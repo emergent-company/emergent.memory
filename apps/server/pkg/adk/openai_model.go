@@ -1,0 +1,744 @@
+// Package adk provides Google ADK-Go integration for agent workflows.
+package adk
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"iter"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
+)
+
+// VendorCompat describes a vendor's protocol-level request/response quirks.
+// The zero value preserves the legacy model-name-heuristic behavior: output cap
+// via max_tokens, tool_choice allowed, and a thinking toggle derived from the
+// model name (deepseek → top-level "thinking", otherwise chat_template_kwargs).
+type VendorCompat struct {
+	// MaxTokensField is the output-cap field name: "max_tokens" or
+	// "max_completion_tokens". Empty means the legacy default ("max_tokens").
+	MaxTokensField string
+	// NoToolChoice, when true, never sends the tool_choice field.
+	NoToolChoice bool
+	// ThinkingStyle names the vendor's thinking/CoT toggle mechanism:
+	// "", "thinking", "thinking_type", "chat_template_kwargs", or "none".
+	// Empty resolves to the legacy heuristic (deepseek name → "thinking",
+	// otherwise "chat_template_kwargs").
+	ThinkingStyle string
+}
+
+// openaiCompatibleModel implements model.LLM using the OpenAI Chat Completions wire protocol.
+// It supports any OpenAI-compatible endpoint (Ollama, llama.cpp, vLLM, LM Studio, etc.)
+// including full function/tool calling.
+type openaiCompatibleModel struct {
+	baseURL   string
+	apiKey    string
+	modelName string
+	auth      AuthStyle
+	client    *http.Client
+	// extra carries vendor-specific config keyed by field name (e.g. Azure
+	// "api_version"), applied to the request URL.
+	extra map[string]string
+	// extraHeaders are additional request headers derived from vendor extra
+	// fields (e.g. a secondary secret header).
+	extraHeaders map[string]string
+	// compat carries vendor-compat-driven request shaping (output-cap field,
+	// tool_choice support, thinking toggle). The zero value reproduces the
+	// legacy model-name heuristic behavior.
+	compat VendorCompat
+	// enableThinking overrides the per-request thinking default when non-nil.
+	// nil  → keep existing per-request logic (disable when tools present)
+	// true → always request thinking tokens
+	// false → always suppress thinking tokens
+	enableThinking *bool
+}
+
+// ThinkingConfigurator is implemented by models that support an explicit
+// thinking/chain-of-thought toggle (e.g. Qwen3 via OpenAI-compatible endpoint).
+type ThinkingConfigurator interface {
+	SetEnableThinking(v *bool)
+}
+
+// NewOpenAICompatibleModel creates a new openaiCompatibleModel using bearer auth.
+// baseURL is the base URL of the OpenAI-compatible API (e.g. "http://localhost:11434/v1").
+// apiKey is optional — pass empty string for keyless local servers.
+// modelName is the model to request (e.g. "llama3", "kvasir", "mistral").
+func NewOpenAICompatibleModel(baseURL, apiKey, modelName string) model.LLM {
+	return NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName, AuthBearer, nil, nil)
+}
+
+// NewOpenAICompatibleModelWithAuth creates a new openaiCompatibleModel with an
+// explicit auth style (e.g. AuthAPIKeyHeader for Azure OpenAI). extra and
+// extraHeaders carry vendor-specific request config (e.g. Azure api_version as a
+// query param, LKEAP secret_key as a header); both may be nil. The vendor-compat
+// shaping is left at its zero value, preserving the legacy heuristic behavior.
+func NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName string, auth AuthStyle, extra, extraHeaders map[string]string) model.LLM {
+	return NewOpenAICompatibleModelWithCompat(baseURL, apiKey, modelName, auth, VendorCompat{}, extra, extraHeaders)
+}
+
+// NewOpenAICompatibleModelWithCompat creates a new openaiCompatibleModel with an
+// explicit auth style, vendor-compat shaping, and vendor-specific extra request
+// config (extra query/header fields). Passing a zero VendorCompat reproduces the
+// legacy heuristic behavior for existing callers.
+func NewOpenAICompatibleModelWithCompat(baseURL, apiKey, modelName string, auth AuthStyle, compat VendorCompat, extra, extraHeaders map[string]string) model.LLM {
+	return &openaiCompatibleModel{
+		baseURL:      strings.TrimSuffix(baseURL, "/"),
+		apiKey:       apiKey,
+		modelName:    modelName,
+		auth:         auth,
+		compat:       compat,
+		extra:        extra,
+		extraHeaders: extraHeaders,
+		client:       &http.Client{Timeout: 900 * time.Second},
+	}
+}
+
+// SetEnableThinking implements ThinkingConfigurator. Pass nil to restore
+// the default per-request logic (disable thinking when tools are present).
+func (m *openaiCompatibleModel) SetEnableThinking(v *bool) {
+	m.enableThinking = v
+}
+
+// Name returns the model name.
+func (m *openaiCompatibleModel) Name() string {
+	return m.modelName
+}
+
+// --- OpenAI wire types ---
+
+type openaiMessage struct {
+	Role             string           `json:"role"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent *string          `json:"reasoning_content,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ToolCalls        []openaiToolCall `json:"tool_calls,omitempty"`
+	Name             string           `json:"name,omitempty"`
+}
+
+type openaiToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"` // "function"
+	Function openaiToolCallFunc `json:"function"`
+}
+
+type openaiToolCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
+}
+
+type openaiTool struct {
+	Type     string             `json:"type"` // "function"
+	Function openaiToolFunction `json:"function"`
+}
+
+type openaiToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+}
+
+type openaiRequest struct {
+	Model      string          `json:"model"`
+	Messages   []openaiMessage `json:"messages"`
+	Tools      []openaiTool    `json:"tools,omitempty"`
+	ToolChoice string          `json:"tool_choice,omitempty"`
+	MaxTokens  int32           `json:"max_tokens,omitempty"`
+	// MaxCompletionTokens is the output-cap field used by OpenAI reasoning
+	// models and other vendors (e.g. Volcengine Ark) that reject max_tokens.
+	MaxCompletionTokens int32           `json:"max_completion_tokens,omitempty"`
+	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
+	// ChatTemplateKwargs passes model-specific template arguments.
+	// For Qwen3/vLLM, {"enable_thinking": false} suppresses chain-of-thought
+	// reasoning tokens. This is the correct way to disable thinking on vLLM —
+	// the top-level enable_thinking field does not work correctly (it empties
+	// the response content field).
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	// Thinking is DeepSeek's thinking-mode toggle ({"type":"enabled"|"disabled"}).
+	// DeepSeek ignores chat_template_kwargs (a vLLM/Qwen3 mechanism), so DeepSeek
+	// models must use this top-level field instead to disable thinking.
+	Thinking any `json:"thinking,omitempty"`
+}
+
+type responseFormat struct {
+	Type string `json:"type"`
+}
+
+type openaiResponse struct {
+	Choices []struct {
+		Message struct {
+			Content          string           `json:"content"`
+			ReasoningContent string           `json:"reasoning_content,omitempty"`
+			ToolCalls        []openaiToolCall `json:"tool_calls"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int32 `json:"prompt_tokens"`
+		CompletionTokens int32 `json:"completion_tokens"`
+		TotalTokens      int32 `json:"total_tokens"`
+	} `json:"usage,omitempty"`
+}
+
+// --- Role mapping ---
+
+// openAIFinishReason maps an OpenAI finish_reason to the genai vocabulary so
+// callers can distinguish a completed response from one cut off at the output
+// limit.
+func openAIFinishReason(reason string) genai.FinishReason {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "length", "max_tokens":
+		return genai.FinishReasonMaxTokens
+	case "stop":
+		return genai.FinishReasonStop
+	case "content_filter", "safety":
+		return genai.FinishReasonSafety
+	case "":
+		return genai.FinishReasonUnspecified
+	default:
+		return genai.FinishReasonOther
+	}
+}
+
+func mapRole(role string) string {
+	switch role {
+	case "model":
+		return "assistant"
+	case "system":
+		return "system"
+	default:
+		return "user"
+	}
+}
+
+// --- Tool schema conversion ---
+
+// coordinationTools are internal housekeeping tools that should not count as
+// "substantive" tool calls when deciding whether to force tool_choice=required.
+var coordinationTools = map[string]bool{
+	"list_available_agents": true,
+}
+
+// isReasonerModel returns true for models that do not support the tool_choice
+// field — typically chain-of-thought / reasoning models. These models still
+// support function calling but reject an explicit tool_choice constraint.
+func isReasonerModel(name string) bool {
+	lower := strings.ToLower(name)
+	reasonerKeywords := []string{"reasoner", "deepseek-v4-", "deepseek-r1", "kvasir"}
+	for _, kw := range reasonerKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeepSeekModel returns true for DeepSeek models. DeepSeek toggles thinking via
+// a top-level `thinking` field (and silently ignores chat_template_kwargs), and
+// requires reasoning_content to be echoed back on every assistant turn while
+// thinking mode is on — so these models need dedicated disable and echo paths.
+func isDeepSeekModel(name string) bool {
+	return strings.Contains(strings.ToLower(name), "deepseek")
+}
+
+// hasSubstantiveToolCall returns true when the conversation history contains a
+// FunctionCall to a non-coordination tool (e.g. spawn_agents, entity-create).
+// Used to decide tool_choice: "required" until the model calls a real tool,
+// then "auto" so it can produce a final text response.
+func hasSubstantiveToolCall(contents []*genai.Content) bool {
+	for _, c := range contents {
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionCall != nil && !coordinationTools[p.FunctionCall.Name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// buildOpenAITools converts genai.Tool declarations to OpenAI tool format.
+func buildOpenAITools(tools []*genai.Tool) []openaiTool {
+	var result []openaiTool
+	for _, t := range tools {
+		for _, fd := range t.FunctionDeclarations {
+			ot := openaiTool{
+				Type: "function",
+				Function: openaiToolFunction{
+					Name:        fd.Name,
+					Description: fd.Description,
+				},
+			}
+			// Prefer ParametersJsonSchema (raw JSON schema) over Parameters (*Schema).
+			if fd.ParametersJsonSchema != nil {
+				ot.Function.Parameters = fd.ParametersJsonSchema
+			} else if fd.Parameters != nil {
+				ot.Function.Parameters = fd.Parameters
+			} else {
+				// OpenAI requires parameters to be an object schema even if empty.
+				ot.Function.Parameters = map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				}
+			}
+			result = append(result, ot)
+		}
+	}
+	return result
+}
+
+// --- Message history conversion ---
+
+// buildMessages converts ADK content history to OpenAI messages, including
+// tool call / tool response turns.
+//
+// After building the message list, it validates the conversation structure:
+// every tool_call_id in an assistant message's tool_calls must have a
+// matching tool response. Orphaned calls get synthetic responses patched
+// in to prevent DeepSeek's strict API from rejecting the request.
+func buildMessages(contents []*genai.Content, deepseek bool) []openaiMessage {
+	var messages []openaiMessage
+	for _, content := range contents {
+		role := mapRole(content.Role)
+
+		// Collect text parts and function calls/responses separately.
+		var textParts []string
+		var reasoningParts []string
+		var funcCalls []openaiToolCall
+		var funcResponses []struct {
+			id   string
+			name string
+			data map[string]any
+		}
+
+		for _, part := range content.Parts {
+			if part == nil {
+				continue
+			}
+			// Route thought/reasoning parts to reasoning_content for roundtrip.
+			// DeepSeek's API requires reasoning_content to be echoed back
+			// on subsequent turns when the model uses thinking mode.
+			if part.Thought && part.Text != "" {
+				reasoningParts = append(reasoningParts, part.Text)
+			} else if part.Text != "" {
+				textParts = append(textParts, part.Text)
+			}
+			if part.FunctionCall != nil {
+				fc := part.FunctionCall
+				argsJSON, _ := json.Marshal(fc.Args)
+				id := fc.ID
+				if id == "" {
+					id = "call_" + fc.Name
+				}
+				funcCalls = append(funcCalls, openaiToolCall{
+					ID:   id,
+					Type: "function",
+					Function: openaiToolCallFunc{
+						Name:      fc.Name,
+						Arguments: string(argsJSON),
+					},
+				})
+			}
+			if part.FunctionResponse != nil {
+				fr := part.FunctionResponse
+				id := fr.ID
+				if id == "" {
+					id = "call_" + fr.Name
+				}
+				funcResponses = append(funcResponses, struct {
+					id   string
+					name string
+					data map[string]any
+				}{id, fr.Name, fr.Response})
+			}
+		}
+
+		// Emit assistant message with tool_calls when present.
+		// Note: we intentionally omit any pre-tool text content (reasoning narrative)
+		// from the history message. Including it inflates context on every
+		// subsequent turn and can cause context-size errors on long sessions.
+		// The tool results themselves convey what was done; the narrative adds
+		// no value for continuation.
+		// However, reasoning_content MUST be echoed back for DeepSeek on every
+		// assistant turn — including tool-call sub-turns — or the API returns a
+		// 400 "reasoning_content must be passed back" error on the next turn.
+		// DeepSeek treats a missing field as missing reasoning, so we always set
+		// it (even empty) on assistant messages, matching opencode's approach.
+		if role == "assistant" && len(funcCalls) > 0 {
+			msg := openaiMessage{
+				Role:      "assistant",
+				ToolCalls: funcCalls,
+			}
+			if deepseek {
+				rc := strings.Join(reasoningParts, "\n")
+				msg.ReasoningContent = &rc
+			}
+			messages = append(messages, msg)
+			continue
+		}
+
+		// Emit tool result messages (one per function response).
+		if len(funcResponses) > 0 {
+			for _, fr := range funcResponses {
+				resultJSON, _ := json.Marshal(fr.data)
+				messages = append(messages, openaiMessage{
+					Role:       "tool",
+					ToolCallID: fr.id,
+					Name:       fr.name,
+					Content:    string(resultJSON),
+				})
+			}
+			continue
+		}
+
+		// Plain text message.
+		// Per Qwen3 best practices, thinking/reasoning content must NOT be
+		// included in multi-turn history — only the final output text is sent
+		// back. This prevents reasoning blobs from ballooning context on every
+		// subsequent turn.
+		if len(textParts) > 0 || len(reasoningParts) > 0 {
+			msg := openaiMessage{
+				Role: role,
+			}
+			if len(textParts) > 0 {
+				msg.Content = strings.Join(textParts, "\n")
+			}
+			// Echo reasoning_content back in assistant history turns.
+			// DeepSeek requires the reasoning_content it produced to be passed back
+			// verbatim on subsequent turns, and treats a missing field as missing
+			// reasoning — so we always set it (even empty) on DeepSeek assistant
+			// messages. Qwen3/vLLM does not want this field at all.
+			if deepseek && role == "assistant" {
+				rc := strings.Join(reasoningParts, "\n")
+				msg.ReasoningContent = &rc
+			}
+			messages = append(messages, msg)
+		}
+	}
+	// Validate conversation structure: every tool_call ID must have a matching
+	// tool response. Some providers (DeepSeek) enforce this strictly and reject
+	// conversations with orphaned tool_calls. Inject synthetic tool responses
+	// for any missing call IDs to keep the conversation valid.
+	messages = ensureToolCallResponsePairs(messages)
+	return messages
+}
+
+// ensureToolCallResponsePairs validates that every assistant tool_call has a
+// corresponding tool response. This is required by providers like DeepSeek that
+// enforce strict conversation ordering. Orphaned tool_calls can occur when ADK
+// session history is reconstructed from persisted events and a tool's response
+// was not properly serialized. For each orphaned tool_call ID, a synthetic tool
+// response is injected with a neutral "tool response not available" message.
+func ensureToolCallResponsePairs(messages []openaiMessage) []openaiMessage {
+	// Pass 1: collect tool_call IDs (with their call data and assistant message
+	// index) in encounter order, and collect all tool response IDs.
+	type toolCallEntry struct {
+		call         openaiToolCall
+		assistantIdx int
+	}
+	// Use a slice to preserve discovery order and a map for O(1) lookup.
+	var toolCallOrder []string // ordered IDs as discovered
+	toolCallIndex := make(map[string]toolCallEntry)
+	toolResponseIDs := make(map[string]bool)
+
+	for i, msg := range messages {
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				if _, seen := toolCallIndex[tc.ID]; !seen {
+					toolCallOrder = append(toolCallOrder, tc.ID)
+				}
+				toolCallIndex[tc.ID] = toolCallEntry{call: tc, assistantIdx: i}
+			}
+		}
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			toolResponseIDs[msg.ToolCallID] = true
+		}
+	}
+
+	if len(toolCallIndex) == 0 {
+		return messages
+	}
+
+	// Pass 2: identify orphaned IDs in discovery order (deterministic).
+	// Group synthetic responses by assistant message index.
+	type orphanGroup struct {
+		responses []openaiMessage
+	}
+	orphanGroups := make(map[int]*orphanGroup)
+	hasOrphans := false
+	for _, id := range toolCallOrder {
+		if toolResponseIDs[id] {
+			continue
+		}
+		hasOrphans = true
+		entry := toolCallIndex[id]
+		if orphanGroups[entry.assistantIdx] == nil {
+			orphanGroups[entry.assistantIdx] = &orphanGroup{}
+		}
+		orphanGroups[entry.assistantIdx].responses = append(
+			orphanGroups[entry.assistantIdx].responses,
+			openaiMessage{
+				Role:       "tool",
+				ToolCallID: id,
+				Name:       entry.call.Function.Name,
+				Content:    `{"error":"tool response not available","note":"synthetic response inserted to maintain valid conversation structure"}`,
+			},
+		)
+	}
+	if !hasOrphans {
+		return messages
+	}
+
+	// Inject synthetic responses immediately after their assistant message,
+	// iterating left to right over a new result slice (no index shifting).
+	result := make([]openaiMessage, 0, len(messages))
+	for i, msg := range messages {
+		result = append(result, msg)
+		if group, ok := orphanGroups[i]; ok {
+			result = append(result, group.responses...)
+		}
+	}
+	return result
+}
+
+// GenerateContent implements model.LLM by calling the OpenAI Chat Completions API,
+// including full function/tool calling support.
+func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		messages := buildMessages(req.Contents, isDeepSeekModel(m.modelName))
+
+		// Prepend system instruction if provided (OpenAI uses a system-role message).
+		if req.Config != nil && req.Config.SystemInstruction != nil {
+			var siParts []string
+			for _, p := range req.Config.SystemInstruction.Parts {
+				if p != nil && p.Text != "" {
+					siParts = append(siParts, p.Text)
+				}
+			}
+			if len(siParts) > 0 {
+				sysMsg := openaiMessage{
+					Role:    "system",
+					Content: strings.Join(siParts, "\n"),
+				}
+				messages = append([]openaiMessage{sysMsg}, messages...)
+			}
+		}
+
+		body := openaiRequest{
+			Model:    m.modelName,
+			Messages: messages,
+		}
+
+		// Attach tool declarations when present.
+		if req.Config != nil && len(req.Config.Tools) > 0 {
+			body.Tools = buildOpenAITools(req.Config.Tools)
+			// Use "required" when the model has never called a substantive tool yet
+			// (i.e. only coordination tools like set_session_title have fired, or
+			// nothing has fired). Switch to "auto" once spawn_agents or any
+			// user-defined tool has been called, so the model can produce a final
+			// text response after completing its work.
+			// Skip tool_choice entirely for reasoning models (e.g. deepseek-v4-flash,
+			// deepseek-reasoner) — they reject the field outright — and for vendors
+			// whose compat declares NoToolChoice.
+			if !m.compat.NoToolChoice && !isReasonerModel(m.modelName) {
+				if hasSubstantiveToolCall(req.Contents) {
+					body.ToolChoice = "auto"
+				} else {
+					body.ToolChoice = "required"
+				}
+			}
+			// Disable thinking mode when tools are present — thinking mode
+			// causes the model to reason independently and ignore system prompt
+			// instructions about which tools/agents to use.
+			// If the agent definition explicitly sets EnableThinking, honour that
+			// instead of the default (disable) behaviour.
+			wantThinking := true // default: allow thinking when no tools
+			if m.enableThinking != nil {
+				wantThinking = *m.enableThinking
+			} else {
+				wantThinking = false // default: disable when tools present
+			}
+			if !wantThinking {
+				// Resolve the vendor's thinking-toggle mechanism. The zero value
+				// reproduces the legacy model-name heuristic (deepseek → top-level
+				// "thinking", otherwise chat_template_kwargs).
+				style := m.compat.ThinkingStyle
+				if style == "" {
+					if isDeepSeekModel(m.modelName) {
+						style = "thinking"
+					} else {
+						style = "chat_template_kwargs"
+					}
+				}
+				switch style {
+				case "thinking", "thinking_type":
+					// DeepSeek (and other vendors using a top-level `thinking`
+					// object) toggle thinking via `{"type":"disabled"}`; they ignore
+					// chat_template_kwargs. Without this, they stay in thinking mode,
+					// emit reasoning_content, and — because tools are present —
+					// require it echoed back on every turn, else 400.
+					body.Thinking = map[string]any{"type": "disabled"}
+				case "chat_template_kwargs":
+					// vLLM/Qwen3 toggles thinking via chat_template_kwargs. NOTE:
+					// must use chat_template_kwargs (vLLM-level) not top-level
+					// enable_thinking — the top-level field empties the content field.
+					body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+				case "none":
+					// No toggle mechanism — leave the request unchanged.
+				}
+			}
+		}
+
+		// Apply generation config.
+		if req.Config != nil {
+			if m.compat.MaxTokensField == "max_completion_tokens" {
+				body.MaxCompletionTokens = req.Config.MaxOutputTokens
+			} else {
+				body.MaxTokens = req.Config.MaxOutputTokens
+			}
+			if req.Config.ResponseMIMEType == "application/json" {
+				body.ResponseFormat = &responseFormat{Type: "json_object"}
+				// DeepSeek requires the word "json" to appear in a user message
+				// (not just the system message). Ensure the last user message
+				// contains "json"; if no user message exists, add one.
+				lastUserIdx := -1
+				for i, msg := range body.Messages {
+					if msg.Role == "user" {
+						lastUserIdx = i
+					}
+				}
+				if lastUserIdx >= 0 {
+					if !strings.Contains(strings.ToLower(body.Messages[lastUserIdx].Content), "json") {
+						body.Messages[lastUserIdx].Content += " Respond in json."
+						slog.Debug("openai-model: injected json into user message", "model", m.modelName, "msg_idx", lastUserIdx)
+					} else {
+						slog.Debug("openai-model: user message already contains json", "model", m.modelName, "msg_idx", lastUserIdx)
+					}
+				} else {
+					body.Messages = append(body.Messages, openaiMessage{
+						Role:    "user",
+						Content: "Respond in json.",
+					})
+					slog.Debug("openai-model: added json user message (none existed)", "model", m.modelName)
+				}
+			}
+		}
+
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: failed to marshal request: %w", err))
+			return
+		}
+
+		// Azure OpenAI's legacy dated endpoint requires ?api-version=<v> on the
+		// request URL; other vendors leave the extra unset and the URL unchanged.
+		requestURL := AppendQueryParam(m.baseURL+"/chat/completions", "api-version", extraValue(m.extra, "api_version"))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			requestURL,
+			bytes.NewReader(bodyBytes))
+		if err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: failed to create request: %w", err))
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if err := ApplyAuth(httpReq, m.auth, m.apiKey); err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: %w", err))
+			return
+		}
+		ApplyExtraHeaders(httpReq, m.extraHeaders)
+
+		resp, err := m.client.Do(httpReq)
+		if err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: request failed: %w", err))
+			return
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: failed to read response: %w", err))
+			return
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			yield(nil, fmt.Errorf("openai-compatible: endpoint returned %d (url=%s model=%s req_bytes=%d): %s", resp.StatusCode, m.baseURL, m.modelName, len(bodyBytes), string(respBody)))
+			return
+		}
+
+		var result openaiResponse
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: failed to decode response: %w", err))
+			return
+		}
+		if len(result.Choices) == 0 {
+			preview := string(respBody)
+			if len(preview) > 500 {
+				preview = preview[:500] + "…"
+			}
+			yield(nil, fmt.Errorf("openai-compatible: response had no choices (body=%s)", preview))
+			return
+		}
+
+		choice := result.Choices[0]
+		var parts []*genai.Part
+
+		// Emit reasoning content (DeepSeek thinking tokens) as a Thought part
+		// so it's stored in the ADK content and echoed back in subsequent requests.
+		if choice.Message.ReasoningContent != "" {
+			parts = append(parts, &genai.Part{
+				Text:    choice.Message.ReasoningContent,
+				Thought: true,
+			})
+		}
+
+		// Emit text content when present.
+		if choice.Message.Content != "" {
+			parts = append(parts, &genai.Part{Text: choice.Message.Content})
+		}
+
+		// Emit function calls when the model requested tool use.
+		for _, tc := range choice.Message.ToolCalls {
+			var args map[string]any
+			if tc.Function.Arguments != "" {
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					// Fallback: wrap raw string as {"_raw": "..."}
+					args = map[string]any{"_raw": tc.Function.Arguments}
+				}
+			}
+			parts = append(parts, &genai.Part{
+				FunctionCall: &genai.FunctionCall{
+					ID:   tc.ID,
+					Name: tc.Function.Name,
+					Args: args,
+				},
+			})
+		}
+
+		if len(parts) == 0 {
+			yield(nil, fmt.Errorf("openai-compatible: response had no content or tool calls"))
+			return
+		}
+
+		llmResp := &model.LLMResponse{
+			Content: &genai.Content{
+				Role:  "model",
+				Parts: parts,
+			},
+			Partial:      false,
+			FinishReason: openAIFinishReason(choice.FinishReason),
+		}
+		if result.Usage != nil {
+			llmResp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+				PromptTokenCount:     result.Usage.PromptTokens,
+				CandidatesTokenCount: result.Usage.CompletionTokens,
+				TotalTokenCount:      result.Usage.TotalTokens,
+			}
+		}
+		yield(llmResp, nil)
+	}
+}

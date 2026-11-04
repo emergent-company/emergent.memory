@@ -1,0 +1,106 @@
+package chat
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers chat routes with the Echo router
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+	// Base group for chat - all routes require authentication and project ID
+	g := e.Group("/api/chat")
+	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectID())
+
+	// All chat operations require chat:use scope
+	g.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+
+	// Project authorization for the header-scoped /api/chat group (issue #864).
+	// RequireProjectTokenScope + RequireProjectMember are applied in canonical
+	// order (token binding first, then membership). This group carries no
+	// :projectId path param, so both middlewares fall back to user.ProjectID
+	// (normalised from the X-Project-ID header by RequireAuth).
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
+
+	// Streaming endpoint - POST /api/chat/stream
+	g.POST("/stream", h.StreamChat)
+
+	// Conversation CRUD
+	g.GET("/conversations", h.ListConversations)
+	g.POST("/conversations", h.CreateConversation)
+	g.GET("/:id", h.GetConversation)
+
+	// Delete is an ordinary member action (owner-or-shared predicate, chat:use),
+	// not admin-gated — moved out of the adminGroup so any member who can read a
+	// conversation can permanently delete it (D8).
+	g.DELETE("/:id", h.DeleteConversation)
+
+	// Lifecycle: archive / unarchive are idempotent member actions (chat:use).
+	g.POST("/:id/archive", h.ArchiveConversation)
+	g.POST("/:id/unarchive", h.UnarchiveConversation)
+
+	// Admin operations - require chat:admin scope
+	adminGroup := g.Group("")
+	adminGroup.Use(authMiddleware.RequireAPITokenScopes("chat:admin"))
+	adminGroup.PATCH("/:id", h.UpdateConversation)
+
+	// Message operations
+	g.POST("/:id/messages", h.AddMessage)
+	g.GET("/:id/history", h.GetConversationHistory)
+
+	// Project-scoped query endpoint — stateless NL query against the knowledge graph.
+	// Uses the internal graph-query-agent; no agent ID needed from the client.
+	queryGroup := e.Group("/api/projects/:projectId/query")
+	queryGroup.Use(authMiddleware.RequireAuth())
+	queryGroup.Use(authMiddleware.RequireProjectTokenScope())
+	queryGroup.Use(authMiddleware.RequireProjectMember())
+	queryGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	queryGroup.POST("", h.QueryStream)
+
+	// Project-scoped ask endpoint — stateless CLI assistant.
+	// Uses the internal cli-assistant-agent; accepts OAuth, emt_* tokens, and API keys.
+	// The agent is context-aware: it adapts responses based on auth state and project availability.
+	askProjectGroup := e.Group("/api/projects/:projectId/ask")
+	askProjectGroup.Use(authMiddleware.RequireAuth())
+	askProjectGroup.Use(authMiddleware.RequireProjectTokenScope())
+	askProjectGroup.Use(authMiddleware.RequireProjectMember())
+	askProjectGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	askProjectGroup.POST("", h.AskStream)
+
+	// User-level ask endpoint — no project context required when no project is
+	// supplied. Useful for documentation questions and account-level tasks (e.g.
+	// "how do I configure a provider?"). Still requires authentication so the
+	// agent can personalise responses and access account info.
+	//
+	// The project, when present, is header-sourced (X-Project-ID, normalised onto
+	// user.ProjectID by RequireAuth) — the same disposition as /api/chat, /api/graph
+	// and /api/graph/journal. The shared pair enforces token binding then real
+	// org membership for any project-addressed caller (issue #913); with no
+	// project in scope both middlewares pass through, preserving the account-level
+	// ask path.
+	askGroup := e.Group("/api/ask")
+	askGroup.Use(authMiddleware.RequireAuth())
+	askGroup.Use(authMiddleware.RequireProjectTokenScope())
+	askGroup.Use(authMiddleware.RequireProjectMember())
+	askGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	askGroup.POST("", h.AskStream)
+	// Project-scoped remember endpoint — stateless NL insertion into the knowledge graph.
+	// Uses the internal graph-insert-agent; understands NL, deduplicates, branches, and merges.
+	rememberGroup := e.Group("/api/projects/:projectId/remember")
+	rememberGroup.Use(authMiddleware.RequireAuth())
+	rememberGroup.Use(authMiddleware.RequireProjectTokenScope())
+	rememberGroup.Use(authMiddleware.RequireProjectMember())
+	rememberGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	rememberGroup.POST("", h.RememberStream)
+	rememberGroup.POST("/file", h.RememberFile)
+
+	// Project-scoped forget endpoint — NL soft-delete from the knowledge graph.
+	forgetGroup := e.Group("/api/projects/:projectId/forget")
+	forgetGroup.Use(authMiddleware.RequireAuth())
+	forgetGroup.Use(authMiddleware.RequireProjectTokenScope())
+	forgetGroup.Use(authMiddleware.RequireProjectMember())
+	forgetGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	forgetGroup.POST("", h.ForgetStream)
+}

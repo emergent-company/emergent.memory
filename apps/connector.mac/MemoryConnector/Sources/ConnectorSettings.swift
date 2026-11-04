@@ -1,0 +1,240 @@
+import Foundation
+import Observation
+
+/// The Sparkle update channel the app follows. `stable` tracks tagged releases;
+/// `dev` tracks the rolling development build. The choice is persisted in
+/// `UserDefaults` and applied at runtime through Sparkle's feed-URL override.
+enum UpdateChannel: String, CaseIterable, Identifiable {
+    case stable
+    case dev
+
+    var id: String {
+        rawValue
+    }
+
+    /// User-facing label for the channel picker.
+    var displayName: String {
+        switch self {
+        case .stable:
+            "Stable"
+        case .dev:
+            "Development"
+        }
+    }
+
+    /// One-line explanation shown next to the channel picker.
+    var explanation: String {
+        switch self {
+        case .stable:
+            "Tagged releases."
+        case .dev:
+            "Rolling builds from the main branch."
+        }
+    }
+}
+
+/// Single source of truth for non-secret connection settings.
+///
+/// Sign-in and connector secrets are owned by the bundled `memory-connector`
+/// CLI; the app keeps only non-secret defaults in `UserDefaults` under the
+/// `connector.` prefix. Tool enablement stores only the disabled subset here.
+@MainActor
+@Observable
+final class ConnectorSettings {
+    private nonisolated static let serverURLKey = "connector.serverURL"
+    private static let instanceIDKey = "connector.instanceID"
+    private static let disabledToolsKey = "connector.disabledTools"
+    /// Presence marker: distinguishes "user saved an empty disabled set" from
+    /// "never configured" (so import does not clobber an intentional empty set
+    /// and only backfills a genuinely unset one).
+    private static let disabledToolsInitializedKey = "connector.disabledToolsInitialized"
+    /// Persisted update channel (`connector.updateChannel`).
+    private static let updateChannelKey = "connector.updateChannel"
+
+    private let defaults: UserDefaults
+
+    var serverURL: String
+    var instanceID: String
+    /// Selected Sparkle update channel. Defaults to stable.
+    var updateChannel: UpdateChannel
+
+    /// Every catalog tool id. A never-configured install starts with all local
+    /// MCP tools OFF, i.e. the disabled set defaults to the whole catalog.
+    static var allCatalogToolIDs: Set<String> {
+        Set(ToolCatalog.tools.map(\.id))
+    }
+
+    private(set) var disabledTools: Set<String>
+    /// True when the last `importExistingConfigIfNeeded` pulled values from an
+    /// existing engine config file.
+    private(set) var importedFromConfig: Bool = false
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        serverURL = defaults.string(forKey: Self.serverURLKey) ?? ""
+        instanceID = defaults.string(forKey: Self.instanceIDKey) ?? Self.defaultInstanceID()
+        disabledTools = Self.loadDisabledTools(defaults: defaults)
+        updateChannel = Self.loadUpdateChannel(defaults: defaults)
+    }
+
+    /// Live, nonisolated read of the persisted `serverURL`. The one-time legacy
+    /// migration's `serverURLProvider` runs off the main actor, so it cannot
+    /// touch the actor-isolated `serverURL` property; this reads the same
+    /// (always-persisted) value through thread-safe `UserDefaults`.
+    nonisolated static func persistedServerURL() -> String {
+        UserDefaults.standard.string(forKey: serverURLKey) ?? ""
+    }
+
+    /// Resolves the disabled set with the "all local MCP tools default OFF"
+    /// rule, without changing any stored value:
+    ///
+    /// - a stored `disabledTools` list (with or without the marker) is honored
+    ///   verbatim, so existing installs and user-intended empty sets (all ON)
+    ///   are never migrated;
+    /// - the marker present without a list is also treated as an intentional
+    ///   empty set (all ON);
+    /// - neither present → never configured → every catalog tool is disabled.
+    private static func loadDisabledTools(defaults: UserDefaults) -> Set<String> {
+        if let stored = defaults.stringArray(forKey: disabledToolsKey) {
+            return Set(stored)
+        }
+        if defaults.object(forKey: Self.disabledToolsInitializedKey) != nil {
+            return []
+        }
+        return Self.allCatalogToolIDs
+    }
+
+    /// Loads the persisted update channel, defaulting to `.stable` when unset or
+    /// unrecognized.
+    private static func loadUpdateChannel(defaults: UserDefaults) -> UpdateChannel {
+        guard let raw = defaults.string(forKey: updateChannelKey),
+              let channel = UpdateChannel(rawValue: raw)
+        else {
+            return .stable
+        }
+        return channel
+    }
+
+    /// Default instance id mirrors the engine's `<hostname>-connector`.
+    static func defaultInstanceID() -> String {
+        let host = ProcessInfo.processInfo.hostName
+        let base = host.hasSuffix(".local") ? String(host.dropLast(".local".count)) : host
+        let trimmed = base.isEmpty ? "localhost" : base
+        return "\(trimmed)-connector"
+    }
+
+    /// Persists non-secret settings.
+    func persist() {
+        defaults.set(serverURL, forKey: Self.serverURLKey)
+        defaults.set(instanceID, forKey: Self.instanceIDKey)
+        defaults.set(Array(disabledTools).sorted(), forKey: Self.disabledToolsKey)
+        defaults.set(true, forKey: Self.disabledToolsInitializedKey)
+        defaults.set(updateChannel.rawValue, forKey: Self.updateChannelKey)
+    }
+
+    /// Selects the Sparkle update channel and persists it. Callers re-check the
+    /// newly selected feed (see `UpdaterModel`).
+    func setUpdateChannel(_ channel: UpdateChannel) {
+        guard updateChannel != channel else { return }
+        updateChannel = channel
+        persist()
+    }
+
+    /// Replaces the disabled tool set. The caller then materializes the engine
+    /// config through the connected project's profile.
+    func updateDisabledTools(_ tools: Set<String>) {
+        disabledTools = tools
+        persist()
+    }
+
+    /// Toggle state for a catalog tool: enabled == NOT in the disabled set.
+    func isToolEnabled(_ id: String) -> Bool {
+        !disabledTools.contains(id)
+    }
+
+    /// Flips one catalog tool on/off and persists the disabled set.
+    func setToolEnabled(_ id: String, enabled: Bool) {
+        if enabled {
+            disabledTools.remove(id)
+        } else {
+            disabledTools.insert(id)
+        }
+        persist()
+    }
+
+    /// Clears all persisted non-secret settings back to a fresh install (used
+    /// by tests and a future "Disconnect" affordance).
+    func clearConfiguration() {
+        defaults.removeObject(forKey: Self.serverURLKey)
+        defaults.removeObject(forKey: Self.instanceIDKey)
+        defaults.removeObject(forKey: Self.disabledToolsKey)
+        defaults.removeObject(forKey: Self.disabledToolsInitializedKey)
+        defaults.removeObject(forKey: Self.updateChannelKey)
+        serverURL = ""
+        instanceID = Self.defaultInstanceID()
+        updateChannel = .stable
+        // Back to a fresh install: all local MCP tools OFF (keys were removed,
+        // so a reload would resolve to the same).
+        disabledTools = Self.allCatalogToolIDs
+        importedFromConfig = false
+    }
+
+    /// Backfills app state from an existing engine config file (typically
+    /// created by the CLI). Per-field, not all-or-nothing: whenever the file
+    /// exists, only the missing pieces are adopted —
+    ///
+    /// - empty saved server URL  → take the file's (and persist);
+    /// - empty saved instance id → take the file's (and persist);
+    /// - disabled set never saved AND the file declares `disabled_tools` →
+    ///   adopt the file's list.
+    ///
+    /// It never overwrites a non-empty saved server URL, a saved instance id,
+    /// or an already-saved disabled set. A file with no `disabled_tools` block
+    /// leaves the "all tools OFF" default in place rather than silently
+    /// enabling everything. `importedFromConfig` is set when anything was
+    /// adopted.
+    func importExistingConfigIfNeeded(configURL: URL) {
+        guard let parsed = EngineConfigWriter.readDetailed(configURL: configURL) else { return }
+        let values = parsed.values
+
+        var persistNeeded = false
+        var imported = false
+
+        // "Unset" is decided by UserDefaults PRESENCE, never by the in-memory
+        // value: instanceID has a non-empty hostname default, so comparing the
+        // property would wrongly look "already saved".
+        let savedServerURL = (defaults.string(forKey: Self.serverURLKey) ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        if savedServerURL.isEmpty, !values.serverURL.isEmpty {
+            serverURL = values.serverURL
+            persistNeeded = true
+            imported = true
+        }
+
+        let savedInstanceID = defaults.string(forKey: Self.instanceIDKey) ?? ""
+        if savedInstanceID.trimmingCharacters(in: .whitespaces).isEmpty, !values.instanceID.isEmpty {
+            instanceID = values.instanceID
+            persistNeeded = true
+            imported = true
+        }
+
+        // "Never saved" is detected by the presence marker, not by emptiness.
+        // Only adopt when the file actually declared a disabled_tools block;
+        // otherwise keep the all-tools-OFF default instead of re-enabling.
+        if defaults.object(forKey: Self.disabledToolsInitializedKey) == nil,
+           parsed.hasDisabledTools
+        {
+            disabledTools = Set(values.disabledTools)
+            persistNeeded = true
+            imported = true
+        }
+
+        if persistNeeded {
+            persist()
+        }
+
+        if imported {
+            importedFromConfig = true
+        }
+    }
+}

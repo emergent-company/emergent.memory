@@ -1,0 +1,644 @@
+package blueprints
+
+import (
+	"fmt"
+	"strings"
+
+	sdkmodelref "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelref"
+)
+
+// ──────────────────────────────────────────────
+// Validation result types
+// ──────────────────────────────────────────────
+
+// ValidationSeverity indicates how serious a finding is.
+type ValidationSeverity string
+
+const (
+	ValidationError   ValidationSeverity = "error"
+	ValidationWarning ValidationSeverity = "warning"
+)
+
+// ValidationIssue is a single finding produced by Validate.
+type ValidationIssue struct {
+	Severity     ValidationSeverity
+	ResourceType string // "pack", "agent", "skill", "seed_object", "seed_relationship"
+	Name         string // resource name (may be empty for file-level issues)
+	SourceFile   string // file the issue was found in
+	Field        string // field path, e.g. "objectTypes[1].name"
+	Message      string
+}
+
+func (v ValidationIssue) String() string {
+	loc := v.SourceFile
+	if v.Field != "" {
+		loc += " → " + v.Field
+	}
+	name := ""
+	if v.Name != "" {
+		name = fmt.Sprintf(" %q", v.Name)
+	}
+	return fmt.Sprintf("[%s] %s%s: %s (%s)", v.Severity, v.ResourceType, name, v.Message, loc)
+}
+
+// ValidationReport is the full output of Validate.
+type ValidationReport struct {
+	Issues []ValidationIssue
+}
+
+// HasErrors returns true when any issue has severity Error.
+func (r *ValidationReport) HasErrors() bool {
+	for _, i := range r.Issues {
+		if i.Severity == ValidationError {
+			return true
+		}
+	}
+	return false
+}
+
+// Errors returns only error-severity issues.
+func (r *ValidationReport) Errors() []ValidationIssue {
+	var out []ValidationIssue
+	for _, i := range r.Issues {
+		if i.Severity == ValidationError {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// Warnings returns only warning-severity issues.
+func (r *ValidationReport) Warnings() []ValidationIssue {
+	var out []ValidationIssue
+	for _, i := range r.Issues {
+		if i.Severity == ValidationWarning {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// ──────────────────────────────────────────────
+// Validate — entry point
+// ──────────────────────────────────────────────
+
+// Validate runs a full structural and cross-reference validation over a loaded
+// blueprint directory. It expects the same values returned by LoadDir.
+//
+// It is purely offline — no API calls are made. It validates:
+//   - Pack: required fields, per-type required fields, cross-references
+//     (a relationship's sourceType/targetType must name an objectType defined by
+//     some pack in the blueprint; an endpoint may be owned by a different pack
+//     than the one declaring the relationship, and the install gate
+//     PreflightWithProjectTypes additionally accepts types already present in
+//     the project, #1853), duplicate names within a pack, duplicate pack names
+//     across files.
+//   - Agent: required fields, enum values (visibility, dispatchMode),
+//     model.name required when model block is present, duplicate agent names.
+//   - Skill: required fields, non-empty content body, duplicate skill names.
+//   - Seed objects: type field required, warns on missing key, cross-references
+//     type against loaded pack object types.
+//   - Seed relationships: required fields, cross-references type against loaded
+//     pack relationship types, srcKey/dstKey reference known seed object keys.
+//   - Cross-file: warns when the blueprint is empty (nothing found).
+func Validate(
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	return validateWithProjectTypes(nil, project, packs, agents, skills, objects, rels, loadErrors)
+}
+
+// validateWithProjectTypes is the shared implementation behind Validate (offline
+// — nil knownProjectObjTypes, so only the blueprint's own packs are known) and
+// PreflightWithProjectTypes (the install gate, which supplies the object types
+// already present in the project). A relationship endpoint is accepted when it
+// names an object type defined by any pack in the blueprint OR one already in
+// the project (#1853).
+func validateWithProjectTypes(
+	knownProjectObjTypes map[string]bool,
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	r := &ValidationReport{}
+
+	// Surface load-time parse errors as validation errors.
+	for _, le := range loadErrors {
+		if le.Action == BlueprintsActionError {
+			r.add(ValidationError, le.ResourceType, le.Name, le.SourceFile, "", le.Error.Error())
+		}
+	}
+
+	// Empty blueprint warning.
+	if project == nil && len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(objects) == 0 && len(rels) == 0 {
+		r.add(ValidationWarning, "blueprint", "", "", "", "no blueprint files found — directory appears to be empty")
+		return r
+	}
+
+	// Validate each resource type.
+	r.validatePacks(packs, knownProjectObjTypes)
+	r.validateAgents(agents)
+	r.validateSkills(skills)
+	r.validateSeedObjects(objects, packs)
+	r.validateSeedRelationships(rels, packs, objects)
+
+	return r
+}
+
+// ──────────────────────────────────────────────
+// Pack validation
+// ──────────────────────────────────────────────
+
+func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes map[string]bool) {
+	seen := make(map[string]string) // name → sourceFile
+
+	// Relationship endpoints may name an object type owned by any pack in the
+	// same blueprint, not only the pack that declares the relationship type
+	// (#1853), or a type already present in the project. The server accepts any
+	// non-empty endpoint, so validate against the union of every loaded pack's
+	// object types plus the project's known types rather than one pack in
+	// isolation. Offline Validate passes a nil project set (blueprint only).
+	knownObjTypes := buildKnownObjectTypes(packs)
+	for name := range knownProjectObjTypes {
+		if name != "" {
+			knownObjTypes[name] = true
+		}
+	}
+	// Scope phrase for the "does not match" message: the install gate knows the
+	// project's types, the offline validator only knows the blueprint.
+	scope := "the blueprint"
+	if len(knownProjectObjTypes) > 0 {
+		scope = "the blueprint or the project"
+	}
+
+	for _, p := range packs {
+		// Duplicate pack names across files.
+		if prev, ok := seen[p.Name]; ok {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, "name",
+				fmt.Sprintf("duplicate pack name (also defined in %s)", prev))
+		} else {
+			seen[p.Name] = p.SourceFile
+		}
+
+		// name required (already checked by loader, but belt-and-suspenders).
+		if p.Name == "" {
+			r.add(ValidationError, "pack", "", p.SourceFile, "name", "name is required")
+		}
+
+		// version required.
+		if p.Version == "" {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, "version", "version is required")
+		}
+
+		// At least one object type.
+		if len(p.ObjectTypes) == 0 {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, "objectTypes", "must define at least one objectType")
+		}
+
+		// Validate each object type.
+		dupObjNames := make(map[string]bool)
+		for i, ot := range p.ObjectTypes {
+			field := fmt.Sprintf("objectTypes[%d]", i)
+			if ot.Name == "" {
+				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name", "name is required")
+			} else {
+				if dupObjNames[ot.Name] {
+					r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name",
+						fmt.Sprintf("duplicate objectType name %q", ot.Name))
+				}
+				dupObjNames[ot.Name] = true
+			}
+			if ot.Label == "" {
+				r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".label",
+					fmt.Sprintf("objectType %q has no label — UI will fall back to name", ot.Name))
+			}
+		}
+
+		// Validate each relationship type.
+		// Uniqueness key is (name, sourceType) — the same name may appear multiple times
+		// when sourceTypes differ (e.g. belongs_to with sourceType=Scenario and sourceType=Module).
+		// A plain duplicate (same name AND same sourceType) is still an error.
+		dupRelKeys := make(map[string]bool) // key: "name\x00sourceType"
+		for i, rt := range p.RelationshipTypes {
+			field := fmt.Sprintf("relationshipTypes[%d]", i)
+			if rt.Name == "" {
+				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name", "name is required")
+			}
+
+			// Resolve effective source types: prefer sourceTypes[] over sourceType.
+			srcTypes := rt.GetSourceTypes()
+			if len(srcTypes) == 0 {
+				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
+					fmt.Sprintf("relationshipType %q: sourceType (or sourceTypes) is required", rt.Name))
+			} else {
+				for _, src := range srcTypes {
+					dupKey := rt.Name + "\x00" + src
+					if dupRelKeys[dupKey] {
+						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name",
+							fmt.Sprintf("duplicate relationshipType name %q with sourceType %q", rt.Name, src))
+					}
+					dupRelKeys[dupKey] = true
+					if len(knownObjTypes) > 0 && !knownObjTypes[src] {
+						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
+							fmt.Sprintf("relationshipType %q: sourceType %q does not match any objectType in %s", rt.Name, src, scope))
+					}
+				}
+			}
+
+			// Resolve effective target types.
+			tgtTypes := rt.GetTargetTypes()
+			if len(tgtTypes) == 0 {
+				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".targetType",
+					fmt.Sprintf("relationshipType %q: targetType (or targetTypes) is required", rt.Name))
+			} else {
+				for _, tgt := range tgtTypes {
+					if len(knownObjTypes) > 0 && !knownObjTypes[tgt] {
+						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".targetType",
+							fmt.Sprintf("relationshipType %q: targetType %q does not match any objectType in %s", rt.Name, tgt, scope))
+					}
+				}
+			}
+		}
+	}
+}
+
+// ──────────────────────────────────────────────
+// Agent validation
+// ──────────────────────────────────────────────
+
+// validVisibilities is the set of agent visibility levels the server accepts.
+// It mirrors the canonical AgentVisibility constants in
+// apps/server/domain/agents/entity.go (VisibilityProject|External|Internal) and
+// the server's NormalizeVisibility, which maps empty to "project". The CLI SDK
+// exposes visibility only as a plain string (no shared enum constants), so the
+// set is hardcoded here and must be kept in sync with the server.
+var validVisibilities = map[string]bool{
+	"":         true, // optional — server normalizes empty to "project"
+	"project":  true,
+	"external": true,
+	"internal": true,
+}
+
+var validDispatchModes = map[string]bool{
+	"":       true, // optional
+	"sync":   true,
+	"queued": true,
+}
+
+func (r *ValidationReport) validateAgents(agents []AgentFile) {
+	seen := make(map[string]string) // name → sourceFile
+
+	for _, a := range agents {
+		if prev, ok := seen[a.Name]; ok {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "name",
+				fmt.Sprintf("duplicate agent name (also defined in %s)", prev))
+		} else {
+			seen[a.Name] = a.SourceFile
+		}
+
+		if a.Name == "" {
+			r.add(ValidationError, "agent", "", a.SourceFile, "name", "name is required")
+		}
+
+		if a.Visibility != "" && !validVisibilities[a.Visibility] {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "visibility",
+				fmt.Sprintf("invalid visibility %q (valid: project, external, internal)", a.Visibility))
+		}
+
+		if a.DispatchMode != "" && !validDispatchModes[a.DispatchMode] {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "dispatchMode",
+				fmt.Sprintf("invalid dispatchMode %q (valid: sync, queued)", a.DispatchMode))
+		}
+
+		if a.Model != nil {
+			if a.Model.Name == "" && a.Model.Provider == "" {
+				r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
+					"model.name is required when a model block is present")
+			} else if _, err := sdkmodelref.ParseWithProvider(a.Model.Name, a.Model.Provider); err != nil {
+				// The server's create/update handlers reject a reference that is
+				// not in "provider/model" form. Parse via the shared SDK package
+				// so the CLI and server apply the exact same rule and cannot
+				// drift (#1489).
+				r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
+					fmt.Sprintf("%s (got %q: %v)", agentModelRefHelp, a.Model.refDisplay(), err))
+			}
+		}
+
+		if a.MaxSteps != nil && *a.MaxSteps <= 0 {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "maxSteps",
+				fmt.Sprintf("maxSteps must be a positive integer, got %d", *a.MaxSteps))
+		}
+
+		if a.DefaultTimeout != nil && *a.DefaultTimeout <= 0 {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "defaultTimeout",
+				fmt.Sprintf("defaultTimeout must be a positive integer (milliseconds), got %d", *a.DefaultTimeout))
+		}
+
+		if a.SystemPrompt == "" && a.Description == "" {
+			r.add(ValidationWarning, "agent", a.Name, a.SourceFile, "",
+				"agent has no systemPrompt and no description — it may behave unexpectedly")
+		}
+	}
+}
+
+// ──────────────────────────────────────────────
+// Install preflight — validate + normalize models
+// ──────────────────────────────────────────────
+
+// agentModelRefHelp mirrors the server's ErrInvalidAgentModelRef
+// (apps/server/domain/agents/model_ref.go) so both write paths describe the
+// expected form identically.
+const agentModelRefHelp = `model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash")`
+
+// refDisplay renders a model block in its most useful form for an error message:
+// the canonical "provider/model" when both parts are present, otherwise
+// whichever field is set.
+func (m *AgentModel) refDisplay() string {
+	switch {
+	case m.Provider != "" && m.Name != "":
+		return m.Provider + "/" + m.Name
+	case m.Provider != "":
+		return m.Provider
+	default:
+		return m.Name
+	}
+}
+
+// NormalizeAgentModels validates every agent's model reference with the shared
+// modelref parser and canonicalizes it in place: a structured model.provider is
+// folded into the "provider/model" name and the provider field is cleared, so
+// the applier sends exactly the shape the server accepts (mirroring
+// agents.NormalizeAgentModelConfig). An empty reference is left empty (project
+// default). The returned report collects every malformed reference with
+// agent/file/field context; callers must abort when it HasErrors.
+func NormalizeAgentModels(agents []AgentFile) *ValidationReport {
+	r := &ValidationReport{}
+	for i := range agents {
+		a := &agents[i]
+		if a.Model == nil {
+			continue
+		}
+		ref, err := sdkmodelref.ParseWithProvider(a.Model.Name, a.Model.Provider)
+		if err != nil {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
+				fmt.Sprintf("%s (got %q: %v)", agentModelRefHelp, a.Model.refDisplay(), err))
+			continue
+		}
+		if ref.IsZero() {
+			// No override. Drop a stray provider so the applied shape is canonical.
+			a.Model.Provider = ""
+			continue
+		}
+		a.Model.Name = ref.String()
+		a.Model.Provider = ""
+	}
+	return r
+}
+
+// Preflight is the offline gate the CLI install path runs before applying any
+// blueprint. It runs the full structural validation and, when that passes,
+// canonicalizes every agent model reference in place (folding a structured
+// model.provider into "provider/model"). It makes no API calls.
+//
+// Install MUST abort when the returned report HasErrors so a malformed
+// blueprint — in particular an agent model that is not in "provider/model" form
+// — applies nothing instead of leaving a partial install (packs already
+// created) behind (#1586).
+func Preflight(
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	return PreflightWithProjectTypes(nil, project, packs, agents, skills, objects, rels, loadErrors)
+}
+
+// PreflightWithProjectTypes is Preflight with the object types already present in
+// the project supplied (installed packs plus built-ins). A relationship endpoint
+// naming one of them is accepted even when no pack in the blueprint defines it
+// (#1853), so a pack may relate to a type owned by a companion/community pack or
+// a built-in type. Install resolves the list with a best-effort read-only call;
+// when it is unavailable (nil) the check falls back to the blueprint's own packs,
+// exactly like Preflight.
+//
+// Like Preflight, this function makes no API calls itself — the caller supplies
+// the project's types — so a malformed blueprint still aborts before any
+// mutation (#1586).
+func PreflightWithProjectTypes(
+	projectObjectTypes []string,
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	var known map[string]bool
+	if len(projectObjectTypes) > 0 {
+		known = make(map[string]bool, len(projectObjectTypes))
+		for _, name := range projectObjectTypes {
+			if name != "" {
+				known[name] = true
+			}
+		}
+	}
+
+	report := validateWithProjectTypes(known, project, packs, agents, skills, objects, rels, loadErrors)
+	if !report.HasErrors() {
+		// Validate just proved every model reference parses, so normalization
+		// cannot add errors; it only rewrites the references the applier sends.
+		NormalizeAgentModels(agents)
+	}
+	return report
+}
+
+// ──────────────────────────────────────────────
+// Skill validation
+// ──────────────────────────────────────────────
+
+func (r *ValidationReport) validateSkills(skills []SkillFile) {
+	seen := make(map[string]string) // name → sourceFile
+
+	for _, s := range skills {
+		if prev, ok := seen[s.Name]; ok {
+			r.add(ValidationError, "skill", s.Name, s.SourceFile, "name",
+				fmt.Sprintf("duplicate skill name (also defined in %s)", prev))
+		} else {
+			seen[s.Name] = s.SourceFile
+		}
+
+		if s.Name == "" {
+			r.add(ValidationError, "skill", "", s.SourceFile, "name", "name is required")
+		}
+
+		if s.Description == "" {
+			r.add(ValidationError, "skill", s.Name, s.SourceFile, "description", "description is required")
+		}
+
+		if strings.TrimSpace(s.Content) == "" {
+			r.add(ValidationError, "skill", s.Name, s.SourceFile, "content",
+				"SKILL.md has no content body after frontmatter — skill would be empty")
+		}
+	}
+}
+
+// ──────────────────────────────────────────────
+// Seed object validation
+// ──────────────────────────────────────────────
+
+func (r *ValidationReport) validateSeedObjects(objects []SeedObjectRecord, packs []PackFile) {
+	// Build set of known object type names from all packs.
+	knownObjTypes := buildKnownObjectTypes(packs)
+
+	for _, o := range objects {
+		if o.Type == "" {
+			r.add(ValidationError, "seed_object", "", o.SourceFile, "type", "type is required")
+			continue
+		}
+
+		if o.Key == "" {
+			r.add(ValidationWarning, "seed_object", o.Type, o.SourceFile, "key",
+				"object has no key — upsert will always create a new object rather than merging")
+		}
+
+		// Cross-reference type against known pack object types (only when packs are present).
+		if len(knownObjTypes) > 0 && !knownObjTypes[o.Type] {
+			r.add(ValidationWarning, "seed_object", o.Type, o.SourceFile, "type",
+				fmt.Sprintf("type %q is not defined in any loaded pack — ensure the pack is installed", o.Type))
+		}
+	}
+}
+
+// ──────────────────────────────────────────────
+// Seed relationship validation
+// ──────────────────────────────────────────────
+
+func (r *ValidationReport) validateSeedRelationships(rels []SeedRelationshipRecord, packs []PackFile, objects []SeedObjectRecord) {
+	// Build set of known relationship type names from all packs.
+	knownRelTypes := buildKnownRelationshipTypes(packs)
+
+	// Build set of all seed object keys for cross-reference.
+	seedObjectKeys := make(map[string]bool, len(objects))
+	for _, o := range objects {
+		if o.Key != "" {
+			seedObjectKeys[o.Key] = true
+		}
+	}
+
+	for _, rel := range rels {
+		if rel.Type == "" {
+			r.add(ValidationError, "seed_relationship", "", rel.SourceFile, "type", "type is required")
+			continue
+		}
+
+		// Endpoint validation.
+		hasSrcKey := rel.SrcKey != ""
+		hasDstKey := rel.DstKey != ""
+		hasSrcID := rel.SrcID != ""
+		hasDstID := rel.DstID != ""
+
+		if !((hasSrcKey && hasDstKey) || (hasSrcID && hasDstID)) {
+			r.add(ValidationError, "seed_relationship", rel.Type, rel.SourceFile, "",
+				"must provide either (srcKey + dstKey) or (srcId + dstId)")
+		}
+
+		// Cross-reference srcKey/dstKey against loaded seed objects.
+		if hasSrcKey && len(seedObjectKeys) > 0 && !seedObjectKeys[rel.SrcKey] {
+			r.add(ValidationWarning, "seed_relationship", rel.Type, rel.SourceFile, "srcKey",
+				fmt.Sprintf("srcKey %q does not match any seed object key in this blueprint", rel.SrcKey))
+		}
+		if hasDstKey && len(seedObjectKeys) > 0 && !seedObjectKeys[rel.DstKey] {
+			r.add(ValidationWarning, "seed_relationship", rel.Type, rel.SourceFile, "dstKey",
+				fmt.Sprintf("dstKey %q does not match any seed object key in this blueprint", rel.DstKey))
+		}
+
+		// Cross-reference relationship type against known pack types.
+		if len(knownRelTypes) > 0 && !knownRelTypes[rel.Type] {
+			r.add(ValidationWarning, "seed_relationship", rel.Type, rel.SourceFile, "type",
+				fmt.Sprintf("type %q is not defined in any loaded pack — ensure the pack is installed", rel.Type))
+		}
+	}
+}
+
+// ──────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────
+
+func (r *ValidationReport) add(severity ValidationSeverity, resourceType, name, sourceFile, field, message string) {
+	r.Issues = append(r.Issues, ValidationIssue{
+		Severity:     severity,
+		ResourceType: resourceType,
+		Name:         name,
+		SourceFile:   sourceFile,
+		Field:        field,
+		Message:      message,
+	})
+}
+
+func buildKnownObjectTypes(packs []PackFile) map[string]bool {
+	m := make(map[string]bool)
+	for _, p := range packs {
+		for _, ot := range p.ObjectTypes {
+			if ot.Name != "" {
+				m[ot.Name] = true
+			}
+		}
+	}
+	return m
+}
+
+// HasUnknownRelationshipEndpoints reports whether any relationship in packs
+// names a source or target object type that no pack in the same set defines. The
+// install path uses it to decide whether it must consult the project's existing
+// object types: when every endpoint resolves locally, no read is needed, so a
+// blueprint that fails offline validation still aborts with zero requests. When
+// an endpoint is unresolved, a single read-only compiled-types call happens
+// before the abort — the #1586 guarantee of zero mutations holds regardless. It
+// is a cheap pre-check; the authoritative check remains validatePacks/Preflight.
+func HasUnknownRelationshipEndpoints(packs []PackFile) bool {
+	known := buildKnownObjectTypes(packs)
+	if len(known) == 0 {
+		// No object types at all — validatePacks skips endpoint cross-checks.
+		return false
+	}
+	for _, p := range packs {
+		for _, rt := range p.RelationshipTypes {
+			for _, src := range rt.GetSourceTypes() {
+				if !known[src] {
+					return true
+				}
+			}
+			for _, tgt := range rt.GetTargetTypes() {
+				if !known[tgt] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func buildKnownRelationshipTypes(packs []PackFile) map[string]bool {
+	m := make(map[string]bool)
+	for _, p := range packs {
+		for _, rt := range p.RelationshipTypes {
+			if rt.Name != "" {
+				m[rt.Name] = true
+			}
+		}
+	}
+	return m
+}

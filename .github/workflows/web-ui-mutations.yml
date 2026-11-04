@@ -1,0 +1,142 @@
+name: Web UI mutations e2e
+
+# Runs the `mutations` Playwright project (every `*-ui.spec.ts` — org/project/
+# provider/agent/skill/schedule/token/object/board/document/backup mutations)
+# against the deployed dev stack (session-mode gateway + dev Zitadel + dev
+# memory): E2E_BASE_URL=https://admin.dev.emergent-company.ai,
+# E2E_MEMORY_API_URL=https://api.dev.emergent-company.ai. The self-hosted
+# `memory` runners are separate machines from the host running the gateway, so
+# they must target that stack over the network — the suite's local default
+# (`http://localhost:8095`) can never work on them (#1901). Like the live-LLM
+# scenarios, these specs need the real gateway in session mode plus a Zitadel
+# test user, so they are deliberately NOT part of any PR gate: they run on the
+# self-hosted `memory` runner via a scheduled + manually-dispatchable workflow,
+# and can NEVER gate a PR (no `pull_request` trigger, not part of the
+# branch-protection-required `ci` aggregate).
+#
+# This closes the gap in #1857: until this workflow existed, every `*-ui.spec.ts`
+# was authored but never executed anywhere — the PR CI only ever invoked the
+# hermetic `js-dom.config.ts` and `datasources.config.ts` projects.
+#
+# Required repo secrets (same as web-ui-llm-scenarios.yml — no new secrets):
+#   E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD — the Zitadel test user (no MFA)
+#     that the `setup` dependency signs in as. `helpers/auth.ts` HARD-FAILS (not
+#     skips) when either is unset, so a missing secret degrades to a red run, never
+#     a silently-green one; the preflight step below names the missing secret
+#     explicitly. The canonical values are host-managed by the operator on
+#     the dev host and are only ever referenced here as `${{ secrets.* }}` — never
+#     inlined. NOTE: they are NOT currently present in `/opt/emergent-dev/.env`
+#     (that file has no E2E_TEST_USER_* keys), so the operator must provision the
+#     secrets from the credential vault; until then the preflight fails with the
+#     actionable message below instead of a 90-minute mystery.
+#
+# The specs self-clean (created orgs/projects/objects/board items are removed in
+# `afterAll`/`afterEach`), so a run leaves no residue in the shared "E2E Main"
+# tenant beyond the reusable bootstrap org/project.
+on:
+  schedule:
+    # 08:43 UTC daily — an hour after the live-LLM chat suite (07:43 UTC), and
+    # off the :00/:15 mark to avoid runner congestion. Both suites reuse the
+    # same "E2E Main" tenant, so they share a concurrency group below.
+    - cron: '43 8 * * *'
+  workflow_dispatch:
+
+# Per-ref group (#552) instead of the old global `web-ui-session-e2e` literal, so
+# a `workflow_dispatch` on a non-main branch no longer queues behind main's
+# scheduled runs. The `web-ui-session-e2e-` prefix stays shared with
+# web-ui-llm-scenarios.yml on purpose: both suites reuse the stable "E2E Main"
+# tenant on the single deployed dev stack, and that constraint is GLOBAL (one
+# org/project on one live server, not per-branch), so the two suites must keep
+# serializing against each other on the same ref. `cancel-in-progress` is written
+# as the PR posture but evaluates to false here — this workflow has no
+# `pull_request` trigger — so a superseded same-ref run still queues (never
+# cancels) rather than stranding a live-server stack.
+concurrency:
+  group: web-ui-session-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  mutations:
+    name: UI mutations e2e
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 90
+    # Target the DEPLOYED dev stack — the runner is not the gateway host, so the
+    # suite's local default never applies here. Inherited by every `run:` step.
+    env:
+      E2E_BASE_URL: https://admin.dev.emergent-company.ai
+      E2E_MEMORY_API_URL: https://api.dev.emergent-company.ai
+    defaults:
+      run:
+        working-directory: apps/web-ui/tests/e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Precondition — dev stack reachable and test user configured
+        # Fail in seconds, naming the broken URL or missing secret, instead of
+        # burning the full timeout on dozens of ECONNREFUSED/login failures.
+        env:
+          E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
+          E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+        run: |
+          status=0
+          for var in E2E_TEST_USER_EMAIL E2E_TEST_USER_PASSWORD; do
+            if [ -z "${!var}" ]; then
+              echo "::error::repository secret $var is empty — provision the dev Zitadel test user (no MFA) and set E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD repo secrets from the operator credential vault (they are not present in /opt/emergent-dev/.env). Never hardcode credentials in the workflow."
+              status=1
+            fi
+          done
+          [ "$status" -eq 0 ] || exit "$status"
+
+          # Both URLs are the health endpoints the suite itself depends on.
+          for probe in "${E2E_BASE_URL}/api/health" "${E2E_MEMORY_API_URL}/api/health"; do
+            if curl -sf --connect-timeout 10 --max-time 20 --retry 2 --retry-delay 2 --retry-connrefused -o /dev/null "$probe"; then
+              echo "reachable: $probe"
+            else
+              echo "::error::cannot reach $probe — E2E_BASE_URL=${E2E_BASE_URL}, E2E_MEMORY_API_URL=${E2E_MEMORY_API_URL}. The self-hosted runner has no route to the deployed dev stack, or the dev stack is down."
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No `cache:` — see web-ui.yml; setup-node's cache step can red the
+          # job before any step runs (#1758), and `npm ci` installs deps
+          # regardless.
+
+      - name: Install e2e deps
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        # The `memory` pool spans two hosts and only one is apt-based: there
+        # `--with-deps` installs the Chromium runtime libs, while on the other
+        # host Playwright does not recognise the distribution — it falls back to
+        # the ubuntu24.04 build and installs no dependencies. The guard is what
+        # keeps both halves working.
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+
+      - name: Run UI mutations specs
+        env:
+          E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
+          E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+        # `--project=mutations` runs `setup` (login + tenant bootstrap) as its
+        # dependency, then the serial `*-ui.spec.ts` project against the dev
+        # stack configured in the job-level env above.
+        run: npx playwright test --config=playwright.config.ts --project=mutations

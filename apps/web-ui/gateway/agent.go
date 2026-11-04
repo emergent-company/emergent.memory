@@ -1,0 +1,1958 @@
+package main
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+	"maps"
+	"net/http"
+	"net/url"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/labstack/echo/v4"
+)
+
+// agentDashboardData is the assembled payload for AgentDashboardPage. The
+// agent fetch failure renders the whole-page error state (LoadErr); a
+// conversations failure degrades only the recent-chats section (ChatsErr).
+type agentDashboardData struct {
+	Agent    *AgentDefinition
+	Chats    []Conversation
+	ChatsErr error
+	LoadErr  error
+
+	// DefaultModel is the project's PINNED default generative model (project
+	// model-config); "" when none is pinned. The provider-credential fallback is
+	// deliberately NOT folded in — ModelConfigKnown + HasProviders drive the
+	// "isn't pinned" warning.
+	DefaultModel string
+
+	// ModelConfigKnown reports whether the project model-config fetch succeeded,
+	// so DefaultModel == "" reliably means "no pinned default" rather than
+	// "signal unavailable".
+	ModelConfigKnown bool
+
+	// HasProviders reports whether the project has at least one configured
+	// provider (drives the "agent can't chat" warning for default-less agents).
+	HasProviders bool
+
+	// ProviderNames holds the configured provider keys of the project, e.g.
+	// "openai" (drives the pinned-model unservable warning).
+	ProviderNames []string
+}
+
+// uiAgent renders the per-agent dashboard: summary, configured tools, and
+// recent chats, with a link to the objects this agent created or updated.
+func (s *Server) uiAgent(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	agent, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return s.page(c, pageTitle("Agent"), AgentDashboardPage(agentDashboardData{LoadErr: userFacingError(err)}))
+	}
+	data := agentDashboardData{Agent: agent}
+
+	if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
+		captureError(err)
+	} else {
+		if mc != nil {
+			data.DefaultModel = mc.GenerativeModel
+		}
+		data.ModelConfigKnown = true
+	}
+
+	if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
+		data.HasProviders = len(ps) > 0
+		data.ProviderNames = projectProviderNames(ps)
+	} else {
+		captureError(err)
+	}
+
+	convs, cerr := s.memory.ListConversations(ctx, false)
+	if cerr != nil {
+		data.ChatsErr = userFacingError(cerr)
+	} else {
+		for _, conv := range convs.Conversations {
+			if conv.AgentDefinitionID == id {
+				data.Chats = append(data.Chats, conv)
+			}
+		}
+		// Most recently updated first (conversation UpdatedAt is RFC3339,
+		// so plain string comparison orders correctly).
+		sort.SliceStable(data.Chats, func(i, j int) bool {
+			return data.Chats[i].UpdatedAt > data.Chats[j].UpdatedAt
+		})
+	}
+	return s.page(c, pageTitle(agent.Name), AgentDashboardPage(data))
+}
+
+// agentSettingsData is the payload for AgentSettingsPage: the agent being
+// edited, the model catalog, the MCP servers + their tools (the tools picker),
+// the skill list, and every other agent (the delegation-target picker). A
+// failed agent fetch renders the whole-page error state (LoadErr).
+type agentSettingsData struct {
+	Agent *AgentDefinition
+	// Section is the settings subpage being rendered: "general", "model",
+	// "tools", "skills", "delegation", or "mcp" ("" is treated as "general").
+	Section    string
+	Agents     []AgentDefinitionSummary
+	Models     []Model
+	MCPServers []MCPServer
+	// RelayNodes are the connected external MCP relay nodes + their tools,
+	// rendered as extra labelled groups in the tool picker. Best-effort: a
+	// relay API failure during load leaves this empty (RelayNodes absent) and
+	// the rest of the page intact.
+	RelayNodes []relayNode
+	Skills     []Skill
+	// ObjectTypes / RelationshipTypes are the project's compiled graph types,
+	// offered as the General form's scope allowlist. Best-effort: a failed or
+	// empty fetch leaves them nil and the picker shows its empty note.
+	ObjectTypes       []CompiledType
+	RelationshipTypes []CompiledType
+	LoadErr           error
+	FlashMsg          string
+	FlashErr          error
+
+	// DefaultModel is the project's PINNED default generative model (project
+	// model-config); "" when none is pinned.
+	DefaultModel string
+	// ModelConfigKnown reports whether the project model-config fetch succeeded
+	// (see agentDashboardData.ModelConfigKnown).
+	ModelConfigKnown bool
+	// HasProviders reports whether the project has a configured provider.
+	HasProviders bool
+	// ProviderNames holds the configured provider keys of the project, e.g.
+	// "openai" (drives the pinned-model unservable warning).
+	ProviderNames []string
+
+	// MCPEndpoint is the agent's own MCP endpoint (agent-scoped-mcp-endpoint);
+	// nil means the agent has none yet. MCPKeys are its labeled credentials,
+	// MCPSessions the external client sessions those keys created.
+	MCPAgentID       string
+	MCPEndpoint      *AgentMCPEndpoint
+	MCPKeys          []AgentMCPKey
+	MCPSessions      []AgentMCPSession
+	MCPSessionStatus string
+	// MCPKeyDraft preserves a typed-but-rejected key label across a re-render.
+	MCPKeyDraft string
+	// MCPEndpointErr / MCPKeysErr / MCPSessionsErr degrade only their own MCP
+	// block; MCPActionErr is a create/revoke/rotate failure shown inline.
+	MCPEndpointErr error
+	MCPKeysErr     error
+	MCPSessionsErr error
+	MCPActionErr   error
+	// MCPReveal carries a just-created/rotated one-time secret. It is non-nil on
+	// that one response only.
+	MCPReveal *agentMCPReveal
+}
+
+// agentSessionsData is the payload for AgentSessionsPage: the agent plus its
+// full conversation list, mirroring agentDashboardData.
+type agentSessionsData struct {
+	Agent    *AgentDefinition
+	Chats    []Conversation
+	ChatsErr error
+	LoadErr  error
+}
+
+// agentSandboxData is the payload for AgentSandboxPage: the agent being
+// edited, its current sandbox config, and the provider/image catalogs. The
+// catalogs are best-effort (only the agent/config failures surface as the
+// whole-page LoadErr); a provider-list failure sets ProviderListErr so the
+// form can show an inline warning instead of guessing at availability.
+type agentSandboxData struct {
+	Agent           *AgentDefinition
+	Config          *AgentSandboxConfig
+	Providers       []SandboxProvider
+	Images          []SandboxImage
+	ProviderListErr bool // provider list fetch failed; availability is unknown
+	LoadErr         error
+	FlashMsg        string
+	FlashErr        error
+}
+
+// Settings subpage keys. "general" is the landing page (/agents/:id/settings);
+// the rest are /agents/:id/settings/<section>.
+const (
+	sectionGeneral    = "general"
+	sectionGraph      = "graph"
+	sectionWork       = "work"
+	sectionModel      = "model"
+	sectionTools      = "tools"
+	sectionSkills     = "skills"
+	sectionDelegation = "delegation"
+	sectionMCP        = "mcp"
+)
+
+// agentSettingsSections is the ordered list of settings subpages, used by the
+// nav group.
+var agentSettingsSections = []string{sectionGeneral, sectionGraph, sectionWork, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
+
+// agentSettingsSectionPath returns the settings subpage URL for one section.
+// "general" maps to the bare /agents/:id/settings landing route.
+func agentSettingsSectionPath(agentID, section string) string {
+	base := "/agents/" + url.PathEscape(agentID) + "/settings"
+	if section == "" || section == sectionGeneral {
+		return base
+	}
+	return base + "/" + section
+}
+
+// uiAgentSettings renders the settings landing page (the General section).
+func (s *Server) uiAgentSettings(c echo.Context) error {
+	return s.renderAgentSettingsSection(c, sectionGeneral)
+}
+
+// uiAgentSettingsSection renders one settings subpage (Graph / Model / Tools /
+// Skills / Delegation / MCP sharing). An unknown section is a 404.
+func (s *Server) uiAgentSettingsSection(c echo.Context) error {
+	section := c.Param("section")
+	if !containsString(agentSettingsSections, section) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	return s.renderAgentSettingsSection(c, section)
+}
+
+// renderAgentSettingsSection assembles the settings payload for one subpage and
+// renders the shared AgentSettingsPage, with data.Section selecting the panel.
+// ?updated=1 / ?err=... surface PRG feedback; ?sessions= preselects the MCP
+// session status filter (only loaded on the MCP subpage).
+func (s *Server) renderAgentSettingsSection(c echo.Context, section string) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	data := agentSettingsData{Section: section}
+	switch {
+	case c.QueryParam("updated") != "":
+		data.FlashMsg = "Agent updated."
+	case c.QueryParam("mcpCreated") != "":
+		data.FlashMsg = "MCP endpoint created."
+	case c.QueryParam("mcpRevoked") != "":
+		data.FlashMsg = "MCP endpoint revoked."
+	case c.QueryParam("keyRevoked") != "":
+		data.FlashMsg = "Key revoked."
+	}
+	data.FlashErr = flashError(c)
+	data.MCPSessionStatus = normalizeAgentMCPSessionStatus(c.QueryParam("sessions"))
+
+	if err := s.loadAgentSettings(ctx, id, &data); err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))
+	}
+	// The MCP block (endpoint/keys/sessions) is only rendered on the MCP
+	// sharing subpage; other subpages skip those backend fetches.
+	if section == sectionMCP {
+		s.loadAgentMCP(c, id, &data)
+	}
+
+	return s.page(c, pageTitle(data.Agent.Name, "Settings"), AgentSettingsPage(data))
+}
+
+// agentSectionApply mutates the freshly fetched definition with one subpage's
+// form values only — it never touches fields another subpage owns, so saving
+// one section can't wipe the others.
+type agentSectionApply func(def *AgentDefinition, c echo.Context) error
+
+// applyAgentSettingsSection fetches the agent definition, reconstructs the
+// gateway-only Delegation field from the persisted representation, applies one
+// section's fields, re-applies delegation (so delegation-managed tools and
+// spawnPolicy survive even a non-delegation save), and persists. PRG redirects
+// back to the section with ?updated=1 on success or ?err=<msg> on failure.
+func (s *Server) applyAgentSettingsSection(c echo.Context, section string, apply agentSectionApply) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	// Parse the form once so the multi-value reads (tool[], skill[],
+	// delegation-target[]) in the section appliers see the submitted values.
+	if err := c.Request().ParseForm(); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	deriveDelegation(def)
+	if err := apply(def, c); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	if err := applyDelegation(def); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	if _, err := s.memory.UpdateAgentDefinition(ctx, id, def); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	return c.Redirect(http.StatusSeeOther, agentSettingsSectionPath(id, section)+"?updated=1")
+}
+
+// uiAgentUpdateGeneral handles POST /agents/:id/settings/general (and the
+// back-compat POST /agents/:id/update alias): name, system prompt, language,
+// and visibility.
+func (s *Server) uiAgentUpdateGeneral(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionGeneral, applyAgentGeneralSection)
+}
+
+// uiAgentAutosaveGeneral handles POST /agents/:id/settings/general/autosave —
+// the JSON counterpart of uiAgentUpdateGeneral used by the General form's
+// debounced auto-save. It applies the same section applier and persists, but
+// reports success/validation failure as JSON (200 {"ok":true} /
+// 422 {"ok":false,"error":...}) instead of the PRG redirect, so the page can
+// surface the error inline without losing the user's in-progress edits. The
+// form posts its whole field set, so the applier's all-fields mapping stays
+// lossless.
+func (s *Server) uiAgentAutosaveGeneral(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	fail := func(status int, err error) error {
+		return c.JSON(status, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return fail(http.StatusBadGateway, err)
+	}
+	if err := c.Request().ParseForm(); err != nil {
+		return fail(http.StatusBadRequest, err)
+	}
+	deriveDelegation(def)
+	if err := applyAgentGeneralSection(def, c); err != nil {
+		return fail(http.StatusUnprocessableEntity, err)
+	}
+	if err := applyDelegation(def); err != nil {
+		return fail(http.StatusUnprocessableEntity, err)
+	}
+	if _, err := s.memory.UpdateAgentDefinition(ctx, id, def); err != nil {
+		return fail(http.StatusBadGateway, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// uiAgentUpdateGraph handles POST /agents/:id/settings/graph — the Graph
+// subpage's type-scope allowlists.
+func (s *Server) uiAgentUpdateGraph(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionGraph, applyAgentGraphSection)
+}
+
+// uiAgentUpdateWork handles POST /agents/:id/settings/work — the Work subpage's
+// object-driven work configuration.
+func (s *Server) uiAgentUpdateWork(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionWork, applyAgentWorkSection)
+}
+
+// uiAgentUpdateModel handles POST /agents/:id/settings/model.
+func (s *Server) uiAgentUpdateModel(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionModel, applyAgentModelSection)
+}
+
+// uiAgentUpdateTools handles POST /agents/:id/settings/tools.
+func (s *Server) uiAgentUpdateTools(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionTools, applyAgentToolsSection)
+}
+
+// uiAgentUpdateSkills handles POST /agents/:id/settings/skills.
+func (s *Server) uiAgentUpdateSkills(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionSkills, applyAgentSkillsSection)
+}
+
+// uiAgentUpdateDelegation handles POST /agents/:id/settings/delegation.
+func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionDelegation, applyAgentDelegationSection)
+}
+
+// applyAgentGeneralSection maps the General form (name, short description,
+// system prompt, language, appearance, visibility) onto the definition. Name is
+// trimmed and required; the short description is trimmed and shown under the
+// agent's name in chat (empty clears it); language persists to Config["language"]
+// (deleted when empty); includeProjectInfo persists to Config["includeProjectInfo"]
+// (deleted when false, only when the field is present); the icon + color
+// appearance persists to the uiConfig blob (both empty clears it); visibility
+// accepts only project/external/internal, with empty/missing defaulting to
+// project (the server default) and anything else rejected. The graph type-scope
+// allowlists are owned by the Graph subpage (applyAgentGraphSection), so this
+// applier never touches Config["objectTypes"] / Config["relationshipTypes"].
+func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
+	name := strings.TrimSpace(c.FormValue("name"))
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	def.Name = name
+	def.Description = strings.TrimSpace(c.FormValue("description"))
+	def.SystemPrompt = c.FormValue("systemPrompt")
+	// Appearance is lossless: only rewrite uiConfig when the request actually
+	// carries the picker fields. The rendered General form always submits both
+	// `icon` and `color` (an explicit empty value clears the appearance), but a
+	// partial body — a section-scoped save or an auto-save that omits the
+	// Appearance block — must preserve the stored appearance rather than wipe
+	// it by defaulting both values to "".
+	params, err := c.FormParams()
+	if err != nil {
+		return fmt.Errorf("invalid form: %w", err)
+	}
+	if params.Has("icon") || params.Has("color") {
+		def.UIConfig = agentUIConfig(params.Get("icon"), params.Get("color"))
+	}
+	lang := strings.TrimSpace(c.FormValue("language"))
+	if def.Config == nil {
+		def.Config = map[string]any{}
+	}
+	if lang != "" {
+		def.Config["language"] = lang
+	} else {
+		delete(def.Config, "language")
+	}
+	// Lossless partial save: only touch the key when the request carries it
+	// (the rendered form always submits it via the hidden companion input).
+	//
+	// A boolean control submits its hidden "false" then, when checked, the
+	// toggle's "true", so the browser-serialized body is ["false","true"] when
+	// checked. Take the LAST submitted value (repo convention; see objects.go)
+	// rather than the first, or a checked box would always read as false.
+	if vals := params["includeProjectInfo"]; len(vals) > 0 {
+		last := ""
+		for _, v := range vals {
+			if v != "" {
+				last = v
+			}
+		}
+		if last == "true" {
+			def.Config["includeProjectInfo"] = true
+		} else {
+			delete(def.Config, "includeProjectInfo")
+		}
+	}
+	visibility, ok := agentVisibilityNormalize(c.FormValue("visibility"))
+	if !ok {
+		return fmt.Errorf("visibility must be one of project, external, internal")
+	}
+	def.Visibility = visibility
+	return nil
+}
+
+// applyAgentGraphSection maps the Graph form onto the definition: the graph
+// type-scope allowlists of object / relationship type names the agent may see
+// and query. They persist to Config["objectTypes"] / Config["relationshipTypes"],
+// deleted when the selection is empty (an absent key means "all types").
+//
+// Lossless partial save: only touch a key when the request carries its field, so
+// a request that omits the Graph fields leaves the stored allowlists unchanged.
+// The rendered form always submits each field via a hidden companion input, so
+// clearing every box reads as present-but-blank (a real "clear the scope") rather
+// than absent (leave unchanged) — the distinction the old General-form control
+// relied on. This is why the pickers moved here with their hidden companions.
+func applyAgentGraphSection(def *AgentDefinition, c echo.Context) error {
+	params, err := c.FormParams()
+	if err != nil {
+		return fmt.Errorf("invalid form: %w", err)
+	}
+	if def.Config == nil {
+		def.Config = map[string]any{}
+	}
+	for _, ts := range []struct{ form, config string }{
+		{"objectType", "objectTypes"},
+		{"relationshipType", "relationshipTypes"},
+	} {
+		if !params.Has(ts.form) {
+			continue
+		}
+		if names := normalizedTypeNames(params[ts.form]); len(names) > 0 {
+			def.Config[ts.config] = names
+		} else {
+			delete(def.Config, ts.config)
+		}
+	}
+	return nil
+}
+
+// applyAgentModelSection maps the Model form onto the definition: an explicit
+// model (name + temperature + max tokens) or nil when "Auto — default model"
+// is selected.
+func applyAgentModelSection(def *AgentDefinition, c echo.Context) error {
+	if modelName := strings.TrimSpace(c.FormValue("modelName")); modelName != "" {
+		temp, terr := strconv.ParseFloat(c.FormValue("temperature"), 64)
+		if terr != nil {
+			temp = 0.7
+		}
+		maxTok, merr := strconv.Atoi(c.FormValue("maxTokens"))
+		if merr != nil || maxTok <= 0 {
+			maxTok = 4096
+		}
+		def.Model = &ModelConfig{Name: modelName, Temperature: temp, MaxTokens: maxTok}
+	} else {
+		def.Model = nil
+	}
+	return nil
+}
+
+// applyAgentToolsSection maps the Tools form onto the definition: the allowed
+// tool list, un-banning any newly allowed tool, the default approval policy,
+// per-tool policy overrides (ask/deny/allow/inherit), and the capability-group
+// policy + enable/disable controls.
+//
+// Per-tool and group policy keys are written only when their form control is
+// actually present (a per-tool select submits for both checked and unchecked
+// tools; a group select submits only for non-"other" groups), so keys whose
+// control is absent are preserved verbatim rather than wiped.
+//
+// Group enable/disable is a membership operation (D4), not a policy: enabling a
+// group adds every member to Tools and un-bans it; disabling removes members
+// from Tools and bans them. Group policies are stored under reserved
+// "@group:<id>" keys in ToolPolicies, so resolution (explicit tool → group →
+// default) needs no schema change.
+func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
+	form := c.Request().Form
+	def.Tools = form["tool"]
+	def.BannedTools = removeItems(def.BannedTools, def.Tools...)
+	def.DefaultToolPolicy = strings.TrimSpace(c.FormValue("defaultToolPolicy"))
+
+	// Ban-managed hidden builtins (e.g. set_session_title) are always injected
+	// by the server; the picker row's checkbox therefore maps to ban state, and
+	// the only way to disable one is BannedTools. Reconcile it here: if the row
+	// was rendered (groupWasEnabled.session present) and the tool is absent from
+	// the submitted membership it is banned, otherwise it is un-banned.
+	if form.Has("groupWasEnabled.session") {
+		for name := range banManagedTools {
+			if containsString(def.Tools, name) {
+				def.BannedTools = removeItems(def.BannedTools, name)
+			} else {
+				def.BannedTools = appendUnique(def.BannedTools, name)
+			}
+		}
+	}
+
+	// Start from the existing policies so per-tool overrides and @group: entries
+	// for tools/groups this save does not render are preserved, not deleted.
+	policies := maps.Clone(def.ToolPolicies)
+	if policies == nil {
+		policies = map[string]ToolPolicy{}
+	}
+
+	// Per-tool overrides are read first and win: a tool that carries an explicit
+	// "toolPolicy.<tool>" entry always writes its own entry; "inherit" deletes it.
+	// Iterate the submitted keys (not def.Tools) so a policy select for an
+	// unchecked tool is still honored.
+	for key := range form {
+		tool, ok := strings.CutPrefix(key, "toolPolicy.")
+		if !ok {
+			continue
+		}
+		switch form.Get(key) {
+		case "ask":
+			policies[tool] = ToolPolicy{Confirm: true}
+		case "deny":
+			policies[tool] = ToolPolicy{Disabled: true}
+		case "allow":
+			policies[tool] = ToolPolicy{}
+		case "inherit":
+			delete(policies, tool)
+		}
+	}
+	applyToolGroups(def, form, policies)
+
+	// Ban-managed hidden builtins are never stored in the allowed-tools
+	// whitelist; their enable state lives entirely in BannedTools. Group
+	// fan-out above appends every member to Tools when a group is enabled, so
+	// strip them again to keep the invariant (a ban-managed tool in Tools would
+	// also make the picker row disagree with the ban state and let a saved
+	// definition re-expose the Session group without a catalog).
+	for name := range banManagedTools {
+		def.Tools = removeItems(def.Tools, name)
+	}
+
+	def.ToolPolicies = policies
+	return nil
+}
+
+// applyToolGroups writes the group-level policy entries and applies each
+// rendered group's enable/disable fan-out. A group is "rendered" when the form
+// carries its baseline groupWasEnabled.<id> field (emitted next to the enable
+// switch). The enable/disable fan-out runs only when the submitted switch state
+// differs from that baseline, so a no-op save or unchecking a single child does
+// not fan out the entire full-catalog group.
+//
+// Delegation-managed tools are never fanned out: the enable switch must not add
+// or ban spawn_agents / list_available_agents, which the delegation toggle owns.
+func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]ToolPolicy) {
+	// Group policy: only when the form explicitly submits a value for the group
+	// (the policy select is rendered for every non-"other" group). "inherit"
+	// clears the key; an absent control leaves the stored entry untouched.
+	for _, g := range def.ToolGroups {
+		if !form.Has("groupPolicy." + g.ID) {
+			continue
+		}
+		switch form.Get("groupPolicy." + g.ID) {
+		case "ask":
+			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{Confirm: true}
+		case "deny":
+			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{Disabled: true}
+		case "allow":
+			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{}
+		case "inherit":
+			delete(policies, toolGroupPolicyKey(g.ID))
+		}
+	}
+
+	// Enable/disable fan-out: only when the submitted switch state differs from
+	// the rendered baseline.
+	for _, g := range def.ToolGroups {
+		if !form.Has("groupWasEnabled." + g.ID) {
+			continue
+		}
+		wasEnabled := form.Get("groupWasEnabled."+g.ID) == "true"
+		nowEnabled := form.Has("groupEnabled." + g.ID)
+		if wasEnabled == nowEnabled {
+			continue
+		}
+		members := make([]string, 0, len(g.Tools))
+		for _, t := range g.Tools {
+			if isDelegationTool(t) {
+				continue
+			}
+			members = append(members, t)
+		}
+		if nowEnabled {
+			def.Tools = appendUnique(def.Tools, members...)
+			def.BannedTools = removeItems(def.BannedTools, members...)
+		} else {
+			def.Tools = removeItems(def.Tools, members...)
+			def.BannedTools = appendUnique(def.BannedTools, members...)
+		}
+	}
+}
+
+// applyAgentSkillsSection maps the Skills form onto the definition, always
+// setting (even to empty) so clearing skills reaches memory.
+func applyAgentSkillsSection(def *AgentDefinition, c echo.Context) error {
+	def.Skills = c.Request().Form["skill"]
+	return nil
+}
+
+// applyAgentDelegationSection maps the Delegation form onto the definition:
+// enabled with targets, or disabled. applyDelegation (run after every section)
+// then syncs the spawn_agents/list_available_agents tools and spawnPolicy.
+func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
+	if c.FormValue("delegationEnabled") == "on" {
+		targets := c.Request().Form["delegation-target"]
+		if len(targets) == 0 {
+			return fmt.Errorf("delegation requires at least one target")
+		}
+		def.Delegation = &Delegation{Enabled: true, Targets: targets}
+	} else {
+		def.Delegation = &Delegation{Enabled: false}
+	}
+	return nil
+}
+
+// applyAgentWorkSection maps the Work form onto the definition's WorkConfig: the
+// six status-name phases, requiresReview, failureLimit, revisionLimit,
+// retryPolicy, workContract, and triggerStatuses. An empty status name or a zero
+// limit inherits the platform default (the server resolver treats ≤ 0 / empty as
+// "use the built-in default"), so a typed 0 is stored as the default sentinel
+// rather than rejected. A negative value is rejected so a nonsensical budget
+// never reaches memory.
+func applyAgentWorkSection(def *AgentDefinition, c echo.Context) error {
+	wc := &AgentWorkConfig{}
+
+	wc.Status.Ready = strings.TrimSpace(c.FormValue("workStatus.ready"))
+	wc.Status.InProgress = strings.TrimSpace(c.FormValue("workStatus.inProgress"))
+	wc.Status.Review = strings.TrimSpace(c.FormValue("workStatus.review"))
+	wc.Status.Revision = strings.TrimSpace(c.FormValue("workStatus.revision"))
+	wc.Status.Blocked = strings.TrimSpace(c.FormValue("workStatus.blocked"))
+	wc.Status.Done = strings.TrimSpace(c.FormValue("workStatus.done"))
+
+	// requiresReview is a checkbox: a hidden companion guarantees the field is
+	// present; the LAST submitted value wins (the toggle's "true" follows the
+	// hidden "false" when checked).
+	wc.RequiresReview = lastFormBool(c, "workRequiresReview")
+
+	var err error
+	if wc.FailureLimit, err = workIntField(c, "failureLimit", "Failure limit", 0); err != nil {
+		return err
+	}
+	if wc.RevisionLimit, err = workIntField(c, "revisionLimit", "Revision limit", 0); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.MaxAttempts, err = workIntField(c, "maxAttempts", "Max attempts", 1); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.InitialIntervalMS, err = workIntField(c, "initialIntervalMs", "Initial interval", 0); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.BackoffCoefficient, err = workFloatField(c, "backoffCoefficient", "Backoff coefficient", 1); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.MaxIntervalMS, err = workIntField(c, "maxIntervalMs", "Max interval", 0); err != nil {
+		return err
+	}
+
+	wc.WorkContract.RequireArtifacts = lastFormBool(c, "workRequireArtifacts")
+	wc.WorkContract.RequiredDeliverableTypes = splitCSV(c.FormValue("requiredDeliverableType"))
+	wc.TriggerStatuses = splitCSV(c.FormValue("triggerStatus"))
+
+	def.WorkConfig = wc
+	return nil
+}
+
+// lastFormBool reads a boolean form field where a hidden companion ("false")
+// precedes a checkbox's "true" when checked; the LAST non-empty value wins.
+func lastFormBool(c echo.Context, name string) bool {
+	vals, _ := c.FormParams()
+	last := false
+	for _, v := range vals[name] {
+		if v == "" {
+			continue
+		}
+		last = v == "true" || v == "on"
+	}
+	return last
+}
+
+// workIntField parses an optional integer form field. Empty reads 0 (the server
+// "use default" sentinel); an unparseable value or a value below min is an
+// error. The error message uses the human-readable label (not the raw field
+// identifier). A min of 0 means "non-negative": 0 is accepted as the default.
+func workIntField(c echo.Context, name, label string, min int) (int, error) {
+	raw := strings.TrimSpace(c.FormValue(name))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a whole number", label)
+	}
+	if n < min {
+		return 0, fmt.Errorf("%s must be at least %d", label, min)
+	}
+	return n, nil
+}
+
+// workFloatField parses an optional float form field. Empty reads 0 (the server
+// default); an unparseable value or a value below min is an error. The error
+// message uses the human-readable label (not the raw field identifier).
+func workFloatField(c echo.Context, name, label string, min float64) (float64, error) {
+	raw := strings.TrimSpace(c.FormValue(name))
+	if raw == "" {
+		return 0, nil
+	}
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", label)
+	}
+	if min > 0 && f < min {
+		return 0, fmt.Errorf("%s must be at least %v", label, min)
+	}
+	return f, nil
+}
+
+// agentWorkConfig returns the agent's work config for form rendering, nil-safe:
+// a nil agent or nil WorkConfig reads as the zero value (every field empty, so
+// the form shows the platform-default placeholders).
+func agentWorkConfig(a *AgentDefinition) *AgentWorkConfig {
+	if a == nil || a.WorkConfig == nil {
+		return &AgentWorkConfig{}
+	}
+	return a.WorkConfig
+}
+
+// workIntStr renders an optional integer field's input value: a zero value (the
+// server "use default" sentinel) renders empty so the placeholder (the platform
+// default) shows instead.
+func workIntStr(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+// workFloatStr renders an optional float field's input value; a zero value
+// renders empty so the placeholder shows.
+func workFloatStr(f float64) string {
+	if f <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// workListValue joins a string list into the comma-separated form-input value.
+func workListValue(vals []string) string {
+	return strings.Join(vals, ", ")
+}
+
+// loadAgentSettings assembles the agent settings payload for ONE subpage: the
+// agent being edited plus only the catalog data that subpage renders. Each
+// subpage's template is the source of truth for what must load here:
+//   - general:     agent only (name / prompt / language / appearance / visibility)
+//   - graph:       + the project's compiled graph types (the scope allowlists)
+//   - model:       + project model config, providers, and the model catalog
+//   - tools:       + MCP servers + relay node tools (the picker)
+//   - skills:      + the skill list
+//   - delegation:  + every other agent (the delegation-target picker)
+//   - mcp:         agent only (endpoint/keys/sessions load via loadAgentMCP)
+//
+// GetAgentDefinition + deriveDelegation always run (the header/nav need the
+// agent). Catalog fetches stay best-effort (captureError) so a failed fetch
+// degrades only that subpage's content, never the whole page.
+func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSettingsData) error {
+	agent, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return err
+	}
+	deriveDelegation(agent) // reconstruct Delegation for the form's prefill
+	data.Agent = agent
+
+	switch data.Section {
+	case sectionGraph:
+		if types, err := s.memory.GetCompiledTypes(ctx); err != nil {
+			captureError(err)
+		} else if types != nil {
+			data.ObjectTypes = types.ObjectTypes
+			data.RelationshipTypes = types.RelationshipTypes
+		}
+	case sectionModel:
+		if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
+			captureError(err)
+		} else {
+			if mc != nil {
+				data.DefaultModel = mc.GenerativeModel
+			}
+			data.ModelConfigKnown = true
+		}
+		if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
+			data.HasProviders = len(ps) > 0
+			data.ProviderNames = projectProviderNames(ps)
+			// Offer only configured providers' models — the global catalog
+			// includes unconfigured providers, which would break chats.
+			data.Models = s.configuredGenerativeModels(ctx, ps)
+		} else {
+			captureError(err)
+		}
+	case sectionTools:
+		mcps, err := s.memory.ListMCPServers(ctx)
+		captureError(err)
+		data.MCPServers = mcps
+		// Relay nodes are best-effort: when the backend relay API is
+		// unreachable the relay groups are simply absent (see loadRelayNodes).
+		data.RelayNodes = s.loadRelayNodes(ctx)
+	case sectionSkills:
+		skills, err := s.memory.ListSkills(ctx)
+		captureError(err)
+		data.Skills = skills
+	case sectionDelegation:
+		agents, err := s.memory.ListAgentDefinitions(ctx)
+		captureError(err)
+		data.Agents = agents
+	}
+
+	return nil
+}
+
+// uiAgentSessions renders the full conversation list for one agent, mirroring
+// the recent-chats query in uiAgent but as a dedicated sub-page.
+func (s *Server) uiAgentSessions(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	data := agentSessionsData{}
+	agent, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Agent sessions"), AgentSessionsPage(data))
+	}
+	data.Agent = agent
+
+	convs, cerr := s.memory.ListConversations(ctx, false)
+	if cerr != nil {
+		data.ChatsErr = userFacingError(cerr)
+	} else {
+		for _, conv := range convs.Conversations {
+			if conv.AgentDefinitionID == id {
+				data.Chats = append(data.Chats, conv)
+			}
+		}
+		sort.SliceStable(data.Chats, func(i, j int) bool {
+			return data.Chats[i].UpdatedAt > data.Chats[j].UpdatedAt
+		})
+	}
+	return s.page(c, pageTitle(agent.Name, "Sessions"), AgentSessionsPage(data))
+}
+
+// --- settings-form helpers (used by AgentSettingsPage) ---
+
+// delegationToolNames are the A2A tools applyDelegation manages on
+// AgentDefinition.Tools. They're driven by the delegation toggle, not the
+// manual tools picker, so the picker neither renders nor submits them.
+var delegationToolNames = []string{"spawn_agents", "list_available_agents"}
+
+// isDelegationTool reports whether t is delegation-managed.
+func isDelegationTool(t string) bool {
+	return containsString(delegationToolNames, t)
+}
+
+// unlistedTools returns the agent's current tools that no registered MCP
+// server or connected relay node offers (and that aren't delegation-managed) —
+// surfaced as an "Other" group so the picker never silently drops them (e.g.
+// the bridge's Home Assistant tools, or a relay tool whose node has
+// disconnected since it was whitelisted).
+func unlistedTools(agent *AgentDefinition, servers []MCPServer, relayNodes []relayNode) []string {
+	if agent == nil {
+		return nil
+	}
+	listed := map[string]bool{}
+	for _, srv := range servers {
+		for _, t := range srv.Tools {
+			listed[t.ToolName] = true
+		}
+	}
+	for _, n := range relayNodes {
+		for _, t := range n.Tools {
+			listed[relayAgentToolName(n.Session.InstanceID, t.Name)] = true
+		}
+	}
+	var out []string
+	for _, t := range agent.Tools {
+		if !listed[t] && !isDelegationTool(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// mcpServerInUse reports whether the agent already has a tool from the
+// server — drives the default open/collapsed state of the settings tools
+// picker so active picks stay visible.
+func mcpServerInUse(srv MCPServer, agent *AgentDefinition) bool {
+	if agent == nil {
+		return false
+	}
+	for _, t := range srv.Tools {
+		if containsString(agent.Tools, t.ToolName) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsString reports whether list contains s.
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// toolPolicyValue returns the current approval policy for a tool as one of
+// "allow", "ask", "deny", or "" (inherit the default). It maps the memory
+// ToolPolicy booleans onto the form's value space.
+func toolPolicyValue(agent *AgentDefinition, tool string) string {
+	if agent == nil || agent.ToolPolicies == nil {
+		return ""
+	}
+	p, ok := agent.ToolPolicies[tool]
+	if !ok {
+		return ""
+	}
+	switch {
+	case p.Disabled:
+		return "deny"
+	case p.Confirm:
+		return "ask"
+	default:
+		return "allow"
+	}
+}
+
+// --- capability-group Tools picker ---
+
+// toolGroupPolicyPrefix marks a group policy entry inside ToolPolicies. Tool
+// names are validated identifiers that cannot begin with "@", so the prefix
+// cannot collide with a per-tool entry.
+const toolGroupPolicyPrefix = "@group:"
+
+// toolGroupOtherID is the display-only fallback group id (server's
+// toolgroups.GroupOther). It is never a policy source: it gets an enable switch
+// but no group policy select, and its nested relay/server sub-groups get no
+// per-tool policy control.
+const toolGroupOtherID = "other"
+
+// banManagedTools are hidden builtin tools the server always injects into a
+// capability group regardless of the agent's Tools list. The ONLY way to
+// disable one is BannedTools, so its picker row maps to ban state (checked =
+// not banned) and renders no per-tool policy select. The applier reconciles
+// BannedTools against the submitted "tool" membership for these rows.
+var banManagedTools = map[string]bool{"set_session_title": true}
+
+// toolGroupPolicyKey returns the ToolPolicies key for a group id.
+func toolGroupPolicyKey(groupID string) string {
+	return toolGroupPolicyPrefix + groupID
+}
+
+// groupPolicyValue returns a group's stored policy as "", "allow", "ask", or
+// "deny" ("" = inherit the agent default).
+func groupPolicyValue(agent *AgentDefinition, groupID string) string {
+	return toolPolicyValue(agent, toolGroupPolicyKey(groupID))
+}
+
+// groupPolicyFormValue maps a stored group policy onto the select's value
+// space, where "inherit" spells the absent policy.
+func groupPolicyFormValue(v string) string {
+	if v == "" {
+		return "inherit"
+	}
+	return v
+}
+
+// groupWasEnabledValue renders the boolean baseline for the hidden
+// groupWasEnabled.<id> field emitted next to each group enable switch, so the
+// applier can tell whether the switch actually toggled.
+func groupWasEnabledValue(enabled bool) string {
+	if enabled {
+		return "true"
+	}
+	return "false"
+}
+
+// policyTitle renders a policy value for an inheritance label ("Ask", "Deny").
+func policyTitle(v string) string {
+	switch v {
+	case "allow":
+		return "Allow"
+	case "ask":
+		return "Ask"
+	case "deny":
+		return "Deny"
+	default:
+		return "Inherit"
+	}
+}
+
+// inheritValueLabel resolves the value a policy select's Inherit option falls
+// back to, so the dropdown itself carries the inherited value ("Inherit (Ask)")
+// instead of a separate hint label: the owning group's policy when it is set,
+// else the agent default, else "Default" when neither is configured.
+func inheritValueLabel(groupPolicy, defaultPolicy string) string {
+	if groupPolicy != "" {
+		return policyTitle(groupPolicy)
+	}
+	if defaultPolicy != "" {
+		return policyTitle(defaultPolicy)
+	}
+	return "Default"
+}
+
+// toolRow resolves one tool into a picker row: its toggle state, the explicit
+// per-tool policy value, whether it carries a policy select at all, and the
+// value its Inherit option falls back to (the owning group policy, else the
+// agent default).
+func toolRow(agent *AgentDefinition, name, description, groupPolicy string) agentToolRow {
+	checked := containsString(agent.Tools, name)
+	if banManagedTools[name] {
+		// Ban-managed rows carry no whitelist membership: their checkbox maps
+		// to ban state directly, so an inconsistent stored state can never make
+		// a banned builtin render as checked.
+		checked = !containsString(agent.BannedTools, name)
+	}
+	return agentToolRow{
+		Name:         name,
+		Description:  description,
+		Checked:      checked,
+		PolicyValue:  toolPolicyValue(agent, name),
+		NoPolicy:     banManagedTools[name],
+		InheritLabel: inheritValueLabel(groupPolicy, agent.DefaultToolPolicy),
+	}
+}
+
+// toolGroupView is the resolved view of one capability group inside the
+// Built-in section: the server-supplied group, its stored policy, whether any
+// member is currently enabled, and the native member rows that make up its
+// body. Tools owned by an external MCP server or a relay node are excluded
+// here; they render in their own top-level source block.
+type toolGroupView struct {
+	Group        ToolGroup
+	Policy       string // "inherit" | "allow" | "ask" | "deny"
+	InheritLabel string // value the group's Inherit option falls back to (the agent default)
+	Enabled      bool
+	Open         bool
+	Count        int
+	Rows         []agentToolRow
+}
+
+// toolPickerView is the fully resolved source-first model for the Tools picker:
+// the Built-in section's capability groups, the external MCP-server and
+// relay-node sibling source groups, and the uncovered fallback rows.
+type toolPickerView struct {
+	BuiltinGroups []toolGroupView
+	Servers       []agentToolGroupProps
+	Relays        []agentToolGroupProps
+	Other         []agentToolRow
+}
+
+// buildToolPickerView resolves the source-first Tools picker model: the
+// Built-in section's capability groups, the external MCP-server and relay-node
+// sibling source groups, and the uncovered fallback rows. Built-in is the top
+// dimension; capability groups live inside it and their native members render
+// as direct rows (there is no nested per-source sub-group). A tool offered by a
+// non-builtin MCP server or a relay node renders in that source's own top-level
+// block, never inside a capability group. Every tool renders at most once.
+//
+// ToolGroup.Tools is the group's FULL membership — the project catalog for that
+// group unioned with the agent's allowed and banned tools — so it still drives
+// the enable switch and its server-side enable/disable fan-out even when every
+// member is currently disabled. A group that would render an empty body (all of
+// its members are external) is dropped so the panel never shows an empty header.
+func buildToolPickerView(data agentSettingsData) toolPickerView {
+	agent := data.Agent
+	if agent == nil || len(agent.ToolGroups) == 0 {
+		return toolPickerView{}
+	}
+	descriptions := catalogToolDescriptions(data)
+	relays := relayPickerGroups(data.RelayNodes)
+
+	// Tools owned by external sources (non-builtin MCP servers + relay nodes)
+	// render in their own top-level block, so a capability group's direct rows
+	// must never claim them.
+	externalOwned := map[string]bool{}
+	for _, srv := range data.MCPServers {
+		if mcpServerIsBuiltin(srv) {
+			continue
+		}
+		for _, t := range srv.Tools {
+			if t.ToolName != "" {
+				externalOwned[t.ToolName] = true
+			}
+		}
+	}
+	for _, node := range relays {
+		for _, name := range node.agentToolNames() {
+			externalOwned[name] = true
+		}
+	}
+
+	claimed := map[string]bool{}
+	var view toolPickerView
+
+	// 1. Built-in capability groups.
+	for _, g := range agent.ToolGroups {
+		if len(g.Tools) == 0 {
+			continue
+		}
+		// The server computes the group policy; prefer it, falling back to the
+		// stored "@group:" entry when an older memory omits the field.
+		policy := g.Policy
+		if policy == "" {
+			policy = groupPolicyValue(agent, g.ID)
+		}
+		inGroup := make(map[string]bool, len(g.Tools))
+		for _, t := range g.Tools {
+			inGroup[t] = true
+		}
+		var rows []agentToolRow
+		// Builtin server tools that belong to the group, in server order.
+		for _, srv := range data.MCPServers {
+			if !mcpServerIsBuiltin(srv) {
+				continue
+			}
+			for _, t := range srv.Tools {
+				if !inGroup[t.ToolName] || claimed[t.ToolName] {
+					continue
+				}
+				claimed[t.ToolName] = true
+				rows = append(rows, toolRow(agent, t.ToolName, t.Description, policy))
+			}
+		}
+		// Native members no source offers render inline. Delegation-managed
+		// tools and externally owned tools are excluded.
+		for _, t := range g.Tools {
+			if isDelegationTool(t) || claimed[t] || externalOwned[t] {
+				continue
+			}
+			claimed[t] = true
+			rows = append(rows, toolRow(agent, t, descriptions[t], policy))
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		view.BuiltinGroups = append(view.BuiltinGroups, toolGroupView{
+			Group:        g,
+			Policy:       groupPolicyFormValue(policy),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+			Enabled:      g.Enabled,
+			Open:         g.Enabled,
+			Count:        len(rows),
+			Rows:         rows,
+		})
+	}
+
+	// 2. External MCP servers: top-level siblings of Built-in, each listing its
+	// own tools directly with per-tool policy controls.
+	for _, srv := range data.MCPServers {
+		if mcpServerIsBuiltin(srv) {
+			continue
+		}
+		rows := unclaimedServerRows(srv, agent, claimed)
+		if len(rows) == 0 {
+			continue
+		}
+		view.Servers = append(view.Servers, agentToolGroupProps{
+			BorderClass:     "border-base-content/10 bg-base-200/40",
+			BodyBorderClass: "border-base-content/10",
+			Icon:            "lucide--server",
+			IconClass:       "text-muted-faint",
+			Title:           srv.Name,
+			TestID:          "tool-source-server-" + srv.Name,
+			Count:           len(rows),
+			Open:            rowsInUse(rows),
+			Tools:           rows,
+			WithPolicy:      true,
+		})
+	}
+
+	// 3. Relay nodes: top-level siblings, enable-only, carrying the remote badge.
+	for _, node := range relays {
+		rows := unclaimedRelayRows(node, agent, claimed)
+		if len(rows) == 0 {
+			continue
+		}
+		view.Relays = append(view.Relays, agentToolGroupProps{
+			BorderClass:     "border-primary/25 bg-primary/[0.04]",
+			BodyBorderClass: "border-primary/15",
+			Icon:            "lucide--radio",
+			IconClass:       "text-primary/60",
+			Title:           node.Session.InstanceID,
+			TitleMono:       true,
+			RemoteBadge:     true,
+			TestID:          "tool-source-relay-" + node.Session.InstanceID,
+			Count:           len(rows),
+			Open:            rowsInUse(rows),
+			Tools:           rows,
+		})
+	}
+
+	// 4. Uncovered fallback: kept so a taxonomy gap never drops a tool on save.
+	view.Other = uncoveredRows(data, claimed, descriptions)
+	return view
+}
+
+// unclaimedServerRows resolves a registry server's tools into rows, skipping
+// names an earlier section already rendered and marking the rest as claimed.
+func unclaimedServerRows(srv MCPServer, agent *AgentDefinition, claimed map[string]bool) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(srv.Tools))
+	for _, t := range srv.Tools {
+		if t.ToolName == "" || claimed[t.ToolName] {
+			continue
+		}
+		claimed[t.ToolName] = true
+		rows = append(rows, agentToolRow{
+			Name:         t.ToolName,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, t.ToolName),
+			PolicyValue:  toolPolicyValue(agent, t.ToolName),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+		})
+	}
+	return rows
+}
+
+// unclaimedRelayRows is unclaimedServerRows for a relay node's agent-facing
+// <instance>_<tool> names.
+func unclaimedRelayRows(node relayNode, agent *AgentDefinition, claimed map[string]bool) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(node.Tools))
+	for _, t := range node.Tools {
+		name := relayAgentToolName(node.Session.InstanceID, t.Name)
+		if claimed[name] {
+			continue
+		}
+		claimed[name] = true
+		rows = append(rows, agentToolRow{
+			Name:         name,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, name),
+			PolicyValue:  toolPolicyValue(agent, name),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+		})
+	}
+	return rows
+}
+
+// rowsInUse reports whether any row's tool is currently whitelisted, so a
+// source group with active picks defaults open.
+func rowsInUse(rows []agentToolRow) bool {
+	return slices.ContainsFunc(rows, func(r agentToolRow) bool { return r.Checked })
+}
+
+// builtinToolCount sums the rendered tool rows across the Built-in section's
+// capability groups.
+func builtinToolCount(groups []toolGroupView) int {
+	total := 0
+	for _, g := range groups {
+		total += len(g.Rows)
+	}
+	return total
+}
+
+// catalogToolDescriptions maps every catalog tool name to its description, so
+// direct (source-less) group rows and the Other group can still show one.
+func catalogToolDescriptions(data agentSettingsData) map[string]string {
+	descriptions := map[string]string{}
+	for _, srv := range data.MCPServers {
+		for _, t := range srv.Tools {
+			if t.ToolName == "" {
+				continue
+			}
+			if _, ok := descriptions[t.ToolName]; !ok {
+				descriptions[t.ToolName] = t.Description
+			}
+		}
+	}
+	for _, node := range data.RelayNodes {
+		for _, t := range node.Tools {
+			name := relayAgentToolName(node.Session.InstanceID, t.Name)
+			if _, ok := descriptions[name]; !ok {
+				descriptions[name] = t.Description
+			}
+		}
+	}
+	return descriptions
+}
+
+// uncoveredRows returns rows for tools no rendered section covers — the
+// agent's allowed and banned tools plus any builtin catalog tool whose
+// capability group is missing — so a taxonomy gap can never drop a tool from
+// the picker on save. Tools offered by a server or relay already rendered in
+// their own source block are claimed and stay out of Other, as are
+// delegation-managed tools (the delegation toggle owns them).
+func uncoveredRows(data agentSettingsData, claimed map[string]bool, descriptions map[string]string) []agentToolRow {
+	agent := data.Agent
+	if agent == nil {
+		return nil
+	}
+	names := slices.Clone(agent.Tools)
+	names = append(names, agent.BannedTools...)
+	for _, srv := range data.MCPServers {
+		if !mcpServerIsBuiltin(srv) {
+			continue
+		}
+		for _, t := range srv.Tools {
+			names = append(names, t.ToolName)
+		}
+	}
+	seen := map[string]bool{}
+	var rows []agentToolRow
+	for _, name := range names {
+		if name == "" || claimed[name] || seen[name] || isDelegationTool(name) {
+			continue
+		}
+		seen[name] = true
+		rows = append(rows, agentToolRow{
+			Name:         name,
+			Description:  descriptions[name],
+			Checked:      containsString(agent.Tools, name),
+			PolicyValue:  toolPolicyValue(agent, name),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+		})
+	}
+	return rows
+}
+
+// modelInCatalog reports whether a prefixed provider/model name is present in
+// the catalog.
+func modelInCatalog(models []Model, name string) bool {
+	for _, m := range models {
+		if m.Provider+"/"+m.ModelName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// agentModelName returns the model an agent runs with and whether that model
+// is its (resolved) default rather than an explicit override. name is ""
+// when nothing is known — callers keep rendering the "auto — default model"
+// fallback. fallbackDefault is the project's default generative model, used
+// only when memory reported no EffectiveModel (older memory versions).
+func agentModelName(agent *AgentDefinition, fallbackDefault string) (name string, isDefault bool) {
+	if agent == nil {
+		return "", false
+	}
+	if agent.Model != nil && agent.Model.Name != "" {
+		return agent.Model.Name, false
+	}
+	if agent.EffectiveModel != "" {
+		return agent.EffectiveModel, true
+	}
+	if fallbackDefault != "" {
+		return fallbackDefault, true
+	}
+	return "", false
+}
+
+// agentAutoModelName returns the model the agent would fall back to when the
+// Auto option is selected (i.e. only when the agent has no explicit model),
+// or "" when the agent is explicitly pinned or nothing resolves. It keeps the
+// model picker's Auto label identical to what the dashboard shows for auto
+// agents.
+func agentAutoModelName(agent *AgentDefinition, pinnedDefault string) string {
+	if agent == nil {
+		return ""
+	}
+	if agent.Model != nil && agent.Model.Name != "" {
+		return ""
+	}
+	name, _ := agentModelName(agent, pinnedDefault)
+	return name
+}
+
+// projectProviderNames returns the provider identifiers an agent model
+// reference may use: each configured instance's slug (the structured
+// reference) plus its dialect (the legacy alias), in list order and deduped.
+// Including the dialect keeps a stored legacy value like "openai/gpt-4o"
+// resolvable when the instance slug is "openai-main".
+func projectProviderNames(ps []ProjectProviderConfig) []string {
+	names := make([]string, 0, len(ps)*2)
+	seen := map[string]bool{}
+	for _, p := range ps {
+		for _, n := range []string{cmp.Or(p.Slug, p.Provider), p.Provider} {
+			if n == "" || seen[n] {
+				continue
+			}
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// modelProviderOf returns the provider key of a model string — the substring
+// before the first "/" — or "" when the model is bare (no "/").
+func modelProviderOf(model string) string {
+	if i := strings.IndexByte(model, '/'); i > 0 {
+		return model[:i]
+	}
+	return ""
+}
+
+// agentModelIssue classifies an agent's model availability for the warnings:
+// the severity ("" = none) plus, when the problem is an explicit pinned model,
+// that model and its unconfigured provider prefix.
+type agentModelIssue struct {
+	sev      string
+	explicit bool
+	model    string
+	provider string
+}
+
+// classifyAgentModelIssue decides whether (and why) an agent's model can't be
+// served. For an agent with no explicit model the PINNED project default
+// decides: "error" when the project has no configured provider, "warning" when
+// providers exist but the model is only a provider-credential fallback (no
+// pinned project default), none when a pinned project default resolves. Memory
+// resolves a provider-credential fallback into EffectiveModel whenever a
+// configured credential carries a generative model (it stays empty otherwise),
+// so that fallback must not suppress the "isn't pinned" warning. pinnedDefaultKnown
+// false means the project model-config fetch failed — the legacy rule (any
+// resolvable model suppresses the warning) is kept so a transient fetch error
+// never fabricates a warning. An explicit model is "error" when the project has
+// no configured provider or its provider prefix matches no configured provider;
+// a bare model (no "/") with providers configured is treated as satisfied, and
+// a matching provider is satisfied even when the model name isn't in its
+// catalog (custom base URLs).
+func classifyAgentModelIssue(agent *AgentDefinition, pinnedDefault string, pinnedDefaultKnown, hasProviders bool, providerNames []string) agentModelIssue {
+	if agent == nil {
+		return agentModelIssue{}
+	}
+	if agent.Model == nil || agent.Model.Name == "" {
+		if !hasProviders {
+			return agentModelIssue{sev: "error"}
+		}
+		if !pinnedDefaultKnown {
+			if resolved, _ := agentModelName(agent, pinnedDefault); resolved != "" {
+				return agentModelIssue{}
+			}
+			return agentModelIssue{sev: "warning"}
+		}
+		if pinnedDefault == "" {
+			return agentModelIssue{sev: "warning"}
+		}
+		return agentModelIssue{}
+	}
+	model := agent.Model.Name
+	if !hasProviders {
+		return agentModelIssue{sev: "error", explicit: true, model: model}
+	}
+	prov := modelProviderOf(model)
+	if prov == "" || containsString(providerNames, prov) {
+		return agentModelIssue{}
+	}
+	return agentModelIssue{sev: "error", explicit: true, model: model, provider: prov}
+}
+
+// agentModelDashboardIssue returns the severity and copy for the agent
+// dashboard's model-availability notice, or ("", "") when no warning applies.
+func agentModelDashboardIssue(agent *AgentDefinition, pinnedDefault string, pinnedDefaultKnown, hasProviders bool, providerNames []string) (sev, msg string) {
+	issue := classifyAgentModelIssue(agent, pinnedDefault, pinnedDefaultKnown, hasProviders, providerNames)
+	switch {
+	case issue.sev == "":
+		return "", ""
+	case !issue.explicit:
+		if issue.sev == "error" {
+			return "error", "No provider or default model is configured — this agent can't run chats yet."
+		}
+		return "warning", "No project default model is set — the model this agent uses isn't pinned."
+	case issue.provider != "":
+		return "error", "This agent's model " + issue.model + " needs the " + issue.provider + " provider, which isn't configured. Add it or choose another model."
+	default:
+		return "error", "No provider is configured, so this agent's model " + issue.model + " can't run yet. Configure a provider or change the agent's model."
+	}
+}
+
+// agentModelSettingsIssue returns the severity and copy for the agent-settings
+// Model section's availability warning, or ("", "") when none applies. Copy
+// mirrors the dashboard's but uses "pinned" wording.
+func agentModelSettingsIssue(agent *AgentDefinition, pinnedDefault string, pinnedDefaultKnown, hasProviders bool, providerNames []string) (sev, msg string) {
+	issue := classifyAgentModelIssue(agent, pinnedDefault, pinnedDefaultKnown, hasProviders, providerNames)
+	switch {
+	case issue.sev == "":
+		return "", ""
+	case !issue.explicit:
+		if issue.sev == "error" {
+			return "error", "This agent has no model. The project has no configured provider and no default generative model, so chats will fail."
+		}
+		return "warning", "This agent has no explicit model and the project has no default generative model, so the exact model isn't pinned. Chats fall back to a configured provider's default."
+	case issue.provider != "":
+		return "error", "This agent's model " + issue.model + " uses the " + issue.provider + " provider, which isn't configured — chats will fail until it is added or the model is changed."
+	default:
+		return "error", "This agent is pinned to " + issue.model + ", but the project has no configured provider — chats will fail until one is added or the model is changed."
+	}
+}
+
+// modelWarningAlertType maps the warning severity ("error"/"warning") to the
+// go-daisy alert type used for the banner.
+func modelWarningAlertType(sev string) ui.AlertType {
+	if sev == "error" {
+		return ui.AlertError
+	}
+	return ui.AlertWarning
+}
+
+// agentLanguageValue reads the agent's configured response language from
+// Config["language"], returning "" when unset.
+func agentLanguageValue(a *AgentDefinition) string {
+	if a == nil || a.Config == nil {
+		return ""
+	}
+	if v, ok := a.Config["language"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// agentIncludeProjectInfoValue reads whether the project description is injected
+// into the agent's system prompt from Config["includeProjectInfo"], returning
+// false when the agent, its config, or the key is absent or non-bool.
+func agentIncludeProjectInfoValue(a *AgentDefinition) bool {
+	if a == nil || a.Config == nil {
+		return false
+	}
+	v, ok := a.Config["includeProjectInfo"].(bool)
+	return ok && v
+}
+
+// agentObjectTypesValue reads the agent's object-type allowlist from
+// Config["objectTypes"]. An absent or empty list means "all types".
+func agentObjectTypesValue(a *AgentDefinition) []string {
+	return agentConfigStringList(a, "objectTypes")
+}
+
+// agentRelationshipTypesValue reads the agent's relationship-type allowlist
+// from Config["relationshipTypes"]. An absent or empty list means "all types".
+func agentRelationshipTypesValue(a *AgentDefinition) []string {
+	return agentConfigStringList(a, "relationshipTypes")
+}
+
+// agentConfigStringList reads a []string value from an agent's Config, tolerating
+// both the []string the fresh-save applier writes and the []any a JSON-decoded
+// definition carries. Non-string items are dropped; nil means absent.
+func agentConfigStringList(a *AgentDefinition, key string) []string {
+	if a == nil || a.Config == nil {
+		return nil
+	}
+	switch v := a.Config[key].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// normalizedTypeNames trims each submitted value and drops blanks, preserving
+// submission order. It returns nil when nothing remains so the caller can treat
+// "no names" uniformly (empty selection = all types).
+func normalizedTypeNames(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// languageOption is one selectable agent language.
+type languageOption struct {
+	Code  string
+	Label string
+}
+
+// agentLanguages is the canonical language list (ISO 639-1 codes), shared with
+// the bridge's LANGUAGES table. Codes are the single source of truth.
+var agentLanguages = []languageOption{
+	{"en", "English"},
+	{"pl", "Polski"},
+	{"de", "Deutsch"},
+	{"es", "Español"},
+	{"fr", "Français"},
+	{"it", "Italiano"},
+	{"ja", "日本語"},
+	{"pt", "Português"},
+	{"nl", "Nederlands"},
+}
+
+// agentLanguageCode normalizes a stored language value — a code like "pl" or a
+// legacy free-form label like "Spanish" — to the canonical ISO 639-1 code.
+// Returns "" for empty or unknown values.
+func agentLanguageCode(v string) string {
+	code := strings.ToLower(strings.TrimSpace(v))
+	if code == "" {
+		return ""
+	}
+	for _, l := range agentLanguages {
+		if code == l.Code {
+			return l.Code
+		}
+	}
+	aliases := map[string]string{
+		"english": "en", "polish": "pl", "german": "de", "spanish": "es",
+		"french": "fr", "italian": "it", "japanese": "ja", "portuguese": "pt",
+		"dutch": "nl",
+	}
+	if c, ok := aliases[code]; ok {
+		return c
+	}
+	return ""
+}
+
+// temperatureInputValue returns the form value for the temperature field, or
+// "" when unset (zero value is treated as unset, matching the JSON omitempty
+// round-trip of the old modal).
+func temperatureInputValue(m *ModelConfig) string {
+	if m == nil || m.Temperature == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(m.Temperature, 'f', -1, 64)
+}
+
+// maxTokensInputValue returns the form value for the max-tokens field, or ""
+// when unset.
+func maxTokensInputValue(m *ModelConfig) string {
+	if m == nil || m.MaxTokens == 0 {
+		return ""
+	}
+	return strconv.Itoa(m.MaxTokens)
+}
+
+// --- sandbox ---
+
+// sandboxToolNames are the only workspace tools memory accepts.
+var sandboxToolNames = []string{"bash", "read", "write", "edit", "glob", "grep", "git", "run_python", "run_go", "ast_grep"}
+
+// uiAgentSandbox renders the per-agent sandbox config page. ?updated=1 /
+// ?err=1 surface PRG feedback from the update flow, mirroring uiAgentSettings.
+// The provider and image catalogs are best-effort — a provider-list failure
+// keeps the page rendering and raises an inline availability warning, not the
+// whole-page error.
+func (s *Server) uiAgentSandbox(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	data := agentSandboxData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Sandbox updated."
+	}
+	data.FlashErr = flashError(c)
+
+	agent, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Sandbox"), AgentSandboxPage(data))
+	}
+	data.Agent = agent
+
+	cfg, err := s.memory.GetAgentSandboxConfig(ctx, id)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Sandbox"), AgentSandboxPage(data))
+	}
+	data.Config = cfg
+
+	providers, err := s.memory.ListSandboxProviders(ctx)
+	if err != nil {
+		captureError(err)
+		data.ProviderListErr = true
+	}
+	data.Providers = providers
+
+	images, err := s.memory.ListSandboxImages(ctx)
+	captureError(err)
+	data.Images = images
+
+	return s.page(c, pageTitle(agent.Name, "Sandbox"), AgentSandboxPage(data))
+}
+
+// uiAgentSandboxUpdate handles the sandbox form (PRG). It maps form fields
+// onto AgentSandboxConfig — empty tools means "all allowed", repo_source is
+// only set for fixed/task_context, URL is only valid for fixed — then persists
+// via SetAgentSandboxConfig.
+func (s *Server) uiAgentSandboxUpdate(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	cfg := &AgentSandboxConfig{
+		Enabled:   c.FormValue("enabled") == "on",
+		Provider:  strings.TrimSpace(c.FormValue("provider")),
+		BaseImage: strings.TrimSpace(c.FormValue("baseImage")),
+		// A git token is a server-managed secret: the form stores a reference, not
+		// a literal (issue #1844).
+		GitTokenSecretRef: strings.TrimSpace(c.FormValue("gitTokenSecretRef")),
+	}
+
+	switch repoType := strings.TrimSpace(c.FormValue("repoSourceType")); repoType {
+	case "fixed":
+		urlStr := strings.TrimSpace(c.FormValue("repoSourceUrl"))
+		if urlStr == "" {
+			return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/sandbox", fmt.Errorf("repository URL is required for a fixed source"))
+		}
+		cfg.RepoSource = &RepoSourceConfig{Type: "fixed", URL: urlStr, Branch: strings.TrimSpace(c.FormValue("repoSourceBranch"))}
+	case "task_context":
+		cfg.RepoSource = &RepoSourceConfig{Type: "task_context", Branch: strings.TrimSpace(c.FormValue("repoSourceBranch"))}
+	default: // "none" / empty → no repo source
+		cfg.RepoSource = nil
+	}
+
+	if tools := c.Request().Form["sandboxTool"]; len(tools) > 0 {
+		cfg.Tools = tools
+	}
+
+	cpu := strings.TrimSpace(c.FormValue("cpu"))
+	mem := strings.TrimSpace(c.FormValue("memory"))
+	disk := strings.TrimSpace(c.FormValue("disk"))
+	if cpu != "" || mem != "" || disk != "" {
+		cfg.ResourceLimits = &ResourceLimits{CPU: cpu, Memory: mem, Disk: disk}
+	}
+
+	for _, line := range strings.Split(c.FormValue("setupCommands"), "\n") {
+		if cmd := strings.TrimSpace(line); cmd != "" {
+			cfg.SetupCommands = append(cfg.SetupCommands, cmd)
+		}
+	}
+
+	cfg.EnvVars = map[string]string{}
+	for _, line := range strings.Split(c.FormValue("envVars"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/sandbox", fmt.Errorf("env vars: each line must be KEY=VALUE"))
+		}
+		if isGitTokenEnvKey(k) {
+			return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/sandbox", fmt.Errorf("a git token must be set via the Git token reference, not an environment variable"))
+		}
+		cfg.EnvVars[k] = strings.TrimSpace(v)
+	}
+
+	if _, err := s.memory.SetAgentSandboxConfig(ctx, id, cfg); err != nil {
+		return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/sandbox", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/agents/"+url.PathEscape(id)+"/sandbox?updated=1")
+}
+
+// --- sandbox form helpers (used by AgentSandboxPage) ---
+
+// sandboxConfigEnabled reports whether the sandbox is enabled.
+func sandboxConfigEnabled(cfg *AgentSandboxConfig) bool {
+	return cfg != nil && cfg.Enabled
+}
+
+// sandboxConfigProvider returns the configured sandbox provider, or "" when
+// unset (memory's auto).
+func sandboxConfigProvider(cfg *AgentSandboxConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Provider
+}
+
+// sandboxRepoSourceType returns the repo-source type, defaulting the display
+// to "none" when unset.
+func sandboxRepoSourceType(cfg *AgentSandboxConfig) string {
+	if cfg == nil || cfg.RepoSource == nil {
+		return ""
+	}
+	t := cfg.RepoSource.Type
+	if t == "" {
+		return "none"
+	}
+	return t
+}
+
+func sandboxRepoSourceURL(cfg *AgentSandboxConfig) string {
+	if cfg == nil || cfg.RepoSource == nil {
+		return ""
+	}
+	return cfg.RepoSource.URL
+}
+
+func sandboxRepoSourceBranch(cfg *AgentSandboxConfig) string {
+	if cfg == nil || cfg.RepoSource == nil {
+		return ""
+	}
+	return cfg.RepoSource.Branch
+}
+
+// sandboxResourceValue returns one of cpu/memory/disk from the configured
+// resource limits ("" when unset). kind must be "cpu", "memory", or "disk".
+func sandboxResourceValue(cfg *AgentSandboxConfig, kind string) string {
+	if cfg == nil || cfg.ResourceLimits == nil {
+		return ""
+	}
+	switch kind {
+	case "cpu":
+		return cfg.ResourceLimits.CPU
+	case "memory":
+		return cfg.ResourceLimits.Memory
+	case "disk":
+		return cfg.ResourceLimits.Disk
+	}
+	return ""
+}
+
+func sandboxBaseImage(cfg *AgentSandboxConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.BaseImage
+}
+
+// sandboxSetupCommands joins the setup commands one-per-line for the textarea.
+func sandboxSetupCommands(cfg *AgentSandboxConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return strings.Join(cfg.SetupCommands, "\n")
+}
+
+// sandboxEnvVars joins the env vars as KEY=VALUE lines (sorted for
+// deterministic rendering).
+func sandboxEnvVars(cfg *AgentSandboxConfig) string {
+	if cfg == nil || len(cfg.EnvVars) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(cfg.EnvVars))
+	for k := range cfg.EnvVars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, k+"="+cfg.EnvVars[k])
+	}
+	return strings.Join(lines, "\n")
+}
+
+// isGitTokenEnvKey reports whether an env var key is a git token key
+// (GH_TOKEN / GITHUB_TOKEN), case-insensitive.
+func isGitTokenEnvKey(key string) bool {
+	k := strings.ToLower(strings.TrimSpace(key))
+	return k == "gh_token" || k == "github_token"
+}
+
+// sandboxGitTokenSecretRef returns the configured git token secret reference, or
+// "" when unset.
+func sandboxGitTokenSecretRef(cfg *AgentSandboxConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.GitTokenSecretRef
+}
+
+// sandboxToolEnabled reports whether tool is in the config's tool allowlist
+// (empty list = all tools allowed, but unchecked).
+func sandboxToolEnabled(cfg *AgentSandboxConfig, tool string) bool {
+	return cfg != nil && containsString(cfg.Tools, tool)
+}
+
+// sandboxProviderDisplayName is the provider name shown in the status list,
+// falling back to the type when the API omits a name.
+func sandboxProviderDisplayName(p SandboxProvider) string {
+	if p.Name != "" {
+		return p.Name
+	}
+	return p.Type
+}
+
+// sandboxProviderOptionLabel is the option text for a provider: the plain name
+// when healthy, otherwise the name with an explicit unavailable suffix so the
+// disabled state is unmistakable without relying on colour alone.
+func sandboxProviderOptionLabel(p SandboxProvider) string {
+	name := sandboxProviderDisplayName(p)
+	if p.Healthy {
+		return name
+	}
+	return name + " — unavailable"
+}
+
+// sandboxProviderListed reports whether typ appears in the provider list.
+func sandboxProviderListed(providers []SandboxProvider, typ string) bool {
+	return slices.ContainsFunc(providers, func(p SandboxProvider) bool { return p.Type == typ })
+}
+
+// sandboxSavedProviderLabel is the option text for a stored provider the API
+// did not report: a friendly name when the type is known, else the raw type,
+// always marked unavailable because its state cannot be confirmed.
+func sandboxSavedProviderLabel(typ string) string {
+	name := map[string]string{
+		"gvisor":      "gVisor (Docker)",
+		"firecracker": "Firecracker",
+		"e2b":         "E2B",
+	}[typ]
+	if name == "" {
+		name = typ
+	}
+	return name + " — unavailable"
+}
+
+// sandboxProviderWarning explains why the availability list is empty, so the
+// user knows a failed fetch differs from "no providers configured".
+func sandboxProviderWarning(data agentSandboxData) string {
+	if data.ProviderListErr {
+		return "Could not load sandbox provider availability, so Auto may pick a provider that is not available."
+	}
+	return "No sandbox providers were reported. Sandbox workspaces may be disabled on this server."
+}

@@ -1,0 +1,267 @@
+package blueprints
+
+import (
+	"encoding/json"
+
+	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
+)
+
+// BlueprintManifest is the typed shape of a blueprint's opaque manifest JSON.
+// Packs, agents, and skills are materialized with create-or-update (by name)
+// semantics; seed objects/relationships are created idempotently.
+type BlueprintManifest struct {
+	Project *ProjectManifest `json:"project,omitempty"`
+	Packs   []PackManifest   `json:"packs,omitempty"`
+	Agents  []AgentManifest  `json:"agents,omitempty"`
+	Skills  []SkillManifest  `json:"skills,omitempty"`
+	Seed    *SeedManifest    `json:"seed,omitempty"`
+}
+
+// ProjectManifest carries optional project-level metadata (currently unused by apply).
+type ProjectManifest struct {
+	Description string `json:"description"`
+}
+
+// PackManifest describes a schema pack to create and assign.
+type PackManifest struct {
+	Name              string                        `json:"name"`
+	Version           string                        `json:"version"`
+	Description       string                        `json:"description"`
+	Author            string                        `json:"author"`
+	Migrations        *schemas.SchemaMigrationHints `json:"migrations,omitempty"`
+	ObjectTypes       []ObjectTypeDef               `json:"objectTypes,omitempty"`
+	RelationshipTypes []RelationshipTypeDef         `json:"relationshipTypes,omitempty"`
+}
+
+// UnmarshalJSON accepts both the camelCase (`objectTypes`/`relationshipTypes`)
+// and the snake_case (`objectTypeSchemas`/`relationshipTypeSchemas`) spellings,
+// so packs authored in either convention decode uniformly. Canonical camelCase
+// wins when both are present, mirroring CreatePackRequest's snake/camel aliasing.
+func (p *PackManifest) UnmarshalJSON(data []byte) error {
+	type alias PackManifest
+	var a struct {
+		alias
+		ObjectTypeSchemas       []ObjectTypeDef       `json:"objectTypeSchemas,omitempty"`
+		RelationshipTypeSchemas []RelationshipTypeDef `json:"relationshipTypeSchemas,omitempty"`
+	}
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*p = PackManifest(a.alias)
+	if len(p.ObjectTypes) == 0 && len(a.ObjectTypeSchemas) > 0 {
+		p.ObjectTypes = a.ObjectTypeSchemas
+	}
+	if len(p.RelationshipTypes) == 0 && len(a.RelationshipTypeSchemas) > 0 {
+		p.RelationshipTypes = a.RelationshipTypeSchemas
+	}
+	return nil
+}
+
+// ObjectTypeDef is a single object type schema in a pack manifest. Labels,
+// Embedding, Extraction, and UI are carried as raw maps so behavioural keys
+// (e.g. extraction.enabled:false, embedding.mode/field) survive the manifest
+// round-trip losslessly rather than being dropped by a typed struct.
+type ObjectTypeDef struct {
+	Name        string         `json:"name"`
+	Label       string         `json:"label"`
+	Description string         `json:"description"`
+	Properties  map[string]any `json:"properties"`
+	// Required lists the property names the type marks required. Carried through
+	// the manifest round-trip so a pack authored with a `required:` list (as the
+	// schemas builtin seeder used to emit) reaches the schema registry unchanged.
+	Required []string `json:"required,omitempty"`
+	// ScopeKey is the effective scope-key declaration (issue #1148). Carried as
+	// a raw map so it passes through to the schema registry untouched. It is the
+	// canonical (camelCase) spelling; the snake_case alias below is promoted
+	// into it on decode.
+	ScopeKey map[string]any `json:"scopeKey,omitempty"`
+	// ScopeKeySnake is the accepted top-level snake_case alias (`scope_key`). On
+	// decode it is promoted into ScopeKey and cleared, so it is never re-emitted.
+	// Precedence: canonical `scopeKey` wins when both are present, matching the
+	// inner-property alias handling.
+	ScopeKeySnake map[string]any `json:"scope_key,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Embedding     map[string]any `json:"embedding,omitempty"`
+	Extraction    map[string]any `json:"extraction,omitempty"`
+	UI            map[string]any `json:"ui,omitempty"`
+	// Object-driven work configuration (Kanban board). These mirror the fields
+	// on schemas.ObjectTypeSchema (apps/server/domain/schemas/entity.go) and are
+	// carried through the pack's object_type_schemas JSON to the schema registry.
+	BoardEnabled      bool     `json:"boardEnabled,omitempty"`
+	AllowedStatuses   []string `json:"allowedStatuses,omitempty"`
+	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"`
+	SkipExtraction    bool     `json:"skipExtraction,omitempty"`
+	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty"`
+}
+
+// UnmarshalJSON decodes the canonical `scopeKey` and its `scope_key` alias and
+// normalizes them (canonical wins), so a manifest authored with either spelling
+// reaches the schema validator/registry as a declaration instead of being
+// dropped.
+func (o *ObjectTypeDef) UnmarshalJSON(data []byte) error {
+	type alias ObjectTypeDef
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*o = ObjectTypeDef(a)
+	if o.ScopeKey == nil && o.ScopeKeySnake != nil {
+		o.ScopeKey = o.ScopeKeySnake
+	}
+	o.ScopeKeySnake = nil
+	return nil
+}
+
+// RelationshipTypeDef is a single relationship type schema in a pack manifest.
+// Properties carries any relationship-level sub-block (e.g. a description
+// property) as a raw map for lossless pass-through.
+//
+// It accepts both singular (sourceType/targetType) and plural
+// (sourceTypes/targetTypes) field names, mirroring the CLI loader
+// (apps/cli/internal/blueprints/types.go). The schemas relationship contract is
+// singular-only, so apply.go expands plural declarations into singular entries
+// before posting to the schemas service (see expandRelationshipTypes).
+type RelationshipTypeDef struct {
+	Name        string         `json:"name"`
+	Label       string         `json:"label"`
+	Description string         `json:"description"`
+	SourceType  string         `json:"sourceType"`
+	TargetType  string         `json:"targetType"`
+	SourceTypes []string       `json:"sourceTypes,omitempty"`
+	TargetTypes []string       `json:"targetTypes,omitempty"`
+	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// GetSourceTypes returns the effective source types, preferring the plural
+// array field over the singular string.
+func (r RelationshipTypeDef) GetSourceTypes() []string {
+	if len(r.SourceTypes) > 0 {
+		return r.SourceTypes
+	}
+	if r.SourceType != "" {
+		return []string{r.SourceType}
+	}
+	return nil
+}
+
+// GetTargetTypes returns the effective target types, preferring the plural
+// array field over the singular string.
+func (r RelationshipTypeDef) GetTargetTypes() []string {
+	if len(r.TargetTypes) > 0 {
+		return r.TargetTypes
+	}
+	if r.TargetType != "" {
+		return []string{r.TargetType}
+	}
+	return nil
+}
+
+// AgentManifest describes an agent definition to create or update.
+type AgentManifest struct {
+	Name            string                     `json:"name"`
+	Description     string                     `json:"description"`
+	SystemPrompt    string                     `json:"systemPrompt"`
+	Model           *AgentModelManifest        `json:"model,omitempty"`
+	Tools           []string                   `json:"tools,omitempty"`
+	BannedTools     []string                   `json:"bannedTools,omitempty"`
+	Skills          []string                   `json:"skills,omitempty"`
+	IsDefault       *bool                      `json:"isDefault,omitempty"`
+	MaxSteps        *int                       `json:"maxSteps,omitempty"`
+	DefaultTimeout  *int                       `json:"defaultTimeout,omitempty"`
+	Visibility      string                     `json:"visibility,omitempty"`
+	DispatchMode    string                     `json:"dispatchMode,omitempty"`
+	DefaultQueue    string                     `json:"defaultQueue,omitempty"`
+	Config          map[string]any             `json:"config,omitempty"`
+	WorkspaceConfig map[string]any             `json:"workspaceConfig,omitempty"`
+	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies,omitempty"`
+	UI              *AgentUIManifest           `json:"ui,omitempty"`
+	// WorkConfig is the object-driven work configuration, unmarshalled into the
+	// definition's agents.AgentWorkConfig at apply time.
+	WorkConfig map[string]any `json:"workConfig,omitempty"`
+	// TriggerType/ReactionConfig/CronSchedule configure the runtime kb.agents
+	// row that picks object-driven work up. Any of these being set causes apply
+	// to create-or-update the runtime agent bound to this definition.
+	TriggerType    string                 `json:"triggerType,omitempty"`
+	ReactionConfig *agents.ReactionConfig `json:"reactionConfig,omitempty"`
+	CronSchedule   string                 `json:"cronSchedule,omitempty"`
+}
+
+// AgentUIManifest describes an agent's inline appearance block, mirroring the
+// object-type registry's inline ui block. Both fields optional.
+type AgentUIManifest struct {
+	Icon  string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Color string `json:"color,omitempty" yaml:"color,omitempty"`
+}
+
+// AgentModelManifest describes the model config for an agent.
+// Empty Name means the provider default model is used.
+type AgentModelManifest struct {
+	Name           string   `json:"name"`
+	Temperature    *float32 `json:"temperature,omitempty"`
+	MaxTokens      *int     `json:"maxTokens,omitempty"`
+	EnableThinking *bool    `json:"enableThinking,omitempty"`
+}
+
+// UnmarshalJSON accepts both the object form (`model: {name: ...}`) and the
+// bare-string form (`model: openai/deepseek-v4-pro`) used by bundled packs, so a
+// pinned model reference authored as a plain string decodes into Name.
+func (m *AgentModelManifest) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		m.Name = name
+		return nil
+	}
+	type alias AgentModelManifest
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = AgentModelManifest(a)
+	return nil
+}
+
+// AgentToolPolicy is a per-tool confirmation policy.
+type AgentToolPolicy struct {
+	Confirm bool   `json:"confirm"`
+	Message string `json:"message"`
+}
+
+// SkillManifest describes a global skill to create or update.
+type SkillManifest struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Content     string         `json:"content"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+// SeedManifest describes seed graph objects and relationships.
+type SeedManifest struct {
+	Objects       []SeedObjectRecord       `json:"objects,omitempty"`
+	Relationships []SeedRelationshipRecord `json:"relationships,omitempty"`
+}
+
+// SeedObjectRecord is a seed graph object identified by (type, key).
+type SeedObjectRecord struct {
+	Type       string         `json:"type"`
+	Key        string         `json:"key"`
+	Status     string         `json:"status"`
+	Properties map[string]any `json:"properties"`
+	Labels     []string       `json:"labels,omitempty"`
+	// Assignee is the work lane for board-enabled types (the agent identity that
+	// owns the item). Forwarded to graph.CreateGraphObjectRequest when non-empty.
+	Assignee string `json:"assignee,omitempty"`
+}
+
+// SeedRelationshipRecord is a seed graph relationship whose endpoints are
+// referenced by the keys of seed objects. When SrcType/DstType are set they
+// disambiguate the key lookup (type + key is unambiguous); otherwise the key
+// is resolved alone.
+type SeedRelationshipRecord struct {
+	Type       string         `json:"type"`
+	SrcKey     string         `json:"srcKey,omitempty"`
+	DstKey     string         `json:"dstKey,omitempty"`
+	SrcType    string         `json:"srcType,omitempty"`
+	DstType    string         `json:"dstType,omitempty"`
+	Properties map[string]any `json:"properties"`
+}

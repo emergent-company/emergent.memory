@@ -1,0 +1,40 @@
+package embeddings
+
+import "context"
+
+// ResolvedEmbeddingCredential holds the decrypted credential material needed to
+// instantiate an embeddings client for a specific request context.
+// This type is defined in pkg/embeddings (not domain/provider) to avoid an import cycle.
+type ResolvedEmbeddingCredential struct {
+	IsGoogleAI         bool
+	APIKey             string
+	IsVertexAI         bool
+	GCPProject         string
+	Location           string
+	ServiceAccountJSON string // set for Vertex AI; SA key JSON
+	EmbeddingModel     string
+	// BaseURL is the HTTP endpoint override for OpenAI-compatible providers (LiteLLM, etc.).
+	// When set alongside APIKey, the OpenAI-compatible client is used instead of Google AI.
+	BaseURL string
+	// Auth is the vendor's declared credential-injection style (e.g. "bearer",
+	// "api-key"). Empty defaults to bearer. Azure OpenAI embeddings require
+	// "api-key"; OpenAI-compatible vendors use bearer.
+	Auth string
+	// Extra carries vendor-specific request config (e.g. Azure "api_version",
+	// applied as a query parameter by the OpenAI-compatible client). May be nil.
+	Extra map[string]string
+	// ExtraHeaders are additional request headers derived from vendor extra
+	// fields (e.g. a secondary secret header). May be nil.
+	ExtraHeaders map[string]string
+	// Source describes where the credential was resolved from (project/organization/environment).
+	// Informational only; used for logging and tracing.
+	Source string
+}
+
+// EmbeddingResolver resolves embedding credentials for the current request context.
+// Implemented by domain/provider.EmbeddingCredentialAdapter to avoid an import cycle:
+// pkg/embeddings cannot import domain/provider, so the adapter satisfies this interface
+// and is injected via fx.
+type EmbeddingResolver interface {
+	ResolveEmbedding(ctx context.Context) (*ResolvedEmbeddingCredential, error)
+}

@@ -1,0 +1,246 @@
+package branches
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+
+	"github.com/uptrace/bun"
+)
+
+// Store handles database operations for branches
+type Store struct {
+	db bun.IDB
+}
+
+// NewStore creates a new branches store
+func NewStore(db bun.IDB) *Store {
+	return &Store{db: db}
+}
+
+// List returns all branches, optionally filtered by project_id
+func (s *Store) List(ctx context.Context, projectID *string) ([]*Branch, error) {
+	var branches []*Branch
+	q := s.db.NewSelect().Model(&branches).Order("created_at ASC")
+
+	if projectID != nil {
+		// Project-scoped: only branches owned by this project. Legacy root
+		// branches with project_id IS NULL were backfilled by migrations
+		// 00122/00123, so any remaining NULL rows are org-global test/bench
+		// branches that must not leak into a project's list.
+		q = q.Where("project_id = ?", *projectID)
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return branches, nil
+}
+
+// GetByID returns a branch by ID, scoped to the given project.
+func (s *Store) GetByID(ctx context.Context, id, projectID string) (*Branch, error) {
+	branch := new(Branch)
+	err := s.db.NewSelect().
+		Model(branch).
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return branch, nil
+}
+
+// GetByNameAndProject returns a branch by name and project_id (null-safe)
+func (s *Store) GetByNameAndProject(ctx context.Context, name string, projectID *string) (*Branch, error) {
+	branch := new(Branch)
+	q := s.db.NewSelect().
+		Model(branch).
+		Where("name = ?", name)
+
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	} else {
+		q = q.Where("project_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return branch, nil
+}
+
+// Create creates a new branch and returns it
+func (s *Store) Create(ctx context.Context, branch *Branch) (*Branch, error) {
+	_, err := s.db.NewInsert().
+		Model(branch).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return branch, nil
+}
+
+// Update updates a branch by ID, scoped to the given project.
+func (s *Store) Update(ctx context.Context, id, projectID, name string, description *string) (*Branch, error) {
+	branch := new(Branch)
+	q := s.db.NewUpdate().
+		Model(branch).
+		Set("name = ?", name).
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Returning("*")
+
+	if description != nil {
+		q = q.Set("description = ?", *description)
+	}
+
+	_, err := q.Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if any row was actually updated
+	if branch.ID == "" {
+		return nil, nil
+	}
+
+	return branch, nil
+}
+
+// Delete deletes a branch by ID, scoped to the given project. Returns true if deleted.
+func (s *Store) Delete(ctx context.Context, id, projectID string) (bool, error) {
+	result, err := s.db.NewDelete().
+		Model((*Branch)(nil)).
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rowsAffected > 0, nil
+}
+
+// EnsureBranchLineage ensures lineage records exist for a branch
+// and maintains the branch_lineage table
+func (s *Store) EnsureBranchLineage(ctx context.Context, branchID string, parentBranchID *string) error {
+	// Insert self lineage (depth=0)
+	_, err := s.db.NewRaw(`
+		INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth) 
+		VALUES (?, ?, 0) 
+		ON CONFLICT DO NOTHING
+	`, branchID, branchID).Exec(ctx)
+	if err != nil {
+		// Ignore errors if table doesn't exist (older schema)
+		return nil
+	}
+
+	if parentBranchID != nil {
+		// Ensure parent self row exists (defensive)
+		_, _ = s.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth) 
+			VALUES (?, ?, 0) 
+			ON CONFLICT DO NOTHING
+		`, *parentBranchID, *parentBranchID).Exec(ctx)
+
+		// Copy parent lineage rows with depth+1
+		_, _ = s.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			SELECT ?, ancestor_branch_id, depth + 1 
+			FROM kb.branch_lineage 
+			WHERE branch_id = ?
+			ON CONFLICT (branch_id, ancestor_branch_id) DO NOTHING
+		`, branchID, *parentBranchID).Exec(ctx)
+
+		// Add direct parent (depth=1) if not already captured
+		_, _ = s.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			VALUES (?, ?, 1) 
+			ON CONFLICT (branch_id, ancestor_branch_id) DO NOTHING
+		`, branchID, *parentBranchID).Exec(ctx)
+	}
+
+	return nil
+}
+
+// DeleteBranchLineage removes all lineage records for a branch
+func (s *Store) DeleteBranchLineage(ctx context.Context, branchID string) error {
+	_, err := s.db.NewRaw(`
+		DELETE FROM kb.branch_lineage WHERE branch_id = ?
+	`, branchID).Exec(ctx)
+	// Ignore errors if table doesn't exist
+	return err
+}
+
+// ListMerged returns all branches that have been merged (merged_at IS NOT NULL),
+// optionally filtered by project_id.
+func (s *Store) ListMerged(ctx context.Context, projectID *string) ([]*Branch, error) {
+	var branches []*Branch
+	q := s.db.NewSelect().Model(&branches).Where("merged_at IS NOT NULL").Order("merged_at ASC")
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+	err := q.Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return branches, nil
+}
+
+// GetMainBranch returns the main (root) branch for a project — the branch with no parent.
+// Returns nil when the project has no main branch yet.
+func (s *Store) GetMainBranch(ctx context.Context, projectID string) (*Branch, error) {
+	branch := new(Branch)
+	err := s.db.NewSelect().
+		Model(branch).
+		Where("project_id = ?", projectID).
+		Where("parent_branch_id IS NULL").
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return branch, nil
+}
+
+// GetMainBranchID returns the ID of the project's root branch, or nil if none exists.
+// Satisfies the projects.BranchReader interface.
+func (s *Store) GetMainBranchID(ctx context.Context, projectID string) (*string, error) {
+	branch, err := s.GetMainBranch(ctx, projectID)
+	if err != nil || branch == nil {
+		return nil, err
+	}
+	id := branch.ID
+	return &id, nil
+}
+
+// SetMergedAt stamps a branch as merged by setting merged_at.
+func (s *Store) SetMergedAt(ctx context.Context, branchID string, mergedAt time.Time) error {
+	_, err := s.db.NewUpdate().
+		Model((*Branch)(nil)).
+		Set("merged_at = ?", mergedAt).
+		Where("id = ?", branchID).
+		Exec(ctx)
+	return err
+}

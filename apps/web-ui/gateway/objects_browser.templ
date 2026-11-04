@@ -1,0 +1,862 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	table "github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Objects browser ---
+//
+// The objects page: a wide table with row selection and a grouped action bar,
+// one compact toolbar card that stacks the search field over a single filter
+// line, a single stats strip instead of three stat cards, and "Ask the graph"
+// behind a header dialog instead of a permanent card.
+//
+// data.Preview marks a dev-gallery render: pagination, search submission, and
+// bulk mutations render without their live wiring (no hx-* attributes, no
+// backend form action) so the sample page stays inert.
+
+// ObjectsPage renders the objects browser surface. The agent-scoped view
+// (data.AgentID) keeps its own header and omits the stats, the global search and
+// the Q&A dialog: those are project-wide surfaces the agent route cannot scope.
+//
+// The outer x-data carries the selection model shared by the visible checkbox
+// column, the bulk action bar, and the bulk dialogs. Selection is Alpine-only
+// (the bulk bar and the dialogs are Alpine-driven too), so row checkboxes carry
+// no `name` and are never submitted: each dialog form submits the selection as
+// one comma-separated `ids` value. That keeps table rows out of any form and
+// lets htmx-appended rows work without re-registering anything.
+templ ObjectsPage(data objectsPageData) {
+	@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
+		<div x-data={ objectsBrowserSelectionJS } data-status-options={ data.StatusOptionsJSON }>
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			if data.AgentID != "" {
+				@objectsAgentHeader(data)
+			} else {
+				@objectsBrowserHeader(data)
+			}
+			if data.LoadErr != nil {
+				@pageError("Failed to load objects", data.LoadErr)
+			} else {
+				if data.Query == "" && data.AgentID == "" {
+					@objectsBrowserStats(data)
+				}
+				@objectsBrowserToolbar(data)
+				if data.Query != "" {
+					@objectsBrowserResultsNote(data)
+				}
+				@objectsBrowserTable(data)
+				@objectsBrowserBulkBar()
+				@objectsBrowserBulkDialogs(data)
+				if data.AgentID == "" {
+					@objectsBrowserKnowledgeDialog(data)
+				}
+			}
+		</div>
+	}
+}
+
+// objectsBrowserHeader is the page header with the two primary affordances:
+// asking the graph (a dialog) and creating an object.
+templ objectsBrowserHeader(data objectsPageData) {
+	@pageHeader("Knowledge", "Objects", "Entities in the knowledge graph — people, tasks, notes, and everything else memory stores.") {
+		<div class="flex items-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--sparkles",
+				Attrs:   templ.Attributes{"onclick": "MemoryApp.openDialog('objects-knowledge-dialog')"},
+			}) {
+				Ask the graph
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/objects/new",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+			}) {
+				New object
+			}
+		</div>
+	}
+}
+
+// objectsBrowserStats renders the browse overview as one daisyUI stats strip.
+// The three separate stat cards it replaces read as three equally loud panels;
+// the strip keeps the same three numbers in one quiet band.
+templ objectsBrowserStats(data objectsPageData) {
+	if data.Stats == nil {
+		@objectsBrowserStatsDeferred(data)
+	} else {
+		{{
+			s := *data.Stats
+			total := groupDigits(int64(s.TotalObjects))
+			pending := strconv.FormatInt(s.PendingEmbed, 10)
+			failed := strconv.FormatInt(s.FailedEmbed, 10)
+			totalDesc := ""
+			embedDesc := ""
+			failedColor := "text-error"
+			if s.TotalErr != nil {
+				total = "—"
+				totalDesc = "unavailable"
+			}
+			if s.EmbedErr != nil {
+				pending = "—"
+				failed = "—"
+				embedDesc = "unavailable"
+				failedColor = ""
+			}
+		}}
+		<div class="mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]">
+			@ui.StatsGroup([]ui.StatsGroupItem{
+				{Title: "objects", Value: total, Desc: totalDesc},
+				{Title: "pending embeddings", Value: pending, Desc: embedDesc, Color: "text-warning"},
+				{Title: "failed embeddings", Value: failed, Desc: embedDesc, Color: failedColor},
+			})
+		</div>
+	}
+}
+
+// objectsBrowserStatsDeferred is the first-paint placeholder for the stats
+// strip. It keeps the deferred /objects/stats fetch (and its branch scoping and
+// explicit hx-target="this" — the page shell's <main> otherwise lends the fetch
+// its #main-content target). Preview mode renders the placeholder without the
+// fetch: the gallery has no project behind it.
+templ objectsBrowserStatsDeferred(data objectsPageData) {
+	{{
+		statsAttrs := templ.Attributes{
+			"id":    "objects-stats",
+			"class": "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
+		}
+		if !data.Preview {
+			statsAttrs["hx-get"] = objectsStatsURL(data.BranchID)
+			statsAttrs["hx-trigger"] = "load"
+			statsAttrs["hx-target"] = "this"
+			statsAttrs["hx-swap"] = "outerHTML"
+		}
+	}}
+	<div { statsAttrs... }>
+		@ui.StatsGroup([]ui.StatsGroupItem{
+			{Title: "objects", Value: "…"},
+			{Title: "pending embeddings", Value: "…"},
+			{Title: "failed embeddings", Value: "…"},
+		})
+	</div>
+}
+
+// objectsBrowserToolbar puts search and filters in one card: the search form
+// keeps the split mode button (mode rides on the submit button), and the filter
+// form applies each control on change (the actor picker applies on pick). They
+// stay two forms because a single form cannot carry both a submitted search mode
+// and a filter change without dropping one of them.
+//
+// The agent-scoped view has no search form (the server's search endpoints cannot
+// be provenance-scoped), so its card is the filter line alone and the divider
+// that separates the two rows goes with it.
+templ objectsBrowserToolbar(data objectsPageData) {
+	{{
+		searchAction := "/objects"
+		filterAction := objectsTargetURL(data)
+		if data.Preview {
+			// Preview forms post nowhere: the gallery must not navigate away or
+			// reach a project that does not exist.
+			searchAction = "#"
+			filterAction = "#"
+		}
+		searching := data.AgentID == ""
+		filterClass := "flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2"
+		if searching {
+			filterClass = "border-base-content/10 border-t pt-3 " + filterClass
+		}
+	}}
+	<div class="mb-4">
+		@components.PanelCard("", nil, "p-3 sm:p-4") {
+			<div class="flex flex-col gap-3">
+				if searching {
+					<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsPreviewGuards(data.Preview)... }>
+						@objectsSearchControls(data)
+					</form>
+				}
+				<form id="objects-filters-form" class={ filterClass } method="get" action={ templ.URL(filterAction) } { objectsPreviewGuards(data.Preview)... }>
+					@objectsFilterControls(data)
+				</form>
+			</div>
+		}
+	</div>
+}
+
+// objectsBrowserResultsNote is the one-line search summary above the table:
+// how many rows matched and how they are ranked.
+templ objectsBrowserResultsNote(data objectsPageData) {
+	<div class="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "min-w-0 truncate"}) {
+			{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"
+		}
+		<span class="text-muted-faint shrink-0 text-xs">Ranked by relevance</span>
+	</div>
+}
+
+// objectsBrowserTable is the unified results surface: browse rows and search
+// hits render in the same table, so switching between browsing and searching
+// does not change the page's shape. Unified search hits cannot fill the
+// status/embedding/created columns (the endpoint does not return them), so the
+// table drops those columns in that mode instead of rendering a column of
+// dashes.
+templ objectsBrowserTable(data objectsPageData) {
+	{{
+		rows := objectsBrowserRows(data)
+		search := data.Query != ""
+		unified := search && data.Mode == "unified"
+	}}
+	if len(rows) == 0 {
+		if search {
+			@objectsSearchEmpty()
+		} else {
+			@objectsEmpty(data.TypeFilter)
+		}
+	} else {
+		<div class="hidden md:block">
+			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
+				@table.TableWithProps(table.TableProps{Size: "sm", Attrs: templ.Attributes{"data-testid": "objects-table"}}) {
+					@objectsBrowserTableHead(data, search, unified)
+					<tbody id="objects-list">
+						for _, r := range rows {
+							@objectsBrowserRow(r, search, unified)
+						}
+					</tbody>
+				}
+			}
+		</div>
+		<div class="md:hidden">
+			@objectsBrowserMobileRows(rows, unified)
+		</div>
+		@objectsBrowserFooter(data)
+	}
+}
+
+// objectsBrowserTableHead renders the column headers. The leading and trailing
+// checkbox/chevron columns are raw <th> because TableHeadCell owns its class
+// list and cannot carry the width utility.
+//
+// There is no Type column: the type rides above the object id in the Object cell
+// ("task · #9f1c0a2e"), where it reads as the object's identity rather than as a
+// second, mostly-repeated column.
+templ objectsBrowserTableHead(data objectsPageData, search, unified bool) {
+	@table.TableHead() {
+		@table.TableHeadRow() {
+			<th class="w-10">
+				<input
+					type="checkbox"
+					class="checkbox checkbox-sm"
+					aria-label="Select all objects"
+					@change="toggleAll($el.checked)"
+					:checked="all"
+					:indeterminate="some"
+				/>
+			</th>
+			@table.TableHeadCell("Object")
+			if !unified {
+				@table.TableHeadCell("Status")
+				@table.TableHeadCell("Embedding")
+			}
+			@table.TableHeadCell("Labels")
+			if search {
+				<th class="text-right text-xs font-semibold text-base-content/60 uppercase">Score</th>
+			}
+			if !unified {
+				if search {
+					// Search hits are relevance-ranked; `order` does not apply to
+					// them, so the column states the value without offering a
+					// sort it cannot honour.
+					<th scope="col" class="text-right text-xs font-semibold text-base-content/60 uppercase">Created</th>
+				} else {
+					// Created is the one column the list endpoint can sort: `order`
+					// flips its (created_at, id) keyset and the cursor keeps working.
+					// Name/type/status would need a server-side sort whitelist — the
+					// endpoint only orders JSONB properties, which breaks the cursor.
+					@objectsBrowserSortHead("Created", objectsSortHref(data, objectsNextSortDir(data)), true, objectsSortDir(data))
+				}
+			}
+			<th class="w-10"></th>
+		}
+	}
+}
+
+// objectsBrowserSortHead renders one sortable column header. The indicator sits
+// opposite the column's alignment — a right-aligned (numeric/date) column leads
+// with the glyph, a left-aligned one trails with it — so it never crowds the
+// values it sorts. The glyph is always present (dimmed when the column is not
+// the active sort) so the header advertises that the column sorts at all, and
+// aria-sort carries the state for assistive tech.
+//
+// This is page-local rather than table.TableHeader because the library header
+// hardcodes left alignment and a trailing indicator — exactly backwards for a
+// right-aligned column (see the go-daisy sortable-header alignment issue).
+templ objectsBrowserSortHead(label, href string, alignRight bool, dir string) {
+	{{
+		thClass := "text-xs font-semibold text-base-content/60 uppercase"
+		linkClass := "inline-flex items-center gap-1 hover:text-base-content"
+		if alignRight {
+			thClass = "text-right " + thClass
+			linkClass += " justify-end"
+		}
+		ariaSort := "none"
+		icon := "lucide--chevrons-up-down"
+		iconClass := "text-base-content/25"
+		switch dir {
+		case "asc":
+			ariaSort, icon, iconClass = "ascending", "lucide--chevron-up", ""
+		case "desc":
+			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
+		}
+	}}
+	<th scope="col" aria-sort={ ariaSort } class={ thClass }>
+		<a href={ href } class={ linkClass }>
+			if alignRight {
+				@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
+				<span>{ label }</span>
+			} else {
+				<span>{ label }</span>
+				@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
+			}
+		</a>
+	</th>
+}
+
+// objectsBrowserRow renders one table row (browse or search). The whole row is
+// clickable through data-href; the checkbox and the trailing chevron keep their
+// own behaviour because app.js ignores clicks that land on form controls.
+templ objectsBrowserRow(r objectsBrowserRowView, search, unified bool) {
+	<tr class="hover cursor-pointer" data-href={ templ.URL("/objects/" + url.PathEscape(r.ID)) }>
+		@table.TableCell("w-10", nil) {
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm"
+				value={ r.ID }
+				data-object-select
+				data-object-type={ r.Type }
+				aria-label={ "Select " + r.Label }
+				x-model="sel"
+			/>
+		}
+		@table.TableCell("max-w-[30rem]", nil) {
+			<div class="flex min-w-0 items-center gap-3">
+				@typeIconTile(r.UI.Icon, r.UI.Color)
+				<div class="min-w-0">
+					@objectsObjectMeta(r)
+					<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:text-primary block truncate text-sm font-medium hover:underline">{ r.Label }</a>
+				</div>
+			</div>
+		}
+		if !unified {
+			@table.TableCell("", nil) {
+				if r.Status != "" {
+					@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
+						Size:  ui.BadgeSizeXS,
+						Dot:   true,
+						Attrs: templ.Attributes{"data-status": r.Status},
+					})
+				} else {
+					@components.EmptyDash()
+				}
+			}
+			@table.TableCell("", nil) {
+				if r.EmbeddingIcon != "" {
+					<span class={ "tooltip tooltip-top inline-flex items-center", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
+						<span class={ "iconify shrink-0 text-base " + r.EmbeddingIcon } aria-hidden="true"></span>
+						<span class="sr-only">{ r.EmbeddingLabel }</span>
+					</span>
+				} else {
+					@components.EmptyDash()
+				}
+			}
+		}
+		@table.TableCell("", nil) {
+			if len(r.Labels) == 0 {
+				@components.EmptyDash()
+			} else {
+				<div class="flex flex-wrap items-center gap-1">
+					for _, l := range firstLabels(r.Labels, 2) {
+						@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+					}
+					if len(r.Labels) > 2 {
+						@ui.Badge(ui.BadgeProps{Label: "+" + strconv.Itoa(len(r.Labels)-2), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					}
+				</div>
+			}
+		}
+		if search {
+			@table.TableCell("text-right", nil) {
+				<span class="text-muted-faint inline-flex items-center gap-1" title="Relevance score">
+					@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
+					<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
+				</span>
+			}
+		}
+		if !unified {
+			@table.TableCell("text-right whitespace-nowrap", nil) {
+				<span class="text-muted-faint text-xs tabular-nums" title={ r.CreatedAt }>{ relTime(r.CreatedAt) }</span>
+			}
+		}
+		@table.TableActionCell() {
+			@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-faint")
+		}
+	</tr>
+}
+
+// objectsObjectMeta is the identity line above an object's name: its type, a dot
+// tinted with the type's declared colour, and the short id ("task · #9f1c0a2e").
+// The type lives here instead of in its own column so the row reads as one
+// identity, and the name below stays the row's single loud line.
+templ objectsObjectMeta(r objectsBrowserRowView) {
+	{{
+		dotAttrs := templ.Attributes{
+			"class":       "bg-base-content/25 size-1.5 shrink-0 rounded-full",
+			"aria-hidden": "true",
+		}
+		if style := typeDotStyle(r.UI.Color); style != "" {
+			dotAttrs["style"] = style
+		}
+	}}
+	<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
+		<span class="truncate">{ r.Type }</span>
+		<span { dotAttrs... }></span>
+		<span class="shrink-0">#{ objectShortID(r.ID) }</span>
+	</div>
+}
+
+// objectsBrowserMobileRows is the small-screen browse list: one compact card
+// per object with the same type accent and badges as the table row. The card
+// body opens the object; the checkbox is a sibling of the anchor so a phone can
+// drive the same Alpine selection model (and bulk bar) as the table.
+templ objectsBrowserMobileRows(rows []objectsBrowserRowView, unified bool) {
+	@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
+		<div id="objects-mobile-list" class="divide-base-200 divide-y">
+			for _, r := range rows {
+				@objectsBrowserMobileRow(r, unified)
+			}
+		</div>
+	}
+}
+
+// objectsBrowserMobileRow is one mobile card. It is its own component so the
+// "Load more" fragment can append cards as well as table rows: the table is
+// hidden on small screens, so paginating only #objects-list would load rows no
+// phone can see.
+templ objectsBrowserMobileRow(r objectsBrowserRowView, unified bool) {
+	<div class="hover:bg-base-200/40 flex items-start gap-2 py-3 pr-2 pl-3 transition-colors" data-testid="objects-mobile-row">
+		<label class="mt-1.5 flex shrink-0 items-center">
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm"
+				value={ r.ID }
+				data-object-select
+				data-object-type={ r.Type }
+				aria-label={ "Select " + r.Label }
+				x-model="sel"
+			/>
+		</label>
+		<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="flex min-w-0 flex-1 items-start gap-3">
+			@typeIconTile(r.UI.Icon, r.UI.Color)
+			<div class="min-w-0 flex-1">
+				@objectsObjectMeta(r)
+				<div class="truncate text-sm font-medium">{ r.Label }</div>
+				<div class="mt-1 flex flex-wrap items-center gap-1">
+					if !unified {
+						if r.Status != "" {
+							@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
+								Size:  ui.BadgeSizeXS,
+								Dot:   true,
+								Attrs: templ.Attributes{"data-status": r.Status},
+							})
+						}
+						if r.EmbeddingLabel != "" {
+							@ui.Badge(ui.BadgeProps{Label: r.EmbeddingLabel, Variant: r.EmbeddingVariant, Size: ui.BadgeSizeXS})
+						}
+					}
+					for _, l := range firstLabels(r.Labels, 2) {
+						@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+					}
+				</div>
+			</div>
+			@ui.IconSpan("lucide--chevron-right", "mt-2 size-4 shrink-0 text-muted-faint")
+		</a>
+	</div>
+}
+
+// objectsBrowserFooter sits below the table: the sort note on the left and the
+// cursor-pagination trigger on the right. #objects-load-more is the OOB swap
+// target the /objects/partial response replaces when a page is appended.
+templ objectsBrowserFooter(data objectsPageData) {
+	<div class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
+		<span class="text-muted-faint inline-flex items-center gap-1.5 text-xs">
+			if data.Query != "" {
+				// Search hits are relevance-ranked; claiming a created_at order
+				// there would state something the result set does not honour.
+				@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0")
+				Best match first
+			} else if objectsSortDir(data) == "asc" {
+				@ui.IconSpan("lucide--arrow-up", "size-3.5 shrink-0")
+				Oldest first
+			} else {
+				@ui.IconSpan("lucide--arrow-down", "size-3.5 shrink-0")
+				Newest first
+			}
+		</span>
+		<div id="objects-load-more">
+			if data.HasMore {
+				@objectsBrowserLoadMoreButton(data)
+			}
+		</div>
+	</div>
+}
+
+// objectsBrowserLoadMoreButton is the cursor-pagination trigger. In the gallery
+// preview the wiring is suppressed (the preview has no backend), so the button
+// renders as a static visual sample.
+templ objectsBrowserLoadMoreButton(data objectsPageData) {
+	{{
+		var attrs templ.Attributes
+		if !data.Preview {
+			attrs = templ.Attributes{
+				"hx-get":    objectsPartialURL(data),
+				"hx-target": "#objects-list",
+				"hx-swap":   "beforeend",
+			}
+		}
+	}}
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonOutline,
+		Size:       ui.ButtonSM,
+		Icon:       "lucide--chevron-down",
+		ExtraClass: "gap-2 px-5",
+		Attrs:      attrs,
+	}) {
+		Load more
+	}
+}
+
+// objectsBrowserRowsPartial is the HTMX fragment returned by /objects/partial:
+// the next page's rows (appended to #objects-list), the same page's mobile cards
+// (appended to #objects-mobile-list — the table is hidden on small screens, so
+// paginating only the table would load rows a phone cannot see), and a
+// replacement load-more slot.
+templ objectsBrowserRowsPartial(data objectsPageData) {
+	{{
+		search := data.Query != ""
+		unified := search && data.Mode == "unified"
+		rows := objectsBrowserRows(data)
+	}}
+	for _, r := range rows {
+		@objectsBrowserRow(r, search, unified)
+	}
+	<div id="objects-mobile-list" hx-swap-oob="beforeend">
+		for _, r := range rows {
+			@objectsBrowserMobileRow(r, unified)
+		}
+	</div>
+	<div id="objects-load-more" hx-swap-oob="true">
+		if data.HasMore {
+			@objectsBrowserLoadMoreButton(data)
+		}
+	</div>
+}
+
+// objectsKnowledgeAnswer renders a grounded answer as sanitized markdown using
+// the shared .memory-md prose styles, with the conversation id as a muted
+// caption when the stream reported one. It is the HTMX response the "Ask the
+// graph" dialog swaps into #objects-knowledge-answer.
+templ objectsKnowledgeAnswer(answer, sessionID string) {
+	@components.PanelCard("memory-rise", nil, "p-4") {
+		<div class="mb-2 flex items-center gap-2">
+			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
+			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
+		</div>
+		<div class="memory-md text-sm leading-relaxed">
+			@templ.Raw(renderMarkdown(answer))
+		</div>
+		if sessionID != "" {
+			<p class="text-muted-faint mt-3 border-t border-base-content/10 pt-2 font-mono text-[11px]">Session { sessionID }</p>
+		}
+	}
+}
+
+// objectsKnowledgeError renders the inline error state for a failed Q&A.
+templ objectsKnowledgeError(err error) {
+	<div class="border-error/25 bg-error/10 text-error rounded-box flex items-center gap-2 border px-3 py-2 text-sm" role="alert">
+		@ui.IconSpan("lucide--triangle-alert", "size-4 shrink-0")
+		<span>Could not get an answer. Try again in a moment.</span>
+	</div>
+}
+
+// objectsAgentHeader is the agent-scoped objects view's header: a breadcrumb
+// back through the agent, with the provenance-scoped subtitle.
+templ objectsAgentHeader(data objectsPageData) {
+	@detailHeader(
+		crumbsActive(nav.Crumbs("Agents", "/agents", data.AgentName, "/agents/"+url.PathEscape(data.AgentID), "Objects")),
+		"",
+		"Objects",
+		objectsScopeDescription(data.AgentName),
+		detailHeaderOpts{Margin: "mb-6"},
+	)
+}
+
+// objectsBrowserBulkBar is the grouped action bar for the current selection:
+// label/status edits and soft delete. It is pinned to the viewport bottom while
+// rows are selected, so actions stay reachable without scrolling back to a
+// toolbar. The count comes from the Alpine model on the page root.
+templ objectsBrowserBulkBar() {
+	<div id="objects-bulk-bar" data-testid="objects-bulk-bar" x-show="count > 0" style="display: none" class="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4 print:hidden">
+		<div class="border-base-content/10 bg-base-100 shadow-xl rounded-box flex flex-wrap items-center gap-1.5 border px-3 py-2 sm:px-4">
+			<span class="px-1 text-sm font-medium">
+				<span x-text="count" class="tabular-nums"></span>
+				selected
+			</span>
+			<div class="bg-base-content/10 mx-1 h-5 w-px" aria-hidden="true"></div>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--tag",
+				Attrs:   templ.Attributes{"onclick": "MemoryApp.openDialog('objects-bulk-label-add-dialog')"},
+			}) {
+				Add label
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--tag",
+				Attrs:   templ.Attributes{"onclick": "MemoryApp.openDialog('objects-bulk-label-remove-dialog')"},
+			}) {
+				Remove label
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--circle-dot-dashed",
+				Attrs:   templ.Attributes{"onclick": "MemoryApp.openDialog('objects-bulk-status-dialog')"},
+			}) {
+				Set status
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeButton,
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Icon:       "lucide--trash-2",
+				ExtraClass: "text-error hover:bg-error/10",
+				Attrs:      templ.Attributes{"onclick": "MemoryApp.openDialog('objects-bulk-delete-dialog')"},
+			}) {
+				Delete
+			}
+			<div class="bg-base-content/10 mx-1 h-5 w-px" aria-hidden="true"></div>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--x",
+				Attrs:   templ.Attributes{"@click": "clear()", "aria-label": "Clear selection"},
+			}) {
+				Clear
+			}
+		</div>
+	</div>
+}
+
+// objectsBrowserBulkDialogs renders the four bulk action dialogs. Each dialog
+// owns its own <form> — one shared form would make HTML constraint validation
+// apply to every dialog's controls, including the closed ones, so an empty
+// required field in the Add-label dialog would silently block Delete, and the
+// identically named label fields would collide. Selection reaches the handler as
+// one comma-separated `ids` value kept in sync by the Alpine model, so the table
+// rows never nest inside a form and htmx-appended rows need no re-registration.
+templ objectsBrowserBulkDialogs(data objectsPageData) {
+	{{ action := objectsBulkAction(data) }}
+	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-label-add-dialog", BoxClass: "max-w-md"}) {
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
+			@objectsBulkFormFields(data, "label_add")
+			@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
+				Add label
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-1"}) {
+				The label is added to every selected object. Existing labels are kept.
+			}
+			<label class="flex flex-col gap-1">
+				<span class="text-xs font-medium">Label</span>
+				<input type="text" name="label" class="input input-sm w-full" placeholder="e.g. needs-review" autocomplete="off" required/>
+			</label>
+			<div class="modal-action">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Attrs: templ.Attributes{"data-dialog-close": "true"}}) {
+					Cancel 
+				}
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
+					Add label
+				}
+			</div>
+		</form>
+	}
+	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-label-remove-dialog", BoxClass: "max-w-md"}) {
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
+			@objectsBulkFormFields(data, "label_remove")
+			@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
+				Remove label
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-1"}) {
+				The label is removed from every selected object that carries it.
+			}
+			<label class="flex flex-col gap-1">
+				<span class="text-xs font-medium">Label</span>
+				<input type="text" name="label" class="input input-sm w-full" placeholder="e.g. needs-review" autocomplete="off" required/>
+			</label>
+			<div class="modal-action">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Attrs: templ.Attributes{"data-dialog-close": "true"}}) {
+					Cancel 
+				}
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
+					Remove label
+				}
+			</div>
+		</form>
+	}
+	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-status-dialog", BoxClass: "max-w-md"}) {
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
+			@objectsBulkFormFields(data, "status")
+			@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
+				Set status
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-1"}) {
+				Options are the statuses every selected type declares. Types without a workflow cannot take a status.
+			}
+			<label class="flex flex-col gap-1">
+				<span class="text-xs font-medium">Status</span>
+				<select name="status" class="select select-sm w-full" required :disabled="!statusActionable">
+					<option value="" disabled selected>Pick a status…</option>
+					<template x-for="s in statusOptions" :key="s">
+						<option :value="s" x-text="s"></option>
+					</template>
+				</select>
+			</label>
+			<p x-show="!statusActionable" class="text-warning text-xs" data-testid="objects-bulk-status-unavailable">
+				The selected objects' types declare no common workflow status, so bulk Set status is unavailable.
+			</p>
+			<div class="modal-action">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Attrs: templ.Attributes{"data-dialog-close": "true"}}) {
+					Cancel 
+				}
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Attrs: templ.Attributes{":disabled": "!statusActionable"}}) {
+					Set status
+				}
+			</div>
+		</form>
+	}
+	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-delete-dialog", BoxClass: "max-w-md"}) {
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
+			@objectsBulkFormFields(data, "delete")
+			<div class="flex items-start gap-3">
+				@ui.IconTile("lucide--trash-2", ui.IconTileProps{Tone: "error"})
+				<div class="min-w-0">
+					@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
+						Delete
+						<span x-text="count" class="tabular-nums"></span>
+						selected?
+					}
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						Selected objects are removed from the browser. Branch history keeps the versions, so a deleted object can be restored from its branch.
+					}
+				</div>
+			</div>
+			<div class="modal-action">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Attrs: templ.Attributes{"data-dialog-close": "true"}}) {
+					Cancel 
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeSubmit,
+					Variant:    ui.ButtonError,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "gap-2",
+				}) {
+					Delete selected
+				}
+			</div>
+		</form>
+	}
+}
+
+// objectsBulkFormFields is the per-dialog hidden prefix: the selected ids as one
+// comma-separated value (kept in sync by the Alpine model), the action the
+// handler dispatches on, the branch the page is filtered to, and the filtered
+// page to return to. Every bulk dialog carries its own copy so each submits as
+// an independent form.
+//
+// `branch` is not decoration: delete resolves the object on that branch, and
+// without it the endpoint removes the MAIN head while the branch-scoped list
+// still shows the object.
+templ objectsBulkFormFields(data objectsPageData, actionValue string) {
+	<input type="hidden" name="ids" :value="sel.join(',')"/>
+	<input type="hidden" name="action" value={ actionValue }/>
+	<input type="hidden" name="branch" value={ data.BranchID }/>
+	<input type="hidden" name="back" value={ objectsBulkBackURL(data) }/>
+}
+
+// objectsBrowserKnowledgeDialog is the "Ask the graph" Q&A, moved off the page
+// body and behind a header button: it is an occasional tool, not permanent page
+// chrome. The answer still swaps into #objects-knowledge-answer.
+templ objectsBrowserKnowledgeDialog(data objectsPageData) {
+	{{
+		action := "/objects/knowledge"
+		if data.Preview {
+			action = "#"
+		}
+		var formAttrs templ.Attributes
+		if !data.Preview {
+			formAttrs = templ.Attributes{
+				"hx-post":   "/objects/knowledge",
+				"hx-target": "#objects-knowledge-answer",
+				"hx-swap":   "innerHTML",
+			}
+		}
+	}}
+	@ui.Dialog(ui.DialogProps{ID: "objects-knowledge-dialog", BoxClass: "max-w-2xl"}) {
+		<div class="flex items-start gap-3">
+			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
+			<div class="min-w-0">
+				@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
+					Ask the graph 
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+					Ask a question in plain language. The answer is grounded in the objects memory has stored.
+				}
+			</div>
+		</div>
+		<form class="mt-4 flex flex-col gap-3" action={ templ.URL(action) } { formAttrs... } { objectsPreviewGuards(data.Preview)... }>
+			<textarea id="objects-knowledge-question" name="question" rows="4" placeholder="Ask a question about your knowledge graph…" class="textarea w-full" autocomplete="off" aria-label="Ask the graph"></textarea>
+			if data.BranchID != "" {
+				<input type="hidden" name="branch" value={ data.BranchID }/>
+			}
+			<div class="flex flex-wrap items-center gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--messages-square",
+				}) {
+					Ask
+				}
+				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+				<span class="text-muted-faint text-xs">Answers can take a few seconds.</span>
+			</div>
+		</form>
+		<div id="objects-knowledge-answer" class="mt-3"></div>
+	}
+}

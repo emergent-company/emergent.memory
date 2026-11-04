@@ -1,0 +1,83 @@
+name: session-message-types
+version: 1.0.0
+description: >
+  Built-in conversation primitives: Session and Message types for storing agent
+  interactions. A Session groups an ordered sequence of Messages via the
+  has_message relationship (Session -> Message).
+
+objectTypeSchemas:
+  - name: Session
+    label: Session
+    description: A conversation session storing a sequence of messages
+    properties:
+      title:
+        type: string
+        description: Title or name for this session
+      started_at:
+        type: string
+        title: Started
+        format: date-time
+        description: When the session started
+      ended_at:
+        type: string
+        title: Ended
+        format: date-time
+        description: When the session ended (optional)
+      message_count:
+        type: integer
+        title: Messages
+        description: Number of messages in this session
+        default: 0
+      summary:
+        type: string
+        description: A summary of the session content (optional)
+      agent_version:
+        type: string
+        title: Agent version
+        description: Version of the agent that ran this session (optional)
+    required:
+      - title
+
+  - name: Message
+    label: Message
+    description: A single message within a conversation session
+    properties:
+      role:
+        type: string
+        enum:
+          - user
+          - assistant
+          - system
+        description: The role of the message author
+      content:
+        type: string
+        description: The text content of the message
+        x-embedding-target: true
+      sequence_number:
+        type: integer
+        title: Sequence
+        description: Order of this message within the session (1-indexed)
+      timestamp:
+        type: string
+        format: date-time
+        description: When the message was created
+      token_count:
+        type: integer
+        title: Tokens
+        description: Number of tokens in the message (optional)
+      tool_calls:
+        type: array
+        title: Tool calls
+        description: Tool calls made in this message (optional)
+        items:
+          type: object
+    required:
+      - role
+      - content
+      - sequence_number
+
+relationshipTypeSchemas:
+  - name: has_message
+    description: Links a Session to its Messages in order
+    sourceType: Session
+    targetType: Message

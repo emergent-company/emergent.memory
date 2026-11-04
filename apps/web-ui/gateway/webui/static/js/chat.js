@@ -1,0 +1,2816 @@
+/* Memory web UI — chat page client.
+   Streaming (fetch + ReadableStream over /api/chat SSE), conversation
+   persistence (?c= URL param, conversationId threaded back into turns), and
+   the resumable session rail (past conversations from /api/conversations,
+   transcripts from /api/conversations/{id}/history).
+
+   The shell re-renders #chat-root on HTMX sidebar swaps, so init() is
+   re-runnable: it binds to the fresh DOM and aborts any in-flight stream. */
+(function () {
+  "use strict";
+
+  /* Scoped-path helper for JS-built URLs. app.js defines window.MemoryScope on
+     the shell; fall back to the raw path when this script is loaded standalone
+     (the hermetic js-dom specs) or app.js is absent, so a missing global never
+     throws a ReferenceError. */
+  function scopedPath(p) {
+    return window.MemoryScope && typeof window.MemoryScope.path === "function"
+      ? window.MemoryScope.path(p)
+      : p;
+  }
+
+  /* Report an error to Sentry when the browser SDK is active (gated on
+     window.Sentry, present only when the loader was injected because a
+     Sentry DSN is configured). No-op otherwise. */
+  function captureError(err) {
+    if (window.Sentry && err) window.Sentry.captureException(err);
+  }
+
+  /* Report an unexpected failure, but stay quiet for expected transient
+     memory outages (brief restart / 502-504): those still surface as an error
+     toast and a local console.warn, just not as Sentry events. The
+     classification lives in the shared MemoryChatHost helper (chat-host.js is
+     loaded globally in ui.templ alongside this file). */
+  function reportError(err, context) {
+    var transient = false;
+    var host = window.MemoryChatHost;
+    if (host && typeof host.isTransientError === "function") {
+      transient = !!host.isTransientError(err);
+    }
+    if (transient) {
+      console.warn("chat: " + context + " (transient, not reported):", err);
+      return;
+    }
+    captureError(err || new Error(context || "unknown error"));
+  }
+
+  var root = null, log = null, messages = null, empty = null;
+  var input = null, sendBtn = null, stopBtn = null, agentSelect = null;
+  var agentFilterSelect = null;
+  var originFilterSelect = null;
+  var includeArchivedEl = null;
+  var filterAgent = "";   // session rail agent filter ("" = all agents)
+  var filterOrigin = "";  // session rail origin filter ("" = all types)
+  var filterIncludeArchived = false; // rail "Include archived" filter (server-side query)
+  var deleteSessionId = "";          // session pending the delete confirmation
+  var selectionMode = false;         // bulk-selection mode (#1385): row checkboxes + footer bar
+  var selectedSessions = {};         // session id -> true, the checked set while selecting
+  var bulkBusy = false;              // a bulk archive is in flight (footer button disabled)
+  var archivePendingIds = {};        // session id -> true, optimistic archive in flight (#1419 review)
+  var expandedSubchats = {};         // group root id -> true, sub-chat rows expanded
+  var aborter = null;
+  var eventSource = null;   // SSE live-update channel for the active conversation/run
+  var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
+  var streaming = false;    // turn-busy flag: composer stop, queue-on-send, rail "Running"
+  var liveTurn = false;     // THIS page is DOM-owning a live /api/chat stream (raised in openAssistantBubble, cleared at turn teardown)
+  var bubble = null;        // current streaming assistant bubble
+  var bubbleHTML = "";      // accumulated assistant rendered HTML (snapshot)
+  var bubbleText = "";      // accumulated raw token deltas (pre-snapshot)
+  var conversationId = "";  // threaded back into /api/chat turns
+  var activeRunId = "";     // scheduled-run transcript open in the pane ("" = conversation/fresh chat)
+  var transcriptRefreshPending = false; // one history re-render at a time
+  var replayFrames = [];    // active run's open thinking + running-tool frames (live_replay)
+  var transcriptReady = false; // persisted history rendered at least once for this scope
+
+  // chatDebugEnabled's URL half, captured ONCE at script init. updateUrl()
+  // normalizes the /chat URL (rewritten to /chat or /chat?c=<id>) when a
+  // conversation/run is resumed, which would strip `?debug` before the
+  // transcript rendered — so the advertised URL switch silently did nothing
+  // (#1416). Snapshot it here, before any resume can rewrite the URL. The
+  // window.MemoryChatDebug switch stays read live (a console/test harness sets
+  // it after load), so it is deliberately NOT captured.
+  var debugParam = (function () {
+    try {
+      var params = new URLSearchParams(window.location.search || "");
+      if (params.has("debug")) {
+        var v = params.get("debug");
+        return v === "" || v === "1" || v === "true";
+      }
+    } catch (e) {
+      /* URLSearchParams unavailable — treat as debug off. */
+    }
+    return false;
+  })();
+
+  // --- agentic run-control state ---
+  var liveRunId = "";       // active run id (refresh payload runId / newest run lifecycle item)
+  var liveRunStatus = "";   // active run status (submitted/working/input-required/failed/…)
+  var liveBucket = "";      // derived run bucket from the refresh payload
+  var railFingerprint = ""; // last refresh-derived rail state — avoids redundant rail fetches
+  var lastTimelineRun = { status: "", ended: false }; // newest run in the rendered transcript
+  var queueStore = {};      // conversationId -> {items:[{id,text}], armed:bool}
+  var mounts = {};          // created mount points: queue, todos, status
+
+  // Session rail width: single source of truth is the shared resize grip
+  // (chat-host.js), applied as an inline style.width on #chat-rail (beats the
+  // md:w-72 default). Dragging the right-edge grip overrides it; the value
+  // survives reloads.
+  var rail = null, railResizeHandle = null;
+  var railGrip = MemoryChatHost.createResizeGrip({
+    handle: null, // assigned in init() once #chat-rail-resize is resolved
+    el: rail,
+    storageKey: "memory.chat.rail.width.v1",
+    defaultWidth: 288, // 18rem — matches the rail's md:w-72 default
+    minWidth: 200,     // narrowest the session list can go
+    maxWidthFn: function () { return Math.min(window.innerWidth - 48, 560); },
+    direction: 1,
+    apply: function (w) {
+      if (!rail) return;
+      if (window.innerWidth >= 768) rail.style.width = w + "px";
+      else rail.style.width = "";
+    },
+  });
+
+  // Composer helpers (scrollToBottom / hideEmpty / setStreaming) come from the
+  // shared MemoryChatHost module, bound to this page's live elements. The
+  // getters return the current DOM node/state, so they survive the shell
+  // re-rendering #chat-root on HTMX swaps.
+  var composer = MemoryChatHost.createComposer({
+    getLog: function () { return log; },
+    getEmpty: function () { return empty; },
+    getSendBtn: function () { return sendBtn; },
+    getStopBtn: function () { return stopBtn; },
+    getStreaming: function () { return streaming; },
+    setStreaming: function (v) { streaming = v; },
+  });
+  var scrollToBottom = composer.scrollToBottom;
+  var hideEmpty = composer.hideEmpty;
+  var setStreaming = composer.setStreaming;
+
+  // Shared badge/thinking renderers (chat-components.js) take a context object
+  // instead of reaching into this IIFE. The getter keeps the live #chat-messages
+  // element; hideEmpty/scrollToBottom come from the composer above.
+  var badgeCtx = {
+    get messages() { return messages; },
+    hideEmpty: hideEmpty,
+    scrollToBottom: scrollToBottom,
+  };
+
+  // SSE dispatcher from the shared MemoryChatHost module. The meta frame is
+  // page-local (rail refresh + URL), and the thinking frame is chat-only
+  // (onThinking). railHas / updateUrl / refreshSessionRail are hoisted function
+  // declarations. handleThinkingEvent is bound later (`var thinking.handle`), so
+  // onThinking forwards through a closure — capturing the var directly here
+  // would pin its hoisted `undefined` and silently drop every live frame.
+  var handleEvent = MemoryChatHost.makeHandleEvent({
+    getStreaming: function () { return streaming; },
+    setBubbleHTML: function (v) { bubbleHTML = v; },
+    updateBubbleText: function () { updateBubbleText(); },
+    scrollToBottom: scrollToBottom,
+    handleToolEvent: function (evt) { handleToolEvent(evt); },
+    // Pending questions/approvals always render inline in the transcript as an
+    // agent bubble (renderQuestion/renderApproval, shared with the side panel).
+    renderQuestion: function (evt) {
+      renderQuestion(evt);
+    },
+    renderApproval: function (evt) {
+      renderApproval(evt);
+    },
+    renderUI: function (evt) {
+      stream.noteUISurface();
+      MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
+    },
+    // Grounded citations for the live turn (emitted before `done`): mount the
+    // Sources block under the in-progress assistant bubble. The next transcript
+    // refresh re-attaches the same block from the persisted history item.
+    onCitations: function (list) {
+      if (bubble) MemoryChatComponents.attachSources(bubble, list);
+    },
+    failStream: function (msg) { failStream(msg); },
+    onToken: function (evt) { appendToken(evt.token); },
+    onThinking: function (evt) { handleThinkingEvent(evt); },
+    onMeta: function (evt) {
+      if (evt.conversationId) {
+        // A brand-new conversation (id not yet in the rail) should appear
+        // in the session list immediately — no full reload needed.
+        var isNew = evt.conversationId !== conversationId && !railHas(evt.conversationId);
+        var prevId = conversationId;
+        conversationId = evt.conversationId;
+        // A message parked on a brand-new (id-less) conversation moves with it
+        // once the server assigns the id, so it is never stranded or delivered
+        // to another conversation.
+        var newKey = newChatQueueKey();
+        if (!prevId && queueStore[newKey]) {
+          queueStore[conversationId] = queueStore[newKey];
+          delete queueStore[newKey];
+          try { localStorage.removeItem("memory.chat.queue.v1." + newKey); } catch (e) {}
+          persistQueue();
+          renderQueue();
+        }
+        updateUrl();
+        if (isNew) refreshSessionRail();
+        // A brand-new conversation has an id now, so subscribe it to the
+        // durable push channel (the one-shot turn stream ends when the run
+        // pauses). openLiveStream dedupes an already-watched id, so a turn on
+        // an existing conversation does not stack a second source.
+        openConversationStream(evt.conversationId);
+      }
+    },
+  });
+
+  // Shared streaming engine (chat-stream.js) context: the engine reads/writes
+  // page state through these getters/setters so it survives re-binding, and
+  // calls back into page-local functions (answerQuestion/postDecision/
+  // handleEvent) that are intentionally different from the side panel's.
+  var streamCtx = {
+    get messages() { return messages; },
+    get log()      { return log; },
+    get empty()    { return empty; },
+    get input()    { return input; },
+    get streaming()  { return streaming; },  set streaming(v)  { streaming = v; },
+    get aborter()    { return aborter; },    set aborter(v)    { aborter = v; },
+    get bubble()     { return bubble; },     set bubble(v)     { bubble = v; },
+    get bubbleHTML() { return bubbleHTML; }, set bubbleHTML(v) { bubbleHTML = v; },
+    get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
+    get conversationId() { return conversationId; },
+    currentAgent: currentAgent,
+    currentAgentName: currentAgentName,
+    currentAgentUI: currentAgentUI,
+    setStreaming: setStreaming,
+    scrollToBottom: scrollToBottom,
+    hideEmpty: hideEmpty,
+    // Raised by the engine from openAssistantBubble on EVERY live turn start
+    // (send / answer / inline decision / inline approval): this page now owns the
+    // turn's DOM, so history renders and refresh re-renders must stand down.
+    // The side panel omits this hook and is unaffected.
+    onLiveTurnStart: function () { liveTurn = true; },
+    onStreamStart: function () {
+      clearThinking();
+      // Repaint immediately so the active row shows "Running" on every turn —
+      // not just turn 1 of a brand-new conversation (whose only repaint came
+      // from the meta→isNew rail refresh). Idempotent; the end/failure paths
+      // below clear it.
+      applyRailBadges();
+    },
+    onStreamFinish: finishTurn,
+    onStreamFail: function () {
+      finalizeThinking();
+      // The failure path never reaches finishTurn, so DOM ownership must be
+      // released here too.
+      liveTurn = false;
+      // A failed turn must clear the optimistic "Running" badge: the failure
+      // path never runs finishTurn, so re-pull the rail to show the server's
+      // authoritative bucket (done/failed) instead of a stuck spinner.
+      if (conversationId) refreshSessionRail();
+    },
+    answerQuestion: answerQuestion,
+    postDecision: postDecision,
+    badgeCtx: badgeCtx,
+    // The turn's run id, once the page knows it (the refresh payload names it
+    // before the turn settles). Keys the reader's open/closed choice on a tool
+    // run so the history render that replaces the live DOM keeps it.
+    currentRunId: function () { return liveRunId; },
+    handleEvent: handleEvent,
+  };
+
+  var stream = MemoryChatStream.createEngine(streamCtx);
+  var addUserMessage = stream.addUserMessage;
+  var addAssistantMessage = stream.addAssistantMessage;
+  // Page-local wrapper: opening the live streaming bubble takes over the turn,
+  // so any mid-run "working" placeholder planted by a history render is torn
+  // down first. Every page-side open (send / answer / decision / debug) routes
+  // through here; the engine's internal approval-gate open is covered by the
+  // clearHeaderStatus teardown that follows every decision.
+  var openAssistantBubble = function () {
+    removeWorkingPlaceholder();
+    return stream.openAssistantBubble();
+  };
+  var updateBubbleText = stream.updateBubbleText;
+  var appendToken = stream.appendToken;
+  var toolChip = stream.toolChip;
+  var setToolStatus = stream.setToolStatus;
+  var handleToolEvent = stream.handleToolEvent;
+  var renderQuestion = stream.renderQuestion;
+  var renderApproval = stream.renderApproval;
+  var renderHistoryQuestion = stream.renderHistoryQuestion;
+  var streamChat = stream.streamChat;
+  var finishStream = stream.finishStream;
+  var failStream = stream.failStream;
+  var autoGrow = stream.autoGrow;
+  var escapeHTML = MemoryChatStream.escapeHTML;
+  var normalizeStatus = MemoryChatStream.normalizeStatus;
+  var hasFailureSignal = MemoryChatStream.hasFailureSignal;
+  var firstError = MemoryChatStream.firstError;
+  var summarizeOutput = MemoryChatStream.summarizeOutput;
+  var classifyTool = MemoryChatStream.classifyTool;
+  var relTime = MemoryChatStream.relTime;
+  var isPauseNotice = MemoryChatStream.isPauseNotice;
+  var isResumePrompt = MemoryChatStream.isResumePrompt;
+  var isThinkingMessage = MemoryChatStream.isThinkingMessage;
+  var stripContextPreamble = MemoryChatStream.stripContextPreamble;
+  var notify = MemoryChatStream.notify;
+
+  function init() {
+    root = document.getElementById("chat-root");
+    if (!root || root.dataset.ready === "1") return;
+    root.dataset.ready = "1";
+
+    log = document.getElementById("chat-log");
+    messages = document.getElementById("chat-messages");
+    empty = document.getElementById("chat-empty");
+    input = document.getElementById("chat-input");
+    sendBtn = document.getElementById("chat-send");
+    stopBtn = document.getElementById("chat-stop");
+    agentSelect = document.getElementById("chat-agent");
+    agentFilterSelect = document.getElementById("chat-agent-filter");
+    originFilterSelect = document.getElementById("chat-origin-filter");
+    includeArchivedEl = document.getElementById("chat-include-archived");
+
+    // Seed the sub-chat group model before any filter pass; the server-rendered
+    // rail already has the initial collapsed/expanded classes.
+    initSubchats();
+
+    // Dedicated read-only run-transcript page: no composer, no session rail,
+    // no agent picker. Render the run's history through the exact shared
+    // timeline path and stop — all composer/rail/input wiring below is for the
+    // /chat page and would no-op (or worse) on this shell. renderRunHistory is
+    // a hoisted declaration, and currentAgentName() falls back to "Memory"
+    // when #chat-agent is absent.
+    if (root.dataset.run) {
+      activeRunId = root.dataset.run;
+      // Subscribe to the run's live push channel too: this standalone page
+      // freezes just like the in-workspace transcript otherwise. Same
+      // teardown rules as the /chat surface (openLiveStream closes any other
+      // scope before opening this one).
+      openRunStream(activeRunId);
+      renderRunHistory(activeRunId);
+      return;
+    }
+
+    // session rail drag-to-resize: bind to the fresh #chat-rail-resize (the
+    // shell re-renders #chat-root, so this re-runs on each swap). The rail is
+    // independent of the composer, so wire it before the form guard below.
+    rail = document.getElementById("chat-rail");
+    railResizeHandle = document.getElementById("chat-rail-resize");
+    railGrip.handle = railResizeHandle;
+    if (railResizeHandle) {
+      railResizeHandle.addEventListener("pointerdown", railGrip.onPointerDown);
+    }
+    railGrip.init();
+
+    var form = document.getElementById("chat-form");
+    if (!form || !input || !sendBtn) return;
+
+    // resume target from the server-rendered ?c= param
+    conversationId = root.getAttribute("data-conv") || "";
+
+    form.addEventListener("submit", onSend);
+
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      // Cmd/Ctrl+Enter always queues, even when idle — the unambiguous way to
+      // park a follow-up without changing what Enter means.
+      if (ev.metaKey || ev.ctrlKey) {
+        ev.preventDefault();
+        enqueueFromInput();
+        return;
+      }
+      if (ev.shiftKey) return; // newline
+      ev.preventDefault();
+      // Enter follows the turn state: send when idle, queue while running.
+      if (streaming) enqueueFromInput();
+      else if (input.value.trim()) form.requestSubmit();
+    });
+
+    input.addEventListener("input", autoGrow);
+    autoGrow();
+
+    if (stopBtn) {
+      stopBtn.addEventListener("click", function () {
+        stopTurn();
+      });
+    }
+
+    if (agentSelect) {
+      agentSelect.addEventListener("change", function () {
+        resetConversation();
+        updateModelWarning();
+        updateChatHeader();
+      });
+    }
+
+    // session rail agent filter: hide rows for other agents, and surface a
+    // dedicated empty state when the active filter matches nothing.
+    if (agentFilterSelect) {
+      agentFilterSelect.addEventListener("change", function () {
+        filterAgent = agentFilterSelect.value;
+        applyAgentFilter();
+      });
+    }
+
+    // session rail origin filter (manual / scheduled / all): combined with
+    // the agent filter in applyAgentFilter.
+    if (originFilterSelect) {
+      originFilterSelect.addEventListener("change", function () {
+        filterOrigin = originFilterSelect.value;
+        applyAgentFilter();
+      });
+    }
+
+    // session rail "Include archived" filter: archived rows are excluded by the
+    // server by default, so toggling this re-fetches the rail with the
+    // includeArchived param rather than filtering the DOM.
+    if (includeArchivedEl) {
+      includeArchivedEl.addEventListener("change", function () {
+        filterIncludeArchived = !!includeArchivedEl.checked;
+        refreshSessionRail();
+      });
+    }
+
+    // Run-control surfaces. The mount points are created at runtime when
+    // chat.templ does not already provide them: #chat-queue inside the composer
+    // bar, #chat-todos in the transcript column, #chat-run-status in the header.
+    // Every helper degrades to a no-op when a mount is absent.
+    ensureQueueMount();
+    ensureTodosMount();
+    ensureHeaderStatus();
+    applyRailBadges();
+    renderQueue();
+
+    // session rail: resume a conversation (delegated, survives re-init)
+    root.addEventListener("click", function (ev) {
+      var t = ev.target.closest("[data-action]");
+      if (!t) return;
+      if (t.getAttribute("data-action") === "resume-session") {
+        var id = t.getAttribute("data-id");
+        var agent = t.getAttribute("data-agent") || "";
+        if (selectionMode) {
+          // Selection mode repurposes a row click: toggle its checkbox
+          // instead of resuming the conversation.
+          if (id) setSessionSelected(id, !selectedSessions[id]);
+        } else if (id) {
+          closeSessionRail();
+          resumeConversation(id, agent, t);
+        }
+      } else if (t.getAttribute("data-action") === "open-run") {
+        // scheduled run rows open the run's transcript as a normal chat
+        // session in this workspace (runs are not resumable /api/chat
+        // conversations, but their history renders with the same item shape).
+        var runId = t.getAttribute("data-id");
+        if (runId) {
+          closeSessionRail();
+          resumeRun(runId, t);
+        }
+      } else if (t.getAttribute("data-action") === "open-share") {
+        // owner-shared session rows open a read-only transcript on a separate
+        // page (they are not resumable in this workspace).
+        var shareId = t.getAttribute("data-share-id");
+        if (shareId) {
+          window.location.href = scopedPath("/share-sessions/" + encodeURIComponent(shareId));
+        }
+      } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
+        toggleSessionRail();
+      } else if (t.getAttribute("data-action") === "session-menu") {
+        // The row action menu opens via the go-daisy popover runtime. The
+        // delegated closest("[data-action]") above resolves to the innermost
+        // action, so a click on the menu button is seen as "session-menu" and
+        // deliberately does nothing here; the enclosing row's resume-session
+        // action never fires. No stopPropagation is involved.
+      } else if (t.getAttribute("data-action") === "toggle-session-select") {
+        toggleSelectionMode();
+      } else if (t.getAttribute("data-action") === "select-session") {
+        // The native checkbox has already flipped its checked state; mirror it.
+        setSessionSelected(t.getAttribute("data-id"), !!t.checked);
+      } else if (t.getAttribute("data-action") === "select-all-sessions") {
+        selectAllSessions(!!t.checked);
+      } else if (t.getAttribute("data-action") === "toggle-subchats") {
+        toggleSubchats(t.getAttribute("data-subchat-group"));
+      } else if (t.getAttribute("data-action") === "bulk-archive-sessions") {
+        bulkArchiveSelected();
+      } else if (t.getAttribute("data-action") === "archive-session") {
+        archiveSession(t.getAttribute("data-id"));
+      } else if (t.getAttribute("data-action") === "unarchive-session") {
+        unarchiveSession(t.getAttribute("data-id"));
+      } else if (t.getAttribute("data-action") === "delete-session") {
+        openDeleteSessionConfirm(t.getAttribute("data-id"), t.getAttribute("data-title"));
+      } else if (t.getAttribute("data-action") === "close-delete-session") {
+        closeDeleteSessionDialog();
+      }
+    });
+
+    // The confirm button lives in the delete dialog (inside #chat-root), so a
+    // root-scoped listener survives the fresh bind on each swap without
+    // stacking document-level handlers.
+    root.addEventListener("click", function (ev) {
+      if (ev.target && ev.target.id === "chat-delete-confirm-go") confirmDeleteSession();
+    });
+
+    // tool badges expand inline via their own toggle button; the legacy side
+    // panel (openToolPanel) stays in the file but is no longer wired to chips.
+
+    // welcome-state suggestion chips fill the input
+    root.addEventListener("click", function (ev) {
+      var chip = ev.target.closest("[data-suggestion]");
+      if (!chip) return;
+      input.value = chip.getAttribute("data-suggestion");
+      input.focus();
+      autoGrow();
+    });
+
+    // deep link / refresh on an active conversation → load its transcript
+    if (conversationId) {
+      resumeConversation(conversationId, "", null);
+    }
+
+    // merge deep link: ?agent=<id>&prompt=<msg> auto-sends the prompt once
+    // (init() is guarded by root.dataset.ready, so this never double-fires)
+    var prompt = root.getAttribute("data-prompt") || "";
+    if (prompt && !conversationId && agentSelect && agentSelect.value) {
+      input.value = prompt;
+      autoGrow();
+      form.requestSubmit();
+    }
+
+    // initial pre-send model-availability banner state for the selected agent
+    updateModelWarning();
+
+    // The shell re-renders #chat-root on swap; selectionMode is module-scoped
+    // and survives, so mirror it onto the fresh DOM here. Without this the new
+    // checkboxes/footer stay hidden and the toggle's aria-pressed resets while
+    // row clicks still act in selection mode (#1419 review).
+    pruneSelection();
+    applySelectionMode();
+  }
+
+  function currentAgent() {
+    return agentSelect ? agentSelect.value : "";
+  }
+
+  function currentAgentName() {
+    return agentSelect && agentSelect.selectedOptions.length
+      ? agentSelect.selectedOptions[0].textContent
+      : "Memory";
+  }
+
+  // currentAgentUI is the selected agent's declared appearance, read from the
+  // #chat-agent option's data-icon/data-color attributes (emitted by chat.templ
+  // from the agent's uiConfig). Empty strings mean "no appearance" so the
+  // shared bubbles fall back to the default bot avatar.
+  function currentAgentUI() {
+    var opt = agentSelect && agentSelect.selectedOptions.length ? agentSelect.selectedOptions[0] : null;
+    if (!opt) return { icon: "", color: "" };
+    return {
+      icon: opt.getAttribute("data-icon") || "",
+      color: opt.getAttribute("data-color") || "",
+    };
+  }
+
+  // Pre-send model-availability warning: mirror the selected #chat-agent
+  // option's data-warn (server-computed "model can't be served" message) into
+  // the #chat-model-warning banner, showing it only when a warning applies.
+  // No-op when either element is absent (e.g. run-transcript pages).
+  function updateModelWarning() {
+    var banner = document.getElementById("chat-model-warning");
+    var text = document.getElementById("chat-model-warning-text");
+    if (!banner || !text) return;
+    var warn = agentSelect && agentSelect.selectedOptions.length
+      ? (agentSelect.selectedOptions[0].getAttribute("data-warn") || "")
+      : "";
+    text.textContent = warn;
+    if (warn) {
+      banner.classList.remove("hidden");
+    } else {
+      banner.classList.add("hidden");
+    }
+  }
+
+  // headerIconClass resolves an agent's stored icon to a compiled iconify class
+  // (shared normalization with the chat bubbles). Empty means "render the icon
+  // value as a raw text glyph" (emoji / symbol); the caller then falls back to
+  // the bot class only when the icon is empty.
+  function headerIconClass(icon) {
+    var s = String(icon || "").trim();
+    if (!s) return "lucide--bot";
+    if (window.MemoryChatStream && MemoryChatStream.agentIconifyClass) {
+      return MemoryChatStream.agentIconifyClass(s, "") || "";
+    }
+    return "";
+  }
+
+  // renderHeaderIcon rebuilds the chat pane header's icon tile to match an
+  // agent's declared appearance. It mirrors agentIconTile (chat.templ): a
+  // framed square with the agent glyph, tinted via inline colors when a color
+  // is declared, else the neutral primary tone. Built with DOM nodes (never
+  // innerHTML) because the icon value is user/agent-authored.
+  function renderHeaderIcon(container, icon, color) {
+    var cls = headerIconClass(icon);
+    var frame = document.createElement("div");
+    frame.className = "grid size-9 shrink-0 place-items-center rounded-lg border";
+    if (color) {
+      frame.style.color = color;
+      frame.style.backgroundColor = "color-mix(in oklch," + color + " 10%,transparent)";
+      frame.style.borderColor = "color-mix(in oklch," + color + " 15%,transparent)";
+    } else {
+      frame.className += " bg-primary/10 text-primary border-primary/15";
+    }
+    var glyph = document.createElement("span");
+    glyph.setAttribute("aria-hidden", "true");
+    if (cls) {
+      glyph.className = "iconify " + cls + " size-4.5";
+    } else {
+      glyph.className = "shrink-0 leading-none text-lg";
+      glyph.textContent = String(icon || "");
+    }
+    frame.appendChild(glyph);
+    container.replaceChildren(frame);
+  }
+
+  // updateChatHeader mirrors the selected #chat-agent option's identity — icon,
+  // name, and short description — into the chat pane header, which the server
+  // renders for the active agent on first paint. The description is written
+  // with textContent (never innerHTML): it is user/agent-authored. No-op when
+  // the header mounts are absent (e.g. read-only run-transcript pages) or the
+  // picker has no selection (keep the server-rendered fallback).
+  function updateChatHeader() {
+    var titleEl = document.getElementById("chat-header-title");
+    var descEl = document.getElementById("chat-header-desc");
+    var iconEl = document.getElementById("chat-header-icon");
+    if (!titleEl && !descEl && !iconEl) return;
+    var opt = agentSelect && agentSelect.selectedOptions.length ? agentSelect.selectedOptions[0] : null;
+    if (!opt) return;
+    if (titleEl) titleEl.textContent = opt.textContent || "";
+    if (descEl) {
+      var desc = opt.getAttribute("data-description") || "";
+      descEl.textContent = desc;
+      descEl.classList.toggle("hidden", desc === "");
+    }
+    if (iconEl) {
+      renderHeaderIcon(iconEl, opt.getAttribute("data-icon") || "", opt.getAttribute("data-color") || "");
+    }
+  }
+
+  /* ---------- conversation persistence ---------- */
+
+  function updateUrl() {
+    var url = scopedPath("/chat");
+    var qs = [];
+    if (conversationId) qs.push("c=" + encodeURIComponent(conversationId));
+    // Preserve the transient debug switch across URL normalization so the
+    // advertised `?debug` link keeps working (and survives a refresh) after a
+    // conversation/run resume (#1416). Only re-emitted when the flag came from
+    // the URL — window.MemoryChatDebug stays console/test-only, never persisted.
+    if (debugParam) qs.push("debug=1");
+    if (qs.length) url += "?" + qs.join("&");
+    try { history.replaceState(null, "", url); } catch (e) {}
+  }
+
+  function resetConversation() {
+    closeLiveStream();
+    if (aborter) aborter.abort();
+    clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
+    conversationId = "";
+    activeRunId = "";
+    updateUrl();
+    clearActiveRailItem();
+    if (messages) messages.innerHTML = "";
+    bubble = null; bubbleHTML = ""; bubbleText = "";
+    if (empty) empty.classList.remove("hidden");
+    liveTurn = false;
+    setStreaming(false);
+    clearRunControlState();
+    clearTodos();
+    clearHeaderStatus();
+    renderQueue();
+  }
+
+  // On mobile the rail is a fixed overlay (see app.css) toggled via the
+  // "hidden" class; a matching backdrop sits behind it. Track the element that
+  // opened it so focus returns there on close. Desktop keeps the rail pinned
+  // (md:flex) and these helpers are no-ops for display purposes.
+  var railReturnFocus = null;
+
+  function isMobileRail() {
+    return window.matchMedia("(max-width: 767.98px)").matches;
+  }
+
+  function setSessionRail(open) {
+    var rail = document.getElementById("chat-rail");
+    var backdrop = document.getElementById("chat-rail-backdrop");
+    if (!rail) return;
+    var mobile = isMobileRail();
+    if (open) {
+      railReturnFocus = document.activeElement;
+      rail.classList.remove("hidden");
+      rail.removeAttribute("inert");
+      rail.setAttribute("aria-hidden", "false");
+      if (backdrop && mobile) backdrop.classList.remove("hidden");
+    } else {
+      rail.classList.add("hidden");
+      if (backdrop) backdrop.classList.add("hidden");
+      if (mobile) {
+        rail.setAttribute("aria-hidden", "true");
+        rail.setAttribute("inert", "");
+      }
+      if (railReturnFocus && typeof railReturnFocus.focus === "function") {
+        railReturnFocus.focus();
+      }
+      railReturnFocus = null;
+    }
+  }
+
+  function toggleSessionRail() {
+    var rail = document.getElementById("chat-rail");
+    if (!rail) return;
+    setSessionRail(rail.classList.contains("hidden"));
+  }
+
+  function closeSessionRail() {
+    if (!isMobileRail()) return;
+    setSessionRail(false);
+  }
+
+  // Rail rows come in two flavors — resumable conversations
+  // (data-action="resume-session") and scheduled-run transcripts opened in the
+  // chat workspace (data-action="open-run"). The active highlight must clear
+  // across both so opening one type deselects the other.
+  var railRowSelector = "[data-action='resume-session'], [data-action='open-run']";
+
+  function clearActiveRailItem() {
+    var rail = document.getElementById("chat-rail");
+    if (!rail) return;
+    var items = rail.querySelectorAll(railRowSelector);
+    for (var i = 0; i < items.length; i++) items[i].removeAttribute("data-active");
+  }
+
+  function markRailItem(id) {
+    clearActiveRailItem();
+    var rail = document.getElementById("chat-rail");
+    if (!rail) return;
+    var items = rail.querySelectorAll(railRowSelector);
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].getAttribute("data-id") === id) items[i].setAttribute("data-active", "true");
+    }
+  }
+
+  /* ---------- session rail live refresh ---------- */
+
+  function railHas(id) {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return false;
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute("data-id") === id) return true;
+    }
+    return false;
+  }
+
+  // Show/hide session rows according to the active agent + origin filters, the
+  // sub-chat group state, and the optimistic archive marker; toggle the empty
+  // states. Rows carry data-agent/data-origin and sub-chat rows carry
+  // data-parent-id, so visibility is a pure DOM pass that works after both the
+  // initial server render and refreshSessionRail() rebuilds.
+  function applyAgentFilter() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return;
+
+    var rows = railList.querySelectorAll("[data-origin]");
+    var showRows = new Array(rows.length);
+    var groupHasMatch = {};
+
+    // First pass: the filter + optimistic archive conditions, independent of
+    // collapse state, so a collapsed group can still surface when one of its
+    // children matches.
+    for (var i = 0; i < rows.length; i++) {
+      var agent = rows[i].getAttribute("data-agent") || "";
+      var origin = rows[i].getAttribute("data-origin") || "";
+      var show = (!filterAgent || agent === filterAgent) && (!filterOrigin || origin === filterOrigin);
+      // A pending optimistic archive is a second, independent reason a row is
+      // hidden. Fold it in here so a filter change recomputes visibility from
+      // both conditions instead of clearing the optimistic hide (#1419 review).
+      // Only while "Include archived" is off: with it on an archived row is
+      // expected to stay listed, pending or not.
+      if (!filterIncludeArchived && rows[i].getAttribute("data-archive-pending") === "true") show = false;
+      showRows[i] = show;
+      var parentID = rows[i].getAttribute("data-parent-id");
+      if (show && parentID) groupHasMatch[parentID] = true;
+    }
+
+    var visible = 0;
+    for (var j = 0; j < rows.length; j++) {
+      var showRow = showRows[j];
+      var groupID = rows[j].getAttribute("data-parent-id");
+      if (groupID) {
+        // A sub-chat is visible only while its group is open.
+        showRow = showRow && !!expandedSubchats[groupID];
+      } else if (rows[j].hasAttribute("data-subchat-count")) {
+        // Keep a collapsed parent header reachable when one of its children is
+        // the only match, otherwise the filter would hide the toggle that opens
+        // the matching sub-chat.
+        var ownGroup = rows[j].getAttribute("data-subchat-group");
+        showRow = showRow || !!groupHasMatch[ownGroup];
+      }
+      rows[j].classList.toggle("hidden", !showRow);
+      if (showRow) visible++;
+    }
+
+    // Reflect the group model on each toggle's chevron and accessible name.
+    var toggles = railList.querySelectorAll("[data-action='toggle-subchats']");
+    for (var k = 0; k < toggles.length; k++) {
+      var toggleGroup = toggles[k].getAttribute("data-subchat-group");
+      var isOpen = !!expandedSubchats[toggleGroup];
+      toggles[k].setAttribute("aria-expanded", isOpen ? "true" : "false");
+      var countEl = toggles[k].querySelector(".tabular-nums");
+      var count = countEl ? parseInt(countEl.textContent, 10) || 0 : 0;
+      toggles[k].setAttribute("aria-label", (isOpen ? "Hide " : "Show ") + count + (count === 1 ? " sub-chat" : " sub-chats"));
+    }
+
+    var emptyAll = document.getElementById("chat-rail-empty");
+    var emptyFiltered = document.getElementById("chat-rail-empty-filtered");
+    if (rows.length === 0) {
+      if (emptyAll) emptyAll.classList.remove("hidden");
+      if (emptyFiltered) emptyFiltered.classList.add("hidden");
+    } else if (visible === 0) {
+      if (emptyAll) emptyAll.classList.add("hidden");
+      if (emptyFiltered) emptyFiltered.classList.remove("hidden");
+    } else {
+      if (emptyAll) emptyAll.classList.add("hidden");
+      if (emptyFiltered) emptyFiltered.classList.add("hidden");
+    }
+  }
+
+  // initSubchats seeds the open/closed model from the server-rendered rail.
+  // The server opens only the active branch; a user's toggles persist across
+  // rail refreshes because an existing entry is not overwritten. An active
+  // sub-chat (deep link or resume) forces its group open.
+  function initSubchats() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return;
+    // The group state lives on the parent row (data-subchats-expanded); the
+    // toggle button only identifies the group. Read the row, not the button.
+    var groups = railList.querySelectorAll("[data-subchat-count]");
+    for (var i = 0; i < groups.length; i++) {
+      var id = groups[i].getAttribute("data-id");
+      if (id && !(id in expandedSubchats)) {
+        expandedSubchats[id] = groups[i].getAttribute("data-subchats-expanded") === "true";
+      }
+    }
+    var active = railList.querySelector("[data-active='true'][data-parent-id]");
+    if (active) expandedSubchats[active.getAttribute("data-parent-id")] = true;
+  }
+
+  function toggleSubchats(groupID) {
+    if (!groupID) return;
+    expandedSubchats[groupID] = !expandedSubchats[groupID];
+    applyAgentFilter();
+  }
+
+  // Re-fetch the server-rendered rail list (past conversations + scheduled-run
+  // rows, same markup as the initial page) and swap it into #chat-rail-list,
+  // so the row markup lives only in chat.templ (ui.ListRow) instead of being
+  // re-built here. The ?c= param lets the server mark the active row.
+  // Conversation rows carry data-origin="manual"; scheduled-run rows carry
+  // data-origin="scheduled" and open their transcript inside this workspace
+  // (data-action="open-run" → resumeRun, rendered from /api/runs/{id}/history).
+  async function refreshSessionRail() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return;
+    try {
+      var res = await fetch(scopedPath("/partial/chat-rail") + "?c=" + encodeURIComponent(conversationId || "") + "&includeArchived=" + (filterIncludeArchived ? "true" : "false"));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      railList.innerHTML = await res.text();
+      reapplyArchivePending();
+      initSubchats();
+      applyAgentFilter();
+      applyRailBadges();
+      pruneSelection();
+      applySelectionMode();
+    } catch (err) {
+      reportError(err, "session rail refresh failed");
+      // keep the stale list; the next refresh retries
+    }
+  }
+
+  /* ---------- optimistic session lifecycle (archive / unarchive, #1382) ---------- */
+
+  // sessionRowById returns the rail row for a conversation id, or null. Used by
+  // the optimistic transitions to hide/restore a row without a server
+  // round-trip.
+  function sessionRowById(id) {
+    if (!id) return null;
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return null;
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute("data-id") === id) return rows[i];
+    }
+    return null;
+  }
+
+  // postSessionRoute POSTs one lifecycle route and resolves on 2xx, rejecting
+  // with an Error carrying the HTTP status otherwise.
+  function postSessionRoute(id, route) {
+    return fetch("/api/conversations/" + encodeURIComponent(id) + route, { method: "POST" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+      });
+  }
+
+  // applyArchiveOptimistic hides the row immediately (#1382): under the default
+  // filter an archived conversation drops out of the rail, so hiding is the
+  // visible outcome the user expects the instant they click. With "Include
+  // archived" on the row stays listed, so there is nothing to hide — the refresh
+  // after the request settles re-renders its archived marker.
+  //
+  // The pending marker is kept separate from the filter's `hidden` class
+  // (#1419 review): a filter change goes through applyAgentFilter(), which
+  // re-derives visibility from both the filter and the pending marker, and the
+  // rollback clears only the marker then lets applyAgentFilter() decide whether
+  // the row is visible again — so a row the filter hides stays hidden, and a
+  // pending archive is not revealed by a concurrent filter change.
+  //
+  // The marker itself does not survive refreshSessionRail()'s innerHTML swap
+  // (an SSE live-update, finishTurn, a delete of another row, or the
+  // include-archived toggle can all refresh the rail before the POST settles),
+  // so the in-flight ids live in the module-level archivePendingIds set and
+  // reapplyArchivePending() re-stamps the marker after every rebuild.
+  function applyArchiveOptimistic(id) {
+    var row = sessionRowById(id);
+    if (!row || filterIncludeArchived) return function () {};
+    archivePendingIds[id] = true;
+    row.setAttribute("data-archive-pending", "true");
+    row.classList.add("hidden");
+    return function () {
+      delete archivePendingIds[id];
+      var current = sessionRowById(id);
+      if (current) current.removeAttribute("data-archive-pending");
+      applyAgentFilter();
+    };
+  }
+
+  // reapplyArchivePending re-marks the rows whose archive request is still in
+  // flight after the rail list is rebuilt. Visibility is then decided by
+  // applyAgentFilter(), which hides a pending row only while "Include archived"
+  // is off.
+  function reapplyArchivePending() {
+    var ids = Object.keys(archivePendingIds);
+    for (var i = 0; i < ids.length; i++) {
+      var row = sessionRowById(ids[i]);
+      if (row) row.setAttribute("data-archive-pending", "true");
+    }
+  }
+
+  // applyUnarchiveOptimistic clears the archived visual state at once. The
+  // unarchive action only exists while "Include archived" is on, so the row must
+  // stay listed; only the marker/muted styling flips optimistically.
+  function applyUnarchiveOptimistic(id) {
+    var row = sessionRowById(id);
+    if (!row || row.getAttribute("data-archived") !== "true") return function () {};
+    var marker = row.querySelector('[data-testid="session-archived-marker"]');
+    row.removeAttribute("data-archived");
+    row.classList.remove("opacity-60");
+    if (marker) marker.classList.add("hidden");
+    return function () {
+      row.setAttribute("data-archived", "true");
+      row.classList.add("opacity-60");
+      if (marker) marker.classList.remove("hidden");
+    };
+  }
+
+  // runSessionAction applies one lifecycle route to a set of sessions. It is
+  // optimistic: rows are hidden (archive) / un-marked (unarchive) before the
+  // request, restored individually if they fail, and reconciled with the server
+  // by a rail refresh once every request settles. A multi-id call backs the bulk
+  // archive (#1385). Resolves to {total, failed} so the caller can exit selection
+  // mode after completion regardless of partial failures. A missing id is a
+  // no-op (defensive — the menu always carries one). `verb` is the past
+  // participle for the success toast; `action` is the present-tense verb for the
+  // failure paths ("Could not archive session", not "Could not archived …").
+  function runSessionAction(ids, route, verb, action) {
+    var list = (ids || []).filter(Boolean);
+    if (!list.length) return Promise.resolve({ total: 0, failed: 0 });
+    var rollbacks = list.map(function (id) {
+      return route === "/archive" ? applyArchiveOptimistic(id) : applyUnarchiveOptimistic(id);
+    });
+    return Promise.allSettled(list.map(function (id) { return postSessionRoute(id, route); }))
+      .then(function (results) {
+        var failed = [];
+        results.forEach(function (r, i) {
+          if (r.status === "rejected") failed.push({ id: list[i], err: r.reason });
+        });
+        if (failed.length === 0) {
+          notify("success", list.length > 1 ? (list.length + " sessions " + verb) : ("Session " + verb));
+        } else {
+          failed.forEach(function (f) {
+            var idx = list.indexOf(f.id);
+            if (rollbacks[idx]) rollbacks[idx]();
+            reportError(f.err, "session " + action + " failed");
+          });
+          var first = failed[0].err;
+          var what = failed.length === 1
+            ? ("Could not " + action + " session: ")
+            : ("Could not " + action + " " + failed.length + " sessions: ");
+          notify("error", what + ((first && first.message) || first));
+        }
+        // Every request has settled, so nothing here is in flight any more: a
+        // later refresh must not re-hide a successfully archived row (the
+        // server list is authoritative now). Failed ids were rolled back above.
+        list.forEach(function (id) { delete archivePendingIds[id]; });
+        return refreshSessionRail().then(function () {
+          return { total: list.length, failed: failed.length };
+        });
+      });
+  }
+
+  function archiveSession(id) { return runSessionAction([id], "/archive", "archived", "archive"); }
+  function unarchiveSession(id) { return runSessionAction([id], "/unarchive", "unarchived", "unarchive"); }
+
+  /* ---------- bulk session selection (#1385) ---------- */
+
+  // rowCheckbox returns the row's selection checkbox, or null for rows that are
+  // not selectable conversations (scheduled / shared rows).
+  function rowCheckbox(row) {
+    return row ? row.querySelector(".session-select") : null;
+  }
+
+  // selectableRowsInDom returns the conversation rows bulk archive may target:
+  // manual-origin rows currently visible under the filters and not already
+  // archived. Archived rows are excluded from select-all (archiving them is a
+  // no-op); they can still be checked individually when "Include archived" is on.
+  function selectableRowsInDom() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return [];
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!rowCheckbox(row)) continue;
+      if (row.getAttribute("data-origin") !== "manual") continue;
+      if (row.classList.contains("hidden")) continue;
+      if (row.getAttribute("data-archived") === "true") continue;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function setRowChecked(row, checked) {
+    var cb = rowCheckbox(row);
+    if (cb) cb.checked = checked;
+    row.setAttribute("data-selected", checked ? "true" : "false");
+  }
+
+  // syncSelectionUi mirrors the selected set onto the footer controls: the live
+  // count, the disabled archive button, and the select-all checkbox with its
+  // indeterminate state.
+  function syncSelectionUi() {
+    var ids = Object.keys(selectedSessions);
+    var countEl = document.getElementById("chat-selection-count");
+    if (countEl) countEl.textContent = ids.length + " selected";
+    var archiveBtn = document.getElementById("chat-bulk-archive");
+    if (archiveBtn) archiveBtn.disabled = bulkBusy || ids.length === 0;
+    var selectAll = document.getElementById("chat-select-all");
+    if (selectAll) {
+      var rows = selectableRowsInDom();
+      var selected = 0;
+      for (var i = 0; i < rows.length; i++) {
+        if (selectedSessions[rows[i].getAttribute("data-id")]) selected++;
+      }
+      selectAll.checked = rows.length > 0 && selected === rows.length;
+      selectAll.indeterminate = selected > 0 && selected < rows.length;
+    }
+  }
+
+  // applySelectionMode reflects the client-side selection state onto the
+  // server-rendered rail: checkbox visibility, the footer bar, the toggle's
+  // aria-pressed, and each row's checked/selected state. Called after every rail
+  // refresh so a swapped-in list picks the state back up.
+  function applySelectionMode() {
+    var railList = document.getElementById("chat-rail-list");
+    var boxes = railList ? railList.querySelectorAll(".session-select") : [];
+    for (var i = 0; i < boxes.length; i++) boxes[i].classList.toggle("hidden", !selectionMode);
+    var bar = document.getElementById("chat-bulk-bar");
+    if (bar) {
+      bar.classList.toggle("hidden", !selectionMode);
+      bar.classList.toggle("flex", selectionMode);
+    }
+    var toggle = document.querySelector("[data-action='toggle-session-select']");
+    if (toggle) toggle.setAttribute("aria-pressed", selectionMode ? "true" : "false");
+    var rows = railList ? railList.querySelectorAll("[data-action='resume-session']") : [];
+    for (var j = 0; j < rows.length; j++) {
+      if (rowCheckbox(rows[j])) setRowChecked(rows[j], !!selectedSessions[rows[j].getAttribute("data-id")]);
+    }
+    syncSelectionUi();
+  }
+
+  // pruneSelection drops checked ids no longer present in the rail (e.g. archived
+  // by another surface), so the count cannot drift after a refresh. Selection
+  // deliberately survives filter changes.
+  function pruneSelection() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList || !Object.keys(selectedSessions).length) return;
+    var present = {};
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) present[rows[i].getAttribute("data-id")] = true;
+    Object.keys(selectedSessions).forEach(function (id) {
+      if (!present[id]) delete selectedSessions[id];
+    });
+  }
+
+  function setSessionSelected(id, checked) {
+    if (!id) return;
+    if (checked) selectedSessions[id] = true; else delete selectedSessions[id];
+    var row = sessionRowById(id);
+    if (row) setRowChecked(row, checked);
+    syncSelectionUi();
+  }
+
+  function selectAllSessions(checked) {
+    var rows = selectableRowsInDom();
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i].getAttribute("data-id");
+      if (checked) selectedSessions[id] = true; else delete selectedSessions[id];
+      setRowChecked(rows[i], checked);
+    }
+    syncSelectionUi();
+  }
+
+  function enterSelectionMode() {
+    selectionMode = true;
+    applySelectionMode();
+  }
+
+  function exitSelectionMode() {
+    selectionMode = false;
+    selectedSessions = {};
+    applySelectionMode();
+  }
+
+  function toggleSelectionMode() {
+    if (selectionMode) exitSelectionMode(); else enterSelectionMode();
+  }
+
+  // bulkArchiveSelected archives every checked session through the same
+  // per-session route the row menu uses. On completion (success or partial
+  // failure) selection mode is exited and the rail refreshed; failed rows were
+  // already restored by runSessionAction.
+  function bulkArchiveSelected() {
+    if (bulkBusy) return Promise.resolve({ total: 0, failed: 0 });
+    var ids = Object.keys(selectedSessions);
+    if (!ids.length) return Promise.resolve({ total: 0, failed: 0 });
+    bulkBusy = true;
+    syncSelectionUi();
+    return runSessionAction(ids, "/archive", "archived", "archive").then(function (result) {
+      bulkBusy = false;
+      exitSelectionMode();
+      return result;
+    });
+  }
+
+  // openDeleteSessionConfirm fills the shared confirm dialog and opens it. No
+  // request is sent here — DELETE only fires from confirmDeleteSession, so
+  // dismissing the dialog (Cancel, Escape, backdrop) deletes nothing.
+  function openDeleteSessionConfirm(id, title) {
+    if (!id) return;
+    var d = document.getElementById("chat-delete-confirm-modal");
+    if (!d) return;
+    deleteSessionId = id;
+    var name = document.getElementById("chat-delete-confirm-name");
+    if (name) name.textContent = title || "this session";
+    // Delete cascades to every accessible descendant, including archived and
+    // off-page rows the rail cannot count. The static description names that
+    // blast radius; a page-derived number would understate it.
+    d.showModal();
+  }
+
+  function closeDeleteSessionDialog() {
+    var d = document.getElementById("chat-delete-confirm-modal");
+    if (d) d.close();
+    deleteSessionId = "";
+  }
+
+  function confirmDeleteSession() {
+    if (!deleteSessionId) return;
+    var id = deleteSessionId;
+    var btn = document.getElementById("chat-delete-confirm-go");
+    if (btn) { btn.classList.add("loading"); btn.disabled = true; }
+    fetch("/api/conversations/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function (r) {
+        if (r.status !== 204) {
+          return r.json().catch(function () { return null; }).then(function (j) {
+            var e = new Error((j && (j.error || j.message)) || "HTTP " + r.status);
+            e.status = r.status;
+            throw e;
+          });
+        }
+      })
+      .then(function () {
+        closeDeleteSessionDialog();
+        notify("success", "Session deleted");
+        // Deleting the open conversation must leave the workspace usable, not
+        // render a deleted transcript: reset to the ready/new-session state.
+        if (id === conversationId) resetConversation();
+        return refreshSessionRail();
+      })
+      .catch(function (err) {
+        if (btn) { btn.classList.remove("loading"); btn.disabled = false; }
+        reportError(err, "session delete failed");
+        notify("error", "Could not delete session: " + err.message);
+      });
+  }
+
+  /* ---------- history transcript (issue: full transcript) ---------- */
+
+  // Live-update SSE channel. One EventSource at a time, keyed by scope
+  // ("conv:<id>" or "run:<id>"). openLiveStream reuses an already-open source
+  // for the same scope and closes any other before opening, so switching
+  // surfaces never leaks connections or stacks duplicate sources. The
+  // one-shot /api/chat stream ends when a run pauses, so this durable push
+  // channel is what keeps a resumed page/run current.
+  function closeLiveStream() {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    eventSourceId = "";
+  }
+
+  function openLiveStream(scopeKey, url, onRefresh) {
+    if (!scopeKey) return;
+    if (eventSource && eventSourceId === scopeKey) return; // already watching this scope
+    closeLiveStream();
+    eventSourceId = scopeKey;
+    eventSource = new EventSource(url);
+    eventSource.onmessage = function (ev) {
+      var m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m) return;
+      if (m.type === "refresh") {
+        handleRefreshPayload(m);
+        // A resumed run has no one-shot /api/chat stream, so its activity must
+        // be reflected from the refresh-reported status. Clear in-flight replay
+        // state once the run stops (run end / needs_input). A parked run
+        // (needs_input) reports runStatus "working" but is NOT working from the
+        // user's point of view — it waits on a decision — so treat it like a
+        // stop here and release the composer (issue #1272).
+        if (isRunWorking(m.runStatus) && !runIsParked()) {
+          if (transcriptReady && !streaming) setStreaming(true);
+        } else if (!liveTurn) {
+          // Run stopped (end) or parked on a decision: drop the retained
+          // in-flight tail and release the composer. Guarded on !liveTurn (DOM
+          // ownership, not busy): the bare connect refresh carries no runStatus,
+          // and clearing the composer here would clobber a live /api/chat turn
+          // this page is rendering. A resumed page (liveTurn false) DOES take
+          // this path, so its composer clears when the run ends/parks. Stale
+          // thinking tracking is left for flushReplay / finalizeThinking.
+          replayFrames = [];
+          setStreaming(false);
+        }
+        if (!liveTurn) onRefresh();
+      } else if (m.type === "live_replay") {
+        // Replayed in-flight frames render through the same dispatcher as the
+        // live path. Only open thinking segments + running tools are retained
+        // server-side, so persisted rows never duplicate. Flush immediately when
+        // history is already on screen; otherwise afterTranscriptRender does it
+        // once the pending render lands (before any live tail).
+        replayFrames = Array.isArray(m.frames) ? m.frames.slice() : [];
+        if (transcriptReady) flushReplay();
+      }
+    };
+    eventSource.onerror = function () { /* EventSource auto-reconnects; no-op */ };
+  }
+
+  // openConversationStream watches an /api/chat conversation (used by resume
+  // and by a brand-new conversation once the meta event supplies its id).
+  function openConversationStream(id) {
+    openLiveStream("conv:" + id, "/api/conversations/" + encodeURIComponent(id) + "/events", function () {
+      renderHistory(id);
+    });
+  }
+
+  // openRunStream watches a scheduled agent run's synthesized timeline, so an
+  // opened run transcript shows step progress live (a run is not an /api/chat
+  // conversation and previously had no push channel at all).
+  function openRunStream(runId) {
+    openLiveStream("run:" + runId, "/api/runs/" + encodeURIComponent(runId) + "/events", function () {
+      renderRunHistory(runId);
+    });
+  }
+
+  async function resumeConversation(id, agentId, item) {
+    if (aborter) aborter.abort();
+    liveTurn = false;
+    setStreaming(false);
+    clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
+    // Release any working state left by the scope being left: the fresh history
+    // below re-derives it, so a stale "working" never re-arms the placeholder
+    // or the busy composer for a conversation whose run is not active.
+    releaseWorkingState();
+
+    var detail = null;
+    try {
+      var r = await fetch("/api/conversations/" + encodeURIComponent(id));
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      detail = await r.json();
+    } catch (err) {
+      reportError(err, "conversation load failed");
+      notify("error", "Could not load conversation: " + err.message);
+      return;
+    }
+
+    conversationId = id;
+    activeRunId = "";
+    updateUrl();
+    // Conversation-scoped surfaces: show this conversation's parked queue and
+    // load its todo card (a rail switch never carries the previous
+    // conversation's queue across).
+    renderQueue();
+
+    // Live updates for this conversation: the one-shot /api/chat SSE stream
+    // ends when the run pauses (tool approval / ask_user), so watch the push
+    // channel instead — it fires when the conversation's state changes
+    // (run ends, a step is persisted, a decision lands from
+    // /settings/approvals, …). Reopened on every resume so a stale connection
+    // never lingers; openLiveStream dedupes when this conversation is already
+    // the watched scope.
+    openConversationStream(id);
+
+    // switch the agent picker to the conversation's agent (if still known)
+    if (agentId && agentSelect) {
+      var opts = Array.prototype.slice.call(agentSelect.options);
+      var match = null;
+      for (var i = 0; i < opts.length; i++) {
+        if (opts[i].value === agentId) { match = opts[i]; break; }
+      }
+      if (match) agentSelect.value = agentId;
+      updateModelWarning();
+      // the header follows the same hook: reflect the conversation's agent
+      updateChatHeader();
+    }
+
+    await refreshTodos();
+    await renderHistory(id);
+    markRailItem(id);
+    if (item) item.setAttribute("data-active", "true");
+    scrollToBottom(true); // opening a conversation: jump to the latest message
+    // A turn that ended while this conversation was off-screen still releases
+    // its parked queue when it is reopened.
+    maybeReleaseOnReopen();
+  }
+
+  // Open a scheduled run in the chat workspace: fetch its synthesized history
+  // (GET /api/runs/{id}/history) and render it with the same item renderer as
+  // conversation transcripts. The run-scoped SSE stream (/api/runs/{id}/events)
+  // keeps the transcript live as the executor persists steps; answering a
+  // pending ask_user card also re-renders via the scope-aware answerQuestion.
+  async function resumeRun(runId, item) {
+    if (aborter) aborter.abort();
+    liveTurn = false;
+    setStreaming(false);
+    clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
+    // Release any working state left by the scope being left (see
+    // resumeConversation): the run history below re-derives it.
+    releaseWorkingState();
+    conversationId = ""; // a run is not an /api/chat conversation
+    activeRunId = runId;
+    updateUrl();
+    openRunStream(runId);
+    await renderRunHistory(runId);
+    markRailItem(runId);
+    if (item) item.setAttribute("data-active", "true");
+    scrollToBottom(true); // opening a run: jump to the latest message
+  }
+
+  // Scope guard: a transcript fetch is async, so by the time it resolves the
+  // user may have switched scope (opened another conversation/run). Rendering
+  // then would wipe the new scope's transcript with the old scope's history.
+  // Drop the result unless the pane still shows the scope the fetch belongs to.
+  function scopeIsCurrent(id) {
+    return currentScopeIsRun() ? activeRunId === id : conversationId === id;
+  }
+
+  async function renderRunHistory(runId) {
+    var data = await fetchTimeline("/api/runs/" + encodeURIComponent(runId) + "/history");
+    if (!data) return;
+    if (!currentScopeIsRun() || !scopeIsCurrent(runId)) return; // scope switched mid-fetch
+    renderTimelineItems(data.items || [], data.pending_approvals || []);
+  }
+
+  async function renderHistory(id) {
+    var data = await fetchTimeline("/api/conversations/" + encodeURIComponent(id) + "/history");
+    if (!data) return;
+    if (currentScopeIsRun() || !scopeIsCurrent(id)) return; // scope switched mid-fetch
+    renderTimelineItems(data.items || [], data.pending_approvals || []);
+  }
+
+  async function fetchTimeline(url) {
+    try {
+      var r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (err) {
+      reportError(err, "transcript load failed");
+      notify("error", "Could not load transcript: " + err.message);
+      return null;
+    }
+  }
+
+  // A run's lifecycle items (run_start / run_end) carry run_status and, on
+  // failure, error_message. They render as typed turn boundaries (runMarker in
+  // chat-components.js) rather than generic content: run_start carries the
+  // model, and run_end distinguishes completed / failed / input-required, with
+  // a failed run surfacing its error_message.
+  function isFailedRun(status) {
+    return status === "failed" || status === "error";
+  }
+
+  // isActiveRunStatus reports whether a run status means the run is still in
+  // flight (queued, running, or cancelling) rather than stopped (completed,
+  // failed, cancelled, skipped, or paused awaiting input).
+  function isActiveRunStatus(status) {
+    return status === "working" || status === "submitted" || status === "cancelling";
+  }
+
+  // attachTurnFooters appends one footer per completed run window, on the last
+  // assistant bubble of that run (records are {el, ctx} in render order).
+  function attachTurnFooters(records) {
+    if (!records || !records.length) return;
+    var order = [];
+    var last = [];
+    for (var i = 0; i < records.length; i++) {
+      var idx = order.indexOf(records[i].ctx);
+      if (idx === -1) { order.push(records[i].ctx); last.push(records[i]); }
+      else { last[idx] = records[i]; }
+    }
+    for (var j = 0; j < order.length; j++) {
+      var ctx = order[j];
+      var el = last[j] && last[j].el;
+      if (!ctx || !ctx.ended || !el) continue;
+      var body = el.querySelector(".memory-md");
+      el.appendChild(MemoryChatComponents.turnFooter({
+        model: ctx.model || currentAgentName(),
+        durationMs: ctx.durationMs,
+        endTime: ctx.completedAt,
+        getText: (function (b) {
+          return function () { return b ? (b.innerText || b.textContent || "") : ""; };
+        })(body),
+      }));
+    }
+  }
+
+  // chatDebugEnabled reports whether the transcript's run lifecycle boundary
+  // rows ("Run started" / "Run complete") should render. They are a debug
+  // affordance, hidden by default (#1381) — the underlying run_start/run_end
+  // items still drive the header, working placeholder, cancelation id and turn
+  // footers (renderTimeline tracks that state regardless of this flag).
+  //
+  // Debug mode is deliberately transient — no persisted preference is created:
+  //   - `?debug` / `?debug=1` / `?debug=true` on the /chat URL (captured once
+  //     at init into `debugParam`, and preserved by updateUrl() across a
+  //     resume so the link keeps working — #1416), or
+  //   - `window.MemoryChatDebug = true` (console / test harness; read live).
+  function chatDebugEnabled() {
+    if (window.MemoryChatDebug === true) return true;
+    return debugParam;
+  }
+
+  // renderTimelineItems renders a raw history payload (conversation or run) —
+  // the item vocabulary, sorting, and rendering are shared with the side panel
+  // via MemoryChatComponents.renderTimeline; this page supplies the chat-specific
+  // flags + hooks (run markers, thinking, run-scope meta, turn footers, the
+  // mid-run placeholder) and the DOM-ownership guard. Run boundary rows are
+  // debug-gated (chatDebugEnabled), not always on (#1381) — except a failed
+  // run_end, whose alert banner is durable in the transcript (#2451).
+  function renderTimelineItems(items, pendingApprovals) {
+    // Guard: never render history over a live stream THIS page owns. Wiping
+    // #chat-messages mid-stream would destroy the in-flight assistant bubble,
+    // and appending the same turn beside it would duplicate it. Gated on
+    // liveTurn (DOM ownership), not streaming (busy): a page opened on an
+    // active run it did NOT start is busy but does not own the DOM, and must
+    // keep re-rendering as steps persist.
+    if (liveTurn) return;
+    MemoryChatComponents.renderTimeline(items, timelineCtx(pendingApprovals), {
+      showRunMarkers: chatDebugEnabled(),
+      showMeta: currentScopeIsRun(),
+      silent: false,
+    });
+  }
+
+  // timelineCtx builds the page-local hooks/state for one chat render (see
+  // MemoryChatComponents.renderTimeline for the contract).
+  function timelineCtx(pendingApprovals) {
+    // The viewport is captured before this render empties #chat-messages and
+    // restored once the rebuild finishes (see captureScroll/restoreScroll). Held
+    // per-render so it can never leak into a different scope's render.
+    var scrollSnapshot = null;
+    return {
+      container: messages,
+      badgeCtx: badgeCtx,
+      getAgentName: currentAgentName,
+      // Preserve the mid-run working placeholder across the rebuild so its CSS
+      // animation stays continuous. A page opened mid-run re-renders on every
+      // persisted step (frequent refresh frames), and recreating the node each
+      // time restarts the typing animation at frame 0 — which reads as frozen.
+      // Drop every other child instead; the placeholder stays connected to
+      // #chat-messages and is NEVER moved or re-inserted here. afterTranscriptRender
+      // restores it to the end by moving the rendered rows before it. Keeping
+      // only the first also upholds the "exactly one placeholder" invariant.
+      begin: function () {
+        // Capture BEFORE the wipe: emptying the container clamps its scrollTop
+        // to 0, and the per-bubble auto-scroll cannot recover a long transcript
+        // (it only fires when already within 90px of the bottom). Restoring in
+        // afterRender keeps the user where they were (#1369).
+        scrollSnapshot = captureScroll();
+        var workingEl = workingPlaceholder();
+        var child = messages.firstChild;
+        while (child) {
+          var next = child.nextSibling;
+          if (child !== workingEl) messages.removeChild(child);
+          child = next;
+        }
+        hideEmpty();
+      },
+      stripContextPreamble: stripContextPreamble,
+      isThinkingItem: function (item, content) { return isThinkingMessage(content); },
+      addUserMessage: addUserMessage,
+      addAssistantMessage: addAssistantMessage,
+      toolChip: toolChip,
+      renderHistoryQuestion: renderHistoryQuestion,
+      renderThinkingBlock: renderThinkingBlock,
+      renderApproval: renderApproval,
+      pendingApprovals: pendingApprovals,
+      attachTurnFooters: attachTurnFooters,
+      onNewestRun: function (runId, status, ended) {
+        // Remember the newest run so the stop action can cancel it.
+        lastTimelineRun = { status: status, ended: ended };
+        if (runId) liveRunId = runId;
+      },
+      afterRender: function (newestRunStatus) {
+        afterTimelineRender(pendingApprovals, newestRunStatus);
+        // Restore the viewport captured in begin() now that every row is back in
+        // the DOM (including the replay tail and working placeholder planted by
+        // afterTimelineRender) — otherwise a refresh-driven rebuild leaves the
+        // user at the top of the transcript (#1369).
+        restoreScroll(scrollSnapshot);
+      },
+    };
+  }
+
+  // The render tail: reconcile the header + working state with the newest run
+  // the render found, then finish the transcript render.
+  //
+  // Header + placeholder reflect the newest run ONLY while it is still active. A
+  // stopped or absent run must release any working state carried in from an
+  // earlier scope or a stale refresh — otherwise an idle conversation stays
+  // stuck "Working…" with a phantom bubble and a busy composer.
+  //
+  // History alone cannot distinguish a run parked on a decision from one still
+  // working: its run_status can still read "working". Prefer the known refresh
+  // bucket (falling back to the pending approvals this render carries) so an
+  // empty-bucket render cannot clobber the refresh-derived "Waiting on you"
+  // header with a bare working state.
+  //
+  // A run-scope timeline carries no run_start/run_end items (runTimelineItems
+  // emits only message/tool_call), so newestRunStatus is always empty there —
+  // the refresh-derived bucket is the sole authority. Treat an active run (a
+  // "running"/"needs_input" bucket, or any run-scope page) as still working and
+  // release the stale state only for a conversation scope with no active run;
+  // otherwise a live run's header, placeholder, composer and liveRunId would
+  // all be torn down by its own refresh.
+  function afterTimelineRender(pendingApprovals, newestRunStatus) {
+    var pendingCount = pendingApprovals ? pendingApprovals.length : 0;
+    var bucket = liveBucket;
+    if (bucket !== "needs_input" && pendingCount > 0) bucket = "needs_input";
+    liveBucket = bucket;
+    var runActive = isRunWorking(newestRunStatus) || bucket === "running" || bucket === "needs_input";
+    if (runActive) {
+      if (newestRunStatus) liveRunStatus = newestRunStatus;
+      renderHeaderStatus(liveRunStatus, bucket, pendingCount, 0);
+      // A run parked on a decision still shows the "Waiting on you" header, but
+      // it is not working: release the placeholder bubble and the busy composer
+      // so the run does not look stuck and the answer path is usable (#1272).
+      if (runIsParked()) releaseParkedWorkingState();
+    } else if (!currentScopeIsRun()) {
+      releaseWorkingState();
+    }
+
+    // Persisted history is on screen: (re-)apply the in-flight replay tail and
+    // reflect a still-working run in the composer.
+    afterTranscriptRender();
+  }
+
+  /* ---------- bubbles ---------- */
+
+  // Inline tool-detail sections (summary / error / input / output) and
+  // humanizeToolName live in chat-components.js, shared with the side panel so
+  // tool-call rendering stays identical across surfaces. The chip builders
+  // (toolChip / setToolStatus / handleToolEvent) live in chat-stream.js.
+
+  /* ---------- tool detail side panel ---------- */
+
+  var toolPanel = { panel: null, backdrop: null };
+
+  function openToolPanel(chip) {
+    if (!chip || !document.body) return;
+    var p = chip._payload || {};
+
+    var backdrop = document.createElement("div");
+    backdrop.className = "fixed inset-0 z-40 bg-black/40";
+    backdrop.setAttribute("data-action", "close-tool-panel");
+
+    var panel = document.createElement("div");
+    panel.className =
+      "memory-tool-panel fixed top-0 right-0 z-50 flex h-full w-full max-w-md flex-col bg-base-100 shadow-2xl transition-transform duration-300 ease-out translate-x-full";
+
+    var badgeClass = p.status === "error" ? "badge-error" : p.status === "running" ? "badge-warning" : "badge-success";
+    var badgeLabel = p.status || "ok";
+
+    panel.innerHTML =
+      '<div class="flex items-center justify-between gap-3 border-b border-base-content/10 px-5 py-4">' +
+      '<div class="flex min-w-0 items-center gap-2">' +
+      '<span class="iconify lucide--wrench size-4 text-muted" aria-hidden="true"></span>' +
+      '<h3 class="truncate font-mono text-sm font-semibold">' + escapeHTML(p.tool || "tool") + "</h3>" +
+      '<span class="badge badge-ghost badge-xs font-normal ' + badgeClass + '">' + escapeHTML(badgeLabel) + "</span>" +
+      "</div>" +
+      '<button type="button" class="btn btn-circle btn-ghost btn-sm" data-action="close-tool-panel" aria-label="Close">' +
+      '<span class="iconify lucide--x size-4.5" aria-hidden="true"></span></button>' +
+      "</div>" +
+      '<div class="min-h-0 grow overflow-y-auto p-5">' +
+      (p.summary ? MemoryChatComponents.summarySection(p.summary) : "") +
+      (p.error ? MemoryChatComponents.errorSection(p.error) : "") +
+      MemoryChatComponents.rawSection(p.input, p.output) +
+      (!p.summary && !p.error && p.input === undefined && p.output === undefined
+        ? '<p class="text-muted-faint text-sm">No details yet — the tool is still running.</p>'
+        : "") +
+      "</div>";
+
+    closeToolPanel(true);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+    toolPanel.panel = panel;
+    toolPanel.backdrop = backdrop;
+    // slide in on the next frame so the transition runs
+    requestAnimationFrame(function () {
+      panel.classList.remove("translate-x-full");
+    });
+
+    var esc = function (ev) {
+      if (ev.key === "Escape") closeToolPanel();
+    };
+    document.addEventListener("keydown", esc);
+    panel._esc = esc;
+  }
+
+  // detailSection / errorSection / summarySection / rawSection / safeJSON live
+  // in chat-components.js — shared with the side panel (see MemoryChatComponents).
+
+  function closeToolPanel(instant) {
+    var panel = toolPanel.panel;
+    if (!panel) return;
+    if (panel._esc) document.removeEventListener("keydown", panel._esc);
+    var backdrop = toolPanel.backdrop;
+    toolPanel.panel = null;
+    toolPanel.backdrop = null;
+    if (instant) {
+      panel.remove();
+      if (backdrop) backdrop.remove();
+      return;
+    }
+    panel.classList.add("translate-x-full");
+    setTimeout(function () {
+      panel.remove();
+      if (backdrop) backdrop.remove();
+    }, 300);
+  }
+
+  /* ---------- expandable badges (thinking + tool calls) ---------- */
+
+  // The badge builder, its CSS injection, the thinking-block renderer and the
+  // live thinking tracker all live in chat-components.js (shared with
+  // sidepanel.js and share-agent.js). One instance per page; call sites below
+  // keep their local names.
+  var thinking = MemoryChatComponents.createThinkingHost({
+    badgeCtx: badgeCtx,
+    scrollToBottom: scrollToBottom,
+  });
+  // Live `thinking` SSE events (and the _debugThinking test hook) land here: a
+  // new id starts a fresh badge in stream position, `text` appends as a plain
+  // delta, `done:true` stops the shimmer.
+  var handleThinkingEvent = thinking.handle;
+  // History path: an operator message carrying a non-empty function_calls
+  // array is the planning monologue, not the final answer — render it as a
+  // collapsed thinking badge using raw text (never markdown-rendered).
+  // (isThinkingMessage itself lives in chat-stream.js.)
+  var renderThinkingBlock = thinking.render;
+  var clearThinking = thinking.clear;
+  // The stream ended before a segment sent done:true — stop its shimmer so
+  // the badge doesn't look stuck, then stop tracking the segments.
+  var finalizeThinking = thinking.finalize;
+
+  // onStreamFinish: a completed (or aborted) turn is always re-pulled from
+  // history so the transcript ends up showing the persisted run — even when
+  // the live stream delivered no text deltas (reasoning-model final answers)
+  // and/or the EventSource refresh frame was dropped while streaming (the hub
+  // consumes the fingerprint, so it is never re-sent). finalizeThinking first
+  // stops any live thinking shimmer; refreshActiveTranscript then replaces the
+  // streamed DOM with the authoritative history render. The live status clears
+  // (a paused run re-arms it via the next refresh payload) and the parked queue
+  // releases in order — but NOT after a mid-turn abort.
+  function finishTurn(reason) {
+    finalizeThinking();
+    // The engine's live turn is over: this page no longer owns the DOM, so the
+    // re-render below is allowed (and clears the placeholder via
+    // clearHeaderStatus).
+    liveTurn = false;
+    refreshActiveTranscript();
+    clearHeaderStatus();
+    liveRunStatus = "";
+    // Re-pull the rail so the optimistic "Running" badge clears once the turn
+    // ends — the run's run_end item is now in history, so the server's
+    // re-derived bucket is authoritative. A brand-new conversation now also
+    // subscribes on its meta event, so this is a defence-in-depth refresh that
+    // guarantees the row repaints even if that hub frame was dropped while
+    // streaming. Fire-and-forget, like the other post-turn refresh calls.
+    if (conversationId) refreshSessionRail();
+    // Release the parked queue only after the engine finishes its own teardown
+    // (streaming flag, bubble update) — otherwise the fresh turn this starts
+    // would be reset by finishStream's remaining lines.
+    if (reason !== "aborted") setTimeout(pumpQueue, 0);
+  }
+
+  // Test hook: inject a synthetic thinking event straight into the live code
+  // path so streaming can be verified in the browser. Harmless in production.
+  function debugThinking(payload) {
+    var p = payload || {};
+    handleThinkingEvent({
+      id: p.id,
+      role: p.role,
+      text: p.text,
+      done: p.done,
+    });
+  }
+
+  // Test hook: inject a synthetic tool event into the live code path so tool
+  // chips can be verified in the browser alongside thinking (DOM order).
+  // Harmless in production.
+  function debugTool(payload) {
+    var p = payload || {};
+    handleToolEvent({
+      tool: p.tool || "tool",
+      status: p.status || "running",
+      result: p.result,
+      error: p.error,
+      resultHtml: p.resultHtml,
+      id: p.id,
+    });
+  }
+
+  // Test hook: inject a synthetic live_replay frame through the shared
+  // dispatcher so replayed in-flight state (thinking badge / running tool chip)
+  // can be verified in the browser without a live reconnect.
+  function debugReplay(payload) {
+    var p = payload || {};
+    handleEvent(JSON.stringify({
+      type: "live_replay",
+      runId: p.runId || "debug",
+      frames: Array.isArray(p.frames) ? p.frames : [],
+    }));
+  }
+
+  // Test hook: open the in-progress assistant bubble directly (mirrors the
+  // streaming open path) so DOM-order tests can position badges relative to it.
+  // Harmless in production.
+  function debugOpenBubble() {
+    openAssistantBubble();
+  }
+
+  /* ---------- SSE handling ---------- */
+
+  // Tool-result normalization and tool-chip live updates
+  // (normalizeStatus / hasFailureSignal / firstError / summarizeOutput /
+  // summarizeText / tryParseJSON / classifyTool / handleToolEvent) live in
+  // chat-stream.js, shared with the side panel.
+
+  /* ---------- question cards (opencode-style prompt) ---------- */
+
+  // renderQuestion / renderApproval / renderHistoryQuestion live in
+  // chat-stream.js (shared with the side panel); they call back into this
+  // page's answerQuestion()/postDecision() below.
+
+  // The transcript currently in the pane is either a conversation
+  // (conversationId) or a scheduled run (activeRunId). These scope helpers
+  // keep the answer/decision/resume-poll flows working for both: runs have no
+  // run_end items, so "resumed" is detected as transcript growth instead.
+  function currentScopeId() { return activeRunId || conversationId; }
+  function currentScopeIsRun() { return activeRunId !== ""; }
+
+  function scopeHistoryUrl(id) {
+    return currentScopeIsRun()
+      ? "/api/runs/" + encodeURIComponent(id) + "/history"
+      : "/api/conversations/" + encodeURIComponent(id) + "/history";
+  }
+
+  // Re-render the transcript that is currently in the pane after a decision
+  // lands or a turn's stream finishes. Guarded two ways: never re-render while
+  // THIS page is DOM-owning a live stream (the wipe in renderTimelineItems
+  // would destroy the in-flight bubble; gated on liveTurn, not the busy flag),
+  // and never stack concurrent refreshes — finishStream already triggers one
+  // via onStreamFinish → finishTurn, so the answer/decision paths' explicit
+  // calls here collapse into that in-flight fetch instead of double-rendering.
+  async function refreshActiveTranscript() {
+    if (liveTurn || transcriptRefreshPending) return;
+    transcriptRefreshPending = true;
+    try {
+      if (activeRunId) await renderRunHistory(activeRunId);
+      else if (conversationId) await renderHistory(conversationId);
+      // A finished turn may have only just appeared in the transcript (the
+      // no-text-delta case) — land the viewport on the newest message.
+      scrollToBottom(true);
+    } finally {
+      transcriptRefreshPending = false;
+    }
+  }
+
+  // POSTs an answer back to the gateway, then polls the transcript until the
+  // resumed run progresses. Memory resumes the run in the background and returns
+  // JSON (not an SSE stream), so the assistant's continuation is read back from
+  // history rather than streamed live.
+  async function answerQuestion(questionId, answerValue) {
+    // A parked run (needs_input) reports runStatus "working", and the refresh
+    // path may have set the busy flag before this release landed. Answering is
+    // exactly how a parked run progresses, so do not bail on `streaming` while
+    // the run is parked on a decision (#1272). Only a genuinely live turn
+    // (streaming, not parked) blocks a second send.
+    if (streaming && !runIsParked()) return false;
+    if (!questionId) return false;
+    hideEmpty();
+    setStreaming(true);
+    openAssistantBubble();
+
+    var baseline = await resumeBaseline(currentScopeId());
+
+    var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/respond", { response: answerValue });
+    if (!result.ok) {
+      // result.network === true is a fetch transport failure; postJSON has
+      // already discarded the original error, so mark the rebuilt error
+      // explicitly as transient instead of relying on message heuristics.
+      if (result.network) {
+        var netErr = new Error(result.error || "Failed to fetch");
+        netErr.transient = true;
+        reportError(netErr, "answer send failed");
+      }
+      failStream("Could not send answer: " + result.error);
+      return false;
+    }
+
+    await waitForResume(currentScopeId(), baseline);
+    finishStream("done");
+    // Re-render the transcript: the answered question becomes a static
+    // "Answered" card and the resumed run's continuation appears.
+    refreshActiveTranscript();
+    return true;
+  }
+
+  /* ---------- approval cards ---------- */
+
+  // renderApproval lives in chat-stream.js (shared with the side panel); it
+  // calls back into this page's postDecision() below.
+
+  // POSTs an approval decision to the gateway: payload is the respond body
+  // ({response, message?}) or null to cancel. The resumed run is polled until
+  // it progresses, then the transcript re-renders. Returns true when the
+  // decision was recorded (the inline card uses this to re-enable its controls
+  // on failure). There is deliberately no `streaming` guard here: the inline
+  // approval cards set the streaming flag before calling in (to show the
+  // progress bubble), so guarding on it would silently drop every inline
+  // decision.
+  async function postDecision(questionId, payload) {
+    if (!questionId) return false;
+    var baseline = await resumeBaseline(currentScopeId());
+    var action = payload ? "respond" : "cancel";
+    var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/" + action, payload);
+    if (!result.ok) {
+      // see answerQuestion: result.network is a transient fetch transport failure.
+      if (result.network) {
+        var netErr = new Error(result.error || "Failed to fetch");
+        netErr.transient = true;
+        reportError(netErr, "decision send failed");
+      }
+      failStream("Could not send decision: " + result.error);
+      return false;
+    }
+    await waitForResume(currentScopeId(), baseline);
+    finishStream("done");
+    // Re-render the transcript so the decided card leaves and the resumed run's
+    // continuation appears.
+    refreshActiveTranscript();
+    return true;
+  }
+
+  // resumeBaseline snapshots the conversation's resume-progress watermark: the
+  // newest run id in the transcript for a conversation, or the transcript item
+  // count for a scheduled run scope (which has no run_end items). null when the
+  // history can't be read.
+  async function resumeBaseline(id) {
+    try {
+      var r = await fetch(scopeHistoryUrl(id));
+      if (!r.ok) return null;
+      var data = await r.json();
+      var items = data.items || [];
+      if (currentScopeIsRun()) return items.length;
+      var newest = "";
+      for (var i = 0; i < items.length; i++) {
+        if (items[i] && items[i].run_id) newest = items[i].run_id;
+      }
+      return newest;
+    } catch (e) {
+      reportError(e, "resume baseline failed");
+      return null;
+    }
+  }
+
+  // resumeProgressed reports whether a conversation has moved past its baseline
+  // watermark: a run other than the baseline's newest run has stopped (completed,
+  // failed, cancelled, skipped, or paused on input-required). A still-"working"
+  // run does not count — the server emits a run_end for the pre-created resume
+  // run the moment an answer lands, and the prior paused run is flipped back to
+  // "working" on resume, neither of which is actual progress.
+  async function resumeProgressed(id, baseline) {
+    if (baseline === null) return false;
+    try {
+      var r = await fetch(scopeHistoryUrl(id));
+      if (!r.ok) return false;
+      var data = await r.json();
+      var items = data.items || [];
+      if (currentScopeIsRun()) return items.length > baseline;
+      var newestEnd = "";
+      var newestEndRun = "";
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it || it.kind !== "run_end") continue;
+        newestEnd = it.run_status || "";
+        newestEndRun = it.run_id || "";
+      }
+      if (!newestEndRun || newestEndRun === baseline) return false;
+      return !isActiveRunStatus(newestEnd);
+    } catch (e) {
+      reportError(e, "resume progress check failed");
+      return false;
+    }
+  }
+
+  // waitForResume polls until the resumed run progresses (conversation scope) or
+  // the run transcript grows (run scope) — or a timeout elapses (~60s).
+  // Resolves either way: the caller re-renders.
+  function waitForResume(id, baseline) {
+    return new Promise(function (resolve) {
+      var attempts = 0;
+      var maxAttempts = 40; // 40 * 1.5s
+      var timer = setInterval(function () {
+        attempts++;
+        resumeProgressed(id, baseline)
+          .then(function (progressed) {
+            if (progressed || attempts >= maxAttempts) {
+              clearInterval(timer);
+              resolve();
+            }
+          })
+          .catch(function () {
+            if (attempts >= maxAttempts) { clearInterval(timer); resolve(); }
+          });
+      }, 1500);
+    });
+  }
+
+  function onSend(ev) {
+    ev.preventDefault();
+    var text = input ? input.value.trim() : "";
+    if (!text) return;
+    // A submit while a turn is running parks the message instead of dropping it.
+    if (streaming) {
+      enqueue(text);
+      input.value = "";
+      autoGrow();
+      input.focus();
+      return;
+    }
+    dispatchMessage(text);
+  }
+
+  // dispatchMessage runs one turn through the shared engine. Returns false when
+  // it could not start (so a queue pump can put the message back).
+  function dispatchMessage(text) {
+    if (!text || streaming) return false;
+    var agent = currentAgent();
+    if (!agent) {
+      notify("error", "Pick an agent first.");
+      return false;
+    }
+    // Sending from a run transcript starts a fresh chat: a run is not an
+    // /api/chat conversation, so abandon the run scope and clear its bubbles.
+    if (activeRunId) {
+      activeRunId = "";
+      closeLiveStream(); // drop the abandoned run's push channel
+      clearActiveRailItem();
+      clearThinking();
+      replayFrames = [];
+      transcriptReady = false;
+      updateUrl();
+      if (messages) messages.innerHTML = "";
+      bubble = null; bubbleHTML = ""; bubbleText = "";
+    }
+    if (input) {
+      input.value = "";
+      autoGrow();
+      input.focus();
+    }
+    addUserMessage(text);
+    setStreaming(true); // before the bubble: it shows the typing indicator
+    openAssistantBubble();
+    streamChat(agent, text);
+    return true;
+  }
+
+  /* ---------- run-control surfaces (todos, rail, queue, stop) ---------- */
+
+  // --- mount points -------------------------------------------------------
+  // Each ensure* creates its mount at runtime when chat.templ does not already
+  // provide it, and returns null (never throws) when the surrounding page does
+  // not have the anchor it needs.
+
+  function composerWrapper() {
+    var l = document.getElementById("chat-log");
+    return l ? l.nextElementSibling : null;
+  }
+
+  function isAtBottom() {
+    if (!log) return true;
+    return log.scrollHeight - log.scrollTop - log.clientHeight < 90;
+  }
+
+  // captureScroll records the transcript viewport before a full re-render.
+  // renderTimelineItems empties #chat-messages, which clamps the scroll
+  // container's scrollTop to 0; the per-bubble auto-scroll only re-pins when it
+  // is already within 90px of the bottom, so a long rebuilt transcript is left
+  // at the very top. Capturing "was the user at the bottom, and where exactly"
+  // lets restoreScroll put the viewport back after the rebuild (#1369).
+  function captureScroll() {
+    if (!log) return null;
+    return { bottom: isAtBottom(), top: log.scrollTop };
+  }
+
+  // restoreScroll applies a captureScroll snapshot: stay pinned to the bottom
+  // (new content keeps auto-scrolling) when the user was already there, else
+  // hold the exact reading offset so a refresh never yanks a reader out of
+  // position.
+  function restoreScroll(snapshot) {
+    if (!log || !snapshot) return;
+    if (snapshot.bottom) {
+      scrollToBottom(true);
+      return;
+    }
+    log.scrollTop = snapshot.top;
+  }
+
+  // withAnchoredScroll keeps the transcript pinned to the composer across a
+  // height change (todo card expanding, queue growing): if the viewport was at
+  // the bottom it stays there, otherwise the reading position is left alone.
+  function withAnchoredScroll(fn) {
+    var wasBottom = isAtBottom();
+    if (typeof fn === "function") fn();
+    if (wasBottom) scrollToBottom(true);
+  }
+
+  // The queue is a swapped/server-rendered surface (#chat-queue is rendered by
+  // chat.templ), so its row controls are delegated at the document level — the
+  // same pattern as the tool-panel handlers. Binding on element creation missed
+  // the server-rendered mount entirely, leaving "Send next" and remove inert
+  // (#1301).
+  function onQueueClick(ev) {
+    var mount = document.getElementById("chat-queue");
+    if (!mount || !ev.target || !mount.contains(ev.target)) return;
+    var btn = ev.target.closest("[data-queue-action]");
+    if (!btn) return;
+    var id = btn.getAttribute("data-queue-id");
+    if (btn.getAttribute("data-queue-action") === "send") sendNow(id);
+    else removeQueued(id);
+  }
+
+  function ensureQueueMount() {
+    if (mounts.queue && document.contains(mounts.queue)) return mounts.queue;
+    var wrap = composerWrapper();
+    if (!wrap) return null;
+    var el = document.getElementById("chat-queue");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "chat-queue";
+      el.className = "memory-queue hidden";
+      el.setAttribute("aria-live", "polite");
+      var form = document.getElementById("chat-form");
+      if (form && form.parentNode === wrap) wrap.insertBefore(el, form);
+      else wrap.appendChild(el);
+    }
+    mounts.queue = el;
+    return el;
+  }
+
+  function ensureTodosMount() {
+    if (mounts.todos && document.contains(mounts.todos)) return mounts.todos;
+    var msgs = document.getElementById("chat-messages");
+    if (!msgs || !msgs.parentNode) return null;
+    var el = document.getElementById("chat-todos");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "chat-todos";
+      el.className = "hidden";
+      // Collapse state is owned by mount.dataset.expanded (set by the delegated
+      // .todo-card-toggle bridge in chat.templ, reapplied by applyTodoCollapse
+      // on refresh). No separate listener here — one mechanism owns it.
+      msgs.parentNode.insertBefore(el, msgs);
+    }
+    mounts.todos = el;
+    return el;
+  }
+
+  function ensureHeaderStatus() {
+    if (mounts.status && document.contains(mounts.status)) return mounts.status;
+    var el = document.getElementById("chat-run-status");
+    if (!el) {
+      var h1 = document.querySelector("#chat-root h1");
+      var header = (h1 && h1.closest) ? h1.closest('[class*="justify-between"]') : null;
+      if (!header) return null;
+      el = document.createElement("div");
+      el.id = "chat-run-status";
+      el.className = "memory-run-status hidden";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      header.appendChild(el);
+    }
+    mounts.status = el;
+    return el;
+  }
+
+  // --- run-control state --------------------------------------------------
+  // clearRunControlState drops the live run identity on a scope switch (reset to
+  // a fresh chat, or resuming a different conversation) so liveRunId /
+  // liveRunStatus / liveBucket can never leak across conversations. (This was
+  // the run-state half of the retired bottom dock's clearDock.)
+  function clearRunControlState() {
+    liveRunId = "";
+    liveRunStatus = "";
+    liveBucket = "";
+  }
+
+  // --- session todo card --------------------------------------------------
+
+  function clearTodos() {
+    var el = mounts.todos || document.getElementById("chat-todos");
+    if (el) {
+      el.innerHTML = "";
+      el.classList.add("hidden");
+      // Expansion is per-conversation, so a reset drops the remembered choice.
+      if (el.dataset) delete el.dataset.expanded;
+    }
+  }
+
+  function refreshTodos() {
+    var el = ensureTodosMount();
+    if (!el) return Promise.resolve();
+    if (!conversationId) {
+      withAnchoredScroll(function () { el.innerHTML = ""; el.classList.add("hidden"); });
+      return Promise.resolve();
+    }
+    return fetch(scopedPath("/partial/chat-todos") + "?c=" + encodeURIComponent(conversationId))
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.text();
+      })
+      .then(function (html) {
+        withAnchoredScroll(function () {
+          if (html && html.trim()) {
+            var expanded = el.dataset.expanded === "1";
+            el.innerHTML = html;
+            el.classList.remove("hidden");
+            applyTodoCollapse(el, expanded);
+          } else {
+            el.innerHTML = "";
+            el.classList.add("hidden");
+          }
+        });
+      })
+      .catch(function (err) {
+        console.warn("chat: todo refresh failed (ignored):", err);
+      });
+  }
+
+  // applyTodoCollapse reapplies the user's expand/collapse choice to the freshly
+  // swapped-in todo card. TodoCard renders a plain <button class="todo-card-toggle">
+  // whose aria-expanded drives the list's visibility (app.css), so this is the
+  // whole mechanism: the delegated click bridge in chat.templ flips the button
+  // and records the choice on the mount's data-expanded, and this function is the
+  // only writer on refresh — a refresh therefore never re-collapses a card the
+  // user expanded. The default (no remembered choice) stays collapsed.
+  function applyTodoCollapse(mount, expanded) {
+    var toggles = mount.querySelectorAll(".todo-card-toggle");
+    for (var i = 0; i < toggles.length; i++) {
+      toggles[i].setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+  }
+
+  // --- live status + refresh payload --------------------------------------
+
+  // isRunWorking reports whether a refresh `runStatus` means the run is still
+  // actively executing (working/submitted/running/cancelling) — as opposed to
+  // stopped (completed/failed/cancelled) or paused awaiting input.
+  function isRunWorking(status) {
+    return status === "working" || status === "submitted" ||
+           status === "running" || status === "cancelling";
+  }
+
+  // runIsParked reports whether the active run is paused awaiting a human
+  // decision (an ask_user question or a tool approval). The refresh reports the
+  // "needs_input" bucket while runStatus can still read "working" (the run is
+  // alive but parked), so the bucket is the authority; a run_end item may also
+  // carry "input-required". A parked run keeps the "Waiting on you" header but
+  // must not hold the working placeholder or the busy composer — it waits on
+  // the user, so the composer has to be usable (#1272).
+  function runIsParked() {
+    return liveBucket === "needs_input" || liveRunStatus === "input-required";
+  }
+
+  // flushReplay renders the retained in-flight frames through the shared
+  // dispatcher. Called after a transcript render (so the frames append after
+  // persisted history, not get wiped by it) and on live_replay arrival when
+  // history is already on screen. Skipped while THIS page DOM-owns a live
+  // /api/chat turn (the live path already owns the in-flight state).
+  function flushReplay() {
+    if (liveTurn) return;
+    if (!replayFrames.length) return;
+    // A prior render wiped #chat-messages, orphaning any thinking badges the
+    // last flush created — drop their tracking so a re-applied frame re-creates
+    // its badge instead of appending to a detached node.
+    clearThinking();
+    var frames = replayFrames.slice();
+    // Consume the buffer: a later history re-render must not re-append these
+    // connect-time frames on top of freshly rendered persisted history. An
+    // EventSource reconnect re-emits live_replay and repopulates the buffer.
+    replayFrames = [];
+    for (var i = 0; i < frames.length; i++) {
+      handleEvent(JSON.stringify(frames[i]));
+    }
+  }
+
+  // afterTranscriptRender runs at the end of every persisted-history render:
+  // mark the transcript ready, (re-)apply the in-flight replay tail, plant the
+  // mid-run working placeholder (AFTER the replay tail so replayed thinking /
+  // tool chips render above it), and reflect a still-working run in the
+  // composer (stop button / parked sends).
+  function afterTranscriptRender() {
+    transcriptReady = true;
+    flushReplay();
+    // Single quiet placeholder for a run already in flight on page open. Gated
+    // on liveTurn (DOM ownership), never on streaming: a resumed page is busy
+    // but must still show the agent bubble. renderTimelineItems preserved any
+    // existing node in place; re-home it to the end WITHOUT moving it — a
+    // same-parent move (appendChild) restarts a CSS animation in Chromium, so
+    // instead move every sibling rendered after it to before it. The
+    // placeholder node is never removed or re-inserted, so .memory-typing
+    // keeps animating continuously. When the run is not active no placeholder
+    // may survive the render (a run-scope timeline has no run_start/run_end, so
+    // it never reaches releaseWorkingState) — drop it here. A parked run
+    // (needs_input) is active-but-waiting, not working, so it must not plant or
+    // keep the placeholder either (#1272).
+    var working = isRunWorking(liveRunStatus) && !runIsParked() && !liveTurn;
+    if (working) {
+      var workingEl = ensureWorkingPlaceholder();
+      if (workingEl && workingEl.parentNode === messages) {
+        var n = workingEl.nextSibling;
+        while (n) { var nn = n.nextSibling; messages.insertBefore(n, workingEl); n = nn; }
+      }
+    } else {
+      removeWorkingPlaceholder();
+    }
+    if (working) {
+      if (!streaming) setStreaming(true);
+    } else if (runIsParked() && streaming) {
+      // Parked on a decision: the placeholder is gone above, so drop the busy
+      // composer too (the header keeps the "Waiting on you" state).
+      setStreaming(false);
+    }
+  }
+
+  function handleRefreshPayload(m) {
+    if (m.runId) liveRunId = m.runId;
+    if (m.runStatus) liveRunStatus = m.runStatus;
+    if (m.bucket) liveBucket = m.bucket;
+    renderHeaderStatus(liveRunStatus, liveBucket, m.pendingApprovals || 0, m.pendingQuestions || 0);
+    refreshTodos();
+    // The rail's per-row badge needs the server's fresh row attributes, so
+    // re-pull it only when the state actually changed.
+    var fp = [m.bucket || "", m.runId || "", m.runStatus || "", m.pendingApprovals || 0, m.pendingQuestions || 0].join("|");
+    if (fp !== railFingerprint) {
+      railFingerprint = fp;
+      refreshSessionRail();
+    } else {
+      applyRailBadges();
+    }
+  }
+
+  function renderHeaderStatus(status, bucket, pendingApprovals, pendingQuestions) {
+    var el = ensureHeaderStatus();
+    if (!el) return;
+    var pending = (pendingApprovals || 0) + (pendingQuestions || 0);
+    var state = "";
+    var label = "";
+    if (bucket === "needs_input" || status === "input-required") {
+      state = "waiting";
+      label = pending > 0 ? ("Waiting on you · " + pending) : "Waiting on you";
+    } else if (status === "submitted" || status === "working" || status === "running" || status === "cancelling") {
+      state = "working";
+      label = "Working…";
+    } else if (isFailedRun(status)) {
+      state = "failed";
+      label = "Run failed";
+    } else {
+      clearHeaderStatus();
+      return;
+    }
+    el.className = "memory-run-status";
+    el.setAttribute("data-state", state);
+    el.innerHTML =
+      '<span class="memory-run-status-dot" aria-hidden="true"></span>' +
+      '<span class="memory-run-status-label">' + escapeHTML(label) + "</span>";
+  }
+
+  function clearHeaderStatus() {
+    // The header stands down exactly when a run stops (or the scope resets):
+    // the mid-run placeholder belongs to that same "working" state, so drop it
+    // here too — the single teardown point shared by finishTurn,
+    // resetConversation, and the non-active branch of renderHeaderStatus.
+    removeWorkingPlaceholder();
+    var el = mounts.status || document.getElementById("chat-run-status");
+    if (!el) return;
+    el.className = "memory-run-status hidden";
+    el.removeAttribute("data-state");
+    el.innerHTML = "";
+  }
+
+  // releaseWorkingState drops every trace of a run that is no longer active:
+  // the cached run id/status/bucket, the header indicator, the mid-run
+  // placeholder bubble, and the busy composer. A page that does not DOM-own a
+  // live stream calls this when it (re)opens a scope and whenever a render
+  // reports no active newest run, so an idle conversation can never stay stuck
+  // "Working…" with a phantom bubble and a disabled composer.
+  function releaseWorkingState() {
+    liveRunId = "";
+    liveRunStatus = "";
+    liveBucket = "";
+    clearHeaderStatus();
+    if (streaming) setStreaming(false);
+  }
+
+  // releaseParkedWorkingState drops only the "working" affordances of a run
+  // parked on a decision: the mid-run placeholder bubble and the busy composer.
+  // Unlike releaseWorkingState it keeps the cached run id/status/bucket and the
+  // header, because the run is still alive — the header must keep showing
+  // "Waiting on you" (#1272).
+  function releaseParkedWorkingState() {
+    removeWorkingPlaceholder();
+    if (streaming) setStreaming(false);
+  }
+
+  // --- mid-run working placeholder ----------------------------------------
+  //
+  // A page opened while a run is already in flight never enters the live
+  // streaming path, so without this it would render persisted history and no
+  // agent bubble at all. When the newest run in history is still active,
+  // renderTimelineItems plants one placeholder — the same chat-start shell and
+  // .memory-typing dots as the live bubble, but with no text and no copy action.
+  // It is status, not an answer. Exactly one exists at a time (it carries
+  // data-memory-working), and it is removed the moment the live stream takes
+  // over (openAssistantBubble), the run stops (clearHeaderStatus), or a
+  // re-render no longer reports an active newest run (the wipe in
+  // renderTimelineItems).
+
+  function workingPlaceholder() {
+    return messages ? messages.querySelector("[data-memory-working]") : null;
+  }
+
+  function ensureWorkingPlaceholder(name) {
+    if (!messages) return null;
+    var existing = workingPlaceholder();
+    if (existing) return existing;
+    // Same shell as a real assistant bubble (avatar + agent header + neutral
+    // bubble) so the placeholder aligns and tints identically.
+    var wrap = addAssistantMessage("", name || currentAgentName(), true);
+    if (!wrap) return null;
+    wrap.setAttribute("data-memory-working", "");
+    // Not a message: drop the whole-message copy affordance addAssistantMessage
+    // attaches to every assistant bubble.
+    var copy = wrap.querySelector(".memory-copy-msg");
+    if (copy && copy.parentNode) copy.parentNode.removeChild(copy);
+    var body = wrap.querySelector(".memory-md");
+    if (body) {
+      body.innerHTML = '<span class="memory-typing"><span></span><span></span><span></span></span>';
+    }
+    return wrap;
+  }
+
+  function removeWorkingPlaceholder() {
+    if (!messages) return;
+    var nodes = messages.querySelectorAll("[data-memory-working]");
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].parentNode) nodes[i].parentNode.removeChild(nodes[i]);
+    }
+  }
+
+  // --- rail badges --------------------------------------------------------
+
+  // applyRailBadges reads the server-rendered data-bucket /
+  // data-pending-approvals / data-pending-questions attributes off each rail row
+  // and paints (or updates) one badge per row. Idempotent: an existing badge is
+  // reused, so re-running after a re-render never duplicates it, and a row whose
+  // state returns to idle has any previously-painted badge cleared.
+  function applyRailBadges() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return;
+    var rows = railList.querySelectorAll(railRowSelector);
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var bucket = row.getAttribute("data-bucket") || "";
+      var pa = parseInt(row.getAttribute("data-pending-approvals") || "0", 10) || 0;
+      var pq = parseInt(row.getAttribute("data-pending-questions") || "0", 10) || 0;
+      var pending = pa + pq;
+
+      // Optimistic waiting indicator: a just-started turn on the active
+      // conversation shows "Running" before the server has flipped the row's
+      // bucket off done/empty. It must not clobber needs_input/failed or a row
+      // with pending work, and it clears on its own once streaming ends.
+      var id = row.getAttribute("data-id") || "";
+      var optimisticRunning =
+        streaming && id === conversationId && conversationId !== "" &&
+        bucket !== "needs_input" && bucket !== "failed" && pending === 0;
+
+      var label = optimisticRunning ? "Running" : bucketLabel(bucket);
+      var show = pending > 0 || label !== "";
+
+      var badge = row.querySelector("[data-rail-badge], .memory-rail-badge");
+      if (!badge) {
+        if (!show) continue; // nothing to show — leave the row plain
+        badge = document.createElement("span");
+        badge.className = "memory-rail-badge";
+        badge.setAttribute("data-rail-badge", "");
+        badge.setAttribute("aria-hidden", "true");
+        // Sit before the trailing chevron so the badge reads as status, not as
+        // the row's actionable affordance.
+        if (row.lastElementChild) row.insertBefore(badge, row.lastElementChild);
+        else row.appendChild(badge);
+      }
+      if (!show) {
+        // Idle/`done` row (or unknown bucket with no pending): clear any badge
+        // painted by an earlier pass and hide it.
+        badge.className = "memory-rail-badge hidden";
+        badge.innerHTML = "";
+        badge.title = "";
+        continue;
+      }
+      badge.className = "memory-rail-badge";
+      badge.setAttribute("data-bucket", optimisticRunning ? "running" : (bucket || "done"));
+      // Build the label span only when there is a label (an unknown bucket with
+      // pending work has no label), and never emit a leading separator in the
+      // title for that label-less case.
+      var html = "";
+      if (label !== "") html += '<span class="memory-rail-label">' + escapeHTML(label) + "</span>";
+      if (pending > 0) html += '<span class="memory-rail-count">' + pending + "</span>";
+      badge.innerHTML = html;
+      badge.title = pending > 0 ? (label !== "" ? label + " · " : "") + pending + " pending" : label;
+    }
+  }
+
+  // bucketLabel maps a run bucket to its human rail-badge label. This MUST stay
+  // in lockstep with railBucketLabel in chat_dock.go: `done` (idle) and unknown
+  // buckets have no label, so an idle row reads as a plain row with no badge.
+  function bucketLabel(bucket) {
+    switch (bucket) {
+      case "needs_input": return "Needs input";
+      case "failed": return "Failed";
+      case "running": return "Running";
+      default: return "";
+    }
+  }
+
+  // --- composer queue (client-side, per conversation) ---------------------
+
+  // A staged queue for an unsaved chat must be scoped to the tenancy it was
+  // typed in: the old browser-global "__new__" key leaked draft text between
+  // projects (#2223). Conversation ids are already project-scoped.
+  function newChatQueueKey() {
+    var body = document.body;
+    var org = (body && body.getAttribute("data-org-id")) || "";
+    var project = (body && body.getAttribute("data-project-id")) || "";
+    return "new." + encodeURIComponent(org) + "." + encodeURIComponent(project);
+  }
+
+  function activeQueueKey() { return conversationId || newChatQueueKey(); }
+
+  function activeQueue() {
+    var k = activeQueueKey();
+    if (!queueStore[k]) queueStore[k] = loadQueue(k);
+    return queueStore[k];
+  }
+
+  function loadQueue(k) {
+    var items = [];
+    var armed = false;
+    try {
+      // The retired unscoped new-chat key carries no tenancy and cannot be
+      // attributed safely — drop it instead of adopting another project's draft.
+      localStorage.removeItem("memory.chat.queue.v1.__new__");
+      var raw = localStorage.getItem("memory.chat.queue.v1." + k);
+      if (raw) {
+        var d = JSON.parse(raw);
+        if (d && Array.isArray(d.items)) {
+          items = d.items
+            .filter(function (x) { return x && typeof x.text === "string" && x.text.trim(); })
+            .map(function (x) { return { id: x.id || newQueueId(), text: x.text }; });
+        }
+        armed = !!(d && d.armed);
+      }
+    } catch (e) {}
+    return { items: items, armed: armed };
+  }
+
+  function persistQueue() {
+    var k = activeQueueKey();
+    var q = queueStore[k];
+    if (!q) return;
+    try { localStorage.setItem("memory.chat.queue.v1." + k, JSON.stringify(q)); } catch (e) {}
+  }
+
+  function newQueueId() {
+    return "q" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  // Compact queued-message editor. Caps at 112px to match
+  // `.memory-queue-input`'s max-height:7rem — deliberately shorter than the
+  // primary composer's 160px cap (chat-stream.js autoGrow), which owns the main
+  // input.
+  function autoGrowEl(el) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 112) + "px";
+  }
+
+  function enqueueFromInput() {
+    if (!input) return;
+    var text = input.value.trim();
+    if (!text) return;
+    enqueue(text);
+    input.value = "";
+    autoGrow();
+    input.focus();
+  }
+
+  function enqueue(text) {
+    var q = activeQueue();
+    q.items.push({ id: newQueueId(), text: text });
+    // Only a message parked during a running turn is armed for auto-release;
+    // a Cmd/Ctrl+Enter when idle waits for an explicit action.
+    if (streaming) q.armed = true;
+    persistQueue();
+    renderQueue();
+    notify("info", "Queued — it will send when this turn finishes.");
+  }
+
+  function removeQueued(id) {
+    var q = activeQueue();
+    for (var i = 0; i < q.items.length; i++) {
+      if (q.items[i].id === id) { q.items.splice(i, 1); break; }
+    }
+    persistQueue();
+    renderQueue();
+  }
+
+  // sendNow promotes a queued row to the head of the queue ("Send next"). When
+  // the composer is idle it sends immediately; while a turn is running the
+  // shared engine cannot start a second turn without clobbering the live bubble
+  // (steer is deferred by design), so the row is promoted to the head and
+  // released the moment the current turn ends — ahead of every other queued row.
+  function sendNow(id) {
+    var q = activeQueue();
+    var idx = -1;
+    var item = null;
+    for (var i = 0; i < q.items.length; i++) {
+      if (q.items[i].id === id) { idx = i; item = q.items[i]; break; }
+    }
+    if (idx === -1 || !item) return;
+    q.items.splice(idx, 1);
+    if (!streaming && !activeRunId) {
+      // The composer is idle, so this is an explicit send of exactly one row.
+      // Disarm the queue first: finishTurn's pumpQueue would otherwise treat the
+      // turn this starts as the one the remaining rows were parked behind and
+      // cascade-send them all. They were queued behind a turn that has already
+      // ended, so they stay parked for an explicit action (#1301).
+      q.armed = false;
+      persistQueue();
+      renderQueue();
+      if (!dispatchMessage(item.text)) {
+        q.items.unshift(item);
+        persistQueue();
+        renderQueue();
+      }
+      return;
+    }
+    q.items.unshift(item);
+    q.armed = true;
+    persistQueue();
+    renderQueue();
+    notify("info", "Will send next, as soon as this turn finishes.");
+  }
+
+  // pumpQueue releases an armed queue in order, one turn at a time: each
+  // finished turn calls back here (finishTurn) and the next message goes out.
+  // It refuses to release an unarmed queue so a Cmd/Ctrl+Enter parked while idle
+  // is not silently released when a later unrelated turn ends.
+  function pumpQueue() {
+    if (streaming || activeRunId) return;
+    var q = activeQueue();
+    if (!q.items.length || !q.armed) return;
+    var item = q.items.shift();
+    // The last queued row clearing also disarms the queue, so a later idle
+    // enqueue is not released by the next turn end.
+    if (!q.items.length) q.armed = false;
+    persistQueue();
+    renderQueue();
+    if (!dispatchMessage(item.text)) {
+      q.items.unshift(item);
+      persistQueue();
+      renderQueue();
+    }
+  }
+
+  // maybeReleaseOnReopen releases an armed queue when a conversation is reopened
+  // after its turn already ended off-screen.
+  function maybeReleaseOnReopen() {
+    if (streaming || activeRunId || !conversationId) return;
+    var q = activeQueue();
+    if (!q.items.length || !q.armed) return;
+    if (lastTimelineRun && lastTimelineRun.ended) {
+      persistQueue();
+      pumpQueue();
+    }
+  }
+
+  function renderQueue() {
+    var mount = ensureQueueMount();
+    if (!mount) return;
+    var q = activeQueue();
+    mount.innerHTML = "";
+    if (!q.items.length) {
+      mount.classList.add("hidden");
+      return;
+    }
+    mount.classList.remove("hidden");
+    var head = document.createElement("div");
+    head.className = "memory-queue-head";
+    head.innerHTML = '<span class="iconify lucide--list-todo size-3.5" aria-hidden="true"></span>';
+    var title = document.createElement("span");
+    title.textContent = "Queued · " + q.items.length;
+    head.appendChild(title);
+    mount.appendChild(head);
+    var list = document.createElement("div");
+    list.className = "memory-queue-list";
+    list.setAttribute("role", "list");
+    for (var i = 0; i < q.items.length; i++) list.appendChild(queueRow(q.items[i]));
+    mount.appendChild(list);
+  }
+
+  function queueRow(item) {
+    var row = document.createElement("div");
+    row.className = "memory-queue-row";
+    row.setAttribute("role", "listitem");
+    row.setAttribute("data-queue-id", item.id);
+
+    var ta = document.createElement("textarea");
+    ta.className = "memory-queue-input";
+    ta.rows = 1;
+    ta.value = item.text;
+    ta.setAttribute("aria-label", "Queued message — edit before sending");
+    ta.addEventListener("input", function () {
+      item.text = ta.value;
+      persistQueue();
+      autoGrowEl(ta);
+    });
+    ta.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        sendNow(item.id);
+      }
+    });
+
+    var send = document.createElement("button");
+    send.type = "button";
+    send.className = "memory-queue-send";
+    send.setAttribute("data-queue-action", "send");
+    send.setAttribute("data-queue-id", item.id);
+    send.textContent = "Send next";
+
+    var rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "memory-queue-remove";
+    rm.setAttribute("data-queue-action", "remove");
+    rm.setAttribute("data-queue-id", item.id);
+    rm.setAttribute("aria-label", "Remove queued message");
+    rm.title = "Remove";
+    rm.innerHTML = '<span class="iconify lucide--x size-3.5" aria-hidden="true"></span>';
+
+    row.appendChild(ta);
+    row.appendChild(send);
+    row.appendChild(rm);
+    return row;
+  }
+
+  // --- stop = real interrupt ---------------------------------------------
+
+  // requestRunCancel POSTs the frozen cancel route and preserves the {"ok":
+  // false,"reason":"…"} body (postJSON's {ok,error} contract would drop the
+  // reason).
+  async function requestRunCancel(runId) {
+    try {
+      var res = await fetch("/api/chat/runs/" + encodeURIComponent(runId) + "/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      var data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (data && data.ok === true) return { ok: true, data: data };
+      var reason = (data && (data.reason || data.error)) || ("Gateway error " + res.status);
+      return { ok: false, error: reason, network: false };
+    } catch (err) {
+      return { ok: false, error: err.message, network: true };
+    }
+  }
+
+  // stopTurn aborts the local stream and cancels the server-side run. It never
+  // claims success when no run id could be resolved.
+  function stopTurn() {
+    var runId = liveRunId;
+    if (aborter) aborter.abort();
+    if (!runId) {
+      notify("info", "Stopped — no active run id, so the server run could not be cancelled.");
+      return;
+    }
+    requestRunCancel(runId).then(function (result) {
+      if (!result.ok) {
+        notify("error", "Could not cancel the server run: " + result.error);
+        return;
+      }
+      notify("info", "Run cancelled.");
+      liveRunStatus = "cancelling";
+      renderHeaderStatus("cancelling", liveBucket, 0, 0);
+    });
+  }
+
+  // The stream engine (streamChat / finishStream / failStream / notify /
+  // escapeHTML) lives in chat-stream.js, bound above via MemoryChatStream.
+
+  /* ---------- boot ---------- */
+  MemoryChatComponents.ensureBadgeStyle();
+
+  // document-level: close the tool panel via backdrop / X / Escape (survives
+  // htmx swaps of #chat-root)
+  document.addEventListener("click", function (ev) {
+    var t = ev.target.closest("[data-action='close-tool-panel']");
+    if (t) closeToolPanel();
+  });
+  // document-level: the queue rows live under the server-rendered #chat-queue
+  // mount, so their controls are delegated too (survives every render/swap).
+  document.addEventListener("click", onQueueClick);
+  // window-level: re-clamp the session rail width when the viewport shrinks.
+  // Registered once here (not in init()) so re-renders of #chat-root never
+  // stack duplicate listeners.
+  window.addEventListener("resize", railGrip.onWindowResize);
+
+  // hx-boosted navigation swaps #main-content in place and does NOT fire
+  // DOMContentLoaded; the swapped #chat-root is a fresh element with no
+  // data-ready. Re-init after every swap (init() is idempotent per #chat-root).
+  // This file is loaded once from the shell — it must not live in the swapped
+  // fragment, where htmx re-executes it in a racy order relative to the swap.
+  document.addEventListener("htmx:after:swap", init);
+
+  // Escape leaves bulk-selection mode (#1385). Registered once at boot —
+  // selectionMode is module state, so it survives every #chat-root swap.
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && selectionMode) exitSelectionMode();
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+  window.MemoryChat = {
+    init: init,
+    _debugThinking: debugThinking,
+    _debugTool: debugTool,
+    _debugOpenBubble: debugOpenBubble,
+    _debugReplay: debugReplay,
+    refreshSessionRail: refreshSessionRail,
+    applyRailBadges: applyRailBadges,
+    refreshTodos: refreshTodos,
+    renderQueue: renderQueue,
+  };
+})();

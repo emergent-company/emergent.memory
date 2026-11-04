@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "results": [
+      {"ok": true, "index": 0, "entity": {"id": "e1", "type": "Note"}}
+    ],
+    "message": "Batch create completed: 1 created, 0 failed, 0 near-duplicate"
+  },
+  "meta": {"created": 1, "failed": 0, "total": 1, "similar_count": 0}
+}

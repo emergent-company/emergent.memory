@@ -1,0 +1,54 @@
+package documents
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers document routes with the Echo router
+func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, authMiddleware *auth.Middleware) {
+	sourceTypesGroup := e.Group("/api/documents")
+	sourceTypesGroup.Use(authMiddleware.RequireAuth())
+	sourceTypesGroup.Use(authMiddleware.RequireProjectID())
+	sourceTypesGroup.Use(authMiddleware.RequireProjectTokenScope())
+	sourceTypesGroup.Use(authMiddleware.RequireProjectMember())
+	sourceTypesGroup.GET("/source-types", h.GetSourceTypes)
+
+	g := e.Group("/api/documents")
+	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectID())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
+
+	readGroup := g.Group("")
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("documents:read"))
+	readGroup.GET("", h.List)
+	readGroup.GET("/:id", h.GetByID)
+	readGroup.GET("/:id/versions", h.GetVersionHistory)
+	readGroup.GET("/:id/content", h.GetContent)
+	readGroup.GET("/:id/download", h.Download)
+	readGroup.GET("/:id/extraction-summary", h.GetExtractionSummary)
+
+	writeGroup := g.Group("")
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("documents:write"))
+	writeGroup.POST("", h.Create)
+	writeGroup.POST("/upload", uploadHandler.Upload)
+	writeGroup.POST("/upload/batch", uploadHandler.UploadBatch)
+	writeGroup.POST("/:id/retry-extraction", h.RetryExtraction)
+
+	deleteGroup := g.Group("")
+	deleteGroup.Use(authMiddleware.RequireAPITokenScopes("documents:delete"))
+	deleteGroup.DELETE("", h.BulkDelete)
+	deleteGroup.DELETE("/:id", h.Delete)
+	deleteGroup.GET("/:id/deletion-impact", h.GetDeletionImpact)
+	deleteGroup.POST("/deletion-impact", h.BulkDeletionImpact)
+
+	legacyUpload := e.Group("/api/document-parsing-jobs")
+	legacyUpload.Use(authMiddleware.RequireAuth())
+	legacyUpload.Use(authMiddleware.RequireProjectID())
+	legacyUpload.Use(authMiddleware.RequireProjectTokenScope())
+	legacyUpload.Use(authMiddleware.RequireProjectMember())
+	legacyUpload.Use(authMiddleware.RequireAPITokenScopes("documents:write"))
+	legacyUpload.POST("/upload", uploadHandler.Upload)
+}

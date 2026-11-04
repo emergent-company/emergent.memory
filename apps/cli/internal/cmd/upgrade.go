@@ -1,0 +1,616 @@
+package cmd
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/installer"
+	"github.com/spf13/cobra"
+)
+
+var upgradeFlags struct {
+	dir   string
+	force bool
+}
+
+// Package manager detection functions
+func isPackageManagerInstalled() (string, bool) {
+	// Check if installed via pacman (Arch Linux)
+	if isArchLinux() {
+		cmd := exec.Command("pacman", "-Qi", "emergent")
+		if err := cmd.Run(); err == nil {
+			return "pacman", true
+		}
+	}
+	// Future: check for dpkg (Debian/Ubuntu), rpm (Fedora/RHEL), etc.
+	return "", false
+}
+
+func isArchLinux() bool {
+	// Check for Arch-specific files
+	if _, err := os.Stat("/etc/arch-release"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/etc/manjaro-release"); err == nil {
+		return true
+	}
+	// Check if pacman exists
+	if _, err := exec.LookPath("pacman"); err == nil {
+		return true
+	}
+	return false
+}
+
+func isCLIInPath() bool {
+	path, err := exec.LookPath("memory")
+	if err != nil {
+		return false
+	}
+	// Verify it's actually the memory CLI (not just any executable named memory)
+	cmd := exec.Command(path, "version")
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
+}
+
+var upgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Upgrade the Memory CLI binary",
+	Long: `Upgrades the Memory CLI binary to the latest release.
+
+Downloads the latest CLI binary from GitHub and replaces the current binary
+in-place. Does not touch a self-hosted server installation — use
+'memory server upgrade' to upgrade the server.
+
+Examples:
+  memory upgrade            # Upgrade the CLI binary
+  memory upgrade --force    # Upgrade even when running a dev build`,
+	RunE: runUpgrade,
+}
+
+// serverUpgradeCmd is the "memory server upgrade" sub-command.
+// It is registered under serverCmd in server.go.
+var serverUpgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Upgrade the standalone server installation",
+	Long: `Upgrades the Memory standalone server installation.
+
+This will:
+  - Pull the latest Docker images
+  - Restart services with the new images
+  - Preserve all existing configuration and data
+
+Examples:
+  memory server upgrade
+  memory server upgrade --dir ~/.memory`,
+	RunE: runUpgradeServer,
+}
+
+func init() {
+	homeDir, _ := os.UserHomeDir()
+	defaultDir := filepath.Join(homeDir, ".memory")
+
+	upgradeCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade even for dev versions")
+	upgradeCmd.Flags().StringVar(&upgradeFlags.dir, "dir", defaultDir, "Installation directory (unused for CLI-only upgrade)")
+
+	serverUpgradeCmd.Flags().StringVar(&upgradeFlags.dir, "dir", defaultDir, "Installation directory")
+	serverUpgradeCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade without confirmation")
+}
+
+type Release struct {
+	TagName     string  `json:"tag_name"`
+	Body        string  `json:"body"`
+	Draft       bool    `json:"draft"`
+	Prerelease  bool    `json:"prerelease"`
+	Assets      []Asset `json:"assets"`
+	ImagesReady bool
+}
+
+type Asset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+func runUpgradeServer(cmd *cobra.Command, args []string) error {
+	cfg := installer.Config{
+		InstallDir: upgradeFlags.dir,
+		Verbose:    true,
+	}
+
+	inst := installer.New(cfg)
+
+	if !inst.IsInstalled() {
+		return fmt.Errorf("no installation found at %s. Run 'memory install' first", upgradeFlags.dir)
+	}
+
+	// Check if Docker images are ready before allowing server upgrade
+	release, err := getLatestRelease()
+	if err != nil {
+		return fmt.Errorf("error checking for updates: %w", err)
+	}
+
+	if !release.ImagesReady && !upgradeFlags.force {
+		displayLatest := strings.TrimPrefix(release.TagName, "v")
+		fmt.Println()
+		fmt.Println("⚠️  Docker images for this release are still being built")
+		fmt.Printf("Latest release: %s\n", displayLatest)
+		fmt.Println()
+		fmt.Println("Please wait a few minutes and try again.")
+		fmt.Println("Use --force to skip this check.")
+		fmt.Println()
+		return nil
+	}
+
+	cfg.ServerPort = inst.GetServerPort()
+
+	if !upgradeFlags.force {
+		fmt.Print("Upgrade server installation? [y/N]: ")
+		var confirm string
+		_, _ = fmt.Scanln(&confirm)
+		if strings.ToLower(confirm) != "y" {
+			fmt.Println("Upgrade canceled.")
+			return nil
+		}
+	}
+
+	// Capture current version before upgrade for changelog
+	currentVersion := normalizeVersion(inst.GetInstalledVersion())
+
+	if err := inst.Upgrade(release.TagName); err != nil {
+		return err
+	}
+
+	// Show changelog between old and new version (best-effort, never blocks)
+	targetVersion := normalizeVersion(release.TagName)
+	if changelog := getUpgradeChangelog(currentVersion, targetVersion); changelog != "" {
+		fmt.Print(changelog)
+	}
+
+	return nil
+}
+
+func runUpgrade(cmd *cobra.Command, args []string) error {
+	fmt.Println("Checking for updates...")
+
+	// Check if installed via package manager
+	pkgMgr, installedViaPkgMgr := isPackageManagerInstalled()
+	if installedViaPkgMgr {
+		fmt.Println()
+		fmt.Printf("Memory is installed via %s package manager\n", pkgMgr)
+		fmt.Println()
+		fmt.Println("To upgrade, use your system package manager:")
+		switch pkgMgr {
+		case "pacman":
+			fmt.Println("  sudo pacman -Syu memory")
+		}
+		fmt.Println()
+		fmt.Println("The 'memory upgrade' command is for standalone installations only.")
+		fmt.Println()
+		return nil
+	}
+
+	// Check if CLI is in PATH
+	if !isCLIInPath() {
+		fmt.Println()
+		fmt.Println("Warning: memory CLI is not in your PATH")
+		fmt.Println()
+		currentExec, err := os.Executable()
+		if err == nil {
+			execDir := filepath.Dir(currentExec)
+			fmt.Printf("Add to PATH: export PATH=\"%s:$PATH\"\n", execDir)
+			fmt.Println()
+		}
+	}
+
+	release, err := getLatestRelease()
+	if err != nil {
+		return fmt.Errorf("error checking for updates: %w", err)
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "cli-")
+	latestVersion = strings.TrimPrefix(latestVersion, "v")
+	currentVersion := strings.TrimPrefix(Version, "cli-")
+	currentVersion = strings.TrimPrefix(currentVersion, "v")
+
+	if Version == "dev" && !upgradeFlags.force {
+		displayLatest := strings.TrimPrefix(release.TagName, "v")
+		fmt.Println("You are running a development version. Upgrade skipped.")
+		fmt.Printf("Latest release: %s\n", displayLatest)
+		fmt.Println("Use --force to upgrade anyway.")
+		return nil
+	}
+
+	cliNeedsUpgrade := compareVersions(latestVersion, currentVersion) > 0 || upgradeFlags.force
+
+	if !cliNeedsUpgrade {
+		displayCurrent := strings.TrimPrefix(Version, "v")
+		fmt.Printf("CLI is already up to date: %s\n", displayCurrent)
+		return nil
+	}
+
+	fmt.Println()
+	displayCurrent := strings.TrimPrefix(Version, "v")
+	displayLatest := strings.TrimPrefix(release.TagName, "v")
+	fmt.Printf("Current version: %s\n", displayCurrent)
+	fmt.Printf("Latest version:  %s\n", displayLatest)
+	fmt.Println()
+
+	if Version == "dev" {
+		fmt.Printf("Will upgrade CLI from dev version to %s\n", displayLatest)
+	} else if latestVersion == currentVersion {
+		fmt.Printf("Will reinstall CLI %s\n", displayLatest)
+	} else {
+		fmt.Printf("Will upgrade CLI: %s -> %s\n", displayCurrent, displayLatest)
+	}
+	fmt.Println()
+
+	if !upgradeFlags.force {
+		fmt.Print("Proceed? [y/N]: ")
+		var confirm string
+		_, _ = fmt.Scanln(&confirm)
+		if strings.ToLower(confirm) != "y" {
+			fmt.Println("Upgrade canceled.")
+			return nil
+		}
+	}
+
+	assetURL, assetName, err := findAsset(release.Assets)
+	if err != nil {
+		return fmt.Errorf("error finding compatible asset: %w", err)
+	}
+
+	fmt.Printf("Downloading %s...\n", assetName)
+	_, err = installUpdate(assetURL, assetName)
+	if err != nil {
+		return fmt.Errorf("CLI upgrade failed: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Printf("CLI upgraded to %s\n", displayLatest)
+
+	// Show changelog between old and new version (best-effort, never blocks)
+	if changelog := getUpgradeChangelog(currentVersion, latestVersion); changelog != "" {
+		fmt.Print(changelog)
+	}
+
+	fmt.Println()
+	fmt.Println("To upgrade the server: memory server upgrade")
+	return nil
+}
+
+const githubRepoBase = "https://github.com/emergent-company/emergent.memory"
+
+func getLatestRelease() (*Release, error) {
+	tag, err := highestReleaseTag()
+	if err != nil {
+		return nil, err
+	}
+
+	release := &Release{
+		TagName:     tag,
+		ImagesReady: checkImagesReady(tag),
+	}
+	release.Assets = constructAssets(tag)
+	return release, nil
+}
+
+// highestReleaseTag returns the highest-semver main-release tag (vX.Y.Z).
+// GitHub's releases/latest pointer follows publish order, not semver, so it
+// can resolve to an older version when releases are tagged out of order.
+// We therefore enumerate tags via `git ls-remote` (no GitHub API rate limit)
+// and pick the highest, falling back to the redirect when git is unavailable.
+func highestReleaseTag() (string, error) {
+	tags, err := listReleaseTags()
+	if err != nil {
+		return latestReleaseTagViaRedirect()
+	}
+	tag := pickHighestTag(tags)
+	if tag == "" {
+		return "", fmt.Errorf("no release tags found")
+	}
+	return tag, nil
+}
+
+// listReleaseTags enumerates main-release tags via `git ls-remote --tags`.
+func listReleaseTags() ([]string, error) {
+	out, err := exec.Command("git", "ls-remote", "--tags", githubRepoBase+".git").Output()
+	if err != nil {
+		return nil, err
+	}
+	var tags []string
+	for _, line := range strings.Split(string(out), "\n") {
+		idx := strings.LastIndex(line, "refs/tags/")
+		if idx < 0 {
+			continue
+		}
+		tag := strings.TrimSuffix(line[idx+len("refs/tags/"):], "^{}")
+		if isMainReleaseTag(tag) {
+			tags = append(tags, tag)
+		}
+	}
+	return tags, nil
+}
+
+// pickHighestTag returns the highest semver tag from the given list.
+func pickHighestTag(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	highest := tags[0]
+	for _, t := range tags[1:] {
+		if compareVersions(t, highest) > 0 {
+			highest = t
+		}
+	}
+	return highest
+}
+
+// isMainReleaseTag reports whether tag is a plain vX.Y.Z main release,
+// excluding prereleases (e.g. v0.1.0-rc.1) and submodule tags
+// (e.g. apps/server/pkg/sdk/v0.41.149).
+func isMainReleaseTag(tag string) bool {
+	if !strings.HasPrefix(tag, "v") {
+		return false
+	}
+	body := strings.TrimPrefix(tag, "v")
+	if strings.ContainsAny(body, "-+") {
+		return false
+	}
+	parts := strings.Split(body, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// latestReleaseTagViaRedirect resolves the tag via GitHub's releases/latest
+// redirect (fallback when git is unavailable).
+func latestReleaseTagViaRedirect() (string, error) {
+	noFollow := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := noFollow.Get(githubRepoBase + "/releases/latest")
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently {
+		return "", fmt.Errorf("unexpected status from releases/latest: %d", resp.StatusCode)
+	}
+
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", fmt.Errorf("no Location header in redirect response")
+	}
+
+	parts := strings.Split(loc, "/")
+	if len(parts) == 0 {
+		return "", fmt.Errorf("could not parse tag from redirect: %s", loc)
+	}
+	tag := parts[len(parts)-1]
+	if tag == "" {
+		return "", fmt.Errorf("empty tag in redirect URL: %s", loc)
+	}
+	return tag, nil
+}
+
+// constructAssets builds a synthetic []Asset for the given tag using the
+// predictable GitHub release download URL pattern — no API call needed.
+func constructAssets(tag string) []Asset {
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+	name := fmt.Sprintf("memory-cli-%s-%s", osName, archName)
+	if osName == "windows" {
+		name += ".zip"
+	} else {
+		name += ".tar.gz"
+	}
+	url := fmt.Sprintf("%s/releases/download/%s/%s", githubRepoBase, tag, name)
+	return []Asset{{Name: name, BrowserDownloadURL: url}}
+}
+
+// checkImagesReady probes the images-ready.txt sentinel file via a HEAD
+// request to the release download URL — no GitHub API, no rate limit.
+func checkImagesReady(tag string) bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	sentinelURL := fmt.Sprintf("%s/releases/download/%s/images-ready.txt", githubRepoBase, tag)
+	resp, err := client.Head(sentinelURL)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func findAsset(assets []Asset) (string, string, error) {
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+
+	target := fmt.Sprintf("memory-cli-%s-%s", osName, archName)
+	if osName == "windows" {
+		target += ".zip"
+	} else {
+		target += ".tar.gz"
+	}
+
+	for _, asset := range assets {
+		if asset.Name == target {
+			return asset.BrowserDownloadURL, asset.Name, nil
+		}
+	}
+
+	return "", "", fmt.Errorf("no asset found for %s/%s", osName, archName)
+}
+
+// installUpdate downloads and installs the new binary, returning the path
+// of the installed binary. The caller can use this path to re-exec the new binary.
+func installUpdate(url, filename string) (string, error) {
+	tmpFile, err := os.CreateTemp("", "emergent-update-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmpFile.Name())
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return "", err
+	}
+	tmpFile.Close()
+
+	tmpDir, err := os.MkdirTemp("", "emergent-extract-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	var binaryData []byte
+
+	if strings.HasSuffix(filename, ".zip") {
+		binaryData, err = extractZip(tmpFile.Name())
+	} else {
+		binaryData, err = extractTarGz(tmpFile.Name())
+	}
+	if err != nil {
+		return "", fmt.Errorf("extraction failed: %w", err)
+	}
+
+	// Resolve the current executable path BEFORE replacing it.
+	// On Linux, os.Executable() reads /proc/self/exe which becomes a dead
+	// symlink after the binary is replaced, so we must capture it now.
+	currentExec, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
+	currentExec, err = filepath.EvalSymlinks(currentExec)
+	if err != nil {
+		return "", err
+	}
+
+	newExecPath := currentExec + ".new"
+	if err := os.WriteFile(newExecPath, binaryData, 0755); err != nil {
+		return "", err
+	}
+
+	oldExecPath := currentExec + ".old"
+	os.Remove(oldExecPath)
+
+	if err := os.Rename(currentExec, oldExecPath); err != nil {
+		return "", fmt.Errorf("failed to move current binary: %w", err)
+	}
+
+	if err := os.Rename(newExecPath, currentExec); err != nil {
+		_ = os.Rename(oldExecPath, currentExec)
+		return "", fmt.Errorf("failed to replace binary: %w", err)
+	}
+
+	_ = os.Remove(oldExecPath)
+
+	// Return the path where the new binary was installed
+	return currentExec, nil
+}
+
+func extractTarGz(filepath string) ([]byte, error) {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if header.Typeflag == tar.TypeReg {
+			baseName := header.Name
+			if strings.Contains(baseName, "/") {
+				parts := strings.Split(baseName, "/")
+				baseName = parts[len(parts)-1]
+			}
+
+			// Match various binary naming patterns
+			if baseName == "memory" || baseName == "memory.exe" ||
+				baseName == "emergent" || baseName == "emergent.exe" ||
+				baseName == "emergent-cli" || baseName == "emergent-cli.exe" ||
+				strings.HasPrefix(baseName, "memory-cli-") ||
+				strings.HasPrefix(baseName, "emergent-cli-") {
+				return io.ReadAll(tr)
+			}
+		}
+	}
+	return nil, fmt.Errorf("binary not found in archive")
+}
+
+func extractZip(filepath string) ([]byte, error) {
+	r, err := zip.OpenReader(filepath)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		baseName := f.Name
+		if strings.Contains(baseName, "/") {
+			parts := strings.Split(baseName, "/")
+			baseName = parts[len(parts)-1]
+		}
+
+		if baseName == "memory" || baseName == "memory.exe" ||
+			baseName == "emergent" || baseName == "emergent.exe" ||
+			baseName == "emergent-cli" || baseName == "emergent-cli.exe" ||
+			strings.HasPrefix(baseName, "memory-cli-") ||
+			strings.HasPrefix(baseName, "emergent-cli-") {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer rc.Close()
+			return io.ReadAll(rc)
+		}
+	}
+	return nil, fmt.Errorf("binary not found in archive")
+}

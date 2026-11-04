@@ -1,0 +1,1574 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Agent dashboard ---
+
+// AgentDashboardPage renders the per-agent dashboard: summary, configured
+// tools, and recent chats, plus a link to the objects this agent created or
+// updated. A failed agent fetch (LoadErr) renders the whole-page error state; a
+// conversations failure (ChatsErr) degrades only the recent-chats section.
+templ AgentDashboardPage(data agentDashboardData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "")
+			@layout.Rail(agentSubNav(data.Agent.ID, "dashboard", ""), nil) {
+				@agentSummaryCard(data)
+				@agentModelNotice(data)
+				@agentToolsSection(data)
+				@agentChatsSection(data)
+			}
+		}
+	}
+}
+
+// agentSubNav is the vertical sub-navigation rail for the per-agent pages
+// (dashboard / settings / sandbox / sessions). It stacks horizontally on small
+// screens and becomes a sticky left rail on desktop.
+templ agentSubNav(agentID string, active string, section string) {
+	{{ base := "/agents/" + url.PathEscape(agentID) }}
+	@components.SettingsRail("Agent sections", active, []components.RailItem{
+		{Key: "dashboard", Href: base, Icon: "lucide--layout-dashboard", Label: "Dashboard"},
+		{Custom: agentSettingsNavGroup(agentID, section)},
+		{Key: "sandbox", Href: base + "/sandbox", Icon: "lucide--box", Label: "Sandbox"},
+		{Key: "sessions", Href: base + "/sessions", Icon: "lucide--messages-square", Label: "Sessions"},
+		{Key: "share", Href: base + "/share", Icon: "lucide--share-2", Label: "Share"},
+	})
+}
+
+// agentSettingsNavGroup renders the Settings rail entry together with its eight
+// subpage children, always visible in the agent details rail. A child is active
+// when its section matches; the parent is a plain link into the settings hub and
+// is never marked current (the General child shares its destination, so marking
+// both would duplicate the current-page state). The children form a compact
+// bordered cluster beside the parent on the small-screen horizontal rail and
+// become an indented vertical column on the desktop rail.
+templ agentSettingsNavGroup(agentID string, section string) {
+	<div class="flex shrink-0 flex-row gap-1 lg:flex-col lg:gap-1">
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
+		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/graph", section == "graph", "lucide--git-branch", "Graph")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/work", section == "work", "lucide--list-checks", "Work")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/delegation", section == "delegation", "lucide--users", "Delegation")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/mcp", section == "mcp", "lucide--plug", "MCP sharing")
+		</div>
+	</div>
+}
+
+templ agentDashboardHeader(a *AgentDefinition, section string) {
+	{{ crumbs := crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID)))
+	if section != "" {
+		crumbs = crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID), section))
+	} }}
+	@detailHeader(crumbs, "", a.Name, a.Description, detailHeaderOpts{
+		Margin:       "mb-6",
+		Dashboard:    true,
+		TitleLeading: agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig)),
+	}) {
+		@ui.Badge(ui.BadgeProps{
+			Label:   "updated " + relTime(a.UpdatedAt),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeSM,
+			Icon:    "lucide--clock",
+		})
+	}
+}
+
+templ agentSummaryCard(data agentDashboardData) {
+	@components.PanelCard("", nil) {
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div class="flex items-center gap-3">
+				@agentIconTile(agentIcon(data.Agent.UIConfig), agentColor(data.Agent.UIConfig))
+				<h2 class="text-lg font-semibold">{ data.Agent.Name }</h2>
+			</div>
+			@ui.Badge(ui.BadgeProps{
+				Label:   visibilityLabel(data.Agent.Visibility),
+				Variant: visibilityIntent(data.Agent.Visibility),
+				Size:    ui.BadgeSizeSM,
+				Dot:     true,
+			})
+		</div>
+		<div class="mt-5 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+			@agentSummaryField("Model") {
+				if name, isDefault := agentModelName(data.Agent, data.DefaultModel); name != "" {
+					<span class="font-mono text-sm">{ name }</span>
+					if isDefault {
+						<span class="text-muted-faint text-sm"> (default)</span>
+					}
+				} else {
+					<span class="text-muted-faint text-sm">auto — default model</span>
+				}
+			}
+			@agentSummaryField("Visibility") {
+				@ui.Badge(ui.BadgeProps{
+					Label:   visibilityLabel(data.Agent.Visibility),
+					Variant: visibilityIntent(data.Agent.Visibility),
+					Size:    ui.BadgeSizeXS,
+					Dot:     true,
+				})
+			}
+			@agentSummaryField("Tools") {
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(data.Agent.ToolCount) + " tool" + plural(data.Agent.ToolCount),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--wrench",
+				})
+			}
+		</div>
+		<div class="mt-5 flex flex-wrap items-center gap-2 border-t border-base-200 pt-4">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/chat?agent=" + url.QueryEscape(data.Agent.ID),
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--messages-square",
+			}) {
+				Chat with this agent
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/objects",
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--box",
+			}) {
+				Objects
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/settings/mcp",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--share-2",
+			}) {
+				Share via MCP
+			}
+		</div>
+	}
+}
+
+// agentModelNotice warns under the dashboard summary card when the agent's
+// model can't be served: an agent with no explicit model is error when the
+// project has no configured provider (chats can't run) and warning while the
+// model is only a provider-credential fallback (no pinned project default);
+// an explicit model is error when its provider prefix matches no configured
+// provider (or none is configured).
+templ agentModelNotice(data agentDashboardData) {
+	if sev, msg := agentModelDashboardIssue(data.Agent, data.DefaultModel, data.ModelConfigKnown, data.HasProviders, data.ProviderNames); sev != "" {
+		<div class="mt-6">
+			@agentModelWarningBox(sev, msg)
+		</div>
+	}
+}
+
+// agentModelSettingsWarning alerts in the settings Model section when the
+// agent's model can't be served (see agentModelNotice for the rules).
+templ agentModelSettingsWarning(data agentSettingsData) {
+	if sev, msg := agentModelSettingsIssue(data.Agent, data.DefaultModel, data.ModelConfigKnown, data.HasProviders, data.ProviderNames); sev != "" {
+		@agentModelWarningBox(sev, msg)
+	}
+}
+
+// agentModelWarningBox is the shared warning visual: a severity alert with a
+// link to the providers settings (where providers and the default model are
+// configured) on the same row, stretching to match the alert's height.
+templ agentModelWarningBox(sev, message string) {
+	<div class="flex items-stretch gap-2">
+		<div class="min-w-0 flex-1">
+			@ui.Alert(ui.AlertProps{
+				Type:    modelWarningAlertType(sev),
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: message,
+			})
+		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       "/settings/providers",
+			Variant:    ui.ButtonOutline,
+			Size:       ui.ButtonXS,
+			Icon:       "lucide--server",
+			ExtraClass: "h-auto",
+		}) {
+			if sev == "error" {
+				Configure a provider
+			} else {
+				Set a default model
+			}
+		}
+	</div>
+}
+
+templ agentSummaryField(label string) {
+	<div>
+		@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[11px]"})
+		<div class="mt-1.5">{ children... }
+</div>
+	</div>
+}
+
+templ agentToolsSection(data agentDashboardData) {
+	@ui.Section("Configured tools", ui.SectionProps{
+		Margin:    "mt-6",
+		BodyClass: "memory-density-comfortable",
+		Empty:     len(data.Agent.Tools) == 0 && len(data.Agent.BannedTools) == 0,
+		EmptyIcon: "lucide--wrench", EmptyTitle: "No tools configured", EmptyDesc: "This agent has no tool overrides — it uses the platform defaults.",
+	}) {
+		<div class="flex flex-col gap-4">
+			<div>
+				@ui.Eyebrow("Allowed tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
+				if len(data.Agent.Tools) == 0 {
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Class: "italic"}) { None }
+				} else {
+					<div class="flex flex-wrap gap-1.5">
+						for _, t := range data.Agent.Tools {
+							@ui.Badge(ui.BadgeProps{
+								Label:   t,
+								Variant: ui.BadgeInfo,
+								Style:   ui.BadgeStyleSoft,
+								Size:    ui.BadgeSizeXS,
+								Icon:    "lucide--wrench",
+							})
+						}
+					</div>
+				}
+			</div>
+			if len(data.Agent.BannedTools) > 0 {
+				<div>
+					@ui.Eyebrow("Banned tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
+					<div class="flex flex-wrap gap-1.5">
+						for _, t := range data.Agent.BannedTools {
+							@ui.Badge(ui.BadgeProps{
+								Label:   t,
+								Variant: ui.BadgeError,
+								Style:   ui.BadgeStyleSoft,
+								Size:    ui.BadgeSizeXS,
+								Icon:    "lucide--ban",
+							})
+						}
+					</div>
+				</div>
+			}
+		</div>
+	}
+}
+
+// agentChatsList renders the shared conversations list: a titled Section with
+// an error alert on ChatsErr, otherwise a cardList of chatLinkRow. Shared by
+// the dashboard's "Recent chats" section and the dedicated Sessions page.
+templ agentChatsList(chatsErr error, chats []Conversation, title, margin, emptyTitle string) {
+	@ui.Section(title, ui.SectionProps{
+		Margin:    margin,
+		Empty:     chatsErr == nil && len(chats) == 0,
+		EmptyIcon: "lucide--messages-square", EmptyTitle: emptyTitle, EmptyDesc: "Start a conversation with this agent and it will show up here.",
+		Raw: true,
+	}) {
+		if chatsErr != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "Failed to load conversations: " + chatsErr.Error(),
+			})
+		} else {
+			@cardList("", cardListProps{}) {
+				for _, c := range chats {
+					@chatLinkRow(c)
+				}
+			}
+		}
+	}
+}
+
+templ agentChatsSection(data agentDashboardData) {
+	@agentChatsList(data.ChatsErr, data.Chats, "Recent chats", "mt-6", "No chats yet")
+}
+
+templ chatLinkRow(c Conversation) {
+	@components.LinkRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), relTime(c.UpdatedAt))
+}
+
+// --- Agent settings ---
+
+// AgentSettingsPage renders one agent-settings subpage: header, sub-nav, and a
+// single section panel selected by data.Section. A failed agent fetch (LoadErr)
+// renders the whole-page error state; FlashMsg/FlashErr surface PRG feedback
+// from the update flow.
+templ AgentSettingsPage(data agentSettingsData) {
+	if data.LoadErr != nil {
+		@layout.Container(layout.ContainerLG, nil) {
+			@pageError("Agent unavailable", data.LoadErr)
+		}
+	} else if data.Section == "mcp" {
+		@layout.Container(layout.ContainerLG, nil) {
+			@agentDashboardHeader(data.Agent, "Settings")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@agentMCPSection(data)
+			}
+		}
+	} else {
+		<div class={ pageFormChromeClass }>
+			@agentDashboardHeader(data.Agent, "Settings")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+		</div>
+		@agentSettingsSectionPanel(data)
+	}
+}
+
+// agentSettingsSectionPanel renders exactly one settings subpage's panel based
+// on data.Section ("" defaults to the General landing page).
+templ agentSettingsSectionPanel(data agentSettingsData) {
+	switch data.Section {
+	case "graph":
+		@agentGraphSettingsForm(data)
+	case "work":
+		@agentWorkSettingsForm(data)
+	case "model":
+		@agentModelSettingsForm(data)
+	case "tools":
+		@agentToolsSettingsForm(data)
+	case "skills":
+		@agentSkillsSettingsForm(data)
+	case "delegation":
+		@agentDelegationSettingsForm(data)
+	case "mcp":
+		@agentMCPSection(data)
+	default:
+		@agentGeneralSettingsForm(data)
+	}
+}
+
+// agentSettingsSave is the shared PRG form footer: a primary submit button in
+// the same FormActions wrapper every settings subpage uses.
+templ agentSettingsSave() {
+	@components.StickyFormActions(components.StickyFormActionsProps{Rail: true}) {
+		@components.SaveChangesButton()
+	}
+}
+
+// agentAutosaveStatus is the General form's footer in place of the shared save
+// button: the client (agent-settings.js) debounces edits and posts them to
+// data-autosave-url, and this node mirrors its state (saving / saved / error)
+// with a retry affordance on failure. data-state carries the machine-readable
+// state; the label is the user-facing text.
+templ agentAutosaveStatus() {
+	@components.StickyFormActions(components.StickyFormActionsProps{
+		Align: "start",
+		Rail:  true,
+		Class: "min-h-6",
+		Attrs: templ.Attributes{
+			"data-autosave-status": "",
+			"data-state":           "idle",
+			"data-testid":          "agent-settings-autosave-status",
+			"aria-live":            "polite",
+		},
+	}) {
+		<span class="iconify lucide--cloud-check text-muted-faint size-4" data-autosave-icon aria-hidden="true"></span>
+		<span class="text-muted-strong text-sm" data-autosave-status-label>All changes saved</span>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonXS,
+			Attrs: templ.Attributes{
+				"data-autosave-retry": true,
+				"hidden":              true,
+			},
+		}) {
+			Retry
+		}
+	}
+}
+
+// agentGeneralSettingsForm is the General subpage (auto-save → POST
+// /agents/:id/settings/general/autosave, with the PRG path kept as the no-JS
+// fallback): name, system prompt, language, and visibility. The form is marked
+// data-agent-autosave so agent-settings.js debounces text edits and posts the
+// whole form in place; the shared agentSettingsSave() footer is replaced by the
+// agentAutosaveStatus indicator.
+templ agentGeneralSettingsForm(data agentSettingsData) {
+	<form
+		method="post"
+		action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }
+		data-agent-autosave="general"
+		data-autosave-url={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general/autosave") }
+	>
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("General", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-settings-name", "Name", form.LabelAbove, "", "", nil) {
+					<input id="agent-settings-name" name="name" type="text" required value={ data.Agent.Name } placeholder="e.g. Support Butler" class="input w-full"/>
+				}
+				@form.FormControl("agent-settings-description", "Short description", form.LabelAbove, "Shown under the agent's name in chat.", "", nil) {
+					<input id="agent-settings-description" name="description" type="text" value={ data.Agent.Description } placeholder="e.g. Keeps the household running" class="input w-full"/>
+				}
+				@form.FormControl("agent-settings-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
+					<textarea id="agent-settings-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none">{ data.Agent.SystemPrompt }</textarea>
+				}
+				@form.FormControl("agent-settings-language", "Language", form.LabelAbove, "Voice language — drives speech-to-text and text-to-speech. Leave empty for auto-detection.", "", nil) {
+					<select id="agent-settings-language" name="language" class="select w-full">
+						<option value="">Auto — detect language</option>
+						for _, l := range agentLanguages {
+							<option value={ l.Code } selected?={ agentLanguageCode(agentLanguageValue(data.Agent)) == l.Code }>{ l.Label }</option>
+						}
+					</select>
+				}
+				@form.FormControl("agent-settings-project-context", "Project context", form.LabelAbove, "Inject this project's description into the agent's system prompt on every run. Off by default.", "", nil) {
+					// Unchecked checkboxes are not submitted, so the hidden
+					// companion guarantees the field is present (true/false)
+					// on a full form submit; a partial body that omits it
+					// leaves the stored value unchanged.
+					<input type="hidden" name="includeProjectInfo" value="false"/>
+					<input id="agent-settings-project-context" name="includeProjectInfo" type="checkbox" value="true" checked?={ agentIncludeProjectInfoValue(data.Agent) } class="checkbox"/>
+				}
+			</div>
+		}
+		@ui.Section("Appearance", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			// This icon/color pair is intentionally NOT extracted into a shared
+			// AppearanceFields component: the three sites (agent create dialog,
+			// this settings form, object type) diverge on grid gap, per-column
+			// wrapper divs, and help copy (web-ui-component-conventions).
+			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("agent-settings-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
+						@ui.IconPicker(ui.IconPickerProps{
+							ID:           "agent-settings-icon",
+							Name:         "icon",
+							Value:        agentIcon(data.Agent.UIConfig),
+							Options:      supportedIconPickerOptions(),
+							DefaultValue: "",
+							DefaultLabel: "Default icon",
+							DefaultClass: "lucide--bot",
+						})
+					}
+				</div>
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("agent-settings-color", "Color", form.LabelAbove, "Any CSS color; tints the agent tile and chip (e.g. #4F46E5).", "", nil) {
+						@ui.ColorPicker(ui.ColorPickerProps{
+							ID:         "agent-settings-color",
+							Name:       "color",
+							Value:      agentColor(data.Agent.UIConfig),
+							AllowEmpty: true,
+							Presets:    schemaColorPresets,
+						})
+					}
+				</div>
+			</div>
+		}
+		@ui.Section("Visibility", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4">
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { Controls who can discover this agent. Changes take effect after you save. }
+				@form.FormControl("agent-settings-visibility", "Visibility", form.LabelAbove, agentVisibilityDescription(agentVisibilityValue(data.Agent)), "", nil) {
+					// Native <select>/<option> cannot render a second, dimmed
+					// description line per option, so this is a custom listbox:
+					// the hidden input keeps `visibility` as the submitted
+					// field, and Alpine drives opening, keyboard navigation, and
+					// committing a choice back into that input. See
+					// agentVisibilityDropdownData for the state/methods.
+					<div
+						class="relative w-full"
+						x-data={ agentVisibilityDropdownData(agentVisibilityValue(data.Agent)) }
+						@click.outside="close()"
+						@keydown.escape.prevent="closeAndFocus()"
+					>
+						<input
+							type="hidden"
+							id="agent-settings-visibility"
+							name="visibility"
+							value={ agentVisibilityValue(data.Agent) }
+							:value="value"
+						/>
+						<button
+							type="button"
+							x-ref="trigger"
+							class="input flex w-full cursor-pointer items-center justify-between gap-2 text-left font-normal"
+							aria-haspopup="listbox"
+							aria-label="Visibility"
+							aria-expanded="false"
+							:aria-expanded="open ? 'true' : 'false'"
+							aria-controls="agent-settings-visibility-listbox"
+							@click="toggle()"
+							@keydown.arrow-down.prevent="openList()"
+							@keydown.arrow-up.prevent="openList()"
+						>
+							<span class="truncate" x-text="labels[value]">
+								for _, opt := range agentVisibilityOptions {
+									if agentVisibilityValue(data.Agent) == opt.Value {
+										{ opt.Label }
+									}
+								}
+							</span>
+							<span class="iconify lucide--chevron-down size-4 shrink-0 text-muted-strong" aria-hidden="true"></span>
+						</button>
+						// `style="display: none"` is the server-rendered closed
+						// state, not just a redundancy with `x-show`/`x-cloak`:
+						// htmx v4's innerHTML swap copies then restores attributes
+						// for same-id elements, which strips the inline `display`
+						// that Alpine's `x-show` set on the previous DOM. Without
+						// a rendered `display: none`, a boosted PRG save (the
+						// settings form) would leave the listbox visible — the
+						// "dropdown opens by itself" report. Alpine removes the
+						// inline display on open and restores it on close.
+						<ul
+							id="agent-settings-visibility-listbox"
+							x-ref="list"
+							role="listbox"
+							aria-label="Visibility"
+							x-show="open"
+							x-cloak
+							style="display: none"
+							class="rounded-box border-base-300 bg-base-100 absolute z-50 mt-1 max-h-72 w-full overflow-y-auto overscroll-contain border p-1 shadow-lg"
+							@keydown.arrow-down.prevent="move(1)"
+							@keydown.arrow-up.prevent="move(-1)"
+							@keydown.enter.prevent="choose(options[active])"
+							@keydown.space.prevent="choose(options[active])"
+							@keydown.tab="open = false"
+						>
+							for i, opt := range agentVisibilityOptions {
+								<li
+									role="option"
+									id={ "agent-settings-visibility-option-" + opt.Value }
+									data-index={ strconv.Itoa(i) }
+									data-value={ opt.Value }
+									aria-selected={ strconv.FormatBool(agentVisibilityValue(data.Agent) == opt.Value) }
+									:aria-selected={ "value === '" + opt.Value + "'" }
+									:tabindex={ "active === " + strconv.Itoa(i) + " ? 0 : -1" }
+									@click={ "choose('" + opt.Value + "')" }
+									@mouseenter={ "setActive(" + strconv.Itoa(i) + ")" }
+									class={ "flex cursor-pointer flex-col gap-0.5 rounded-box px-3 py-2 transition-colors hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none", templ.KV("bg-primary/10 text-primary", agentVisibilityValue(data.Agent) == opt.Value) }
+								>
+									<span class="text-sm font-medium">{ opt.Label }</span>
+									<span class="text-muted text-xs leading-snug">{ opt.Description }</span>
+								</li>
+							}
+						</ul>
+					</div>
+				}
+				if agentVisibilityValue(data.Agent) == agentVisibilityExternal {
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--shield-alert",
+						Message: agentVisibilityExternalWarning,
+					})
+				} else if agentVisibilityValue(data.Agent) == agentVisibilityInternal {
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertInfo,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--info",
+						Message: agentVisibilityInternalNote,
+					})
+				}
+			</div>
+			}
+		}
+		</div>
+		@agentAutosaveStatus()
+	</form>
+}
+
+// agentGraphSettingsForm is the Graph subpage (PRG → POST
+// /agents/:id/settings/graph): the graph type-scope allowlists — the object and
+// relationship types this agent may see and query. Both pickers are empty by
+// default, which means "all types", so leaving both unchecked is the permissive
+// default. The hidden companion input guarantees each field is always submitted
+// (present, possibly blank), so clearing every box is distinguishable from a
+// partial body that omits the field — the "cleared all" vs "untouched" contract
+// this control relied on when it lived on the General form.
+templ agentGraphSettingsForm(data agentSettingsData) {
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/graph") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Graph", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { Limit which graph types this agent may see and query. Leave everything unchecked to allow every type. Changes take effect after you save. }
+				@form.FormControl("agent-settings-object-types", "Object types", form.LabelAbove, "Only the object types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
+					<input type="hidden" name="objectType" value=""/>
+					@checkboxPicker(checkboxPickerProps{
+						Name:          "objectType",
+						EmptyContent:  objectTypeEmptyContent(),
+						LabelClass:    "items-start gap-2 py-1.5",
+						CheckboxClass: "checkbox checkbox-sm mt-0.5",
+						TitleClass:    "block text-sm font-medium",
+						DescClass:     "text-muted block text-xs",
+						WrapTitle:     true,
+						Items:         compiledTypePickerItems(data.ObjectTypes, func(name string) bool { return containsString(agentObjectTypesValue(data.Agent), name) }),
+					})
+				}
+				@form.FormControl("agent-settings-relationship-types", "Relationship types", form.LabelAbove, "Only the relationship types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
+					<input type="hidden" name="relationshipType" value=""/>
+					@checkboxPicker(checkboxPickerProps{
+						Name:          "relationshipType",
+						EmptyContent:  relationshipTypeEmptyContent(),
+						LabelClass:    "items-start gap-2 py-1.5",
+						CheckboxClass: "checkbox checkbox-sm mt-0.5",
+						TitleClass:    "block text-sm font-medium",
+						DescClass:     "text-muted block text-xs",
+						WrapTitle:     true,
+						Items:         compiledTypePickerItems(data.RelationshipTypes, func(name string) bool { return containsString(agentRelationshipTypesValue(data.Agent), name) }),
+					})
+				}
+			</div>
+			}
+		}
+		</div>
+		@agentSettingsSave()
+	</form>
+}
+
+// agentWorkSettingsForm is the Work subpage (PRG → POST
+// /agents/:id/settings/work): the agent's object-driven work configuration —
+// status phases, review gate, failure/revision budgets, retry backoff, the
+// deliverable contract, and the trigger statuses that wake the agent. Empty
+// status names and zero limits inherit the platform defaults, shown as
+// placeholders. A blueprint-derived agent (SourceBlueprintID set) gates the
+// save behind a "Save anyway" confirmation dialog.
+templ agentWorkSettingsForm(data agentSettingsData) {
+	{{ wc := agentWorkConfig(data.Agent) }}
+	<form
+		method="post"
+		action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/work") }
+		hx-disable="find button.memory-save-btn"
+		data-testid="agent-work-settings-form"
+		if data.Agent.SourceBlueprintID != nil {
+			data-requires-confirm="agent-work-blueprint-warning"
+		}
+	>
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Work", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { Configure how this agent picks up and works board items. Empty status names and zero limits inherit the platform defaults. Changes take effect after you save. }
+						@agentWorkPickupNote()
+						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+							@form.FormControl("agent-settings-work-ready", "Ready status", form.LabelAbove, "The status value meaning an item is ready to be picked up.", "", nil) {
+								<input id="agent-settings-work-ready" name="workStatus.ready" type="text" value={ wc.Status.Ready } placeholder="ready" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-in-progress", "In progress status", form.LabelAbove, "The status value meaning an item is being worked.", "", nil) {
+								<input id="agent-settings-work-in-progress" name="workStatus.inProgress" type="text" value={ wc.Status.InProgress } placeholder="in_progress" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-review", "Review status", form.LabelAbove, "The status value meaning an item awaits review.", "", nil) {
+								<input id="agent-settings-work-review" name="workStatus.review" type="text" value={ wc.Status.Review } placeholder="review" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-revision", "Revision status", form.LabelAbove, "The status value meaning an item needs rework.", "", nil) {
+								<input id="agent-settings-work-revision" name="workStatus.revision" type="text" value={ wc.Status.Revision } placeholder="revision" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-blocked", "Blocked status", form.LabelAbove, "The status value meaning an item is blocked.", "", nil) {
+								<input id="agent-settings-work-blocked" name="workStatus.blocked" type="text" value={ wc.Status.Blocked } placeholder="blocked" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-done", "Done status", form.LabelAbove, "The status value meaning an item is complete.", "", nil) {
+								<input id="agent-settings-work-done" name="workStatus.done" type="text" value={ wc.Status.Done } placeholder="done" class="input w-full"/>
+							}
+						</div>
+						@form.FormControl("agent-settings-work-requires-review", "Require review", form.LabelAbove, "Route completed items through a human review step before they are done.", "", nil) {
+							<input type="hidden" name="workRequiresReview" value="false"/>
+							<input id="agent-settings-work-requires-review" name="workRequiresReview" type="checkbox" value="true" checked?={ wc.RequiresReview } class="checkbox"/>
+						}
+						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+							@form.FormControl("agent-settings-work-failure-limit", "Failure limit", form.LabelAbove, "How many failures an item tolerates before escalation. Zero inherits the platform default (3).", "", nil) {
+								<input id="agent-settings-work-failure-limit" name="failureLimit" type="number" min="0" step="1" value={ workIntStr(wc.FailureLimit) } placeholder="3" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-revision-limit", "Revision limit", form.LabelAbove, "How many rework rounds before the item is escalated to a human. Zero inherits the platform default (3).", "", nil) {
+								<input id="agent-settings-work-revision-limit" name="revisionLimit" type="number" min="0" step="1" value={ workIntStr(wc.RevisionLimit) } placeholder="3" class="input w-full"/>
+							}
+						</div>
+					</div>
+				}
+				@ui.Section("Retry policy", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+						@form.FormControl("agent-settings-work-max-attempts", "Max attempts", form.LabelAbove, "Maximum run attempts per queued work item.", "", nil) {
+							<input id="agent-settings-work-max-attempts" name="maxAttempts" type="number" min="1" step="1" value={ workIntStr(wc.RetryPolicy.MaxAttempts) } placeholder="1" class="input w-full"/>
+						}
+						@form.FormControl("agent-settings-work-initial-interval", "Initial interval (ms)", form.LabelAbove, "Delay before the first retry.", "", nil) {
+							<input id="agent-settings-work-initial-interval" name="initialIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.InitialIntervalMS) } placeholder="0" class="input w-full"/>
+						}
+						@form.FormControl("agent-settings-work-backoff-coefficient", "Backoff coefficient", form.LabelAbove, "Multiplier applied to the interval between retries.", "", nil) {
+							<input id="agent-settings-work-backoff-coefficient" name="backoffCoefficient" type="number" min="1" step="any" value={ workFloatStr(wc.RetryPolicy.BackoffCoefficient) } placeholder="1" class="input w-full"/>
+						}
+						@form.FormControl("agent-settings-work-max-interval", "Max interval (ms)", form.LabelAbove, "Ceiling for the backoff interval.", "", nil) {
+							<input id="agent-settings-work-max-interval" name="maxIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.MaxIntervalMS) } placeholder="0" class="input w-full"/>
+						}
+					</div>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Class: "mt-3", Attrs: templ.Attributes{"data-testid": "agent-work-retry-policy-gap"}}) {
+						Only <strong>Max attempts</strong> is applied today. The initial interval, backoff coefficient, and max interval fields are saved on the definition but are not yet used when scheduling retries.
+					}
+				}
+				@ui.Section("Work contract", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@form.FormControl("agent-settings-work-require-artifacts", "Require artifacts", form.LabelAbove, "Require a summary or artifacts before the item may complete.", "", nil) {
+							<input type="hidden" name="workRequireArtifacts" value="false"/>
+							<input id="agent-settings-work-require-artifacts" name="workRequireArtifacts" type="checkbox" value="true" checked?={ wc.WorkContract.RequireArtifacts } class="checkbox"/>
+						}
+						@form.FormControl("agent-settings-work-required-deliverables", "Required deliverable types", form.LabelAbove, "Comma-separated object types the agent must produce before completing an item.", "", nil) {
+							<input id="agent-settings-work-required-deliverables" name="requiredDeliverableType" type="text" value={ workListValue(wc.WorkContract.RequiredDeliverableTypes) } placeholder="e.g. Document, Chunk" class="input w-full"/>
+						}
+					</div>
+				}
+				@ui.Section("Triggers", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@form.FormControl("agent-settings-work-trigger-statuses", "Trigger statuses", form.LabelAbove, "Comma-separated status values that wake this agent when an object enters one of them.", "", nil) {
+							<input id="agent-settings-work-trigger-statuses" name="triggerStatus" type="text" value={ workListValue(wc.TriggerStatuses) } placeholder="ready" class="input w-full"/>
+						}
+					</div>
+				}
+			}
+		</div>
+		@agentSettingsSave()
+	</form>
+	if data.Agent.SourceBlueprintID != nil {
+		@agentWorkBlueprintWarning(data)
+	}
+}
+
+// agentWorkPickupNote is the read-only work-pickup precondition: the trigger
+// statuses are the only thing that wakes this agent, so operators understand
+// the "Triggers" group below.
+templ agentWorkPickupNote() {
+	@ui.Alert(ui.AlertProps{
+		Type:    ui.AlertInfo,
+		Style:   ui.AlertStyleOutline,
+		Icon:    "lucide--info",
+		Message: "This agent picks up work when an item assigned to it (or unassigned) enters one of its trigger statuses. Configure those statuses under Triggers.",
+	})
+}
+
+// agentWorkBlueprintWarning is the blueprint-derived edit gate for the Work
+// subpage: a native <dialog> opened by app.js when the form is submitted.
+// Confirming submits once; dismissing keeps the entered values and posts nothing.
+templ agentWorkBlueprintWarning(data agentSettingsData) {
+	@ui.Dialog(ui.DialogProps{ID: "agent-work-blueprint-warning", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "agent-work-blueprint-warning-title", "aria-describedby": "agent-work-blueprint-warning-desc"}}) {
+		<div class="flex items-start gap-3">
+			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--alert-triangle", "size-5")
+			</div>
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "agent-work-blueprint-warning-title"}) { Save changes to a blueprint-derived agent? }
+				@ui.EmptyNote(ui.EmptyNoteProps{ID: "agent-work-blueprint-warning-desc", Tone: ui.EmptyNoteToneStrong, Class: "mt-1"}) {
+					<span class="font-mono">{ data.Agent.Name }</span> was created by a blueprint. Saving your edit takes this agent out of sync with the blueprint, and it may be overwritten when the blueprint is updated or reinstalled.
+				}
+			</div>
+		</div>
+		<div class="modal-action">
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{
+					Type:  ui.ButtonTypeSubmit,
+					Size:  ui.ButtonSM,
+					Attrs: templ.Attributes{"value": "cancel", "autofocus": true},
+				}) {
+					Keep editing
+				}
+			</form>
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"value": "confirm"},
+				}) {
+					Save anyway
+				}
+			</form>
+		</div>
+	}
+}
+
+// agentModelSettingsForm is the Model subpage (PRG → POST
+// /agents/:id/settings/model): the model picker, temperature, max tokens, and
+// the model-misconfiguration warning box.
+templ agentModelSettingsForm(data agentSettingsData) {
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Model", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@agentModelSettingsWarning(data)
+						@modelSelect("agent-settings-model", data.Models, data.Agent.Model, agentAutoModelName(data.Agent, data.DefaultModel), nil)
+						@modelParamsGrid("agent-settings", data.Agent.Model)
+					</div>
+			}
+		}
+		</div>
+		@agentSettingsSave()
+	</form>
+}
+
+// agentToolsSettingsForm is the Tools subpage (PRG → POST
+// /agents/:id/settings/tools): the default-approval select and the grouped tool
+// checkbox picker.
+templ agentToolsSettingsForm(data agentSettingsData) {
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Tools", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+						<span class="text-sm font-medium">Default approval</span>
+						<select name="defaultToolPolicy" data-tool-default-policy class="select select-sm w-40">
+							<option value="allow" if data.Agent.DefaultToolPolicy == "allow" { selected }>Allow</option>
+							<option value="ask" if data.Agent.DefaultToolPolicy == "ask" { selected }>Ask</option>
+							<option value="deny" if data.Agent.DefaultToolPolicy == "deny" { selected }>Deny</option>
+						</select>
+					</div>
+					@agentToolPicker(data)
+			}
+		}
+		</div>
+		@agentSettingsSave()
+	</form>
+}
+
+// agentSkillsSettingsForm is the Skills subpage (PRG → POST
+// /agents/:id/settings/skills): the skill checkbox picker.
+templ agentSkillsSettingsForm(data agentSettingsData) {
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Skills", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					@form.FormControl("agent-settings-skills", "", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
+						@checkboxPicker(checkboxPickerProps{
+							Name:          "skill",
+							EmptyContent:  skillEmptyContent(),
+							LabelClass:    "items-start gap-2 py-1.5",
+							CheckboxClass: "checkbox checkbox-sm mt-0.5",
+							TitleClass:    "block text-sm font-medium",
+							DescClass:     "text-muted block text-xs",
+							WrapTitle:     true,
+							Items:         skillPickerItems(data.Skills, func(name string) bool { return containsString(data.Agent.Skills, name) }),
+						})
+					}
+			}
+		}
+		</div>
+		@agentSettingsSave()
+	</form>
+}
+
+// agentDelegationSettingsForm is the Delegation subpage (PRG → POST
+// /agents/:id/settings/delegation): the enable toggle and the delegation-target
+// agent picker.
+templ agentDelegationSettingsForm(data agentSettingsData) {
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Delegation", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					@form.FormControl("agent-settings-delegation", "", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
+						<label class="label flex w-full justify-between gap-3">
+							<span class="text-sm font-medium">Can delegate to other agents</span>
+							<input
+								id="agent-settings-delegation-enabled"
+								name="delegationEnabled"
+								type="checkbox"
+								if data.Agent.Delegation != nil && data.Agent.Delegation.Enabled {
+									checked
+								}
+								class="checkbox"
+							/>
+						</label>
+						@checkboxPicker(checkboxPickerProps{
+							Name:          "delegation-target",
+							Wrapped:       true,
+							EmptyContent:  delegateEmptyContent(),
+							LabelClass:    "gap-2 py-1",
+							CheckboxClass: "checkbox",
+							TitleClass:    "text-muted-bright text-sm",
+							Items:         delegatePickerItems(data.Agents, data.Agent.Name, func(name string) bool { return data.Agent.Delegation != nil && containsString(data.Agent.Delegation.Targets, name) }),
+						})
+					}
+			}
+		}
+		</div>
+		@agentSettingsSave()
+	</form>
+}
+
+// --- Agent sandbox ---
+
+// AgentSandboxPage renders the per-agent sandbox (workspace) config page:
+// header, sub-nav, and a form mirroring the AgentSettingsPage layout. A failed
+// agent/config fetch (LoadErr) renders the whole-page error state;
+// FlashMsg/FlashErr surface PRG feedback from the update flow.
+templ AgentSandboxPage(data agentSandboxData) {
+	if data.LoadErr != nil {
+		@layout.Container(layout.ContainerLG, nil) {
+			@pageError("Agent unavailable", data.LoadErr)
+		}
+	} else {
+		<div class={ pageFormChromeClass }>
+			@agentDashboardHeader(data.Agent, "Sandbox")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+		</div>
+		@agentSandboxForm(data)
+	}
+}
+
+// sandboxProviderAvailability renders the compact per-provider availability
+// list under the provider select: a colour-coded badge plus the reason for
+// unavailable providers. When the provider list is empty (fetch failed or
+// sandboxes disabled) it shows an inline warning instead of implying anything
+// is available.
+templ sandboxProviderAvailability(data agentSandboxData) {
+	<div id="agent-sandbox-provider-status" class="flex flex-col gap-2">
+		if len(data.Providers) == 0 {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--alert-triangle",
+				Message: sandboxProviderWarning(data),
+			})
+		} else {
+			<ul class="flex flex-col gap-1.5">
+				for _, p := range data.Providers {
+					<li class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+						<span class="text-muted-strong font-medium">{ sandboxProviderDisplayName(p) }</span>
+						if p.Healthy {
+							@components.StatusBadge("available", ui.BadgeSuccess, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+						} else {
+							@components.StatusBadge("unavailable", ui.BadgeError, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+							if p.Message != "" {
+								<span class="text-muted-strong">{ p.Message }</span>
+							}
+						}
+					</li>
+				}
+			</ul>
+		}
+	</div>
+}
+
+// agentSandboxForm is the sandbox edit form (PRG → POST
+// /agents/:id/sandbox/update). Empty tools means "all allowed"; repo_source
+// url is only honored for a fixed source.
+templ agentSandboxForm(data agentSandboxData) {
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "sandbox", ""), nil) {
+				@ui.Section("Provider", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+				@form.FormControl("agent-sandbox-enabled", "", form.LabelAbove, "Enable a sandboxed workspace for this agent.", "", nil) {
+					<label class="label flex w-full justify-between gap-3">
+						<span class="text-sm font-medium">Enable sandbox</span>
+						<input id="agent-sandbox-enabled" name="enabled" type="checkbox" checked?={ sandboxConfigEnabled(data.Config) } class="checkbox"/>
+					</label>
+				}
+				@form.FormControl("agent-sandbox-provider", "Provider", form.LabelAbove, "Sandbox runtime. Auto picks a healthy provider.", "", nil) {
+					<select id="agent-sandbox-provider" name="provider" class="select w-full" aria-describedby="agent-sandbox-provider-status">
+						<option value="" selected?={ sandboxConfigProvider(data.Config) == "" }>Auto</option>
+						for _, p := range data.Providers {
+							// A disabled option is omitted from the submitted form data, so
+							// disabling the SELECTED option would drop a stored-but-unavailable
+							// provider and silently persist Auto. Keep the stored provider's
+							// option selectable (still labelled unavailable); every other
+							// unavailable provider stays disabled.
+							<option value={ p.Type } selected?={ sandboxConfigProvider(data.Config) == p.Type } disabled?={ !p.Healthy && sandboxConfigProvider(data.Config) != p.Type } title={ p.Message }>{ sandboxProviderOptionLabel(p) }</option>
+						}
+						if saved := sandboxConfigProvider(data.Config); saved != "" && !sandboxProviderListed(data.Providers, saved) {
+							<option value={ saved } selected title="The server no longer reports this provider.">{ sandboxSavedProviderLabel(saved) }</option>
+						}
+					</select>
+				}
+				@sandboxProviderAvailability(data)
+				@form.FormControl("agent-sandbox-base-image", "Base image", form.LabelAbove, "Container image for the workspace.", "", nil) {
+					<input id="agent-sandbox-base-image" name="baseImage" type="text" value={ sandboxBaseImage(data.Config) } placeholder="memory-workspace:latest" class="input w-full" list="sandbox-base-images"/>
+					<datalist id="sandbox-base-images">
+						for _, img := range data.Images {
+							<option value={ img.Name }></option>
+						}
+					</datalist>
+				}
+			</div>
+		}
+		@ui.Section("Repository", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-sandbox-repo-type", "Source", form.LabelAbove, "", "", nil) {
+					<select id="agent-sandbox-repo-type" name="repoSourceType" class="select w-full">
+						<option value="none" selected?={ sandboxRepoSourceType(data.Config) == "none" }>No checkout (empty workspace)</option>
+						<option value="fixed" selected?={ sandboxRepoSourceType(data.Config) == "fixed" }>Fixed repository</option>
+						<option value="task_context" selected?={ sandboxRepoSourceType(data.Config) == "task_context" }>From task context</option>
+					</select>
+				}
+				@form.FormControl("agent-sandbox-repo-url", "Repository URL", form.LabelAbove, "Used when source is Fixed.", "", nil) {
+					<input id="agent-sandbox-repo-url" name="repoSourceUrl" type="text" value={ sandboxRepoSourceURL(data.Config) } placeholder="https://github.com/org/repo" class="input w-full"/>
+				}
+				@form.FormControl("agent-sandbox-repo-branch", "Branch", form.LabelAbove, "Default branch; overridden by task context.", "", nil) {
+					<input id="agent-sandbox-repo-branch" name="repoSourceBranch" type="text" value={ sandboxRepoSourceBranch(data.Config) } placeholder="main" class="input w-full"/>
+				}
+			</div>
+		}
+		@ui.Section("Tools", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-2.5">
+				for _, tool := range sandboxToolNames {
+					<label class="flex cursor-pointer items-center gap-2.5">
+						<input type="checkbox" name="sandboxTool" value={ tool } checked?={ sandboxToolEnabled(data.Config, tool) } class="checkbox"/>
+						<span class="font-mono text-[13px]">{ tool }</span>
+					</label>
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { If none selected, all tools are allowed. }
+			</div>
+		}
+		@ui.Section("Resources", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+				@form.FormControl("agent-sandbox-cpu", "CPU", form.LabelAbove, "", "", nil) {
+					<input id="agent-sandbox-cpu" name="cpu" type="text" value={ sandboxResourceValue(data.Config, "cpu") } placeholder="2" class="input w-full"/>
+				}
+				@form.FormControl("agent-sandbox-memory", "Memory", form.LabelAbove, "", "", nil) {
+					<input id="agent-sandbox-memory" name="memory" type="text" value={ sandboxResourceValue(data.Config, "memory") } placeholder="4G" class="input w-full"/>
+				}
+				@form.FormControl("agent-sandbox-disk", "Disk", form.LabelAbove, "", "", nil) {
+					<input id="agent-sandbox-disk" name="disk" type="text" value={ sandboxResourceValue(data.Config, "disk") } placeholder="10G" class="input w-full"/>
+				}
+			</div>
+		}
+		@ui.Section("Setup & environment", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-sandbox-setup", "Setup commands", form.LabelAbove, "Run on workspace start, one per line.", "", nil) {
+					<textarea id="agent-sandbox-setup" name="setupCommands" rows="4" placeholder="pip install -r requirements.txt" class="textarea w-full resize-none">{ sandboxSetupCommands(data.Config) }</textarea>
+				}
+				@form.FormControl("agent-sandbox-env", "Environment variables", form.LabelAbove, "KEY=VALUE, one per line.", "", nil) {
+					<textarea id="agent-sandbox-env" name="envVars" rows="4" placeholder="FOO=bar" class="textarea w-full resize-none">{ sandboxEnvVars(data.Config) }</textarea>
+				}
+				@form.FormControl("agent-sandbox-git-token-ref", "Git token (server secret)", form.LabelAbove, "Reference to a server-managed git credential, not a literal token. Leave empty for public repositories.", "", nil) {
+					<input id="agent-sandbox-git-token-ref" name="gitTokenSecretRef" type="text" value={ sandboxGitTokenSecretRef(data.Config) } placeholder="SANDBOX_GIT_TOKEN" class="input w-full"/>
+				}
+			</div>
+			}
+		}
+		</div>
+		@agentSettingsSave()
+	</form>
+}
+
+// agentToolPicker is the tools panel body, grouped by source first. When the
+// agent definition carries a server-computed tool taxonomy it renders a
+// top-level "Built-in" section (memory's native tools as capability groups with
+// enable switches + tri-state policies, their members as direct rows) followed
+// by one top-level sibling block per external MCP server and per relay node.
+// When memory reports no groups (older server) it falls back to the previous
+// source-only grouping unchanged. Either way, tools that nothing covers stay
+// reachable so saving the panel never drops them.
+templ agentToolPicker(data agentSettingsData) {
+	{{ view := buildToolPickerView(data)
+	relayGroups := relayPickerGroups(data.RelayNodes)
+	unlisted := unlistedTools(data.Agent, data.MCPServers, data.RelayNodes) }}
+	if len(view.BuiltinGroups) > 0 {
+		<div class="flex flex-col gap-3" data-testid="tool-groups">
+			@agentToolBuiltinSection(view.BuiltinGroups)
+			for _, src := range view.Servers {
+				@agentToolGroup(src)
+			}
+			for _, node := range view.Relays {
+				@agentToolGroup(node)
+			}
+			if len(view.Other) > 0 {
+				@agentToolUncoveredGroup(view.Other)
+			}
+		</div>
+	} else if len(data.MCPServers) == 0 && len(relayGroups) == 0 && len(unlisted) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--wrench",
+			Title:       "No tools available",
+			Description: "Register an MCP server, or connect an external MCP node, to give this agent tools to call.",
+			ActionHref:  "/settings/mcp-servers",
+			ActionLabel: "Register an MCP server",
+			ActionIcon:  "lucide--plus",
+		})
+	} else {
+		<div class="flex flex-col gap-3">
+			for _, srv := range data.MCPServers {
+				@agentToolServerGroup(srv, data.Agent)
+			}
+			for _, node := range relayGroups {
+				@agentToolRelayGroup(node, data.Agent)
+			}
+			if len(unlisted) > 0 {
+				@agentToolOtherGroup(unlisted, data.Agent)
+			}
+		</div>
+	}
+}
+
+// agentToolCountBadge renders the ghost XS "N tool(s)" wrench badge shown in a
+// tool-group header (capability groups and source sub-groups alike).
+templ agentToolCountBadge(n int) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   countLabel(n, "tool", "tools"),
+		Variant: ui.BadgeGhost,
+		Size:    ui.BadgeSizeXS,
+		Icon:    "lucide--wrench",
+	})
+}
+
+// agentToolBuiltinSection is the top-level "Built-in" container: memory's
+// native tools organised into capability groups whose members render as direct
+// rows. It is the sibling of the external MCP-server and relay-node source
+// blocks and uses a lighter container tone so it reads as the built-in origin.
+// The named `group/builtin` keeps its chevron independent of the nested
+// capability-group chevrons.
+templ agentToolBuiltinSection(groups []toolGroupView) {
+	@ui.Disclosure(ui.DisclosureProps{
+		GroupClass:   "group/builtin",
+		ItemsStart:   true,
+		DetailsBase:  "rounded-box border border-base-content/10 bg-base-100/60",
+		BodyBase:     "flex flex-col gap-2 border-t border-base-content/10 p-3",
+		Open:         true,
+		Attrs:        templ.Attributes{"data-testid": "tool-source-builtin"},
+		SummaryAttrs: templ.Attributes{"data-testid": "tool-source-header-builtin"},
+	}, agentToolBuiltinLeading(), agentToolCountBadge(builtinToolCount(groups))) {
+		for _, gv := range groups {
+			@agentToolCapabilityGroup(gv)
+		}
+	}
+}
+
+// agentToolBuiltinLeading is the Built-in section's summary leading block: the
+// package icon, the plain "Built-in" label, and a one-line explanation.
+templ agentToolBuiltinLeading() {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 items-center gap-2.5">
+			@ui.IconSpan("lucide--package", "size-4 shrink-0 text-primary/70")
+			<span class="truncate text-sm font-semibold">Built-in</span>
+		</div>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "truncate pl-[26px]"}) { Tools that ship with Memory. }
+	</div>
+}
+
+// agentToolCapabilityGroup renders one capability group inside the Built-in
+// section: a collapsible header (label, description, member count) carrying only
+// the group enable switch (groupEnabled.<id>), and a body of the group's
+// approval-policy row (groupPolicy.<id>) followed by its native member tools as
+// direct rows. The policy select lives in the body — never inside the
+// interactive <summary> — so choosing a policy can never run the summary's
+// activation behaviour (the fold/unfold) and needs no click cancelling. The
+// header uses a named `group/cap` so nested details don't rotate each other's
+// chevrons.
+templ agentToolCapabilityGroup(gv toolGroupView) {
+	@ui.Disclosure(ui.DisclosureProps{
+		GroupClass:   "group/cap",
+		ItemsStart:   true,
+		DetailsBase:  "rounded-box border border-base-content/10",
+		Attrs:        templ.Attributes{"data-testid": "tool-group", "data-tool-group": gv.Group.ID},
+		SummaryAttrs: templ.Attributes{"data-testid": "tool-group-header-" + gv.Group.ID},
+		Open:         gv.Open,
+	}, agentToolCapabilityLeading(gv), agentToolCapabilityEnable(gv)) {
+		if gv.Group.ID != toolGroupOtherID {
+			@agentToolGroupPolicy(gv)
+		}
+		<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
+			for _, t := range gv.Rows {
+				@agentToolRowView(t, !t.NoPolicy)
+			}
+		</div>
+	}
+}
+
+// agentToolCapabilityLeading is the capability-group summary's leading block:
+// the layers icon, label, member-count badge, and optional description.
+templ agentToolCapabilityLeading(gv toolGroupView) {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 items-center gap-2.5">
+			@ui.IconSpan("lucide--layers", "size-4 shrink-0 text-muted-faint")
+			<span class="truncate text-sm font-medium">{ gv.Group.Label }</span>
+			@agentToolCountBadge(gv.Count)
+		</div>
+		if gv.Group.Description != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "truncate pl-[26px]"}) { { gv.Group.Description } }
+		}
+	</div>
+}
+
+// agentToolCapabilityEnable is the capability-group summary's trailing control:
+// the group enable switch (groupEnabled.<id>) with its groupWasEnabled.<id>
+// baseline. It is a pure toggle in the header — the group approval policy select
+// is not here (see agentToolGroupPolicy), so the header never wraps a control
+// whose click could be mistaken for the summary's own activation.
+templ agentToolCapabilityEnable(gv toolGroupView) {
+	<div class="flex shrink-0 items-center gap-2" onclick="event.stopPropagation()">
+		<input
+			type="hidden"
+			name={ "groupWasEnabled." + gv.Group.ID }
+			value={ groupWasEnabledValue(gv.Enabled) }
+		/>
+		<label class="flex cursor-pointer items-center gap-1.5" title="Turn every tool in this group on or off">
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "groupEnabled." + gv.Group.ID,
+				Value:   "on",
+				Checked: gv.Enabled,
+				Class:   "toggle toggle-sm",
+				Attrs: templ.Attributes{
+					"aria-label":  "Enable " + gv.Group.Label + " tools",
+					"data-testid": "tool-group-enabled-" + gv.Group.ID,
+					"onchange":    "this.closest('[data-tool-group]').querySelectorAll('input[name=tool]').forEach(function(cb){cb.checked=this.checked;cb.dispatchEvent(new Event('change'))},this)",
+				},
+			})
+		</label>
+	</div>
+}
+
+// agentToolGroupPolicy is the capability-group approval-policy row rendered
+// inside the group body, above the member-tool rows: a visible label associated
+// with the tri-state policy select (groupPolicy.<id>). It lives in the
+// disclosure body — a sibling of the interactive <summary>, not a descendant —
+// so its clicks open the native dropdown and never run the summary activation.
+templ agentToolGroupPolicy(gv toolGroupView) {
+	<div class="flex items-center justify-between gap-2">
+		<label class="text-muted text-xs" for={ "tool-group-policy-" + gv.Group.ID }>Approval policy</label>
+		<select
+			id={ "tool-group-policy-" + gv.Group.ID }
+			name={ "groupPolicy." + gv.Group.ID }
+			class="select select-xs w-40"
+			aria-label={ gv.Group.Label + " approval policy" }
+			data-testid={ "tool-group-policy-" + gv.Group.ID }
+		>
+			@agentPolicyOptions(gv.Policy, "inherit", gv.InheritLabel)
+		</select>
+	</div>
+}
+
+// agentToolOtherContainer renders the shared dashed "Other" fallback container:
+// a dashed-border box with the "Other" eyebrow, a one-line explanation, and the
+// tool rows as children. withTestID emits the data-testid="tool-group-other"
+// marker (only the uncovered-group variant carries it, so tests can assert the
+// grouped-picker fallback).
+templ agentToolOtherContainer(desc string, withTestID bool) {
+	<div
+		class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3"
+		if withTestID {
+			data-testid="tool-group-other"
+		}
+	>
+		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 mb-2"}) { { desc } }
+		<div class="flex flex-col divide-y divide-base-content/10">
+			{ children... }
+		</div>
+	</div>
+}
+
+// agentToolUncoveredGroup lists tools the rendered capability groups do not
+// cover — the agent's existing tools plus any catalog tool whose group is
+// missing — so a taxonomy gap can never drop a tool on save. It is not a
+// capability group: it carries no group enable switch or group policy, and each
+// row keeps its own per-tool policy select.
+templ agentToolUncoveredGroup(rows []agentToolRow) {
+	@agentToolOtherContainer("Not offered by a source yet — kept so existing tools aren't dropped on save.", true) {
+		for _, t := range rows {
+			@agentToolRowView(t, true)
+		}
+	}
+}
+
+// agentToolGroupProps configures one collapsible tool group in the agent tools
+// picker. The callers — external MCP-server source blocks and relay-node source
+// blocks (plus the no-groups fallback) — share the <details> shell and tool-row
+// shape; only the border tone, summary icon, remote badge, per-tool policy
+// select, and optional TestID differ.
+type agentToolGroupProps struct {
+	BorderClass     string
+	BodyBorderClass string
+	Icon            string
+	IconClass       string
+	Title           string
+	TitleMono       bool
+	RemoteBadge     bool
+	TestID          string
+	Count           int
+	Open            bool
+	Tools           []agentToolRow
+	WithPolicy      bool
+}
+
+// agentToolRow is one pre-resolved tool in a group: Name is the agent-facing
+// tool name (submitted and displayed), Checked whether the agent whitelists it,
+// PolicyValue its explicit per-tool policy ("" = none), NoPolicy whether the row
+// omits its per-tool policy select (a ban-managed hidden builtin), and
+// InheritLabel the value its Inherit option falls back to.
+type agentToolRow struct {
+	Name         string
+	Description  string
+	Checked      bool
+	PolicyValue  string
+	NoPolicy     bool
+	InheritLabel string
+}
+
+// agentToolGroupLeading is the source-group summary's leading block: the group
+// icon, title (mono for relay instances), and optional remote badge.
+templ agentToolGroupLeading(p agentToolGroupProps) {
+	<div class="flex min-w-0 items-center gap-2.5">
+		@ui.IconSpan(p.Icon, "size-4 shrink-0 "+p.IconClass)
+		if p.TitleMono {
+			<span class="truncate font-mono text-sm font-semibold">{ p.Title }</span>
+		} else {
+			<span class="truncate text-sm font-semibold">{ p.Title }</span>
+		}
+		if p.RemoteBadge {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "remote",
+				Variant: ui.BadgeWarning,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--radio",
+			})
+		}
+	</div>
+}
+
+// agentToolGroup renders one collapsible <details> tool group: a summary
+// (icon + title + optional remote badge + tool count) and a body listing each
+// tool as a toggle row, with an optional per-tool policy select (registry
+// servers only). TestID, when set, marks the top-level source block.
+templ agentToolGroup(p agentToolGroupProps) {
+	{{ attrs := templ.Attributes{}
+	if p.TestID != "" {
+		attrs["data-testid"] = p.TestID
+	} }}
+	@ui.Disclosure(ui.DisclosureProps{
+		DetailsBase: "rounded-box border " + p.BorderClass,
+		BodyBase:    "flex flex-col border-t " + p.BodyBorderClass,
+		Open:        p.Open,
+		Attrs:       attrs,
+	}, agentToolGroupLeading(p), agentToolCountBadge(p.Count)) {
+		for _, t := range p.Tools {
+			@agentToolRowView(t, p.WithPolicy)
+		}
+	}
+}
+
+// agentToolRowView is one tool row shared by every group body: an enable toggle
+// bound to the flat "tool" list, the tool name + description, and an optional
+// per-tool policy select. The toggle's onchange disables/dims the policy select
+// while the tool is off. A ban-managed hidden builtin passes withPolicy=false:
+// its checkbox maps to ban state and it renders no policy select.
+//
+// Two row variants exist. The default (`px-3` + hover background) suits rows
+// inside a plain group body, where the surrounding container has no horizontal
+// padding. The "Other" fallback container already supplies `p-3`, so its rows
+// pass the legacy inset-free class (no `px-3`, no hover background) to keep the
+// pre-refactor alignment with the "Other" eyebrow.
+templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
+	{{ cls := "flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-base-200/50"
+	if len(rowClass) > 0 {
+		cls = rowClass[0]
+	} }}
+	{{ toolAttrs := templ.Attributes{}
+	if withPolicy {
+		toolAttrs["onchange"] = "var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"
+	} }}
+	<div class={ cls } data-tool-row>
+		<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "tool",
+				Value:   t.Name,
+				Checked: t.Checked,
+				Class:   "toggle toggle-sm shrink-0",
+				Attrs:   toolAttrs,
+			})
+			<span class="min-w-0">
+				<span class="block font-mono text-[13px] font-medium">{ t.Name }</span>
+				if t.Description != "" {
+					<span class="text-muted block truncate text-xs">{ t.Description }</span>
+				}
+			</span>
+		</label>
+		if withPolicy {
+			@toolPolicySelectValue("toolPolicy."+t.Name, t.Name, t.PolicyValue, !t.Checked, t.InheritLabel)
+		}
+	</div>
+}
+
+// serverToolRows pre-resolves a registry server's tools into group rows.
+func serverToolRows(srv MCPServer, agent *AgentDefinition) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(srv.Tools))
+	for _, t := range srv.Tools {
+		rows = append(rows, agentToolRow{
+			Name:         t.ToolName,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, t.ToolName),
+			PolicyValue:  toolPolicyValue(agent, t.ToolName),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+		})
+	}
+	return rows
+}
+
+// relayToolRows pre-resolves a relay node's tools into group rows, using each
+// tool's agent-facing <instance>_<tool> name.
+func relayToolRows(node relayNode, agent *AgentDefinition) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(node.Tools))
+	for _, t := range node.Tools {
+		name := relayAgentToolName(node.Session.InstanceID, t.Name)
+		rows = append(rows, agentToolRow{
+			Name:         name,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, name),
+			PolicyValue:  toolPolicyValue(agent, name),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+		})
+	}
+	return rows
+}
+
+// agentToolServerGroup builds a group for one registry MCP server: a per-tool
+// policy select, neutral border tone, no remote badge. It opens by default when
+// the agent already uses a tool from that server, so active picks stay visible
+// without dumping every tool (e.g. "builtin" has ~124).
+templ agentToolServerGroup(srv MCPServer, agent *AgentDefinition) {
+	@agentToolGroup(agentToolGroupProps{
+		BorderClass:     "border-base-content/10 bg-base-200/40",
+		BodyBorderClass: "border-base-content/10",
+		Icon:            "lucide--server",
+		IconClass:       "text-muted-faint",
+		Title:           srv.Name,
+		Count:           srv.ToolCount,
+		Open:            mcpServerInUse(srv, agent),
+		Tools:           serverToolRows(srv, agent),
+		WithPolicy:      true,
+	})
+}
+
+// agentToolRelayGroup builds a group for one connected external MCP relay node:
+// allow-only (no per-tool policy select), a remote badge, and a primary border
+// tone to distinguish it from registry server groups.
+templ agentToolRelayGroup(node relayNode, agent *AgentDefinition) {
+	@agentToolGroup(agentToolGroupProps{
+		BorderClass:     "border-primary/25 bg-primary/[0.04]",
+		BodyBorderClass: "border-primary/15",
+		Icon:            "lucide--radio",
+		IconClass:       "text-primary/60",
+		Title:           node.Session.InstanceID,
+		TitleMono:       true,
+		RemoteBadge:     true,
+		Count:           len(node.Tools),
+		Open:            relayNodeInUse(node, agent),
+		Tools:           relayToolRows(node, agent),
+	})
+}
+
+// agentToolOtherGroup lists the agent's current tools that no registered MCP
+// server offers (e.g. the bridge's Home Assistant tools). Always checked —
+// they're preserved so the picker never drops them on save.
+templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
+	@agentToolOtherContainer("Not from a registered MCP server — kept so existing tools aren't dropped on save.", false) {
+		for _, t := range tools {
+			@agentToolRowView(agentToolRow{Name: t, Checked: true, PolicyValue: toolPolicyValue(agent, t), InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy)}, true, "flex items-center gap-2.5 py-2")
+		}
+	}
+}
+
+// agentPolicyOptions renders the shared Inherit / Allow / Ask / Deny option set
+// for a policy <select>. inheritValue is the Inherit option's submitted value —
+// "inherit" for the group select (its value space spells the absent policy) and
+// "" for the per-tool select ("" = no override) — inheritLabel the value the
+// Inherit option falls back to ("Inherit (Ask)"), and value selects the current
+// option.
+templ agentPolicyOptions(value, inheritValue, inheritLabel string) {
+	if inheritLabel != "" {
+		<option value={ inheritValue } if value == inheritValue { selected } data-inherit-option>Inherit ({ inheritLabel })</option>
+	} else {
+		<option value={ inheritValue } if value == inheritValue { selected } data-inherit-option>Inherit</option>
+	}
+	<option value="allow" if value == "allow" { selected }>Allow</option>
+	<option value="ask" if value == "ask" { selected }>Ask</option>
+	<option value="deny" if value == "deny" { selected }>Deny</option>
+}
+
+// toolPolicySelectValue is the value-driven form of the per-tool policy
+// dropdown: name is the form field, key the tool name carried in
+// data-tool-policy for the row's onchange lookup, value the stored policy
+// ("" = Inherit), and inheritLabel the value its Inherit option falls back to.
+templ toolPolicySelectValue(name, key, value string, disabled bool, inheritLabel string) {
+	<select
+		name={ name }
+		class="select select-xs w-40 shrink-0"
+		if disabled {
+			disabled
+		}
+		data-tool-policy={ key }
+	>
+		@agentPolicyOptions(value, "", inheritLabel)
+	</select>
+}
+
+// --- Agent sessions ---
+
+// AgentSessionsPage renders the full conversation list for one agent. A
+// failed agent fetch (LoadErr) renders the whole-page error state; a
+// conversations failure (ChatsErr) degrades only the list section.
+templ AgentSessionsPage(data agentSessionsData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Sessions")
+			@layout.Rail(agentSubNav(data.Agent.ID, "sessions", ""), nil) {
+				@agentChatsList(data.ChatsErr, data.Chats, "Sessions", "", "No sessions yet")
+			}
+		}
+	}
+}

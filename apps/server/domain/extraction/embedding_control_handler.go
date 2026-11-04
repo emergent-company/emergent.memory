@@ -1,0 +1,703 @@
+package extraction
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// EmbeddingControlHandler exposes HTTP endpoints to pause/resume/inspect
+// all embedding workers. Intended for benchmarking and operational use.
+type EmbeddingControlHandler struct {
+	objectWorker  *GraphEmbeddingWorker
+	relWorker     *GraphRelationshipEmbeddingWorker
+	sweepWorker   *EmbeddingSweepWorker
+	staleTask     *scheduler.StaleJobCleanupTask
+	objectJobsSvc *GraphEmbeddingJobsService
+	relJobsSvc    *GraphRelationshipEmbeddingJobsService
+	chunkJobsSvc  *ChunkEmbeddingJobsService
+}
+
+// NewEmbeddingControlHandler creates a new control handler.
+func NewEmbeddingControlHandler(
+	objectWorker *GraphEmbeddingWorker,
+	relWorker *GraphRelationshipEmbeddingWorker,
+	sweepWorker *EmbeddingSweepWorker,
+	staleTask *scheduler.StaleJobCleanupTask,
+	objectJobsSvc *GraphEmbeddingJobsService,
+	relJobsSvc *GraphRelationshipEmbeddingJobsService,
+	chunkJobsSvc *ChunkEmbeddingJobsService,
+) *EmbeddingControlHandler {
+	return &EmbeddingControlHandler{
+		objectWorker:  objectWorker,
+		relWorker:     relWorker,
+		sweepWorker:   sweepWorker,
+		staleTask:     staleTask,
+		objectJobsSvc: objectJobsSvc,
+		relJobsSvc:    relJobsSvc,
+		chunkJobsSvc:  chunkJobsSvc,
+	}
+}
+
+// EmbeddingWorkerStatus describes the current state of a single worker.
+type EmbeddingWorkerStatus struct {
+	Running bool `json:"running"`
+	Paused  bool `json:"paused"`
+}
+
+// EmbeddingConfigResponse describes the current dynamic config.
+type EmbeddingConfigResponse struct {
+	BatchSize             int  `json:"batch_size"`
+	Concurrency           int  `json:"concurrency"`
+	IntervalMs            int  `json:"interval_ms"`
+	StaleMinutes          int  `json:"stale_minutes"`
+	EnableAdaptiveScaling bool `json:"enable_adaptive_scaling"`
+	MinConcurrency        int  `json:"min_concurrency"`
+	MaxConcurrency        int  `json:"max_concurrency"`
+	CurrentConcurrency    int  `json:"current_concurrency"`
+	HealthScore           int  `json:"health_score"`
+}
+
+// EmbeddingStatusResponse is the response for GET /api/embeddings/status.
+type EmbeddingStatusResponse struct {
+	Objects       EmbeddingWorkerStatus   `json:"objects"`
+	Relationships EmbeddingWorkerStatus   `json:"relationships"`
+	Sweep         EmbeddingWorkerStatus   `json:"sweep"`
+	Config        EmbeddingConfigResponse `json:"config"`
+}
+
+func (h *EmbeddingControlHandler) currentStatus() EmbeddingStatusResponse {
+	cfg := h.objectWorker.GetConfig()
+	staleMinutes := 30
+	if h.staleTask != nil {
+		staleMinutes = h.staleTask.GetStaleMinutes()
+	}
+	return EmbeddingStatusResponse{
+		Objects: EmbeddingWorkerStatus{
+			Running: h.objectWorker.IsRunning(),
+			Paused:  h.objectWorker.IsPaused(),
+		},
+		Relationships: EmbeddingWorkerStatus{
+			Running: h.relWorker.IsRunning(),
+			Paused:  h.relWorker.IsPaused(),
+		},
+		Sweep: EmbeddingWorkerStatus{
+			Running: h.sweepWorker.IsRunning(),
+			Paused:  h.sweepWorker.IsPaused(),
+		},
+		Config: EmbeddingConfigResponse{
+			BatchSize:             cfg.WorkerBatchSize,
+			Concurrency:           cfg.WorkerConcurrency,
+			IntervalMs:            cfg.WorkerIntervalMs,
+			StaleMinutes:          staleMinutes,
+			EnableAdaptiveScaling: cfg.EnableAdaptiveScaling,
+			MinConcurrency:        cfg.MinConcurrency,
+			MaxConcurrency:        cfg.MaxConcurrency,
+		},
+	}
+}
+
+// Status returns the current pause/run state of all embedding workers.
+// @Router /api/embeddings/status [get]
+func (h *EmbeddingControlHandler) Status(c echo.Context) error {
+	return c.JSON(http.StatusOK, h.currentStatus())
+}
+
+// Pause pauses all embedding workers (object, relationship, sweep).
+// @Router /api/embeddings/pause [post]
+func (h *EmbeddingControlHandler) Pause(c echo.Context) error {
+	h.objectWorker.Pause()
+	h.relWorker.Pause()
+	h.sweepWorker.Pause()
+	return c.JSON(http.StatusOK, map[string]any{
+		"message": "all embedding workers paused",
+		"status":  h.currentStatus(),
+	})
+}
+
+// Resume resumes all embedding workers.
+// @Router /api/embeddings/resume [post]
+func (h *EmbeddingControlHandler) Resume(c echo.Context) error {
+	h.objectWorker.Resume()
+	h.relWorker.Resume()
+	h.sweepWorker.Resume()
+	return c.JSON(http.StatusOK, map[string]any{
+		"message": "all embedding workers resumed",
+		"status":  h.currentStatus(),
+	})
+}
+
+// EmbeddingConfigRequest is the body for PATCH /api/embeddings/config.
+type EmbeddingConfigRequest struct {
+	BatchSize             *int  `json:"batch_size"`
+	Concurrency           *int  `json:"concurrency"`
+	IntervalMs            *int  `json:"interval_ms"`
+	StaleMinutes          *int  `json:"stale_minutes"`
+	EnableAdaptiveScaling *bool `json:"enable_adaptive_scaling"`
+	MinConcurrency        *int  `json:"min_concurrency"`
+	MaxConcurrency        *int  `json:"max_concurrency"`
+}
+
+// Config updates embedding worker configuration at runtime.
+// All fields are optional — only provided fields are changed.
+// @Router /api/embeddings/config [patch]
+func (h *EmbeddingControlHandler) Config(c echo.Context) error {
+	var req EmbeddingConfigRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+
+	// Apply to both workers (they share the same config shape)
+	objCfg := h.objectWorker.GetConfig()
+	relCfg := h.relWorker.GetConfig()
+
+	if req.BatchSize != nil {
+		objCfg.WorkerBatchSize = *req.BatchSize
+		relCfg.WorkerBatchSize = *req.BatchSize
+	}
+	if req.Concurrency != nil {
+		if objCfg.EnableAdaptiveScaling {
+			objCfg.MaxConcurrency = *req.Concurrency
+			relCfg.MaxConcurrency = *req.Concurrency
+		} else {
+			objCfg.WorkerConcurrency = *req.Concurrency
+			relCfg.WorkerConcurrency = *req.Concurrency
+		}
+	}
+	if req.IntervalMs != nil {
+		objCfg.WorkerIntervalMs = *req.IntervalMs
+		relCfg.WorkerIntervalMs = *req.IntervalMs
+	}
+	if req.EnableAdaptiveScaling != nil {
+		objCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+		relCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+	}
+	if req.MinConcurrency != nil {
+		objCfg.MinConcurrency = *req.MinConcurrency
+		relCfg.MinConcurrency = *req.MinConcurrency
+	}
+	if req.MaxConcurrency != nil {
+		objCfg.MaxConcurrency = *req.MaxConcurrency
+		relCfg.MaxConcurrency = *req.MaxConcurrency
+	}
+
+	// Validation (Task 8.4)
+	if objCfg.MinConcurrency < 1 {
+		objCfg.MinConcurrency = 1
+		relCfg.MinConcurrency = 1
+	}
+	if objCfg.MaxConcurrency < objCfg.MinConcurrency {
+		objCfg.MaxConcurrency = objCfg.MinConcurrency
+		relCfg.MaxConcurrency = objCfg.MinConcurrency
+	}
+	if objCfg.MaxConcurrency > 50 {
+		objCfg.MaxConcurrency = 50
+		relCfg.MaxConcurrency = 50
+	}
+
+	h.objectWorker.SetConfig(objCfg)
+	h.relWorker.SetConfig(relCfg)
+
+	if req.StaleMinutes != nil && h.staleTask != nil {
+		h.staleTask.SetStaleMinutes(*req.StaleMinutes)
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"message": "embedding worker config updated",
+		"status":  h.currentStatus(),
+	})
+}
+
+// EmbeddingQueueStats describes job queue stats for a single queue.
+// Failed counts only genuine failures; StaleFailed counts terminal rows left by
+// the stale-job sweep (jobs.StaleJobMessage), which are historical cleanup
+// artifacts rather than current breakage.
+type EmbeddingQueueStats struct {
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	DeadLetter  int64 `json:"deadLetter"`
+}
+
+// EmbeddingProgressResponse is the response for GET /api/embeddings/progress.
+type EmbeddingProgressResponse struct {
+	Objects       EmbeddingQueueStats `json:"objects"`
+	Relationships EmbeddingQueueStats `json:"relationships"`
+}
+
+// EmbeddingCoverage describes embedding coverage for a single queue: how many
+// live graph rows already hold an embedding vector (embedded) versus how many
+// are still awaiting one (awaiting). Total is the live row count
+// (embedded + awaiting) and never includes deleted rows.
+type EmbeddingCoverage struct {
+	Embedded int64 `json:"embedded"`
+	Awaiting int64 `json:"awaiting"`
+	Total    int64 `json:"total"`
+}
+
+// EmbeddingCoverageResponse is the response for GET /api/embeddings/coverage.
+type EmbeddingCoverageResponse struct {
+	Objects       EmbeddingCoverage `json:"objects"`
+	Relationships EmbeddingCoverage `json:"relationships"`
+}
+
+// Progress returns per-queue embedding job statistics, project-scoped when a
+// project context is present. A caller with no project context may only obtain
+// the deployment-wide view when they hold an active superadmin_full grant;
+// otherwise the request is refused. This closes the unprojected aggregate-count
+// disclosure of issue #940 (including the admin:all escalation: a scope check
+// would admit an org_admin-minted admin:all token, so the fallback checks the
+// core.superadmins role instead) while keeping the gateway's project-scoped
+// embeddings page working.
+// @Router /api/embeddings/progress [get]
+func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
+	ctx := c.Request().Context()
+	user := auth.MustGetUser(c)
+
+	projectID := user.APITokenProjectID
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+
+	if projectID == "" {
+		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.objectJobsSvc.DB())
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if !isSuperadmin {
+			return c.JSON(http.StatusForbidden, map[string]any{
+				"error": "superadmin privilege required for deployment-wide embedding progress",
+			})
+		}
+		return h.progressGlobal(ctx, c)
+	}
+	return h.progressByProject(ctx, c, projectID)
+}
+
+// progressByProject returns the queue statistics scoped to a single project.
+func (h *EmbeddingControlHandler) progressByProject(ctx context.Context, c echo.Context, projectID string) error {
+	// The two per-queue aggregates are independent. On large projects the
+	// relationship leg dominates (it joins the queue table with
+	// kb.graph_relationships to resolve the project), so run both concurrently
+	// instead of serially.
+	var (
+		objStats *GraphEmbeddingQueueStats
+		relStats *GraphRelationshipEmbeddingQueueStats
+		objErr   error
+		relErr   error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.objectJobsSvc.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { relStats, relErr = h.relJobsSvc.StatsByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+	}
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
+}
+
+// progressGlobal returns the deployment-wide queue statistics. Callers must have
+// already been authorized (admin:read) by the Progress handler.
+func (h *EmbeddingControlHandler) progressGlobal(ctx context.Context, c echo.Context) error {
+	var (
+		objStats *GraphEmbeddingQueueStats
+		relStats *GraphRelationshipEmbeddingQueueStats
+		objErr   error
+		relErr   error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.objectJobsSvc.Stats(ctx); return nil })
+	g.Go(func() error { relStats, relErr = h.relJobsSvc.Stats(ctx); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+	}
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
+}
+
+// embeddingProgressResponse folds object and relationship queue stats into the
+// wire shape shared by the project-scoped and global progress paths.
+func embeddingProgressResponse(objStats *GraphEmbeddingQueueStats, relStats *GraphRelationshipEmbeddingQueueStats) EmbeddingProgressResponse {
+	return EmbeddingProgressResponse{
+		Objects: EmbeddingQueueStats{
+			Pending:     objStats.Pending,
+			Processing:  objStats.Processing,
+			Completed:   objStats.Completed,
+			Failed:      objStats.Failed,
+			StaleFailed: objStats.StaleFailed,
+			DeadLetter:  objStats.DeadLetter,
+		},
+		Relationships: EmbeddingQueueStats{
+			Pending:     relStats.Pending,
+			Processing:  relStats.Processing,
+			Completed:   relStats.Completed,
+			Failed:      relStats.Failed,
+			StaleFailed: relStats.StaleFailed,
+			DeadLetter:  relStats.DeadLetter,
+		},
+	}
+}
+
+// Coverage returns per-queue embedding coverage (embedded / awaiting / total
+// live rows), project-scoped when a project context is present. A caller with no
+// project context may only obtain the deployment-wide view when they hold an
+// active superadmin_full grant; otherwise the request is refused — the same
+// authorization posture as Progress (issue #940).
+// @Summary      Get embedding coverage
+// @Description  Returns embedded/awaiting/total counts for live graph objects and relationships. Project-scoped for a caller with project context; deployment-wide requires an active superadmin_full grant.
+// @Tags         embeddings
+// @Produce      json
+// @Success      200  {object}  EmbeddingCoverageResponse
+// @Router       /api/embeddings/coverage [get]
+func (h *EmbeddingControlHandler) Coverage(c echo.Context) error {
+	ctx := c.Request().Context()
+	user := auth.MustGetUser(c)
+
+	projectID := user.APITokenProjectID
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+
+	if projectID == "" {
+		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.objectJobsSvc.DB())
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if !isSuperadmin {
+			return c.JSON(http.StatusForbidden, map[string]any{
+				"error": "superadmin privilege required for deployment-wide embedding coverage",
+			})
+		}
+		return h.coverageGlobal(ctx, c)
+	}
+	return h.coverageByProject(ctx, c, projectID)
+}
+
+// coverageByProject returns embedding coverage scoped to a single project.
+func (h *EmbeddingControlHandler) coverageByProject(ctx context.Context, c echo.Context, projectID string) error {
+	// The two per-queue counts are independent; run both concurrently instead of
+	// serially (same shape as progressByProject).
+	var (
+		objCov *EmbeddingCoverage
+		relCov *EmbeddingCoverage
+		objErr error
+		relErr error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objCov, objErr = h.objectJobsSvc.CoverageByProject(ctx, projectID); return nil })
+	g.Go(func() error { relCov, relErr = h.relJobsSvc.CoverageByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+	}
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingCoverageResponse(objCov, relCov))
+}
+
+// coverageGlobal returns the deployment-wide embedding coverage. Callers must
+// have already been authorized (superadmin_full) by the Coverage handler.
+func (h *EmbeddingControlHandler) coverageGlobal(ctx context.Context, c echo.Context) error {
+	var (
+		objCov *EmbeddingCoverage
+		relCov *EmbeddingCoverage
+		objErr error
+		relErr error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objCov, objErr = h.objectJobsSvc.Coverage(ctx); return nil })
+	g.Go(func() error { relCov, relErr = h.relJobsSvc.Coverage(ctx); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+	}
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingCoverageResponse(objCov, relCov))
+}
+
+// embeddingCoverageResponse folds object and relationship coverage into the wire
+// shape shared by the project-scoped and global coverage paths.
+func embeddingCoverageResponse(objCov, relCov *EmbeddingCoverage) EmbeddingCoverageResponse {
+	return EmbeddingCoverageResponse{
+		Objects:       *objCov,
+		Relationships: *relCov,
+	}
+}
+
+// EmbeddingClearResponse is the response for DELETE /api/embeddings/queue.
+type EmbeddingClearResponse struct {
+	ObjectsCleared       int `json:"objects_cleared"`
+	RelationshipsCleared int `json:"relationships_cleared"`
+}
+
+// EmbeddingResetScheduleResponse is the response for POST /api/embeddings/reset-schedule.
+type EmbeddingResetScheduleResponse struct {
+	ObjectsReset       int `json:"objects_reset"`
+	RelationshipsReset int `json:"relationships_reset"`
+}
+
+// ResetSchedule resets scheduled_at to now() for all pending jobs so they bypass backoff delays.
+// @Router /api/embeddings/reset-schedule [post]
+// DiagnoseQueue runs a SELECT-only version of the Dequeue query and returns
+// the count of immediately eligible jobs, plus min/max scheduled_at.
+func (h *EmbeddingControlHandler) DiagnoseQueue(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	type row struct {
+		Count    int    `bun:"count"`
+		MinSched string `bun:"min_sched"`
+		MaxSched string `bun:"max_sched"`
+		NowDB    string `bun:"now_db"`
+	}
+	var result []row
+	err := h.objectJobsSvc.DB().NewRaw(`
+		SELECT
+			count(*) AS count,
+			coalesce(min(scheduled_at)::text, '') AS min_sched,
+			coalesce(max(scheduled_at)::text, '') AS max_sched,
+			now()::text AS now_db
+		FROM kb.graph_embedding_jobs
+		WHERE status = 'pending' AND scheduled_at <= now()
+	`).Scan(ctx, &result)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	var allPending []row
+	err = h.objectJobsSvc.DB().NewRaw(`
+		SELECT
+			count(*) AS count,
+			coalesce(min(scheduled_at)::text, '') AS min_sched,
+			coalesce(max(scheduled_at)::text, '') AS max_sched,
+			now()::text AS now_db
+		FROM kb.graph_embedding_jobs
+		WHERE status = 'pending'
+	`).Scan(ctx, &allPending)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"eligible_now": result,
+		"all_pending":  allPending,
+	})
+}
+
+func (h *EmbeddingControlHandler) ResetSchedule(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	objN, err := h.objectJobsSvc.ResetSchedule(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	relN, err := h.relJobsSvc.ResetSchedule(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, EmbeddingResetScheduleResponse{
+		ObjectsReset:       objN,
+		RelationshipsReset: relN,
+	})
+}
+
+// ClearQueue deletes all pending and processing jobs from both embedding queues.
+// @Router /api/embeddings/queue [delete]
+func (h *EmbeddingControlHandler) ClearQueue(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	objN, err := h.objectJobsSvc.ClearPendingJobs(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	relN, err := h.relJobsSvc.ClearPendingJobs(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, EmbeddingClearResponse{
+		ObjectsCleared:       objN,
+		RelationshipsCleared: relN,
+	})
+}
+
+// These exported methods are called by the MCP package via interface (no direct import).
+// ============================================================================
+
+// CurrentStatus returns the current status of all embedding workers.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) CurrentStatus() mcp.EmbeddingStatusSnapshot {
+	s := h.currentStatus()
+	return mcp.EmbeddingStatusSnapshot{
+		Objects: mcp.EmbeddingWorkerState{
+			Running: s.Objects.Running,
+			Paused:  s.Objects.Paused,
+		},
+		Relationships: mcp.EmbeddingWorkerState{
+			Running: s.Relationships.Running,
+			Paused:  s.Relationships.Paused,
+		},
+		Sweep: mcp.EmbeddingWorkerState{
+			Running: s.Sweep.Running,
+			Paused:  s.Sweep.Paused,
+		},
+		Config: mcp.EmbeddingConfigState{
+			BatchSize:             s.Config.BatchSize,
+			Concurrency:           s.Config.Concurrency,
+			IntervalMs:            s.Config.IntervalMs,
+			StaleMinutes:          s.Config.StaleMinutes,
+			EnableAdaptiveScaling: s.Config.EnableAdaptiveScaling,
+			MinConcurrency:        s.Config.MinConcurrency,
+			MaxConcurrency:        s.Config.MaxConcurrency,
+		},
+	}
+}
+
+// PauseAll pauses all embedding workers.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) PauseAll() {
+	h.objectWorker.Pause()
+	h.relWorker.Pause()
+	h.sweepWorker.Pause()
+}
+
+// ResumeAll resumes all embedding workers.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) ResumeAll() {
+	h.objectWorker.Resume()
+	h.relWorker.Resume()
+	h.sweepWorker.Resume()
+}
+
+// ProjectQueueStats returns per-queue job counts for one project.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) ProjectQueueStats(ctx context.Context, projectID string) (mcp.EmbeddingProjectQueueStats, error) {
+	var (
+		objStats   *GraphEmbeddingQueueStats
+		chunkStats *ChunkEmbeddingQueueStats
+		relStats   *GraphRelationshipEmbeddingQueueStats
+		objErr     error
+		chunkErr   error
+		relErr     error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.objectJobsSvc.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { chunkStats, chunkErr = h.chunkJobsSvc.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { relStats, relErr = h.relJobsSvc.StatsByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return mcp.EmbeddingProjectQueueStats{}, objErr
+	}
+	if chunkErr != nil {
+		return mcp.EmbeddingProjectQueueStats{}, chunkErr
+	}
+	if relErr != nil {
+		return mcp.EmbeddingProjectQueueStats{}, relErr
+	}
+
+	return mcp.EmbeddingProjectQueueStats{
+		Chunks: mcp.EmbeddingQueueStats{
+			Pending:     chunkStats.Pending,
+			Processing:  chunkStats.Processing,
+			Completed:   chunkStats.Completed,
+			Failed:      chunkStats.Failed,
+			StaleFailed: chunkStats.StaleFailed,
+		},
+		Objects: mcp.EmbeddingQueueStats{
+			Pending:     objStats.Pending,
+			Processing:  objStats.Processing,
+			Completed:   objStats.Completed,
+			Failed:      objStats.Failed,
+			StaleFailed: objStats.StaleFailed,
+			DeadLetter:  objStats.DeadLetter,
+		},
+		Relationships: mcp.EmbeddingQueueStats{
+			Pending:     relStats.Pending,
+			Processing:  relStats.Processing,
+			Completed:   relStats.Completed,
+			Failed:      relStats.Failed,
+			StaleFailed: relStats.StaleFailed,
+			DeadLetter:  relStats.DeadLetter,
+		},
+	}, nil
+}
+
+// RetriggerFailed requeues this project's failed and dead_letter embedding jobs.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) RetriggerFailed(ctx context.Context, projectID string) (mcp.EmbeddingRetriggerResult, error) {
+	objN, err := h.objectJobsSvc.RetriggerByProject(ctx, projectID)
+	if err != nil {
+		return mcp.EmbeddingRetriggerResult{}, err
+	}
+	chunkN, err := h.chunkJobsSvc.RetriggerByProject(ctx, projectID)
+	if err != nil {
+		return mcp.EmbeddingRetriggerResult{}, err
+	}
+	return mcp.EmbeddingRetriggerResult{ObjectsReset: objN, ChunksReset: chunkN}, nil
+}
+
+// ApplyConfig applies an embedding configuration update.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) ApplyConfig(req mcp.EmbeddingConfigUpdate) {
+	objCfg := h.objectWorker.GetConfig()
+	relCfg := h.relWorker.GetConfig()
+
+	if req.BatchSize != nil {
+		objCfg.WorkerBatchSize = *req.BatchSize
+		relCfg.WorkerBatchSize = *req.BatchSize
+	}
+	if req.Concurrency != nil {
+		if objCfg.EnableAdaptiveScaling {
+			objCfg.MaxConcurrency = *req.Concurrency
+			relCfg.MaxConcurrency = *req.Concurrency
+		} else {
+			objCfg.WorkerConcurrency = *req.Concurrency
+			relCfg.WorkerConcurrency = *req.Concurrency
+		}
+	}
+	if req.IntervalMs != nil {
+		objCfg.WorkerIntervalMs = *req.IntervalMs
+		relCfg.WorkerIntervalMs = *req.IntervalMs
+	}
+	if req.EnableAdaptiveScaling != nil {
+		objCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+		relCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+	}
+	if req.MinConcurrency != nil {
+		objCfg.MinConcurrency = *req.MinConcurrency
+		relCfg.MinConcurrency = *req.MinConcurrency
+	}
+	if req.MaxConcurrency != nil {
+		objCfg.MaxConcurrency = *req.MaxConcurrency
+		relCfg.MaxConcurrency = *req.MaxConcurrency
+	}
+
+	h.objectWorker.SetConfig(objCfg)
+	h.relWorker.SetConfig(relCfg)
+
+	if req.StaleMinutes != nil && h.staleTask != nil {
+		h.staleTask.SetStaleMinutes(*req.StaleMinutes)
+	}
+}

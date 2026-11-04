@@ -1,0 +1,230 @@
+package main
+
+import (
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/a-h/templ"
+)
+
+// renderPageShell renders the full app shell (head included) with minimal
+// data so tests can assert on the <head> output. The feedback overlay URL is
+// empty, so the optional overlay <script> is not emitted.
+func renderPageShell(t *testing.T, content templ.Component) string {
+	t.Helper()
+	return renderPageShellWithOverlay(t, "", content)
+}
+
+// renderPageShellWithOverlay renders the full app shell (head included) with
+// the feedback overlay URL set to overlayURL so tests can assert on both the
+// disabled (empty URL) and enabled (non-empty URL) overlay branches.
+func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.Component) string {
+	t.Helper()
+	return renderHTML(t, appShell(
+		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		0,
+		nil, nil,
+		content,
+		nil,
+		"", "", 0, 0, 0, overlayURL,
+	))
+}
+
+// TestPageHeadOmitsMonolithicGoDaisyCSS (change spec 4.1): the gateway no
+// longer references go-daisy's pre-compiled /static/css/app.css; its own
+// combined /assets/css/app.css is the only stylesheet.
+func TestPageHeadOmitsMonolithicGoDaisyCSS(t *testing.T) {
+	body := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		_, err := w.Write([]byte("<p>hi</p>"))
+		return err
+	})
+	html := renderPageShell(t, body)
+	if strings.Contains(html, "/static/css/app.css") {
+		t.Error("page head still references go-daisy monolithic /static/css/app.css")
+	}
+	if !strings.Contains(html, "/assets/css/app.css") {
+		t.Error("page head missing the gateway's own /assets/css/app.css stylesheet")
+	}
+}
+
+// TestPageHeadFeedbackOverlayScript guards the optional element-level feedback
+// overlay: the shell emits its <script> only when a feedback overlay URL is
+// configured, and wires the script's data attributes to that URL.
+func TestPageHeadFeedbackOverlayScript(t *testing.T) {
+	body := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		_, err := w.Write([]byte("<p>hi</p>"))
+		return err
+	})
+
+	disabled := renderPageShellWithOverlay(t, "", body)
+	if strings.Contains(disabled, "emergent-feedback.js") {
+		t.Error("page head emits emergent-feedback.js when no overlay URL is configured")
+	}
+	if strings.Contains(disabled, `data-label="feedback"`) {
+		t.Error(`page head emits data-label="feedback" when no overlay URL is configured`)
+	}
+
+	const overlayURL = "https://feedback.emergent-company.ai"
+	enabled := renderPageShellWithOverlay(t, overlayURL, body)
+	for _, want := range []string{
+		`src="https://feedback.emergent-company.ai/emergent-feedback.js"`,
+		`data-api="https://feedback.emergent-company.ai"`,
+		`data-repo="emergent-company/emergent.memory"`,
+		`data-label="feedback"`,
+		"async",
+	} {
+		if !strings.Contains(enabled, want) {
+			t.Errorf("page head missing expected feedback overlay attribute %q", want)
+		}
+	}
+}
+
+// compiledCSS returns the gateway's committed compiled stylesheet.
+func compiledCSS(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("webui", "static", "css", "app.css"))
+	if err != nil {
+		t.Skipf("compiled css not present: %v", err)
+	}
+	return string(b)
+}
+
+// chatBubbleOverride returns the custom unlayered .chat-bubble rule from the
+// compiled CSS, or "" when absent. It is the only .chat-bubble rule that sets a
+// box-shadow — daisyUI's layered default has none — so the shadow uniquely
+// identifies the override that is meant to beat daisyUI's layered defaults.
+func chatBubbleOverride(css string) string {
+	for {
+		start := strings.Index(css, ".chat-bubble{")
+		if start < 0 {
+			return ""
+		}
+		rest := css[start:]
+		end := strings.IndexByte(rest, '}')
+		if end < 0 {
+			return ""
+		}
+		rule := rest[:end+1]
+		if strings.Contains(rule, "box-shadow") {
+			return rule
+		}
+		css = rest[len(".chat-bubble{"):]
+	}
+}
+
+// TestCompiledCSSExcludesUnusedDaisyUIModules (change spec 4.2): daisyUI
+// modules the gateway never renders (audited) must be absent from the compiled
+// CSS, while used component styles + go-daisy custom CSS + icons remain.
+func TestCompiledCSSExcludesUnusedDaisyUIModules(t *testing.T) {
+	css := compiledCSS(t)
+	for _, sel := range []string{".mockup", ".artboard", ".otp-"} {
+		if strings.Contains(css, sel) {
+			t.Errorf("compiled css still contains excluded daisyUI module %q", sel)
+		}
+	}
+	// sanity: styles that must remain. `.status` is deliberately NOT excluded:
+	// go-daisy's Badge renders its Dot prop as `status status-<intent>
+	// status-xs`, so the module must stay compiled for badge dots to have any
+	// geometry/colour at all.
+	for _, want := range []string{"sidebar-menu-item", "data:image/svg+xml", ".status{", ".status-xs{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("compiled css missing expected rule/asset %q", want)
+		}
+	}
+}
+
+// TestCompiledCSSDeterministic (change spec 4.3): compiling webui/css/app.css
+// twice yields byte-identical output.
+func TestCompiledCSSDeterministic(t *testing.T) {
+	tw := filepath.Join("node_modules", ".bin", "tailwindcss")
+	if _, err := os.Stat(tw); err != nil {
+		t.Skipf("tailwindcss not installed: %v", err)
+	}
+	compile := func() string {
+		out := filepath.Join(t.TempDir(), "app.css")
+		cmd := exec.Command(tw, "-i", filepath.Join("webui", "css", "app.css"), "-o", out, "--minify")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("tailwind failed: %v\n%s", err, b)
+		}
+		b, _ := os.ReadFile(out)
+		return string(b)
+	}
+	a, b := compile(), compile()
+	if a != b {
+		t.Error("compiled CSS is not deterministic across two identical builds")
+	}
+	if len(a) < 50000 {
+		t.Errorf("compiled CSS suspiciously small (%d bytes)", len(a))
+	}
+}
+
+// TestChatBubbleShrinksToContent guards the chat bubble sizing fix: daisyUI
+// sizes .chat-bubble to its content (width:fit-content; max-width:90%), so a
+// short message renders as a narrow pill that only widens as the text grows.
+// The custom unlayered override beats those layered defaults, so it must pass
+// the shrink-to-fit sizing through unchanged (fit-content + a percentage cap),
+// NOT force width/max-width to 100%. A source-only check is not enough to guard
+// this: webui/static/css/app.css is generated and gitignored, so a future
+// Tailwind/daisyUI build or an accidental width:100% override could silently
+// stretch every bubble to the full chat column while the Go page-markup tests
+// still pass.
+func TestChatBubbleShrinksToContent(t *testing.T) {
+	css := compiledCSS(t)
+	rule := chatBubbleOverride(css)
+	if rule == "" {
+		t.Fatal("compiled css missing the custom .chat-bubble override (no box-shadow rule)")
+	}
+	if !strings.Contains(rule, "width:fit-content") {
+		t.Errorf("chat-bubble override %q missing width:fit-content — the bubble would not hug its content", rule)
+	}
+	if strings.Contains(rule, "width:100%") || strings.Contains(rule, "max-width:100%") {
+		t.Errorf("chat-bubble override %q forces full width — every bubble would stretch across the chat column", rule)
+	}
+	if !strings.Contains(rule, "max-width:90%") {
+		t.Errorf("chat-bubble override %q missing the 90%% max-width cap", rule)
+	}
+}
+
+// TestMobileTouchTargetsAndHoverFallbacks guards the P3 touch fixes: the app
+// root is 15px, so daisyUI btn-xs (24px) and btn-sm (32px) are below the 44px
+// touch target, and the chat turn time is revealed only on hover/focus. The
+// compiled sheet must raise the mobile hit area and keep the timestamp visible
+// where hover does not exist.
+func TestMobileTouchTargetsAndHoverFallbacks(t *testing.T) {
+	css := compiledCSS(t)
+	if !strings.Contains(css, ".btn-xs,.btn-sm{min-height:44px}") {
+		t.Error("compiled css missing the mobile min-height:44px rule for .btn-xs/.btn-sm")
+	}
+	if !strings.Contains(css, ".btn-xs.btn-square,.btn-xs.btn-circle,.btn-sm.btn-square,.btn-sm.btn-circle{min-width:44px}") {
+		t.Error("compiled css missing the mobile 44px min-width rule for square/circle icon buttons")
+	}
+	if !strings.Contains(css, "@media (hover:none){.memory-turn-footer .memory-turn-time{") {
+		t.Error("compiled css missing the (hover:none) fallback that keeps the chat turn time visible")
+	}
+	if !strings.Contains(css, "max-width:12rem") {
+		t.Error("chat turn time fallback missing its 12rem reveal width")
+	}
+}
+
+// TestStackedMobileTables guards the mobile card fallback for dense list
+// tables: the table must collapse into one card per row below md and read its
+// column labels from the per-table --h1..--h8 variables.
+func TestStackedMobileTables(t *testing.T) {
+	css := compiledCSS(t)
+	for _, want := range []string{
+		".stacked-table table{width:100%;display:block}",
+		".stacked-table thead{display:none}",
+		".stacked-table tbody>tr>td{",
+		"content:var(--h1",
+		"content:var(--h8",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("compiled css missing stacked-table rule %q", want)
+		}
+	}
+}

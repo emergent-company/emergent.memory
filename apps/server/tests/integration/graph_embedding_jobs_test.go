@@ -1,0 +1,516 @@
+package integration
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/emergent-company/emergent.memory/domain/extraction"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
+)
+
+// GraphEmbeddingJobsTestSuite tests the graph embedding job queue functionality
+type GraphEmbeddingJobsTestSuite struct {
+	suite.Suite
+	testDB      *testutil.TestDB
+	ctx         context.Context
+	jobsService *extraction.GraphEmbeddingJobsService
+	log         *slog.Logger
+	projectID   string
+}
+
+func TestGraphEmbeddingJobsSuite(t *testing.T) {
+	suite.Run(t, new(GraphEmbeddingJobsTestSuite))
+}
+
+func (s *GraphEmbeddingJobsTestSuite) SetupSuite() {
+	s.ctx = context.Background()
+	s.log = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	// Create isolated test database with NestJS migrations
+	testDB, err := testutil.SetupTestDB(s.ctx, "graph_embedding_jobs")
+	s.Require().NoError(err, "Failed to setup test database")
+	s.testDB = testDB
+
+	// Set up org/project fixtures required for FK constraints
+	err = testutil.SetupTestFixtures(s.ctx, testDB.DB)
+	s.Require().NoError(err)
+	orgID := uuid.NewString()
+	s.projectID = uuid.NewString()
+	err = testutil.SetupFullTestProject(s.ctx, testDB.DB, orgID, s.projectID)
+	s.Require().NoError(err)
+
+	// Create the graph embedding jobs service
+	cfg := &extraction.GraphEmbeddingConfig{
+		BaseRetryDelaySec: 60,
+		MaxRetryDelaySec:  3600,
+		WorkerIntervalMs:  5000,
+		WorkerBatchSize:   10,
+	}
+	s.jobsService = extraction.NewGraphEmbeddingJobsService(testDB.DB, s.log, cfg)
+}
+
+// createGraphObject inserts a real graph_objects row and returns its ID.
+// Required because graph_embedding_jobs has a FK → graph_objects.id.
+func (s *GraphEmbeddingJobsTestSuite) createGraphObject() string {
+	id := uuid.NewString()
+	_, err := s.testDB.DB.NewRaw(`
+		INSERT INTO kb.graph_objects (id, project_id, canonical_id, type, key, properties, created_at, updated_at)
+		VALUES (?, ?, ?, 'TestObject', ?, '{}', now(), now())
+	`, id, s.projectID, id, "obj-"+id).Exec(s.ctx)
+	s.Require().NoError(err)
+	return id
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TearDownSuite() {
+	if s.testDB != nil {
+		s.testDB.Close()
+	}
+}
+
+func (s *GraphEmbeddingJobsTestSuite) SetupTest() {
+	// Truncate graph_embedding_jobs table before each test
+	_, err := s.testDB.DB.ExecContext(s.ctx, "TRUNCATE TABLE kb.graph_embedding_jobs CASCADE")
+	s.Require().NoError(err)
+}
+
+// =============================================================================
+// Test: Enqueue
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_CreatesJob() {
+	objectID := s.createGraphObject()
+
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
+		ObjectID: objectID,
+	})
+
+	s.NoError(err)
+	s.NotEmpty(job.ID)
+	s.Equal(objectID, job.ObjectID)
+	s.Equal(extraction.JobStatusPending, job.Status)
+	s.Equal(0, job.AttemptCount)
+	s.Equal(0, job.Priority)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_WithPriority() {
+	objectID := s.createGraphObject()
+
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
+		ObjectID: objectID,
+		Priority: 10,
+	})
+
+	s.NoError(err)
+	s.Equal(10, job.Priority)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_Idempotent() {
+	objectID := s.createGraphObject()
+
+	// First enqueue
+	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	// Second enqueue should return same job
+	job2, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	s.Equal(job1.ID, job2.ID, "Should return existing job, not create new one")
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_AfterCompletion_CreatesNew() {
+	objectID := s.createGraphObject()
+
+	// Enqueue first job
+	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	// Mark as completed
+	err = s.jobsService.MarkCompleted(s.ctx, job1.ID)
+	s.NoError(err)
+
+	// Enqueue again - should create new job
+	job2, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	s.NotEqual(job1.ID, job2.ID, "Should create new job after previous completed")
+}
+
+// =============================================================================
+// Test: EnqueueBatch
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestEnqueueBatch_CreatesMultipleJobs() {
+	objectIDs := []string{s.createGraphObject(), s.createGraphObject(), s.createGraphObject()}
+
+	count, err := s.jobsService.EnqueueBatch(s.ctx, objectIDs, 5)
+
+	s.NoError(err)
+	s.Equal(3, count)
+
+	// Verify all jobs exist
+	for _, id := range objectIDs {
+		job, err := s.jobsService.GetActiveJobForObject(s.ctx, id)
+		s.NoError(err)
+		s.NotNil(job)
+		s.Equal(5, job.Priority)
+	}
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestEnqueueBatch_SkipsExisting() {
+	// Pre-create a job
+	existingID := s.createGraphObject()
+	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: existingID})
+	s.NoError(err)
+
+	// Batch enqueue including existing
+	objectIDs := []string{existingID, s.createGraphObject(), s.createGraphObject()}
+	count, err := s.jobsService.EnqueueBatch(s.ctx, objectIDs, 0)
+
+	s.NoError(err)
+	s.Equal(2, count, "Should only create 2 new jobs, skipping existing")
+}
+
+// =============================================================================
+// Test: Dequeue
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestDequeue_ClaimsJobs() {
+	objectID := s.createGraphObject()
+	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	jobs, err := s.jobsService.Dequeue(s.ctx, 10)
+
+	s.NoError(err)
+	s.Len(jobs, 1)
+	s.Equal(extraction.JobStatusProcessing, jobs[0].Status)
+	s.Equal(1, jobs[0].AttemptCount)
+	s.NotNil(jobs[0].StartedAt)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsScheduledAt() {
+	// Create a job scheduled for future
+	futureID := s.createGraphObject()
+	future := time.Now().Add(1 * time.Hour)
+	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
+		ObjectID:   futureID,
+		ScheduleAt: &future,
+	})
+	s.NoError(err)
+
+	// Create a job ready now
+	nowID := s.createGraphObject()
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: nowID})
+	s.NoError(err)
+
+	// Dequeue should only get the now job
+	jobs, err := s.jobsService.Dequeue(s.ctx, 10)
+
+	s.NoError(err)
+	s.Len(jobs, 1)
+	s.Equal(nowID, jobs[0].ObjectID)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsPriority() {
+	// Create low priority job first
+	lowID := s.createGraphObject()
+	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
+		ObjectID: lowID,
+		Priority: 1,
+	})
+	s.NoError(err)
+
+	// Create high priority job second
+	highID := s.createGraphObject()
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
+		ObjectID: highID,
+		Priority: 10,
+	})
+	s.NoError(err)
+
+	// Dequeue should get high priority first
+	jobs, err := s.jobsService.Dequeue(s.ctx, 1)
+
+	s.NoError(err)
+	s.Len(jobs, 1)
+	s.Equal(highID, jobs[0].ObjectID)
+}
+
+// =============================================================================
+// Test: MarkCompleted
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestMarkCompleted_UpdatesJob() {
+	objectID := s.createGraphObject()
+	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+
+	// Dequeue first (simulating worker picking up)
+	_, _ = s.jobsService.Dequeue(s.ctx, 1)
+
+	err := s.jobsService.MarkCompleted(s.ctx, job.ID)
+	s.NoError(err)
+
+	// Verify job is completed
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusCompleted, updatedJob.Status)
+	s.NotNil(updatedJob.CompletedAt)
+}
+
+// =============================================================================
+// Test: MarkFailed
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestMarkFailed_RequeuesForRetry() {
+	objectID := s.createGraphObject()
+	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+
+	// Dequeue to set to processing
+	_, _ = s.jobsService.Dequeue(s.ctx, 1)
+
+	err := s.jobsService.MarkFailed(s.ctx, job.ID, errors.New("Embedding API timeout"))
+	s.NoError(err)
+
+	// Verify job is requeued
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+	s.NotNil(updatedJob.LastError)
+	s.Contains(*updatedJob.LastError, "timeout")
+}
+
+// =============================================================================
+// Test: RecoverStaleJobs
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestRecoverStaleJobs_RecoversProcessingJobs() {
+	objectID := s.createGraphObject()
+	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+
+	// Dequeue to set to processing
+	_, _ = s.jobsService.Dequeue(s.ctx, 1)
+
+	// Manually set started_at to 15 minutes ago to simulate stale job
+	_, err := s.testDB.DB.NewRaw(
+		"UPDATE kb.graph_embedding_jobs SET started_at = now() - interval '15 minutes' WHERE id = ?",
+		job.ID).Exec(s.ctx)
+	s.NoError(err)
+
+	// Recover with 10 minute threshold
+	count, err := s.jobsService.RecoverStaleJobs(s.ctx, 10)
+	s.NoError(err)
+	s.Equal(1, count)
+
+	// Verify job is back to pending
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestRecoverStaleJobs_IgnoresRecentProcessingJobs() {
+	objectID := s.createGraphObject()
+	_, _ = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+
+	// Dequeue to set to processing (started just now)
+	_, _ = s.jobsService.Dequeue(s.ctx, 1)
+
+	// Recover with 10 minute threshold - should not recover
+	count, err := s.jobsService.RecoverStaleJobs(s.ctx, 10)
+	s.NoError(err)
+	s.Equal(0, count)
+}
+
+// =============================================================================
+// Test: Stats
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestStats_ReturnsCorrectCounts() {
+	// Create various jobs
+	obj1, obj2, obj3 := s.createGraphObject(), s.createGraphObject(), s.createGraphObject()
+
+	// Pending job
+	_, _ = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: obj1})
+
+	// Processing job (dequeue it)
+	_, _ = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: obj2})
+	_, _ = s.jobsService.Dequeue(s.ctx, 1)
+
+	// Completed job
+	job3, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: obj3})
+	_ = s.jobsService.MarkCompleted(s.ctx, job3.ID)
+
+	stats, err := s.jobsService.Stats(s.ctx)
+	s.NoError(err)
+	s.Equal(int64(1), stats.Pending)
+	s.Equal(int64(1), stats.Processing)
+	s.Equal(int64(1), stats.Completed)
+	s.Equal(int64(0), stats.Failed)
+}
+
+// =============================================================================
+// Test: GetActiveJobForObject
+// =============================================================================
+
+func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsActiveJob() {
+	objectID := s.createGraphObject()
+	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+
+	activeJob, err := s.jobsService.GetActiveJobForObject(s.ctx, objectID)
+	s.NoError(err)
+	s.NotNil(activeJob)
+	s.Equal(job.ID, activeJob.ID)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsNilWhenCompleted() {
+	objectID := s.createGraphObject()
+	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	_ = s.jobsService.MarkCompleted(s.ctx, job.ID)
+
+	activeJob, err := s.jobsService.GetActiveJobForObject(s.ctx, objectID)
+	s.NoError(err)
+	s.Nil(activeJob)
+}
+
+func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsNilForUnknown() {
+	activeJob, err := s.jobsService.GetActiveJobForObject(s.ctx, uuid.NewString())
+	s.NoError(err)
+	s.Nil(activeJob)
+}
+
+// =============================================================================
+// Test: RetriggerByProject
+// =============================================================================
+
+// TestRetriggerByProject_ResetsFailedJobs verifies the happy path: a failed job
+// with no active job for its object is reset to pending.
+func (s *GraphEmbeddingJobsTestSuite) TestRetriggerByProject_ResetsFailedJobs() {
+	objectID := s.createGraphObject()
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	err = s.jobsService.MarkPermanentlyFailed(s.ctx, job.ID, errors.New("503 service unavailable"))
+	s.NoError(err)
+
+	count, err := s.jobsService.RetriggerByProject(s.ctx, s.projectID)
+	s.NoError(err)
+	s.Equal(1, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+}
+
+// TestRetriggerByProject_SkipsNonRetryableFailures verifies a missing model is
+// not reset by the project-wide action; the per-problem retry refuses it too.
+func (s *GraphEmbeddingJobsTestSuite) TestRetriggerByProject_SkipsNonRetryableFailures() {
+	objectID := s.createGraphObject()
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	err = s.jobsService.MarkPermanentlyFailed(s.ctx, job.ID, errors.New("no model configured"))
+	s.Require().NoError(err)
+
+	count, err := s.jobsService.RetriggerByProject(s.ctx, s.projectID)
+	s.NoError(err)
+	s.Equal(0, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusFailed, updatedJob.Status)
+}
+
+// TestRetriggerByProjectWithOptions_IncludeNonRetryable verifies the explicit
+// after-fixing opt-in reaches a configuration failure the default sweep refuses.
+func (s *GraphEmbeddingJobsTestSuite) TestRetriggerByProjectWithOptions_IncludeNonRetryable() {
+	objectID := s.createGraphObject()
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	err = s.jobsService.MarkPermanentlyFailed(s.ctx, job.ID, errors.New("no model configured"))
+	s.Require().NoError(err)
+
+	count, err := s.jobsService.RetriggerByProjectWithOptions(s.ctx, s.projectID, extraction.BulkRetryOptions{IncludeNonRetryable: true})
+	s.NoError(err)
+	s.Equal(1, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+}
+
+// TestRetriggerByProject_SkipsObjectsWithActiveJobs verifies that when a stale
+// failed row coexists with an already-active (pending) job for the same object,
+// retrigger skips it instead of aborting on the active-job unique index
+// (uidx_graph_embedding_jobs_active). Fails with the pre-fix blind UPDATE.
+func (s *GraphEmbeddingJobsTestSuite) TestRetriggerByProject_SkipsObjectsWithActiveJobs() {
+	objectID := s.createGraphObject()
+
+	// First job -> permanently failed (stale retryable row).
+	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	err = s.jobsService.MarkPermanentlyFailed(s.ctx, job1.ID, errors.New("no model configured"))
+	s.NoError(err)
+
+	// A later sweep enqueued a fresh active job for the same object.
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	// Retrigger must not error and must not reset the stale failed row.
+	count, err := s.jobsService.RetriggerByProject(s.ctx, s.projectID)
+	s.NoError(err)
+	s.Equal(0, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job1.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusFailed, updatedJob.Status)
+}
+
+// =============================================================================
+// Test: ResetDeadLetterJobs
+// =============================================================================
+
+// TestResetDeadLetterJobs_ResetsWhenNoActiveJob verifies the happy path: a
+// dead_letter job with no active job for its object is reset to pending.
+func (s *GraphEmbeddingJobsTestSuite) TestResetDeadLetterJobs_ResetsWhenNoActiveJob() {
+	objectID := s.createGraphObject()
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	_, err = s.testDB.DB.NewRaw("UPDATE kb.graph_embedding_jobs SET status = 'dead_letter' WHERE id = ?", job.ID).Exec(s.ctx)
+	s.NoError(err)
+
+	count, err := s.jobsService.ResetDeadLetterJobs(s.ctx)
+	s.NoError(err)
+	s.Equal(1, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+}
+
+// TestResetDeadLetterJobs_SkipsObjectsWithActiveJobs verifies dead-letter reset
+// skips an object that already has an active job instead of hitting the unique
+// index. Fails with the pre-fix blind UPDATE.
+func (s *GraphEmbeddingJobsTestSuite) TestResetDeadLetterJobs_SkipsObjectsWithActiveJobs() {
+	objectID := s.createGraphObject()
+
+	// First job -> dead_letter (stale terminal row).
+	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	_, err = s.testDB.DB.NewRaw("UPDATE kb.graph_embedding_jobs SET status = 'dead_letter' WHERE id = ?", job1.ID).Exec(s.ctx)
+	s.NoError(err)
+
+	// A fresh active job was enqueued for the same object.
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	count, err := s.jobsService.ResetDeadLetterJobs(s.ctx)
+	s.NoError(err)
+	s.Equal(0, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job1.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusDeadLetter, updatedJob.Status)
+}

@@ -1,0 +1,277 @@
+# Memory Minimal Standalone Deployment
+# Single-user deployment with MCP access only (no Admin UI, no Zitadel)
+#
+# Stack:
+#   - Go Backend (API server)
+#   - PostgreSQL with pgvector (database)
+#   - xberg (document extraction)
+#   - SeaweedFS (S3-compatible storage)
+#
+# Quick Start:
+#   1. Copy .env.example to .env
+#   2. Generate secrets: ./setup.sh
+#   3. Access via MCP using the API key from .env
+
+services:
+  db:
+    # PG_CLIENT_MAJOR in Dockerfile.server must be >= this image major (pg_dump
+    # cannot dump a newer server). Both are 18 today; the trixie variant is
+    # deliberate — pgautoupgrade's 18 images are trixie-based and pg_upgrade
+    # rebuilds indexes with their libc (see PostgresImage in
+    # apps/cli/internal/installer/templates.go).
+    image: pgvector/pgvector:pg18-trixie
+    # Docker's default /dev/shm (64 MB) is too small for a parallel HNSW index
+    # build; migration 00164 fails with SQLSTATE 53100 without this.
+    shm_size: 1gb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-emergent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-emergent}
+      # PostgreSQL 18 moved the default data directory to
+      # /var/lib/postgresql/<major>/docker; PGDATA keeps the pre-18 layout that
+      # existing volumes and pg_upgrade expect.
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - ./logs/postgres:/var/log/postgresql
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-emergent} -d ${POSTGRES_DB:-emergent}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - memory
+
+  # Whisper Audio Transcription Service
+  # Based on openai-whisper-asr-webservice (https://github.com/onerahmet/openai-whisper-asr-webservice)
+  # Downloads model on first start (~150MB for base, ~1.5GB for large-v3)
+  # Set WHISPER_ENABLED=false to disable audio transcription
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: memory-whisper
+    restart: unless-stopped
+    ports:
+      - '${WHISPER_PORT:-9876}:9000'
+    environment:
+      ASR_MODEL: ${WHISPER_MODEL:-base}
+      ASR_ENGINE: ${WHISPER_ENGINE:-openai_whisper}
+    volumes:
+      - whisper_cache:/root/.cache/whisper
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/asr | grep -qE "405|422"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    networks:
+      - memory
+
+  # xberg Document Extraction Service
+  xberg:
+    # Pinned: xberg v1 (GHCR). Keep in sync with XbergImage in apps/cli/internal/installer/templates.go.
+    image: ghcr.io/xberg-io/xberg:1.3.0
+    container_name: memory-xberg
+    restart: unless-stopped
+    ports:
+      - '${XBERG_PORT:-8000}:8000'
+    environment:
+      - RUST_LOG=${XBERG_LOG_LEVEL:-info}
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - memory
+
+  # SeaweedFS S3-Compatible Object Storage
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    container_name: memory-seaweedfs
+    restart: unless-stopped
+    # Single node: master + volume + filer + S3 in one process. S3 API on 8333.
+    command: server -dir=/data -s3
+    environment:
+      # Fallback admin credentials. With these set, the installer-generated
+      # secret is authoritative and unmatched access keys are rejected.
+      AWS_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY:-emergent}
+      AWS_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_KEY}
+    ports:
+      - '${OBJECT_STORE_API_PORT:-9000}:8333'
+    volumes:
+      - object_store_data:/data
+    healthcheck:
+      # Readiness must prove BOTH that raft has elected a leader AND that the
+      # S3 gateway is accepting connections on 8333 (#2004): /cluster/status
+      # answers 200 with `{}` before leader election and while the S3 listener
+      # is still closed, and an unauthenticated S3 GET is not usable either
+      # (with AWS_ACCESS_KEY_ID set the gateway answers 403 for anonymous
+      # requests, which fails `wget --spider`). `nc` (busybox) and `grep` are
+      # present in the digest-pinned image; 127.0.0.1 avoids IPv6 localhost.
+      test: ["CMD-SHELL", "wget -q -O - --tries=1 http://127.0.0.1:9333/cluster/status | grep -q '\"IsLeader\":true' && nc -z 127.0.0.1 8333"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - memory
+
+  # One-shot bucket bootstrap (runs from the server image; same S3 client).
+  storage-init:
+    image: ghcr.io/emergent-company/memory-server:${VERSION:-latest}
+    container_name: memory-storage-init
+    entrypoint: ['/usr/local/bin/emergent-storage-init']
+    restart: 'no'
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-emergent}
+      STORAGE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+    networks:
+      - memory
+
+  # Tailscale Sidecar - Secure Network Access
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: memory-tailscale
+    hostname: ${TAILSCALE_HOSTNAME:-memory}
+    restart: unless-stopped
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_ACCEPT_DNS=true
+      - TS_EXTRA_ARGS=--advertise-tags=tag:memory
+    volumes:
+      - tailscale_data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    network_mode: service:server
+    depends_on:
+      - server
+
+  # Memory Go Backend
+  server:
+    image: ghcr.io/emergent-company/memory-server:${VERSION:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      # Standalone Mode Configuration
+      STANDALONE_MODE: 'true'
+      STANDALONE_API_KEY: ${STANDALONE_API_KEY}
+      STANDALONE_USER_EMAIL: ${STANDALONE_USER_EMAIL:-admin@localhost}
+      STANDALONE_ORG_NAME: ${STANDALONE_ORG_NAME:-Default Organization}
+      STANDALONE_PROJECT_NAME: ${STANDALONE_PROJECT_NAME:-Default Project}
+
+      # Database Configuration
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-emergent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-emergent}
+
+      # Server Configuration
+      PORT: 3002
+      GO_ENV: production
+
+      # xberg Service
+      XBERG_SERVICE_URL: http://xberg:8000
+      XBERG_SERVICE_TIMEOUT: 300000
+      XBERG_ENABLED: 'true'
+
+      # Storage (SeaweedFS S3-compatible)
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-emergent}
+      STORAGE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY}
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_USE_SSL: 'false'
+
+      # AI Configuration
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+
+      # Whisper Audio Transcription
+      WHISPER_ENABLED: ${WHISPER_ENABLED:-true}
+      WHISPER_SERVICE_URL: http://whisper:9000
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+      WHISPER_MAX_FILE_SIZE_MB: ${WHISPER_MAX_FILE_SIZE_MB:-500}
+
+      # Agent Sandboxes (disabled by default)
+      ENABLE_AGENT_SANDBOXES: ${ENABLE_AGENT_SANDBOXES:-false}
+      WORKSPACE_DEFAULT_PROVIDER: ${WORKSPACE_DEFAULT_PROVIDER:-gvisor}
+      WORKSPACE_DEFAULT_IMAGE: ${WORKSPACE_DEFAULT_IMAGE:-ghcr.io/emergent-company/memory-workspace:latest}
+      WORKSPACE_MAX_CONCURRENT: ${WORKSPACE_MAX_CONCURRENT:-10}
+      WORKSPACE_DEFAULT_TTL_DAYS: ${WORKSPACE_DEFAULT_TTL_DAYS:-30}
+      WORKSPACE_WARM_POOL_SIZE: ${WORKSPACE_WARM_POOL_SIZE:-0}
+      GITHUB_APP_ENCRYPTION_KEY: ${GITHUB_APP_ENCRYPTION_KEY:-}
+      LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      xberg:
+        condition: service_healthy
+      whisper:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'curl', '-sf', 'http://localhost:3002/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/server:/app/logs
+    networks:
+      - memory
+
+volumes:
+  postgres_data:
+    driver: local
+  object_store_data:
+    driver: local
+  tailscale_data:
+    driver: local
+  whisper_cache:
+    driver: local
+
+networks:
+  memory:
+    driver: bridge

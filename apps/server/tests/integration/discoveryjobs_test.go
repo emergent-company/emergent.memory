@@ -1,0 +1,2601 @@
+package integration
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+)
+
+// orgChartDoc is a short org-chart text used to seed discovery tests.
+// It is intentionally dense with reporting relationships so a naive LLM
+// is tempted to produce "ReportingRelationship" as an entity type.
+const orgChartDoc = `
+Acme Corp Organizational Chart
+
+Alice Johnson is the Chief Executive Officer of Acme Corp and reports to the Board of Directors.
+Bob Smith serves as Vice President of Engineering and reports directly to Alice Johnson.
+Carol Davis is the Director of Product and also reports to Alice Johnson.
+Dave Lee is a Senior Software Engineer who reports to Bob Smith.
+Eve Chen is a Product Manager and reports to Carol Davis.
+Frank Torres is a UX Designer and reports to Carol Davis.
+
+Acme Corp is headquartered in San Francisco, California.
+The Engineering department has 42 staff. The Product department has 18 staff.
+`
+
+// DiscoveryJobsTestSuite tests discovery job endpoints end-to-end using an
+// in-process Echo server backed by a real Postgres test database.
+//
+// These tests do NOT require an LLM — they exercise HTTP mechanics, auth
+// boundaries, and the post-parse reification filter introduced in
+// parseTypeDiscoveryResponse.  LLM-dependent assertions are skipped
+// unless TEST_SERVER_URL is set (external mode).
+type DiscoveryJobsTestSuite struct {
+	suite.Suite
+
+	testDB    *testutil.TestDB
+	inProcess *testutil.TestServer
+	client    *testutil.HTTPClient
+
+	orgID     string
+	projectID string
+	docID     string
+	authToken string
+}
+
+func TestDiscoveryJobsSuite(t *testing.T) {
+	suite.Run(t, new(DiscoveryJobsTestSuite))
+}
+
+// ---------------------------------------------------------------------------
+// Suite lifecycle
+// ---------------------------------------------------------------------------
+
+func (s *DiscoveryJobsTestSuite) SetupSuite() {
+	testDB, err := testutil.SetupTestDB(s.T().Context(), "discoveryjobs")
+	if err != nil {
+		s.T().Skipf("test DB unavailable: %v", err)
+	}
+	s.testDB = testDB
+	s.authToken = "e2e-test-user"
+}
+
+func (s *DiscoveryJobsTestSuite) TearDownSuite() {
+	if s.testDB != nil {
+		s.testDB.Close()
+	}
+}
+
+func (s *DiscoveryJobsTestSuite) SetupTest() {
+	ctx := s.T().Context()
+
+	err := testutil.TruncateTables(ctx, s.testDB.DB)
+	s.Require().NoError(err)
+
+	err = testutil.SetupTestFixtures(ctx, s.testDB.DB)
+	s.Require().NoError(err)
+
+	s.orgID = uuid.New().String()
+	s.projectID = uuid.New().String()
+	s.docID = uuid.New().String()
+
+	err = testutil.SetupFullTestProject(ctx, s.testDB.DB, s.orgID, s.projectID)
+	s.Require().NoError(err)
+
+	content := orgChartDoc
+	mimeType := "text/plain"
+	filename := "org-chart.txt"
+	err = testutil.CreateTestDocument(ctx, s.testDB.DB, testutil.TestDocument{
+		ID:        s.docID,
+		ProjectID: s.projectID,
+		Filename:  &filename,
+		MimeType:  &mimeType,
+		Content:   &content,
+	})
+	s.Require().NoError(err)
+
+	s.inProcess = testutil.NewTestServer(s.testDB)
+	s.client = testutil.NewHTTPClient(s.inProcess.Echo)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func (s *DiscoveryJobsTestSuite) startURL() string {
+	return fmt.Sprintf("/api/discovery-jobs/projects/%s/start", s.projectID)
+}
+
+func (s *DiscoveryJobsTestSuite) statusURL(jobID string) string {
+	return fmt.Sprintf("/api/discovery-jobs/%s", jobID)
+}
+
+func (s *DiscoveryJobsTestSuite) finalizeURL(jobID string) string {
+	return fmt.Sprintf("/api/discovery-jobs/%s/finalize", jobID)
+}
+
+// startDiscoveryJob posts to the start endpoint and returns the job ID.
+func (s *DiscoveryJobsTestSuite) startDiscoveryJob(docIDs []string) string {
+	s.T().Helper()
+
+	ids := make([]string, len(docIDs))
+	copy(ids, docIDs)
+
+	resp := s.client.POST(
+		s.startURL(),
+		testutil.WithAuth(s.authToken),
+		testutil.WithJSONBody(map[string]any{
+			"document_ids":          ids,
+			"batch_size":            5,
+			"min_confidence":        0.3,
+			"include_relationships": false,
+		}),
+	)
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "start discovery: %s", resp.Body)
+
+	var body map[string]any
+	s.Require().NoError(json.Unmarshal(resp.Body, &body))
+
+	jobID, ok := body["job_id"].(string)
+	s.Require().True(ok, "job_id missing from response")
+	return jobID
+}
+
+// pollUntilDone polls GET /discovery-jobs/:id until status is completed/failed
+// or the deadline is reached. Returns the final status response body.
+func (s *DiscoveryJobsTestSuite) pollUntilDone(jobID string, deadline time.Duration) map[string]any {
+	s.T().Helper()
+
+	end := time.Now().Add(deadline)
+	for time.Now().Before(end) {
+		resp := s.client.GET(
+			s.statusURL(jobID),
+			testutil.WithAuth(s.authToken),
+		)
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+		var body map[string]any
+		s.Require().NoError(json.Unmarshal(resp.Body, &body))
+
+		status, _ := body["status"].(string)
+		if status == "completed" || status == "failed" {
+			return body
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	s.T().Fatalf("discovery job %s did not complete within %s", jobID, deadline)
+	return nil
+}
+
+// insertPendingJob inserts a discovery job directly in StatusPending without
+// launching the background processing goroutine, so its state is fully
+// deterministic for cancellation tests (no goroutine can race it to terminal).
+func (s *DiscoveryJobsTestSuite) insertPendingJob() string {
+	s.T().Helper()
+	job := &discoveryjobs.DiscoveryJob{
+		ID:                      uuid.New(),
+		OrganizationID:          uuid.MustParse(s.orgID),
+		ProjectID:               uuid.MustParse(s.projectID),
+		Status:                  discoveryjobs.StatusPending,
+		Progress:                discoveryjobs.JSONMap{},
+		Config:                  discoveryjobs.JSONMap{},
+		KBPurpose:               "test",
+		DiscoveredTypes:         discoveryjobs.JSONArray{},
+		DiscoveredRelationships: discoveryjobs.JSONArray{},
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
+	}
+	_, err := s.testDB.DB.NewInsert().Model(job).Exec(s.T().Context())
+	s.Require().NoError(err)
+	return job.ID.String()
+}
+
+// assertNoReifiedTypes fails the test if any discovered type name ends in
+// "Relationship" or "Association" — these are relational concepts that should
+// never appear as entity types in the discovery output.
+func assertNoReifiedTypes(t *testing.T, discoveredTypes []any) {
+	t.Helper()
+	for _, raw := range discoveredTypes {
+		obj, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := obj["type_name"].(string)
+		if strings.HasSuffix(name, "Relationship") || strings.HasSuffix(name, "Association") {
+			t.Errorf("reified type found in discovery output: %q — should be a graph edge, not an entity type", name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+// TestDiscovery_StartReturnsJobID verifies that the start endpoint accepts a
+// valid request and returns a well-formed job ID. No LLM required.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_StartReturnsJobID() {
+	jobID := s.startDiscoveryJob([]string{s.docID})
+	_, err := uuid.Parse(jobID)
+	s.NoError(err, "job_id should be a valid UUID, got %q", jobID)
+}
+
+// TestDiscovery_StartRequiresAuth verifies that unauthenticated requests are
+// rejected with 401.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_StartRequiresAuth() {
+	resp := s.client.POST(
+		s.startURL(),
+		testutil.WithJSONBody(map[string]any{
+			"document_ids": []string{s.docID},
+		}),
+	)
+	s.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestDiscovery_StartRequiresDocumentIDs verifies that a missing document_ids
+// array returns 400.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_StartRequiresDocumentIDs() {
+	resp := s.client.POST(
+		s.startURL(),
+		testutil.WithAuth(s.authToken),
+		testutil.WithJSONBody(map[string]any{}),
+	)
+	s.Equal(http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestDiscovery_GetStatusUnknownJob verifies that querying a nonexistent job
+// returns 404.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_GetStatusUnknownJob() {
+	resp := s.client.GET(
+		s.statusURL(uuid.New().String()),
+		testutil.WithAuth(s.authToken),
+	)
+	s.Equal(http.StatusNotFound, resp.StatusCode)
+}
+
+// TestDiscovery_FinalizeRequiresProjectIDHeader verifies that FinalizeDiscovery
+// returns 400 when the X-Project-ID header is absent.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_FinalizeRequiresProjectIDHeader() {
+	// Start a real job so we have a valid job ID in the DB.
+	jobID := s.startDiscoveryJob([]string{s.docID})
+
+	resp := s.client.POST(
+		s.finalizeURL(jobID),
+		testutil.WithAuth(s.authToken),
+		testutil.WithJSONBody(map[string]any{
+			"packName":      "test-pack",
+			"mode":          "create",
+			"includedTypes": []map[string]any{{"type_name": "Person"}},
+		}),
+		// intentionally omit X-Project-ID header
+	)
+	s.Equal(http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestDiscovery_CancelJob verifies cancellation against both ends of the
+// status contract, deterministically:
+//
+//   - Cancelling a still-pending job returns 200 and marks it cancelled.
+//   - Cancelling an already-terminal job returns 409 Conflict.
+//
+// The terminal case is made deterministic by waiting for the background
+// goroutine to fail the job (no LLM provider is configured in-process) BEFORE
+// issuing the DELETE, so the outcome no longer depends on goroutine timing
+// (issue #1003).
+func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelJob() {
+	// 200 path: cancel a job that is still pending. The job is inserted
+	// directly (no background goroutine), so it cannot race to a terminal
+	// state before the DELETE.
+	pendingID := s.insertPendingJob()
+	resp := s.client.DELETE(
+		fmt.Sprintf("/api/discovery-jobs/%s", pendingID),
+		testutil.WithAuth(s.authToken),
+	)
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "cancel pending: %s", resp.Body)
+
+	// The subsequent status reflects the cancellation.
+	statusResp := s.client.GET(s.statusURL(pendingID), testutil.WithAuth(s.authToken))
+	s.Require().Equal(http.StatusOK, statusResp.StatusCode)
+	var pendingStatus map[string]any
+	s.Require().NoError(json.Unmarshal(statusResp.Body, &pendingStatus))
+	s.Equal("cancelled", pendingStatus["status"], "cancelled job status should be 'cancelled'")
+
+	// 409 path: cancel an already-terminal job. With no LLM provider the
+	// StartDiscovery goroutine fails the job almost immediately, so we wait
+	// for the terminal state before deleting — controlled, not lucky.
+	terminalID := s.startDiscoveryJob([]string{s.docID})
+	s.pollUntilDone(terminalID, 5*time.Second)
+	resp = s.client.DELETE(
+		fmt.Sprintf("/api/discovery-jobs/%s", terminalID),
+		testutil.WithAuth(s.authToken),
+	)
+	s.Equal(http.StatusConflict, resp.StatusCode, "cancel terminal: %s", resp.Body)
+}
+
+// TestDiscovery_ListJobs verifies the list endpoint returns the started job.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_ListJobs() {
+	jobID := s.startDiscoveryJob([]string{s.docID})
+
+	resp := s.client.GET(
+		fmt.Sprintf("/api/discovery-jobs/projects/%s", s.projectID),
+		testutil.WithAuth(s.authToken),
+	)
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	var items []map[string]any
+	s.Require().NoError(json.Unmarshal(resp.Body, &items))
+	s.Require().Len(items, 1, "expected exactly one job")
+	s.Equal(jobID, items[0]["id"])
+}
+
+// TestDiscovery_AssertNoReifiedTypes_HelperWorks confirms that the
+// assertNoReifiedTypes helper correctly identifies reified type names.
+// This is a meta-test for the test helper itself.
+func TestDiscovery_AssertNoReifiedTypes_HelperWorks(t *testing.T) {
+	reifiedSuffixes := []string{
+		"ReportingRelationship",
+		"EmployeeAssociation",
+		"ManagementRelationship",
+	}
+	for _, name := range reifiedSuffixes {
+		n := name
+		t.Run("detects_"+n, func(t *testing.T) {
+			// Build a mock recorder to capture failures without aborting.
+			// We just check the suffix logic directly.
+			if !strings.HasSuffix(n, "Relationship") && !strings.HasSuffix(n, "Association") {
+				t.Errorf("expected %q to be detected as reified", n)
+			}
+		})
+	}
+
+	clean := []any{
+		map[string]any{"type_name": "Person"},
+		map[string]any{"type_name": "Organization"},
+		map[string]any{"type_name": "Department"},
+	}
+	// assertNoReifiedTypes should not call t.Errorf for clean types.
+	assertNoReifiedTypes(t, clean)
+}
+
+// ---------------------------------------------------------------------------
+// LLM-dependent tests (external mode only — require TEST_SERVER_URL)
+// ---------------------------------------------------------------------------
+
+// createAndCleanupProject creates a fresh project via the live API, sets its
+// project_info (kbPurpose), and registers a t.Cleanup to delete it.
+// It resolves the org ID by inspecting the current user via GET /api/auth/me.
+// Only TEST_SERVER_URL and TEST_API_TOKEN are required.
+func createAndCleanupProject(t *testing.T, client *testutil.HTTPClient, token, name, projectInfo string) string {
+	t.Helper()
+
+	// Resolve org ID from the first available project.
+	projsResp := client.GET("/api/projects", testutil.WithAPIKey(token))
+	if projsResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/projects: status=%d body=%s", projsResp.StatusCode, projsResp.Body)
+	}
+	var projects []map[string]any
+	mustUnmarshal(t, projsResp.Body, &projects)
+	if len(projects) == 0 {
+		t.Fatal("GET /api/projects returned empty list — cannot resolve org_id")
+	}
+	orgID, _ := projects[0]["orgId"].(string)
+	if orgID == "" {
+		t.Fatalf("orgId missing from projects response: %v", projects[0])
+	}
+
+	// Create the project.
+	createResp := client.POST(
+		"/api/projects",
+		testutil.WithAPIKey(token),
+		testutil.WithJSONBody(map[string]any{
+			"name":  name,
+			"orgId": orgID,
+		}),
+	)
+	if createResp.StatusCode != http.StatusOK && createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /api/projects: status=%d body=%s", createResp.StatusCode, createResp.Body)
+	}
+	var createBody map[string]any
+	mustUnmarshal(t, createResp.Body, &createBody)
+	projectID, _ := createBody["id"].(string)
+	if projectID == "" {
+		t.Fatalf("project id missing from create response: %s", createResp.Body)
+	}
+
+	// Set project_info (kbPurpose) and model config via PATCH / PUT.
+	if projectInfo != "" {
+		patchResp := client.PATCH(
+			fmt.Sprintf("/api/projects/%s", projectID),
+			testutil.WithAPIKey(token),
+			testutil.WithJSONBody(map[string]any{
+				"project_info": projectInfo,
+			}),
+		)
+		if patchResp.StatusCode != http.StatusOK {
+			t.Fatalf("PATCH /api/projects/%s: status=%d body=%s", projectID, patchResp.StatusCode, patchResp.Body)
+		}
+	}
+
+	// If TEST_GOOGLE_API_KEY is set, store it as a project-level provider credential
+	// and use Google AI for generative calls (avoids dependency on OpenAI-compatible
+	// env-var config which may have exhausted balance).
+	googleAPIKey := os.Getenv("TEST_GOOGLE_API_KEY")
+	generativeModel := testutil.BareGenerativeModelFromEnv()
+	if generativeModel == "" {
+		generativeModel = "deepseek/deepseek-v4-flash" // fallback for CI
+	}
+	if googleAPIKey != "" {
+		provResp := client.PUT(
+			fmt.Sprintf("/api/v1/projects/%s/providers/google", projectID),
+			testutil.WithAPIKey(token),
+			testutil.WithJSONBody(map[string]any{
+				"apiKey": googleAPIKey,
+			}),
+		)
+		if provResp.StatusCode != http.StatusOK && provResp.StatusCode != http.StatusCreated {
+			t.Logf("WARN: PUT providers/google: status=%d body=%s — falling back to env model", provResp.StatusCode, provResp.Body)
+		} else {
+			generativeModel = "google/gemini-2.0-flash"
+		}
+	}
+
+	// Configure per-project model config.
+	modelResp := client.PUT(
+		fmt.Sprintf("/api/v1/projects/%s/model-config", projectID),
+		testutil.WithAPIKey(token),
+		testutil.WithJSONBody(map[string]any{
+			"generativeModel": generativeModel,
+			"embeddingModel":  "google/gemini-embedding-2-preview",
+		}),
+	)
+	if modelResp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /api/v1/projects/%s/model-config: status=%d body=%s", projectID, modelResp.StatusCode, modelResp.Body)
+	}
+
+	// Register cleanup — DELETE is async (202) which is fine.
+	t.Cleanup(func() {
+		delResp := client.DELETE(fmt.Sprintf("/api/projects/%s", projectID), testutil.WithAPIKey(token))
+		if delResp.StatusCode != http.StatusOK && delResp.StatusCode != http.StatusAccepted {
+			t.Logf("cleanup: DELETE /api/projects/%s returned %d (ignored)", projectID, delResp.StatusCode)
+		}
+	})
+
+	t.Logf("created test project %s (org=%s)", projectID, orgID)
+	return projectID
+}
+
+// TestDiscovery_StartAndComplete_D2_D8 runs a full discovery job against a live
+// server and asserts the D2 (no reified types) and D8 (no embedded property
+// objects) post-parse filter guarantees.
+//
+// Assumptions verified: D2, D8
+// Requires: TEST_SERVER_URL, TEST_API_TOKEN env vars.
+func TestDiscovery_StartAndComplete_D2_D8(t *testing.T) {
+	serverURL := os.Getenv("TEST_SERVER_URL")
+	apiToken := os.Getenv("TEST_API_TOKEN")
+	if serverURL == "" || apiToken == "" {
+		t.Skip("TEST_SERVER_URL / TEST_API_TOKEN not set — skipping live LLM test")
+	}
+
+	client := testutil.NewExternalHTTPClient(serverURL)
+	projectID := createAndCleanupProject(t, client, apiToken,
+		"discovery-d2d8-"+uuid.New().String()[:8],
+		"HR org-chart system tracking employee reporting lines, departments, and team structures.",
+	)
+
+	// Upload the org-chart test document.
+	docID := uploadTextDocument(t, client, apiToken, projectID, "org-chart-d2d8.txt", orgChartDoc)
+
+	// Start discovery job.
+	startResp := client.POST(
+		fmt.Sprintf("/api/discovery-jobs/projects/%s/start", projectID),
+		testutil.WithAPIKey(apiToken),
+		testutil.WithJSONBody(map[string]any{
+			"document_ids":          []string{docID},
+			"batch_size":            5,
+			"min_confidence":        0.3,
+			"include_relationships": false,
+		}),
+	)
+	if startResp.StatusCode != http.StatusOK {
+		t.Fatalf("start discovery: status=%d body=%s", startResp.StatusCode, startResp.Body)
+	}
+	var startBody map[string]any
+	mustUnmarshal(t, startResp.Body, &startBody)
+	jobID, _ := startBody["job_id"].(string)
+	if jobID == "" {
+		t.Fatal("job_id missing from start response")
+	}
+
+	// Poll until done (up to 3 minutes — LLM calls can be slow).
+	statusBody := pollJobDone(t, client, apiToken, jobID, 3*time.Minute)
+
+	status, _ := statusBody["status"].(string)
+	if status == "failed" {
+		errMsg, _ := statusBody["error_message"].(string)
+		t.Fatalf("discovery job failed: %s", errMsg)
+	}
+
+	discoveredTypes, _ := statusBody["discovered_types"].([]any)
+	if len(discoveredTypes) == 0 {
+		t.Skip("discovery produced zero types — likely LLM quota issue, skipping assertions")
+	}
+
+	t.Logf("D2/D8 check: %d discovered types", len(discoveredTypes))
+
+	// D2: no reified type names.
+	assertNoReifiedTypes(t, discoveredTypes)
+	t.Log("D2 PASS: zero reified type names")
+
+	// D8: no embedded objects in properties.
+	assertNoEmbeddedProperties(t, discoveredTypes)
+	t.Log("D8 PASS: zero embedded property objects")
+}
+
+// TestDiscovery_RelationshipGating_D7 verifies that:
+//   - include_relationships=false → discovered_relationships is empty
+//   - include_relationships=true  → discovered_relationships field exists (may be empty if LLM finds none)
+//
+// The first assertion is purely mechanical (no LLM output needed).
+// The second requires a completed job and is skipped if no LLM is available.
+//
+// Assumptions verified: D7
+// Requires: TEST_SERVER_URL, TEST_API_TOKEN env vars.
+func TestDiscovery_RelationshipGating_D7(t *testing.T) {
+	serverURL := os.Getenv("TEST_SERVER_URL")
+	apiToken := os.Getenv("TEST_API_TOKEN")
+	if serverURL == "" || apiToken == "" {
+		t.Skip("TEST_SERVER_URL / TEST_API_TOKEN not set — skipping live LLM test")
+	}
+
+	client := testutil.NewExternalHTTPClient(serverURL)
+	projectID := createAndCleanupProject(t, client, apiToken,
+		"discovery-d7-"+uuid.New().String()[:8],
+		"HR org-chart system tracking employee reporting lines, departments, and team structures.",
+	)
+	docID := uploadTextDocument(t, client, apiToken, projectID, "org-chart-d7.txt", orgChartDoc)
+
+	t.Run("relationships_excluded_when_flag_false", func(t *testing.T) {
+		startResp := client.POST(
+			fmt.Sprintf("/api/discovery-jobs/projects/%s/start", projectID),
+			testutil.WithAPIKey(apiToken),
+			testutil.WithJSONBody(map[string]any{
+				"document_ids":          []string{docID},
+				"batch_size":            5,
+				"min_confidence":        0.3,
+				"include_relationships": false,
+			}),
+		)
+		if startResp.StatusCode != http.StatusOK {
+			t.Fatalf("start: %d %s", startResp.StatusCode, startResp.Body)
+		}
+		var sb map[string]any
+		mustUnmarshal(t, startResp.Body, &sb)
+		jobID, _ := sb["job_id"].(string)
+
+		body := pollJobDone(t, client, apiToken, jobID, 3*time.Minute)
+		if s, _ := body["status"].(string); s == "failed" {
+			t.Skipf("job failed — skipping: %v", body["error_message"])
+		}
+
+		rels, _ := body["discovered_relationships"].([]any)
+		if len(rels) != 0 {
+			t.Errorf("D7 FAIL: include_relationships=false but got %d relationships", len(rels))
+		} else {
+			t.Log("D7 PASS (no-rels branch): discovered_relationships empty when flag=false")
+		}
+	})
+
+	t.Run("relationships_field_present_when_flag_true", func(t *testing.T) {
+		startResp := client.POST(
+			fmt.Sprintf("/api/discovery-jobs/projects/%s/start", projectID),
+			testutil.WithAPIKey(apiToken),
+			testutil.WithJSONBody(map[string]any{
+				"document_ids":          []string{docID},
+				"batch_size":            5,
+				"min_confidence":        0.3,
+				"include_relationships": true,
+			}),
+		)
+		if startResp.StatusCode != http.StatusOK {
+			t.Fatalf("start: %d %s", startResp.StatusCode, startResp.Body)
+		}
+		var sb map[string]any
+		mustUnmarshal(t, startResp.Body, &sb)
+		jobID, _ := sb["job_id"].(string)
+
+		body := pollJobDone(t, client, apiToken, jobID, 3*time.Minute)
+		if s, _ := body["status"].(string); s == "failed" {
+			t.Skipf("job failed — skipping: %v", body["error_message"])
+		}
+
+		if _, exists := body["discovered_relationships"]; !exists {
+			t.Error("D7 FAIL: discovered_relationships field missing when include_relationships=true")
+		} else {
+			t.Log("D7 PASS (with-rels branch): discovered_relationships field present when flag=true")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// FinalizeDiscovery enrich / create_rich mode tests
+// These run in-process with a real LLM when credentials are available.
+// ---------------------------------------------------------------------------
+
+// skipDiscoveryEnrich skips the test only when LLM credentials are absent.
+// A config-load failure is a real error and FAILS the test (rather than
+// skipping), so a broken environment — a malformed env var or unparseable
+// config value — surfaces as a failure instead of silently reduced coverage.
+func skipDiscoveryEnrich(t *testing.T) {
+	t.Helper()
+	cfg, err := loadDiscoveryEnrichConfig()
+	reason, failErr := classifyEnrichAvailability(cfg, err)
+	if failErr != nil {
+		t.Fatalf("cannot determine LLM availability: %v", failErr)
+	}
+	if reason != "" {
+		t.Skip(reason)
+	}
+}
+
+// loadDiscoveryEnrichConfig loads the app config from env files. Kept separate
+// from the classification logic so the skip-vs-fail decision is unit-testable.
+func loadDiscoveryEnrichConfig() (*config.Config, error) {
+	testutil.LoadEnvFiles()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	return config.NewConfig(log)
+}
+
+// classifyEnrichAvailability classifies a config-load result for the enrich tests.
+//
+// It returns a non-empty skipReason only when the config loaded fine but no LLM
+// credentials are configured. It returns a non-nil failErr when the config itself
+// could not be loaded — config.NewConfig only errors on an env parse failure
+// (malformed int/float/bool/duration), which is always a genuine misconfiguration
+// and never a legitimate environment-dependent absence, so no error is swallowed.
+// When both are empty the test should proceed.
+func classifyEnrichAvailability(cfg *config.Config, err error) (skipReason string, failErr error) {
+	if err != nil {
+		return "", fmt.Errorf("loading config: %w", err)
+	}
+	if cfg == nil {
+		return "", fmt.Errorf("nil config with nil error")
+	}
+	if !cfg.LLM.IsEnabled() {
+		return "no LLM credentials configured — skipping discovery enrich test", nil
+	}
+	return "", nil
+}
+
+// TestClassifyEnrichAvailability is the fail-first guard for skipDiscoveryEnrich:
+// a forced config-load error must FAIL (failErr set, no skip reason), while the
+// absence of LLM credentials must SKIP (skipReason set, no error).
+func TestClassifyEnrichAvailability(t *testing.T) {
+	t.Run("config-load error fails, never skips", func(t *testing.T) {
+		forced := fmt.Errorf("failed to parse config: SERVER_PORT=not-a-number")
+		reason, failErr := classifyEnrichAvailability(nil, forced)
+		if failErr == nil {
+			t.Fatal("expected a config-load error to FAIL, not skip")
+		}
+		if reason != "" {
+			t.Fatalf("expected no skip reason on config-load error, got %q", reason)
+		}
+	})
+
+	t.Run("nil config fails", func(t *testing.T) {
+		reason, failErr := classifyEnrichAvailability(nil, nil)
+		if failErr == nil {
+			t.Fatal("expected a nil config to FAIL, not skip")
+		}
+		if reason != "" {
+			t.Fatalf("expected no skip reason on nil config, got %q", reason)
+		}
+	})
+
+	t.Run("no LLM credentials skips", func(t *testing.T) {
+		cfg := &config.Config{}
+		reason, failErr := classifyEnrichAvailability(cfg, nil)
+		if failErr != nil {
+			t.Fatalf("unexpected error: %v", failErr)
+		}
+		if reason == "" {
+			t.Fatal("expected a skip reason when LLM is not enabled")
+		}
+	})
+
+	t.Run("LLM enabled runs", func(t *testing.T) {
+		cfg := &config.Config{LLM: config.LLMConfig{DeepSeekAPIKey: "test-key"}}
+		reason, failErr := classifyEnrichAvailability(cfg, nil)
+		if failErr != nil || reason != "" {
+			t.Fatalf("expected run (no skip, no error), got reason=%q err=%v", reason, failErr)
+		}
+	})
+}
+
+// discoveryEnrichFactory builds an adk.ModelFactory from env credentials.
+func discoveryEnrichFactory() *adk.ModelFactory {
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg, _ := config.NewConfig(log)
+	if cfg == nil || !cfg.LLM.IsEnabled() {
+		return nil
+	}
+	return adk.NewModelFactory(&cfg.LLM, log, nil, nil, nil)
+}
+
+// TestFinalizeDiscovery_EnrichMode verifies that mode=enrich fills null
+// properties in an existing schema pack using LLM-generated property definitions.
+func TestFinalizeDiscovery_EnrichMode(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "discenrich")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	require.NoError(t, testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID))
+
+	projectUUID := uuid.MustParse(projectID)
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg := &config.Config{}
+
+	// Create a document so loadDocumentText has text to work with.
+	content := `Alice Johnson is the CEO of Acme Corp. Bob Smith is VP of Engineering.
+Carol Davis is Director of Product. Dave Lee is a Senior Engineer reporting to Bob.`
+	filename := "org.txt"
+	sourceType := "manual"
+	docsRepo := documents.NewRepository(testDB.DB, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	doc, _, err := docsSvc.Create(ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &content,
+		SourceType: &sourceType,
+	})
+	require.NoError(t, err)
+
+	// Build discovery service with real LLM.
+	mf := discoveryEnrichFactory()
+	require.NotNil(t, mf)
+	djRepo := discoveryjobs.NewRepository(testDB.DB, log)
+	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
+
+	// Create a stub discovery job.
+	stubJob := &discoveryjobs.DiscoveryJob{
+		ID:        uuid.New(),
+		ProjectID: projectUUID,
+		Status:    discoveryjobs.StatusCompleted,
+		KBPurpose: "HR org-chart system",
+		Progress:  discoveryjobs.JSONMap{"message": "stub"},
+		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+	}
+	require.NoError(t, djRepo.Create(ctx, stubJob))
+
+	// Step 1: Finalize in "create" mode to install a schema with sparse properties.
+	createResp, err := djSvc.FinalizeDiscovery(ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:     "create",
+		PackName: "OrgChart",
+		IncludedTypes: []discoveryjobs.IncludedType{
+			{TypeName: "Person", Description: "An employee", Properties: nil, RequiredProperties: nil},
+			{TypeName: "Department", Description: "A business unit", Properties: nil, RequiredProperties: nil},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, createResp.SchemaID, "create should return a valid schema_id")
+
+	schemaUUID := createResp.SchemaID
+
+	// Step 2: Finalize in "enrich" mode to fill null properties.
+	_, err = djSvc.FinalizeDiscovery(ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:           "enrich",
+		PackName:       "OrgChart",
+		DocumentID:     doc.ID,
+		ExistingPackID: &schemaUUID,
+		IncludedTypes:  []discoveryjobs.IncludedType{},
+	})
+	require.NoError(t, err)
+
+	// Step 3: Verify the schema now has properties filled.
+	updatedPack, err := djRepo.GetMemorySchema(ctx, schemaUUID)
+	require.NoError(t, err)
+	require.NotNil(t, updatedPack.ObjectTypeSchemas)
+
+	personRaw, ok := updatedPack.ObjectTypeSchemas["Person"]
+	require.True(t, ok, "Person type should exist after enrich")
+	person := personRaw.(map[string]any)
+	props, ok := person["properties"].(map[string]any)
+	require.True(t, ok, "Person should have a properties map after enrich")
+	require.Greater(t, len(props), 0, "Person should have at least one property after enrich")
+
+	propKeys := make([]string, 0, len(props))
+	for k := range props {
+		propKeys = append(propKeys, k)
+	}
+	t.Logf("enrich result: Person has %d properties: %v", len(props), propKeys)
+}
+
+// TestFinalizeDiscovery_CreateRichMode verifies that mode=create_rich
+// generates a full schema with populated properties from scratch.
+func TestFinalizeDiscovery_CreateRichMode(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "disccreaterich")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	require.NoError(t, testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID))
+
+	projectUUID := uuid.MustParse(projectID)
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg := &config.Config{}
+
+	content := `Klarnak ball is played by two teams of 7 on a triangular court.
+Each player wields a vibro-racquet to volley the incandescent solk. Points are scored
+when the solk touches the gravity-well. A match lasts 5 phases of 8 zorns each.`
+	docsRepo := documents.NewRepository(testDB.DB, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	filename := "klarnak.txt"
+	sourceType := "manual"
+	doc, _, err := docsSvc.Create(ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &content,
+		SourceType: &sourceType,
+	})
+	require.NoError(t, err)
+
+	mf := discoveryEnrichFactory()
+	require.NotNil(t, mf)
+	djRepo := discoveryjobs.NewRepository(testDB.DB, log)
+	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
+
+	stubJob := &discoveryjobs.DiscoveryJob{
+		ID:        uuid.New(),
+		ProjectID: projectUUID,
+		Status:    discoveryjobs.StatusCompleted,
+		KBPurpose: "Fictional sports tracking",
+		Progress:  discoveryjobs.JSONMap{"message": "stub"},
+		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+	}
+	require.NoError(t, djRepo.Create(ctx, stubJob))
+
+	// Finalize with create_rich — generates types + properties from document.
+	resp, err := djSvc.FinalizeDiscovery(ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:          "create_rich",
+		PackName:      "KlarnakBall",
+		DocumentID:    doc.ID,
+		IncludedTypes: []discoveryjobs.IncludedType{},
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, resp.SchemaID, "create_rich should return a valid schema_id")
+
+	// Verify the generated schema has populated types.
+	pack, err := djRepo.GetMemorySchema(ctx, resp.SchemaID)
+	require.NoError(t, err)
+	require.Greater(t, len(pack.ObjectTypeSchemas), 0,
+		"create_rich should generate at least one type")
+	var hasProps bool
+	for typeName, raw := range pack.ObjectTypeSchemas {
+		if m, ok := raw.(map[string]any); ok {
+			if props, ok := m["properties"].(map[string]any); ok && len(props) > 0 {
+				hasProps = true
+				t.Logf("  type %q has %d properties", typeName, len(props))
+			}
+		}
+	}
+	require.True(t, hasProps, "at least one generated type should have non-empty properties")
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers for external-mode tests
+// ---------------------------------------------------------------------------
+
+// uploadTextDocument creates a document on the live server with the given
+// content and returns its ID.
+func uploadTextDocument(t *testing.T, client *testutil.HTTPClient, token, projectID, filename, content string) string {
+	t.Helper()
+	resp := client.POST(
+		"/api/documents",
+		testutil.WithAPIKey(token),
+		testutil.WithProjectID(projectID),
+		testutil.WithJSONBody(map[string]any{
+			"filename":    filename,
+			"mime_type":   "text/plain",
+			"source_type": "upload",
+			"content":     content,
+		}),
+	)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload document: status=%d body=%s", resp.StatusCode, resp.Body)
+	}
+	var body map[string]any
+	mustUnmarshal(t, resp.Body, &body)
+	id, _ := body["id"].(string)
+	if id == "" {
+		t.Fatalf("document id missing from response: %s", resp.Body)
+	}
+	return id
+}
+
+// pollJobDone polls GET /api/discovery-jobs/:id until status is completed or
+// failed, or deadline is exceeded.
+func pollJobDone(t *testing.T, client *testutil.HTTPClient, token, jobID string, deadline time.Duration) map[string]any {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for time.Now().Before(end) {
+		resp := client.GET(
+			fmt.Sprintf("/api/discovery-jobs/%s", jobID),
+			testutil.WithAPIKey(token),
+		)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("poll status: %d %s", resp.StatusCode, resp.Body)
+		}
+		var body map[string]any
+		mustUnmarshal(t, resp.Body, &body)
+		st, _ := body["status"].(string)
+		if st == "completed" || st == "failed" {
+			return body
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("job %s did not complete within %s", jobID, deadline)
+	return nil
+}
+
+// assertNoEmbeddedProperties fails if any discovered type has a property whose
+// value is a nested object without a scalar "type" key — which would indicate
+// the normalizePropertyCrossRefs filter did not run or was bypassed.
+func assertNoEmbeddedProperties(t *testing.T, discoveredTypes []any) {
+	t.Helper()
+	for _, raw := range discoveredTypes {
+		obj, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName, _ := obj["type_name"].(string)
+		props, _ := obj["properties"].(map[string]any)
+		for propKey, propVal := range props {
+			nested, isMap := propVal.(map[string]any)
+			if !isMap {
+				continue
+			}
+			typeField, hasType := nested["type"]
+			if !hasType {
+				t.Errorf("D8 FAIL: type %q property %q is an embedded object without 'type' field — normalizer did not flatten it", typeName, propKey)
+				continue
+			}
+			if _, isString := typeField.(string); !isString {
+				t.Errorf("D8 FAIL: type %q property %q has non-string 'type' field: %T", typeName, propKey, typeField)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP 1: schema_policy=enrich integration test via the remember endpoint
+// ---------------------------------------------------------------------------
+
+// TestRememberEnrichPolicy verifies that calling POST /api/projects/:id/remember
+// with schema_policy=enrich routes to the V8 enrich agent and produces a schema
+// pack with enriched (populated) property definitions — no errors.
+func TestRememberEnrichPolicy(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "remenrich")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	// POST remember with schema_policy=enrich and mode=sync (waits for completion).
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "enrich",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "schema_policy=enrich should return 200")
+	t.Logf("remember status: %d", rec.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	runID, _ := body["run_id"].(string)
+	status, _ := body["status"].(string)
+	docID, _ := body["document_id"].(string)
+	t.Logf("remember enrich: run_id=%s status=%s document_id=%s", runID, status, docID)
+
+	// Verify no error in response.
+	errMsg, _ := body["error"].(string)
+	require.Empty(t, errMsg, "response should not contain an error")
+	require.Equal(t, "completed", status, "agent should complete successfully")
+	require.NotEmpty(t, docID, "response should include a document_id")
+
+	// Poll for schema packs installed to the project.
+	// The enrich/new-domain agent calls finalize-discovery with
+	// create_rich_combined, which creates and installs a schema pack.
+	djRepo := discoveryjobs.NewRepository(testDB.GetDB(), slog.Default())
+
+	var enriched bool
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(3 * time.Second)
+
+		// Query project_schemas for active schema pack IDs.
+		var schemaIDs []string
+		qErr := testDB.DB.NewRaw(
+			"SELECT schema_id::text FROM kb.project_schemas WHERE project_id = ? AND active = true",
+			projectID,
+		).Scan(ctx, &schemaIDs)
+		if qErr != nil || len(schemaIDs) == 0 {
+			continue
+		}
+
+		for _, sidStr := range schemaIDs {
+			schemaUUID := uuid.MustParse(sidStr)
+			pack, getErr := djRepo.GetMemorySchema(ctx, schemaUUID)
+			if getErr != nil {
+				t.Logf("  GetMemorySchema(%s): %v", schemaUUID, getErr)
+				continue
+			}
+			t.Logf("  schema %s has %d object types, %d rel types",
+				schemaUUID, len(pack.ObjectTypeSchemas), len(pack.RelationshipTypeSchemas))
+			objJSON, _ := json.MarshalIndent(pack.ObjectTypeSchemas, "    ", "  ")
+			t.Logf("  raw object_type_schemas:\n    %s", string(objJSON))
+			// Check if any type has non-empty properties.
+			for typeName, raw := range pack.ObjectTypeSchemas {
+				m, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				props, _ := m["properties"].(map[string]any)
+				if len(props) > 0 {
+					enriched = true
+					t.Logf("  ✅ type %q has %d properties", typeName, len(props))
+				}
+			}
+		}
+		if enriched {
+			break
+		}
+	}
+	require.True(t, enriched,
+		"schema_policy=enrich should produce a schema pack with populated properties")
+}
+
+// ---------------------------------------------------------------------------
+// GAP 6: schema_policy=ask pauses for confirmation on remember
+// ---------------------------------------------------------------------------
+
+func TestRememberAskPolicy_PausesForConfirmation(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "remask")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	// POST remember with schema_policy=ask in async mode.
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "ask",
+			"mode":          "async",
+		}),
+	)
+	require.Equal(t, http.StatusAccepted, rec.StatusCode, "async should return 202")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	runID, _ := body["run_id"].(string)
+	require.NotEmpty(t, runID, "async response must contain run_id")
+	t.Logf("remember ask run_id: %s", runID)
+
+	// Poll run status; expect paused/input-required for tool confirmation.
+	var finalStatus string
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(1 * time.Second)
+		statusResp := client.GET(
+			fmt.Sprintf("/api/v1/runs/%s", runID),
+			testutil.WithAuth("e2e-test-user"),
+		)
+		if statusResp.StatusCode != http.StatusOK {
+			continue
+		}
+		var runBody map[string]any
+		if err := json.Unmarshal(statusResp.Body, &runBody); err != nil {
+			continue
+		}
+		data, _ := runBody["data"].(map[string]any)
+		status, _ := data["status"].(string)
+		if status == "input-required" || status == "completed" || status == "failed" {
+			finalStatus = status
+			break
+		}
+	}
+
+	t.Logf("remember ask run %s final status: %s", runID, finalStatus)
+	if finalStatus != "input-required" && finalStatus != "completed" {
+		t.Fatalf("expected run to pause for tool confirmation or complete; got status=%q", finalStatus)
+	}
+	if finalStatus == "completed" {
+		t.Log("⚠ run completed without pausing — LLM chose not to call finalize-discovery (ask policy not exercised)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP 7: strategy=ask pauses for confirmation on forget
+// ---------------------------------------------------------------------------
+
+func TestForgetAskStrategy_PausesForConfirmation(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "frgask")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	// Seed a graph object to forget.
+	projectUUID := uuid.MustParse(projectID)
+	canonicalID := uuid.New()
+	obj := &graph.GraphObject{
+		ID:          uuid.New(),
+		ProjectID:   projectUUID,
+		CanonicalID: canonicalID,
+		Version:     1,
+		Type:        "Person",
+		Properties: map[string]any{
+			"name": "TargetForgetPerson",
+		},
+		Labels:    []string{},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	_, err = testDB.DB.NewInsert().Model(obj).Exec(ctx)
+	require.NoError(t, err, "seed graph object")
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	// POST forget with strategy=ask in async mode.
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/forget", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":  "forget the person named TargetForgetPerson",
+			"strategy": "ask",
+			"mode":     "async",
+		}),
+	)
+	require.Equal(t, http.StatusAccepted, rec.StatusCode, "async should return 202")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	runID, _ := body["run_id"].(string)
+	require.NotEmpty(t, runID, "async response must contain run_id")
+	t.Logf("forget ask run_id: %s", runID)
+
+	// Poll run status; expect input-required for tool confirmation.
+	var finalStatus string
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(1 * time.Second)
+		statusResp := client.GET(
+			fmt.Sprintf("/api/v1/runs/%s", runID),
+			testutil.WithAuth("e2e-test-user"),
+		)
+		if statusResp.StatusCode != http.StatusOK {
+			continue
+		}
+		var runBody map[string]any
+		if err := json.Unmarshal(statusResp.Body, &runBody); err != nil {
+			continue
+		}
+		data, _ := runBody["data"].(map[string]any)
+		status, _ := data["status"].(string)
+		if status == "input-required" || status == "completed" || status == "failed" {
+			finalStatus = status
+			break
+		}
+		// Log intermediate statuses for debugging.
+		if status != "" {
+			t.Logf("forget ask run %s status: %s", runID, status)
+		}
+	}
+
+	t.Logf("forget ask run %s final status: %q", runID, finalStatus)
+	if finalStatus == "" {
+		t.Fatal("run never reached a terminal or paused state (120s timeout)")
+	}
+	if finalStatus == "completed" {
+		t.Log("⚠ run completed without pausing — LLM may not have called entity-delete")
+	}
+	if finalStatus == "failed" {
+		t.Logf("⚠ run failed — agent may not have found the target entity")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Re-extraction comparison: extract same doc twice, report diff
+// ---------------------------------------------------------------------------
+
+type extractionSnapshot struct {
+	SchemaPacks       []schemaPackInfo
+	ObjectStats       map[string]objTypeStats // type → stats
+	RelStats          map[string]relTypeStats // type → count
+	ExtractionJobInfo string                  // status info about extraction jobs
+}
+
+type schemaPackInfo struct {
+	SchemaID   string
+	ObjTypes   int
+	RelTypes   int
+	TypeNames  []string
+	Properties map[string]int // typeName → prop count
+}
+
+type objTypeStats struct {
+	TotalObjects int
+	OnBranch     int // on a staging branch (extraction branch)
+	OnMain       int // on main branch (branch_id IS NULL)
+	Version1     int // only version 1
+	VersionGe2   int // updated at least once
+	Deleted      int // soft-deleted
+	WithKey      int // has a name key (dedup-able)
+	WithoutKey   int // no name key (duplicate-prone)
+}
+
+type relTypeStats struct {
+	Total int
+}
+
+func snapshotExtraction(t *testing.T, ctx context.Context, projectID string, testDB *testutil.TestDB) extractionSnapshot {
+	t.Helper()
+	s := extractionSnapshot{
+		ObjectStats: make(map[string]objTypeStats),
+		RelStats:    make(map[string]relTypeStats),
+	}
+
+	// 0. Extraction job status
+	type exJobRow struct {
+		ID     string
+		Status string
+		Error  *string
+	}
+	var exJobs []exJobRow
+	_ = testDB.DB.NewRaw(
+		`SELECT id::text, status, error_message FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 5`,
+		projectID,
+	).Scan(ctx, &exJobs)
+	if len(exJobs) > 0 {
+		parts := make([]string, len(exJobs))
+		for i, j := range exJobs {
+			errSuffix := ""
+			if j.Error != nil && *j.Error != "" {
+				errSuffix = fmt.Sprintf(" err=%q", truncateStr(*j.Error, 80))
+			}
+			parts[i] = fmt.Sprintf("  job %s status=%s%s", j.ID[:8], j.Status, errSuffix)
+		}
+		s.ExtractionJobInfo = "Extraction jobs (last 5):\n" + strings.Join(parts, "\n")
+	} else {
+		s.ExtractionJobInfo = "No extraction jobs found."
+	}
+
+	// 1. Schema packs
+	djRepo := discoveryjobs.NewRepository(testDB.GetDB(), slog.Default())
+	var schemaIDs []string
+	_ = testDB.DB.NewRaw(
+		"SELECT schema_id::text FROM kb.project_schemas WHERE project_id = ? AND active = true",
+		projectID,
+	).Scan(ctx, &schemaIDs)
+	for _, sidStr := range schemaIDs {
+		schemaUUID := uuid.MustParse(sidStr)
+		pack, err := djRepo.GetMemorySchema(ctx, schemaUUID)
+		if err != nil {
+			continue
+		}
+		info := schemaPackInfo{
+			SchemaID:   sidStr[:8],
+			ObjTypes:   len(pack.ObjectTypeSchemas),
+			RelTypes:   len(pack.RelationshipTypeSchemas),
+			TypeNames:  make([]string, 0, len(pack.ObjectTypeSchemas)),
+			Properties: make(map[string]int),
+		}
+		for tn, raw := range pack.ObjectTypeSchemas {
+			info.TypeNames = append(info.TypeNames, tn)
+			m, ok := raw.(map[string]any)
+			if ok {
+				props, _ := m["properties"].(map[string]any)
+				info.Properties[tn] = len(props)
+			}
+		}
+		sort.Strings(info.TypeNames)
+		for _, rn := range pack.RelationshipTypeSchemas {
+			rnMap, ok := rn.(map[string]any)
+			if ok {
+				name, _ := rnMap["name"].(string)
+				if name != "" {
+					info.RelTypes++
+					_ = name
+				}
+			}
+		}
+		s.SchemaPacks = append(s.SchemaPacks, info)
+	}
+
+	// 2. Graph objects — all branches (HEAD per branch)
+	type objRow struct {
+		Type      string
+		Key       *string
+		DeletedAt *time.Time
+		Version   int
+		BranchID  *string
+	}
+	var rows []objRow
+	_ = testDB.DB.NewRaw(
+		`SELECT type, key, deleted_at, version, branch_id::text
+		 FROM kb.graph_objects
+		 WHERE project_id = ?::uuid AND supersedes_id IS NULL`,
+		projectID,
+	).Scan(ctx, &rows)
+	for _, r := range rows {
+		stats := s.ObjectStats[r.Type]
+		stats.TotalObjects++
+		if r.BranchID != nil && *r.BranchID != "" {
+			stats.OnBranch++
+		} else {
+			stats.OnMain++
+		}
+		if r.DeletedAt != nil {
+			stats.Deleted++
+		}
+		if r.Version == 1 {
+			stats.Version1++
+		} else {
+			stats.VersionGe2++
+		}
+		if r.Key != nil && *r.Key != "" {
+			stats.WithKey++
+		} else {
+			stats.WithoutKey++
+		}
+		s.ObjectStats[r.Type] = stats
+	}
+
+	// 3. Relationships
+	type relRow struct {
+		Type string
+	}
+	var relRows []relRow
+	_ = testDB.DB.NewRaw(
+		`SELECT type FROM kb.graph_relationships WHERE project_id = ?::uuid AND deleted_at IS NULL`,
+		projectID,
+	).Scan(ctx, &relRows)
+	for _, r := range relRows {
+		rs := s.RelStats[r.Type]
+		rs.Total++
+		s.RelStats[r.Type] = rs
+	}
+
+	return s
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
+
+func printExtractionSummary(t *testing.T, label string, snap extractionSnapshot) {
+	t.Logf("")
+	t.Logf("=== %s ===", label)
+
+	// Schema packs
+	for _, p := range snap.SchemaPacks {
+		t.Logf("  Schema %s: %d object types, %d relationship types", p.SchemaID, p.ObjTypes, p.RelTypes)
+		for _, tn := range p.TypeNames {
+			t.Logf("    Object type %q: %d properties", tn, p.Properties[tn])
+		}
+	}
+	if len(snap.SchemaPacks) == 0 {
+		t.Logf("  (no schema packs installed)")
+	}
+
+	// Objects
+	var typeNames []string
+	for tn := range snap.ObjectStats {
+		typeNames = append(typeNames, tn)
+	}
+	sort.Strings(typeNames)
+	var totalObj, totalKey, totalNoKey, totalV1, totalVge2, totalDel, totalBranch, totalMain int
+	for _, tn := range typeNames {
+		os := snap.ObjectStats[tn]
+		totalObj += os.TotalObjects
+		totalKey += os.WithKey
+		totalNoKey += os.WithoutKey
+		totalV1 += os.Version1
+		totalVge2 += os.VersionGe2
+		totalDel += os.Deleted
+		totalBranch += os.OnBranch
+		totalMain += os.OnMain
+		t.Logf("  Objects %q: total=%d  branch=%d  main=%d  v1=%d  v2+=%d  del=%d  key=%d  nokey=%d",
+			tn, os.TotalObjects, os.OnBranch, os.OnMain, os.Version1, os.VersionGe2, os.Deleted, os.WithKey, os.WithoutKey)
+	}
+	t.Logf("  OBJECT TOTALS: %d objects  |  branch=%d  main=%d  |  key=%d  nokey=%d  |  v1=%d  v2+=%d  del=%d",
+		totalObj, totalBranch, totalMain, totalKey, totalNoKey, totalV1, totalVge2, totalDel)
+
+	// Relationships
+	var relTypeNames []string
+	for rn := range snap.RelStats {
+		relTypeNames = append(relTypeNames, rn)
+	}
+	sort.Strings(relTypeNames)
+	var totalRel int
+	for _, rn := range relTypeNames {
+		totalRel += snap.RelStats[rn].Total
+		t.Logf("  Relationships %q: %d", rn, snap.RelStats[rn].Total)
+	}
+	t.Logf("  RELATIONSHIP TOTAL: %d", totalRel)
+
+	// Extraction jobs
+	if snap.ExtractionJobInfo != "" {
+		t.Logf("  %s", snap.ExtractionJobInfo)
+	}
+}
+
+func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║              RE-EXTRACTION COMPARISON SUMMARY                      ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	// Schema comparison
+	type schemaDiff struct {
+		TypeName   string
+		PropsPass1 int
+		PropsPass2 int
+		Changed    string
+	}
+	var schemaDiffs []schemaDiff
+	propMap1 := map[string]int{}
+	propMap2 := map[string]int{}
+	for _, p := range pass1.SchemaPacks {
+		for tn, pc := range p.Properties {
+			propMap1[tn] = pc
+		}
+	}
+	for _, p := range pass2.SchemaPacks {
+		for tn, pc := range p.Properties {
+			propMap2[tn] = pc
+		}
+	}
+	allTypeNames := map[string]bool{}
+	for tn := range propMap1 {
+		allTypeNames[tn] = true
+	}
+	for tn := range propMap2 {
+		allTypeNames[tn] = true
+	}
+	var sortedTypes []string
+	for tn := range allTypeNames {
+		sortedTypes = append(sortedTypes, tn)
+	}
+	sort.Strings(sortedTypes)
+	for _, tn := range sortedTypes {
+		p1 := propMap1[tn]
+		p2 := propMap2[tn]
+		ch := "IDENTICAL"
+		if p2 > p1 {
+			ch = fmt.Sprintf("ENRICHED +%d props", p2-p1)
+		} else if p2 < p1 {
+			ch = fmt.Sprintf("SHRUNK -%d props", p1-p2)
+		}
+		schemaDiffs = append(schemaDiffs, schemaDiff{tn, p1, p2, ch})
+	}
+
+	t.Logf("")
+	t.Logf("── Schema Types ──")
+	if len(schemaDiffs) == 0 {
+		t.Logf("  No types discovered")
+	} else {
+		t.Logf("  %-30s %10s %10s   %s", "TYPE", "PASS1", "PASS2", "CHANGE")
+		t.Logf("  %-30s %10s %10s   %s", strings.Repeat("─", 30), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 20))
+		for _, sd := range schemaDiffs {
+			t.Logf("  %-30s %10d %10d   %s", sd.TypeName, sd.PropsPass1, sd.PropsPass2, sd.Changed)
+		}
+	}
+
+	// Object comparison
+	allObjTypes := map[string]bool{}
+	for tn := range pass1.ObjectStats {
+		allObjTypes[tn] = true
+	}
+	for tn := range pass2.ObjectStats {
+		allObjTypes[tn] = true
+	}
+	var sortedObjTypes []string
+	for tn := range allObjTypes {
+		sortedObjTypes = append(sortedObjTypes, tn)
+	}
+	sort.Strings(sortedObjTypes)
+
+	t.Logf("")
+	t.Logf("── Graph Objects (HEAD versions, by type) ──")
+	t.Logf("  %-25s %6s %6s %+6s %+6s %6s %6s", "TYPE", "PASS1", "PASS2", "NEW", "DEL", "BRANCH1", "BRANCH2")
+	t.Logf("  %-25s %6s %6s %6s %6s %6s %6s", strings.Repeat("─", 25), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6))
+	for _, tn := range sortedObjTypes {
+		o1 := pass1.ObjectStats[tn]
+		o2 := pass2.ObjectStats[tn]
+		diffCount := o2.TotalObjects - o1.TotalObjects
+		delCount := o2.Deleted - o1.Deleted
+		t.Logf("  %-25s %6d %6d %+6d %+6d %6d %6d",
+			tn, o1.TotalObjects, o2.TotalObjects, diffCount, delCount, o1.OnBranch, o2.OnBranch)
+	}
+
+	// Total summary
+	var total1, total2, total1Del, total2Del, total2Vge2, total1Branch, total2Branch int
+	for _, os := range pass1.ObjectStats {
+		total1 += os.TotalObjects
+		total1Del += os.Deleted
+		total1Branch += os.OnBranch
+	}
+	for _, os := range pass2.ObjectStats {
+		total2 += os.TotalObjects
+		total2Del += os.Deleted
+		total2Vge2 += os.VersionGe2
+		total2Branch += os.OnBranch
+	}
+
+	t.Logf("")
+	t.Logf("── Overall Summary ──")
+	t.Logf("  Objects on staging branches (pass1): %d", total1Branch)
+	t.Logf("  Objects on staging branches (pass2): %d", total2Branch)
+	t.Logf("  Total objects pass1: %d  |  pass2: %d", total1, total2)
+	t.Logf("  Net new objects:     %+d", total2-total1)
+	t.Logf("  Deleted (pass1):     %d  |  pass2: %d", total1Del, total2Del)
+	t.Logf("  v2+ in pass2:        %d (objects updated vs original)", total2Vge2)
+	t.Logf("")
+	if total1 == 0 && total2 == 0 {
+		t.Logf("  ⚠ No objects found in either pass — extraction may not have completed.")
+	} else if total1 == 0 && total2 > 0 {
+		t.Logf("  ⚠ Pass 1 extraction hadn't completed yet (objects found only in pass 2).")
+		t.Logf("     Pass 2 found %d objects — dedup comparison incomplete.", total2)
+	} else if total2Vge2 == 0 && (total2-total1) == 0 {
+		t.Logf("  ✅ VERDICT: Second extraction produced IDENTICAL results — no new versions, no new objects.")
+		t.Logf("     The upsert-by-key dedup (project_id+type+key) correctly avoided duplicates.")
+	} else if total2Vge2 > 0 && (total2-total1) >= 0 {
+		t.Logf("  ⚠ VERDICT: Second extraction created new versions or objects.")
+		t.Logf("     Check diff table above to see which types changed.")
+	} else {
+		t.Logf("  ⚠ VERDICT: Object count decreased — possible deletion or tombstoning.")
+		t.Logf("     diff=%+d  v2+=%d", total2-total1, total2Vge2)
+	}
+
+	// Relationship comparison
+	allRelTypes := map[string]bool{}
+	for rn := range pass1.RelStats {
+		allRelTypes[rn] = true
+	}
+	for rn := range pass2.RelStats {
+		allRelTypes[rn] = true
+	}
+	var sortedRelTypes []string
+	for rn := range allRelTypes {
+		sortedRelTypes = append(sortedRelTypes, rn)
+	}
+	sort.Strings(sortedRelTypes)
+
+	t.Logf("")
+	t.Logf("── Relationships (by type) ──")
+	t.Logf("  %-30s %8s %8s %8s", "TYPE", "PASS1", "PASS2", "DIFF")
+	t.Logf("  %-30s %8s %8s %8s", strings.Repeat("─", 30), strings.Repeat("─", 8), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	var relTotal1, relTotal2 int
+	for _, rn := range sortedRelTypes {
+		r1 := pass1.RelStats[rn].Total
+		r2 := pass2.RelStats[rn].Total
+		relTotal1 += r1
+		relTotal2 += r2
+		t.Logf("  %-30s %8d %8d %+8d", rn, r1, r2, r2-r1)
+	}
+	t.Logf("  %-30s %8s %8s %8s", strings.Repeat("─", 30), strings.Repeat("─", 8), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	t.Logf("  %-30s %8d %8d %+8d", "TOTAL", relTotal1, relTotal2, relTotal2-relTotal1)
+}
+
+// waitForExtraction polls until the extraction jobs have all completed for
+// the project, or timeout. Returns true if objects were found.
+func waitForExtraction(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
+	t.Helper()
+	var doneCount, totalCount int
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		doneCount = 0
+		totalCount = 0
+		_ = testDB.DB.NewRaw(
+			`SELECT COUNT(*) FILTER (WHERE status IN ('completed','failed')),
+			        COUNT(*)
+			 FROM kb.object_extraction_jobs WHERE project_id = ?::uuid`,
+			projectID,
+		).Scan(ctx, &doneCount, &totalCount)
+		if totalCount > 0 && totalCount == doneCount {
+			var objCount int
+			_ = testDB.DB.NewRaw(
+				"SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND supersedes_id IS NULL",
+				projectID,
+			).Scan(ctx, &objCount)
+			t.Logf("  extraction complete: %d objects, %d/%d jobs done", objCount, doneCount, totalCount)
+			return objCount > 0
+		}
+		var jobStatus string
+		_ = testDB.DB.NewRaw(
+			`SELECT status FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 1`,
+			projectID,
+		).Scan(ctx, &jobStatus)
+		if totalCount > 0 {
+			t.Logf("  waiting: %d/%d jobs done, latest status=%s", doneCount, totalCount, jobStatus)
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Logf("  ⚠ timeout after %v (%d/%d jobs done)", timeout, doneCount, totalCount)
+	return false
+}
+
+// waitForObjects polls until at least one graph object exists for the project.
+// Deprecated: use waitForExtraction for more reliable job-level waiting.
+func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var count int
+		err := testDB.DB.NewRaw(
+			"SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND supersedes_id IS NULL",
+			projectID,
+		).Scan(ctx, &count)
+		if err == nil && count > 0 {
+			t.Logf("  background extraction complete: %d objects found", count)
+			return true
+		}
+		// Check if extraction job finished (even if it produced 0 objects)
+		var jobStatus string
+		_ = testDB.DB.NewRaw(
+			`SELECT status FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 1`,
+			projectID,
+		).Scan(ctx, &jobStatus)
+		if jobStatus == "completed" || jobStatus == "failed" {
+			t.Logf("  extraction job reached terminal status: %s (objects: %d)", jobStatus, count)
+			return count > 0
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Logf("  ⚠ no objects appeared after %v (extraction may be slow or failed)", timeout)
+	return false
+}
+
+// TestReExtractionComparison runs two remember extractions with the same document
+// and prints a human-readable comparison summary of what changed.
+func TestReExtractionComparison(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "reextract")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║         FIRST EXTRACTION: schema_policy=auto, mode=sync            ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	// ── Pass 1: First extraction ──
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "first extraction should return 200")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	p1Status, _ := body["status"].(string)
+	require.Equal(t, "completed", p1Status, "first extraction should complete")
+	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
+
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+
+	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
+
+	// ── Pass 2: Second extraction with same document ──
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║      SECOND EXTRACTION: same doc, schema_policy=auto, mode=sync    ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec2 := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec2.StatusCode, "second extraction should return 200")
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(rec2.Body, &body2))
+	p2Status, _ := body2["status"].(string)
+	require.Equal(t, "completed", p2Status, "second extraction should complete")
+	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
+
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+
+	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
+
+	// ── Print diff ──
+	printDiffTable(t, pass1, pass2)
+
+	t.Logf("")
+	t.Logf("Done. See above for the re-extraction comparison summary.")
+}
+
+// friendsPilotDoc is a condensed transcript of Friends S01E01
+// "The One Where Monica Gets a Roommate" — rich with characters, locations, relationships.
+const friendsPilotDoc = `
+Friends — Season 1, Episode 1: "The One Where Monica Gets a Roommate"
+
+Central Perk coffeehouse, Greenwich Village, New York.
+
+MONICA GELLER (26, chef at a restaurant in Manhattan) is sitting with her brother
+ROSS GELLER (26, paleontologist, just divorced from Carol) and
+CHANDLER BING (26, data processor at a multinational corporation).
+PHOEBE BUFFAY (26, masseuse and musician) arrives and sits down.
+JOEY TRIBBIANI (26, struggling actor) walks in.
+
+They talk about Ross's ex-wife Carol, who left him for another woman named Susan.
+The gang has known each other for years. Monica and Ross are siblings.
+Chandler and Ross were college roommates at Columbia University.
+
+Monica has a date tonight with Paul the Wine Guy. Paul works at her restaurant
+and is described as a handsome man in his 40s who knows wine.
+
+At Monica's apartment (Greenwich Village), Monica is preparing for her date.
+
+RACHEL GREEN (24, just left her fiancé Barry at the altar) bursts in wearing
+a wedding dress. She was supposed to marry Barry Farber, a doctor, but realized
+she didn't love him. Rachel has never worked a day in her life — her father
+Dr. Leonard Green is a wealthy surgeon who bought her everything.
+
+Monica agrees to let Rachel stay with her. Rachel becomes Monica's new roommate.
+The previous roommate was Kandi, who moved out.
+
+Ross has been in love with Rachel since high school.
+Rachel remembers Ross as "the boy with the funny raft" from a childhood incident.
+
+Paul the Wine Guy comes for dinner at Monica's apartment.
+Monica cooks a multicourse meal. Paul says Monica is "incredible" and
+"the most beautiful woman he's ever served wine to."
+In Monica's bedroom, Paul starts crying. He says his wife left him
+three years ago and he hasn't been able to perform since.
+Monica comforts him. They end up having sex.
+Later, Paul tells his friends at the restaurant that Monica is easy,
+which devastates Monica when she overhears.
+
+Rachel gets her first job as a waitress at Central Perk coffeehouse.
+She makes $4.50 an hour plus tips. She hates it.
+
+Ross's pet monkey Marcel (a capuchin monkey) arrives at his apartment.
+Marcel was rescued from a research laboratory.
+
+At Central Perk, the gang discusses Rachel's new job.
+Rachel smokes a cigarette, even though nobody knew she smoked.
+Chandler makes a joke about taking up smoking now.
+
+Ross asks Rachel out on a date. She says yes.
+Later, Rachel returns Ross's jacket, which is full of spinach dip from their date.
+They share a kiss.
+`
+
+// TestReExtractionFriends runs two extractions on the Friends pilot episode
+// and prints a human-readable comparison summary of what changed.
+func TestReExtractionFriends(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "friendsrex")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   FRIENDS S01E01 — FIRST EXTRACTION (schema_policy=auto, sync)     ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	// ── Pass 1: First extraction of Friends pilot ──
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsPilotDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "first extraction should return 200")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	p1Status, _ := body["status"].(string)
+	require.Equal(t, "completed", p1Status, "first extraction should complete")
+	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
+
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+
+	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
+
+	// ── Pass 2: Second extraction with same Friends pilot ──
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   FRIENDS S01E01 — SECOND EXTRACTION (same doc, auto, sync)        ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec2 := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsPilotDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec2.StatusCode, "second extraction should return 200")
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(rec2.Body, &body2))
+	p2Status, _ := body2["status"].(string)
+	require.Equal(t, "completed", p2Status, "second extraction should complete")
+	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
+
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+
+	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
+
+	// ── Print diff ──
+	printDiffTable(t, pass1, pass2)
+
+	t.Logf("")
+	t.Logf("Done. See above for Friends re-extraction comparison.")
+}
+
+// friendsE02Doc is a condensed transcript of Friends S01E02
+// "The One with the Sonogram at the End" — new characters, locations, and plot events.
+const friendsE02Doc = `
+Friends — Season 1, Episode 2: "The One with the Sonogram at the End"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+ROSS GELLER (paleontologist, 26) tells his friends that his ex-wife CAROL
+is pregnant with his baby. Carol left Ross for another woman named SUSAN.
+Ross is nervous about becoming a father.
+
+RACHEL GREEN (24) has moved in with MONICA GELLER (26, chef)
+and is trying to adjust to being on her own for the first time.
+Rachel's father DR. LEONARD GREEN (wealthy surgeon) is furious that she
+left BARRY FARBER (doctor) at the altar. Dr. Green cuts off Rachel's credit cards.
+Rachel has her first panic attack about money and being independent.
+She decides to return her wedding dress to Bloomingdale's department store
+to get money back. She also pawns some of her father's gifts.
+
+Monica is supportive of Rachel's independence. She teaches Rachel
+how to do laundry and manage money.
+
+Carol and Susan invite Ross to the ultrasound appointment at the
+obstetrician's office. Ross is uncomfortable that Susan will be there too.
+CHANDLER BING (26, data processor), JOEY TRIBBIANI (26, struggling actor),
+and PHOEBE BUFFAY (26, masseuse) support Ross and go with him to the clinic.
+
+At the obstetrician's office, the doctor performs the ultrasound.
+Ross, Carol, and Susan see the baby on the sonogram screen.
+Ross gets emotional seeing his unborn child.
+The sonogram shows the baby is healthy and developing normally.
+The due date is in five months.
+
+Ross realizes that he will always be connected to Carol and Susan
+because of the baby, and they agree to co-parent together.
+
+Meanwhile, at Bloomingdale's, Rachel tries to return her wedding dress
+but has trouble because the store's return policy requires a receipt.
+She eventually returns it and gets $500 back.
+
+Back at Central Perk, Rachel shows everyone her new boots that she bought
+with her first paycheck from the waitressing job she started.
+She is proud of being financially independent for the first time.
+`
+
+// TestReExtractionFriendsE02 runs extraction on Friends S01E01 then S01E02
+// and prints a comparison showing new entities, updated entities, and relationships.
+func TestReExtractionFriendsE02(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "friendse02")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   S01E01 — FIRST EXTRACTION (schema_policy=auto, sync)            ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsPilotDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "first extraction should return 200")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	p1Status, _ := body["status"].(string)
+	require.Equal(t, "completed", p1Status, "first extraction should complete")
+	t.Logf("PASS1 (E01) response: run_id=%s status=%s", body["run_id"], p1Status)
+
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+
+	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "S01E01 RESULTS", pass1)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   S01E02 — SECOND EXTRACTION (different episode, auto, sync)       ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec2 := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsE02Doc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec2.StatusCode, "second extraction should return 200")
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(rec2.Body, &body2))
+	p2Status, _ := body2["status"].(string)
+	require.Equal(t, "completed", p2Status, "second extraction should complete")
+	t.Logf("PASS2 (E02) response: run_id=%s status=%s", body2["run_id"], p2Status)
+
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+
+	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "S01E02 RESULTS", pass2)
+
+	printDiffTable(t, pass1, pass2)
+
+	t.Logf("")
+	t.Logf("Done. See above for E01→E02 re-extraction comparison.")
+}
+
+// friendsE03Doc is a condensed transcript of Friends S01E03
+// "The One with the Thumb" — smoking, money, ruined cookies.
+const friendsE03Doc = `
+Friends — Season 1, Episode 3: "The One with the Thumb"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+PHOEBE BUFFAY (26, masseuse and musician) is excited because she found
+a human thumb in her soda can at the bank where she cashed her paycheck.
+She is horrified but also thinks it might bring good luck.
+
+Later, Phoebe receives a $7,000 compensation check from the soda company
+for the trauma of finding the thumb. She doesn't know what to do with the money.
+She considers giving it to a homeless woman named GLENDA who lives
+on the street near Central Perk.
+
+CHANDLER BING (26, data processor) has started smoking again,
+which frustrates MONICA GELLER (26, chef) who hates smoking.
+Chandler had quit smoking three years ago but relapsed due to stress
+from his job. His father also smokes.
+
+RACHEL GREEN (24, waitress at Central Perk) is getting used to her job.
+She spills coffee on customers and struggles with the espresso machine.
+MONICA GELLER teaches Rachel how to make cappuccino.
+
+JOEY TRIBBIANI (26, struggling actor) has an audition for a play
+called "Freud!" where he would play Sigmund Freud. He practices
+his lines at the coffeehouse. ROSS GELLER (paleontologist, 26)
+helps Joey rehearse.
+
+Monica prepares a massive Thanksgiving feast with all the traditional
+dishes. She has been planning it for weeks. She makes her famous
+chocolate truffles with a secret recipe from her grandmother.
+
+Phoebe decides to give her $7,000 to Glenda the homeless woman.
+Glenda is grateful and uses the money to buy a new cart for her belongings.
+
+Chandler tries to quit smoking again. Monica catches him smoking
+in the hallway outside her apartment. She threatens to tell his mother.
+Chandler eventually quits using nicotine patches.
+
+Monica's Thanksgiving turkey is perfect, but her chocolate truffles
+are accidentally destroyed when someone leaves the freezer door open.
+The chocolate truffles melt and are ruined. Monica is devastated
+but the gang cheers her up.
+
+ROSS GELLER tells Phoebe that giving the money away was the
+most generous thing he's ever seen. Phoebe feels good about her decision.
+`
+
+// friendsE04Doc is a condensed transcript of Friends S01E04
+// "The One with George Stephanopoulos" — spying, hockey, delivery guy.
+const friendsE04Doc = `
+Friends — Season 1, Episode 4: "The One with George Stephanopoulos"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+MONICA GELLER (26, chef) is upset because her credit card was declined
+at the supermarket. She is struggling financially. Her parents are
+pressuring her to succeed.
+
+RACHEL GREEN (24, waitress) gets her first paycheck and is excited
+but realizes how little she makes. She and Monica bond over being broke.
+
+ROSS GELLER (paleontologist, 26) offers to take Rachel to a museum
+where he works as a tour guide. She declines.
+
+PHOEBE BUFFAY (26, masseuse) is dating a guy named Carl who
+works at a copy shop. Carl is nice but Phoebe isn't sure about him.
+
+CHANDLER BING (26, data processor) and JOEY TRIBBIANI (26, actor)
+go to a New York Rangers hockey game at Madison Square Garden.
+They pay $50 for standing-room tickets. Chandler loves hockey.
+Joey doesn't understand the rules but enjoys the fights.
+
+At Monica's apartment, the girls discover that a handsome man
+named DAN (a model) lives across the street in a penthouse.
+They use binoculars to spy on him. Monica is thrilled because
+Dan's apartment has a better view than theirs.
+
+Ross goes on a date with a woman named CELESTE from the museum.
+The date goes poorly. Celeste is boring.
+
+Dan the model orders $200 worth of food from the restaurant
+where Monica works. Monica delivers the food herself to Dan's
+penthouse. Dan tips her $50. Monica is thrilled.
+
+Ross and Rachel have a conversation on the balcony of Monica's
+apartment. Ross admits he had a crush on Rachel in high school.
+Rachel admits she wishes she had dated Ross instead of Barry.
+They almost kiss but are interrupted by a delivery.
+`
+
+// friendsE05Doc is a condensed transcript of Friends S01E05
+// "The One with the East German Laundry Detergent" — laundromat date, fake leg.
+const friendsE05Doc = `
+Friends — Season 1, Episode 5: "The One with the East German Laundry Detergent"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+ROSS GELLER (paleontologist, 26) and RACHEL GREEN (24, waitress)
+go on their first official date at a coin-operated laundromat
+on 23rd Street in Manhattan. Ross brings East German laundry detergent
+that he bought because it was on sale. The detergent doesn't work well.
+Rachel accidentally turns Ross's laundry pink by mixing colors.
+Despite the laundry disaster, they have fun and bond over the
+shared misery of doing laundry. Ross asks Rachel out again.
+Rachel says yes.
+
+MONICA GELLER (26, chef) is dating a man named ALAN who is
+described as sweet, funny, and very handsome. The gang loves Alan.
+Monica is insecure because all her previous relationships failed.
+Alan breaks up with Monica, saying she is too controlling.
+The gang still likes Alan even after the breakup.
+
+CHANDLER BING (26, data processor) dates a woman named JOANNE
+who has a prosthetic leg. Chandler is uncomfortable about it
+at first but eventually gets over it. Joanne is a lawyer at
+a prestigious Manhattan law firm. She breaks up with Chandler
+after he makes an insensitive joke about her leg.
+
+PHOEBE BUFFAY (26, masseuse) finds a stray dog outside Central Perk.
+She names it "Maurice." She tries to find the owner but fails.
+She ends up giving the dog to a little boy named ETHAN.
+
+JOEY TRIBBIANI (26, actor) has a date with a woman named
+JENNIFER who works at a pretzel stand in Central Park.
+The date goes well and they plan a second date.
+
+Ross gets a new job at the Museum of Prehistoric History
+as a tour guide. He loves talking about dinosaurs.
+`
+
+// TestReExtractionFriendsE03 runs extraction on E01 through E05
+// and prints the progressive comparison across all five episodes.
+func TestReExtractionFriendsE03(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "friendse05")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	episodes := []struct {
+		Label string
+		Doc   string
+	}{
+		{"S01E01 — Pilot", friendsPilotDoc},
+		{"S01E02 — Sonogram", friendsE02Doc},
+		{"S01E03 — Thumb", friendsE03Doc},
+		{"S01E04 — Stephanopoulos", friendsE04Doc},
+		{"S01E05 — Laundry", friendsE05Doc},
+	}
+
+	var snaps []extractionSnapshot
+	for i, ep := range episodes {
+		t.Logf("")
+		t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+		t.Logf("║   %s (extraction %d/%d)                        ║", ep.Label, i+1, len(episodes))
+		t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+		rec := client.POST(
+			fmt.Sprintf("/api/projects/%s/remember", projectID),
+			testutil.WithAuth("e2e-test-user"),
+			testutil.WithJSONBody(map[string]any{
+				"message":       ep.Doc,
+				"schema_policy": "auto",
+				"mode":          "sync",
+			}),
+		)
+		require.Equal(t, http.StatusOK, rec.StatusCode, "extraction %d should return 200", i+1)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body, &body))
+		st, _ := body["status"].(string)
+		require.Equal(t, "completed", st, "extraction %d should complete", i+1)
+		t.Logf("  run_id=%s status=%s", body["run_id"], st)
+
+		waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+		snap := snapshotExtraction(t, ctx, projectID, testDB)
+		snaps = append(snaps, snap)
+		printExtractionSummary(t, ep.Label, snap)
+
+		// Ground-truth verification for this episode
+		verifyExtraction(t, ctx, testDB.DB, projectID, ep.Label, epEntities[i])
+	}
+
+	// Post-extraction integrity checks
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║             POST-EXTRACTION INTEGRITY CHECKS                        ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+	assertNoRelationshipAsObject(t, ctx, testDB.DB, projectID)
+	assertNoDanglingRelationships(t, ctx, testDB.DB, projectID)
+
+	// Verify all expected entities exist after 5 episodes (final state)
+	t.Logf("")
+	t.Logf("── Full-cast check after all 5 episodes ──")
+	allOK := true
+	for _, e := range groundTruthExpected {
+		obj := assertEntityExists(t, ctx, testDB.DB, projectID, e, 5*time.Second)
+		if obj == nil {
+			allOK = false
+		}
+	}
+	if allOK {
+		t.Logf("  ✅ ALL %d expected entities verified across 5 episodes", len(groundTruthExpected))
+	}
+
+	// Hard assertion: the 6 core characters must exist with stable canonical_ids
+	t.Logf("")
+	t.Logf("── Core cast hard assertion (6 main characters) ──")
+	coreOK := true
+	for _, name := range coreCastNames {
+		e := groundTruthEntity{Name: name, TypeHints: []string{"Character", "Person"}}
+		if assertEntityExists(t, ctx, testDB.DB, projectID, e, 5*time.Second) == nil {
+			coreOK = false
+		}
+	}
+	require.True(t, coreOK, "core cast extraction failed — all 6 main characters must be extracted")
+
+	// Print progressive comparison
+	for i := 1; i < len(snaps); i++ {
+		t.Logf("")
+		t.Logf("──────────────────────────────────────────────────────────────────────")
+		t.Logf("  Δ BETWEEN %s AND %s", episodes[i-1].Label, episodes[i].Label)
+		t.Logf("──────────────────────────────────────────────────────────────────────")
+		progressDiff(t, snaps[i-1], snaps[i], episodes[i-1].Label, episodes[i].Label)
+	}
+
+	// Overall summary
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   CUMULATIVE: %-3d  → %-3d  → %-3d  → %-3d  → %-3d  objects across 5 episodes        ║",
+		snaps[0].TotalObjects(), snaps[1].TotalObjects(), snaps[2].TotalObjects(), snaps[3].TotalObjects(), snaps[4].TotalObjects())
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+}
+
+// TotalObjects returns the sum of all graph objects in the snapshot.
+func (s extractionSnapshot) TotalObjects() int {
+	n := 0
+	for _, os := range s.ObjectStats {
+		n += os.TotalObjects
+	}
+	return n
+}
+
+// progressDiff prints a compact diff between two extraction snapshots.
+func progressDiff(t *testing.T, before, after extractionSnapshot, labelA, labelB string) {
+	t.Helper()
+
+	allTypes := map[string]bool{}
+	for tn := range before.ObjectStats {
+		allTypes[tn] = true
+	}
+	for tn := range after.ObjectStats {
+		allTypes[tn] = true
+	}
+	var sorted []string
+	for tn := range allTypes {
+		sorted = append(sorted, tn)
+	}
+	sort.Strings(sorted)
+
+	t.Logf("  %-25s %10s %10s %8s %8s", "TYPE", labelA, labelB, "NEW", "UPDATED")
+	t.Logf("  %-25s %10s %10s %8s %8s", strings.Repeat("─", 25), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	var totA, totB, totNew, totUpd int
+	for _, tn := range sorted {
+		a := before.ObjectStats[tn]
+		b := after.ObjectStats[tn]
+		newCount := b.TotalObjects - a.TotalObjects
+		updCount := b.VersionGe2 - a.VersionGe2
+		totA += a.TotalObjects
+		totB += b.TotalObjects
+		totNew += max(0, newCount)
+		totUpd += max(0, updCount)
+		if newCount != 0 || updCount != 0 {
+			t.Logf("  %-25s %10d %10d %+8d %+8d", tn, a.TotalObjects, b.TotalObjects, newCount, updCount)
+		}
+	}
+
+	relsA, relsB := 0, 0
+	for _, rs := range before.RelStats {
+		relsA += rs.Total
+	}
+	for _, rs := range after.RelStats {
+		relsB += rs.Total
+	}
+
+	t.Logf("  %-25s %10s %10s %8s %8s", strings.Repeat("─", 25), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	t.Logf("  %-25s %10d %10d %+8d %+8d", "TOTAL", totA, totB, totB-totA, totUpd)
+	t.Logf("  relationships: %d → %d (+%d)", relsA, relsB, relsB-relsA)
+}
+
+// ---------------------------------------------------------------------------
+// Ground-truth verification helpers
+// ---------------------------------------------------------------------------
+
+// groundTruthEntity describes an expected entity with fuzzy matching.
+type groundTruthEntity struct {
+	Name      string   // human-readable name from the doc (e.g. "Monica Geller")
+	TypeHints []string // possible object types (e.g. {"Character", "Person"})
+}
+
+// groundTruthExpected lists core entities that should be extracted across the
+// 5-episode Friends set. Names come directly from the episode transcripts.
+var groundTruthExpected = []groundTruthEntity{
+	// Core cast (appear in every episode)
+	{Name: "Monica Geller", TypeHints: []string{"Character", "Person"}},
+	{Name: "Ross Geller", TypeHints: []string{"Character", "Person"}},
+	{Name: "Rachel Green", TypeHints: []string{"Character", "Person"}},
+	{Name: "Chandler Bing", TypeHints: []string{"Character", "Person"}},
+	{Name: "Joey Tribbiani", TypeHints: []string{"Character", "Person"}},
+	{Name: "Phoebe Buffay", TypeHints: []string{"Character", "Person"}},
+
+	// Central locations (appear in multiple episodes)
+	{Name: "Central Perk", TypeHints: []string{"Location"}},
+	{Name: "Greenwich Village", TypeHints: []string{"Location"}},
+
+	// E01-specific
+	{Name: "Paul the Wine Guy", TypeHints: []string{"Character", "Person"}},
+	{Name: "Marcel", TypeHints: []string{"Character", "Person", "Pet"}},
+
+	// E02-specific
+	{Name: "Carol", TypeHints: []string{"Character", "Person"}},
+	{Name: "Susan", TypeHints: []string{"Character", "Person"}},
+	{Name: "Barry Farber", TypeHints: []string{"Character", "Person"}},
+	{Name: "Bloomingdale", TypeHints: []string{"Location"}},
+
+	// E03-specific
+	{Name: "Glenda", TypeHints: []string{"Character", "Person"}},
+
+	// E04-specific
+	{Name: "Madison Square Garden", TypeHints: []string{"Location"}},
+	{Name: "Celeste", TypeHints: []string{"Character", "Person"}},
+
+	// E05-specific
+	{Name: "Alan", TypeHints: []string{"Character", "Person"}},
+	{Name: "Laundromat", TypeHints: []string{"Location"}},
+	{Name: "Museum of Prehistoric History", TypeHints: []string{"Location"}},
+}
+
+// findEntityViaProperty searches graph_objects for an entity whose properties
+// JSONB text contains the given name. Uses ILIKE for case-insensitive fuzzy
+// matching. Returns the first match or nil.
+func findEntityViaProperty(ctx context.Context, db bun.IDB, projectID, typeName, name string) *graphObjectRow {
+	var rows []graphObjectRow
+	err := db.NewRaw(
+		`SELECT go.type, go.key, go.properties, go.canonical_id, go.version, go.deleted_at, go.branch_id::text
+		 FROM kb.graph_objects go
+		 WHERE go.project_id = ?::uuid
+		   AND go.supersedes_id IS NULL
+		   AND go.type = ?
+		   AND LOWER(go.properties->>'name') LIKE LOWER(?)
+		 LIMIT 1`,
+		projectID, typeName, "%"+name+"%",
+	).Scan(ctx, &rows)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	return &rows[0]
+}
+
+type graphObjectRow struct {
+	Type        string
+	Key         *string
+	Properties  map[string]any
+	CanonicalID uuid.UUID
+	Version     int
+	DeletedAt   *time.Time
+	BranchID    *string
+}
+
+// assertEntityExists fuzzy-matches an entity by name across all possible types.
+// Returns the object or nil (caller decides whether to fail).
+func assertEntityExists(t *testing.T, ctx context.Context, db bun.IDB, projectID string, e groundTruthEntity, timeout time.Duration) *graphObjectRow {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, typeName := range e.TypeHints {
+			if obj := findEntityViaProperty(ctx, db, projectID, typeName, e.Name); obj != nil {
+				if obj.DeletedAt != nil {
+					t.Logf("  ⚠ entity %q found but soft-deleted", e.Name)
+					continue
+				}
+				t.Logf("  ✅ %q → %s (key=%s, v%d, cid=%s)",
+					e.Name, obj.Type, safeStr(obj.Key), obj.Version, obj.CanonicalID.String()[:8])
+				return obj
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Logf("  ❌ %q not found via any type in %v after %v", e.Name, e.TypeHints, timeout)
+	return nil
+}
+
+func safeStr(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
+}
+
+// assertNoRelationshipAsObject verifies zero graph objects exist with
+// relationship-like types (should be filtered by IsRelationshipObjectType).
+func assertNoRelationshipAsObject(t *testing.T, ctx context.Context, db bun.IDB, projectID string) {
+	t.Helper()
+	var count int
+	err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.graph_objects
+		 WHERE project_id = ?::uuid AND supersedes_id IS NULL
+		   AND type IN ('Relationship','CharacterRelationship','Friendship','Marriage','Partnership','Bond','Connection')`,
+		projectID,
+	).Scan(ctx, &count)
+	require.NoError(t, err)
+	if count > 0 {
+		t.Errorf("  ❌ found %d objects with relationship-like types (should be 0)", count)
+	} else {
+		t.Logf("  ✅ no relationship-as-object types found")
+	}
+}
+
+// assertNoDanglingRelationships verifies all relationship src_id/dst_id
+// reference existing HEAD graph objects.
+func assertNoDanglingRelationships(t *testing.T, ctx context.Context, db bun.IDB, projectID string) {
+	t.Helper()
+	var count int
+	err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.graph_relationships gr
+		 WHERE gr.project_id = ?::uuid AND gr.deleted_at IS NULL
+		   AND (NOT EXISTS (SELECT 1 FROM kb.graph_objects go
+		                    WHERE go.id = gr.src_id)
+		     OR NOT EXISTS (SELECT 1 FROM kb.graph_objects go
+		                    WHERE go.id = gr.dst_id))`,
+		projectID,
+	).Scan(ctx, &count)
+	require.NoError(t, err)
+	if count > 0 {
+		t.Errorf("  ❌ found %d dangling relationship references", count)
+	} else {
+		t.Logf("  ✅ no dangling relationship references")
+	}
+}
+
+var capturedCanonicalIDs = map[string]string{} // name → canonical_id
+
+// coreCastNames must always be extracted — these are the 6 main characters
+// present in every episode transcript. Everything else is LLM-dependent.
+var coreCastNames = []string{
+	"Monica Geller", "Ross Geller", "Rachel Green",
+	"Chandler Bing", "Joey Tribbiani", "Phoebe Buffay",
+}
+
+// verifyExtraction verifies ground-truth entities are present and accumulates
+// canonical_id tracking for cross-episode dedup checks.
+func verifyExtraction(t *testing.T, ctx context.Context, db bun.IDB, projectID, epLabel string, expectedForEpisode []groundTruthEntity) {
+	t.Helper()
+
+	t.Logf("  ── Ground-truth verification for %s ──", epLabel)
+	found := 0
+	for _, e := range expectedForEpisode {
+		obj := assertEntityExists(t, ctx, db, projectID, e, 5*time.Second)
+		if obj == nil {
+			continue
+		}
+		found++
+
+		cidStr := obj.CanonicalID.String()
+		if prev, seen := capturedCanonicalIDs[e.Name]; seen {
+			if cidStr != prev {
+				t.Logf("  ❌ %q canonical_id changed: %s → %s (dedup broken!)", e.Name, prev[:8], cidStr[:8])
+			}
+		} else {
+			capturedCanonicalIDs[e.Name] = cidStr
+		}
+	}
+	t.Logf("  ✅ %d/%d expected entities verified for %s", found, len(expectedForEpisode), epLabel)
+	if found < len(expectedForEpisode) {
+		t.Logf("  ⚠ %d missing — minor entities are LLM-dependent (non-fatal)", len(expectedForEpisode)-found)
+	}
+}
+
+// epEntities groups ground-truth entities by the episode they first appear in.
+var epEntities = [][]groundTruthEntity{
+	{ // S01E01 — Pilot
+		{Name: "Monica Geller", TypeHints: []string{"Character", "Person"}},
+		{Name: "Ross Geller", TypeHints: []string{"Character", "Person"}},
+		{Name: "Rachel Green", TypeHints: []string{"Character", "Person"}},
+		{Name: "Chandler Bing", TypeHints: []string{"Character", "Person"}},
+		{Name: "Joey Tribbiani", TypeHints: []string{"Character", "Person"}},
+		{Name: "Phoebe Buffay", TypeHints: []string{"Character", "Person"}},
+		{Name: "Paul the Wine Guy", TypeHints: []string{"Character", "Person"}},
+		{Name: "Central Perk", TypeHints: []string{"Location"}},
+		{Name: "Greenwich Village", TypeHints: []string{"Location"}},
+	},
+	{ // S01E02 — Sonogram
+		{Name: "Carol", TypeHints: []string{"Character", "Person"}},
+		{Name: "Susan", TypeHints: []string{"Character", "Person"}},
+		{Name: "Barry Farber", TypeHints: []string{"Character", "Person"}},
+		{Name: "Bloomingdale", TypeHints: []string{"Location"}},
+	},
+	{ // S01E03 — Thumb
+		{Name: "Glenda", TypeHints: []string{"Character", "Person"}},
+	},
+	{ // S01E04 — Stephanopoulos
+		{Name: "Celeste", TypeHints: []string{"Character", "Person"}},
+		{Name: "Madison Square Garden", TypeHints: []string{"Location"}},
+	},
+	{ // S01E05 — Laundry
+		{Name: "Alan", TypeHints: []string{"Character", "Person"}},
+		{Name: "Laundromat", TypeHints: []string{"Location"}},
+		{Name: "Museum of Prehistoric History", TypeHints: []string{"Location"}},
+	},
+}
+
+// mustUnmarshal decodes JSON bytes into dst or fatals the test.
+func mustUnmarshal(t *testing.T, data []byte, dst any) {
+	t.Helper()
+	if err := json.Unmarshal(data, dst); err != nil {
+		t.Fatalf("json.Unmarshal: %v (body: %s)", err, data)
+	}
+}

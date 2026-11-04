@@ -1,0 +1,23 @@
+package components
+
+// Test fixtures for components whose behaviour depends on a slot or children.
+// templ expands these at test time; they exist only for the _test build.
+
+templ tableCardFixture() {
+	@TableCard(nil) {
+		<table class="table table-sm">
+			<tbody>
+				<tr>
+					<td>child-table</td>
+				</tr>
+			</tbody>
+		</table>
+	}
+}
+
+templ subNavFixture() {
+	@SubNav("Agent sections") {
+		@SubNavItem("/agents/a1", true, "lucide--layout-dashboard", "Dashboard")
+		@SubNavItem("/agents/a1/sandbox", false, "lucide--box", "Sandbox")
+	}
+}

@@ -1,0 +1,767 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+)
+
+// errOrgIDRequired is returned when an org-scoped route lacks an :id.
+var errOrgIDRequired = errors.New("organization id is required")
+
+// --- Organization context pages (org sidebar + landing + members + settings hub) ---
+
+// orgPageData is the payload for OrgLandingPage: the active org and its
+// projects. LoadErr degrades to the whole-page error state. FlashMsg/FlashErr
+// carry PRG feedback from the delete/transfer-project flows. TransferOrgs are
+// the acting user's destination orgs (their org access tree minus the source)
+// and CanTransfer gates the per-row Transfer action (user is org_admin of the
+// source org and at least one candidate exists). IsOrgAdmin is the single
+// org-role capability every org page consults (see orgRoleFor/isOrgAdmin): it
+// gates create/delete/restore on the landing and the admin-only Settings
+// sections, mirroring CanTransfer's derivation from the access tree.
+type orgPageData struct {
+	Org          *Org
+	Projects     []ProjectRef
+	LoadErr      error
+	FlashMsg     string
+	FlashErr     error
+	TransferOrgs []Org
+	CanTransfer  bool
+	IsOrgAdmin   bool
+}
+
+// orgMembersPageData is the payload for OrgMembersPage: the active org's
+// members (GET /api/orgs/{id}/members) and org-scoped pending invitations
+// (GET /api/orgs/{id}/invites), plus PRG flash feedback. The page is
+// org_admin-gated (it exposes whole-org PII); IsOrgAdmin gates the write
+// controls. PendingErr degrades the invite section without hiding members.
+type orgMembersPageData struct {
+	Org        *Org
+	Members    []OrgMemberDto
+	Pending    []SentInviteDto
+	PendingErr error
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
+}
+
+// orgMemberAddPageData is the payload for OrgMemberAddPage
+// (GET /orgs/:id/members/add): the direct-add form for an already-registered
+// user, plus PRG error feedback.
+type orgMemberAddPageData struct {
+	Org      *Org
+	LoadErr  error
+	FlashErr error
+}
+
+// orgInvitePageData is the payload for OrgInvitePage (GET /orgs/:id/invite):
+// the org being invited into plus PRG error feedback from the invite-create
+// flow. LoadErr degrades to the whole-page error state.
+type orgInvitePageData struct {
+	Org      *Org
+	LoadErr  error
+	FlashErr error
+}
+
+// orgSettingsPageData is the payload for OrgSettingsPage (the Tools section of
+// the org Settings hub): the active org's tool-setting overrides plus PRG
+// feedback from the toggle/delete flows. IsOrgAdmin gates the write controls
+// (tool-settings read stays on membership).
+type orgSettingsPageData struct {
+	Org        *Org
+	Settings   []OrgToolSettingDto
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
+}
+
+// orgSettingsDangerZonePageData is the payload for
+// OrgSettingsDangerZonePage (the Danger zone section of the org Settings hub):
+// the active org for the delete-organization confirm form. LoadErr degrades to
+// the whole-page error state. IsOrgAdmin gates the delete form.
+type orgSettingsDangerZonePageData struct {
+	Org        *Org
+	LoadErr    error
+	IsOrgAdmin bool
+}
+
+// orgSettingsGeneralPageData is the payload for OrgSettingsGeneralPage (the
+// General section of the org Settings hub): the active org for the rename form
+// plus PRG feedback from the rename flow. IsOrgAdmin gates the rename form.
+type orgSettingsGeneralPageData struct {
+	Org        *Org
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
+}
+
+// resolveOrg loads the org named by the :id path param and makes it the
+// session's active org context (so the shell renders the org sidebar). It is a
+// no-op activation in dev/API-key mode (no session) but still returns the org.
+func (s *Server) resolveOrg(c echo.Context) (*Org, error) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return nil, errOrgIDRequired
+	}
+	org, err := s.memory.GetOrg(c.Request().Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	if org == nil {
+		return nil, fmt.Errorf("organization not found")
+	}
+	s.activateOrg(c, id)
+	// activateOrg re-issues the cookie for future requests, but page() reads
+	// the request context, so mirror the org context there too (otherwise the
+	// activating request renders with a stale/no sidebar).
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok {
+		sc.OrgID = id
+		sc.ProjectID = ""
+	}
+	return org, nil
+}
+
+// uiOrg renders the org landing (GET /orgs/:id): the org's projects with an
+// empty state + create CTA when there are none. The ?deleted= and ?err= query
+// params surface PRG flash feedback from the delete-project flow; ?moved= +
+// ?project= surface the transfer confirmation.
+func (s *Server) uiOrg(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		// A failed org load (GetOrg) is an unavailable tenancy surface: render
+		// the sanitized message, never the raw backend error (#1654).
+		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{LoadErr: userFacingError(err)}))
+	}
+	projects, err := s.memory.ListProjectsIncludingPending(c.Request().Context())
+	if err != nil {
+		// A projects-list failure must render the unavailable state, not the
+		// empty "No projects yet / Create project" screen: the create CTA is
+		// reserved for a successful zero-project response.
+		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{Org: org, LoadErr: userFacingError(err)}))
+	}
+	// The org access tree supplies the acting user's orgs with roles:
+	// candidates for the transfer destination picker and the per-row
+	// Transfer-action gating. Threaded once per request (see orgAccessTree) and
+	// shared with page()'s sidebar gating.
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	var mine []ProjectRef
+	for _, p := range projects {
+		if p.OrgID == org.ID {
+			mine = append(mine, p)
+		}
+	}
+	data := orgPageData{Org: org, Projects: mine}
+	data.TransferOrgs, data.CanTransfer = transferState(tree, org.ID)
+	data.IsOrgAdmin = isOrgAdmin(tree, org.ID)
+	data.FlashErr = flashError(c)
+	if q := c.QueryParam("deleted"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil {
+			// Memory's project delete is async (202) — the project is
+			// soft-deleted and purged later, so the flash says the deletion was
+			// scheduled rather than claiming it is already gone.
+			if n == 1 {
+				data.FlashMsg = "Project scheduled for deletion."
+			} else {
+				data.FlashMsg = strconv.Itoa(n) + " projects scheduled for deletion."
+			}
+		}
+	}
+	if c.QueryParam("restored") != "" {
+		data.FlashMsg = "Deletion cancelled."
+	}
+	if q := c.QueryParam("moved"); q != "" {
+		data.FlashMsg = transferMovedMessage(projects, tree, c.QueryParam("project"), q)
+	}
+	return s.page(c, pageTitle(org.Name), OrgLandingPage(data))
+}
+
+// orgRoleFor returns the caller's role in orgID from their org access tree
+// ("" when the org is absent). This is the single place a rendered page learns
+// its caller's org role — every org gating surface consults it (or isOrgAdmin)
+// instead of re-deriving the role locally. The memory service stays
+// authoritative on every operation; this only decides UI visibility.
+func orgRoleFor(tree []OrgWithProjectsDto, orgID string) string {
+	for _, o := range tree {
+		if o.ID == orgID {
+			return o.Role
+		}
+	}
+	return ""
+}
+
+// isOrgAdmin reports whether the caller is org_admin of orgID per their access
+// tree.
+func isOrgAdmin(tree []OrgWithProjectsDto, orgID string) bool {
+	return orgRoleFor(tree, orgID) == "org_admin"
+}
+
+// orgTreeCtxKey is the request-context key caching the caller's org→project
+// access tree for one request, so the page data and the sidebar share a single
+// GetOrgsAndProjects evaluation instead of re-fetching it.
+type orgTreeCtxKey struct{}
+
+// withOrgTree returns a context carrying the caller's access tree, scoped to
+// one request.
+func withOrgTree(ctx context.Context, tree []OrgWithProjectsDto) context.Context {
+	return context.WithValue(ctx, orgTreeCtxKey{}, tree)
+}
+
+// orgTreeFrom returns the access tree cached in ctx, if one was computed for
+// this request.
+func orgTreeFrom(ctx context.Context) ([]OrgWithProjectsDto, bool) {
+	tree, ok := ctx.Value(orgTreeCtxKey{}).([]OrgWithProjectsDto)
+	return tree, ok
+}
+
+// orgAccessTree returns the caller's org→project access tree, computing it once
+// per request and caching it in the request context so every consumer of a
+// render — the org landing's transfer/role derivation, the members-page revoke
+// gate, the settings write controls, and page()'s sidebar gating — reads the
+// same single evaluation instead of re-fetching GetOrgsAndProjects. A failed
+// fetch yields an empty tree (fail closed) and returns the error for the caller
+// to capture or surface.
+func (s *Server) orgAccessTree(c echo.Context) ([]OrgWithProjectsDto, error) {
+	if tree, ok := orgTreeFrom(c.Request().Context()); ok {
+		return tree, nil
+	}
+	tree, err := s.memory.GetOrgsAndProjects(c.Request().Context())
+	c.SetRequest(c.Request().WithContext(withOrgTree(c.Request().Context(), tree)))
+	return tree, err
+}
+
+// orgAdminForCaller reports whether the caller is org_admin of orgID per the
+// request's access tree (see orgAccessTree). Best-effort: a failed fetch yields
+// an empty tree, which reports false — hiding admin affordances rather than
+// surfacing an error (the same degrade the transfer affordance already relies
+// on).
+func (s *Server) orgAdminForCaller(c echo.Context, orgID string) bool {
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	return isOrgAdmin(tree, orgID)
+}
+
+// projectAdminForCaller reports whether the caller may administer projectID:
+// project_admin of the project itself, or org_admin of the project's owning org
+// (resolved from the caller's org access tree, whose projects nest under their
+// org). Best-effort: a failed fetch yields an empty tree → false, hiding admin
+// affordances rather than surfacing an error (the same degrade as
+// orgAdminForCaller). Used only for UI visibility — the memory service stays
+// authoritative on every write.
+func (s *Server) projectAdminForCaller(c echo.Context, projectID string) bool {
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	for _, o := range tree {
+		for _, p := range o.Projects {
+			if p.ID != projectID {
+				continue
+			}
+			if p.Role == "project_admin" || o.Role == "org_admin" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// strictProjectAdminForCaller reports whether the caller is project_admin of
+// projectID itself, without widening to org_admin of the owning org. The memory
+// service requires an exact project_admin membership for project OAuth-client
+// reads and writes (auth.CanAdministerProject); using projectAdminForCaller here
+// would show an editor that every save rejects. Best-effort and UI-only, like
+// projectAdminForCaller.
+func (s *Server) strictProjectAdminForCaller(c echo.Context, projectID string) bool {
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	for _, o := range tree {
+		for _, p := range o.Projects {
+			if p.ID == projectID && p.Role == "project_admin" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// transferState derives the org-landing transfer affordance for the acting user
+// from their org access tree: the candidate destination orgs (their orgs minus
+// the source) and whether the per-project Transfer action is available — they
+// are org_admin of the source org and at least one candidate destination
+// exists. The memory service stays authoritative on the transfer itself
+// (design D4/D5); this only decides UI visibility.
+func transferState(tree []OrgWithProjectsDto, sourceOrgID string) (destinations []Org, canTransfer bool) {
+	role := orgRoleFor(tree, sourceOrgID)
+	for _, o := range tree {
+		if o.ID == sourceOrgID {
+			continue
+		}
+		destinations = append(destinations, Org{ID: o.ID, Name: o.Name})
+	}
+	return destinations, role == "org_admin" && len(destinations) > 0
+}
+
+// transferMovedMessage names the transferred project and its destination org in
+// the success flash. uiTransferProject redirects with ?moved=<destinationOrgID>
+// and ?project=<projectID>; both names resolve from data uiOrg already loads —
+// the user's full project list and org access tree — so naming costs no extra
+// round-trip. Falls back to a generic message when either name is unavailable
+// (e.g. the access-tree fetch failed or the project left the user's view).
+func transferMovedMessage(projects []ProjectRef, tree []OrgWithProjectsDto, projectID, destOrgID string) string {
+	projName := ""
+	for _, p := range projects {
+		if p.ID == projectID {
+			projName = p.Name
+			break
+		}
+	}
+	destName := ""
+	for _, o := range tree {
+		if o.ID == destOrgID {
+			destName = o.Name
+			break
+		}
+	}
+	if projName == "" || destName == "" {
+		return "Project moved."
+	}
+	return projName + " moved to " + destName + "."
+}
+
+// uiOrgMembers renders the active org's members (GET /orgs/:id/members).
+// ?invited=1 surfaces the org-invite success flash.
+func (s *Server) uiOrgMembers(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := orgMembersPageData{FlashErr: flashError(c)}
+	switch {
+	case c.QueryParam("invited") != "":
+		data.FlashMsg = "Invitation sent."
+	case c.QueryParam("added") != "":
+		data.FlashMsg = "Member added."
+	case c.QueryParam("role-changed") != "":
+		data.FlashMsg = "Role changed."
+	case c.QueryParam("removed") != "":
+		data.FlashMsg = "Member removed."
+	case c.QueryParam("revoked") != "":
+		data.FlashMsg = "Invite revoked."
+	case c.QueryParam("resent") != "":
+		data.FlashMsg = resendFlash(c.QueryParam("resent"))
+	}
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Members"), OrgMembersPage(data))
+	}
+	data.Org = org
+	data.IsOrgAdmin = s.orgAdminForCaller(c, org.ID)
+
+	members, err := s.memory.ListOrgMembers(ctx, org.ID)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Members"), OrgMembersPage(data))
+	}
+	data.Members = members
+	// Live presence is best-effort: a failed fetch still renders the persisted
+	// activity tiers.
+	if presence, perr := s.memory.GetOrgPresence(ctx, org.ID); perr == nil {
+		markOnlineOrg(data.Members, presenceSet(presence))
+	}
+
+	invites, ierr := s.memory.ListOrgInvites(ctx, org.ID)
+	if ierr != nil {
+		data.PendingErr = userFacingError(ierr)
+	} else {
+		for _, inv := range invites {
+			if inv.Status == "pending" {
+				data.Pending = append(data.Pending, inv)
+			}
+		}
+	}
+	return s.page(c, pageTitle("Members"), OrgMembersPage(data))
+}
+
+// uiOrgMemberAddPage renders the direct-add form (GET /orgs/:id/members/add):
+// add an already-registered user by exact email and choose their org role.
+func (s *Server) uiOrgMemberAddPage(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		return s.page(c, pageTitle("Add a member"), OrgMemberAddPage(orgMemberAddPageData{LoadErr: userFacingError(err), FlashErr: flashError(c)}))
+	}
+	return s.page(c, pageTitle("Add a member"), OrgMemberAddPage(orgMemberAddPageData{Org: org, FlashErr: flashError(c)}))
+}
+
+// uiOrgInvitePage renders the standalone invite-to-organization page
+// (GET /orgs/:id/invite): email (with live user-search autofill) + the fixed
+// org_admin role, posting to POST /orgs/:id/invite. ?err= surfaces PRG
+// feedback from the invite-create flow.
+func (s *Server) uiOrgInvitePage(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		return s.page(c, pageTitle("Invite a member"), OrgInvitePage(orgInvitePageData{LoadErr: userFacingError(err), FlashErr: flashError(c)}))
+	}
+	return s.page(c, pageTitle("Invite a member"), OrgInvitePage(orgInvitePageData{Org: org, FlashErr: flashError(c)}))
+}
+
+// uiOrgInviteCreate handles the invite-to-organization form (POST
+// /orgs/:id/invite; form fields email, role). The org comes from the route
+// (:id) and the project is deliberately omitted, so the invitation is
+// organization-scoped. Only the org_admin role is accepted here — project
+// roles are invited from the project members page. On success it redirects to
+// the org members page with ?invited=1; on failure back to the invite page
+// with the error. Memory stays authoritative: an org invite it rejects (e.g.
+// not an org_admin) surfaces through the same ?err= flash with no state change.
+func (s *Server) uiOrgInviteCreate(c echo.Context) error {
+	orgID := strings.TrimSpace(c.Param("id"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := "/orgs/" + url.PathEscape(orgID) + "/invite"
+	email := strings.TrimSpace(c.FormValue("email"))
+	if email == "" {
+		return redirectWithError(c, back, fmt.Errorf("email is required"))
+	}
+	role := strings.TrimSpace(c.FormValue("role"))
+	if role != "org_admin" && role != "org_member" {
+		return redirectWithError(c, back, fmt.Errorf("invalid role"))
+	}
+	if _, err := s.memory.CreateInvite(c.Request().Context(), CreateInviteDto{
+		OrgID: orgID,
+		Email: email,
+		Role:  role,
+	}); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/orgs/"+url.PathEscape(orgID)+"/members?invited=1")
+}
+
+// uiOrgSettings renders the Tools section of the active org's Settings hub
+// (GET /orgs/:id/settings) with PRG feedback from the toggle/delete flows.
+func (s *Server) uiOrgSettings(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{LoadErr: userFacingError(err)}))
+	}
+	settings, err := s.memory.ListOrgToolSettings(c.Request().Context(), org.ID)
+	if err != nil {
+		return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, LoadErr: userFacingError(err)}))
+	}
+	var flashMsg string
+	if c.QueryParam("updated") != "" {
+		flashMsg = "Tool setting updated."
+	}
+	return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, Settings: settings, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
+}
+
+// uiOrgSettingsDangerZone renders the Danger zone section of the active org's
+// Settings hub (GET /orgs/:id/settings/danger-zone): the delete-organization
+// confirm form. The browser title stays "Settings" so pageTestID remains the
+// stable "page-settings" anchor shared by both hub sections.
+func (s *Server) uiOrgSettingsDangerZone(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{LoadErr: userFacingError(err)}))
+	}
+	return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{Org: org, IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
+}
+
+// uiOrgSettingsGeneral renders the General section of the active org's Settings
+// hub (GET /orgs/:id/settings/general): the rename form. ?renamed=1 surfaces the
+// success flash; ?err= the failure flash.
+func (s *Server) uiOrgSettingsGeneral(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{LoadErr: userFacingError(err), FlashErr: flashError(c)}))
+	}
+	var flashMsg string
+	if c.QueryParam("renamed") != "" {
+		flashMsg = "Organization renamed."
+	}
+	return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{Org: org, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
+}
+
+// uiOrgRename renames the org (POST /orgs/:id/rename; form field name). The org
+// comes from the route (:id); memory stays authoritative on validation
+// (non-empty, ≤120 chars), not-found and authorization, whose errors surface
+// via the standard ?err= flash with no state change. Success redirects to the
+// General section with ?renamed=1.
+func (s *Server) uiOrgRename(c echo.Context) error {
+	orgID := strings.TrimSpace(c.Param("id"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := "/orgs/" + url.PathEscape(orgID) + "/settings/general"
+	name := strings.TrimSpace(c.FormValue("name"))
+	if name == "" {
+		return redirectWithError(c, back, fmt.Errorf("name is required"))
+	}
+	if _, err := s.memory.UpdateOrg(c.Request().Context(), orgID, name); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?renamed=1")
+}
+
+// uiOrgToolSettingUpdate toggles one org tool setting (POST
+// /orgs/:id/tool-settings/:toolName). The form carries the target enabled
+// state; config is preserved by the backend when omitted.
+func (s *Server) uiOrgToolSettingUpdate(c echo.Context) error {
+	orgID := strings.TrimSpace(c.Param("id"))
+	toolName := strings.TrimSpace(c.Param("toolName"))
+	if orgID == "" || toolName == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	enabled := c.FormValue("enabled") == "true"
+	if _, err := s.memory.UpsertOrgToolSetting(c.Request().Context(), orgID, toolName, UpsertOrgToolSettingInput{Enabled: enabled}); err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/orgs/"+url.PathEscape(orgID)+"/settings?updated=1")
+}
+
+// uiOrgToolSettingDelete removes one org tool-setting override (POST
+// /orgs/:id/tool-settings/:toolName/delete), reverting the tool to its global
+// default.
+func (s *Server) uiOrgToolSettingDelete(c echo.Context) error {
+	orgID := strings.TrimSpace(c.Param("id"))
+	toolName := strings.TrimSpace(c.Param("toolName"))
+	if orgID == "" || toolName == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	if err := s.memory.DeleteOrgToolSetting(c.Request().Context(), orgID, toolName); err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/orgs/"+url.PathEscape(orgID)+"/settings?updated=1")
+}
+
+// uiDeleteOrg deletes the org (POST /orgs/:id/delete), clears the session
+// context, and returns to the wizard.
+func (s *Server) uiDeleteOrg(c echo.Context) error {
+	orgID := strings.TrimSpace(c.Param("id"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	if err := s.memory.DeleteOrg(c.Request().Context(), orgID); err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", err)
+	}
+	s.clearContext(c)
+	return c.Redirect(http.StatusSeeOther, "/orgs/new")
+}
+
+// uiDeleteProjects deletes one or more projects (POST /projects/delete; form or
+// query field projectId repeated, plus orgId for the redirect back). Single
+// deletes arrive via the row action menu (HTMX), bulk deletes via the table
+// form (plain POST).
+func (s *Server) uiDeleteProjects(c echo.Context) error {
+	orgID := strings.TrimSpace(c.FormValue("orgId"))
+	if orgID == "" {
+		orgID = strings.TrimSpace(c.QueryParam("orgId"))
+	}
+	back := orgScopeURL(orgID)
+	if err := c.Request().ParseForm(); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	var ids []string
+	for _, v := range c.Request().Form["projectId"] {
+		if v = strings.TrimSpace(v); v != "" {
+			ids = append(ids, v)
+		}
+	}
+	if len(ids) == 0 {
+		return redirectWithError(c, back, fmt.Errorf("no projects selected"))
+	}
+	var firstErr error
+	for _, id := range ids {
+		if err := s.memory.DeleteProject(c.Request().Context(), id); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return redirectWithError(c, back, firstErr)
+	}
+	redirectAfterMutation(c, back+"?deleted="+strconv.Itoa(len(ids)))
+	return nil
+}
+
+// uiTransferProject reparents one project to another org the acting user
+// belongs to (POST /projects/transfer; form fields projectId, destinationOrgId,
+// and orgId — the source org, read from form or query like uiDeleteProjects,
+// used only for the redirect back). Local guards reject a missing/unknown
+// destination and a destination equal to the source with an error flash and NO
+// backend call; everything else — role checks, project existence, naming
+// collisions — is delegated to the memory service, whose errors surface via the
+// standard ?err= flash with no state change. On success the redirect (HTMX
+// single-row submit via redirectAfterMutation, plain form posts get the
+// PRG 303 fallback) returns to the source org view with a ?moved= +
+// ?project= confirmation flash naming the project and its new organization.
+func (s *Server) uiTransferProject(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := strings.TrimSpace(c.FormValue("orgId"))
+	if orgID == "" {
+		orgID = strings.TrimSpace(c.QueryParam("orgId"))
+	}
+	back := orgScopeURL(orgID)
+	projectID := strings.TrimSpace(c.FormValue("projectId"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(c.QueryParam("projectId"))
+	}
+	destOrgID := strings.TrimSpace(c.FormValue("destinationOrgId"))
+	if destOrgID == "" {
+		destOrgID = strings.TrimSpace(c.QueryParam("destinationOrgId"))
+	}
+	if projectID == "" {
+		return redirectWithError(c, back, fmt.Errorf("no project selected"))
+	}
+	// Local guard (spec): a transfer to the project's current organization — or
+	// one with no destination at all — is rejected here, no backend request.
+	if destOrgID == "" {
+		return redirectWithError(c, back, fmt.Errorf("a destination organization is required"))
+	}
+	if destOrgID == orgID {
+		return redirectWithError(c, back, fmt.Errorf("the project is already in that organization"))
+	}
+	// The destination must be one of the acting user's orgs (the same access
+	// tree the dialog's options come from). Anything beyond membership — role
+	// checks, project existence, name collisions — is the service's call.
+	orgs, err := s.memory.GetOrgsAndProjects(ctx)
+	if err != nil {
+		return redirectWithError(c, back, err)
+	}
+	known := false
+	for _, o := range orgs {
+		if o.ID == destOrgID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return redirectWithError(c, back, fmt.Errorf("destination organization is not available to you"))
+	}
+	if err := s.memory.TransferProject(ctx, projectID, destOrgID); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	redirectAfterMutation(c, back+"?moved="+url.QueryEscape(destOrgID)+"&project="+url.QueryEscape(projectID))
+	return nil
+}
+
+// uiRestoreProject cancels one project's pending deletion (POST
+// /projects/restore; form or query field projectId, plus orgId for the redirect
+// back — both read like uiDeleteProjects). A missing projectId is rejected
+// locally with an error flash; everything else is delegated to the memory
+// service, whose errors surface via the standard ?err= flash with no state
+// change. On success the redirect (HTMX single-row submit via
+// redirectAfterMutation, plain form posts get the PRG 303 fallback)
+// returns to the org view with a ?restored=1 confirmation flash.
+func (s *Server) uiRestoreProject(c echo.Context) error {
+	orgID := strings.TrimSpace(c.FormValue("orgId"))
+	if orgID == "" {
+		orgID = strings.TrimSpace(c.QueryParam("orgId"))
+	}
+	back := orgScopeURL(orgID)
+	projectID := strings.TrimSpace(c.FormValue("projectId"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(c.QueryParam("projectId"))
+	}
+	if projectID == "" {
+		return redirectWithError(c, back, fmt.Errorf("no project selected"))
+	}
+	if err := s.memory.RestoreProject(c.Request().Context(), projectID); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	redirectAfterMutation(c, back+"?restored=1")
+	return nil
+}
+
+// uiRoot resolves the landing redirect (GET /): dev/API-key mode keeps the
+// static-project landing; session mode resolves last-used project → activate,
+// else the active org → org landing (validated against the live org list), else
+// the first org → activate + landing, else the no-org wizard. A remembered org
+// that was deleted is cleared and the landing falls through to the next
+// fallback instead of bouncing onto the dead org. Project/org landings are the
+// canonical scoped URLs.
+func (s *Server) uiRoot(c echo.Context) error {
+	sc, hasSession := sessionContextFrom(c.Request().Context())
+	if !hasSession {
+		return c.Redirect(http.StatusFound, "/agents")
+	}
+	// Last-used project (durable recent list) wins, then the session's active
+	// project; both resolve to the project's scoped URL.
+	candidates := []string{}
+	if rc, ok := s.readRecentProjects(c); ok {
+		candidates = append(candidates, rc.Recent[sc.Sub]...)
+	}
+	if sc.ProjectID != "" {
+		candidates = append(candidates, sc.ProjectID)
+	}
+	if len(candidates) > 0 {
+		// Validate each candidate against the caller's org→project access tree —
+		// the same source applyScope uses — never ListProjects alone. ListProjects
+		// filters on kb.project_memberships without requiring an org membership, so
+		// a project membership whose org is absent from the tree would otherwise
+		// be accepted here and then 404/403 every scoped request (#1998).
+		if tree, err := s.orgAccessTree(c); err == nil {
+			for _, id := range candidates {
+				if orgID, projectID, ok := resolveProjectRefAnyOrg(tree, id); ok {
+					s.activateProjectInSession(c, projectID, orgID)
+					return c.Redirect(http.StatusFound, projectScopeURL(orgID, projectID)+"/agents")
+				}
+			}
+		} else {
+			captureError(err)
+		}
+	}
+	// Resolve the caller's orgs once and validate the remembered org against
+	// the live list: a remembered org that was deleted must not bounce the
+	// landing back onto it (the /o/<dead-org> 404 loop). Redirect to the
+	// remembered org only when it is still live; otherwise clear the stale
+	// context and fall through to the first live org or the no-org wizard.
+	orgs, err := s.memory.ListOrgs(c.Request().Context())
+	if err != nil {
+		// A backend failure must surface the explicit unavailable state, never
+		// the empty/onboarding wizard: the create screen is reserved for an
+		// authenticated zero-org response, so an outage cannot look like data
+		// loss.
+		return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(errors.New(userFacingMemoryError(err))))
+	}
+	if sc.OrgID != "" {
+		for _, o := range orgs {
+			if o.ID == sc.OrgID {
+				return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(sc.OrgID))
+			}
+		}
+		// Remembered org is gone: clear the stale session context and fall
+		// through to the existing fallbacks (first live org → /o/<id>, else
+		// the onboarding wizard).
+		s.clearContext(c)
+	}
+	if len(orgs) > 0 {
+		s.activateOrg(c, orgs[0].ID)
+		return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(orgs[0].ID))
+	}
+	return c.Redirect(http.StatusFound, "/orgs/new")
+}
+
+// orgMemberDisplayName is the best human label for an org member: display name,
+// else first+last, else the email.
+func orgMemberDisplayName(m OrgMemberDto) string {
+	if m.DisplayName != nil && *m.DisplayName != "" {
+		return *m.DisplayName
+	}
+	first, last := "", ""
+	if m.FirstName != nil {
+		first = *m.FirstName
+	}
+	if m.LastName != nil {
+		last = *m.LastName
+	}
+	if full := strings.TrimSpace(first + " " + last); full != "" {
+		return full
+	}
+	return m.Email
+}

@@ -1,0 +1,17 @@
+projectInfo: |
+  # Agent Notes Blueprint
+
+  A universal annotation layer for enriching any knowledge graph with agent
+  observations. The `agent-notes` schema pack defines Note and NoteCluster
+  object types — self-contained observations (preferences, patterns,
+  corrections, facts, instructions, conventions) stored as separate objects
+  with their own embeddings, never mixed with the source entity's structured
+  properties.
+
+  Key design decisions:
+  - Notes link to any graph entity via untyped ANNOTATES relationships
+  - Notes have dedicated embedding space (content field only)
+  - Notes are never extracted from documents — only created by agent tool calls
+  - NoteCluster groups semantically related notes for token-efficient context injection
+  - Confidence scores and decay enable automatic archival of stale observations
+  - Labels [note, {category}, {tier}] enable fast label-filtered queries

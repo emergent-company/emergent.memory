@@ -1,0 +1,360 @@
+package agents
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// agentRunOnce budget defaults. Kept below common MCP client tools/call
+// timeouts so a synchronous call returns rather than hanging.
+const (
+	defaultAgentOnceMaxSteps = 12
+	defaultAgentOnceTimeout  = 60 * time.Second
+)
+
+// agentRunner is the subset of AgentExecutor used by RunAgentOnce. *AgentExecutor
+// satisfies it; tests inject a fake.
+type agentRunner interface {
+	Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error)
+}
+
+// agentOnceRepository is the narrow repository surface RunAgentOnce needs.
+// *Repository satisfies it; tests inject a fake.
+type agentOnceRepository interface {
+	FindByID(ctx context.Context, id string, projectID *string) (*Agent, error)
+	FindDefinitionByID(ctx context.Context, id string, projectID *string) (*AgentDefinition, error)
+	// ResolveDefinitionForAgent resolves the definition backing a runtime agent
+	// via the agent_definition_id FK, the strategy_type marker
+	// (chat-session:<defID> / agent-def:<defID>), or name fallbacks. FK-less
+	// runtime agents (chat / OpenAI-compat dummies) rely on the marker/name
+	// fallbacks, so RunAgentOnce must use this rather than the FK alone.
+	ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error)
+	FindRunByID(ctx context.Context, runID string) (*AgentRun, error)
+	FindMessagesByRunID(ctx context.Context, runID string) ([]*AgentRunMessage, error)
+	FindPendingQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error)
+	GetOrgIDByProjectID(ctx context.Context, projectID string) (string, error)
+}
+
+// RunAgentOnce runs one agent synchronously with a bounded step/time budget and
+// returns the assistant reply text plus the run ID. It is the execution backend
+// for the per-agent MCP endpoint's call_agent tool.
+//
+// Failures are returned as *mcp.AgentRunError so the MCP transport can map them
+// to structured tool errors. A human-in-the-loop pause yields
+// mcp.AgentRunErrorPaused carrying the pending question; the caller must not
+// fabricate a reply.
+//
+// It is a thin wrapper over runAgentTurn that leaves the ADK session key
+// per-run (ConversationKey empty), preserving one-shot semantics.
+func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, message string, budget mcp.AgentRunBudget) (string, string, error) {
+	reply, runID, _, err := h.runAgentTurn(ctx, projectID, agentID, "", message, budget)
+	return reply, runID, err
+}
+
+// RunAgentInSession runs one agent turn inside a persistent conversation
+// session. It is identical to RunAgentOnce except that it sets
+// ExecuteRequest.ConversationKey, so the executor keys the ADK session as
+// "session:<projectID>:<sessionRef>" and successive turns share history
+// (cross-run load/token-trim/LLM-compress, executor.go).
+//
+// It is a NEW entry point; RunAgentOnce keeps its four-argument signature and
+// its one-shot behaviour. The returned step count is the number of agent steps
+// the executor actually ran this turn, used by the caller to enforce a
+// cumulative session budget.
+func (h *MCPToolHandler) RunAgentInSession(ctx context.Context, projectID, agentID, sessionRef, message string, budget mcp.AgentRunBudget) (string, string, int, error) {
+	return h.runAgentTurn(ctx, projectID, agentID, sessionRef, message, budget)
+}
+
+// ResolveAgentDefinitionID resolves the kb.agent_definitions id backing a
+// runtime agent (kb.agents id), for actor provenance stamping. It returns ""
+// when the agent cannot be found or its definition cannot be resolved, so the
+// caller can skip stamping and leave the write unattributed (the kb.agents id is
+// a separate id space and must never be stamped as the actor_id).
+func (h *MCPToolHandler) ResolveAgentDefinitionID(ctx context.Context, projectID, agentID string) string {
+	repo := h.onceRepo
+	if repo == nil {
+		if h.repo != nil {
+			repo = h.repo
+		}
+	}
+	if repo == nil {
+		return ""
+	}
+	agent, err := repo.FindByID(ctx, agentID, &projectID)
+	if err != nil || agent == nil {
+		return ""
+	}
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	if err != nil || def == nil {
+		return ""
+	}
+	return def.ID
+}
+
+// runAgentTurn is the shared execution core for RunAgentOnce and
+// RunAgentInSession. sessionRef is empty for the one-shot path; when non-empty
+// it is carried to the executor as ExecuteRequest.ConversationKey.
+//
+// Failures are returned as *mcp.AgentRunError; the reply extraction
+// (assistantReply) and error mapping live here and are shared, never
+// duplicated.
+func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, sessionRef, message string, budget mcp.AgentRunBudget) (string, string, int, error) {
+	repo := h.onceRepo
+	if repo == nil {
+		if h.repo != nil {
+			repo = h.repo
+		}
+	}
+	runner := h.onceRunner
+	if runner == nil {
+		if h.executor != nil {
+			runner = h.executor
+		}
+	}
+	if repo == nil || runner == nil {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent execution is unavailable"}
+	}
+
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "message is required"}
+	}
+
+	agent, err := repo.FindByID(ctx, agentID, &projectID)
+	if err != nil {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent: " + err.Error()}
+	}
+	if agent == nil {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent not found"}
+	}
+	if !agent.Enabled {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent is disabled"}
+	}
+
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	if err != nil {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
+	}
+
+	// Type-scope delegation guard: when a scoped caller invokes call_agent, the
+	// target's declared allowlist must not widen beyond the caller's (#1695).
+	// External (no-scope) callers are unaffected.
+	if delegationDeniedByTypeScope(ctx, def) {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: delegationScopeError()}
+	}
+
+	// Resolve the org that owns the project so the executor can attribute LLM
+	// usage to the correct tenant. OrgIDFromContext is non-empty only when a
+	// caller has already resolved the org (executor loopback via
+	// ContextWithOrgID, or the auth middleware from a token/project binding); it
+	// is empty for human/OAuth session callers with no project binding. The
+	// fallback resolves the owning org authoritatively from kb.projects, so every
+	// caller type ends up with the same org. The context read is a short-circuit
+	// that avoids the DB round-trip when the org is already known.
+	orgID := auth.OrgIDFromContext(ctx)
+	if orgID == "" {
+		orgID, _ = repo.GetOrgIDByProjectID(ctx, projectID)
+	}
+
+	maxSteps := budget.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = defaultAgentOnceMaxSteps
+	}
+	timeout := budget.Timeout
+	if timeout <= 0 {
+		timeout = defaultAgentOnceTimeout
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Inherit the caller's trust. call_agent is only reachable through the
+	// per-agent MCP endpoint (an admin-minted mcp:agent-call key), i.e. a direct
+	// authenticated MCP client with no parent run — an external-facing surface,
+	// not the session UI — so this resolves to untrusted (false). The run keeps
+	// that marker unchanged, which is what stops the called agent from reaching
+	// internal-visible agents through its own coordination tools.
+	trusted := inheritedTrust(ctx, repo.FindRunByID)
+
+	result, err := runner.Execute(runCtx, ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: def,
+		ProjectID:       projectID,
+		OrgID:           orgID,
+		UserMessage:     message,
+		ConversationKey: sessionRef,
+		MaxSteps:        &maxSteps,
+		Timeout:         &timeout,
+		TrustedInternal: trusted, // inherit the caller's trust; never force true
+	})
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
+
+	// The executor's per-turn step count is the unit of cumulative session
+	// budget accounting. Zero when no result was produced.
+	steps := 0
+	if result != nil {
+		steps = result.Steps
+	}
+
+	// A context deadline is a budget exhaustion regardless of how the executor
+	// reported it (it may surface as an error or a RunStatusError result).
+	if runCtx.Err() == context.DeadlineExceeded {
+		runID := ""
+		if result != nil {
+			runID = result.RunID
+		}
+		return "", runID, steps, &mcp.AgentRunError{
+			Kind:    mcp.AgentRunErrorBudget,
+			Message: "agent run exceeded the time budget",
+			RunID:   runID,
+		}
+	}
+	if err != nil {
+		return "", "", steps, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "agent run failed: " + err.Error()}
+	}
+	if result == nil {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "agent run produced no result"}
+	}
+
+	runID := result.RunID
+	switch result.Status {
+	case RunStatusPaused:
+		// A pause with a pending question needs human input; a pause without one
+		// is the step-limit budget being exhausted.
+		if question := pendingQuestionText(ctx, repo, runID); question != "" {
+			return "", runID, steps, &mcp.AgentRunError{
+				Kind:     mcp.AgentRunErrorPaused,
+				Message:  "agent run paused awaiting human input",
+				Question: question,
+				RunID:    runID,
+			}
+		}
+		return "", runID, steps, &mcp.AgentRunError{
+			Kind:    mcp.AgentRunErrorBudget,
+			Message: "agent run exceeded the step budget",
+			RunID:   runID,
+		}
+	case RunStatusError:
+		return "", runID, steps, &mcp.AgentRunError{
+			Kind:    mcp.AgentRunErrorFailed,
+			Message: runFailureMessage(ctx, repo, runID, result),
+			RunID:   runID,
+		}
+	}
+
+	reply, err := assistantReply(ctx, repo, runID)
+	if err != nil {
+		return "", runID, steps, err
+	}
+	return reply, runID, steps, nil
+}
+
+// agentADKSessionKey derives the ADK session key for a caller-supplied session
+// ref. It is the single definition of the cross-run session key namespace:
+// executor.Execute uses it when ExecuteRequest.ConversationKey is set, and the session
+// tests assert against it.
+func agentADKSessionKey(projectID, sessionRef string) string {
+	return "session:" + projectID + ":" + sessionRef
+}
+
+// pendingQuestionText returns the first pending question for a run, or "".
+func pendingQuestionText(ctx context.Context, repo agentOnceRepository, runID string) string {
+	if runID == "" {
+		return ""
+	}
+	questions, err := repo.FindPendingQuestionsByRunID(ctx, runID)
+	if err != nil || len(questions) == 0 || questions[0] == nil {
+		return ""
+	}
+	return questions[0].Question
+}
+
+// runFailureMessage prefers the persisted run error message, falling back to the
+// executor summary and then a generic message.
+func runFailureMessage(ctx context.Context, repo agentOnceRepository, runID string, result *ExecuteResult) string {
+	if runID != "" {
+		if run, err := repo.FindRunByID(ctx, runID); err == nil && run != nil && run.ErrorMessage != nil && *run.ErrorMessage != "" {
+			return *run.ErrorMessage
+		}
+	}
+	if result != nil && result.Summary != nil {
+		if msg, _ := result.Summary["error"].(string); msg != "" {
+			return msg
+		}
+	}
+	return "agent run failed"
+}
+
+// IsAgentReplyRole reports whether a persisted run-message role can carry the
+// bound agent's reply text.
+//
+// It is the single shared predicate for the persisted-author contract: the
+// executor persists assistant turns under the ADK event Author — the sanitized
+// agent name (e.g. "research_agent", "coder", "Norwegian_Law_Assistant"), NOT
+// the literal "assistant" (see persistEventContent and sanitizeAgentName).
+// CONSUMERS MUST NOT COMPARE AgentRunMessage.Role / ConversationHistoryItem.Role
+// AGAINST "assistant": that literal never matches a real agent turn, so an
+// equality check silently drops every reply. Route role classification through
+// this predicate instead (the runrole-guard preflight gate fails a new
+// `role == "assistant"` / `role != "assistant"` check on run-message data).
+//
+// A role is an agent reply when it is not an explicit user/tool/system side: the
+// empty role, "user", "tool" (executor tool responses), "tool_result"
+// (ACP/historical tool output), and "system" are excluded, so prompts and raw
+// tool output never leak to a caller; every other author — including the literal
+// "assistant" from hand-written or migrated rows — is accepted.
+func IsAgentReplyRole(role string) bool {
+	switch role {
+	case "", "user", "tool", "tool_result", "system":
+		return false
+	default:
+		return true
+	}
+}
+
+// assistantReply returns the last non-empty reply text from the run's persisted
+// RAW messages. It accepts the agent-authored role (the sanitized agent name)
+// as well as a literal "assistant" role, while excluding user/tool/system
+// messages so the ACP collapse of system and tool_result to "agent" cannot leak
+// them. When no reply text exists it returns an explicit structured error
+// rather than an empty success.
+func assistantReply(ctx context.Context, repo agentOnceRepository, runID string) (string, error) {
+	if runID == "" {
+		return "", &mcp.AgentRunError{
+			Kind:    mcp.AgentRunErrorFailed,
+			Message: "agent run produced no assistant reply",
+		}
+	}
+	msgs, err := repo.FindMessagesByRunID(ctx, runID)
+	if err != nil {
+		return "", &mcp.AgentRunError{
+			Kind:    mcp.AgentRunErrorFailed,
+			Message: "failed to load run messages: " + err.Error(),
+			RunID:   runID,
+		}
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m == nil || !IsAgentReplyRole(m.Role) {
+			continue
+		}
+		var b strings.Builder
+		if text, ok := m.Content["text"].(string); ok && text != "" {
+			b.WriteString(text)
+		}
+		if b.Len() > 0 {
+			return b.String(), nil
+		}
+	}
+	return "", &mcp.AgentRunError{
+		Kind:    mcp.AgentRunErrorFailed,
+		Message: "agent run produced no assistant reply",
+		RunID:   runID,
+	}
+}

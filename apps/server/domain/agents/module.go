@@ -1,0 +1,524 @@
+package agents
+
+import (
+	"context"
+	"log/slog"
+
+	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/orgs"
+	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/uptrace/bun"
+	"google.golang.org/adk/v2/session"
+)
+
+// Module provides the agents domain
+var Module = fx.Module("agents",
+	fx.Provide(
+		NewRepository,
+		NewTestLLMFlagChecker,
+		provideADKTestLLMChecker,
+		provideEmbeddingsTestLLMChecker,
+		provideToolPool,
+		provideSessionService,
+		provideAgentExecutor,
+		provideHandler,
+		provideA2AHandler,
+		provideTriggerService,
+		provideMCPToolHandler,
+		provideWebhookRateLimiter,
+		provideWorkerPool,
+		provideStaleRunReaper,
+		provideSessionTitleHandlerForMCP,
+		provideOrgToolPoolInvalidator,
+		provideShareRepo,
+		provideShareRunner,
+		provideShareResponder,
+		provideShareService,
+		provideShareHandler,
+		provideShareRunReaper,
+		provideWorkObjectStore,
+		provideWorkStatusReaper,
+		provideWorkReconciler,
+		provideWorkActionService,
+	),
+	fx.Invoke(
+		RegisterRoutes,
+		RegisterShareRoutes,
+		RegisterA2ARoutes,
+		registerAgentTriggers,
+		registerOrphanRecovery,
+		registerWorkerPool,
+		registerHandlerMCPToolHandler,
+		registerHandlerMCPService,
+		registerRelayToolPoolInvalidator,
+		registerAgentToolHandler,
+		registerToolPoolInvalidator,
+		registerStaleRunReaper,
+		registerShareRunReaper,
+		registerWorkObjectStore,
+		registerWorkStatusReaper,
+		registerWorkReconciler,
+		registerHandlerWorkActions,
+		registerHandlerTriggerService,
+	),
+)
+
+func provideSessionService(db *bun.DB) session.Service {
+	return bunsession.NewService(db)
+}
+
+// provideWebhookRateLimiter creates a WebhookRateLimiter
+func provideWebhookRateLimiter() *WebhookRateLimiter {
+	return NewWebhookRateLimiter()
+}
+
+// provideToolPool creates a ToolPool from fx dependencies.
+func provideToolPool(mcpService *mcp.Service, registryService *mcpregistry.Service, relayService *mcprelay.Service, log *slog.Logger) *ToolPool {
+	return NewToolPool(ToolPoolConfig{
+		MCPService:      mcpService,
+		RegistryService: registryService,
+		RelayService:    relayService,
+		Logger:          log,
+	})
+}
+
+// provideAgentExecutor creates an AgentExecutor from fx dependencies.
+func provideAgentExecutor(
+	modelFactory *adk.ModelFactory,
+	toolPool *ToolPool,
+	repo *Repository,
+	skillRepo *skills.Repository,
+	embeddingsSvc *embeddings.Service,
+	provisioner *sandbox.AutoProvisioner,
+	cfg *config.Config,
+	sessionService session.Service,
+	providerRepo *provider.Repository,
+	apiTokenSvc *apitoken.Service,
+	usageSvc *provider.UsageService,
+	eventsSvc *events.Service,
+	notificationsSvc *notifications.Service,
+	log *slog.Logger,
+) *AgentExecutor {
+	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, usageSvc, eventsSvc, notificationsSvc, log)
+}
+
+// provideHandler creates a Handler with both repo and executor.
+func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, cfg *config.Config, providerRepo *provider.Repository, usageSvc *provider.UsageService, sandboxStore *sandbox.Store) *Handler {
+	tempoURL := ""
+	if cfg.Otel.Enabled() {
+		tempoURL = cfg.Otel.InternalTempoQueryURL()
+	}
+	return NewHandler(repo, executor, rateLimiter, tempoURL, &providerPricingAdapter{repo: providerRepo}, usageSvc, providerRepo, sandboxStore)
+}
+
+// providerPricingAdapter wraps *provider.Repository to satisfy the pricingLookup
+// interface without importing the provider package from handler.go.
+type providerPricingAdapter struct {
+	repo *provider.Repository
+}
+
+func (a *providerPricingAdapter) lookupModelPricing(ctx context.Context, model string) (providerName string, textIn float64, out float64, found bool) {
+	p, err := a.repo.GetPricingByModel(ctx, model)
+	if err != nil || p == nil {
+		return "", 0, 0, false
+	}
+	return string(p.Provider), p.TextInputPrice, p.OutputPrice, true
+}
+
+// provideA2AHandler creates an A2AHandler from fx dependencies.
+func provideA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger, cfg *config.Config) *A2AHandler {
+	return NewA2AHandler(repo, executor, eventsSvc, log, cfg)
+}
+
+// provideTriggerService creates a TriggerService from fx dependencies.
+func provideTriggerService(
+	sched *scheduler.Scheduler,
+	executor *AgentExecutor,
+	repo *Repository,
+	eventService *events.Service,
+	log *slog.Logger,
+) *TriggerService {
+	return NewTriggerService(sched, executor, repo, eventService, log)
+}
+
+// provideMCPToolHandler creates an MCPToolHandler from fx dependencies.
+func provideMCPToolHandler(repo *Repository, executor *AgentExecutor, log *slog.Logger, extractionJobs mcp.ExtractionJobFinder, embeddingJobs mcp.EmbeddingJobFinder) *MCPToolHandler {
+	return NewMCPToolHandler(repo, executor, log, extractionJobs, embeddingJobs)
+}
+
+// registerAgentToolHandler wires the MCPToolHandler into mcp.Service after
+// construction (agents → mcp; deferred to fx.Invoke to break the constructor cycle).
+func registerAgentToolHandler(mcpService *mcp.Service, handler *MCPToolHandler) {
+	mcpService.RegisterAgentToolHandler(handler)
+}
+
+// registerHandlerMCPToolHandler injects the MCPToolHandler into the REST Handler
+// so the project-scoped run route can reuse buildRememberStatus for the
+// remember-status endpoint.
+func registerHandlerMCPToolHandler(h *Handler, mcpToolHandler *MCPToolHandler) {
+	h.WithMCPToolHandler(mcpToolHandler)
+}
+
+// registerHandlerMCPService injects the MCP service into the REST Handler so the
+// agent-definition read path can compute the full tool-group catalog (dynamic
+// tool scope resolution) without a per-request DB scan.
+func registerHandlerMCPService(h *Handler, mcpService *mcp.Service) {
+	h.WithMCPService(mcpService)
+}
+
+// provideSessionTitleHandlerForMCP exposes the Repository as mcp.SessionTitleHandler
+// so the set_session_title built-in tool can update session metadata.
+func provideSessionTitleHandlerForMCP(repo *Repository) mcp.SessionTitleHandler {
+	return repo
+}
+
+// orphanedSandboxStore is the sandbox-store surface needed to recover sandbox
+// rows whose owning run is no longer live.
+type orphanedSandboxStore interface {
+	ListOrphanedSandboxes(ctx context.Context, liveRunStatuses []string) ([]*sandbox.AgentSandbox, error)
+	Update(ctx context.Context, ws *sandbox.AgentSandbox, fields ...string) (*sandbox.AgentSandbox, error)
+}
+
+// liveRunStatuses are the run states that still own their sandbox. A sandbox
+// row linked to a run in any of these states must not be recovered.
+func liveRunStatuses() []string {
+	return []string{
+		string(RunStatusQueued),
+		string(RunStatusRunning),
+		string(RunStatusCancelling),
+	}
+}
+
+// recoverOrphanedSandboxes transitions agent-sandbox rows whose owning run is
+// no longer active out of a non-stopped state, logging each row with its id,
+// provider workspace id, and previous status. It reuses the existing
+// reconciliation contract: it only makes rows eligible for reclamation rather
+// than destroying containers directly.
+//
+// Container and volume reclamation for the transitioned rows is performed by
+// the label-based orphan reconciler owned by fix-warm-pool-orphan-reaping (not
+// present in this change). Recovery is best-effort: a failed update is logged
+// and does not abort the remaining rows, and a row that is already
+// stopped/errored is left untouched (idempotent across repeated startups).
+func recoverOrphanedSandboxes(ctx context.Context, store orphanedSandboxStore, log *slog.Logger) (int, error) {
+	if store == nil {
+		return 0, nil
+	}
+	orphans, err := store.ListOrphanedSandboxes(ctx, liveRunStatuses())
+	if err != nil {
+		return 0, err
+	}
+
+	recovered := 0
+	for _, ws := range orphans {
+		if ws == nil {
+			continue
+		}
+		previous := ws.Status
+		if previous == sandbox.StatusStopped || previous == sandbox.StatusError {
+			// Already terminal; nothing to do (idempotent recovery).
+			continue
+		}
+		ws.Status = sandbox.StatusStopped
+		if _, err := store.Update(ctx, ws, "status"); err != nil {
+			log.Warn("failed to transition orphaned sandbox row out of non-stopped state",
+				slog.String("sandbox_id", ws.ID),
+				slog.String("previous_status", string(previous)),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		log.Warn("recovered orphaned sandbox row on startup",
+			slog.String("sandbox_id", ws.ID),
+			slog.String("provider_workspace_id", ws.ProviderWorkspaceID),
+			slog.String("previous_status", string(previous)),
+			slog.String("reason", "owning run is no longer active after restart"),
+			slog.String("note", "container/volume reclamation is performed by the orphan reconciler (fix-warm-pool-orphan-reaping)"),
+		)
+		recovered++
+	}
+	return recovered, nil
+}
+
+// registerOrphanRecovery marks any agent runs that were left in "running" status
+// (due to an unclean server shutdown) as errored on startup, and re-enqueues
+// any queued runs that lost their job row.
+func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, sandboxStore *sandbox.Store, log *slog.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			n, err := repo.MarkOrphanedRunsAsError(ctx)
+			if err != nil {
+				log.Warn("failed to mark orphaned agent runs as error on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if n > 0 {
+				log.Warn("marked orphaned agent runs as error on startup",
+					slog.Int("count", n),
+				)
+			}
+
+			// Resolve runs parked in the intermediate "cancelling" state whose
+			// executor is gone, without touching a run still owned by a live
+			// instance. This sweep is age/heartbeat-aware (idle past
+			// staleRunThreshold), so a rolling restart on one instance can never
+			// finalize a run executing on another. A committed cancel always
+			// resolves to cancelled, never to a failure (issue #1166).
+			if k, err := repo.FinalizeOrphanedCancellingRuns(ctx); err != nil {
+				log.Warn("failed to finalize orphaned cancelling agent runs on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if k > 0 {
+				log.Warn("finalized orphaned cancelling agent runs as cancelled on startup",
+					slog.Int("count", k),
+				)
+			}
+
+			// Re-enqueue queued runs that lost their job row (e.g. due to crash mid-enqueue)
+			m, err := repo.RequeueOrphanedQueuedRuns(ctx)
+			if err != nil {
+				log.Warn("failed to re-enqueue orphaned queued runs on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if m > 0 {
+				log.Warn("re-enqueued orphaned queued runs on startup",
+					slog.Int("count", m),
+				)
+			}
+
+			// Transition sandbox rows whose owning run is no longer active out
+			// of a non-stopped state so they become eligible for container
+			// reclamation. Runs queued by the step above are still live and
+			// their sandboxes are spared.
+			if n, err := recoverOrphanedSandboxes(ctx, sandboxStore, log); err != nil {
+				log.Warn("failed to recover orphaned sandbox rows on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if n > 0 {
+				log.Warn("recovered orphaned sandbox rows on startup", slog.Int("count", n))
+			}
+			return nil
+		},
+	})
+}
+
+// registerAgentTriggers syncs all agent triggers on startup.
+func registerAgentTriggers(lc fx.Lifecycle, ts *TriggerService) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// SyncAllTriggers is best-effort; log but don't block startup
+			if err := ts.SyncAllTriggers(ctx); err != nil {
+				ts.log.Warn("failed to sync agent triggers on startup",
+					slog.String("error", err.Error()),
+				)
+			}
+			return nil
+		},
+	})
+}
+
+// registerToolPoolInvalidator wires the ToolPool into mcpregistry.Service after
+// construction (mcpregistry → agents; deferred to fx.Invoke to break the constructor cycle).
+func registerToolPoolInvalidator(registryService *mcpregistry.Service, toolPool *ToolPool) {
+	registryService.RegisterToolPoolInvalidator(toolPool)
+}
+
+// provideOrgToolPoolInvalidator exposes the ToolPool as orgs.ToolPoolInvalidator
+// so org-level tool setting changes automatically invalidate the ToolPool cache.
+func provideOrgToolPoolInvalidator(toolPool *ToolPool) orgs.ToolPoolInvalidator {
+	return toolPool
+}
+
+// registerRelayToolPoolInvalidator wires the ToolPool into the mcprelay service
+// so that relay session registrations/unregistrations automatically invalidate
+// the ToolPool cache for the affected project.
+func registerRelayToolPoolInvalidator(relayService *mcprelay.Service, toolPool *ToolPool) {
+	relayService.OnChange(func(projectID, instanceID string, isRegister bool) {
+		toolPool.InvalidateCache(projectID)
+	})
+}
+
+// provideWorkerPool creates a WorkerPool from fx dependencies.
+func provideWorkerPool(repo *Repository, executor *AgentExecutor, cfg *config.Config, log *slog.Logger) *WorkerPool {
+	pool := NewWorkerPool(repo, executor, log, cfg.AgentWorkerPoolSize, cfg.AgentWorkerPollInterval)
+	pool.SetRefreshInterval(cfg.AgentWorkerQueueRefreshInterval)
+	return pool
+}
+
+// provideWorkObjectStore exposes the graph service as the agents domain's
+// narrow work-object surface, used by dispatch (HEAD version lookup) and the
+// worker pool (versioned claim transition).
+func provideWorkObjectStore(svc *graph.Service) WorkObjectStore {
+	return svc
+}
+
+// registerWorkObjectStore injects the work-object store into the trigger
+// service, the worker pool, the executor, and the human-action service after
+// construction.
+func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, executor *AgentExecutor, wa *WorkActionService, store WorkObjectStore) {
+	ts.SetWorkObjectStore(store)
+	pool.SetWorkObjectStore(store)
+	executor.SetWorkObjectStore(store)
+	wa.SetWorkObjectStore(store)
+}
+
+// provideWorkActionService creates the human-action service for work items.
+func provideWorkActionService(repo *Repository, log *slog.Logger) *WorkActionService {
+	return NewWorkActionService(repo, log)
+}
+
+// registerHandlerWorkActions injects the human-action service into the REST
+// handler.
+func registerHandlerWorkActions(h *Handler, svc *WorkActionService) {
+	h.WithWorkActionService(svc)
+}
+
+// registerHandlerTriggerService injects the TriggerService into the REST Handler
+// so the runtime agent write paths (create/update/enable/delete) keep the
+// in-memory trigger registry in step with row changes (issue #2388).
+func registerHandlerTriggerService(h *Handler, ts *TriggerService) {
+	h.WithTriggerService(ts)
+}
+
+// registerWorkerPool wires the WorkerPool into the fx lifecycle.
+func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns, which would immediately kill all worker goroutines.
+			return pool.Start(context.Background())
+		},
+		OnStop: func(ctx context.Context) error {
+			pool.Stop()
+			return nil
+		},
+	})
+}
+
+func provideStaleRunReaper(repo *Repository, log *slog.Logger) *StaleRunReaper {
+	return NewStaleRunReaper(repo, log)
+}
+
+func provideWorkStatusReaper(repo *Repository, log *slog.Logger, cfg *config.Config) *WorkStatusReaper {
+	return NewWorkStatusReaper(repo, log, cfg.WorkStatusReaperInterval, cfg.WorkStatusReaperThreshold)
+}
+
+func provideWorkReconciler(repo *Repository, log *slog.Logger, cfg *config.Config) *WorkReconciler {
+	return NewWorkReconciler(repo, log, cfg.WorkReconcilerInterval)
+}
+
+func registerWorkStatusReaper(lc fx.Lifecycle, reaper *WorkStatusReaper, store WorkObjectStore) {
+	reaper.SetWorkObjectStore(store)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}
+
+func registerWorkReconciler(lc fx.Lifecycle, rc *WorkReconciler, store WorkObjectStore) {
+	rc.SetWorkObjectStore(store)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reconciler goroutine before its first tick.
+			rc.Start(context.Background())
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			rc.Stop()
+			return nil
+		},
+	})
+}
+
+func registerStaleRunReaper(lc fx.Lifecycle, reaper *StaleRunReaper) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}
+
+// --- Share feature wiring ---
+
+func provideShareRepo(repo *Repository) ShareRepo {
+	return repo
+}
+
+func provideShareRunner(executor *AgentExecutor) shareRunner {
+	return executor
+}
+
+func provideShareResponder(h *Handler) QuestionResponder {
+	return h
+}
+
+func provideShareService(repo ShareRepo, apiTokens *apitoken.Service, runner shareRunner, responder QuestionResponder, cfg *config.Config, log *slog.Logger) *ShareService {
+	return NewShareService(repo, apiTokens, runner, responder, cfg.ShareRefSecret, log)
+}
+
+func provideShareHandler(svc *ShareService) *ShareHandler {
+	return NewShareHandler(svc)
+}
+
+func provideShareRunReaper(repo *Repository, log *slog.Logger) *ShareRunReaper {
+	return NewShareRunReaper(repo, log)
+}
+
+func registerShareRunReaper(lc fx.Lifecycle, reaper *ShareRunReaper) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}
+
+// provideADKTestLLMChecker exposes the test-LLM flag checker to pkg/adk.
+func provideADKTestLLMChecker(c *TestLLMFlagChecker) adk.TestLLMChecker {
+	return c
+}
+
+// provideEmbeddingsTestLLMChecker exposes the test-LLM flag checker to pkg/embeddings.
+func provideEmbeddingsTestLLMChecker(c *TestLLMFlagChecker) embeddings.TestLLMChecker {
+	return c
+}

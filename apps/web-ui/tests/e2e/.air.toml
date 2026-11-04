@@ -1,0 +1,15 @@
+root = "."
+tmp_dir = "/tmp/air-e2e"
+
+[build]
+  cmd = "true"
+  bin = "/usr/bin/npx"
+  args_bin = ["playwright", "test", "--ui", "--ui-host", "0.0.0.0", "--ui-port", "8123"]
+  include_ext = ["ts", "js", "mjs", "json"]
+  exclude_dir = ["node_modules", "test-results", ".auth", ".playwright", "playwright-report"]
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

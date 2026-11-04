@@ -1,0 +1,135 @@
+# Migration: v1.4.0 → v1.5.0
+# String properties that duplicated graph relationships are removed.
+# Each removed property has a corresponding relationship that carries the same data.
+# New relationship types are added to replace them.
+# Also adds Domain as a first-class object type.
+#
+# Live data impact:
+#   - Strip the listed properties from all affected objects.
+#   - Ensure the corresponding relationships exist (create them if missing).
+
+from: 1.4.0
+to: 1.5.0
+
+objectTypeSchemas:
+
+  add:
+    - name: Domain
+      description: >
+        Added as a first-class type. Previously domain grouping was implicit
+        (string tags or naming conventions). Now Scenarios, Services, Jobs,
+        Modules, and APIEndpoints all link to a Domain node via `belongs_to`.
+
+  remove: []
+
+  properties:
+
+    # Service.file → replaced by: SourceFile --defines→ Service
+    - objectType: Service
+      remove:
+        - name: file
+          reason: >
+            Stored a string path to the source file. Replace with a
+            SourceFile --defines→ Service relationship.
+
+    # Service.domain → replaced by: Service --belongs_to→ Domain
+    - objectType: Service
+      remove:
+        - name: domain
+          reason: >
+            Stored a string domain name. Replace with a
+            Service --belongs_to→ Domain relationship.
+
+    # Job.file → replaced by: SourceFile --defines→ Job
+    - objectType: Job
+      remove:
+        - name: file
+          reason: >
+            Stored a string path to the source file. Replace with a
+            SourceFile --defines→ Job relationship.
+
+    # Job.domain → replaced by: Job --belongs_to→ Domain
+    - objectType: Job
+      remove:
+        - name: domain
+          reason: >
+            Stored a string domain name. Replace with a
+            Job --belongs_to→ Domain relationship.
+
+    # APIEndpoint.domain → replaced by: APIEndpoint --belongs_to→ Domain
+    - objectType: APIEndpoint
+      remove:
+        - name: domain
+          reason: >
+            Stored a string domain name. Replace with an
+            APIEndpoint --belongs_to→ Domain relationship.
+
+    # APIEndpoint.source_file → replaced by: SourceFile --handles→ APIEndpoint
+    - objectType: APIEndpoint
+      remove:
+        - name: source_file
+          reason: >
+            Stored a string path to the handler source file. Replace with a
+            SourceFile --handles→ APIEndpoint relationship.
+
+    # DataModel.persistence → replaced by: Database --stores→ DataModel
+    - objectType: DataModel
+      remove:
+        - name: persistence
+          reason: >
+            Stored a string like "postgres" or "memory". Replace with a
+            Database --stores→ DataModel relationship.
+
+    # Pattern.example_path → replaced by: SourceFile --exemplifies→ Pattern
+    - objectType: Pattern
+      remove:
+        - name: example_path
+          reason: >
+            Stored a string file path to a canonical positive example.
+            Replace with a SourceFile --exemplifies→ Pattern relationship.
+
+    # Pattern.counter_example_path → replaced by: SourceFile --counter_exemplifies→ Pattern
+    - objectType: Pattern
+      remove:
+        - name: counter_example_path
+          reason: >
+            Stored a string file path to a canonical negative example.
+            Replace with a SourceFile --counter_exemplifies→ Pattern relationship.
+
+    # SQLQuery.path → replaced by: SourceFile --defines→ SQLQuery
+    - objectType: SQLQuery
+      remove:
+        - name: path
+          reason: >
+            Stored a string path to the .sql source file. Replace with a
+            SourceFile --defines→ SQLQuery relationship.
+
+    # SourceFile.module → replaced by: Module --contains→ SourceFile
+    - objectType: SourceFile
+      remove:
+        - name: module
+          reason: >
+            Stored a string module name. Replace with a
+            Module --contains→ SourceFile relationship (already modeled by `contains`).
+
+relationshipTypeSchemas:
+
+  add:
+    - name: belongs_to
+      description: >
+        A node belongs to a functional domain. Valid sources:
+        Scenario, Module, SourceFile, Service, Job, APIEndpoint.
+        Target: Domain.
+
+    - name: exemplifies
+      description: >
+        A source file is a canonical positive example of a pattern.
+        Replaces Pattern.example_path string property.
+
+    - name: counter_exemplifies
+      description: >
+        A source file is a canonical example of what NOT to do for a pattern.
+        Replaces Pattern.counter_example_path string property.
+
+  rename: []
+  remove: []

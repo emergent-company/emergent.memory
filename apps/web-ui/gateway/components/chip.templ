@@ -1,0 +1,14 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// MetaChip renders an inline icon-plus-text metadata chip, as used in list row
+// footers for tool counts and timestamps.
+templ MetaChip(icon, text string) {
+	<span class="inline-flex items-center gap-1">
+		@ui.IconSpan(icon, "size-3.5")
+		{ text }
+	</span>
+}

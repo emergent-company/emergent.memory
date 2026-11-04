@@ -1,0 +1,1347 @@
+package main
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+)
+
+// renderedOption returns the <option> tag and label text rendered for an agent
+// id inside the <select> with the given element id. Two levels of scoping are
+// needed: "disabled" also appears in the page's own inline JS, and both agent
+// panels render the same agent ids, so a page-wide match would let the editor
+// panel satisfy a merge assertion and vice versa (#2181 review).
+func renderedOption(t *testing.T, body, selectID, id string) (tag, label string) {
+	t.Helper()
+	sel := regexp.MustCompile(`(?s)<select[^>]*id="` + regexp.QuoteMeta(selectID) + `"[^>]*>.*?</select>`).FindString(body)
+	if sel == "" {
+		t.Fatalf("no <select id=%q> rendered", selectID)
+	}
+	re := regexp.MustCompile(`<option[^>]*value="` + regexp.QuoteMeta(id) + `"[^>]*>([^<]*)</option>`)
+	m := re.FindStringSubmatch(sel)
+	if m == nil {
+		t.Fatalf("no option rendered for agent %q in <select id=%q>", id, selectID)
+	}
+	return m[0], strings.TrimSpace(m[1])
+}
+
+// TestUIProjectSettingsRoute exercises GET /settings: the project record and
+// the remember/dedup settings render; absent settings fall back to "not set".
+func TestUIProjectSettingsRoute(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{
+			ID:                 "p1",
+			Name:               "Home",
+			ProjectInfo:        "family",
+			ChatPromptTemplate: "hi",
+			AutoExtractObjects: boolPtr(true),
+			BudgetUSD:          floatPtr(25.5),
+		},
+		settings: map[string]map[string]map[string]any{
+			"remember_config": {"agent_name": {"name": "memory"}},
+			"entity_create":   {"similarity_threshold": {"value": 0.8}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Project Settings", "Project info", "Remember &amp; dedup",
+		`value="Home"`, "family", "hi",
+		`name="auto_extract_objects"`,
+		`value="memory"`, `value="0.8"`,
+		`hx-post="/settings/project/name"`,
+		`hx-post="/settings/remember/agent"`, `hx-post="/settings/remember/dedup"`,
+		`hx-post="/settings/editor"`, `name="editor_agent"`,
+		`href="/settings/assistant"`, `href="/settings/overrides"`, `href="/settings/providers"`,
+		`href="/settings/budget"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings route missing %q", want)
+		}
+	}
+	// the checked toggle renders a bare `checked` attribute
+	if !strings.Contains(body, `name="auto_extract_objects" class="toggle" checked`) {
+		t.Error("auto-extract toggle should render checked")
+	}
+}
+
+// TestUIProjectSettingsRouteAbsent exercises the "not set" states: no stored
+// settings render clear empty/not-set states.
+func TestUIProjectSettingsRouteAbsent(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Requires entity-create or entity-update, and relationship-create.") {
+		t.Error("absent settings route missing the editor-agent requirement note")
+	}
+	// budget moved to its own sub-page
+	if strings.Contains(body, `name="budget_usd"`) {
+		t.Error("General route must not render the budget field (moved to /settings/budget)")
+	}
+}
+
+// TestUIProjectSettingsRouteError asserts the whole-page error state when the
+// project fetch fails (memory unreachable), without crashing the rest.
+func TestUIProjectSettingsRouteError(t *testing.T) {
+	f := &fakeMemory{projectErr: errTest}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Project settings unavailable") {
+		t.Error("load-error state missing")
+	}
+}
+
+// TestUIProjectSettingsRouteBestEffort asserts that a failed overrides or
+// settings read still renders the page (best-effort reads, per design).
+func TestUIProjectSettingsRouteBestEffort(t *testing.T) {
+	f := &fakeMemory{
+		project:     &Project{ID: "p1", Name: "Home"},
+		overrideErr: errTest,
+		settingErr:  errTest,
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="Home"`) || strings.Contains(body, "Project settings unavailable") {
+		t.Error("page should still render with best-effort reads degraded")
+	}
+}
+
+// TestUIProjectVoiceSettingsRoute exercises GET /settings/voice: the Voice
+// sub-page renders its sub-nav and the inline auto-save panel (no whole-form
+// Save button).
+func TestUIProjectVoiceSettingsRoute(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/voice", s.uiProjectVoiceSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/voice", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Voice",
+		`hx-post="/settings/voice/enabled"`, `hx-swap="none"`,
+		`hx-post="/settings/voice/group/tts"`,
+		`hx-post="/settings/voice/group/endpoint_delays"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("voice route missing %q", want)
+		}
+	}
+	for _, gone := range []string{`action="/settings/voice"`, "Save voice", `name="voice_enabled"`, `-feedback`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("voice route must not contain %q", gone)
+		}
+	}
+}
+
+// TestUIConnectedDevicesSettingsRoute exercises GET /settings/devices: the
+// Connected devices page renders its sub-nav and all three sections — Connect
+// a device, Devices (empty state), and MCP nodes (empty state).
+func TestUIConnectedDevicesSettingsRoute(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/devices", s.uiConnectedDevices)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/devices", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Connected devices", "Connect a device", "memory-connector auth login",
+		"No devices registered yet.", "No external nodes connected",
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+		`href="/settings/budget"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("connected devices route missing %q", want)
+		}
+	}
+}
+
+// TestUIProjectBudgetSettingsRoute exercises GET /settings/budget: the Budget
+// sub-page renders its sub-nav and both inline auto-save fields.
+func TestUIProjectBudgetSettingsRoute(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home", BudgetUSD: floatPtr(25.5), BudgetAlertThreshold: floatPtr(0.8)}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/budget", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Budget",
+		`name="budget_alert_threshold"`, `name="budget_usd"`,
+		`href="/settings/budget"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("budget route missing %q", want)
+		}
+	}
+}
+
+// TestUIProjectAssistantSettingsRoute exercises GET /settings/assistant: the
+// Assistant sub-page renders its sub-nav and the assistant agent dropdown.
+func TestUIProjectAssistantSettingsRoute(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/assistant", s.uiProjectAssistantSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/assistant", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Assistant", `hx-post="/settings/assistant"`, `name="assistant_agent"`, `hx-swap="none"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("assistant route missing %q", want)
+		}
+	}
+	for _, gone := range []string{`action="/settings/assistant"`, "Save assistant"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("assistant route must not contain %q", gone)
+		}
+	}
+}
+
+// TestUIProjectSettingsAssistantFullLoad: saving the assistant agent forces a
+// full page load (HX-Redirect for HTMX, 303 for plain POSTs) because the
+// selection gates shell chrome — the topbar "Assistant" button and the sidepanel
+// both render outside #main-content. A no-swap toast would leave the button
+// hidden until a manual refresh.
+func TestUIProjectSettingsAssistantFullLoad(t *testing.T) {
+	t.Run("htmx full load", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: Config{}, memory: f}
+		e := echo.New()
+		e.POST("/settings/assistant", s.uiProjectSettingsAssistant)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/assistant", strings.NewReader("assistant_agent=a1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/settings/assistant?updated=1" {
+			t.Fatalf("HTMX assistant save should force a full reload, got %d HX-Redirect %q", rec.Code, rec.Header().Get("HX-Redirect"))
+		}
+		if f.lastSettingCat != settingsAssistantCategory || f.lastSettingKey != settingsAssistantKey {
+			t.Errorf("assistant setting write = %q/%q, want %q/%q", f.lastSettingCat, f.lastSettingKey, settingsAssistantCategory, settingsAssistantKey)
+		}
+	})
+
+	t.Run("plain post redirect", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: Config{}, memory: f}
+		e := echo.New()
+		e.POST("/settings/assistant", s.uiProjectSettingsAssistant)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/assistant", strings.NewReader("assistant_agent="))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/assistant?updated=1" {
+			t.Fatalf("plain assistant save should 303, got %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.lastDeletedCat != settingsAssistantCategory || f.lastDeletedKey != settingsAssistantKey {
+			t.Errorf("assistant setting delete = %q/%q, want %q/%q", f.lastDeletedCat, f.lastDeletedKey, settingsAssistantCategory, settingsAssistantKey)
+		}
+	})
+}
+
+// TestUIProjectOverridesSettingsRoute exercises GET /settings/overrides: the
+// Overrides sub-page renders its sub-nav and the override list/form.
+func TestUIProjectOverridesSettingsRoute(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/overrides", s.uiProjectOverridesSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/overrides", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Agent overrides", `action="/settings/overrides"`, `name="agentName"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overrides route missing %q", want)
+		}
+	}
+}
+
+// TestUIProjectProvidersSettingsRoute exercises GET /settings/providers: the
+// Providers sub-page renders its sub-nav and the provider rate panel.
+func TestUIProjectProvidersSettingsRoute(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/providers", s.uiProjectProvidersSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/providers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Providers",
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("providers route missing %q", want)
+		}
+	}
+}
+
+func TestUIProjectSettingsProjectFieldName(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Old"}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/name", "name=Home")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("name save should trigger a success toast, got %q", hdr)
+	}
+	if f.updatedProject == nil || f.updatedProject.Name != "Home" {
+		t.Errorf("UpdateProject name = %v, want Home", f.updatedProject)
+	}
+}
+
+func TestUIProjectSettingsProjectFieldToggle(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/auto_extract_objects", "auto_extract_objects=on")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if f.updatedProject == nil || f.updatedProject.AutoExtractObjects == nil || !*f.updatedProject.AutoExtractObjects {
+		t.Error("auto_extract_objects should be set true")
+	}
+	if f.updatedProject.Name != "" {
+		t.Errorf("name should not be touched by a toggle save, got %q", f.updatedProject.Name)
+	}
+}
+
+func TestUIProjectSettingsProjectFieldEmptyName(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Old"}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/name", "name=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "project name is required") {
+		t.Errorf("empty name should trigger an error toast, got %q", hdr)
+	}
+	if f.updatedProject != nil {
+		t.Error("UpdateProject must not be called for an empty name")
+	}
+}
+
+func TestUIProjectSettingsProjectFieldError(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Old"}, updateErr: errTest}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/name", "name=Home")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "backend unreachable") {
+		t.Errorf("write failure should trigger an error toast, got %q", hdr)
+	}
+}
+
+// TestUIProjectSettingsProjectFieldBudgetThreshold covers the budget alert
+// threshold inline save: a whole percentage in (0,100] is converted to a
+// fraction; empty, zero, negative, and over-100 values are rejected before any
+// write.
+func TestUIProjectSettingsProjectFieldBudgetThreshold(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/budget_alert_threshold", "budget_alert_threshold=80")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("valid threshold should trigger a success toast, got %q", hdr)
+	}
+	if f.updatedProject == nil || f.updatedProject.BudgetAlertThreshold == nil || *f.updatedProject.BudgetAlertThreshold != 0.8 {
+		t.Errorf("budget_alert_threshold = %v, want 0.8", f.updatedProject)
+	}
+
+	for _, in := range []string{"0", "-5", "150", ""} {
+		t.Run("invalid "+in, func(t *testing.T) {
+			f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+			s := &Server{cfg: Config{}, memory: f}
+			e := echo.New()
+			e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+			rec := voicePost(e, "/settings/project/budget_alert_threshold", "budget_alert_threshold="+in)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d, want 200", rec.Code)
+			}
+			if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"error"`) {
+				t.Errorf("invalid threshold %q should trigger an error toast, got %q", in, hdr)
+			}
+			if f.updatedProject != nil {
+				t.Errorf("UpdateProject must not be called for invalid threshold %q", in)
+			}
+		})
+	}
+}
+
+func TestUIProjectSettingsOverride(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/settings/overrides", s.uiProjectSettingsOverride)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/overrides", strings.NewReader("agentName=memory&systemPrompt=be+terse&model=gpt-4o&tools=web_search,+memory_lookup&maxSteps=10"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/overrides?updated=1" {
+		t.Errorf("redirect = %q, want /settings/overrides?updated=1", loc)
+	}
+	if f.overrideAgent != "memory" {
+		t.Errorf("agent name = %q, want memory", f.overrideAgent)
+	}
+	in := f.overrideInput
+	if in == nil {
+		t.Fatal("SetAgentOverride not called")
+	}
+	if in.SystemPrompt == nil || *in.SystemPrompt != "be terse" {
+		t.Errorf("systemPrompt = %v", in.SystemPrompt)
+	}
+	if in.Model == nil || in.Model.Name != "gpt-4o" {
+		t.Errorf("model = %v", in.Model)
+	}
+	if len(in.Tools) != 2 || in.Tools[0] != "web_search" || in.Tools[1] != "memory_lookup" {
+		t.Errorf("tools = %v", in.Tools)
+	}
+	if in.MaxSteps == nil || *in.MaxSteps != 10 {
+		t.Errorf("maxSteps = %v", in.MaxSteps)
+	}
+}
+
+func TestUIProjectSettingsOverrideEmptyName(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/settings/overrides", s.uiProjectSettingsOverride)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/overrides", strings.NewReader("agentName=&systemPrompt=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/overrides?err=agent+name+is+required" {
+		t.Errorf("empty agent name should redirect with the error, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.overrideInput != nil {
+		t.Error("SetAgentOverride must not be called for an empty agent name")
+	}
+}
+
+func TestUIProjectSettingsOverrideError(t *testing.T) {
+	f := &fakeMemory{overrideErr: errTest}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/settings/overrides", s.uiProjectSettingsOverride)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/overrides", strings.NewReader("agentName=memory"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/overrides?err=backend+unreachable" {
+		t.Errorf("override write failure should redirect with the error, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestUIProjectSettingsOverrideDelete(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/settings/overrides/:agentName/delete", s.uiProjectSettingsOverrideDelete)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/overrides/diane/delete", nil)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/overrides?updated=1" {
+		t.Errorf("redirect = %q, want /settings/overrides?updated=1", loc)
+	}
+	if f.overrideAgent != "diane" {
+		t.Errorf("deleted agent = %q, want diane", f.overrideAgent)
+	}
+}
+
+func TestUIProjectSettingsRememberAgent(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
+
+	rec := voicePost(e, "/settings/remember/agent", "remember_agent=memory")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("agent save should trigger a success toast, got %q", hdr)
+	}
+	if f.lastSettingCat != "remember_config" || f.lastSettingKey != "agent_name" {
+		t.Errorf("write = %s/%s, want remember_config/agent_name", f.lastSettingCat, f.lastSettingKey)
+	}
+	if v, ok := f.lastSettingValue["name"].(string); !ok || v != "memory" {
+		t.Errorf("remember value = %v, want memory", f.lastSettingValue)
+	}
+}
+
+func TestUIProjectSettingsRememberAgentClear(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
+
+	rec := voicePost(e, "/settings/remember/agent", "remember_agent=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if f.lastDeletedCat != "remember_config" || f.lastDeletedKey != "agent_name" {
+		t.Errorf("clear should delete remember_config/agent_name, got %s/%s", f.lastDeletedCat, f.lastDeletedKey)
+	}
+}
+
+func TestUIProjectSettingsRememberDedup(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
+
+	rec := voicePost(e, "/settings/remember/dedup", "dedup_threshold=0.8")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if f.lastSettingCat != "entity_create" || f.lastSettingKey != "similarity_threshold" {
+		t.Errorf("write = %s/%s, want entity_create/similarity_threshold", f.lastSettingCat, f.lastSettingKey)
+	}
+	if v, ok := f.lastSettingValue["value"].(float64); !ok || v != 0.8 {
+		t.Errorf("dedup value = %v, want 0.8", f.lastSettingValue["value"])
+	}
+}
+
+func TestUIProjectSettingsRememberInvalidDedup(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
+
+	for _, v := range []string{"1.5", "-0.1", "abc"} {
+		rec := voicePost(e, "/settings/remember/dedup", "dedup_threshold="+v)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "dedup threshold must be a number") {
+			t.Errorf("dedup %q should trigger an error toast, got %q", v, hdr)
+		}
+	}
+	// validation happens before any write: nothing persisted
+	if f.lastSettingCat != "" || len(f.settingWrites) != 0 {
+		t.Error("invalid dedup must not write anything")
+	}
+}
+
+func TestUIProjectSettingsRememberError(t *testing.T) {
+	f := &fakeMemory{settingErr: errTest}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
+
+	rec := voicePost(e, "/settings/remember/agent", "remember_agent=memory")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "backend unreachable") {
+		t.Errorf("write failure should trigger an error toast, got %q", hdr)
+	}
+}
+
+// TestUIProjectSettingsEditor covers a valid editor-agent inline save (HTMX →
+// POST /settings/editor): the value stores as {"agentId": id} under
+// editor/agent_id and surfaces a success toast.
+func TestUIProjectSettingsEditor(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": editorCapableDefinition("a1", "editor")}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=a1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("agent save should trigger a success toast, got %q", hdr)
+	}
+	if f.lastSettingCat != "editor" || f.lastSettingKey != "agent_id" {
+		t.Errorf("write = %s/%s, want editor/agent_id", f.lastSettingCat, f.lastSettingKey)
+	}
+	if v, ok := f.lastSettingValue["agentId"].(string); !ok || v != "a1" {
+		t.Errorf("editor value = %v, want agentId a1", f.lastSettingValue)
+	}
+}
+
+// TestUIProjectSettingsEditorClear covers clearing the editor agent: an empty
+// value deletes the stored editor/agent_id setting.
+func TestUIProjectSettingsEditorClear(t *testing.T) {
+	f := &fakeMemory{settings: map[string]map[string]map[string]any{
+		"editor": {"agent_id": {"agentId": "a1"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("clear should trigger a success toast, got %q", hdr)
+	}
+	if f.lastDeletedCat != "editor" || f.lastDeletedKey != "agent_id" {
+		t.Errorf("clear should delete editor/agent_id, got %s/%s", f.lastDeletedCat, f.lastDeletedKey)
+	}
+}
+
+// TestUIProjectSettingsEditorError covers a rejected editor-agent write
+// returning an error toast.
+func TestUIProjectSettingsEditorError(t *testing.T) {
+	f := &fakeMemory{
+		defs:       map[string]*AgentDefinition{"a1": editorCapableDefinition("a1", "editor")},
+		settingErr: errTest,
+	}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=a1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "backend unreachable") {
+		t.Errorf("write failure should trigger an error toast, got %q", hdr)
+	}
+}
+
+// TestUIProjectSettingsEditorRender exercises the editor-agent selector on the
+// General settings page: the dropdown renders (empty option = default agent)
+// and a stored value pre-selects its agent.
+func TestUIProjectSettingsEditorRender(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a9", Name: "editor-x", Enabled: true},
+			{ID: "a8", Name: "no-search", Enabled: true},
+			{ID: "a7", Name: "reader", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a9": editorCapableDefinition("a9", "editor-x"),
+			// required tools only: eligible, but the search recommendation is
+			// reported as optional rather than gating (#2098).
+			"a8": {ID: "a8", Name: "no-search", Enabled: true, Tools: []string{"entity-create", "relationship-create"}},
+			// no write tool: visible, but it cannot be selected (#2181).
+			"a7": {ID: "a7", Name: "reader", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"editor": {"agent_id": {"agentId": "a9"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Editor agent",
+		`hx-post="/settings/editor"`, `name="editor_agent"`, `hx-swap="none"`,
+		"None — auto-select an editor-capable agent",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("editor selector missing %q", want)
+		}
+	}
+	if !strings.Contains(body, `value="a9" selected`) {
+		t.Error("stored editor agent should render selected")
+	}
+	// An eligible agent that grants the requirements but neither search tool is
+	// selectable and flagged optional, not disabled.
+	if tag, label := renderedOption(t, body, "editor-agent", "a8"); strings.Contains(tag, "disabled") {
+		t.Errorf("an eligible agent must not render disabled: %s", tag)
+	} else if !strings.Contains(label, "no entity-search, entity-edges-get (optional)") {
+		t.Errorf("the option should flag the missing search tools as optional: %q", label)
+	}
+	// An ineligible agent stays visible but disabled, naming what it lacks.
+	if tag, label := renderedOption(t, body, "editor-agent", "a7"); !strings.Contains(tag, "disabled") {
+		t.Errorf("an ineligible agent must render disabled: %s", tag)
+	} else if !strings.Contains(label, "missing: entity-create or entity-update, relationship-create") {
+		t.Errorf("the ineligible option should name its missing tools: %q", label)
+	}
+	if !strings.Contains(body, "Requires entity-create or entity-update, and relationship-create.") {
+		t.Error("the panel should state the requirement")
+	}
+}
+
+// TestUIProjectSettingsFetchesEachDefinitionOnce pins the per-render definition
+// cache: the editor and merge selections annotate the same agent list, so N
+// agents must cost N GETs, not 2N — including an agent whose definition cannot
+// be loaded, whose failure is cached rather than retried by the second panel
+// (#2181).
+func TestUIProjectSettingsFetchesEachDefinitionOnce(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", Enabled: true},
+			{ID: "a2", Name: "two", Enabled: true},
+			{ID: "a3", Name: "broken", Enabled: true},
+		},
+		defErrs: map[string]error{"a3": errors.New("agent store unavailable")},
+		defs: map[string]*AgentDefinition{
+			"a1": editorCapableDefinition("a1", "one"),
+			"a2": editorCapableDefinition("a2", "two"),
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	fetches := f.definitionFetches()
+	counts := map[string]int{}
+	for _, id := range fetches {
+		counts[id]++
+	}
+	for _, id := range []string{"a1", "a2", "a3"} {
+		if counts[id] != 1 {
+			t.Errorf("definition %q fetched %d times in one render, want 1 (fetches: %v)", id, counts[id], fetches)
+		}
+	}
+}
+
+// editorCapableDefinition is a minimal definition that grants the editor tool set.
+func editorCapableDefinition(id, name string) *AgentDefinition {
+	return &AgentDefinition{
+		ID: id, Name: name, Enabled: true,
+		Tools: []string{"entity-update", "relationship-create", "entity-search"},
+	}
+}
+
+// mergeCapableDefinition is a minimal definition that grants the merge tool set.
+func mergeCapableDefinition(id, name string) *AgentDefinition {
+	return &AgentDefinition{
+		ID: id, Name: name, Enabled: true,
+		Tools: []string{"entity-create", "entity-delete", "entity-edges-get", "relationship-create"},
+	}
+}
+
+// TestUIProjectSettingsMerge covers a valid merge-agent inline save (HTMX →
+// POST /settings/merge): the value stores as {"agentId": id} under
+// merge/agent_id and surfaces a success toast.
+func TestUIProjectSettingsMerge(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": mergeCapableDefinition("a1", "merger")}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=a1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("agent save should trigger a success toast, got %q", hdr)
+	}
+	if f.lastSettingCat != settingsMergeCategory || f.lastSettingKey != settingsMergeKey {
+		t.Errorf("write = %s/%s, want merge/agent_id", f.lastSettingCat, f.lastSettingKey)
+	}
+	if v, ok := f.lastSettingValue["agentId"].(string); !ok || v != "a1" {
+		t.Errorf("merge value = %v, want agentId a1", f.lastSettingValue)
+	}
+}
+
+// TestUIProjectSettingsMergeClear covers clearing the merge agent: an empty
+// value deletes the stored merge/agent_id setting.
+func TestUIProjectSettingsMergeClear(t *testing.T) {
+	f := &fakeMemory{settings: map[string]map[string]map[string]any{
+		"merge": {"agent_id": {"agentId": "a1"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("clear should trigger a success toast, got %q", hdr)
+	}
+	if f.lastDeletedCat != settingsMergeCategory || f.lastDeletedKey != settingsMergeKey {
+		t.Errorf("clear should delete merge/agent_id, got %s/%s", f.lastDeletedCat, f.lastDeletedKey)
+	}
+}
+
+// TestUIProjectSettingsMergeRejectsIncapable covers the server-side validation:
+// an agent that lacks the merge tool set is rejected with an actionable error
+// toast and the setting is not written.
+func TestUIProjectSettingsMergeRejectsIncapable(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{
+		"a1": {ID: "a1", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=a1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	hdr := rec.Header().Get("HX-Trigger")
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "missing") {
+		t.Errorf("ineligible agent should trigger an error toast with the missing tools, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("ineligible agent must not be written, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsMergeUnknownAgent covers a stale option value: an agent
+// id that no longer resolves is rejected without a write.
+func TestUIProjectSettingsMergeUnknownAgent(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=gone")
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"error"`) {
+		t.Errorf("unknown agent should trigger an error toast, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("unknown agent must not be written, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsMergeRender exercises the merge-agent selector: capable
+// agents are selectable, incapable agents render disabled with their missing
+// tools, and a stored capable agent is preselected.
+func TestUIProjectSettingsMergeRender(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "merger", Enabled: true},
+			{ID: "a2", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": mergeCapableDefinition("a1", "merger"),
+			"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"merge": {"agent_id": {"agentId": "a1"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Merge agent",
+		`hx-post="/settings/merge"`, `name="merge_agent"`, `hx-swap="none"`,
+		"None — auto-select a merge-capable agent",
+		mergeCapabilityRequirement,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("merge selector missing %q", want)
+		}
+	}
+	if tag, label := renderedOption(t, body, "merge-agent", "a1"); !strings.Contains(tag, "selected") {
+		t.Errorf("stored merge agent should render selected: %s", tag)
+	} else if !strings.Contains(label, "no relationship-delete (optional)") {
+		t.Errorf("an eligible agent missing a recommended tool should say so: %q", label)
+	}
+	if tag, label := renderedOption(t, body, "merge-agent", "a2"); !strings.Contains(tag, "disabled") {
+		t.Errorf("an ineligible merge agent must render disabled: %s", tag)
+	} else if !strings.Contains(label, "missing: entity-create or entity-update") {
+		t.Errorf("the ineligible merge option should name its missing tools: %q", label)
+	}
+	if strings.Contains(body, "merge-agent-warning") {
+		t.Error("a capable stored merge agent must not render a warning")
+	}
+}
+
+// TestAgentSelectionWarning covers the three warning shapes, including the
+// agent-list-unavailable case that must not masquerade as "agent deleted", and
+// that the per-flow wording is what the caller supplies rather than hard-coded.
+func TestAgentSelectionWarning(t *testing.T) {
+	options := []agentOption{
+		{ID: "a1", Name: "merger", Eligible: true},
+		{ID: "a2", Name: "toolless", Detail: "entity-delete"},
+	}
+	const noun, verb, outcome = "merge agent", "run a merge", "Merges will fall back to another merge-capable agent, and will not start if none exists."
+	if got := agentSelectionWarning(options, "", false, noun, verb, outcome); got != "" {
+		t.Errorf("unset selection warning = %q, want empty", got)
+	}
+	if got := agentSelectionWarning(options, "a1", false, noun, verb, outcome); got != "" {
+		t.Errorf("capable selection warning = %q, want empty", got)
+	}
+	if got := agentSelectionWarning(options, "a2", false, noun, verb, outcome); !strings.Contains(got, "missing: entity-delete") {
+		t.Errorf("incapable selection warning = %q, want the missing tools", got)
+	}
+	if got := agentSelectionWarning(options, "gone", false, noun, verb, outcome); !strings.Contains(got, "no longer in this project") {
+		t.Errorf("unlisted selection warning = %q, want the unlisted message", got)
+	}
+	if got := agentSelectionWarning(options, "a1", true, noun, verb, outcome); !strings.Contains(got, "Could not check") {
+		t.Errorf("unavailable list warning = %q, want the unavailable message", got)
+	}
+	if got := agentSelectionWarning(options, "a2", false,
+		"editor agent", "edit objects", "Object chats will fall back to another editor-capable agent, and will not start if none exists."); !strings.Contains(got, "cannot edit objects") {
+		t.Errorf("editor warning = %q, want the editor verb", got)
+	}
+}
+
+// TestUIProjectSettingsEditorRejectsIncapable covers the save-time defence:
+// an agent that cannot edit objects is refused with an error toast and nothing
+// is written, even if a stale page or crafted request submits it.
+func TestUIProjectSettingsEditorRejectsIncapable(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{
+		"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=a2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	hdr := rec.Header().Get("HX-Trigger")
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "cannot edit objects") {
+		t.Errorf("incapable agent should trigger an error toast naming the flow, got %q", hdr)
+	}
+	if !strings.Contains(hdr, "relationship-create") {
+		t.Errorf("the error should name a missing tool, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("an incapable agent must not be stored, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsEditorUnknownAgent covers a submitted agent that cannot
+// be loaded (deleted since the page rendered).
+func TestUIProjectSettingsEditorUnknownAgent(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=ghost")
+	hdr := rec.Header().Get("HX-Trigger")
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "could not be loaded") {
+		t.Errorf("unknown agent should trigger a load error toast, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("an unknown agent must not be stored, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsEditorRenderStale covers a stored editor agent that is no
+// longer capable: the selector keeps the value visible, disables the ineligible
+// rows, and explains that object chats will fall back to another agent.
+func TestUIProjectSettingsEditorRenderStale(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "editor", Enabled: true},
+			{ID: "a2", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": editorCapableDefinition("a1", "editor"),
+			"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"editor": {"agent_id": {"agentId": "a2"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "editor-agent-warning") {
+		t.Error("an incapable stored editor agent should render a warning")
+	}
+	if !strings.Contains(body, "Object chats will fall back to another editor-capable agent") {
+		t.Error("the warning should say object chats fall back to another agent")
+	}
+	tag, label := renderedOption(t, body, "editor-agent", "a2")
+	if !strings.Contains(tag, "selected") {
+		t.Errorf("the stale value should stay visible as the selected option: %s", tag)
+	}
+	if !strings.Contains(tag, "disabled") {
+		t.Errorf("an ineligible editor agent should render disabled: %s", tag)
+	}
+	if !strings.Contains(label, "missing:") {
+		t.Errorf("the ineligible option should name its missing tools: %q", label)
+	}
+}
+
+// TestUIProjectSettingsMergeRenderStale covers a stored merge agent that is no
+// longer capable: the selector keeps the value visible, flags it invalid, and
+// explains that merges fall back to another agent.
+func TestUIProjectSettingsMergeRenderStale(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "merger", Enabled: true},
+			{ID: "a2", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": mergeCapableDefinition("a1", "merger"),
+			"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"merge": {"agent_id": {"agentId": "a2"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "merge-agent-warning") {
+		t.Error("an incapable stored merge agent should render a warning")
+	}
+	if !strings.Contains(body, "Merges will fall back to another merge-capable agent") {
+		t.Error("the warning should say merges fall back to another agent")
+	}
+	if !strings.Contains(body, `value="a2" selected`) {
+		t.Error("the stale value should stay visible as the selected option")
+	}
+}
+
+// voicePost issues a form-encoded POST to a voice inline-save endpoint and
+// returns the recorder.
+func voicePost(e *echo.Echo, path, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestUIVoiceFieldStringSave covers a valid string-field inline save.
+func TestUIVoiceFieldStringSave(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	rec := voicePost(e, "/settings/voice/exit_keywords", "exit_keywords=stop,+goodbye")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if got := f.settings["voice"]["exit_keywords"]["value"]; got != "stop, goodbye" {
+		t.Errorf("stored = %v, want %q", got, "stop, goodbye")
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) || !strings.Contains(hdr, `"message":"Saved"`) {
+		t.Errorf("success should trigger a success toast, got HX-Trigger %q", hdr)
+	}
+}
+
+// TestUIVoiceFieldNumericSave covers a valid numeric-field inline save.
+func TestUIVoiceFieldNumericSave(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	rec := voicePost(e, "/settings/voice/away_timeout", "away_timeout=20")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if got := f.settings["voice"]["away_timeout"]["value"]; got != "20" {
+		t.Errorf("stored = %v, want %q", got, "20")
+	}
+}
+
+// TestUIVoiceFieldInvalidNumeric covers a non-numeric delay/timeout: the
+// handler returns an inline error and persists nothing.
+func TestUIVoiceFieldInvalidNumeric(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	for _, v := range []string{"abc", "-1"} {
+		rec := voicePost(e, "/settings/voice/endpoint_min_delay", "endpoint_min_delay="+v)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		hdr := rec.Header().Get("HX-Trigger")
+		if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "endpoint min delay must be a non-negative number") {
+			t.Errorf("invalid %q should trigger an error toast, got HX-Trigger %q", v, hdr)
+		}
+	}
+	if f.settings["voice"] != nil {
+		t.Errorf("invalid numeric must not persist anything, got %v", f.settings["voice"])
+	}
+}
+
+// TestUIVoiceFieldEmptyDeletes covers clearing a field: an empty value deletes
+// the stored row so it falls back to the env default.
+func TestUIVoiceFieldEmptyDeletes(t *testing.T) {
+	f := &fakeMemory{settings: map[string]map[string]map[string]any{
+		"voice": {"away_timeout": {"value": "20"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	rec := voicePost(e, "/settings/voice/away_timeout", "away_timeout=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if f.lastDeletedCat != "voice" || f.lastDeletedKey != "away_timeout" {
+		t.Errorf("expected delete of voice/away_timeout, got %s/%s", f.lastDeletedCat, f.lastDeletedKey)
+	}
+}
+
+// TestUIVoiceFieldBoolSave covers a toggle inline save.
+func TestUIVoiceFieldBoolSave(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	rec := voicePost(e, "/settings/voice/enabled", "enabled=on")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if got := f.settings["voice"]["enabled"]["value"]; got != true {
+		t.Errorf("stored = %v, want true", got)
+	}
+}
+
+// TestUIVoiceFieldUnknownKey covers an unknown key returning an inline error.
+func TestUIVoiceFieldUnknownKey(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	rec := voicePost(e, "/settings/voice/bogus", "bogus=x")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "Unknown voice setting") {
+		t.Errorf("unknown key should trigger an error toast, got HX-Trigger %q", hdr)
+	}
+	if len(f.settingWrites) != 0 {
+		t.Error("unknown key must not write anything")
+	}
+}
+
+// TestUIVoiceFieldWriteError covers a rejected write returning an inline error.
+func TestUIVoiceFieldWriteError(t *testing.T) {
+	f := &fakeMemory{settingErr: errTest}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+
+	rec := voicePost(e, "/settings/voice/goodbye_text", "goodbye_text=bye")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "backend unreachable") {
+		t.Errorf("write failure should trigger an error toast, got HX-Trigger %q", hdr)
+	}
+}
+
+// TestUIVoiceGroupEndpointDelays covers a valid endpoint-delays group save.
+func TestUIVoiceGroupEndpointDelays(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)
+
+	rec := voicePost(e, "/settings/voice/group/endpoint_delays", "endpoint_min_delay=0.4&endpoint_max_delay=3")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if got := f.settings["voice"]["endpoint_min_delay"]["value"]; got != "0.4" {
+		t.Errorf("min = %v, want 0.4", got)
+	}
+	if got := f.settings["voice"]["endpoint_max_delay"]["value"]; got != "3" {
+		t.Errorf("max = %v, want 3", got)
+	}
+}
+
+// TestUIVoiceGroupEndpointDelaysInvalid covers min > max: the handler rejects
+// and persists nothing (no partial write).
+func TestUIVoiceGroupEndpointDelaysInvalid(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)
+
+	rec := voicePost(e, "/settings/voice/group/endpoint_delays", "endpoint_min_delay=5&endpoint_max_delay=3")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "cannot exceed") {
+		t.Errorf("min > max should trigger an error toast, got HX-Trigger %q", hdr)
+	}
+	if f.settings["voice"] != nil {
+		t.Errorf("min > max must not persist anything, got %v", f.settings["voice"])
+	}
+}
+
+// TestUIVoiceGroupTTSClearsModelVoice covers a provider change to a
+// model/voice-less provider clearing the coupled fields in the same save.
+func TestUIVoiceGroupTTSClearsModelVoice(t *testing.T) {
+	f := &fakeMemory{settings: map[string]map[string]map[string]any{
+		"voice": {"tts_model": {"value": "sonic-3.5"}, "tts_voice": {"value": "abc"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)
+
+	rec := voicePost(e, "/settings/voice/group/tts", "tts_provider=client&tts_model=sonic-3.5&tts_voice=abc")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if got := f.settings["voice"]["tts_provider"]["value"]; got != "client" {
+		t.Errorf("provider = %v, want client", got)
+	}
+	if _, ok := f.settings["voice"]["tts_model"]; ok {
+		t.Error("tts_model should be cleared when provider is client")
+	}
+	if _, ok := f.settings["voice"]["tts_voice"]; ok {
+		t.Error("tts_voice should be cleared when provider is client")
+	}
+}
+
+// TestUIVoiceGroupUnknown covers an unknown group returning an inline error.
+func TestUIVoiceGroupUnknown(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)
+
+	rec := voicePost(e, "/settings/voice/group/bogus", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "Unknown voice setting group") {
+		t.Errorf("unknown group should trigger an error toast, got HX-Trigger %q", hdr)
+	}
+}
+
+// helpers for pointer-typed fake data
+func strPtr(s string) *string     { return &s }
+func intPtr(n int) *int           { return &n }
+func floatPtr(f float64) *float64 { return &f }

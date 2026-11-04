@@ -1,0 +1,321 @@
+name: Mac Release
+
+# Stable channel: tag vX.Y.Z → sign + notarize + DMG, upload to shared release.
+#
+# The skip decision diffs apps/connector.mac/** against the last commit that was
+# actually built (a `mac-release-uploaded/vX.Y.Z` marker tag written by the build
+# job on success), falling back to the previous `vX.Y.Z` app tag before any
+# marker exists. This is deliberately *not* `git describe HEAD^` against the
+# nearest tag: both `vX.Y.Z` and `apps/server/pkg/sdk/vX.Y.Z` are pushed per
+# release, so the nearest-tag choice is nondeterministic and could silently skip
+# a real app change. Notarization is the ~10min bottleneck, so the guard exists —
+# but it must be correct. (See #1612 for the iOS analogue.)
+# Logic: .github/scripts/mac-release-should-build.sh (unit-tested in meta CI).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force build even if unchanged'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Check if changed
+    runs-on: [self-hosted, linux, x64, memory]
+    outputs:
+      changed: ${{ steps.c.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Diff since last built commit
+        id: c
+        shell: bash
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: .github/scripts/mac-release-should-build.sh >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build, sign, notarize, package
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    # The appcast publish step commits to the gh-pages branch, which the docs
+    # workflow also deploys to. Share its `gh-pages-deploy` concurrency group so
+    # GitHub serializes the two and their pushes cannot race. Job-level groups
+    # share the same repository-wide namespace as docs.yml's workflow-level
+    # group. cancel-in-progress: false so a release publish is never cancelled.
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    env:
+      DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+      NOTARIZE_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      NOTARIZE_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        env:
+          # Deliberate, reported selection: ACCEPTED_XCODE_PATH pins a known-good
+          # bundle so an App Store auto-update cannot swap the toolchain under a
+          # build. The script already failed the step if nothing is installed, so
+          # there is no empty-value guard to keep here.
+          ACCEPTED_XCODE_PATH: ${{ vars.ACCEPTED_XCODE_PATH }}
+        run: |
+          XCODE=$(.github/scripts/select-xcode.sh)
+          CURRENT="$(xcode-select -p 2>/dev/null || true)"
+          if [ "$CURRENT" != "$XCODE/Contents/Developer" ]; then
+            if ! sudo -n xcode-select -s "$XCODE"; then
+              echo "::error::Cannot switch to selected Xcode '$XCODE': 'sudo -n xcode-select -s' failed (passwordless sudo unavailable on this runner). Point ACCEPTED_XCODE_PATH at the already-active bundle, or grant the runner passwordless sudo."
+              exit 1
+            fi
+          fi
+          BUNDLE_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$XCODE/Contents/Info.plist")"
+          ACTIVE_VERSION="$(xcodebuild -version | awk 'NR==1 {print $2}')"
+          if [ "$ACTIVE_VERSION" != "$BUNDLE_VERSION" ]; then
+            echo "::error::xcode-select -s '$XCODE' did not take effect: xcodebuild reports '$ACTIVE_VERSION', selected bundle is '$BUNDLE_VERSION'."
+            exit 1
+          fi
+          xcodebuild -version
+          MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2,v,"."); print v[1]}')
+          if [ -z "$MAJOR" ] || [ "$MAJOR" -lt 16 ]; then
+            echo "::error::Xcode 16 or newer is required (project format 77); selected $XCODE"
+            exit 1
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
+          # disk between jobs, so the built-in Actions cache only adds multi-GB
+          # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).
+          cache: false
+
+      - name: Install tools
+        run: |
+          brew list xcodegen &>/dev/null || brew install xcodegen
+          brew list create-dmg &>/dev/null || brew install create-dmg
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          # Idempotent: a leftover keychain from an earlier attempt on this runner
+          # would make create-keychain fail under `bash -e`.
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          security create-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          echo "$CERTIFICATE_BASE64" | base64 --decode -o "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # Grant codesign non-interactive access to the imported private key.
+          # Without this, codesign fails in a headless runner with
+          # errSecInternalComponent when signing nested binaries (e.g. the
+          # embedded Sparkle.framework) during the archive.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "temp-keychain-password" "$KEYCHAIN_PATH"
+          # PREPEND the signing keychain to the existing search list (do not
+          # replace it): the Developer ID intermediate/root in the System and
+          # login keychains must stay reachable so codesign can build the chain.
+          security list-keychain -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Write App Store Connect API key
+        run: |
+          mkdir -p /tmp/private_keys
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+          chmod 600 /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+
+      - name: Derive version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            RAW="${GITHUB_REF_NAME}"
+          else
+            # Parseable X.Y.Z fallback for forced workflow_dispatch builds
+            # (build-dmg.sh requires a semver it can encode monotonically).
+            RAW="0.0.0"
+          fi
+          echo "version=$RAW" >> "$GITHUB_OUTPUT"
+          # Marketing version = semver without the leading 'v' (matches the DMG
+          # filename and CFBundleShortVersionString in build-dmg.sh).
+          echo "marketing=${RAW#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign, notarize, package
+        working-directory: apps/connector.mac
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTARIZE_KEY: /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+        run: |
+          chmod +x Scripts/build-dmg.sh
+          ./Scripts/build-dmg.sh --notarize
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-mac-dmg
+          path: apps/connector.mac/build/Memory-*.dmg
+          retention-days: 7
+
+      - name: Generate Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: apps/connector.mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: |
+          # Sparkle CLI tools live in the SwiftPM artifacts dir of DerivedData;
+          # the DerivedData hash is not stable, so locate them dynamically.
+          GENERATE_APPCAST="$(find build/DerivedData -type f -path '*/artifacts/sparkle/Sparkle/bin/generate_appcast' 2>/dev/null | head -n 1 || true)"
+          if [ -z "$GENERATE_APPCAST" ]; then
+            echo "::error::generate_appcast not found under build/DerivedData"
+            exit 1
+          fi
+          echo "Using generate_appcast: $GENERATE_APPCAST"
+
+          UPDATES_DIR="build/appcast"
+          mkdir -p "$UPDATES_DIR"
+
+          # Download previously published archives from the rolling feed release.
+          # --skip-existing keeps already-cached DMGs; `|| true` because the
+          # first release has no memory-appcast release yet.
+          gh release download memory-appcast \
+            -p '*.dmg' -p '*.delta' -p 'appcast.xml' \
+            -D "$UPDATES_DIR" --skip-existing || true
+
+          # Copy the freshly built (and stapled) DMG into the feed directory.
+          DMG="build/Memory-${MARKETING}.dmg"
+          cp "$DMG" "$UPDATES_DIR/"
+
+          # Monotonicity guard: the new CFBundleVersion must be strictly greater
+          # than the largest sparkle:version already published. generate_appcast
+          # orders updates by sparkle:version, so a non-increasing value would
+          # silently reorder the feed and break update detection.
+          NEW_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "build/Export/Memory.app/Contents/Info.plist")"
+          PREV_APPCAST="$UPDATES_DIR/appcast.xml"
+          if [ -f "$PREV_APPCAST" ]; then
+            PREV_VERSION="$(grep -o '<sparkle:version>[0-9]*</sparkle:version>' "$PREV_APPCAST" | grep -o '[0-9]*' | sort -n | tail -n 1 || true)"
+            if [ -n "$PREV_VERSION" ] && [ "$NEW_VERSION" -le "$PREV_VERSION" ]; then
+              echo "::error::CFBundleVersion $NEW_VERSION is not greater than previously published $PREV_VERSION"
+              exit 1
+            fi
+          fi
+
+          # Generate the appcast. The EdDSA private key (base64 of the 32-byte
+          # seed) is piped to stdin and must never be echoed. Deltas (if any)
+          # are emitted alongside appcast.xml by generate_appcast. The download
+          # URL prefix points at the Pages host: SUFeedURL is baked into every
+          # shipped build, so the feed path must be permanent per channel.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --download-url-prefix "https://emergent-company.github.io/emergent.memory/appcast/stable/" \
+            --ed-key-file - \
+            "$UPDATES_DIR"
+
+          echo "Appcast generated at $UPDATES_DIR/appcast.xml"
+
+      - name: Publish Sparkle appcast
+        # Rolling release kept only as an archive store for generate_appcast
+        # (previous archives for deltas/ordering). Sparkle never fetches it.
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: apps/connector.mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view memory-appcast || gh release create memory-appcast \
+            --title "Mac update feed" \
+            --notes "Rolling Sparkle feed"
+          shopt -s nullglob
+          ASSETS=(build/appcast/appcast.xml build/appcast/Memory-*.dmg build/appcast/*.delta)
+          gh release upload memory-appcast "${ASSETS[@]}" --clobber
+
+      - name: Publish feed to public GitHub Pages
+        # The feed and DMG are served from the Pages site so each channel has one
+        # fixed URL, which is what shipped builds keep pointing at.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: bash .github/scripts/publish-appcast.sh stable "$MARKETING" apps/connector.mac/build/appcast
+
+      - name: Record build marker
+        # Only meaningful for tag releases; marks this commit as built so the
+        # next tag's skip check diffs against it instead of the nearest tag.
+        # Best-effort: a missing marker only costs one redundant rebuild later.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: |
+          tag="mac-release-uploaded/v${MARKETING}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Marker $tag already exists; nothing to do."
+            exit 0
+          fi
+          git tag "$tag"
+          if git push origin "refs/tags/$tag"; then
+            echo "Recorded build marker $tag"
+          else
+            echo "::warning::Could not push build marker $tag; the next release will fall back to the previous app tag."
+          fi
+
+      - name: Clean up signing keychain and p12
+        # Runs even when an earlier step failed, so signing material never
+        # survives the job. Every command is best-effort (`|| true`) so cleanup
+        # cannot mask the real job result.
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH" 2>/dev/null || true
+            # Remove the imported signing identity before dropping the keychain.
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null \
+              | awk '/"Developer ID|"Apple Development|"Mac Developer/ {print $2}' \
+              | while read -r HASH; do
+                  if [ -n "$HASH" ]; then
+                    security delete-identity -Z "$HASH" "$KEYCHAIN_PATH" 2>/dev/null || true
+                  fi
+                done
+          fi
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          # Restore the user keychain search list so no dangling temp entry is
+          # left behind on the (self-hosted) runner.
+          security list-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+  release:
+    name: Publish to shared release
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: memory-mac-dmg
+          path: release-assets
+
+      - name: Publish to release
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --verify-tag \
+            --title "Memory ${GITHUB_REF_NAME}" --generate-notes || true
+          gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber

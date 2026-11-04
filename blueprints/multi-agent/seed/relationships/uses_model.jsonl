@@ -1,0 +1,11 @@
+{"type":"uses_model","srcKey":"agent-def-enricher","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-web-researcher","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-code-researcher","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-coder","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-reviewer","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-designer","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-research-manager","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-coding-manager","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-review-manager","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-orchestrator","dstKey":"model-gemini-2-5-flash"}
+{"type":"uses_model","srcKey":"agent-def-janitor","dstKey":"model-gemini-2-5-flash"}

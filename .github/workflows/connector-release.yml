@@ -1,0 +1,120 @@
+name: Connector Release
+
+# Stable channel: tag vX.Y.Z → build the memory-connector binary for all
+# platforms and upload to the shared monorepo release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.26'
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
+          # disk between jobs, so the built-in Actions cache only adds multi-GB
+          # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).
+          cache: false
+      # No build-cache restore here: the persistent runner already keeps
+      # GOCACHE on local disk, so this step only re-uploaded ~5 GB.
+      - name: Warm module cache (retry)
+        working-directory: apps/connector.linux
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            go mod download && exit 0
+            echo "go mod download retry $i"
+            sleep 3
+          done
+          exit 1
+
+      - name: Build binary
+        working-directory: apps/connector.linux
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/memory-connector ./cmd/memory-connector
+
+      - name: Package archive
+        working-directory: apps/connector.linux
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          GOOS="${{ matrix.goos }}"
+          GOARCH="${{ matrix.goarch }}"
+          NAME="memory-connector_${VERSION}_${GOOS}_${GOARCH}"
+          tar -C dist -czf "${NAME}.tar.gz" memory-connector
+          sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-connector-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: apps/connector.linux/*.tar.gz*
+          retention-days: 7
+
+  release:
+    name: Publish to shared release
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: build
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: memory-connector-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate manifest
+        shell: bash
+        run: |
+          cat release-assets/*.sha256 > release-assets/checksums.txt
+          scripts/gen-manifest.sh memory-connector stable release-assets \
+            "${{ github.repository }}" "${GITHUB_REF_NAME}"
+
+      - name: Publish to release
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --verify-tag \
+            --title "Memory ${GITHUB_REF_NAME}" --generate-notes || true
+          gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber

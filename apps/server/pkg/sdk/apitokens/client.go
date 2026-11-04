@@ -1,0 +1,458 @@
+// Package apitokens provides the API Tokens service client for the Memory API SDK.
+package apitokens
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+)
+
+// Client provides access to the API Tokens API.
+type Client struct {
+	http *http.Client
+	base string
+	auth auth.Provider
+}
+
+// NewClient creates a new API tokens client.
+func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provider) *Client {
+	return &Client{
+		http: httpClient,
+		base: baseURL,
+		auth: authProvider,
+	}
+}
+
+// APIToken represents an API token (includes full token value if retrieved by ID)
+type APIToken struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Prefix        string   `json:"tokenPrefix"`
+	Token         string   `json:"token,omitempty"` // Full token value - available when retrieved by ID
+	Scopes        []string `json:"scopes"`
+	CreatedAt     string   `json:"createdAt"`
+	RevokedAt     *string  `json:"revokedAt,omitempty"`
+	IsRevoked     bool     `json:"isRevoked"`
+	OwnedByCaller bool     `json:"ownedByCaller,omitempty"`
+}
+
+// CreateTokenResponse represents the response when creating a token (includes full token value)
+type CreateTokenResponse struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Token     string   `json:"token"` // Full token value - only returned at creation
+	Prefix    string   `json:"tokenPrefix"`
+	Scopes    []string `json:"scopes"`
+	CreatedAt string   `json:"createdAt"`
+}
+
+// CreateTokenRequest represents an API token creation request
+type CreateTokenRequest struct {
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+}
+
+// ListResponse represents the response from listing tokens
+type ListResponse struct {
+	Tokens []APIToken `json:"tokens"`
+}
+
+// Create creates a new API token for a project.
+func (c *Client) Create(ctx context.Context, projectID string, req *CreateTokenRequest) (*CreateTokenResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Add authentication
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Execute request
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	// Parse response
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// List returns all API tokens for a project.
+func (c *Client) List(ctx context.Context, projectID string) (*ListResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Execute request
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	// Parse response
+	var result ListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Get retrieves a single API token by ID.
+func (c *Client) Get(ctx context.Context, projectID, tokenID string) (*APIToken, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Execute request
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	// Parse response
+	var token APIToken
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// Revoke revokes an API token, making it permanently unusable.
+func (c *Client) Revoke(ctx context.Context, projectID, tokenID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication
+	if err := c.auth.Authenticate(req); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Execute request
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	// Drain response body
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}
+
+// UpdateScopesRequest represents a request to update a token's scopes.
+type UpdateScopesRequest struct {
+	Scopes []string `json:"scopes"`
+}
+
+// UpdateScopes updates the scopes of a project API token.
+func (c *Client) UpdateScopes(ctx context.Context, projectID, tokenID string, scopes []string) (*APIToken, error) {
+	body, err := json.Marshal(UpdateScopesRequest{Scopes: scopes})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token APIToken
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &token, nil
+}
+
+// UpdateAccountTokenScopes updates the scopes of an account-level API token.
+func (c *Client) UpdateAccountTokenScopes(ctx context.Context, tokenID string, scopes []string) (*APIToken, error) {
+	body, err := json.Marshal(UpdateScopesRequest{Scopes: scopes})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH",
+		c.base+"/api/tokens/"+url.PathEscape(tokenID), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token APIToken
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &token, nil
+}
+
+// CreateAccountToken creates a new account-level API token (not bound to any project).
+func (c *Client) CreateAccountToken(ctx context.Context, req *CreateTokenRequest) (*CreateTokenResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// ListAccountTokens returns all account-level API tokens for the authenticated user.
+func (c *Client) ListAccountTokens(ctx context.Context) (*ListResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/tokens", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result ListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetAccountToken retrieves a single account-level API token by ID.
+func (c *Client) GetAccountToken(ctx context.Context, tokenID string) (*APIToken, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token APIToken
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// Regenerate atomically revokes a project API token and creates a replacement with the same name and scopes.
+// Returns the new token with its plaintext value (shown once).
+func (c *Client) Regenerate(ctx context.Context, projectID, tokenID string) (*CreateTokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID)+"/regenerate", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// RegenerateAccountToken atomically revokes an account-level API token and creates a replacement.
+// Returns the new token with its plaintext value (shown once).
+func (c *Client) RegenerateAccountToken(ctx context.Context, tokenID string) (*CreateTokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.base+"/api/tokens/"+url.PathEscape(tokenID)+"/regenerate", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// RevokeAccountToken revokes an account-level API token.
+func (c *Client) RevokeAccountToken(ctx context.Context, tokenID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}

@@ -1,0 +1,108 @@
+package provider
+
+// Protocol identifies the wire protocol a vendor speaks. Several vendors may
+// share one protocol; the protocol selects the client adapter used to execute
+// a request.
+type Protocol string
+
+const (
+	// ProtocolOpenAIChat is the OpenAI Chat Completions wire protocol.
+	ProtocolOpenAIChat Protocol = "openai-chat"
+	// ProtocolOpenAIResponses is OpenAI's Responses wire protocol
+	// (POST {base}/responses). It is required by the newest OpenAI reasoning
+	// models, which reject `tools` combined with a graded reasoning effort on
+	// /v1/chat/completions, and it is the only protocol that accepts some
+	// effort levels (e.g. "max").
+	ProtocolOpenAIResponses Protocol = "openai-responses"
+	// ProtocolGoogleGenAI is Google's native generateContent protocol.
+	ProtocolGoogleGenAI Protocol = "google-genai"
+	// ProtocolAnthropicMessages is Anthropic's native Messages protocol.
+	ProtocolAnthropicMessages Protocol = "anthropic-messages"
+)
+
+// RerankAPI names the wire shape a vendor uses for reranking. Several vendors
+// may share one shape; the value selects the rerank adapter.
+type RerankAPI string
+
+const (
+	RerankAPICohere       RerankAPI = "cohere"
+	RerankAPIDashScope    RerankAPI = "dashscope"
+	RerankAPIVolcengine   RerankAPI = "volcengine"
+	RerankAPITencentLKEAP RerankAPI = "tencent-lkeap"
+)
+
+// TranscriptionAPI names the wire shape a vendor uses for speech-to-text
+// (ASR/transcription). Several vendors may share one shape; the value selects
+// the transcription adapter.
+type TranscriptionAPI string
+
+const (
+	// TranscriptionAPIOpenAITranscriptions is the OpenAI-compatible multipart
+	// POST {base}/audio/transcriptions protocol (fields: file, model, optional
+	// language / response_format / prompt). Any OpenAI-compatible relay that
+	// speaks this shape (e.g. a Generic provider pointed at Groq) selects it.
+	TranscriptionAPIOpenAITranscriptions TranscriptionAPI = "openai-transcriptions"
+)
+
+// AuthStyle names how a vendor expects credentials to be injected.
+type AuthStyle string
+
+const (
+	// AuthBearer sends Authorization: Bearer <key>.
+	AuthBearer AuthStyle = "bearer"
+	// AuthAPIKeyHeader sends api-key: <key> (Azure OpenAI).
+	AuthAPIKeyHeader AuthStyle = "api-key"
+	// AuthXAPIKey sends x-api-key: <key> (Anthropic).
+	AuthXAPIKey AuthStyle = "x-api-key"
+	// AuthGoogleAPIKey sends x-goog-api-key: <key> (Gemini native).
+	AuthGoogleAPIKey AuthStyle = "x-goog-api-key"
+	// AuthNone sends no credential header (local deployments).
+	AuthNone AuthStyle = "none"
+	// AuthSigned delegates to a registered signer hook. No signer is currently
+	// implemented, so an openai-chat vendor must not declare it; service-account
+	// vendors use the google-genai path instead.
+	AuthSigned AuthStyle = "signed"
+)
+
+// CatalogStrategy names how a vendor's model catalog is resolved.
+type CatalogStrategy string
+
+const (
+	// CatalogOpenAIModels lists models via GET {base_url}/models.
+	CatalogOpenAIModels CatalogStrategy = "openai-models"
+	// CatalogGoogleGenAI lists models via the Google genai SDK.
+	CatalogGoogleGenAI CatalogStrategy = "google-genai"
+	// CatalogStatic returns the definition's embedded model list.
+	CatalogStatic CatalogStrategy = "static"
+)
+
+// ExtraField describes one vendor-specific configuration input rendered
+// dynamically by the API and UI (for example an Azure api-version).
+type ExtraField struct {
+	Key         string             `json:"key"`
+	Label       string             `json:"label"`
+	Type        string             `json:"type"` // string | password | number | boolean | select
+	Required    bool               `json:"required"`
+	Secret      bool               `json:"secret"`
+	Default     string             `json:"default,omitempty"`
+	Placeholder string             `json:"placeholder,omitempty"`
+	Options     []ExtraFieldOption `json:"options,omitempty"`
+	// Header, when set, names the HTTP header the field value is injected as on
+	// every outbound request (e.g. a secondary signing/secret header). Empty
+	// means the field is not attached as a header.
+	Header string `json:"header,omitempty"`
+}
+
+// ExtraFieldOption is one choice of a select extra field.
+type ExtraFieldOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// CredentialLabel optionally renames the primary credential input for a vendor.
+type CredentialLabel struct {
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Hint        string `json:"hint,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}

@@ -1,0 +1,15 @@
+package main
+
+import components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+
+// schemaSubNav is the vertical sub-navigation rail for the Schema area:
+// Compiled schema (/schema) and Schema packs (/schema/packs). It mirrors
+// settingsSubNav/agentSubNav — horizontal on small screens, a sticky left rail
+// on desktop. "Add schema" is NOT a rail item; it is an action on the Schema
+// packs list (linking to the existing /schema/add install flow).
+templ schemaSubNav(active string) {
+	@components.SettingsRail("Schema sections", active, []components.RailItem{
+		{Key: "compiled", Href: "/schema", Icon: "lucide--git-branch", Label: "Compiled schema"},
+		{Key: "packs", Href: "/schema/packs", Icon: "lucide--library", Label: "Schema packs"},
+	})
+}

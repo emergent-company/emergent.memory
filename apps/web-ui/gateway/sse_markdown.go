@@ -1,0 +1,611 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"strings"
+)
+
+// askUserInput is the subset of ask_user tool arguments the gateway forwards
+// to the client so it can render an interactive question card. Field names are
+// snake_case — the tool's wire format.
+type askUserInput struct {
+	Question        string           `json:"question"`
+	Options         []questionOption `json:"options"`
+	InteractionType string           `json:"interaction_type"`
+	Placeholder     string           `json:"placeholder"`
+	MaxLength       int              `json:"max_length"`
+	Proposal        json.RawMessage  `json:"proposal"`
+}
+
+// questionOption is one selectable answer, matching ask_user's options shape.
+type questionOption struct {
+	Label       string `json:"label"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
+}
+
+// questionEvent is the client-facing `question` SSE event (camelCase) — the
+// shape chat.js / sidepanel.js renderQuestion expects. Memory's chat stream
+// never emits it, so the gateway synthesizes it from the ask_user tool call.
+type questionEvent struct {
+	Type            string           `json:"type"`
+	QuestionID      string           `json:"questionId"`
+	Question        string           `json:"question"`
+	QuestionHTML    string           `json:"questionHtml,omitempty"`
+	ProposalHTML    string           `json:"proposalHtml,omitempty"`
+	InteractionType string           `json:"interactionType"`
+	Options         []questionOption `json:"options"`
+	Placeholder     string           `json:"placeholder"`
+	MaxLength       int              `json:"maxLength"`
+}
+
+// rewriteChatStream transforms a memory-service SSE stream in place:
+//   - `token` events are accumulated into the turn buffer and forwarded as raw
+//     `token` deltas — no markdown render is performed per delta;
+//   - a single authoritative markdown-rendered `html` snapshot is emitted per
+//     turn, immediately before `done` or by the post-loop fallback when the
+//     stream ends without `done`;
+//   - `ask_user` MCP tool invocations are rewritten into interactive `question`
+//     events, and their raw `mcp_tool` events are suppressed (the question card
+//     replaces the tool chip);
+//   - all other events (`meta`, `mcp_tool`, `approval`, `done`, unknown) pass
+//     through.
+func rewriteChatStream(w io.Writer, r io.Reader) error {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	sc.Split(splitSSEEvent)
+	var sb strings.Builder
+	var snapshotEmitted bool   // true once this turn's html snapshot was emitted
+	var askInput *askUserInput // ask_user args awaiting the tool's question_id
+	var seenDone bool          // true once the upstream stream emitted a `done` event
+	var citations []citation   // this turn's citations, from the terminal `citations` event
+	for sc.Scan() {
+		raw := sc.Bytes()
+		data := extractSSEData(raw)
+		if data == "" {
+			// Forward SSE keepalive/comment frames (e.g. ": ping") verbatim so
+			// long-lived streams stay alive end-to-end; drop anything else that
+			// carries no data payload.
+			if bytes.HasPrefix(bytes.TrimSpace(raw), []byte(":")) {
+				if _, err := w.Write(raw); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		var ev struct {
+			Type      string          `json:"type"`
+			Token     string          `json:"token"`
+			Tool      string          `json:"tool"`
+			Status    string          `json:"status"`
+			Result    json.RawMessage `json:"result"`
+			Citations []citation      `json:"citations"`
+		}
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			if _, werr := w.Write(raw); werr != nil {
+				return werr
+			}
+			continue
+		}
+		switch ev.Type {
+		case "token":
+			sb.WriteString(ev.Token)
+			payload, err := marshalNoEscape(map[string]string{"type": "token", "token": ev.Token})
+			if err != nil {
+				return err
+			}
+			if _, err := fmtEvent(w, payload); err != nil {
+				return err
+			}
+		case "citations":
+			// The turn's grounded citations, emitted by memory once after the
+			// last token and before `done`. Capture them so the snapshot below
+			// applies the citation link rule, and forward the event verbatim so
+			// the client can render the Sources block.
+			citations = ev.Citations
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+		case "done":
+			// Emit the authoritative snapshot before passing done through, then
+			// reset the turn buffer for any subsequent turn in this stream.
+			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted, citations); err != nil {
+				return err
+			}
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+			sb.Reset()
+			snapshotEmitted = false
+			citations = nil
+			seenDone = true
+		case "mcp_tool":
+			handled, herr := askUserFrame(w, raw, ev.Tool, ev.Status, ev.Result, &askInput)
+			if herr != nil {
+				return herr
+			}
+			if handled {
+				continue
+			}
+			if err := emitToolResultHTML(w, raw, data, ev.Tool, ev.Status, ev.Result); err != nil {
+				return err
+			}
+			continue
+		case "approval":
+			// Tool-policy approval request from memory: pass through verbatim so
+			// the client renders an approval card (tool + input + questionId).
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+		case "ui":
+			// A2UI declarative-card surface update streamed by the agent. The
+			// server has already validated the envelope, so re-emit it to the
+			// client verbatim — the client renders the cards; the gateway does
+			// not interpret or sanitize it beyond normal forwarding.
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+		default:
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+		}
+	}
+	// Fallback: a turn that produced text but never saw `done` (error, EOF, or
+	// scanner failure) still gets its authoritative snapshot before termination.
+	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted, citations); err != nil {
+		return err
+	}
+	// A normal memory stream always ends with `done`. If the scan loop stopped
+	// at a clean upstream EOF without ever seeing it, the connection was
+	// interrupted (server restart/crash) and the client would otherwise hang on
+	// its "working" indicator. Emit a terminal `error` so the client surfaces
+	// the failure instead of spinning forever.
+	if !seenDone {
+		payload, err := marshalNoEscape(map[string]string{
+			"type":  "error",
+			"error": "The agent run was interrupted — the server connection was lost.",
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := fmtEvent(w, payload); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
+}
+
+// askUserFrame rewrites an `ask_user` MCP tool frame into the client-facing
+// `question` event, keeping the pending tool args across the pair of frames (the
+// `started`/`running` frame carries the question, the terminal frame the
+// question_id). Both the authenticated chat stream and the public share stream
+// call it, so a live ask_user pause renders the same interactive question card
+// on either surface.
+//
+// It reports handled=true when it consumed the frame: either the `question`
+// event was written, or the start frame was folded into *pending and suppressed,
+// or an ask_user frame finished without pausing (e.g. a validation error on bad
+// options) and was forwarded raw so the failure shows as a chip. handled=false
+// means the frame is not an ask_user frame and the caller forwards it its own
+// way (raw, or through the tool-result HTML renderer).
+func askUserFrame(w io.Writer, raw []byte, tool, status string, result json.RawMessage, pending **askUserInput) (handled bool, err error) {
+	if tool != "ask_user" {
+		return false, nil
+	}
+	if status == "started" || status == "running" {
+		var in askUserInput
+		if uerr := json.Unmarshal(result, &in); uerr == nil {
+			*pending = &in
+		}
+		return true, nil
+	}
+	var res struct {
+		QuestionID string `json:"question_id"`
+	}
+	_ = json.Unmarshal(result, &res)
+	in := *pending
+	*pending = nil
+	if res.QuestionID == "" || in == nil {
+		if _, werr := w.Write(raw); werr != nil {
+			return false, werr
+		}
+		return true, nil
+	}
+	questionHTML, proposalHTML := askUserQuestionHTML(in.Proposal, in.Question)
+	q := questionEvent{
+		Type:            "question",
+		QuestionID:      res.QuestionID,
+		Question:        in.Question,
+		QuestionHTML:    questionHTML,
+		ProposalHTML:    proposalHTML,
+		InteractionType: in.InteractionType,
+		Options:         in.Options,
+		Placeholder:     in.Placeholder,
+		MaxLength:       in.MaxLength,
+	}
+	if q.InteractionType == "" {
+		q.InteractionType = "buttons"
+	}
+	payload, merr := marshalNoEscape(q)
+	if merr != nil {
+		return false, merr
+	}
+	if _, werr := fmtEvent(w, payload); werr != nil {
+		return false, werr
+	}
+	return true, nil
+}
+
+// emitMarkdownSnapshot emits the single authoritative `html` snapshot for the
+// accumulated turn text, unless the buffer is empty or a snapshot was already
+// emitted this turn. It renders via renderMarkdown — the same sanitized
+// renderer conversation history uses — so the live and history renders of the
+// same text are byte-identical. When the turn carries citations, the same
+// citation link rule the history renderer applies is applied here too.
+func emitMarkdownSnapshot(w io.Writer, sb *strings.Builder, snapshotEmitted *bool, citations []citation) error {
+	if sb.Len() == 0 || *snapshotEmitted {
+		return nil
+	}
+	html := renderCitedMarkdown(sb.String(), citations)
+	payload, err := marshalNoEscape(map[string]string{"type": "html", "html": html})
+	if err != nil {
+		return err
+	}
+	if _, err := fmtEvent(w, payload); err != nil {
+		return err
+	}
+	*snapshotEmitted = true
+	return nil
+}
+
+// marshalNoEscape JSON-encodes v without HTML escaping, so sanitized HTML in
+// the payload stays readable; the JSON itself remains valid for any parser.
+func marshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// splitSSEEvent splits an SSE stream on blank-line event boundaries, yielding
+// the raw event bytes (including any trailing \n\n that terminated it, so
+// framing can be re-emitted verbatim) and a final trailing event at EOF.
+func splitSSEEvent(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.Index(data, []byte("\n\n")); i >= 0 {
+		return i + 2, data[:i+2], nil
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+// extractSSEData returns the JSON payload of the first `data:` line in a raw
+// SSE event, or "" if the event carries none.
+func extractSSEData(raw []byte) string {
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		return strings.TrimSpace(string(bytes.TrimPrefix(line, []byte("data:"))))
+	}
+	return ""
+}
+
+// fmtEvent writes a complete `data: {json}\n\n` SSE event.
+func fmtEvent(w io.Writer, payload []byte) (int, error) {
+	return w.Write(append(append([]byte("data: "), payload...), []byte("\n\n")...))
+}
+
+// emitToolResultHTML re-emits a non-ask_user mcp_tool SSE event, enriching it in
+// place: a highlighted `resultHtml` field when the result is valid JSON, the tool
+// category, and — depending on where the call is in its life — its subject or its
+// readable view. All original fields are preserved verbatim
+// (json.RawMessage), so numbers and unknown fields survive exactly. The verbatim
+// raw event is the fallback when the event cannot be decoded or re-encoded.
+//
+// A frame still running carries the call's arguments in `result`, not output, so
+// it gets a subject and no view; reading it as a result would describe the
+// question as the answer.
+func emitToolResultHTML(w io.Writer, raw []byte, data, tool, status string, result json.RawMessage) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &m); err != nil {
+		_, err := w.Write(raw)
+		return err
+	}
+	if hl, ok := highlightJSONValue(result); ok {
+		m["resultHtml"] = rawJSONString(hl)
+	}
+	if category := toolCategoryJSON(tool); category != nil {
+		m["toolCategory"] = category
+	}
+	switch {
+	case toolAwaitingConfirmation(result):
+		// The call is paused for approval: `result` is the executor's sentinel, so it
+		// is neither a result nor the arguments. The chip keeps the subject the
+		// running frame gave it.
+	case toolTerminal(status):
+		if view := toolViewJSON(result); view != nil {
+			m["toolView"] = view
+		}
+	default:
+		if subject := toolSubjectJSON(result); subject != nil {
+			m["toolSubject"] = subject
+		}
+	}
+	payload, err := marshalNoEscape(m)
+	if err != nil {
+		_, err := w.Write(raw)
+		return err
+	}
+	_, err = fmtEvent(w, payload)
+	return err
+}
+
+// rawJSONString marshals s as a JSON string with HTML escaping disabled, so a
+// highlighted fragment survives intact when embedded in a RawMessage map.
+func rawJSONString(s string) json.RawMessage {
+	b, err := marshalNoEscape(s)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(b)
+}
+
+// splitLeadingReasoning separates the leading chain-of-thought paragraph
+// deepseek-v4 emits before its actual reply. The CoT is the first paragraph
+// (up to the first newline). When there is no clear reply after that newline
+// the text is returned unchanged as the answer with empty reasoning, so
+// single-line messages are never truncated.
+func splitLeadingReasoning(text string) (reasoning, answer string) {
+	if idx := strings.IndexByte(text, '\n'); idx > 0 {
+		r := strings.TrimSpace(text[:idx])
+		a := strings.TrimSpace(text[idx+1:])
+		if r != "" && a != "" {
+			return r, a
+		}
+	}
+	return "", text
+}
+
+// decodeCitations reads a history item's `citations` value into []citation.
+// The value is already-decoded JSON (the item arrived as a raw object), so it
+// is re-marshaled once and decoded into the typed slice; any unexpected shape
+// yields nil (no citations) rather than an error.
+func decodeCitations(v any) []citation {
+	if v == nil {
+		return nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var out []citation
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// renderHistoryHTML converts assistant message text to sanitized HTML,
+// injecting it as content.html. User/tool/system messages and non-message items
+// are left untouched; items that fail to parse are kept as-is. System records
+// carry the run's composed agent instruction — the client renders them as a
+// dedicated prompt card from the raw text, not as a markdown reply.
+func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
+	out := make([]json.RawMessage, len(items))
+	for i, item := range items {
+		out[i] = item
+		var m map[string]any
+		if err := json.Unmarshal(item, &m); err != nil {
+			continue
+		}
+		kind, _ := m["kind"].(string)
+		cites := decodeCitations(m["citations"])
+
+		// ask_user tool calls carry the agent's question text; render its
+		// markdown so the client can show it formatted rather than raw.
+		if kind == "tool_call" {
+			toolName, _ := m["tool_name"].(string)
+			if toolName == "ask_user" {
+				if input, ok := m["tool_input"].(map[string]any); ok {
+					changed := false
+					question, _ := input["question"].(string)
+					var proposalRaw json.RawMessage
+					if p, ok := input["proposal"]; ok {
+						if raw, err := json.Marshal(p); err == nil {
+							proposalRaw = raw
+						}
+					}
+					questionHTML, proposalHTML := askUserQuestionHTML(proposalRaw, question)
+					if question != "" {
+						input["question_html"] = questionHTML
+						changed = true
+					}
+					if proposalHTML != "" {
+						input["proposal_html"] = proposalHTML
+						changed = true
+					}
+					if changed {
+						if re, err := marshalNoEscape(m); err == nil {
+							out[i] = re
+						}
+					}
+				}
+			} else if re := enrichToolItem(item); re != nil {
+				out[i] = re
+			}
+			continue
+		}
+
+		role, _ := m["role"].(string)
+		if kind != "message" || role == "user" || role == "tool" || role == "system" {
+			continue
+		}
+		content, ok := m["content"].(map[string]any)
+		if !ok {
+			continue
+		}
+		text, ok := content["text"].(string)
+		if !ok || text == "" {
+			continue
+		}
+		// Operator planning monologues (function_calls) render as collapsible
+		// thinking blocks and are shown whole.
+		//
+		// Messages persisted after the #1263 fix already carry the model's
+		// chain-of-thought in content.reasoning with a clean content.text, so
+		// the reply is rendered verbatim and the reasoning is left as-is.
+		//
+		// Legacy rows (persisted before the fix) merged CoT into content.text
+		// with no reasoning field; splitLeadingReasoning recovers a sane render
+		// by treating the first line as reasoning. It is kept only as this
+		// legacy fallback.
+		if calls, hasCalls := content["function_calls"].([]any); hasCalls && len(calls) > 0 {
+			content["html"] = renderCitedMarkdown(text, cites)
+		} else if reasoning, hasReasoning := content["reasoning"].(string); hasReasoning && reasoning != "" {
+			content["html"] = renderCitedMarkdown(text, cites)
+		} else if reasoning, answer := splitLeadingReasoning(text); reasoning != "" {
+			content["reasoning"] = reasoning
+			content["text"] = answer
+			content["html"] = renderCitedMarkdown(answer, cites)
+		} else {
+			content["html"] = renderCitedMarkdown(text, cites)
+		}
+		re, err := marshalNoEscape(m)
+		if err != nil {
+			continue
+		}
+		out[i] = re
+	}
+	return out
+}
+
+// enrichToolItem decodes a tool_call timeline item and adds the fields the
+// transcript renders from: highlighted tool_input_html / tool_output_html for
+// JSON I/O, tool_category, tool_subject, and tool_view. Every other field is
+// preserved verbatim (RawMessage). Returns the re-encoded item, or nil when the
+// item cannot be decoded or re-encoded.
+//
+// This is the replay seam: conversation history, run history/resume and share
+// pages all render through renderHistoryHTML, so a run read back carries the same
+// enrichment a live one did. (The recorded-session page reads memory's timeline
+// itself and builds the same presentation through the same toolresult package.) A
+// timeline item's output is its result once the call is settled, and an item with
+// no status is settled by construction (history writes the output when the call
+// finishes) — but a call still running is not, and a call paused for approval is
+// not either: the executor records it as "completed" with a pause sentinel as its
+// output, so the payload, not the status, is what says it never ran.
+func enrichToolItem(data []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	var tool, status string
+	if raw, ok := m["tool_name"]; ok {
+		_ = json.Unmarshal(raw, &tool)
+	}
+	if raw, ok := m["tool_status"]; ok {
+		_ = json.Unmarshal(raw, &status)
+	}
+	if category := toolCategoryJSON(tool); category != nil {
+		m["tool_category"] = category
+	}
+	if hl, ok := highlightJSONValue(m["tool_input"]); ok {
+		m["tool_input_html"] = rawJSONString(hl)
+	}
+	if hl, ok := highlightJSONValue(m["tool_output"]); ok {
+		m["tool_output_html"] = rawJSONString(hl)
+	}
+	if subject := toolSubjectJSON(m["tool_input"]); subject != nil {
+		m["tool_subject"] = subject
+	}
+	if toolSettled(status) && !toolAwaitingConfirmation(m["tool_output"]) {
+		if view := toolViewJSON(m["tool_output"]); view != nil {
+			m["tool_view"] = view
+		}
+	}
+	out, err := marshalNoEscape(m)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+// injectQuestionAnswers annotates answered ask_user tool calls with the user's
+// response (tool_output.response). It collects question ids from the timeline,
+// looks them up in one ListAgentQuestions call, and injects them so the client
+// can keep the question widget and mark it answered.
+func injectQuestionAnswers(ctx context.Context, mem MemoryBackend, items []json.RawMessage) ([]json.RawMessage, error) {
+	ids := make(map[string]bool)
+	for _, item := range items {
+		var m map[string]any
+		if err := json.Unmarshal(item, &m); err != nil {
+			continue
+		}
+		if kind, _ := m["kind"].(string); kind != "tool_call" {
+			continue
+		}
+		if tool, _ := m["tool_name"].(string); tool != "ask_user" {
+			continue
+		}
+		if out, ok := m["tool_output"].(map[string]any); ok {
+			if qid, _ := out["question_id"].(string); qid != "" {
+				ids[qid] = true
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return items, nil
+	}
+	questions, err := mem.ListAgentQuestions(ctx)
+	if err != nil {
+		return items, err
+	}
+	responses := make(map[string]string, len(questions))
+	for _, q := range questions {
+		if q.Response != nil && *q.Response != "" {
+			responses[q.ID] = *q.Response
+		}
+	}
+	out := make([]json.RawMessage, len(items))
+	for i, item := range items {
+		out[i] = item
+		var m map[string]any
+		if err := json.Unmarshal(item, &m); err != nil {
+			continue
+		}
+		if kind, _ := m["kind"].(string); kind != "tool_call" {
+			continue
+		}
+		if tool, _ := m["tool_name"].(string); tool != "ask_user" {
+			continue
+		}
+		toolOut, ok := m["tool_output"].(map[string]any)
+		if !ok {
+			continue
+		}
+		qid, _ := toolOut["question_id"].(string)
+		answer, ok := responses[qid]
+		if qid == "" || !ok {
+			continue
+		}
+		toolOut["response"] = answer
+		if re, err := marshalNoEscape(m); err == nil {
+			out[i] = re
+		}
+	}
+	return out, nil
+}

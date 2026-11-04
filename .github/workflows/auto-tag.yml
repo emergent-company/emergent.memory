@@ -1,0 +1,119 @@
+name: Auto-Tag on Version Bump
+
+on:
+  push:
+    branches: [main]
+    paths: ['VERSION']
+
+permissions:
+  contents: write
+  actions: write   # required for the `gh workflow run` dispatch fallback below
+
+jobs:
+  tag:
+    name: Create Release Tag
+    runs-on: [self-hosted, linux, x64, memory]
+    # A VERSION bump does not always mean "cut a release now". `[skip release]`
+    # anywhere in the pushed commit message lands the bump without tagging,
+    # which is what a snapshot push (new repository, tag created after secrets
+    # are restored) and a re-landed bump after a failed release both need.
+    # Ordinary bumps still tag — the marker has to be deliberate.
+    #
+    # `contains()` matches the whole message, so a commit body that merely
+    # quotes the marker also skips the release. That fails safe (no tag, no
+    # release) and the skip shows in the check list; tag manually with
+    # `git tag -a vX.Y.Z && git push origin vX.Y.Z` if it was unintended.
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Push the tag with a PAT, not GITHUB_TOKEN: events caused by
+          # GITHUB_TOKEN do not create workflow runs, so a GITHUB_TOKEN tag
+          # push silently starts no release pipeline. RELEASE_TOKEN must be a
+          # classic PAT with `repo` + `workflow` scopes.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Verify GitHub CLI
+        run: |
+          if ! command -v gh &>/dev/null; then
+            echo "ERROR: gh CLI is not installed on the runner." >&2
+            exit 1
+          fi
+          echo "gh version: $(gh --version | head -1)"
+
+      - name: Read VERSION
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d ' \n\r' < VERSION)
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: VERSION file is empty or contains only whitespace." >&2
+            exit 1
+          fi
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+){2}$'; then
+            echo "ERROR: VERSION '$VERSION' is not a valid semver (expected MAJOR.MINOR.PATCH, e.g. 1.2.3)." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Read version: $VERSION"
+
+      - name: Check if tag already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          if gh release view "$TAG" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "Tag $TAG already exists as a release — skipping"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin — skipping"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist — will create"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure git
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "Created and pushed tag: $TAG"
+
+      - name: Verify tag push triggered release workflows
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          # The tag push should fan out to every `on: push: tags: v*` workflow.
+          # Give the events a moment, then confirm runs appeared for this ref.
+          for i in 1 2 3 4 5 6; do
+            COUNT=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=50" \
+              --jq "[.workflow_runs[] | select(.head_branch == \"$TAG\")] | length")
+            echo "attempt $i: $COUNT run(s) found for $TAG"
+            if [ "$COUNT" -gt 0 ]; then
+              echo "Release workflows triggered by tag push: $COUNT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "ERROR: no workflow runs appeared for tag $TAG." >&2
+          echo "This means the tag push did not trigger any release workflow." >&2
+          echo "Check that RELEASE_TOKEN is set (a GITHUB_TOKEN push cannot trigger runs)." >&2
+          exit 1

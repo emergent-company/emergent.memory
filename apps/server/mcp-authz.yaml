@@ -1,0 +1,205 @@
+// Raw-access census for apps/server/domain/mcp.
+//
+// This file enumerates every function under domain/mcp that issues raw SQL on
+// the Service's bun.IDB handle (s.db.*) — SQL against other domains' tables
+// that no import rule can see (#1089). Each entry names why the site is
+// legitimate (read-only, project-scoped, or mcp-internal data-plane). The
+// mcp-authz-guard fails when a function issues raw s.db SQL but is not listed
+// here, so a NEW raw-access site must be classified and reviewed.
+//
+// Regenerate with: go run ./cmd/mcp-authz-guard -update
+// This is a tripwire, not a proof of authorization: it catches NEW sites, not
+// an indirect bypass through an already-classified function, nor a mutation of
+// an existing query's WHERE clause. See internal/mcpauthzguard for the
+// method-level Authorize* pairing rule that closes the #1040 shape.
+
+{
+  "version": 1,
+  "raw_sql": [
+    {
+      "file": "apps/server/domain/mcp/bundle.go",
+      "func": "GenerateAgentMCPBundle",
+      "why": "read core.api_tokens by token hash (the bearer validation itself; revoked/expired fails closed) + kb.projects name, read-only and keyed by the authorized endpoint's project; agent authorization is authorizeAgentBundle (401 unbound/revoked key, 403 wrong agent/revoked endpoint/disabled agent)"
+    },
+    {
+      "file": "apps/server/domain/mcp/bundle.go",
+      "func": "GenerateMCPBundle",
+      "why": "read kb.projects name; project_admin role already enforced via apitokenSvc.GetUserProjectRole at the top of the function; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/bundle.go",
+      "func": "GenerateMCPBundleFromToken",
+      "why": "read core.api_tokens by token hash (the bearer validation itself) + kb.projects name; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/graph_tools.go",
+      "func": "getSystemNamespaceTypes",
+      "why": "read kb.project_object_schema_registry, project-scoped (WHERE project_id = ?); read-only namespace blocklist"
+    },
+    {
+      "file": "apps/server/domain/mcp/graph_tools.go",
+      "func": "getTypesForNamespace",
+      "why": "read kb.project_object_schema_registry, project-scoped (WHERE project_id = ?); read-only namespace allowlist"
+    },
+    {
+      "file": "apps/server/domain/mcp/project_auth.go",
+      "func": "authorizeProjectClaim",
+      "why": "read kb.projects + kb.organization_memberships; this function IS the membership authorizer for session-bound endpoints (#868), read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/provider_tools.go",
+      "func": "resolveOrgID",
+      "why": "read kb.projects organization_id; org resolved from auth context (ProjectIDFromContext), read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeCreateSchema",
+      "why": "write INSERT kb.graph_schemas + registries, project-scoped (WHERE project_id = caller) and RLS-guarded via SetRLSContext; membership enforced by the transport (authorizeProjectClaim). Not delegated to schemas.CreatePack because the MCP tool's input contract (type_name keying, relationship types without canonical sourceType/targetType) is rejected by CreatePack validation; tracked in #1041"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeGetInstalledTemplates",
+      "why": "read kb.graph_schemas + kb.project_schemas, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeGetMigrationArchive",
+      "why": "read kb.graph_objects migration_archive JSONB, project-scoped (WHERE project_id = ?); read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeGetSchema",
+      "why": "read kb.graph_schemas + kb.project_object_schema_registry + kb.project_edge_schema_registry, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeListMigrationArchives",
+      "why": "read kb.graph_objects migration_archive JSONB, project-scoped (WHERE project_id = ?); read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeListSchemas",
+      "why": "read kb.graph_schemas, project-scoped (WHERE project_id = ?); read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executePreviewSchemaMigration",
+      "why": "read kb.graph_objects (schema_version), project-scoped (WHERE project_id = ?); read-only preview"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeSchemaCompiledTypes",
+      "why": "read kb.project_object_schema_registry + kb.project_edge_schema_registry, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeSchemaHistory",
+      "why": "read kb.project_schemas, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "executeSchemaVersion",
+      "why": "read kb.graph_schemas, project-scoped (WHERE project_id = ?); read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/schema_tools.go",
+      "func": "getSchemaVersion",
+      "why": "read kb.graph_schemas id/updated_at, project-scoped (WHERE project_id = ?); read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeCreateProject",
+      "why": "write INSERT kb.projects (project-create tool); org resolved from auth context; caller's org_admin authority enforced server-side via the shared projects.Service.AuthorizeOrgAdmin helper before the insert (the REST Create path enforces the same helper), tracked in #1041"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeEntityHistory",
+      "why": "read kb.graph_objects, project-scoped; read-only entity history"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeGetProjectInfo",
+      "why": "read kb.projects (name) + entity/relationship counts, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeListEntityTypes",
+      "why": "read kb.graph_objects + kb.graph_relationships + kb.project_object_schema_registry, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeQueryEntities",
+      "why": "read kb.graph_objects / kb.graph_relationships, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeQueryEntitiesByIDs",
+      "why": "read kb.graph_objects by id, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeSearchEntities",
+      "why": "read kb.graph_objects, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "executeUpdateProjectInfo",
+      "why": "update kb.projects.project_info by the id already authorized for this call (project_id comes from the authenticated request context, never from tool arguments), scope-gated projects:write, bounded to 100 KB; no cross-project read or write"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "getEntityBasicInfo",
+      "why": "read kb.graph_objects, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "getMemoryGuidePrompt",
+      "why": "read kb.projects + kb.project_object_schema_registry, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "readProjectMetadataResource",
+      "why": "read kb.graph_objects + kb.graph_relationships counts, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "readRelationshipsResource",
+      "why": "read kb.graph_relationships, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "readSimilarityThreshold",
+      "why": "read kb.project_settings, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "resolveBranchID",
+      "why": "read kb.branches by name+project, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "resolveCanonicalID",
+      "why": "read kb.graph_objects canonical id resolution, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "resolveEntityIDByKey",
+      "why": "read kb.graph_objects by key, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "resolveOrCreateBranchID",
+      "why": "read kb.branches by name+project; the auto-create path goes through branchSvc.Create (service layer, not raw SQL); read-only here"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
+      "func": "suggestEntityKeysByFuzzy",
+      "why": "read kb.graph_objects fuzzy key match, project-scoped; read-only"
+    },
+    {
+      "file": "apps/server/domain/mcp/share.go",
+      "func": "ShareMCPAccess",
+      "why": "read kb.projects name; project_admin role already enforced via apitokenSvc.GetUserProjectRole at the top of the function; read-only"
+    }
+  ]
+}

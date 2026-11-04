@@ -1,0 +1,285 @@
+node_modules/
+dist/
+.next/
+
+# MkDocs build output (root-level site/ only, not docs/site/ which is our source)
+/site/
+
+# Ignore build outputs in all packages
+**/dist-openapi/
+
+# Environment files with secrets (never commit)
+.env.local
+**/.env.local
+.env.*.local
+.env.e2e.scenarios
+.env.infisical
+.env.test
+docker/.env
+# Note: docker/.env.example IS tracked (safe placeholder values only)
+
+# Environment files for specific deployments (never commit)
+.env.staging
+.env.test.external
+.env.production
+
+# Backup and temporary files
+*.bak
+
+# Backup and temporary env files (never commit)
+*.env.bak
+*.env.backup*
+.env.remote
+.env.opencode
+.env.dev.local
+
+# Note: .env files WITH SAFE DEFAULTS are committed
+# All secrets should be in .env.local files only
+
+# Credentials files
+credentials.txt
+**/credentials.txt
+
+.DS_Store
+
+# Secrets directory (service account JSON keys)
+secrets/
+!secrets/README.md
+
+# Database backups and schema dumps
+/backups/
+
+# Playwright / E2E artifacts
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+test-results-share/
+**/test-results-share/
+/.cache/ms-playwright/
+**/.cache/ms-playwright/
+
+# Coverage outputs
+coverage/
+**/coverage/
+lcov.info
+*.out
+*.coverprofile
+*.prof
+coverage_combined/
+apps/server/coverage_combined/
+
+# Vitest / Jest snapshots (optional keep if needed)
+*.snap
+
+# Misc build caches
+.nx/
+.vite/
+**/.vite/
+
+# OS / IDE extras
+.idea/
+*.log
+*.tsbuildinfo
+
+# Xcode generated projects/build output. The Xcode project is generated from
+# project.yml by XcodeGen (see apps/connector.mac); project.yml is the source
+# of truth, so the generated .xcodeproj must never be committed.
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# Development PID files
+.dev-pids/
+apps/pids/
+
+# Misc
+storybook-static
+logs
+
+# Duplicate detection reports
+/reports/jscpd/
+apps/server/server
+spec-server-dev-vertex-ai.json
+.gemini/
+
+# Built CLI binaries
+apps/cli/emergent-*
+apps/cli/emergent
+apps/cli/memory
+bin/
+apps/server/tmp/
+
+# Go build artifacts and temporary files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/server
+/extraction-bench
+/imdb-bench
+/seed-imdb
+/imdb-benchmark-runner
+
+# Temporary Go scripts and patches
+fix_*.go
+patch*.go
+test_*.go
+setup_*.go
+!**/setup_executor.go
+run_*.go
+new_*.go
+old_*.go
+create_project.go
+clean_syntax.go
+
+# Temporary shell scripts
+*.sh.tmp
+test-*.sh
+run_*.sh
+!e2e/run_tests.sh
+get_*.sh
+
+# Benchmark and test runners
+apps/server/benchmark_script
+apps/server/extraction-bench
+apps/server/seed-imdb
+apps/server/main
+
+# Root level Go module files (should be in subdirectories)
+/go.mod
+/go.sum
+
+# MP3 and large media files
+*.mp3
+**/all_mp3s/
+**/sample_mp3s/
+
+# Binary executables in tools
+tools/niezatapialni-scraper/niezatapialni-scraper
+
+# Large data files
+*.jsonl
+!blueprints/**/seed/**/*.jsonl
+!apps/web-ui/gateway/blueprints/**/seed/**/*.jsonl
+.claude/settings.local.json
+
+# Test data and e2e suites
+test-data/
+tests/
+# ...except the migrated suites (Playwright + memory_bridge pytests + consolidated runlog e2e)
+!apps/web-ui/tests/
+!apps/web-ui/memory_bridge/tests/
+!e2e/tests/
+# ...and the server DB-backed integration suite (issue #911)
+!apps/server/tests/
+# ...and the Python SDK unit suite (issue #1981)
+!sdk/python/tests/
+
+# auto-added by commit skill — 2026-03-01
+/cmd
+apps/cli/test_search
+pids/
+apps/cli/.env
+
+# auto-added by commit skill — 2026-03-06
+vertex-sa-key.json
+tui.json
+opencode.jsonc.tui-migration.bak
+docs/hooks/__pycache__/
+apps/server/swiftbridge
+
+# auto-added by commit skill — 2026-03-09
+apps/server/VERSION
+
+# Apple Xcode 27 agent skills — generated locally on the Mac build host by our
+# local tooling. Apple-licensed
+# content (Xcode SLA §2.5/§2.7): never commit or redistribute. The exporter
+# installs to the local opencode skills dir; these entries are a guard against a
+# repo-pointed --dest.
+.opencode/skills/adopt-c-bounds-safety/
+.opencode/skills/app-intents-specialist/
+.opencode/skills/app-intents-whats-new-27/
+.opencode/skills/audit-xcode-security-settings/
+.opencode/skills/building-document-based-swiftui-applications/
+.opencode/skills/device-interaction/
+.opencode/skills/modernize-tests/
+.opencode/skills/swiftui-specialist/
+.opencode/skills/swiftui-whats-new-27/
+.opencode/skills/uikit-app-modernization/
+
+# Machine-specific local TLS material (e.g. tailscale certs used for dev UI hosting).
+# Never commit these — a private key in the working tree is one `git add -A` away from leaking.
+*.key
+*.crt
+
+# Build outputs and binaries
+apps/server/bin/
+apps/server/*.out
+apps/server/migrate
+apps/server/tasks
+apps/server/vm-agent
+apps/cli/*.tar.gz
+
+# EPF subtree (removed from tracking)
+docs/EPF/
+
+# auto-added by commit skill — 2026-03-14
+apps/cli/main
+
+# Python bytecode
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# auto-added by commit skill — 2026-03-20
+session-dump-*.md
+
+# auto-added by commit skill — 2026-03-24
+sdk/python/.coverage
+
+# auto-added by commit skill — 2026-04-19
+# Root-level compiled tool binaries (built from blueprints/code-memory-blueprint/tools/)
+/api-audit
+/context-rewire
+/coverage-audit
+/func-tree
+/graph-complexity
+/graph-fix
+/graph-logic-audit
+/graph-sync
+/graph-sync-routes
+/refactor-advisor
+/scenario-context-map
+/service-exposes-seed
+/test-coverage
+/uml-gen
+# Temp scripts and data files
+/fix.go
+/fix.patch
+/mapping.py
+/final_mapping.py
+/endpoints.json
+/scenarios.json
+/skills-lock.json
+# opencode package lock
+.opencode/package-lock.json
+
+# Compiled blueprint tool binaries. `go build ./...` inside a tool dir drops the
+# binary next to main.go, so the name matches the directory. Add a line per tool
+# that ships one — do not broad-match `tools/*/*`, it also swallows READMEs and
+# any subdirectory a tool grows.
+blueprints/code-memory-blueprint/tools/branch-verify/branch-verify
+blueprints/code-memory-blueprint/tools/graph-sync-middleware/graph-sync-middleware
+blueprints/code-memory-blueprint/tools/graph-sync-routes/graph-sync-routes
+.server_pid
+
+# auto-added by commit skill — 2026-06-02
+.runlog/
+
+# pr-review-and-fix skill scratch output (generated by scripts/extract_threads.sh)
+threads.tsv
+
+# Flow integration config — removed from the repo; ignore if a local flow CLI regenerates it
+.flow.yml

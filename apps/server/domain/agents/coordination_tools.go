@@ -1,0 +1,631 @@
+package agents
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
+)
+
+// CoordinationToolDeps holds the dependencies needed by coordination tools.
+// These tools need access to the executor and repository because they
+// spawn sub-agents and query agent definitions at runtime.
+type CoordinationToolDeps struct {
+	Executor    *AgentExecutor
+	Repo        *Repository
+	Logger      *slog.Logger
+	ProjectID   string
+	ParentRunID string
+	RootRunID   string // top-level orchestration run ID; propagated unchanged to all spawned sub-agents
+	Depth       int
+	MaxDepth    int
+	// SpawnPolicy is an optional allowlist of agent names this caller is permitted
+	// to spawn. When non-empty, any attempt to spawn an agent not in this list is
+	// rejected and the catalog returned by list_available_agents is also filtered.
+	// When empty (nil/zero-length), all agents are reachable (open policy).
+	SpawnPolicy []string
+	// TrustedInternal is set by the transport that started the run (not inferred
+	// from the agent's own visibility). When false — the fail-closed zero value —
+	// this run was invoked through an external-facing surface (A2A
+	// message:send/stream, agentcompat, public share) and must not reach
+	// internal-visible agents — internal agents are "callable only by other
+	// agents, never via A2A" (entity.go). Trusted surfaces (session UI,
+	// scheduled/worker runs, MCP tools, agent→agent delegation) set it true and
+	// keep full internal coordination. The value is propagated unchanged to any
+	// spawned child so the gate holds for the whole delegation chain (issue #954).
+	TrustedInternal bool
+	// ParentMetadata is the TriggerMetadata of the parent run. It is merged with
+	// any per-spawn Context supplied by the LLM (per-spawn keys take precedence)
+	// to form the child run's TriggerMetadata.
+	ParentMetadata map[string]any
+
+	// SuspendSignal is set by executeSingleSpawn when a spawned child run suspends.
+	// The parent executor's afterToolCb reads this and propagates the suspend upward.
+	SuspendSignal *SuspendSignal
+}
+
+// extractSpawnPolicy reads the spawnPolicy.allow list from an AgentDefinition's Config.
+// Returns nil (open policy — all agents reachable) if the definition is nil,
+// has no config, or has no spawnPolicy key.
+func extractSpawnPolicy(def *AgentDefinition) []string {
+	if def == nil || def.Config == nil {
+		return nil
+	}
+	policyRaw, ok := def.Config["spawnPolicy"]
+	if !ok {
+		return nil
+	}
+	policyMap, ok := policyRaw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	allowRaw, ok := policyMap["allow"]
+	if !ok {
+		return nil
+	}
+	allowList, ok := allowRaw.([]any)
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(allowList))
+	for _, item := range allowList {
+		if name, ok := item.(string); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// spawnAllowed returns true when the agent name is permitted by the policy.
+// An empty/nil policy means all agents are allowed.
+func spawnAllowed(policy []string, agentName string) bool {
+	if len(policy) == 0 {
+		return true
+	}
+	for _, allowed := range policy {
+		if allowed == agentName {
+			return true
+		}
+	}
+	return false
+}
+
+// canReachInternal reports whether a coordination caller may list or spawn
+// internal-visible agents. Only trusted surfaces are allowed: an untrusted
+// (external-facing) caller is A2A/agentcompat/share-reachable, and internal
+// agents are "callable only by other agents, never via A2A". The signal is the
+// transport surface (TrustedInternal), not the caller's own visibility. The zero
+// value is false (untrusted), so an unspecified surface fails closed.
+func canReachInternal(trustedInternal bool) bool {
+	return trustedInternal
+}
+
+// mergeMaps returns a new map that contains all entries from base, with any
+// keys in override taking precedence. Returns nil when both inputs are nil or
+// empty, so that NULL (not '{}') is written to the database.
+func mergeMaps(base, override map[string]any) map[string]any {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		merged[k] = v
+	}
+	return merged
+}
+
+// workspaceToolNameSet is the set of tool names that are resolved as workspace
+// tools (not MCP tools). These should be filtered from agent catalog responses
+// to avoid confusing the LLM into thinking they are spawnable sub-agents.
+var workspaceToolNameSet = map[string]bool{
+	"workspace_bash":  true,
+	"workspace_read":  true,
+	"workspace_write": true,
+	"workspace_edit":  true,
+	"workspace_glob":  true,
+	"workspace_grep":  true,
+	"workspace_git":   true,
+	"run_python":      true,
+	"run_go":          true,
+}
+
+// filterWorkspaceToolNames removes workspace tool names from a tools list.
+// The agent definition's Tools array is a whitelist for MCP tool resolution,
+// but workspace tools are resolved separately via sandbox config. Exposing
+// them in list_available_agents confuses the LLM into treating them as
+// spawnable agents or direct tools on other agents.
+func filterWorkspaceToolNames(tools []string) []string {
+	if len(tools) == 0 {
+		return tools
+	}
+	filtered := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if !workspaceToolNameSet[t] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+// --- list_available_agents ---
+
+// ListAvailableAgentsArgs is the input for the list_available_agents tool.
+type ListAvailableAgentsArgs struct {
+	// No required parameters — returns all agents for the project
+}
+
+// AgentSummary is a single agent entry in the list_available_agents response.
+type AgentSummary struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Tools       []string       `json:"tools,omitempty"`
+	Visibility  string         `json:"visibility"`
+	Config      map[string]any `json:"config,omitempty"`
+}
+
+// ListAvailableAgentsResult is the response from list_available_agents.
+type ListAvailableAgentsResult struct {
+	Agents []AgentSummary `json:"agents"`
+	Count  int            `json:"count"`
+}
+
+// buildAgentCatalog filters the project's definitions down to the agents a
+// coordination caller may list. It honors the spawn-policy allowlist (when set)
+// and hides internal-visible agents from untrusted (external-facing) callers,
+// since an external-facing caller is A2A/agentcompat-reachable and internal
+// agents are "never via A2A".
+func buildAgentCatalog(defs []*AgentDefinition, policy []string, trustedInternal bool) []AgentSummary {
+	agents := make([]AgentSummary, 0, len(defs))
+	for _, def := range defs {
+		if !spawnAllowed(policy, def.Name) {
+			continue
+		}
+		if !canReachInternal(trustedInternal) && def.Visibility == VisibilityInternal {
+			continue
+		}
+		desc := ""
+		if def.Description != nil {
+			desc = *def.Description
+		}
+		agents = append(agents, AgentSummary{
+			Name:        def.Name,
+			Description: desc,
+			Tools:       filterWorkspaceToolNames(def.Tools),
+			Visibility:  string(def.Visibility),
+			Config:      def.Config,
+		})
+	}
+	return agents
+}
+
+// BuildListAvailableAgentsTool creates the list_available_agents ADK tool.
+func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
+	return functiontool.New(
+		functiontool.Config{
+			Name:        ToolNameListAvailableAgents,
+			Description: "List all available agents in the project's catalog. Returns name, description, tools list, and visibility for each agent. Does not include system prompts.",
+		},
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+			// Query all definitions for the project (include internal — non-external
+			// callers should see everything; buildAgentCatalog hides internal from
+			// external-facing callers).
+			defs, err := deps.Repo.FindAllDefinitions(ctx, deps.ProjectID, true)
+			if err != nil {
+				return map[string]any{"error": fmt.Sprintf("failed to list agents: %s", err.Error())}, nil
+			}
+
+			agents := buildAgentCatalog(defs, deps.SpawnPolicy, deps.TrustedInternal)
+
+			deps.Logger.Info("list_available_agents called",
+				slog.String("project_id", deps.ProjectID),
+				slog.Int("count", len(agents)),
+			)
+
+			// Return as map for ADK tool response
+			return map[string]any{
+				"agents": agents,
+				"count":  len(agents),
+			}, nil
+		},
+	)
+}
+
+// --- spawn_agents ---
+
+// SpawnRequest is a single sub-agent spawn request.
+type SpawnRequest struct {
+	AgentName   string  `json:"agent_name"`
+	Task        string  `json:"task"`
+	Timeout     *int    `json:"timeout,omitempty"`       // timeout in seconds
+	ResumeRunID *string `json:"resume_run_id,omitempty"` // for resuming paused runs
+	// Context is an optional per-spawn metadata map. Keys are merged with the
+	// parent's TriggerMetadata (these per-spawn keys take precedence) and
+	// propagated to the child run as its TriggerMetadata.
+	Context map[string]any `json:"context,omitempty"`
+}
+
+// SpawnResult is the result of a single sub-agent execution.
+type SpawnResult struct {
+	AgentName string         `json:"agent_name"`
+	RunID     string         `json:"run_id,omitempty"`
+	Status    AgentRunStatus `json:"status"`
+	Summary   map[string]any `json:"summary,omitempty"`
+	Steps     int            `json:"steps"`
+	Error     string         `json:"error,omitempty"`
+}
+
+// SpawnAgentsResult is the aggregate response from spawn_agents.
+type SpawnAgentsResult struct {
+	Results []SpawnResult `json:"results"`
+	Total   int           `json:"total"`
+}
+
+// BuildSpawnAgentsTool creates the spawn_agents ADK tool.
+// deps is passed by pointer so that executeSingleSpawn can propagate a
+// SuspendSignal back to the parent executor via deps.SuspendSignal.
+func BuildSpawnAgentsTool(deps *CoordinationToolDeps) (tool.Tool, error) {
+	desc := "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, and steps."
+	agentNameDesc := "Name of the agent to spawn (from list_available_agents)"
+	if len(deps.SpawnPolicy) > 0 {
+		allowed := strings.Join(deps.SpawnPolicy, ", ")
+		desc += " Allowed agent_name values: " + allowed + "."
+		agentNameDesc = "Name of the agent to spawn. Must be one of: " + allowed
+	}
+	return functiontool.New(
+		functiontool.Config{
+			Name:        ToolNameSpawnAgents,
+			Description: desc,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"agents": {
+						Type:        "array",
+						Description: "List of sub-agent spawn requests",
+						Items: &jsonschema.Schema{
+							Type: "object",
+							Properties: map[string]*jsonschema.Schema{
+								"agent_name": {Type: "string", Description: agentNameDesc},
+								"task":       {Type: "string", Description: "Task description to pass to the sub-agent"},
+								"timeout":    {Type: "integer", Description: "Optional timeout in seconds"},
+							},
+							Required: []string{"agent_name", "task"},
+						},
+					},
+				},
+				Required: []string{"agents"},
+			},
+		},
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+			// Parse the spawn requests from args
+			requests, err := parseSpawnRequests(args)
+			if err != nil {
+				return map[string]any{"error": fmt.Sprintf("invalid spawn request: %s", err.Error())}, nil
+			}
+
+			if len(requests) == 0 {
+				return map[string]any{"error": "no spawn requests provided"}, nil
+			}
+
+			deps.Logger.Info("spawn_agents called",
+				slog.String("project_id", deps.ProjectID),
+				slog.String("parent_run_id", deps.ParentRunID),
+				slog.Int("depth", deps.Depth),
+				slog.Int("request_count", len(requests)),
+			)
+
+			// Execute all spawn requests in parallel
+			results := executeSpawns(ctx, deps, requests)
+
+			return map[string]any{
+				"results": results,
+				"total":   len(results),
+			}, nil
+		},
+	)
+}
+
+// executeSpawns runs all spawn requests in parallel using a WaitGroup.
+// Parent context cancellation cascades to all sub-agents.
+// Individual sub-agent timeouts only stop that sub-agent.
+func executeSpawns(ctx context.Context, deps *CoordinationToolDeps, requests []SpawnRequest) []SpawnResult {
+	results := make([]SpawnResult, len(requests))
+	var wg sync.WaitGroup
+
+	for i, req := range requests {
+		wg.Add(1)
+		go func(idx int, spawnReq SpawnRequest) {
+			defer wg.Done()
+			results[idx] = executeSingleSpawn(ctx, deps, spawnReq)
+		}(i, req)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// spawnTargetBlocked reports whether the coordination caller is forbidden from
+// spawning the given target definition, returning the rejection reason. Only
+// untrusted (external-facing) callers are blocked from spawning internal-visible
+// agents ("callable only by other agents, never via A2A").
+func spawnTargetBlocked(trustedInternal bool, def *AgentDefinition) (string, bool) {
+	if !canReachInternal(trustedInternal) && def.Visibility == VisibilityInternal {
+		return fmt.Sprintf("agent %q is internal and cannot be reached via A2A", def.Name), true
+	}
+	return "", false
+}
+
+// executeSingleSpawn handles a single sub-agent spawn request.
+func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req SpawnRequest) SpawnResult {
+	// Enforce spawn policy — reject if the target is not in the allowlist
+	if !spawnAllowed(deps.SpawnPolicy, req.AgentName) {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     fmt.Sprintf("agent %q is not in the spawn policy for this agent", req.AgentName),
+		}
+	}
+
+	// Look up the agent definition by name
+	def, err := deps.Repo.FindDefinitionByName(ctx, deps.ProjectID, req.AgentName)
+	if err != nil {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     fmt.Sprintf("failed to look up agent: %s", err.Error()),
+		}
+	}
+	if def == nil {
+		// Invalid agent name — fail this spawn, not others
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     fmt.Sprintf("agent %q not found in project catalog", req.AgentName),
+		}
+	}
+
+	// Internal agents are "never via A2A" — an external-facing caller must not
+	// spawn one, even when the target is inside the spawn-policy allowlist.
+	if reason, blocked := spawnTargetBlocked(deps.TrustedInternal, def); blocked {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     reason,
+		}
+	}
+
+	// Type-scope delegation guard: a scoped caller must not spawn an agent whose
+	// declared allowlist would let the child reach excluded types (#1695).
+	if delegationDeniedByTypeScope(ctx, def) {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     delegationScopeError(),
+		}
+	}
+
+	// Find the corresponding runtime Agent entity by name
+	agent, err := deps.Repo.FindByName(ctx, deps.ProjectID, req.AgentName)
+	if err != nil {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     fmt.Sprintf("failed to find agent runtime entity: %s", err.Error()),
+		}
+	}
+	if agent == nil {
+		// No runtime agent row exists — create one from the definition so that
+		// agent_runs.agent_id FK is satisfied.
+		agent = &Agent{
+			ProjectID:         deps.ProjectID,
+			Name:              def.Name,
+			Prompt:            def.SystemPrompt,
+			Description:       def.Description,
+			StrategyType:      "definition",
+			TriggerType:       TriggerTypeManual,
+			ExecutionMode:     ExecutionModeExecute,
+			AgentDefinitionID: &def.ID,
+		}
+		if createErr := deps.Repo.Create(ctx, agent); createErr != nil {
+			return SpawnResult{
+				AgentName: req.AgentName,
+				Status:    RunStatusError,
+				Error:     fmt.Sprintf("failed to create runtime agent for definition %q: %s", req.AgentName, createErr.Error()),
+			}
+		}
+	}
+
+	// Determine timeout — explicit timeout overrides agent definition's default_timeout
+	var timeout *time.Duration
+	if req.Timeout != nil && *req.Timeout > 0 {
+		d := time.Duration(*req.Timeout) * time.Second
+		timeout = &d
+	} else if def.DefaultTimeout != nil && *def.DefaultTimeout > 0 {
+		d := time.Duration(*def.DefaultTimeout) * time.Second
+		timeout = &d
+	}
+
+	// Build the execute request for the sub-agent
+	parentRunID := deps.ParentRunID
+	rootRunID := deps.RootRunID
+	execReq := ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: def,
+		ProjectID:       deps.ProjectID,
+		UserMessage:     req.Task,
+		ParentRunID:     &parentRunID,
+		RootRunID:       &rootRunID, // propagate root orchestration ID unchanged
+		MaxSteps:        def.MaxSteps,
+		Timeout:         timeout,
+		Depth:           deps.Depth + 1,
+		MaxDepth:        deps.MaxDepth,
+		TriggerMetadata: mergeMaps(deps.ParentMetadata, req.Context),
+		// Propagate the parent's trust marker unchanged: an external-facing parent
+		// must not reach internal agents one hop deeper through its child.
+		TrustedInternal: deps.TrustedInternal,
+	}
+
+	// Handle resume_run_id: resume a paused prior run instead of starting fresh
+	if req.ResumeRunID != nil && *req.ResumeRunID != "" {
+		priorRun, err := deps.Repo.FindRunByID(ctx, *req.ResumeRunID)
+		if err != nil {
+			return SpawnResult{
+				AgentName: req.AgentName,
+				Status:    RunStatusError,
+				Error:     fmt.Sprintf("failed to load prior run %s: %s", *req.ResumeRunID, err.Error()),
+			}
+		}
+		if priorRun == nil {
+			return SpawnResult{
+				AgentName: req.AgentName,
+				Status:    RunStatusError,
+				Error:     fmt.Sprintf("prior run %s not found", *req.ResumeRunID),
+			}
+		}
+
+		deps.Logger.Info("resuming paused sub-agent",
+			slog.String("agent_name", req.AgentName),
+			slog.String("resume_run_id", *req.ResumeRunID),
+			slog.Int("depth", deps.Depth+1),
+		)
+
+		result, err := deps.Executor.Resume(ctx, priorRun, execReq)
+		if result != nil && result.Cleanup != nil {
+			defer result.Cleanup()
+		}
+		if err != nil {
+			return SpawnResult{
+				AgentName: req.AgentName,
+				Status:    RunStatusError,
+				Error:     fmt.Sprintf("resume failed: %s", err.Error()),
+			}
+		}
+
+		// Propagate spawn cascade: if the child suspended, signal the parent to pause too.
+		if result.Status == RunStatusPaused && result.RunID != "" {
+			deps.SuspendSignal = &SuspendSignal{
+				Reason:          SuspendReasonAwaitingChild,
+				WaitingForRunID: result.RunID,
+			}
+		}
+
+		return SpawnResult{
+			AgentName: req.AgentName,
+			RunID:     result.RunID,
+			Status:    result.Status,
+			Summary:   result.Summary,
+			Steps:     result.Steps,
+		}
+	}
+
+	deps.Logger.Info("spawning sub-agent",
+		slog.String("agent_name", req.AgentName),
+		slog.String("project_id", deps.ProjectID),
+		slog.Int("depth", deps.Depth+1),
+	)
+
+	// Execute the sub-agent (context propagation happens automatically via ctx)
+	result, err := deps.Executor.Execute(ctx, execReq)
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
+	if err != nil {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     fmt.Sprintf("execution failed: %s", err.Error()),
+		}
+	}
+
+	// Propagate spawn cascade: if the child suspended, signal the parent to pause too.
+	if result.Status == RunStatusPaused && result.RunID != "" {
+		deps.SuspendSignal = &SuspendSignal{
+			Reason:          SuspendReasonAwaitingChild,
+			WaitingForRunID: result.RunID,
+		}
+	}
+
+	return SpawnResult{
+		AgentName: req.AgentName,
+		RunID:     result.RunID,
+		Status:    result.Status,
+		Summary:   result.Summary,
+		Steps:     result.Steps,
+	}
+}
+
+// parseSpawnRequests extracts SpawnRequest objects from the tool call args.
+func parseSpawnRequests(args map[string]any) ([]SpawnRequest, error) {
+	agentsRaw, ok := args["agents"]
+	if !ok {
+		// Try "requests" as an alternate key
+		agentsRaw, ok = args["requests"]
+		if !ok {
+			return nil, fmt.Errorf("missing 'agents' array in spawn request")
+		}
+	}
+
+	agentsList, ok := agentsRaw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("'agents' must be an array")
+	}
+
+	requests := make([]SpawnRequest, 0, len(agentsList))
+	for i, item := range agentsList {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("spawn request at index %d is not an object", i)
+		}
+
+		agentName, _ := m["agent_name"].(string)
+		if agentName == "" {
+			return nil, fmt.Errorf("spawn request at index %d missing 'agent_name'", i)
+		}
+
+		task, _ := m["task"].(string)
+		if task == "" {
+			return nil, fmt.Errorf("spawn request at index %d missing 'task'", i)
+		}
+
+		req := SpawnRequest{
+			AgentName: agentName,
+			Task:      task,
+		}
+
+		// Optional timeout (seconds)
+		if timeoutRaw, ok := m["timeout"]; ok {
+			switch v := timeoutRaw.(type) {
+			case float64:
+				t := int(v)
+				req.Timeout = &t
+			case int:
+				req.Timeout = &v
+			}
+		}
+
+		// Optional resume_run_id
+		if resumeID, ok := m["resume_run_id"].(string); ok && resumeID != "" {
+			req.ResumeRunID = &resumeID
+		}
+
+		// Optional per-spawn context map
+		if ctxRaw, ok := m["context"]; ok {
+			if ctxMap, ok := ctxRaw.(map[string]any); ok {
+				req.Context = ctxMap
+			}
+		}
+
+		requests = append(requests, req)
+	}
+
+	return requests, nil
+}

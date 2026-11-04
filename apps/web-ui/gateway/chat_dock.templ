@@ -1,0 +1,146 @@
+package main
+
+import (
+	"strconv"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+)
+
+// DockPanel renders the pending-work dock for one conversation: its pending
+// tool approvals and pending ask_user questions. It renders nothing when both
+// are empty. It is the chat page's <noscript> fallback only: with scripting,
+// pending questions and approvals render inline in the transcript as agent
+// bubbles (chat.js/chat-stream.js renderQuestion/renderApproval), so this panel
+// is never part of the live DOM.
+//
+// The cards are the shared components.ApprovalCard / components.QuestionCard —
+// the same markup the transcript and /settings/approvals render — so all three
+// surfaces show one card design. The dock supplies each card's control row (its
+// data-dock-action buttons) as the integration site.
+//
+// The fragment root deliberately carries no id: it is pre-rendered inside
+// <noscript> and must not collide with any live-DOM id.
+templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCard) {
+	if len(approvals) > 0 || len(questions) > 0 {
+		{{ total := len(approvals) + len(questions) }}
+		<div class="chat-dock" data-conv={ convID } data-testid="chat-dock">
+			if total > 1 {
+				<div class="dock-head" data-testid="dock-head">
+					<span class="dock-count" data-testid="dock-count">{ strconv.Itoa(total) }</span>
+					<span class="dock-count-label">pending</span>
+				</div>
+			}
+			for _, a := range approvals {
+				@components.ApprovalCard(dockApprovalProps(a))
+			}
+			for _, q := range questions {
+				@components.QuestionCard(dockQuestionProps(q))
+			}
+		</div>
+	}
+}
+
+// dockApprovalActions is a dock approval's control row: the reject-reason field
+// and the cancel / reject / approve buttons, each carrying the dock's
+// data-dock-action marker. The dock has no client wiring (it is the no-JS
+// fallback), so the markers exist for the surface's own contract and styling.
+templ dockApprovalActions(questionID string) {
+	<div class="memory-approval__actions flex flex-wrap items-center justify-end gap-2">
+		<input
+			type="text"
+			class="input input-sm mr-auto flex-1 min-w-0"
+			placeholder="Reason (optional)"
+			maxlength="500"
+			aria-label="Rejection reason (optional)"
+		/>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-approval-cancel",
+			Attrs:      templ.Attributes{"data-dock-action": "cancel", "data-question-id": questionID},
+		}) {
+			Cancel
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-approval-reject text-error",
+			Attrs:      templ.Attributes{"data-dock-action": "reject", "data-question-id": questionID},
+		}) {
+			Reject
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonPrimary,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-approval-approve",
+			Attrs:      templ.Attributes{"data-dock-action": "approve", "data-question-id": questionID},
+		}) {
+			Approve
+		}
+	</div>
+}
+
+// dockQuestionControls is a dock question's footer: the cancel / submit buttons
+// carrying the dock's data-dock-action markers.
+templ dockQuestionControls(questionID string) {
+	<div class="memory-question__footer flex flex-wrap items-center justify-end gap-2">
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-question-cancel",
+			Attrs:      templ.Attributes{"data-dock-action": "cancel", "data-question-id": questionID},
+		}) {
+			Cancel
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonPrimary,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-question-submit",
+			Attrs: templ.Attributes{
+				"data-dock-action": "answer",
+				"data-question-id": questionID,
+				"disabled":         true,
+			},
+		}) {
+			Submit
+		}
+	</div>
+}
+
+// TodoCard renders one conversation's session todos as a collapsed-by-default
+// card. It renders nothing when there are no todos.
+templ TodoCard(todos []TodoItem) {
+	if len(todos) > 0 {
+		<div class="todo-card" data-testid="todo-card">
+			<button type="button" class="todo-card-toggle" data-testid="todo-card-toggle" aria-expanded="false">
+				Plan
+			</button>
+			<ul class="todo-card-list" data-testid="todo-card-list">
+				for _, t := range todos {
+					<li class="todo-item" data-testid="todo-item" data-status={ t.Status } data-order={ strconv.Itoa(t.Order) }>
+						<span class="todo-item-status">{ t.Status }</span>
+						<span class="todo-item-content">{ t.Content }</span>
+					</li>
+				}
+			</ul>
+		</div>
+	}
+}
+
+// RailStatusBadge renders the session-rail run-state badge for one row: the
+// machine-readable bucket and pending-work counts plus a human label. Lane B
+// places this inside each rail row (sessionRailItem).
+templ RailStatusBadge(bucket string, pendingApprovals, pendingQuestions int) {
+	<span
+		class="rail-status-badge"
+		data-bucket={ bucket }
+		data-pending-approvals={ strconv.Itoa(pendingApprovals) }
+		data-pending-questions={ strconv.Itoa(pendingQuestions) }
+	>{ railBucketLabel(bucket) }</span>
+}

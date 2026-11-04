@@ -1,0 +1,704 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Kanban board (object-driven work) ---
+
+// BoardPage renders the Kanban board: a header, the circuit-breaker health
+// readout (when any reaction agent is unhealthy), and the status columns.
+templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, allowances boardAllowances, statusMap boardStatusMap, loadErr error) {
+	@layout.Container(layout.ContainerFull, nil) {
+		@boardHeaderRegion(len(items), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Board unavailable", loadErr)
+		} else {
+			@boardHealthRegion(agents)
+			<!-- Live refresh: htmx's hx-sse extension (loaded by the page shell,
+			     after htmx) holds /board/stream open and the server pushes
+			     rendered <hx-partial> frames for #board, #board-header and
+			     #board-health whenever a work item or agent run changes — so
+			     agent-driven transitions appear without a reload. -->
+			<div id="board-live" hx-sse:connect="/board/stream" aria-hidden="true"></div>
+			@BoardColumns(items, statuses, allowances, statusMap, "")
+		}
+		<div id="board-drawer" data-testid="board-drawer"></div>
+	}
+}
+
+// boardHeaderRegion wraps the page heading in a stable swap target so a live
+// frame can refresh the item count without re-rendering the page. The wrapper
+// is inside the fragment (outerMorph on #board-header), so the header and its
+// count stay one node and focus/scroll elsewhere is untouched.
+templ boardHeaderRegion(count int, ok bool) {
+	<div id="board-header" data-testid="board-header">
+		@boardHeader(count, ok)
+	</div>
+}
+
+// boardHealthRegion wraps the circuit-breaker readout in a stable swap target.
+// boardHealth renders nothing when every agent is healthy, so the wrapper is
+// what keeps the frame non-empty and lets a later frame clear a stale alert.
+templ boardHealthRegion(agents []ScheduledAgent) {
+	<div id="board-health" data-testid="board-health">
+		@boardHealth(agents)
+	</div>
+}
+
+// BoardColumnsFrame is the fragment the live stream pushes for #board: the
+// columns without the drawer out-of-band clear, so a background refresh can
+// never close an open drawer.
+templ BoardColumnsFrame(items []WorkItem, statuses []string, allowances boardAllowances, statusMap boardStatusMap, errMsg string) {
+	@BoardColumns(items, statuses, allowances, statusMap, errMsg)
+}
+
+// BoardRefresh renders the board columns plus an out-of-band swap that clears
+// the drawer (closing any open dialog). This is the response for the board's
+// action routes; background/partial refreshes use BoardColumnsFrame instead, so
+// an unrelated live update never closes a drawer the user is typing in.
+templ BoardRefresh(items []WorkItem, statuses []string, allowances boardAllowances, statusMap boardStatusMap, errMsg string) {
+	@BoardColumns(items, statuses, allowances, statusMap, errMsg)
+	<div id="board-drawer" hx-swap-oob="true" data-testid="board-drawer"></div>
+}
+
+// boardHeader is the board's page heading. It renders nav.PageHeading directly
+// (rather than the shared pageHeader helper) for one reason: the board is the
+// app's only full-bleed page (layout.ContainerFull), so its subtitle has no
+// measure at all — on a wide monitor it would run the whole width of the
+// content area as a single line, leaving the title/subtitle and the right-hand
+// count badge stranded at opposite edges. SubtitleFull:false restores the
+// shared max-w-2xl reading measure the helper hard-codes off for every capped
+// page; every other prop mirrors pageHeader so the markup is otherwise
+// identical. The kicker, title, subtitle and badge are unchanged.
+templ boardHeader(count int, ok bool) {
+	{{ var actions templ.Component
+	if ok {
+		actions = countBadgeLabel(countLabel(count, "item", "items"), "lucide--kanban-square")
+	} }}
+	@nav.PageHeading(nav.PageHeadingProps{
+		Kicker:          "Control plane",
+		Title:           "Board",
+		Subtitle:        "Work items across object status lanes — drag a card between lanes to move it (Ready re-executes it), or open a card to review and act on it.",
+		Actions:         actions,
+		Margin:          "mb-6",
+		Dashboard:       true,
+		SubtitleFull:    false,
+		HideBreadcrumbs: true,
+		NoTopMargin:     true,
+		Flat:            true,
+	})
+}
+
+// boardHealth renders the agent circuit-breaker readout: a warning listing
+// disabled or repeatedly-failing reaction agents. Renders nothing when healthy.
+templ boardHealth(agents []ScheduledAgent) {
+	{{ broken := boardUnhealthyAgents(agents) }}
+	if len(broken) > 0 {
+		<div class="mb-6" data-testid="board-agent-health">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--heart-pulse",
+				Message: "Some work agents are unhealthy and may not pick up new items.",
+			})
+			<div class="mt-2 flex flex-wrap gap-2">
+				for _, a := range broken {
+					{{ label := a.Name
+					if !a.Enabled {
+						label = a.Name + " · disabled"
+					} else {
+						label = a.Name + " · " + strconv.Itoa(a.ConsecutiveFailures) + " failure" + plural(a.ConsecutiveFailures)
+					} }}
+					@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Dot: true})
+				}
+			</div>
+		</div>
+	}
+}
+
+// BoardColumns renders the status lanes. It is the htmx swap region (#board) that
+// actions and drag re-render. errMsg, when set, renders an error banner above
+// the lanes. The work-path status map is emitted as a data attribute so app.js
+// derives drag transitions from the project's configured statuses.
+templ BoardColumns(items []WorkItem, statuses []string, allowances boardAllowances, statusMap boardStatusMap, errMsg string) {
+	<div id="board" data-testid="board" tabindex="-1" data-board-status-map={ statusMap.statusMapJSON() }>
+		if errMsg != "" {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: errMsg,
+				Attrs:   templ.Attributes{"class": "mb-4"},
+			})
+		}
+		{{ cols := buildBoardColumns(items, statuses) }}
+		if len(items) >= boardItemLimit {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertInfo,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--list-filter",
+				Message: "Showing the newest " + strconv.Itoa(boardItemLimit) + " work items — older items are not listed. Review them from the object list.",
+				Attrs:   templ.Attributes{"class": "mb-4", "data-testid": "board-cap-notice"},
+			})
+		}
+		if len(items) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--kanban-square",
+				Title:       "No work items",
+				Description: "Objects of a board-enabled type will appear here, grouped by their work status.",
+				Bordered:    true,
+				Class:       "py-12",
+			})
+		} else {
+			{{/* Lanes form a single row that divides the available width evenly:
+			    one auto column per lane, each at least 9rem wide and grown to an
+			    equal share of the row. The 9rem floor is sized so the canonical
+			    six lanes fit without a horizontal scroll at a 1280px viewport
+			    (≈960px of content: 6×9rem + 5×1rem gaps = 53rem ≈ 795px), so a
+			    desktop board reads as one divided band rather than a first row
+			    plus a lone wrapped lane. Below the floor — narrow/tablet widths
+			    and the wider 15rem base floor on mobile — the row overflows and
+			    scrolls horizontally instead of compressing lanes below a usable
+			    width; pb-4 leaves the scrollbar its own space. */}}
+			<div class="grid grid-flow-col auto-cols-[minmax(15rem,1fr)] items-stretch gap-4 overflow-x-auto pb-4 lg:auto-cols-[minmax(9rem,1fr)]">
+				for _, col := range cols {
+					@boardLaneView(col, allowances)
+				}
+			</div>
+		}
+	</div>
+}
+
+// boardLane renders one status lane: a header (status badge + count) and the
+// stack of cards. The Ready lane is a drop target (drag = execute).
+templ boardLaneView(col boardLane, allowances boardAllowances) {
+	{{/* memory-board__lane is the styling hook app.js and app.css share: the
+	    drop-affordance rules key off .memory-board__lane[data-drop-eligible], so
+	    the class must be on the lane element or the eligibility ring silently
+	    paints nothing (the --drop modifier class alone still matches). */}}
+	<section
+		class="memory-board__lane flex min-w-0 flex-col rounded-box border border-base-content/10 bg-base-200/30"
+		data-board-column={ col.Status }
+		aria-label={ boardStatusLabel(col.Status) }
+	>
+		<header class="flex items-center gap-2 border-base-content/10 border-b px-3 py-2.5">
+			@components.StatusBadge(boardStatusLabel(col.Status), boardStatusIntent(col.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			<span class="ml-auto font-mono text-[11px] text-muted-faint">{ strconv.Itoa(len(col.Items)) }</span>
+		</header>
+		<div class="flex min-h-12 grow flex-col gap-2 p-2">
+			for _, it := range col.Items {
+				@boardCard(it, allowances)
+			}
+			if len(col.Items) == 0 {
+				<div class="grid place-items-center rounded-field border border-dashed border-base-content/10 py-6 text-[11px] text-muted-faint">Empty</div>
+			}
+		</div>
+	</section>
+}
+
+// boardCard renders one work-item card: type, key, assignee, and the latest-run
+// execution badge. Blocked/failed cards get an error accent; unroutable cards a
+// warning accent. The card is both clickable (opens the shared object preview
+// drawer) and draggable; app.js owns the click/keydown preview hook and the
+// drag action mapping.
+templ boardCard(it WorkItem, allowances boardAllowances) {
+	{{ accent := "border-base-content/10"
+	if it.Status == "blocked" || it.LatestRunStatus == "error" {
+		accent = "border-error/40"
+	} else if it.Unroutable {
+		accent = "border-warning/40"
+	}
+	// The item's own type's allowed statuses (JSON): app.js withholds a lane
+	// outside this set for an exact-status move, so a lane that exists only for
+	// another type is not offered as a target the server would refuse. The
+	// platform transitions (retry/approve/cancel/request changes) are unaffected.
+	allowedJSON := allowances.allowedJSON(it.Type) }}
+	<div
+		class={ "cursor-pointer rounded-field border bg-base-100 p-3 shadow-sm transition-colors hover:border-base-content/25", accent }
+		draggable="true"
+		data-board-card=""
+		data-canonical-id={ it.CanonicalID }
+		data-board-status={ it.Status }
+		if allowedJSON != "" {
+			data-board-allowed={ allowedJSON }
+		}
+		data-board-open-preview=""
+		aria-haspopup="dialog"
+		role="button"
+		tabindex="0"
+		data-testid={ "board-card-" + it.CanonicalID }
+	>
+		<div class="flex items-center gap-1.5">
+			<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ it.Type }</span>
+			if it.Unroutable {
+				<span class="iconify lucide--route-off text-warning size-3" aria-label="Unroutable" title="No listening agent"></span>
+			}
+			if it.Status == "blocked" {
+				<span class="iconify lucide--circle-x text-error size-3" aria-label="Blocked"></span>
+			}
+		</div>
+		<p class="mt-1 min-w-0 truncate text-sm font-medium">{ it.Key }</p>
+		<div class="mt-2 flex flex-wrap items-center gap-1.5">
+			if it.Assignee != "" {
+				@ui.Badge(ui.BadgeProps{Label: it.Assignee, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--user"})
+			}
+			if it.RunCount > 0 {
+				@components.StatusBadge(it.LatestRunStatus, boardRunIntent(it.LatestRunStatus), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			}
+			<!-- Touch has no HTML5 drag: this opens the item drawer (status
+			     control + actions) so a card can still be moved between lanes. -->
+			<button
+				type="button"
+				draggable="false"
+				class="ml-auto inline-flex min-h-[44px] items-center gap-1 rounded-field border border-base-content/10 px-2 text-xs text-muted transition-colors hover:text-base-content md:hidden"
+				data-board-open-drawer={ it.CanonicalID }
+				aria-label={ "Open actions for " + it.Key }
+				data-testid={ "board-move-" + it.CanonicalID }
+			>
+				@ui.IconSpan("lucide--arrow-right-left", "size-3.5")
+				Move
+			</button>
+		</div>
+	</div>
+}
+
+// BoardDrawer renders the card detail as a native dialog: the item identity,
+// its declared deliverables and completion note, feedback history, recent runs,
+// and the human actions. The status map resolves which of the item's statuses
+// gate each action; lanes is the board's rendered lane order, so the "Set
+// status" menu offers every lane the board shows (custom statuses included).
+templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, lanes []string, deliverables []boardDeliverable, completionNote string, candidates []boardAssigneeCandidate) {
+	{{ item := detail.Item }}
+	@ui.Dialog(ui.DialogProps{
+		ID:       "board-item-dialog",
+		BoxClass: "max-w-lg",
+		Attrs:    templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "board-item-dialog", "data-canonical-id": item.CanonicalID},
+	}) {
+		<div class="flex items-center justify-between gap-2">
+			<div class="flex min-w-0 items-center gap-2">
+				@components.StatusBadge(item.Status, boardStatusIntent(item.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeSM, Dot: true})
+				<span class="font-mono text-[11px] text-muted uppercase">{ item.Type }</span>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": "true"},
+			})
+		</div>
+
+		@ui.DialogTitle(ui.DialogTitleProps{Tracking: true, Class: "mt-3"}) {
+			{ item.Key }
+		}
+		<div class="mt-2 flex flex-wrap items-center gap-1.5">
+			@ui.Badge(ui.BadgeProps{Label: "v" + strconv.Itoa(item.Version), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			if item.Assignee != "" {
+				@ui.Badge(ui.BadgeProps{Label: item.Assignee, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--user"})
+			}
+			if item.RunCount > 0 {
+				@components.StatusBadge("last run "+item.LatestRunStatus, boardRunIntent(item.LatestRunStatus), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			}
+			if item.Unroutable {
+				@ui.Badge(ui.BadgeProps{Label: "unroutable", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
+			}
+			if item.NeedsReview {
+				@ui.Badge(ui.BadgeProps{Label: "needs review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+			}
+			@boardStatusControl(item.CanonicalID, item.Status, statusMap, lanes)
+		</div>
+
+		@boardDeliverablesView(deliverables)
+		@boardCompletionNote(completionNote)
+
+		@boardDrawerActions(item, statusMap, candidates)
+
+		{{ comments := boardComments(detail.Comments, detail.Feedback) }}
+		@boardCommentsView(comments, item.CanonicalID, "board-drawer-comment")
+
+		if len(detail.Runs) > 0 {
+			<div class="mt-5">
+				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Runs</span>
+				<div class="mt-2 space-y-1.5">
+					for _, run := range detail.Runs {
+						<!-- The whole row is the affordance: an operator reaches the
+						     run's agent transcript (the run page, a real navigation)
+						     straight from the board drawer. aria-label names the
+						     action because the row's own content is a status chip and
+						     an opaque short id, which would otherwise be the
+						     accessible name. -->
+						<a
+							href={ templ.URL("/runs/" + url.PathEscape(run.ID)) }
+							class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5 transition-colors hover:border-base-content/25 hover:bg-base-200/40"
+							aria-label="Open run session"
+							data-testid="board-run-row"
+						>
+							@components.StatusBadge(run.Status, boardRunIntent(run.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+							if run.ErrorMessage != nil && *run.ErrorMessage != "" {
+								<span class="min-w-0 truncate text-xs text-error">{ *run.ErrorMessage }</span>
+							}
+							<span class="ml-auto font-mono text-[10px] text-muted-faint">#{ shortID(run.ID) }</span>
+							@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+						</a>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+// boardDeliverablesView renders the declared deliverables: a resolved object
+// links to its detail page (key as label, muted type prefix); a declared-but-
+// missing deliverable renders muted with a "not found" hint; an empty list
+// renders an explicit empty state.
+templ boardDeliverablesView(deliverables []boardDeliverable) {
+	<div class="mt-5">
+		<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Deliverables</span>
+		<div class="mt-2 space-y-1.5">
+			for _, d := range deliverables {
+				if d.Resolved {
+					<a
+						href={ templ.URL("/objects/" + url.PathEscape(d.ObjectID)) }
+						class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5 transition-colors hover:border-base-content/25 hover:bg-base-200/40"
+						data-testid="board-deliverable"
+					>
+						<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ d.Type }</span>
+						<span class="min-w-0 truncate text-sm font-medium">{ d.Key }</span>
+						@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+					</a>
+				} else {
+					<div class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5" data-testid="board-deliverable-missing">
+						<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ d.Type }</span>
+						<span class="min-w-0 truncate text-sm text-muted">{ d.Key }</span>
+						<span class="ml-auto text-[10px] text-muted-faint">not found</span>
+					</div>
+				}
+			}
+			if len(deliverables) == 0 {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: templ.Attributes{"data-testid": "board-deliverable-empty"}}) { No deliverables declared }
+			}
+		</div>
+	</div>
+}
+
+// boardCommentsView renders the drawer's "Activity" section: the merged thread
+// (durable comments + rework feedback rounds, ascending) under an eyebrow
+// heading, followed by the inline comment form. testIDPrefix scopes the thread's
+// test ids to this surface — see boardCommentsThread.
+templ boardCommentsView(entries []boardComment, canonicalID, testIDPrefix string) {
+	<div class="mt-5">
+		<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Activity</span>
+		<div class="mt-2">
+			@boardCommentsThread(entries, testIDPrefix)
+		</div>
+		@boardCommentForm(canonicalID, testIDPrefix)
+	</div>
+}
+
+// boardCommentsThread renders the merged thread's rows — durable comments and
+// rework feedback rounds, ascending — plus its muted empty state, with no heading
+// and no outer margin so each surface supplies its own heading chrome (the native
+// dialog's eyebrow, the preview's section heading).
+//
+// testIDPrefix scopes the test ids to one surface ("board-drawer-comment" /
+// "board-preview-comment"). Both surfaces can coexist in the DOM — after the
+// native dialog closes its content stays in #board-drawer — so identical ids
+// would make a Playwright locator resolve to two nodes (strict-mode violation).
+//
+// Feedback rounds are marked with their rework round; agent-authored comments
+// carry an "agent" badge. Two badges are never shown for one entry: a feedback
+// round is never agent-authored. At the preview pane's narrow default width the
+// meta row wraps rather than pushing the author out of the pane.
+templ boardCommentsThread(entries []boardComment, testIDPrefix string) {
+	<div class="space-y-2">
+		for _, e := range entries {
+			<div class="rounded-box border border-base-content/10 bg-base-200/30 p-2.5" data-testid={ testIDPrefix + "-row" }>
+				<div class="flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted">
+					if e.Kind == "feedback" {
+						@ui.Badge(ui.BadgeProps{Label: "rework round " + strconv.Itoa(e.Round), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					} else if e.ActorType == "agent" {
+						@ui.Badge(ui.BadgeProps{Label: "agent", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					}
+					if e.Author != "" {
+						<span class="min-w-0 break-words">{ e.Author }</span>
+					}
+				</div>
+				<p class="mt-1 text-sm break-words">{ e.Body }</p>
+			</div>
+		}
+		if len(entries) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: templ.Attributes{"data-testid": testIDPrefix + "-empty"}}) { No activity yet }
+		}
+	</div>
+}
+
+// boardCommentForm posts a durable comment and re-renders the board columns
+// (mirroring the request-changes form's htmx swap). testIDPrefix scopes its test
+// ids to the calling surface (see boardCommentsThread).
+templ boardCommentForm(canonicalID, testIDPrefix string) {
+	<form
+		hx-post={ boardActionPath(canonicalID, "comments") }
+		hx-target="#board"
+		hx-swap="outerHTML"
+		class="mt-2 flex w-full flex-col gap-2"
+		data-testid={ testIDPrefix + "-form" }
+	>
+		<textarea name="body" required placeholder="Add a comment…" class="textarea w-full" rows="2" data-testid={ testIDPrefix + "-input" }></textarea>
+		<div class="flex justify-end">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonOutline, Size: ui.ButtonSM}) {
+				Comment
+			}
+		</div>
+	</form>
+}
+
+// boardPreviewBoardSlot renders the board's work-item surface inside the shared
+// object preview drawer — the card-click path, and the primary way a human opens
+// a board item: the status-gated actions, then the merged "Activity" thread and
+// its inline form as a preview section, so the thread is discoverable from the
+// common path rather than only from the rarer drag→review dialog. The pane is
+// narrow (32rem by default, resizable, promotable to a modal), so the thread
+// reuses the drawer's wrapping rows and the preview's own section heading. The
+// form posts to #board exactly like the native dialog's form; object-preview.js
+// closes the drawer on a successful POST, so the same htmx swap works from both
+// surfaces.
+//
+// The status and assignee pickers live in the preview's top workflow strip, not
+// this slot: changing either keeps the preview open and swaps its body in place,
+// while the board refreshes from the project event stream.
+templ boardPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []WorkItemComment, feedback []WorkItemFeedback) {
+	@boardDrawerActionButtons(item, statusMap)
+	<div class="mt-5">
+		@objectPreviewSection("Activity") {
+			@boardCommentsThread(boardComments(comments, feedback), "board-preview-comment")
+			@boardCommentForm(item.CanonicalID, "board-preview-comment")
+		}
+	</div>
+}
+
+// boardCompletionNote renders the newest run's completion summary as sanitized
+// markdown. Omitted entirely when empty.
+templ boardCompletionNote(note string) {
+	if note != "" {
+		<div class="mt-5">
+			<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Completion note</span>
+			<div class="mt-2 rounded-box border border-base-content/10 bg-base-200/30 p-2.5">
+				<div class="memory-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(note))</div>
+			</div>
+		</div>
+	}
+}
+
+// boardDrawerActions renders the human actions for an item in the native board
+// dialog: the status-gated actions plus the ticket-style assignee picker, gated
+// by status (hide, don't disable). The statuses are resolved through the
+// project's work-path map, so a custom-mapped board exposes the same actions as
+// the default one. Every action posts to the gateway action route and swaps the
+// board columns; the drawer is cleared out-of-band.
+templ boardDrawerActions(item *WorkItem, statusMap boardStatusMap, candidates []boardAssigneeCandidate) {
+	<div class="mt-4 flex flex-wrap gap-2">
+		if item.Status == statusMap.Review {
+			@boardActionButton("Approve", "lucide--check", ui.ButtonSuccess, boardActionPath(item.CanonicalID, "approve"))
+			@boardRequestChangesForm(item.CanonicalID)
+		}
+		if item.Status == statusMap.Blocked {
+			@boardActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, boardActionPath(item.CanonicalID, "retry"))
+		}
+		if item.Status != statusMap.Done {
+			@boardAssigneePicker(item.CanonicalID, item.Assignee, candidates)
+			@boardActionButton("Cancel", "lucide--ban", ui.ButtonGhost, boardActionPath(item.CanonicalID, "cancel"))
+		}
+	</div>
+}
+
+// boardDrawerActionButtons renders only the status-gated action buttons (no
+// assignee picker). The shared object preview uses it inside its action slot:
+// status/assignee are edited in the preview's top strip, while Approve / Request
+// changes / Retry / Cancel keep posting to #board.
+templ boardDrawerActionButtons(item *WorkItem, statusMap boardStatusMap) {
+	<div class="mt-4 flex flex-wrap gap-2">
+		if item.Status == statusMap.Review {
+			@boardActionButton("Approve", "lucide--check", ui.ButtonSuccess, boardActionPath(item.CanonicalID, "approve"))
+			@boardRequestChangesForm(item.CanonicalID)
+		}
+		if item.Status == statusMap.Blocked {
+			@boardActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, boardActionPath(item.CanonicalID, "retry"))
+		}
+		if item.Status != statusMap.Done {
+			@boardActionButton("Cancel", "lucide--ban", ui.ButtonGhost, boardActionPath(item.CanonicalID, "cancel"))
+		}
+	</div>
+}
+
+// boardActionButton is an htmx POST button for a bodyless action.
+templ boardActionButton(label, icon string, variant ui.ButtonVariant, action string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: variant,
+		Size:    ui.ButtonSM,
+		Icon:    icon,
+		Attrs: templ.Attributes{
+			"hx-post":   action,
+			"hx-target": "#board",
+			"hx-swap":   "outerHTML",
+		},
+	}) {
+		{ label }
+	}
+}
+
+// boardRequestChangesForm posts request-changes with required feedback.
+templ boardRequestChangesForm(canonicalID string) {
+	<form
+		hx-post={ boardActionPath(canonicalID, "request-changes") }
+		hx-target="#board"
+		hx-swap="outerHTML"
+		class="mt-2 flex w-full flex-col gap-2"
+	>
+		<textarea name="feedback" required placeholder="What needs to change?" class="textarea textarea-bordered w-full" rows="2"></textarea>
+		<div class="flex justify-end">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonAccent, Size: ui.ButtonSM}) {
+				Request changes
+			}
+		</div>
+	</form>
+}
+
+// boardAssigneePicker renders a ticket-style assignee dropdown: an avatar+name
+// trigger (or a muted "Unassigned" placeholder) that lists Unassigned, runtime
+// agents, and project members. Each option posts the chosen assignee to the
+// existing reassign route and swaps the board columns (closing the drawer
+// out-of-band).
+templ boardAssigneePicker(canonicalID, current string, candidates []boardAssigneeCandidate) {
+	@ui.Dropdown(ui.DropdownEnd, templ.Attributes{"data-testid": "board-assignee-picker"}) {
+		<div
+			tabindex="0"
+			role="button"
+			class="flex cursor-pointer items-center gap-2 rounded-full py-0.5 pr-2.5 pl-0.5 outline-none transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45"
+			aria-label="Assignee"
+			aria-haspopup="menu"
+		>
+			if current == "" {
+				<div class="shrink-0">
+					@ui.AvatarFull(ui.AvatarProps{Name: "Unassigned", Icon: "lucide--user", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+				</div>
+				<span class="text-xs text-muted-faint">Unassigned</span>
+			} else {
+				<div class="shrink-0">
+					@ui.AvatarFull(ui.AvatarProps{Name: current, Icon: "lucide--user", Size: ui.AvatarSize6, Fallback: ui.AvatarFallbackInitials, TextClass: "text-[10px]"})
+				</div>
+				<span class="max-w-32 truncate text-xs font-medium">{ current }</span>
+			}
+		</div>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Assignee", "class": "min-w-52 border-base-content/10 z-50"}) {
+			<li>
+				<form hx-post={ boardActionPath(canonicalID, "reassign") } hx-target="#board" hx-swap="outerHTML" class="flex w-full">
+					<input type="hidden" name="assignee" value=""/>
+					<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+						<div class="shrink-0">
+							@ui.AvatarFull(ui.AvatarProps{Name: "Unassigned", Icon: "lucide--user", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+						</div>
+						<span class="text-sm text-muted">Unassigned</span>
+					</button>
+				</form>
+			</li>
+			for _, c := range candidates {
+				<li>
+					<form hx-post={ boardActionPath(canonicalID, "reassign") } hx-target="#board" hx-swap="outerHTML" class="flex w-full">
+						<input type="hidden" name="assignee" value={ c.Value }/>
+						<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+							<div class="shrink-0">
+								if c.IsAgent {
+									@ui.AvatarFull(ui.AvatarProps{Name: c.Label, Icon: "lucide--bot", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+								} else {
+									@ui.AvatarFull(ui.AvatarProps{Name: c.Label, Src: c.AvatarURL, Icon: "lucide--user", Size: ui.AvatarSize6, Fallback: ui.AvatarFallbackInitials, TextClass: "text-[10px]"})
+								}
+							</div>
+							<div class="min-w-0 grow">
+								<p class="truncate text-sm">{ c.Label }</p>
+								if c.IsAgent {
+									<p class="truncate text-[10px] text-muted-faint">agent</p>
+								} else {
+									<p class="truncate text-[10px] text-muted-faint">won't be picked up</p>
+								}
+							</div>
+						</button>
+					</form>
+				</li>
+			}
+			<li class="pointer-events-none border-t border-base-content/10 px-3 py-1.5">
+				<p class="text-[10px] text-muted-faint">Only agents that handle work are woken.</p>
+			</li>
+		}
+	}
+}
+
+// boardStatusControl renders a compact "Set status" dropdown listing the
+// board's rendered lanes (custom statuses included, minus the current status).
+// Each option posts the chosen status to the set-status route and swaps the
+// board columns. lanes falls back to the canonical work-path vocabulary when the
+// board rendered no lanes (an empty board still has lanes, so this is only a
+// defensive default).
+templ boardStatusControl(canonicalID, current string, statusMap boardStatusMap, lanes []string) {
+	{{ options := boardStatusOptions(statusMap, lanes, current) }}
+	if len(options) > 0 {
+		@ui.Dropdown(ui.DropdownEnd, templ.Attributes{"data-testid": "board-status-control"}) {
+			<div
+				tabindex="0"
+				role="button"
+				class="cursor-pointer rounded-field border border-base-content/10 px-2 py-0.5 text-xs text-muted transition hover:ring-1 hover:ring-base-content/25"
+				aria-label="Set status"
+				aria-haspopup="menu"
+			>
+				Set status
+			</div>
+			@ui.DropdownMenu(templ.Attributes{"aria-label": "Set status", "class": "min-w-44 border-base-content/10 z-50"}) {
+				for _, s := range options {
+					<li>
+						<form hx-post={ boardActionPath(canonicalID, "status") } hx-target="#board" hx-swap="outerHTML" class="flex w-full">
+							<input type="hidden" name="status" value={ s }/>
+							<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+								@components.StatusBadge(boardStatusLabel(s), boardStatusIntent(s), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+							</button>
+						</form>
+					</li>
+				}
+			}
+		}
+	}
+}
+
+// BoardDrawerError renders a drawer that failed to load (e.g. a deleted item).
+templ BoardDrawerError(err error) {
+	@ui.Dialog(ui.DialogProps{
+		ID:       "board-item-dialog",
+		BoxClass: "max-w-sm",
+		Attrs:    templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "board-item-dialog"},
+	}) {
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertError,
+			Style:   ui.AlertStyleOutline,
+			Icon:    "lucide--circle-x",
+			Message: err.Error(),
+		})
+		<div class="mt-3 flex justify-end">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-dialog-close": "true"},
+			}) {
+				Close
+			}
+		</div>
+	}
+}

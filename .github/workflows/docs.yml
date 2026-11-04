@@ -1,0 +1,215 @@
+name: Docs
+
+concurrency:
+  # Shared with mac-release.yml / mac-dev.yml, which publish the Sparkle appcast
+  # to the same gh-pages branch: GitHub serializes every run in this group so
+  # their pushes cannot race (a job-level group of the same name contends too).
+  # cancel-in-progress: false so a release publish is never cancelled by a newer
+  # docs run.
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      # Self-change so a runner/build migration is exercised by its own PR and
+      # by the merge, instead of silently waiting for the next docs edit.
+      - '.github/workflows/docs.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  build:
+    name: Build docs
+    # Self-hosted: mkdocs + mike are pure-Python and a docs build is
+    # PR-triggered on every docs/** change — one of the largest recurring
+    # hosted-minute consumers. Fork guard as everywhere else.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # mike needs full history
+
+      # uv pins one interpreter, so the docs build is identical on both hosts of
+      # the self-hosted pool whatever their distro Python looks like. They do
+      # differ — only one is Debian, and the other's Python state is not
+      # recorded — and that divergence is the reason for the pin.
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
+          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: uv pip install -r docs/requirements.txt
+
+      - name: Build docs (strict)
+        run: mkdocs build --strict
+
+  deploy-latest:
+    name: Deploy latest (main)
+    # Self-hosted: push-to-main only (never a fork PR), so no guard is
+    # needed. The gh-pages-deploy concurrency group still serialises it against
+    # the appcast publishers.
+    runs-on: [self-hosted, linux, x64, memory]
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # uv pins one interpreter, so the docs build is identical on both hosts of
+      # the self-hosted pool whatever their distro Python looks like. They do
+      # differ — only one is Debian, and the other's Python state is not
+      # recorded — and that divergence is the reason for the pin.
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
+          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: uv pip install -r docs/requirements.txt
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy as latest
+        run: |
+          # mike neither fetches nor rebases (it fails hard on a non-FF push), so
+          # refresh the gh-pages tracking ref it compares against. The shared
+          # `gh-pages-deploy` concurrency group already serializes the pushes.
+          git fetch origin gh-pages
+          mike deploy --push --update-aliases dev latest
+
+      - name: Sync root-level files to gh-pages
+        run: |
+          # Copy files before switching branches so they survive the checkout
+          cp apps/server/docs/swagger/swagger.json /tmp/swagger.json
+          cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
+          cp docs/llms.md /tmp/llms.md
+          cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
+          cp docs/llms-python-sdk.md /tmp/llms-python-sdk.md
+          # gh-pages does not contain .github/, so stage the retry helper too.
+          cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
+          git fetch origin gh-pages
+          git checkout gh-pages
+          cp /tmp/swagger.json swagger.json
+          cp /tmp/swagger.yaml swagger.yaml
+          cp /tmp/swagger.json openapi.json
+          cp /tmp/llms.md llms.md
+          cp /tmp/llms-go-sdk.md llms-go-sdk.md
+          cp /tmp/llms-python-sdk.md llms-python-sdk.md
+          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
+          git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
+          # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
+          # publisher pushes the same branch and may land first. Run the copy
+          # staged before the checkout (gh-pages has no .github/ directory).
+          bash /tmp/push-gh-pages-with-retry.sh
+
+  deploy-version:
+    name: Deploy versioned release
+    runs-on: [self-hosted, linux, x64, memory]
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # uv pins one interpreter, so the docs build is identical on both hosts of
+      # the self-hosted pool whatever their distro Python looks like. They do
+      # differ — only one is Debian, and the other's Python state is not
+      # recorded — and that divergence is the reason for the pin.
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
+          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: uv pip install -r docs/requirements.txt
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy versioned docs and update latest alias
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          # mike neither fetches nor rebases (it fails hard on a non-FF push), so
+          # refresh the gh-pages tracking ref it compares against. The shared
+          # `gh-pages-deploy` concurrency group already serializes the pushes.
+          git fetch origin gh-pages
+          # Remove 'latest' if it exists as a standalone version (not alias) to avoid conflicts
+          mike delete --push latest 2>/dev/null || true
+          mike deploy --push --update-aliases "${VERSION}" latest
+          mike set-default --push latest
+
+      - name: Sync root-level files to gh-pages
+        run: |
+          # Copy files before switching branches so they survive the checkout
+          cp apps/server/docs/swagger/swagger.json /tmp/swagger.json
+          cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
+          cp docs/llms.md /tmp/llms.md
+          cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
+          cp docs/llms-python-sdk.md /tmp/llms-python-sdk.md
+          # gh-pages does not contain .github/, so stage the retry helper too.
+          cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
+          git fetch origin gh-pages
+          git checkout gh-pages
+          cp /tmp/swagger.json swagger.json
+          cp /tmp/swagger.yaml swagger.yaml
+          cp /tmp/swagger.json openapi.json
+          cp /tmp/llms.md llms.md
+          cp /tmp/llms-go-sdk.md llms-go-sdk.md
+          cp /tmp/llms-python-sdk.md llms-python-sdk.md
+          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
+          git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
+          # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
+          # publisher pushes the same branch and may land first. Run the copy
+          # staged before the checkout (gh-pages has no .github/ directory).
+          bash /tmp/push-gh-pages-with-retry.sh

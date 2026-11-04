@@ -1,0 +1,322 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// pageContainerClass is the class layout.Container renders for
+// layout.ContainerLG: centered, the shared responsive gutter, and max-w-6xl.
+// Every page's outermost element must carry exactly this.
+const pageContainerClass = "mx-auto p-6 lg:p-8 max-w-6xl"
+
+// chatContainerClass is the class layout.Container renders for the chat
+// stream's own size: the same centered gutter, but a much wider cap
+// (max-w-[100rem]) that only bites on very large screens, so the transcript,
+// composer, and model-warning banner fill the chat pane instead of being
+// boxed into the narrower ContainerLG width every other page uses.
+const chatContainerClass = "mx-auto p-6 lg:p-8 max-w-[100rem]"
+
+// TestPageWidthConsistency guards the page content-width rule: every page
+// renders inside layout.Container(layout.ContainerLG, …), never the narrower
+// ContainerMD, and never its own ad-hoc centered wrapper. Mixed widths made
+// pages like /agents (max-w-6xl) and /objects (max-w-4xl) visibly inconsistent.
+//
+// Only hand-written *.templ sources are scanned — generated *_templ.go files
+// mirror them and are skipped by the glob.
+//
+// Out of scope on purpose: modal/dialog/popover widths and inner
+// text/card widths (max-w-xs/sm/md/lg/2xl) and any non-centered width. The
+// rule is about *page* content width, i.e. a centered `mx-auto … max-w-…`
+// wrapper, which must come from layout.Container rather than be hand-rolled.
+//
+// max-w-6xl is guarded alongside the narrower widths *because* it is exactly
+// layout.ContainerLG's width: a hand-rolled `mx-auto … max-w-6xl` duplicates
+// the container instead of reusing it and silently drifts if ContainerLG ever
+// changes (the composer/banner did precisely this before review). A bare
+// max-w-6xl without mx-auto — e.g. a `modal-box max-w-6xl` — is not a page
+// wrapper and is not flagged.
+//
+// A line that genuinely needs its own centered wrapper opts out with a
+// `page-width-exempt: <reason>` comment so the exception is explicit.
+func TestPageWidthConsistency(t *testing.T) {
+	files, err := filepath.Glob("*.templ")
+	if err != nil {
+		t.Fatalf("glob *.templ: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no *.templ sources found in gateway root")
+	}
+
+	guardedWidths := []string{"max-w-3xl", "max-w-4xl", "max-w-5xl", "max-w-6xl", "max-w-7xl"}
+	for _, file := range files {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		sc := bufio.NewScanner(bytes.NewReader(b))
+		for lineNo := 1; sc.Scan(); lineNo++ {
+			line := sc.Text()
+			if strings.Contains(line, "layout.ContainerMD") {
+				t.Errorf("%s:%d uses layout.ContainerMD — every page must use layout.ContainerLG for a consistent width", file, lineNo)
+			}
+			if !strings.Contains(line, "mx-auto") || strings.Contains(line, "page-width-exempt:") {
+				continue
+			}
+			for _, w := range guardedWidths {
+				if strings.Contains(line, w) {
+					t.Errorf("%s:%d hardcodes a page-level %q wrapper instead of layout.Container: %s", file, lineNo, w, strings.TrimSpace(line))
+				}
+			}
+		}
+		if err := sc.Err(); err != nil {
+			t.Fatalf("scan %s: %v", file, err)
+		}
+	}
+}
+
+// TestPageFormLayoutWidthMatchesContainer re-enforces the page-width rule for
+// the page-terminal form pages that CANNOT use layout.Container(layout.ContainerLG,
+// nil): a pane-level <form> must be a direct child of main#main-content (see
+// components.StickyFormActions) so its sticky action bar spans the full content
+// pane and rests flush on the pane's bottom edge at max scroll — layout.Container's
+// mx-auto box would cap the bar's width and leave a gutter below it.
+//
+// The container's padding is therefore split across two Go constants in
+// page_form_layout.go — pageFormChromeClass (the page chrome before the form:
+// top padding only) and pageFormFieldsClass (the form's fields: bottom padding
+// only). Because those live in a .go file, the *.templ scanner in
+// TestPageWidthConsistency never reads them, so the rule it enforces goes blind
+// here. This test restores the guard over the exact invariants the split must
+// preserve:
+//
+//   - both carry layout.ContainerLG's width cap (max-w-6xl) and horizontal
+//     gutter (px-6 lg:px-8), and neither introduces a different width cap;
+//   - the split is complete: the chrome class carries no bottom padding
+//     (pb- / lg:pb-) and the fields class carries no top padding (pt- / lg:pt-),
+//     so the bottom gutter lives in exactly one place and the bar sits flush.
+func TestPageFormLayoutWidthMatchesContainer(t *testing.T) {
+	for _, cls := range []struct {
+		name string
+		v    string
+	}{
+		{"pageFormChromeClass", pageFormChromeClass},
+		{"pageFormFieldsClass", pageFormFieldsClass},
+	} {
+		for _, want := range []string{"max-w-6xl", "px-6", "lg:px-8"} {
+			if !strings.Contains(cls.v, want) {
+				t.Errorf("%s = %q: missing %q (must match layout.ContainerLG's width/gutter)", cls.name, cls.v, want)
+			}
+		}
+		// Same width caps TestPageWidthConsistency guards, minus max-w-6xl
+		// (which is the one cap these constants are allowed to carry).
+		for _, w := range []string{"max-w-3xl", "max-w-4xl", "max-w-5xl", "max-w-7xl"} {
+			if strings.Contains(cls.v, w) {
+				t.Errorf("%s = %q: introduces a different width cap %q (must stay max-w-6xl)", cls.name, cls.v, w)
+			}
+		}
+	}
+
+	// The padding split must be complete, not duplicated: bottom padding lives
+	// only in the fields class, top padding only in the chrome class. `pb-` is a
+	// substring of `lg:pb-` (and `pt-` of `lg:pt-`), so one Contains per side
+	// covers both the base and lg spellings.
+	if strings.Contains(pageFormChromeClass, "pb-") {
+		t.Errorf("pageFormChromeClass = %q: must carry no bottom padding (pb- / lg:pb-) — the fields class owns the bottom gutter so the sticky bar sits flush", pageFormChromeClass)
+	}
+	if strings.Contains(pageFormFieldsClass, "pt-") {
+		t.Errorf("pageFormFieldsClass = %q: must carry no top padding (pt- / lg:pt-) — the chrome class owns the top gutter", pageFormFieldsClass)
+	}
+}
+
+// firstClass returns the value of the first class attribute in html. For a page
+// component that is layout.Container's own class, since the container is the
+// outermost element the component renders.
+func firstClass(html string) string {
+	const prefix = `class="`
+	i := strings.Index(html, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := html[i+len(prefix):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// firstClassContaining returns the first class attribute value in html that
+// contains needle, or "" when none does. Use it to assert the members of a
+// wrapper whose exact class list may gain unrelated utilities over time.
+func firstClassContaining(html, needle string) string {
+	for chunk := range strings.SplitSeq(html, `class="`) {
+		end := strings.IndexByte(chunk, '"')
+		if end < 0 {
+			continue
+		}
+		if cls := chunk[:end]; strings.Contains(cls, needle) {
+			return cls
+		}
+	}
+	return ""
+}
+
+// objectsContainerClass is the objects browser's container: the same centered
+// gutter as pageContainerClass, but a much wider cap. The page is a data table
+// (selection column, object, status, embeddings, labels, created, chevron) and
+// max-w-6xl forced the object and label columns to truncate first.
+const objectsContainerClass = "mx-auto p-6 lg:p-8 max-w-[100rem]"
+
+// TestObjectsBrowserWidthIsDeliberate pins the one page that deliberately does
+// not use pageContainerClass. The previous rule (agents and objects sharing a
+// container) existed because /objects was accidentally narrower than every other
+// page (max-w-4xl); the table redesign widened it on purpose, so the rule now
+// states the exception instead of pretending the widths match: agents stays at
+// ContainerLG, both objects routes take the wide cap.
+//
+// Both objects routes are checked because they render the same page: the agent
+// objects view must not jump width when opened from /agents.
+func TestObjectsBrowserWidthIsDeliberate(t *testing.T) {
+	agentsHTML := renderHTML(t, AgentsPage(
+		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		nil, "", nil,
+	))
+	if got := firstClass(agentsHTML); got != pageContainerClass {
+		t.Errorf("/agents page container = %q, want %q", got, pageContainerClass)
+	}
+
+	pages := map[string]string{
+		"project": renderHTML(t, ObjectsPage(objectsPageData{
+			Objects: []GraphObject{{ID: "o1", Type: "person"}},
+			Types:   []string{"person"},
+		})),
+		"agent": renderHTML(t, ObjectsPage(objectsPageData{
+			AgentID:   "a1",
+			AgentName: "diane",
+			Objects:   []GraphObject{{ID: "o1", Type: "person"}},
+			Types:     []string{"person"},
+		})),
+	}
+	for name, html := range pages {
+		if got := firstClass(html); got != objectsContainerClass {
+			t.Errorf("/objects (%s) page container = %q, want %q", name, got, objectsContainerClass)
+		}
+	}
+}
+
+// TestChatWorkspaceKeepsScrollFillAndSharedContainer covers the riskiest part
+// of the width unification: the chat workspace's transcript column must use the
+// chat stream's own wide container (same centered gutter as every other page,
+// but a much wider max-w-[100rem] cap so the stream fills the pane) without
+// losing its full-height flex wrapper (min-h-full + justify-end keeps a short
+// transcript resting on the composer) or the htmx targets chat.js drives.
+func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
+	html := renderHTML(t, ChatPage(
+		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		nil, nil, nil, nil, nil, "", "", "", nil, false, nil,
+	))
+
+	// The scroll-fill wrapper keeps min-h-full + flex-col + justify-end so a
+	// short transcript rests on the composer. Assert the required members
+	// rather than the exact class string — unrelated utilities (e.g. min-w-0)
+	// legitimately join the wrapper without changing its behaviour.
+	scrollFill := firstClassContaining(html, "min-h-full")
+	if scrollFill == "" {
+		t.Error("chat transcript lost its scroll-fill wrapper (no min-h-full class)")
+	} else {
+		for _, want := range []string{"flex", "min-h-full", "flex-col", "justify-end"} {
+			if !strings.Contains(scrollFill, want) {
+				t.Errorf("chat scroll-fill wrapper %q missing %q", scrollFill, want)
+			}
+		}
+	}
+	// Scope the container assertion to the transcript region rather than the
+	// whole page: the composer and model-warning banner legitimately reuse the
+	// very same class, so a page-wide Contains would still pass if the
+	// transcript column lost its own wrapper.
+	_, transcriptRegion, ok := strings.Cut(html, `id="chat-log"`)
+	if !ok {
+		t.Fatal("chat transcript region missing (no chat-log target)")
+	}
+	transcriptRegion, _, ok = strings.Cut(transcriptRegion, `<form id="chat-form"`)
+	if !ok {
+		t.Fatal("could not delimit chat transcript region (no chat-form target)")
+	}
+	if !strings.Contains(transcriptRegion, `class="`+chatContainerClass+`"`) {
+		t.Errorf("chat transcript column must use the wide chat container %q", chatContainerClass)
+	}
+	if strings.Contains(html, "max-w-3xl") {
+		t.Error("chat page must not hardcode the narrower max-w-3xl width")
+	}
+	for _, id := range []string{`id="chat-log"`, `id="chat-messages"`, `id="chat-form"`, `id="chat-input"`} {
+		if !strings.Contains(html, id) {
+			t.Errorf("chat workspace target %s missing after the wrapper change", id)
+		}
+	}
+
+	// The composer reuses the very same Container as the transcript column
+	// rather than repeating its width/gutter classes, so the two cannot drift:
+	// the form itself carries no width/padding and its input sits inside a real
+	// layout.Container.
+	const formTag = `<form id="chat-form" hx-boost="false">`
+	formStart := strings.Index(html, formTag)
+	if formStart < 0 {
+		t.Error("chat composer form must carry no width/padding of its own (want the bare form tag)")
+	} else {
+		textareaStart := strings.Index(html[formStart:], "<textarea")
+		if textareaStart < 0 {
+			t.Fatal("chat composer textarea missing")
+		}
+		composerHead := html[formStart : formStart+textareaStart]
+		if !strings.Contains(composerHead, `class="`+chatContainerClass+`"`) {
+			t.Errorf("chat composer input must sit inside the wide chat container %q", chatContainerClass)
+		}
+	}
+
+	// Same for the model-warning banner: its width/gutter come from the shared
+	// container, not from the alert's own classes.
+	if i := strings.Index(html, `id="chat-model-warning"`); i >= 0 {
+		before := html[:i]
+		j := strings.LastIndex(before, `<div class="`)
+		if j < 0 || !strings.Contains(before[j:], chatContainerClass) {
+			t.Error("chat model-warning banner must sit inside the wide chat container")
+		}
+	}
+}
+
+// TestChatTranscriptColumnFillsWidth covers #1383: a session whose bubbles are
+// very short must render the transcript column at the same width as a session
+// with long messages. The scroll-fill flex wrapper turns layout.Container into a
+// flex item, and Container's mx-auto (auto cross-axis margins) suppresses flex
+// stretch — so without a full-width guard the column sizes to its content (fit-
+// content) and a short session collapses to the width of its longest bubble,
+// while a long one grows toward the max-width cap. The guard must directly wrap
+// the transcript's Container so the column fills the pane at any session length.
+// Bubbles stay content-sized; only the column is pinned.
+func TestChatTranscriptColumnFillsWidth(t *testing.T) {
+	html := renderHTML(t, ChatPage(
+		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		nil, nil, nil, nil, nil, "", "", "", nil, false, nil,
+	))
+
+	_, transcriptRegion, ok := strings.Cut(html, `id="chat-log"`)
+	if !ok {
+		t.Fatal("chat transcript region missing (no chat-log target)")
+	}
+	transcriptRegion, _, ok = strings.Cut(transcriptRegion, `<form id="chat-form"`)
+	if !ok {
+		t.Fatal("could not delimit chat transcript region (no chat-form target)")
+	}
+
+	// The guard must be the Container's direct parent: rendered without
+	// whitespace between the two tags.
+	const want = `<div class="w-full"><div class="` + chatContainerClass + `">`
+	if !strings.Contains(transcriptRegion, want) {
+		t.Errorf("chat transcript column must be wrapped in a full-width guard so its width is independent of message content (#1383)\nwant: %s", want)
+	}
+}

@@ -1,0 +1,586 @@
+package extraction
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
+	"github.com/emergent-company/emergent.memory/domain/chunking"
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/projects"
+	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/syshealth"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
+	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
+)
+
+// DocumentParsingWorker processes document parsing jobs.
+// It polls for pending jobs, downloads documents from storage,
+// routes them to the appropriate extraction service (Whisper for audio,
+// Xberg for binary documents), and stores the results.
+type DocumentParsingWorker struct {
+	log             *slog.Logger
+	jobsService     *DocumentParsingJobsService
+	documentsRepo   *documents.Repository
+	projectsRepo    *projects.Repository
+	chunkingService *chunking.Service
+	xbergClient     *xberg.Client
+	whisperClient   *whisper.Client
+	// asr is the opt-in vendor speech-to-text adapter. When nil (the default)
+	// the audio branch uses the in-house Whisper client unchanged.
+	asr            *vendorASR
+	storageService *storage.Service
+	scaler         *syshealth.ConcurrencyScaler
+	// extractionJobsSvc is optional; when set, triggers object extraction
+	// automatically after content is written (honoring the auto_extract flag
+	// stored in the parsing job's metadata). This avoids the race condition
+	// that occurs when the extraction job is enqueued at upload time, before
+	// the parsing worker has finished writing document content.
+	extractionJobsSvc *ObjectExtractionJobsService
+
+	// notificationsSvc is optional; when set, a job that reaches dead letter
+	// announces itself to the project's members (#document lifecycle). Nil in
+	// tests and CLI-built workers, where notifications are simply skipped.
+	notificationsSvc projectNotifier
+
+	// Polling configuration
+	interval    time.Duration
+	batchSize   int
+	concurrency int
+
+	// Shutdown control
+	stopCh   chan struct{}
+	doneCh   chan struct{}
+	stopOnce sync.Once
+}
+
+// DocumentParsingWorkerConfig contains configuration for the worker
+type DocumentParsingWorkerConfig struct {
+	Interval    time.Duration
+	BatchSize   int
+	Concurrency int
+}
+
+// NewDocumentParsingWorker creates a new document parsing worker
+func NewDocumentParsingWorker(
+	jobsService *DocumentParsingJobsService,
+	documentsRepo *documents.Repository,
+	projectsRepo *projects.Repository,
+	chunkingService *chunking.Service,
+	xbergClient *xberg.Client,
+	whisperClient *whisper.Client,
+	vendorASRTranscriber *vendorASR,
+	storageService *storage.Service,
+	cfg *DocumentParsingWorkerConfig,
+	log *slog.Logger,
+	scaler *syshealth.ConcurrencyScaler,
+	extractionJobsSvc *ObjectExtractionJobsService,
+) *DocumentParsingWorker {
+	interval := 5 * time.Second
+	batchSize := 5
+	concurrency := 5
+	if cfg != nil {
+		if cfg.Interval > 0 {
+			interval = cfg.Interval
+		}
+		if cfg.BatchSize > 0 {
+			batchSize = cfg.BatchSize
+		}
+		if cfg.Concurrency > 0 {
+			concurrency = cfg.Concurrency
+		}
+	}
+
+	return &DocumentParsingWorker{
+		log:               log.With(logger.Scope("document.parsing.worker")),
+		jobsService:       jobsService,
+		documentsRepo:     documentsRepo,
+		projectsRepo:      projectsRepo,
+		chunkingService:   chunkingService,
+		xbergClient:       xbergClient,
+		whisperClient:     whisperClient,
+		asr:               vendorASRTranscriber,
+		storageService:    storageService,
+		interval:          interval,
+		batchSize:         batchSize,
+		concurrency:       concurrency,
+		scaler:            scaler,
+		extractionJobsSvc: extractionJobsSvc,
+		stopCh:            make(chan struct{}),
+		doneCh:            make(chan struct{}),
+	}
+}
+
+// WithNotifications installs the notification service used to announce a
+// dead-lettered parsing job. A nil service disables the announcement.
+func (w *DocumentParsingWorker) WithNotifications(svc *notifications.Service) *DocumentParsingWorker {
+	// Assign only a real service: storing a typed nil in the interface field
+	// would make the `== nil` guard pass and then panic on use.
+	if svc == nil {
+		w.notificationsSvc = nil
+		return w
+	}
+	w.notificationsSvc = svc
+	return w
+}
+
+// Start begins the worker polling loop
+func (w *DocumentParsingWorker) Start() {
+	w.log.Info("starting document parsing worker",
+		slog.Duration("interval", w.interval),
+		slog.Int("batch_size", w.batchSize),
+	)
+
+	// Recover any stale jobs on startup
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	recovered, err := w.jobsService.RecoverStaleJobs(ctx, 0)
+	cancel()
+	if err != nil {
+		w.log.Error("failed to recover stale jobs", logger.Error(err))
+	} else if recovered > 0 {
+		w.log.Info("recovered stale document parsing jobs", slog.Int("count", recovered))
+	}
+
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+	defer close(w.doneCh)
+
+	for {
+		select {
+		case <-w.stopCh:
+			w.log.Info("document parsing worker stopped")
+			return
+		case <-ticker.C:
+			w.poll()
+		}
+	}
+}
+
+// Stop gracefully stops the worker
+func (w *DocumentParsingWorker) Stop() {
+	w.stopOnce.Do(func() {
+		w.log.Info("stopping document parsing worker...")
+		close(w.stopCh)
+
+		// Wait for completion with timeout
+		select {
+		case <-w.doneCh:
+			w.log.Info("document parsing worker stopped gracefully")
+		case <-time.After(30 * time.Second):
+			w.log.Warn("document parsing worker stop timed out")
+		}
+	})
+}
+
+// poll dequeues and processes a batch of jobs
+func (w *DocumentParsingWorker) poll() {
+	// Determine batch size, concurrency, and poll timeout based on whether large files are pending.
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	hasLarge, err := w.jobsService.HasLargePendingJob(checkCtx, w.whisperClient.LargeFileThresholdBytes())
+	checkCancel()
+	if err != nil {
+		w.log.Warn("failed to check for large pending jobs, using normal batch mode", logger.Error(err))
+	}
+
+	effectiveBatchSize := w.batchSize
+	effectiveConcurrency := w.concurrency
+	pollTimeout := 2 * time.Hour
+
+	if hasLarge {
+		effectiveBatchSize = 1
+		effectiveConcurrency = 1
+		// Timeout = worst-case transcription time + 30 min headroom
+		pollTimeout = w.whisperClient.TimeoutForSize(w.whisperClient.MaxFileSizeBytes()) + 30*time.Minute
+		w.log.Debug("large file pending: switching to single-job mode",
+			slog.Duration("poll_timeout", pollTimeout))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), pollTimeout)
+	defer cancel()
+
+	jobs, err := w.jobsService.Dequeue(ctx, effectiveBatchSize)
+	if err != nil {
+		w.log.Error("failed to dequeue jobs", logger.Error(err))
+		return
+	}
+
+	if len(jobs) == 0 {
+		return
+	}
+
+	w.log.Debug("processing document parsing jobs", slog.Int("count", len(jobs)))
+
+	concurrency := effectiveConcurrency
+	if w.scaler != nil {
+		concurrency = w.scaler.GetConcurrency(effectiveConcurrency)
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for _, job := range jobs {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(j *DocumentParsingJob) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			select {
+			case <-w.stopCh:
+				return
+			default:
+				w.processJob(ctx, j)
+			}
+		}(job)
+	}
+	wg.Wait()
+}
+
+// processJob handles a single document parsing job
+func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentParsingJob) {
+	docID := ptrToString(job.DocumentID)
+	ctx, span := tracing.Start(ctx, "extraction.document_parsing",
+		attribute.String("memory.job.id", job.ID),
+		attribute.String("memory.project.id", job.ProjectID),
+		attribute.String("memory.document.id", docID),
+		attribute.String("memory.document.content_type", ptrToString(job.MimeType)),
+	)
+	defer span.End()
+
+	startTime := time.Now()
+	jobLog := w.log.With(
+		slog.String("job_id", job.ID),
+		slog.String("source_type", job.SourceType),
+		slog.String("filename", ptrToString(job.SourceFilename)),
+	)
+
+	jobLog.Info("processing document parsing job")
+
+	// Determine how to process the document
+	mimeType := ptrToString(job.MimeType)
+	filename := ptrToString(job.SourceFilename)
+	storageKey := ptrToString(job.StorageKey)
+
+	// Check if storage key is available
+	if storageKey == "" {
+		err := fmt.Errorf("no storage key for document parsing job")
+		jobLog.Error("job missing storage key", logger.Error(err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		w.markFailed(ctx, job, err)
+		return
+	}
+
+	// Check processing path
+	isEmail := xberg.IsEmailFile(mimeType, filename)
+	isAudio := !isEmail && isAudioFile(mimeType, filename)
+	useXberg := !isEmail && !isAudio && xberg.ShouldUseXberg(mimeType, filename)
+
+	var parsedContent string
+	var extractionMethod string
+	var err error
+
+	var fileSizeBytes int64
+	if job.FileSizeBytes != nil {
+		fileSizeBytes = *job.FileSizeBytes
+	}
+
+	if isEmail {
+		// Email files - use native email parser (not yet implemented in Go)
+		// For now, mark as failed with clear message
+		err = fmt.Errorf("email parsing not yet implemented in Go server")
+		jobLog.Warn("email parsing not implemented", slog.String("mime_type", mimeType))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		w.markFailed(ctx, job, err)
+		return
+	} else if isAudio {
+		// Audio files - use Whisper for transcription.
+		// Look up per-project initial_prompt from auto_extract_config.
+		var initialPrompt string
+		if w.projectsRepo != nil {
+			project, pErr := w.projectsRepo.GetByID(ctx, job.ProjectID, false)
+			if pErr != nil {
+				jobLog.Warn("failed to fetch project for whisper prompt", logger.Error(pErr))
+			} else if project != nil {
+				if v, ok := project.AutoExtractConfig["whisper_initial_prompt"]; ok {
+					if s, ok := v.(string); ok {
+						initialPrompt = s
+					}
+				}
+			}
+		}
+		if w.asr != nil {
+			// Vendor speech-to-text (opt-in via ASR_PROVIDER); the in-house
+			// Whisper path below remains the default.
+			parsedContent, err = w.extractWithVendorASR(ctx, storageKey, filename, mimeType, initialPrompt)
+			extractionMethod = "asr:" + w.asr.provider
+		} else {
+			parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt, fileSizeBytes)
+			extractionMethod = "whisper"
+		}
+	} else if useXberg {
+		// Binary document - use Xberg for extraction
+		parsedContent, err = w.extractWithXberg(ctx, storageKey, filename, mimeType)
+		extractionMethod = "xberg"
+	} else {
+		// Plain text - read directly from storage
+		parsedContent, err = w.extractPlainText(ctx, storageKey)
+		extractionMethod = "plain_text"
+	}
+
+	if err != nil {
+		jobLog.Error("document extraction failed",
+			slog.String("method", extractionMethod),
+			logger.Error(err),
+		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		w.markFailed(ctx, job, err)
+		return
+	}
+
+	// Mark job as completed
+	result := MarkCompletedResult{
+		ParsedContent: parsedContent,
+		DocumentID:    job.DocumentID,
+		Metadata: map[string]interface{}{
+			"extractionMethod": extractionMethod,
+			"processingTimeMs": time.Since(startTime).Milliseconds(),
+		},
+	}
+
+	if err := w.jobsService.MarkCompleted(ctx, job.ID, result); err != nil {
+		jobLog.Error("failed to mark job completed", logger.Error(err))
+		return
+	}
+
+	if job.DocumentID != nil {
+		if err := w.documentsRepo.UpdateContentAndStatus(ctx, *job.DocumentID, parsedContent, "completed"); err != nil {
+			jobLog.Error("failed to update document content", logger.Error(err))
+		}
+
+		// If the parsing job was created with auto_extract=true in its metadata,
+		// trigger object extraction now that content is guaranteed to be stored.
+		// This avoids the race condition where extraction starts before content is written.
+		if w.extractionJobsSvc != nil {
+			if autoExtract, _ := job.Metadata["auto_extract"].(bool); autoExtract {
+				if err := w.extractionJobsSvc.TriggerForDocument(ctx, job.ProjectID, *job.DocumentID); err != nil {
+					jobLog.Error("failed to trigger extraction after parsing", logger.Error(err))
+				} else {
+					jobLog.Info("triggered object extraction after parsing")
+				}
+			}
+		}
+
+		chunkResult, err := w.chunkingService.RecreateChunks(ctx, job.ProjectID, *job.DocumentID, false)
+		if err != nil {
+			jobLog.Error("failed to create chunks", logger.Error(err))
+		} else {
+			jobLog.Info("created chunks",
+				slog.Int("chunks", chunkResult.Summary.NewChunks),
+				slog.String("strategy", chunkResult.Summary.Strategy))
+		}
+	}
+
+	span.SetStatus(codes.Ok, "")
+	jobLog.Info("document parsing completed",
+		slog.String("method", extractionMethod),
+		slog.Int("content_length", len(parsedContent)),
+		slog.Duration("duration", time.Since(startTime)),
+	)
+}
+
+// extractWithXberg downloads a file and sends it to Xberg for extraction
+func (w *DocumentParsingWorker) extractWithXberg(ctx context.Context, storageKey, filename, mimeType string) (string, error) {
+	content, err := w.downloadFile(ctx, storageKey)
+	if err != nil {
+		return "", fmt.Errorf("download file: %w", err)
+	}
+
+	// Enable OCR with auto-detection: Xberg will analyze text quality
+	// and automatically fallback to OCR if any page has poor/no text.
+	// This is optimal for mixed PDFs (some pages scanned, some digital).
+	opts := &xberg.ExtractOptions{
+		OCRBackend:  "tesseract",
+		OCRLanguage: "eng",
+		ForceOCR:    false, // Let Xberg auto-detect when OCR is needed
+	}
+	result, err := w.xbergClient.ExtractText(ctx, content, filename, mimeType, opts)
+	if err != nil {
+		return "", fmt.Errorf("xberg extraction: %w", err)
+	}
+
+	// Append extracted tables as markdown so structured data is not lost.
+	// Xberg returns tables separately from the content field; without this,
+	// table-heavy PDFs (e.g. financial reports) lose almost all their content.
+	if len(result.Tables) > 0 {
+		var sb strings.Builder
+		sb.WriteString(result.Content)
+		for _, t := range result.Tables {
+			if t.Markdown != "" {
+				sb.WriteString("\n\n")
+				sb.WriteString(t.Markdown)
+			}
+		}
+		return sb.String(), nil
+	}
+
+	return result.Content, nil
+}
+
+// audioExtensions is the set of file extensions treated as audio regardless of MIME type
+var audioExtensions = map[string]bool{
+	".mp3":  true,
+	".wav":  true,
+	".m4a":  true,
+	".ogg":  true,
+	".flac": true,
+	".aac":  true,
+	".opus": true,
+	".webm": true,
+}
+
+// isAudioFile returns true if the file should be treated as audio.
+// It checks the MIME type prefix first, then falls back to the file extension.
+func isAudioFile(mimeType, filename string) bool {
+	if strings.HasPrefix(mimeType, "audio/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	return audioExtensions[ext]
+}
+
+// extractWithWhisper downloads an audio file and sends it to Whisper for transcription.
+// fileSizeBytes is the known file size (from the job record); if 0, the actual downloaded
+// size is used as a fallback for computing the per-request timeout.
+func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageKey, filename, mimeType, initialPrompt string, fileSizeBytes int64) (string, error) {
+	if !w.whisperClient.IsEnabled() {
+		return "", fmt.Errorf("whisper transcription service is disabled")
+	}
+
+	content, err := w.downloadFile(ctx, storageKey)
+	if err != nil {
+		return "", fmt.Errorf("download file: %w", err)
+	}
+
+	// Check file size against configured limit
+	maxBytes := w.whisperClient.MaxFileSizeBytes()
+	if maxBytes > 0 && int64(len(content)) > maxBytes {
+		return "", fmt.Errorf("audio file exceeds maximum size of %d MB", maxBytes/(1024*1024))
+	}
+
+	// Use actual downloaded size when job record has no size
+	sizeForTimeout := fileSizeBytes
+	if sizeForTimeout == 0 {
+		sizeForTimeout = int64(len(content))
+	}
+	timeout := w.whisperClient.TimeoutForSize(sizeForTimeout)
+
+	transcript, err := w.whisperClient.Transcribe(ctx, content, filename, mimeType, initialPrompt, timeout)
+	if err != nil {
+		return "", fmt.Errorf("whisper transcription: %w", err)
+	}
+
+	return transcript, nil
+}
+
+// extractPlainText downloads a plain text file directly
+func (w *DocumentParsingWorker) extractPlainText(ctx context.Context, storageKey string) (string, error) {
+	content, err := w.downloadFile(ctx, storageKey)
+	if err != nil {
+		return "", fmt.Errorf("download file: %w", err)
+	}
+
+	return string(content), nil
+}
+
+// downloadFile downloads a file from storage into memory.
+// Reading is capped at maxDownloadBytes+1 to detect oversized files without
+// buffering the entire stream first.
+const maxDownloadBytes = 500 * 1024 * 1024 // 500 MB — matches MaxUploadSize
+
+func (w *DocumentParsingWorker) downloadFile(ctx context.Context, storageKey string) ([]byte, error) {
+	if !w.storageService.Enabled() {
+		return nil, fmt.Errorf("storage service not enabled")
+	}
+
+	reader, err := w.storageService.Download(ctx, storageKey)
+	if err != nil {
+		return nil, fmt.Errorf("download from storage: %w", err)
+	}
+	defer reader.Close()
+
+	limited := &io.LimitedReader{R: reader, N: maxDownloadBytes + 1}
+	content, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("read file content: %w", err)
+	}
+	if limited.N == 0 {
+		return nil, fmt.Errorf("file exceeds maximum download size of %d MB", maxDownloadBytes/(1024*1024))
+	}
+
+	return content, nil
+}
+
+// markFailed marks a job as failed
+func (w *DocumentParsingWorker) markFailed(ctx context.Context, job *DocumentParsingJob, err error) {
+	deadLettered, markErr := w.jobsService.MarkFailed(ctx, job.ID, err)
+	if markErr != nil {
+		w.log.Error("failed to mark job as failed",
+			slog.String("job_id", job.ID),
+			logger.Error(markErr),
+		)
+		// The job's new state is unknown; fall back to the in-memory retry count
+		// so a document cannot stay stuck in 'pending' because the update failed.
+		deadLettered = job.RetryCount >= job.MaxRetries
+	}
+
+	if !deadLettered {
+		// A retry is scheduled. Neither the document status nor the inbox is
+		// touched: announcing each attempt would notify members once per try.
+		return
+	}
+
+	// Retries are exhausted — update the document's conversion_status to
+	// 'failed' so it does not remain stuck in 'pending' indefinitely, and tell
+	// the project's members that the upload will not finish.
+	filename := ""
+	if job.SourceFilename != nil {
+		filename = *job.SourceFilename
+	}
+	if filename == "" {
+		filename = "Document " + shortID(job.ID)
+	}
+	documentID := ""
+	if job.DocumentID != nil {
+		documentID = *job.DocumentID
+		errMsg := err.Error()
+		if updateErr := w.documentsRepo.UpdateConversionStatus(ctx, documentID, "failed", &errMsg); updateErr != nil {
+			w.log.Error("failed to update document conversion status to failed",
+				slog.String("job_id", job.ID),
+				slog.String("document_id", documentID),
+				logger.Error(updateErr),
+			)
+		}
+	}
+	notifyProcessingFailed(ctx, w.notificationsSvc, w.log,
+		job.ProjectID, documentID, job.ID, "document_parsing_job", stageParsing, filename, err.Error())
+}
+
+// JobsService returns the underlying jobs service for testing/management
+func (w *DocumentParsingWorker) JobsService() *DocumentParsingJobsService {
+	return w.jobsService
+}

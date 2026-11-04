@@ -1,0 +1,4562 @@
+package agents
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
+	"github.com/emergent-company/emergent.memory/pkg/acpslug"
+	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+// Repository handles database operations for agents
+type Repository struct {
+	db bun.IDB
+
+	// agentDeletionListeners are invoked, inside the same delete call, with the
+	// ids of runtime agents whose rows were just removed. This is how in-memory
+	// trigger registrations are torn down as part of the delete rather than as
+	// a separate step each caller could forget (or which could race the delete).
+	// Registered once at construction by TriggerService; nil-safe.
+	agentDeletionMu        sync.RWMutex
+	agentDeletionListeners []func(agentIDs []string)
+
+	// agentRestoreListeners are invoked, after an out-of-repository restore has
+	// re-created or newly added runtime agent rows, with the affected project
+	// and the ids present in the restored snapshot. This is how in-memory
+	// trigger registrations are reconciled from the restored rows: a re-created
+	// agent's config may have changed, and a newly added agent has no
+	// registration yet. Registered once at construction by TriggerService;
+	// nil-safe.
+	agentRestoreMu        sync.RWMutex
+	agentRestoreListeners []func(ctx context.Context, projectID string, agentIDs []string)
+}
+
+// NewRepository creates a new agents repository
+func NewRepository(db bun.IDB) *Repository {
+	return &Repository{db: db}
+}
+
+// AddAgentDeletionListener registers a callback invoked with the ids of runtime
+// agents deleted through this repository. It exists so callers cannot delete an
+// agent row without the in-memory trigger registrations being torn down in the
+// same logical step. Safe to leave unset (no-op).
+func (r *Repository) AddAgentDeletionListener(fn func(agentIDs []string)) {
+	if fn == nil {
+		return
+	}
+	r.agentDeletionMu.Lock()
+	defer r.agentDeletionMu.Unlock()
+	r.agentDeletionListeners = append(r.agentDeletionListeners, fn)
+}
+
+// NotifyAgentsDeleted fans the given ids out to every registered deletion
+// listener, exactly as an in-repository delete would. It exists for delete
+// paths that remove agent rows outside this repository (notably the backup
+// restorer's generic table wipe): callers must only pass ids whose rows are
+// actually gone, after the surrounding transaction has committed, so a
+// rolled-back delete never strands a live agent without its registrations.
+func (r *Repository) NotifyAgentsDeleted(agentIDs []string) {
+	r.notifyAgentsDeleted(agentIDs)
+}
+
+// AddAgentRestoreListener registers a callback invoked, after an
+// out-of-repository restore re-creates or adds runtime agent rows, with the
+// affected project and the restored agent ids. It lets callers that rewrite rows
+// outside this repository (notably the backup restorer's generic wipe+insert)
+// drive trigger reconciliation from the restored rows, without the restorer
+// depending on the agents domain. Safe to leave unset (no-op).
+func (r *Repository) AddAgentRestoreListener(fn func(ctx context.Context, projectID string, agentIDs []string)) {
+	if fn == nil {
+		return
+	}
+	r.agentRestoreMu.Lock()
+	defer r.agentRestoreMu.Unlock()
+	r.agentRestoreListeners = append(r.agentRestoreListeners, fn)
+}
+
+// NotifyAgentsRestored fans the restored agent ids out to every registered
+// restore listener. Callers must invoke it only after the rows are committed,
+// and pass exactly the ids the snapshot re-created or added, so reconciliation
+// never runs against a rolled-back state.
+func (r *Repository) NotifyAgentsRestored(ctx context.Context, projectID string, agentIDs []string) {
+	if len(agentIDs) == 0 {
+		return
+	}
+	r.agentRestoreMu.RLock()
+	listeners := r.agentRestoreListeners
+	r.agentRestoreMu.RUnlock()
+	for _, fn := range listeners {
+		fn(ctx, projectID, agentIDs)
+	}
+}
+
+// notifyAgentsDeleted fans the deleted ids out to every registered listener.
+// Called after a successful row delete so a failed delete never drops live
+// registrations.
+func (r *Repository) notifyAgentsDeleted(agentIDs []string) {
+	if len(agentIDs) == 0 {
+		return
+	}
+	r.agentDeletionMu.RLock()
+	listeners := r.agentDeletionListeners
+	r.agentDeletionMu.RUnlock()
+	for _, fn := range listeners {
+		fn(agentIDs)
+	}
+}
+
+// nonTerminalRunStatuses lists the run statuses from which a terminal
+// transition is still legitimate. Terminal writes are guarded on this set so
+// concurrent terminal writers — notably a successful completion racing an
+// explicit cancel (issue #1149) — cannot clobber one another: the first
+// transition wins and the loser is a no-op.
+func nonTerminalRunStatuses() []string {
+	return []string{
+		string(RunStatusQueued),
+		string(RunStatusRunning),
+		string(RunStatusPaused),
+		string(RunStatusCancelling),
+	}
+}
+
+// guardTerminalTransition restricts a terminal-status update to runs that have
+// not yet reached a terminal state, so a late terminal write cannot overwrite
+// an earlier one. The guard runs as part of the UPDATE, so Postgres row locking
+// serializes competing terminal writers and exactly one wins.
+//
+// The guard includes the intermediate "cancelling" status on purpose: a run
+// parked in "cancelling" is carrying a durable cancel committed by some instance
+// (issue #1166), and it must still be reachable by the write that finalizes it.
+// Non-cancel terminal writers pair this guard with setTerminalStatus, which
+// resolves "cancelling" to "cancelled" (never the intended success/failure), so
+// a committed cancel can never be turned into success or failure.
+func guardTerminalTransition(q *bun.UpdateQuery) *bun.UpdateQuery {
+	return q.Where("status IN (?)", bun.In(nonTerminalRunStatuses()))
+}
+
+// setTerminalStatus assigns the run's terminal status while honouring a durable
+// cancel. Postgres evaluates the right-hand side of SET against the pre-UPDATE
+// row, so the CASE reads the row's current status atomically as part of the same
+// UPDATE: when it is "cancelling" the run finalizes as "cancelled", regardless of
+// the terminal status the caller intended. This closes the check-then-write
+// window between observing a cancel and writing the terminal state, so a cancel
+// that lands concurrently is never lost or overwritten.
+func setTerminalStatus(q *bun.UpdateQuery, intended AgentRunStatus) *bun.UpdateQuery {
+	return q.Set("status = CASE WHEN status = ? THEN ? ELSE ? END",
+		RunStatusCancelling, RunStatusCancelled, intended)
+}
+
+// durableCancelReasonSet records the user-cancel reason when a durable cancel
+// wins the terminal write, otherwise leaves the existing error_message intact.
+// Used by the success/skip writers that do not carry their own message.
+func durableCancelReasonSet(q *bun.UpdateQuery) *bun.UpdateQuery {
+	return q.Set("error_message = CASE WHEN status = ? THEN ? ELSE error_message END",
+		RunStatusCancelling, userCancelReason)
+}
+
+// FindAll returns all agents for a project
+func (r *Repository) FindAll(ctx context.Context, projectID string) ([]*Agent, error) {
+	var agents []*Agent
+	err := r.db.NewSelect().
+		Model(&agents).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return agents, nil
+}
+
+// FindByID returns an agent by ID, optionally filtering by project
+func (r *Repository) FindByID(ctx context.Context, id string, projectID *string) (*Agent, error) {
+	agent := new(Agent)
+	q := r.db.NewSelect().
+		Model(agent).
+		Where("id = ?", id)
+
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return agent, nil
+}
+
+// FindEnabled returns all enabled agents
+func (r *Repository) FindEnabled(ctx context.Context) ([]*Agent, error) {
+	var agents []*Agent
+	err := r.db.NewSelect().
+		Model(&agents).
+		Where("enabled = true").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return agents, nil
+}
+
+// FindByStrategyType returns an agent by strategy type
+func (r *Repository) FindByStrategyType(ctx context.Context, strategyType string) (*Agent, error) {
+	agent := new(Agent)
+	err := r.db.NewSelect().
+		Model(agent).
+		Where("strategy_type = ?", strategyType).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return agent, nil
+}
+
+// Create creates a new agent
+func (r *Repository) Create(ctx context.Context, agent *Agent) error {
+	_, err := r.db.NewInsert().
+		Model(agent).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// Update updates an agent
+func (r *Repository) Update(ctx context.Context, agent *Agent) error {
+	agent.UpdatedAt = time.Now()
+	_, err := r.db.NewUpdate().
+		Model(agent).
+		WherePK().
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// Delete deletes an agent and all its runs
+func (r *Repository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.NewDelete().
+		Model((*Agent)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	// Unregister in-memory triggers only after the row is actually gone, so a
+	// failed delete cannot silently disable a still-existing agent. The window
+	// is bounded by the in-flight delete; any dispatch in it re-loads the agent
+	// and no-ops.
+	r.notifyAgentsDeleted([]string{id})
+	return nil
+}
+
+// UpdateLastRun updates the last run status of an agent
+func (r *Repository) UpdateLastRun(ctx context.Context, id string, status string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*Agent)(nil)).
+		Set("last_run_at = ?", now).
+		Set("last_run_status = ?", status).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+// --- Agent Runs ---
+
+// CreateRun creates a new agent run record
+func (r *Repository) CreateRun(ctx context.Context, agentID string) (*AgentRun, error) {
+	run := &AgentRun{
+		AgentID:   agentID,
+		Status:    RunStatusRunning,
+		StartedAt: time.Now(),
+		Summary:   make(map[string]any),
+		Tools:     []string{},
+	}
+	_, err := r.db.NewInsert().
+		Model(run).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// CompleteRun marks a run as successful. A durable cancel committed while the
+// run was in flight wins: the run finalizes as cancelled instead (issue #1166).
+func (r *Repository) CompleteRun(ctx context.Context, runID string, summary map[string]any) error {
+	now := time.Now()
+	_, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("summary = ?", summary).
+		Where("id = ?", runID), RunStatusSuccess))).
+		Exec(ctx)
+	return err
+}
+
+// SkipRun marks a run as skipped. A durable cancel committed while the run was
+// in flight wins: the run finalizes as cancelled instead (issue #1166).
+func (r *Repository) SkipRun(ctx context.Context, runID string, reason string) error {
+	now := time.Now()
+	_, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("skip_reason = ?", reason).
+		Where("id = ?", runID), RunStatusSkipped))).
+		Exec(ctx)
+	return err
+}
+
+// FailRun marks a run as failed. A durable cancel committed while the run was
+// in flight wins: the run finalizes as cancelled instead (issue #1166).
+func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage string) error {
+	now := time.Now()
+	_, err := guardTerminalTransition(setTerminalStatus(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, userCancelReason, errorMessage).
+		Where("id = ?", runID), RunStatusError)).
+		Exec(ctx)
+	return err
+}
+
+// MarkOrphanedRunsAsError finds all runs stuck in "running" status and marks
+// them as errored. This is called on server startup to recover from unclean
+// shutdowns where the agent goroutine was killed mid-execution.
+func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusError).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = ?", "server restarted while run was in progress").
+		Where("status = ?", RunStatusRunning).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// TouchRun bumps the run's last_step_at heartbeat to now. The executor calls
+// this at each pipeline step so the stale-run reaper can distinguish a live run
+// from one that has genuinely stalled (or been abandoned). Only rows still in
+// "running" status are touched, so a heartbeat that races a terminal transition
+// cannot resurrect liveness on a finished run.
+func (r *Repository) TouchRun(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("last_step_at = ?", time.Now()).
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusRunning).
+		Exec(ctx)
+	return err
+}
+
+// StartRunHeartbeat launches a background goroutine that refreshes runID's
+// last_step_at every interval until the returned stop function is called.
+//
+// It complements the per-step TouchRun calls: those only fire when the pipeline
+// reaches a model/tool boundary, so a long blocking phase — workspace
+// provisioning and sandbox build before the pipeline starts, or a single slow
+// model/tool call in flight — could still exceed the stale threshold with no
+// heartbeat. A run-lifetime ticker keeps last_step_at fresh for as long as the
+// executor goroutine is alive, while a goroutine that dies (panic, cancellation,
+// abandoned execution) stops ticking and the run is reaped as before.
+//
+// The returned stop function is idempotent and safe to call more than once.
+// interval <= 0 falls back to defaultRunHeartbeatInterval.
+func (r *Repository) StartRunHeartbeat(runID string, interval time.Duration) (stop func()) {
+	if interval <= 0 {
+		interval = defaultRunHeartbeatInterval
+	}
+	stopCh := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				// Best-effort: a transient failure is retried on the next tick.
+				_ = r.TouchRun(context.Background(), runID)
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(stopCh) }) }
+}
+
+// MarkStaleRunsAsError finds runs stuck in "running" status for longer than
+// the given threshold and marks them as errored. Unlike MarkOrphanedRunsAsError
+// (which runs at startup), this runs periodically to catch runs abandoned
+// mid-execution (e.g. CLI connection drop without graceful close).
+//
+// The idle check keys off COALESCE(last_step_at, started_at) so a run that is
+// actively heartbeating (long sandbox build, many MCP round-trips) is not
+// failed merely because it started long ago; only runs whose last activity —
+// or start, for runs that never heartbeated — predates the threshold are reaped.
+func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
+	cutoff := time.Now().Add(-threshold)
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusError).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = ?", "run exceeded idle timeout (likely abandoned by client)").
+		Where("status = ?", RunStatusRunning).
+		Where("COALESCE(last_step_at, started_at) < ?", cutoff).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit int) ([]*AgentRun, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Where("agent_id = ?", agentID).
+		Order("started_at DESC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+// HasActiveRunForAgentObject reports whether a non-terminal run already exists
+// for the given agent and reaction target object. The "same object" key matches
+// either the inline reaction shape (trigger_metadata->>'subjectObjectId' /
+// 'subjectObjectType', stamped by TriggerService.executeTriggeredAgent) or the
+// object-driven queued shape (subject_object_id / subject_object_type columns).
+// Used by ConcurrencyStrategy=skip.
+func (r *Repository) HasActiveRunForAgentObject(ctx context.Context, agentID, objectID, objectType string) (bool, error) {
+	return r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		Where("ar.agent_id = ?", agentID).
+		Where("ar.status IN (?)", bun.In(nonTerminalRunStatuses())).
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.
+				WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
+					// Inline reaction runs record the target object on
+					// trigger_metadata; object-driven (queued) work runs record
+					// it on the subject_object_id column.
+					return q.
+						Where("ar.trigger_metadata->>'subjectObjectId' = ?", objectID).
+						Where("ar.trigger_metadata->>'subjectObjectType' = ?", objectType)
+				}).
+				WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
+					return q.
+						Where("ar.subject_object_id::text = ?", objectID).
+						Where("ar.subject_object_type = ?", objectType)
+				})
+		}).
+		Exists(ctx)
+}
+
+// --- Agent Processing Log ---
+
+// CreateProcessingLog creates a new processing log entry
+func (r *Repository) CreateProcessingLog(ctx context.Context, log *AgentProcessingLog) error {
+	_, err := r.db.NewInsert().
+		Model(log).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindPendingOrProcessing finds an existing pending/processing entry
+func (r *Repository) FindPendingOrProcessing(ctx context.Context, agentID, objectID string, version int, eventType ReactionEventType) (*AgentProcessingLog, error) {
+	log := new(AgentProcessingLog)
+	err := r.db.NewSelect().
+		Model(log).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("object_version = ?", version).
+		Where("event_type = ?", eventType).
+		Where("status IN (?)", bun.In([]AgentProcessingStatus{ProcessingStatusPending, ProcessingStatusProcessing})).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return log, nil
+}
+
+// FindProcessingLogByKey returns any processing-log entry for the dispatch
+// dedup key (agent_id, graph_object_id, object_version, event_type), regardless
+// of status. Used by enqueue-on-create to guarantee a repeated delivery of the
+// same created event produces a single run even after a prior entry completed.
+func (r *Repository) FindProcessingLogByKey(ctx context.Context, agentID, objectID string, version int, eventType ReactionEventType) (*AgentProcessingLog, error) {
+	log := new(AgentProcessingLog)
+	err := r.db.NewSelect().
+		Model(log).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("object_version = ?", version).
+		Where("event_type = ?", eventType).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return log, nil
+}
+
+// MarkProcessingLogStatus updates the status of a processing log entry
+func (r *Repository) MarkProcessingLogStatus(ctx context.Context, id string, status AgentProcessingStatus, errorMsg *string, summary map[string]any) error {
+	now := time.Now()
+	q := r.db.NewUpdate().
+		Model((*AgentProcessingLog)(nil)).
+		Set("status = ?", status).
+		Where("id = ?", id)
+
+	if status == ProcessingStatusProcessing {
+		q = q.Set("started_at = ?", now)
+	}
+	if status == ProcessingStatusCompleted || status == ProcessingStatusFailed || status == ProcessingStatusSkipped || status == ProcessingStatusAbandoned {
+		q = q.Set("completed_at = ?", now)
+	}
+	if errorMsg != nil {
+		q = q.Set("error_message = ?", *errorMsg)
+	}
+	if summary != nil {
+		q = q.Set("result_summary = ?", summary)
+	}
+
+	_, err := q.Exec(ctx)
+	return err
+}
+
+// GetPendingEvents returns graph objects that haven't been processed by an agent
+// This is used to show unprocessed objects in the admin UI
+func (r *Repository) GetPendingEvents(ctx context.Context, agent *Agent, limit int) ([]PendingEventObjectDTO, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+
+	// Build the query to find objects matching the agent's filters
+	// that haven't been successfully processed by this agent
+	type GraphObject struct {
+		ID        string    `bun:"id"`
+		Type      string    `bun:"type"`
+		Key       string    `bun:"key"`
+		Version   int       `bun:"version"`
+		CreatedAt time.Time `bun:"created_at"`
+		UpdatedAt time.Time `bun:"updated_at"`
+	}
+
+	var objects []GraphObject
+	q := r.db.NewSelect().
+		TableExpr("kb.graph_objects AS go").
+		Column("go.id", "go.type", "go.key", "go.version", "go.created_at", "go.updated_at").
+		Where("go.project_id = ?", agent.ProjectID).
+		Where("go.deleted_at IS NULL")
+
+	// Filter by object types if specified
+	if agent.ReactionConfig != nil && len(agent.ReactionConfig.ObjectTypes) > 0 {
+		q = q.Where("go.type IN (?)", bun.In(agent.ReactionConfig.ObjectTypes))
+	}
+
+	// Exclude objects that have been successfully processed
+	q = q.Where(`NOT EXISTS (
+		SELECT 1 FROM kb.agent_processing_log apl
+		WHERE apl.agent_id = ?
+		AND apl.graph_object_id = go.id
+		AND apl.object_version = go.version
+		AND apl.status = 'completed'
+	)`, agent.ID)
+
+	// Get total count
+	totalCount, err := q.Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Get limited results
+	err = q.Order("go.updated_at DESC").
+		Limit(limit).
+		Scan(ctx, &objects)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Convert to DTOs
+	dtos := make([]PendingEventObjectDTO, len(objects))
+	for i, obj := range objects {
+		dtos[i] = PendingEventObjectDTO{
+			ID:        obj.ID,
+			Type:      obj.Type,
+			Key:       obj.Key,
+			Version:   obj.Version,
+			CreatedAt: obj.CreatedAt,
+			UpdatedAt: obj.UpdatedAt,
+		}
+	}
+
+	return dtos, totalCount, nil
+}
+
+// IsAgentProcessingObject checks if an agent is currently processing an object
+func (r *Repository) IsAgentProcessingObject(ctx context.Context, agentID, objectID string) (bool, error) {
+	count, err := r.db.NewSelect().
+		Model((*AgentProcessingLog)(nil)).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("status = ?", ProcessingStatusProcessing).
+		Count(ctx)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// MarkStuckJobsAsAbandoned marks jobs stuck in processing state as abandoned
+func (r *Repository) MarkStuckJobsAsAbandoned(ctx context.Context, olderThan time.Duration) (int, error) {
+	threshold := time.Now().Add(-olderThan)
+	res, err := r.db.NewUpdate().
+		Model((*AgentProcessingLog)(nil)).
+		Set("status = ?", ProcessingStatusAbandoned).
+		Set("completed_at = ?", time.Now()).
+		Set("error_message = ?", "Job abandoned - exceeded processing time limit").
+		Where("status = ?", ProcessingStatusProcessing).
+		Where("started_at < ?", threshold).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// --- Agent lookup by name ---
+
+// FindByName finds an agent by name within a project.
+func (r *Repository) FindByName(ctx context.Context, projectID, name string) (*Agent, error) {
+	agent := new(Agent)
+	err := r.db.NewSelect().
+		Model(agent).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return agent, nil
+}
+
+// FindAgentByName is a thin, self-documenting alias for FindByName. It exists so
+// the blueprints.AgentRepo interface can refer to runtime-agent lookups by a
+// name that does not collide with definition lookups (FindDefinitionByName).
+func (r *Repository) FindAgentByName(ctx context.Context, projectID, name string) (*Agent, error) {
+	return r.FindByName(ctx, projectID, name)
+}
+
+// CreateAgent is a thin, self-documenting alias for Create. It exists so the
+// blueprints.AgentRepo interface can refer to runtime-agent creation by a name
+// that does not collide with definition creation (CreateDefinition).
+func (r *Repository) CreateAgent(ctx context.Context, agent *Agent) error {
+	return r.Create(ctx, agent)
+}
+
+// UpdateAgent is a thin, self-documenting alias for Update. It exists so the
+// blueprints.AgentRepo interface can refer to runtime-agent updates by a name
+// that does not collide with definition updates (UpdateDefinition).
+func (r *Repository) UpdateAgent(ctx context.Context, agent *Agent) error {
+	return r.Update(ctx, agent)
+}
+
+// DeleteAgentsBySourceBlueprint deletes the runtime agents a blueprint created
+// in a single project, matched on the project and on the ownership stamp stored
+// in their config JSONB (config->>'sourceBlueprintId'). Returns the number of
+// rows deleted.
+//
+// The project scope is not optional: a blueprint source id can be applied in
+// several projects at once, so a delete driven from one project's Unapply must
+// only ever remove that project's agents.
+//
+// The matching ids are resolved first and the delete is scoped to them, so every
+// row removed here is reported to the deletion listeners and its in-memory
+// trigger registrations are torn down in the same step. A concurrent insert that
+// appears after the id snapshot is left alone (its own create path registers its
+// trigger).
+func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, projectID, blueprintID string) (int, error) {
+	var ids []string
+	if err := r.db.NewSelect().
+		Model((*Agent)(nil)).
+		Column("id").
+		Where("project_id = ?", projectID).
+		Where("config->>'sourceBlueprintId' = ?", blueprintID).
+		Scan(ctx, &ids); err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	res, err := r.db.NewDelete().
+		Model((*Agent)(nil)).
+		Where("id IN (?)", bun.In(ids)).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	r.notifyAgentsDeleted(ids)
+	return int(n), nil
+}
+
+// --- Agent Definitions ---
+
+// FindAllDefinitions returns all agent definitions for a project.
+// If includeInternal is false, definitions with visibility='internal' are excluded.
+func (r *Repository) FindAllDefinitions(ctx context.Context, projectID string, includeInternal bool) ([]*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	q := r.db.NewSelect().
+		Model(&defs).
+		Where("project_id = ?", projectID).
+		Order("name ASC")
+	if !includeInternal {
+		q = q.Where("visibility != ?", VisibilityInternal)
+	}
+	err := q.Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return defs, nil
+}
+
+// FindDefinitionByID returns an agent definition by ID, optionally filtering by project.
+//
+// A non-UUID id is treated as not-found and returns (nil, nil): kb.agent_definitions.id
+// is a UUID column, so querying it with a non-UUID string (e.g. an agent *name* passed
+// as an *id*) makes Postgres raise 22P02 "invalid input syntax for type uuid". That is
+// not sql.ErrNoRows, so without this guard it surfaced as a 500 instead of a 404.
+func (r *Repository) FindDefinitionByID(ctx context.Context, id string, projectID *string) (*AgentDefinition, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, nil
+	}
+
+	def := new(AgentDefinition)
+	q := r.db.NewSelect().
+		Model(def).
+		Where("id = ?", id)
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+	err := q.Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return def, nil
+}
+
+// FindDefinitionByName returns an agent definition by name within a project.
+func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name string) (*AgentDefinition, error) {
+	def := new(AgentDefinition)
+	err := r.db.NewSelect().
+		Model(def).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return def, nil
+}
+
+// ResolveDefinitionForAgent looks up the AgentDefinition for a runtime Agent.
+// Resolution order:
+//  1. FK: agent.AgentDefinitionID (direct DB relationship — authoritative)
+//  2. StrategyType: parse "chat-session:{defID}" to extract definition ID
+//  3. StrategyType: parse "agent-def:{defID}" (OpenAI-compat runtime agents)
+//  4. Exact name match (agent.Name == definition.Name)
+//  5. Agent name + "-def" suffix (e.g. agent "foo" → definition "foo-def")
+//  6. Strip "Chat session for " prefix (legacy chat agents)
+//
+// Returns (nil, nil) when no definition is found.
+func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error) {
+	if agent == nil {
+		return nil, nil
+	}
+	// 1. FK lookup — authoritative, no name guessing needed
+	if agent.AgentDefinitionID != nil && *agent.AgentDefinitionID != "" {
+		var def AgentDefinition
+		err := r.db.NewSelect().Model(&def).Where("id = ?", *agent.AgentDefinitionID).Scan(ctx)
+		if err == nil {
+			return &def, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		// Definition was deleted — fall through to name-based lookup
+	}
+	// 2. Parse "chat-session:{defID}" from StrategyType — CLI-triggered agents use this pattern
+	if defID, ok := strings.CutPrefix(agent.StrategyType, "chat-session:"); ok && defID != "" {
+		projectID := agent.ProjectID
+		def, err := r.FindDefinitionByID(ctx, defID, &projectID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if def != nil {
+			return def, nil
+		}
+	}
+	// 3. Parse "agent-def:{defID}" from StrategyType — OpenAI-compat runtime agents use this pattern
+	if defID, ok := strings.CutPrefix(agent.StrategyType, "agent-def:"); ok && defID != "" {
+		projectID := agent.ProjectID
+		def, err := r.FindDefinitionByID(ctx, defID, &projectID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if def != nil {
+			return def, nil
+		}
+	}
+	// 4. Exact name match
+	def, err := r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+	if err != nil {
+		return nil, err
+	}
+	if def != nil {
+		return def, nil
+	}
+	// 5. Try agent name + "-def" suffix (e.g. runtime "foo" → definition "foo-def")
+	def, err = r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name+"-def")
+	if err != nil {
+		return nil, err
+	}
+	if def != nil {
+		return def, nil
+	}
+	// 6. Strip known prefixes and retry
+	if stripped, ok := strings.CutPrefix(agent.Name, "Chat session for "); ok && stripped != "" {
+		return r.FindDefinitionByName(ctx, agent.ProjectID, stripped)
+	}
+	return nil, nil
+}
+
+// FindEnabledByTriggerType returns all enabled agents matching the given trigger type,
+// excluding agents that belong to soft-deleted projects.
+func (r *Repository) FindEnabledByTriggerType(ctx context.Context, triggerType AgentTriggerType) ([]*Agent, error) {
+	var agents []*Agent
+	err := r.db.NewSelect().
+		Model(&agents).
+		Join("JOIN kb.projects AS p ON p.id = a.project_id").
+		Where("a.enabled = true").
+		Where("a.trigger_type = ?", triggerType).
+		Where("p.deleted_at IS NULL").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return agents, nil
+}
+
+// CreateDefinition creates a new agent definition.
+func (r *Repository) CreateDefinition(ctx context.Context, def *AgentDefinition) error {
+	_, err := r.db.NewInsert().
+		Model(def).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// graphQueryAgentSystemPrompt is the default system prompt for the graph-query-agent.
+const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Help users explore and understand data in their knowledge graph.
+
+## Rules
+1. ALWAYS use tools to look up data. Never answer from training data or fabricate entities, relationships, or facts.
+2. Cite specific entity names, types, and relationship types from tool results.
+3. If tools return no results, clearly state that no matching data was found.
+4. Format responses as plain text. Do NOT use markdown, bold, bullet points, headers, or tables unless explicitly requested.
+5. Keep responses concise and factual. Answer the question directly in as few words as possible. Do not add context, explanation, or narrative unless asked.
+6. Start with search-hybrid for most queries. Use entity-query to list by type. Use entity-edges-get to explore relationships. For a simple lookup of a person/entity by name, call search-hybrid and answer directly — do NOT call entity-type-list for lookups (it is only for type/count/schema questions, see Pagination strategy).
+
+## Context budget and field selection
+The model has a 1M token input window, but large entity payloads are expensive and slow. A single entity with full properties is ~200-500 tokens. Always use the minimum fields needed:
+- Every entity always returns: id, key, name, type, created_at, updated_at — these are free, never request them in fields[].
+- Before fetching entities, decide which *additional* property fields your answer requires. Pass fields=["field1","field2"] to entity-query to retrieve only those — never fetch the full object when you only need a subset.
+- For counting or listing names: omit fields entirely (name is already free).
+- For summarizing by a dimension (e.g. method, status, domain): fields=["<dimension_field>"] only.
+- For full detail on a specific entity: omit fields (returns everything) or use ids=[...] with no fields filter.
+
+Response size thresholds:
+- ≤50 entities: return full results freely.
+- 51–200 entities: summarize in your answer (counts, patterns, key names) rather than listing everything.
+- >200 entities: return only id+name, then offer to fetch details for specific IDs via entity-query ids=[...].
+
+## Pagination strategy
+When a question requires a complete list ("how many", "list all", "which ones"):
+- Step 1: Call entity-type-list first — it returns exact per-type counts at near-zero cost. Use this to decide whether pagination is needed before fetching any entities. Use entity-type-list ONLY for type/count/"list all"/schema questions: it is expensive on large graphs, so never call it for a simple name/entity lookup (use search-hybrid instead). Only pass include_relationships=true when the question is about relationship types — that aggregation is also expensive and returns nothing otherwise.
+- Step 2: If count ≤ 200, fetch in one call with limit=200.
+- Step 3: If count > 200, paginate: call entity-query repeatedly with limit=200, incrementing offset by 200 each time, until data.pagination.has_more=false. Tool results are wrapped in a {"ok", "data"} envelope — entity-query's fields live under data (entities at data.entities, pagination at data.pagination), so read data.pagination.total / data.pagination.has_more. The first response includes data.pagination.total so you can compute total pages upfront.
+- Step 4: Accumulate results across pages in your context. Do NOT re-fetch pages already retrieved.
+- Step 5: Summarize — report counts, group by key properties, highlight patterns. For >200 results, list id+name only and offer to fetch details on request via entity-query ids=[...].
+
+## Versioning
+Entities are versioned. Each update creates a new version; the canonical ID stays constant across versions.
+- entity-query always returns the current (HEAD) version. Each entity in the response's data.entities carries a "version" field (integer, starting at 1).
+- To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...].
+- To fetch a specific historical version's properties: call entity-query with ids=[physical_id] (the physical_id from entity-history, NOT the canonical_id).` + "\n\n" + citationInstruction
+
+// EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
+// does not exist yet. Uses VisibilityInternal so it never appears in the public list.
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, "graph-query-agent")
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up graph-query-agent: %w", err)
+	}
+
+	temperature := float32(0.1)
+	maxSteps := 15
+	systemPrompt := graphQueryAgentSystemPrompt
+
+	// MCP tools for direct graph queries — no sandbox/SDK needed.
+	canonicalTools := []string{
+		"search-hybrid",
+		"entity-query",
+		"entity-history",
+		"entity-edges-get",
+		"relationship-list",
+		"entity-type-list",
+	}
+
+	if existing != nil {
+		// Self-heal: update tools, system prompt, and max steps to pick up
+		// any changes deployed in code. Do NOT overwrite the model — let whatever
+		// is explicitly set persist, and fall back to the project default when empty.
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		existing.MaxSteps = &maxSteps
+		// Clear sandbox config — this agent uses MCP tools, not SDK/sandbox.
+		existing.SandboxConfig = nil
+
+		// Apply per-project overrides (if any) on top of canonical defaults.
+		if projectID != "" {
+			if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-query-agent"); oErr == nil && override != nil {
+				ApplyAgentOverride(existing, override)
+			}
+		}
+
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			// Non-fatal — return existing as-is rather than failing the query call.
+			return existing, nil
+		}
+		return existing, nil
+	}
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         "graph-query-agent",
+		Description:  strPtr("Knowledge graph query assistant — explores data via MCP tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Name:        "",
+			Temperature: &temperature,
+		},
+		Tools:      canonicalTools,
+		Skills:     []string{},
+		IsDefault:  true,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
+	}
+
+	// Apply per-project overrides (if any) on top of canonical defaults.
+	if projectID != "" {
+		if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-query-agent"); oErr == nil && override != nil {
+			ApplyAgentOverride(def, override)
+		}
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race condition: another caller inserted first — retry the read.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "graph-query-agent"); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create graph-query-agent: %w", err)
+	}
+
+	return def, nil
+}
+
+// graphInsertAgentSystemPrompt is the default system prompt for the graph-insert-agent.
+const graphInsertAgentSystemPrompt = `You are a knowledge graph insertion agent. Your job is to understand natural language input and persist it as structured data in the knowledge graph.
+
+## Workflow — follow these steps in order
+
+### 1. EXTRACT ENTITIES (think before acting)
+Before calling any tool, read the entire input carefully and produce an exhaustive mental list:
+
+**Every entity mentioned**, no matter how briefly — people, places, organisations, objects, events, concepts.
+For each entity write down:
+- Canonical name
+- Type (person / place / organisation / event / object / concept / …)
+- Every specific property stated or clearly implied: age, role, status, identity, date, location, description, etc.
+- Do NOT summarise or merge facts — capture them at the finest grain possible.
+  - Bad: {name: "Caroline", notes: "transgender, single, looking to adopt"}
+  - Good: {name: "Caroline", gender_identity: "transgender woman", relationship_status: "single", goal: "adopt a child"}
+- For each entity, exhaust every fact the input contains about it — preferences, history, activities, affiliations, physical traits, opinions, anything stated or clearly implied. Each distinct fact → its own typed property. Never bundle multiple facts into a single string value.
+
+**Every relationship** between those entities:
+- Who/what → verb → who/what
+- Include both directions if the relationship is symmetric (e.g. met_with should appear on both sides as separate edges, or as one edge with an inverse noted)
+- Named relationship types must be snake_case verbs: is_pursuing, works_at, attended, located_in, met_with, owns, manages, member_of, etc.
+
+### 2. CHECK SCHEMA
+Call schema-compiled-types to get all active object and relationship types.
+- Match each entity type and relationship type from step 1 against existing types.
+- Only call schema-create if NO existing type is a reasonable match AND schema_policy != "reuse_only".
+- If schema_policy = "ask": call ask_user before creating any new type.
+- If schema_policy = "auto": create new types autonomously, keep names snake_case and minimal.
+- If schema_policy = "reuse_only": never call schema-create.
+- Define only properties present in the input. snake_case names only.
+
+### 3. DEDUP CHECK
+For EVERY entity from step 1, call search-hybrid with "<name> <type>" as query.
+- High-confidence match (same name + type + clearly the same thing) → plan UPDATE, record existing canonical_id.
+- Uncertain → plan CREATE.
+- For matched entities call entity-edges-get to find already-existing relationships — skip creating duplicates.
+
+### 4. CREATE BRANCH
+Call graph-branch-create with name "remember/<short-kebab-slug>".
+Record the branch_id — pass it to ALL subsequent write calls.
+
+### 5. WRITE ENTITIES
+Create or update every entity from step 1 on the branch:
+- entity-create: set key (<type>-<slug>), name, and ALL properties from step 1.
+- entity-update: for dedup matches, patch only the new/changed properties.
+- Batch multiple entities in a single entity-create call where possible.
+
+### 6. WRITE RELATIONSHIPS
+After all entities exist, create every relationship from step 1:
+- Call relationship-create for each directed edge: src_id → type → dst_id.
+- Always use the canonical_id (or newly created entity id) for src/dst.
+- For symmetric relationships (e.g. met_with) create both directions explicitly.
+- Include any properties on the relationship (date, weight, context, etc.).
+
+### 7. MERGE (skip if dry_run = true)
+Call graph-branch-merge with branch_id and execute=true.
+- Conflicts → surface to user, do not force-merge.
+
+### 8. CLEANUP
+Merge succeeded or dry_run → call graph-branch-delete.
+Merge failed → leave branch, report its name.
+
+### 9. REPORT
+Summarise in markdown:
+- Entities created / updated (keys + key properties)
+- Relationships created (src → type → dst)
+- New schema types created
+- Branch and merge status
+
+## Rules
+- ALWAYS key format: <type>-<identifying-slug> e.g. "person-caroline", "event-school-lgbtq-talk".
+- NEVER write to main directly. Always use a branch.
+- NEVER skip step 3 (dedup). Search for EVERY entity before writing.
+- NEVER skip step 6 (relationships). If step 1 identified relationships, they MUST be written.
+- Capture facts at finest grain — separate properties, not blob strings.
+- snake_case for all type names and property names.
+- If input is ambiguous, state your interpretation in the report.`
+
+// EnsureGraphInsertAgent returns the graph-insert-agent for the project, creating it if it
+// does not exist yet. schemaPolicy controls whether the agent may create new schema types:
+//   - "auto"        (default) — create new types if no existing type is a good match
+//   - "reuse_only"  — never call schema-create; always reuse closest existing type
+//   - "ask"         — call ask_user before creating any new schema type
+//
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+func (r *Repository) EnsureGraphInsertAgent(ctx context.Context, projectID string, schemaPolicy string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, "graph-insert-agent")
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up graph-insert-agent: %w", err)
+	}
+
+	temperature := float32(0.2)
+	maxSteps := 30
+	systemPrompt := graphInsertAgentSystemPrompt
+
+	// MCP tools for graph insertion — read (dedup/schema), write (branch + data).
+	canonicalTools := []string{
+		// Read / understand
+		"search-hybrid",
+		"entity-query",
+		"entity-type-list",
+		"entity-edges-get",
+		"schema-compiled-types",
+		"schema-list-installed",
+		// Schema write (conditionally used per schema_policy)
+		"schema-create",
+		// Branch lifecycle
+		"graph-branch-create",
+		"graph-branch-merge",
+		"graph-branch-delete",
+		// Data write
+		"entity-create",
+		"entity-update",
+		"relationship-create",
+	}
+
+	// For schema_policy="ask", include ask_user so the agent can prompt before schema creation.
+	if schemaPolicy == "ask" {
+		canonicalTools = append(canonicalTools, "ask_user")
+	}
+
+	if existing != nil {
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		if existing.Model == nil {
+			existing.Model = &ModelConfig{}
+		}
+		existing.Model.Temperature = &temperature
+		existing.MaxSteps = &maxSteps
+		existing.SandboxConfig = nil
+
+		// Apply per-project overrides on top of canonical defaults.
+		if projectID != "" {
+			if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-insert-agent"); oErr == nil && override != nil {
+				ApplyAgentOverride(existing, override)
+			}
+		}
+
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			return existing, nil
+		}
+		return existing, nil
+	}
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         "graph-insert-agent",
+		Description:  strPtr("Knowledge graph insertion agent — understands natural language and persists structured data via MCP tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Temperature: &temperature,
+		},
+		Tools:      canonicalTools,
+		Skills:     []string{},
+		IsDefault:  false,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
+	}
+
+	// Apply per-project overrides on top of canonical defaults.
+	if projectID != "" {
+		if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-insert-agent"); oErr == nil && override != nil {
+			ApplyAgentOverride(def, override)
+		}
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race condition: another caller inserted first — retry the read.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "graph-insert-agent"); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create graph-insert-agent: %w", err)
+	}
+
+	return def, nil
+}
+
+// cliAssistantAgentSystemPrompt is the default system prompt for the cli-assistant-agent.
+const cliAssistantAgentSystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
+You answer questions and take direct action: create, update, delete entities, relationships, agents, schemas, MCP servers, and projects.
+
+## Context & Auth
+
+You are told whether the user is authenticated and has a project context.
+- **Not authenticated**: answer docs questions only. For tasks, tell user to run "memory login", set MEMORY_ACCOUNT_API_KEY, or pass --project-token.
+- **Authenticated, no project**: docs + account-level tasks (create_project, list_traces, etc.). For project-scoped tasks, say: pass --project <id> or run "memory config set project_id <id>".
+- **Authenticated + project**: full access — use all available tools.
+
+## Classification & Tool Constraints
+
+Classify each request, then strictly follow tool rules:
+- **DOCS**: use ONLY web-fetch. No graph/agent/schema/skill tools.
+- **TASK**: use ONLY action/data tools. No web-fetch unless user explicitly asks for docs.
+- **MIXED**: fetch docs first, then action tools.
+
+Not authenticated + TASK → do NOT call tools. Explain what would be done and how to authenticate.
+
+## Docs Lookup
+
+Fetch from: https://emergent-company.github.io/emergent.memory/latest/
+
+URL pattern: .../latest/<section>/<page>/
+
+| Section | Pages |
+|---|---|
+| user-guide | getting-started, agents, blueprints, knowledge-graph, documents, datasources, tasks, chat, branches, backups, api-tokens, integrations, notifications |
+| developer-guide | provider-setup, mcp-servers, schema, schema-registry, sandbox, extraction, scheduler, security-scopes, health-ops, email-setup |
+| go-sdk | (single page) |
+| api-reference | (single page) |
+
+Fetch the specific page directly. If unsure, fetch the section index. Never re-fetch a URL already retrieved.
+
+## Response Format
+
+Default to CLI commands. Only include REST/curl/HTTP examples if the user explicitly asks about the API, SDK, or endpoints.
+
+## Task Execution
+
+Use tools to fulfill requests directly. Never fabricate live state.
+
+For writes: briefly state intent before executing. For deletes: warn explicitly. Do not ask for confirmation.
+
+## CLI Reference
+
+Knowledge Base:
+  memory blueprints install|inspect|validate|dump|check-updates|update|github-token
+  memory documents list|get|upload|delete
+  memory embeddings status|pause|resume|config
+  memory graph objects create|create-batch|list|get|update|delete|edges
+  memory graph relationships create|create-batch|list|get|delete
+  memory graph branches create|list|get|update|delete|merge
+  memory query "<question>"          (agent or --mode=search)
+  memory schemas list|installed|install|uninstall|get|create|delete|compiled-types
+  memory browse
+
+Agents & AI:
+  memory adk-sessions list|get
+  memory agent-definitions create|list|get|update|delete    (aliases: agent-defs, defs)
+  memory agents create|list|get|update|delete|trigger
+  memory agents runs <agent-id> [--limit N]
+  memory agents get-run <run-id>
+  memory agents hooks|questions
+  memory agents mcp-servers create|list|get|update|delete|inspect|sync|tools|configure
+  memory ask "<question>"
+  memory mcp-guide
+  memory provider configure|configure-project|models|test|usage
+  memory skills create|list|get|update|delete|import
+
+Relocated: "memory mcp-servers ..." is now "memory agents mcp-servers ...". Always use the new path.
+
+Account & Access:
+  memory config set|set-server|set-credentials|show
+  memory login / memory logout
+  memory projects create|list|get|set|delete|create-token|set-info|set-provider
+  memory set-token / memory status / memory tokens create|list|get|revoke
+
+Server (self-hosted):
+  memory server install|upgrade|uninstall
+  memory server ctl start|stop|restart|status|logs|health|shell|pull
+  memory server doctor [--fix]
+
+Other: memory traces list|get|search / memory upgrade / memory version
+
+Common flags: --server <url>, --project <id>, --project-token <tok>, --output table|json|yaml|csv, --compact, --debug, --no-color
+
+## Branching
+
+Branches are isolated workspaces for the knowledge graph. Objects/relationships written with
+--branch <id> are invisible to the main graph until merged.
+
+Key facts:
+- The main graph has NO branch ID. Omitting --branch writes to the main graph.
+- "memory graph branches list" shows all branch IDs for the project.
+- --branch is a flag on graph write commands (objects create/update, relationships create), NOT on branches subcommands.
+- --parent on "branches create" is optional lineage metadata only — it does NOT affect merge behavior.
+- Merge direction: source → target. Both must be branch IDs from "branches list".
+- "branches merge <target-id> --source <source-id>" is a dry run by default. Add --execute to apply.
+- Conflicts block --execute. Resolve by making source and target agree on the conflicting object, then re-run.
+- Merge is all-or-nothing (single transaction). If any write fails, the whole merge rolls back.
+
+Workflow:
+  BRANCH_ID=$(memory graph branches create --name "my-branch" --output json | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+  memory graph objects create --type Foo --key bar --branch "$BRANCH_ID"
+  memory graph branches merge <target-id> --source "$BRANCH_ID"          # dry run
+  memory graph branches merge <target-id> --source "$BRANCH_ID" --execute # apply
+
+## Platform Facts
+
+- **Providers**: Google AI (Gemini API) and Google Cloud Vertex AI only. No OpenAI/Anthropic.
+- **Models**: Gemini family (gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-pro, gemini-3.1-flash-lite-preview).
+- **Provider config**: org-level via "memory provider configure"; project override via "memory provider configure-project".`
+
+// EnsureCliAssistantAgent returns the cli-assistant-agent for the project (or with an empty
+// project ID for the user-level /api/ask endpoint), creating it if it does not exist yet.
+// If it already exists, its Tools list, SystemPrompt, and SandboxConfig are updated to
+// reflect any changes made to cliAssistantAgentSystemPrompt and the canonical tool whitelist.
+// Uses VisibilityInternal so it never appears in the public agent list.
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+// runtime parameter is accepted for API compatibility but no longer affects behavior
+// (both variants use MCP tools, not sandbox).
+func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID string, runtime string) (*AgentDefinition, error) {
+	agentName := "cli-assistant-agent"
+
+	existing, err := r.FindDefinitionByName(ctx, projectID, agentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up %s: %w", agentName, err)
+	}
+
+	temperature := float32(0.3)
+	maxSteps := 20
+	systemPrompt := cliAssistantAgentSystemPrompt
+
+	// MCP tools — no sandbox/SDK needed.
+	canonicalTools := []string{
+		// Web access for documentation lookups (DOCS classification)
+		"web-fetch",
+		// Project info
+		"project-get",
+		// Knowledge graph — read
+		"search-hybrid",
+		"entity-query",
+		"entity-search",
+		"search-semantic",
+		"search-similar",
+		"entity-edges-get",
+		"graph-traverse",
+		"entity-type-list",
+		"schema-version",
+		"relationship-list",
+		// Knowledge graph — write
+		"entity-create",
+		"entity-update",
+		"entity-delete",
+		"relationship-create",
+		"relationship-update",
+		"relationship-delete",
+		// Agent management — read
+		"agent-def-list",
+		"agent-def-get",
+		"agent-list",
+		"agent-get",
+		"agent-run-list",
+		"agent-run-get",
+		"agent-run-tool-calls",
+		"agent-list-available",
+		// Agent definition — write
+		"agent-def-create",
+		"update_agent_definition",
+		"agent-def-delete",
+		// Runtime agent — write
+		"agent-create",
+		"update_agent",
+		"agent-delete",
+		"trigger_agent",
+		// Schema registry — read
+		"schema-list",
+		"schema-get",
+		"schema-list-available",
+		"schema-list-installed",
+		// Schema registry — write
+		"schema-create",
+		"schema-delete",
+		"schema-assign",
+		"schema-assignment-update",
+		// MCP registry — write
+		"mcp-server-create",
+		"update_mcp_server",
+		"mcp-server-delete",
+		"mcp-registry-install",
+		"sync_mcp_server_tools",
+		// Project — write
+		"project-create",
+		// Documents — read/write (non-destructive uploads allowed)
+		"document-list",
+		"document-get",
+		"document-upload",
+		"document-delete",
+		// Skills — read/write
+		"skill-list",
+		"skill-get",
+		"skill-create",
+		"skill-update",
+		"skill-delete",
+		// Embeddings — read only (no pause/resume/config changes)
+		"embedding-status",
+		// Agent Questions and ADK sessions — read
+		"agent-question-list",
+		"agent-question-list-project",
+		"agent-question-respond",
+		"adk-session-list",
+		"adk-session-get",
+		// Traces — read
+		"trace-list",
+		"trace-get",
+	}
+
+	if existing != nil {
+		// Self-heal: update tools, system prompt, model, and clear sandbox config
+		// to pick up any changes deployed in code.
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		if existing.Model == nil {
+			existing.Model = &ModelConfig{}
+		}
+		existing.Model.Name = ""
+		existing.Model.Temperature = &temperature
+		existing.MaxSteps = &maxSteps
+		// Clear sandbox config — this agent uses MCP tools, not SDK/sandbox.
+		existing.SandboxConfig = nil
+
+		// Apply per-project overrides (if any) on top of canonical defaults.
+		if projectID != "" {
+			if override, oErr := r.GetAgentOverride(ctx, projectID, agentName); oErr == nil && override != nil {
+				ApplyAgentOverride(existing, override)
+			}
+		}
+
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			// Non-fatal — return existing as-is rather than failing the ask call.
+			return existing, nil
+		}
+		return existing, nil
+	}
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         agentName,
+		Description:  strPtr("CLI and platform assistant — answers documentation questions and executes tasks using available tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Name:        "",
+			Temperature: &temperature,
+		},
+		Tools:      canonicalTools,
+		Skills:     []string{},
+		IsDefault:  false,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
+	}
+
+	// Apply per-project overrides (if any) on top of canonical defaults.
+	if projectID != "" {
+		if override, oErr := r.GetAgentOverride(ctx, projectID, agentName); oErr == nil && override != nil {
+			ApplyAgentOverride(def, override)
+		}
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race condition: another caller inserted first — retry the read.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, agentName); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create %s: %w", agentName, err)
+	}
+
+	return def, nil
+}
+
+// cliAssistantAgentV2SystemPrompt is the code-generation-focused system prompt for v2.
+// Instead of 57 MCP tools, the agent writes a single Python SDK script and calls run_python.
+const cliAssistantAgentV2SystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
+You accomplish tasks by writing and executing Python scripts using the Memory SDK.
+
+## How you work
+
+1. Classify the request:
+   - **DOCS_QUESTION** → answer from your knowledge below; no tools needed
+   - **TASK** → write a Python script, execute it with run_python, format the output
+   - **MIXED** → answer the docs part from knowledge, then run a script for live data
+
+2. For TASK requests, write a **complete, self-contained Python script** and call run_python once.
+   Do NOT make multiple run_python calls — get everything done in one script.
+
+3. Format the output as clean markdown for the terminal.
+
+## Authentication & Context
+
+You will be told whether the user is authenticated and whether a project context is active.
+- **Not authenticated**: answer docs questions only. For tasks, explain how to authenticate:
+  "memory login" for OAuth, MEMORY_ACCOUNT_API_KEY for standalone, --project-token for project-scoped.
+- **Auth, no project**: account-level tasks work (list projects, etc.). For project tasks, tell user to pass --project <id>.
+- **Auth + project**: full access — write scripts that operate on the active project.
+
+## Python SDK Reference
+
+The sandbox has credentials pre-injected. Use Client.from_env() — never hardcode keys.
+
+ALL SDK methods return plain dicts. Use bracket access (p['name']), NOT attribute access (p.name).
+
+~~~python
+from emergent import Client
+
+client = Client.from_env()
+
+# ── Projects ──
+client.projects.list() -> list[dict]                    # keys: id, name, orgId
+client.projects.get(id) -> dict
+client.projects.create({"name": "..."}) -> dict
+client.projects.update(id, {"name": "..."}) -> dict
+client.projects.delete(id) -> None
+
+# ── Graph Objects ──
+client.graph.list_objects(type=None, status=None, limit=50, cursor=None) -> dict
+    # Returns: {data: [...], cursor: str|None, total: int}
+    # Each object: {id, entity_id, type, properties, labels, status, ...}
+client.graph.create_object({"type": "...", "properties": {...}}) -> dict
+client.graph.update_object(id, {"properties": {...}}) -> dict  # WARNING: returns NEW id
+client.graph.delete_object(id) -> None
+client.graph.hybrid_search({"query": "..."}) -> dict    # {data: [{object, score}]}
+client.graph.bulk_create_objects([...]) -> dict          # max 100, {items, errors}
+
+# ── Agents ──
+client.agents.list() -> list[dict]
+client.agent_definitions.list() -> list[dict]
+client.agent_definitions.get(id) -> dict
+client.agent_definitions.create({...}) -> dict
+client.agent_definitions.update(id, {...}) -> dict
+client.agent_definitions.delete(id) -> None
+
+# ── Schemas ──
+client.schemas.list() -> list[dict]
+client.schemas.get(id) -> dict
+client.schemas.create({...}) -> dict
+client.schemas.delete(id) -> None
+
+# ── Documents ──
+client.documents.list() -> list[dict]
+client.documents.get(id) -> dict
+client.documents.delete(id) -> None
+
+# ── Skills ──
+client.skills.list() -> list[dict]
+client.skills.get(id) -> dict
+client.skills.create({...}) -> dict
+client.skills.update(id, {...}) -> dict
+client.skills.delete(id) -> None
+
+# ── Search ──
+client.search.hybrid({"query": "...", "limit": 10}) -> dict
+~~~
+
+### Script template
+
+~~~python
+from emergent import Client
+
+client = Client.from_env()
+
+# ... your logic here ...
+
+# ALWAYS print results — empty stdout = no output shown to user
+print("Result:", result)
+~~~
+
+### Important rules
+- Always print results with print(). Empty stdout means nothing is shown.
+- Check for empty results and print a clear message (e.g. "No matching projects found").
+- Use try/except for error handling when appropriate.
+- Non-zero exit_code means an exception — read stderr for the traceback.
+
+## CLI Knowledge (for DOCS_QUESTION)
+
+Knowledge Base:
+  memory blueprints install|inspect|validate|dump|check-updates|update|github-token   Apply a blueprint directory or GitHub repo, or check GitHub import updates
+  memory documents list|get|upload|delete
+  memory embeddings status|pause|resume|config
+  memory graph objects create|create-batch|list|get|update|delete|edges
+  memory graph relationships create|create-batch|list|get|delete
+  memory query "<question>"          Natural-language query
+  memory schemas list|installed|install|uninstall|get|create|delete|compiled-types
+  memory browse                      Interactive TUI
+
+Agents & AI:
+  memory agent-definitions create|list|get|update|delete    (aliases: agent-defs, defs)
+  memory agents create|list|get|update|delete|trigger
+  memory agents runs <agent-id>       List recent runs
+  memory agents get-run <run-id>      Full run detail
+  memory agents hooks|questions
+  memory agents mcp-servers create|list|get|update|delete|inspect|sync|tools|configure
+  memory ask "<question>"             Ask the CLI assistant
+  memory provider configure|configure-project|models|test|usage
+  memory skills create|list|get|update|delete|import
+
+Account & Access:
+  memory config set|set-server|set-credentials|show
+  memory login / memory logout
+  memory projects create|list|get|set|delete|create-token|set-info|set-provider
+  memory status                       Show auth status
+  memory tokens create|list|get|revoke
+
+Server (self-hosted):
+  memory server install|upgrade|ctl|doctor|uninstall
+
+Other:
+  memory traces list|get|search
+  memory upgrade [--force]
+  memory version
+
+Platform facts:
+- Supported LLM providers: Google AI (Gemini API) and Google Cloud Vertex AI ONLY.
+- Supported models: Gemini family (gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-pro, gemini-3.1-flash-lite-preview).
+
+## Response Style
+- Keep responses concise and focused
+- Use markdown with code blocks for CLI commands
+- For lists, use tables when there are multiple columns
+- Number multi-step instructions clearly`
+
+// EnsureCliAssistantAgentV2 creates the v2 code-generation variant of the CLI assistant.
+// Instead of 57 MCP tools, v2 uses only run_python + bash and a code-gen system prompt.
+// The agent writes a complete Python SDK script per request, reducing LLM round-trips from
+// ~5-10 (tool call per action) to 1-2 (generate script + execute).
+// runtime parameter is accepted for signature compatibility but v2 always uses Python.
+func (r *Repository) EnsureCliAssistantAgentV2(ctx context.Context, projectID string, runtime string) (*AgentDefinition, error) {
+	agentName := "cli-assistant-agent-v2"
+
+	existing, err := r.FindDefinitionByName(ctx, projectID, agentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up %s: %w", agentName, err)
+	}
+
+	temperature := float32(0.3)
+	maxSteps := 5
+	systemPrompt := cliAssistantAgentV2SystemPrompt
+
+	sandboxCfg := &sandbox.AgentSandboxConfig{
+		Enabled:   true,
+		BaseImage: "emergent-memory-python-sdk:latest",
+		Tools:     []string{"run_python", "bash"},
+		RepoSource: &sandbox.RepoSourceConfig{
+			Type: sandbox.RepoSourceNone,
+		},
+	}
+	sandboxMap, sandboxMapErr := sandboxCfg.ToMap()
+	if sandboxMapErr != nil {
+		sandboxMap = nil
+	}
+
+	// V2 uses only sandbox tools — no MCP tools at all.
+	canonicalTools := []string{}
+
+	if existing != nil {
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		if existing.Model == nil {
+			existing.Model = &ModelConfig{}
+		}
+		existing.Model.Name = ""
+		if sandboxMap != nil {
+			existing.SandboxConfig = sandboxMap
+		}
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			return existing, nil
+		}
+		return existing, nil
+	}
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         agentName,
+		Description:  strPtr("CLI assistant v2 — code-generation mode using Python SDK scripts"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Name:        "",
+			Temperature: &temperature,
+		},
+		Tools:         canonicalTools,
+		Skills:        []string{},
+		IsDefault:     false,
+		MaxSteps:      &maxSteps,
+		Visibility:    VisibilityInternal,
+		Config:        map[string]any{},
+		SandboxConfig: sandboxMap,
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, agentName); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create %s: %w", agentName, err)
+	}
+
+	return def, nil
+}
+
+// UpdateDefinition updates an agent definition.
+func (r *Repository) UpdateDefinition(ctx context.Context, def *AgentDefinition) error {
+	def.UpdatedAt = time.Now()
+	_, err := r.db.NewUpdate().
+		Model(def).
+		WherePK().
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// DeleteDefinition deletes an agent definition by ID.
+func (r *Repository) DeleteDefinition(ctx context.Context, id string) error {
+	_, err := r.db.NewDelete().
+		Model((*AgentDefinition)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+// --- Extended Agent Run operations ---
+
+// UpdateTraceAndRootRun persists the OTel trace_id and root_run_id on an agent run.
+// Called immediately after the OTel span is created so the run row is linked to
+// its trace and to the top-level orchestration run in the same request.
+// Either argument may be empty string, in which case the corresponding column is set to NULL.
+func (r *Repository) UpdateTraceAndRootRun(ctx context.Context, runID, traceID, rootRunID string) error {
+	q := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Where("id = ?", runID)
+	if traceID != "" {
+		q = q.Set("trace_id = ?", traceID)
+	} else {
+		q = q.Set("trace_id = NULL")
+	}
+	if rootRunID != "" {
+		q = q.Set("root_run_id = ?", rootRunID)
+	} else {
+		q = q.Set("root_run_id = NULL")
+	}
+	_, err := q.Exec(ctx)
+	return err
+}
+
+// nilIfEmpty returns nil for a nil or empty string pointer. Used for optional
+// uuid columns such as root_run_id: a caller-supplied empty string means
+// "absent", and writing "" to a uuid column would fail the insert instead.
+func nilIfEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
+}
+
+// strPtrIfNotEmpty returns a pointer to s, or nil when s is empty. Used for
+// nullable uuid columns populated from a non-pointer value.
+func strPtrIfNotEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// UpdateRunTrustedInternal persists the fail-closed trust marker on an existing
+// run row. Used by the executor entry points (ExecuteWithRun, Resume with a
+// pre-created run) to store the run's trust after the row has already been
+// inserted, so a later resume inherits the same value rather than the column's
+// restrictive default.
+func (r *Repository) UpdateRunTrustedInternal(ctx context.Context, runID string, trusted bool) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("trusted_internal = ?", trusted).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// CreateRunWithOptions creates a new agent run with coordination options.
+// newAgentRun builds an AgentRun from CreateRunOptions without persisting it.
+// Shared by CreateRunWithOptions and the share run reservation path.
+func newAgentRun(opts CreateRunOptions) *AgentRun {
+	return &AgentRun{
+		AgentID:           opts.AgentID,
+		Status:            RunStatusRunning,
+		StartedAt:         time.Now(),
+		Summary:           make(map[string]any),
+		ParentRunID:       opts.ParentRunID,
+		RootRunID:         nilIfEmpty(opts.RootRunID),
+		MaxSteps:          opts.MaxSteps,
+		ResumedFrom:       opts.ResumedFrom,
+		StepCount:         opts.InitialStepCount,
+		TriggerSource:     opts.TriggerSource,
+		TriggerMetadata:   opts.TriggerMetadata,
+		TriggerMessage:    opts.TriggerMessage,
+		Model:             opts.Model,
+		AgentDefinitionID: opts.AgentDefinitionID,
+		TrustedInternal:   opts.TrustedInternal,
+		SubjectObjectID:   opts.SubjectObjectID,
+		SubjectObjectType: opts.SubjectObjectType,
+		Tools:             []string{},
+	}
+}
+
+func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
+	run := newAgentRun(opts)
+	_, err := r.db.NewInsert().
+		Model(run).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// FindRunByID returns an agent run by ID.
+// FindParentAwaitingChild returns any agent run that is paused waiting for the given
+// child run ID to complete (suspend_context->>'waiting_for_run_id' = childRunID).
+// Returns nil (no error) if no such parent exists.
+func (r *Repository) FindParentAwaitingChild(ctx context.Context, childRunID string) (*AgentRun, error) {
+	var run AgentRun
+	err := r.db.NewSelect().
+		Model(&run).
+		Where("status = ?", RunStatusPaused).
+		Where("suspend_context->>'waiting_for_run_id' = ?", childRunID).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (r *Repository) FindRunByID(ctx context.Context, runID string) (*AgentRun, error) {
+	run := new(AgentRun)
+	err := r.db.NewSelect().
+		Model(run).
+		Relation("Agent").
+		Where("ar.id = ?", runID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return run, nil
+}
+
+// PauseRun marks a run as paused, persisting the current step count.
+// UpdateSuspendContext persists the suspend_context JSONB on an agent run row.
+// Call this before PauseRun so the context is available when the run is later resumed.
+func (r *Repository) UpdateSuspendContext(ctx context.Context, runID string, sc map[string]any) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("suspend_context = ?", sc).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// MarkToolConfirmationDecision atomically records a tool-policy confirmation
+// decision in the run's suspend_context batch and reports whether every
+// confirmation in the batch is now decided (resume=true). Uses FOR UPDATE on
+// the run row so concurrent answers serialize and exactly one caller observes
+// resume=true. Non-batch (legacy single-confirmation) runs report resume=true.
+func (r *Repository) MarkToolConfirmationDecision(ctx context.Context, runID, questionID, decision, message string) (resume bool, err error) {
+	err = r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		run := new(AgentRun)
+		if err := tx.NewSelect().Model(run).Where("id = ?", runID).For("UPDATE").Scan(ctx); err != nil {
+			return fmt.Errorf("lock run for decision: %w", err)
+		}
+		sc := SuspendSignalFromMap(run.SuspendContext)
+		if sc == nil || len(sc.PendingToolConfirmations) == 0 {
+			resume = true
+			return nil
+		}
+		remaining := 0
+		for i := range sc.PendingToolConfirmations {
+			c := &sc.PendingToolConfirmations[i]
+			if c.QuestionID == questionID && c.Decision == "" {
+				c.Decision = decision
+				c.Message = message
+			}
+			if c.Decision == "" {
+				remaining++
+			}
+		}
+		resume = remaining == 0
+		if _, err := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("suspend_context = ?", sc.ToMap()).
+			Where("id = ?", runID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("update suspend_context: %w", err)
+		}
+		return nil
+	})
+	return resume, err
+}
+
+// PauseRun marks a run as paused (input-required), persisting the step count.
+// It is guarded to non-cancelling, non-terminal rows: the after-tool pause paths
+// (ask_user / suspend) race an explicit cancel, and a pause must never move a
+// "cancelling" row to "input-required" and thereby drop a durable cancel
+// committed by any instance (issue #1166).
+func (r *Repository) PauseRun(ctx context.Context, runID string, stepCount int) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusPaused).
+		Set("completed_at = ?", now).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID).
+		Where("status IN (?)", bun.In([]string{string(RunStatusQueued), string(RunStatusRunning), string(RunStatusPaused)})).
+		Exec(ctx)
+	return err
+}
+
+// CancelRun marks a run as cancelled, but only if the run has not already
+// reached a terminal state. It returns true when a row was actually
+// transitioned. The guard makes cancellation race-safe against a concurrent
+// terminal write (e.g. the executor completing the run): exactly one of the two
+// wins, and the loser is a no-op, so a cancel that arrives too late cannot turn
+// a completed run into "cancelled".
+func (r *Repository) CancelRun(ctx context.Context, runID string) (bool, error) {
+	now := time.Now()
+	res, err := guardTerminalTransition(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Where("id = ?", runID)).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CancelRunWithSteps marks a run cancelled with the step count reached and a
+// reason, but only if the run has not already reached a terminal state. It is
+// used when an explicit cancel request stops an in-flight run: unlike
+// FailRunWithSteps it records the terminal status as cancelled, not error, so a
+// user stop is not misreported as a server fault. The reason is stored in
+// error_message so the stop is self-explanatory in the run history. It returns
+// true when a row was actually transitioned.
+func (r *Repository) CancelRunWithSteps(ctx context.Context, runID, reason string, stepCount int) (bool, error) {
+	now := time.Now()
+	res, err := guardTerminalTransition(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = ?", reason).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID)).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CancelRunIfPaused transitions a paused (input-required) run to cancelled only
+// if it is still paused, so a run resumed between listing and cancellation is
+// not clobbered. Returns true when a row was actually cancelled.
+func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool, error) {
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
+// been created. The checkpoint must reach a terminal state: this used to flip it
+// to `running` and clear completed_at, and nothing ever finalized it, so every
+// resumed run left its parent permanently stuck in "working" — visible as a
+// stalled run in the UI and counted as live work. Execution has moved to the new
+// run; the checkpoint records that it was resumed and is marked successful.
+func (r *Repository) MarkRunResumed(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusSuccess).
+		Set("completed_at = NOW()").
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Exec(ctx)
+	return err
+}
+
+// UpdateStepCount updates the step count for a running agent.
+func (r *Repository) UpdateStepCount(ctx context.Context, runID string, stepCount int) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// FailRunWithSteps marks a run as failed, persisting the step count at the time
+// of failure. Guarded like the other terminal writes so a late failure cannot
+// overwrite a run that has already reached a terminal state (notably an explicit
+// cancel). A durable cancel wins: a run parked in "cancelling" finalizes as
+// cancelled with the user-cancel reason instead of failed (issue #1166).
+func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMessage string, stepCount int) error {
+	now := time.Now()
+	_, err := guardTerminalTransition(setTerminalStatus(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, userCancelReason, errorMessage).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID), RunStatusError)).
+		Exec(ctx)
+	return err
+}
+
+// CompleteRunWithSteps marks a run as successfully completed with step count and
+// duration. Guarded like the other terminal writes: if an explicit cancel won
+// the terminal transition first, this is a no-op, so the row's status always
+// matches what the cancel endpoint reported (issue #1149). A durable cancel
+// committed by any instance wins atomically: a run parked in "cancelling"
+// finalizes as cancelled, not completed, so a cancel served by one instance can
+// never be reported cancelled while the run on another instance completes
+// (issue #1166).
+func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, summary map[string]any, stepCount int, durationMs int) error {
+	now := time.Now()
+	_, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("completed_at = ?", now).
+		Set("summary = ?", summary).
+		Set("step_count = ?", stepCount).
+		Set("duration_ms = ?", durationMs).
+		Where("id = ?", runID), RunStatusSuccess))).
+		Exec(ctx)
+	return err
+}
+
+// UpdateRunModel sets the model name and provider identity on an agent run.
+// provider is the dialect; slug identifies the provider instance; dialect is
+// recorded separately so legacy rows (no slug) remain queryable by dialect.
+func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model string, provider string, slug string, dialect string) error {
+	q := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("model = ?", model).
+		Where("id = ?", runID)
+	if provider != "" {
+		q = q.Set("provider = ?", provider)
+	}
+	if slug != "" {
+		q = q.Set("provider_slug = ?", slug)
+	}
+	if dialect != "" {
+		q = q.Set("dialect = ?", dialect)
+	}
+	_, err := q.Exec(ctx)
+	return err
+}
+
+// UpdateRunTools sets the tool names on an agent run.
+// Uses a raw array literal to avoid Bun serialising []string as a JSON string
+// (which causes SQLSTATE 22P02 "malformed array literal" against a text[] column).
+func (r *Repository) UpdateRunTools(ctx context.Context, runID string, tools []string) error {
+	if len(tools) == 0 {
+		return nil
+	}
+	// Build a Postgres array literal: ARRAY['a','b','c']
+	// bun.In handles the comma-separated quoting; we wrap in ARRAY[].
+	_, err := r.db.NewRaw(
+		`UPDATE kb.agent_runs SET tools = ARRAY[?] WHERE id = ?`,
+		bun.In(tools), runID,
+	).Exec(ctx)
+	return err
+}
+
+// FindChildRuns returns all child runs of a parent run.
+func (r *Repository) FindChildRuns(ctx context.Context, parentRunID string) ([]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Where("parent_run_id = ?", parentRunID).
+		Order("started_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+// FindFirstChildRunForAgent returns the earliest run for a specific agent that
+// has the given parent run ID. This is used to recover the original trigger
+// message the parent sent to the child, even when the child has been re-enqueued
+// multiple times (e.g. research-manager woken by web-researcher).
+func (r *Repository) FindFirstChildRunForAgent(ctx context.Context, parentRunID, agentID string) (*AgentRun, error) {
+	var run AgentRun
+	err := r.db.NewSelect().
+		Model(&run).
+		Where("parent_run_id = ?", parentRunID).
+		Where("agent_id = ?", agentID).
+		Order("started_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+// --- Agent Run Messages ---
+
+// CreateMessage creates a new agent run message.
+func (r *Repository) CreateMessage(ctx context.Context, msg *AgentRunMessage) error {
+	_, err := r.db.NewInsert().
+		Model(msg).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindMessagesByRunID returns all messages for a run, ordered by creation time.
+func (r *Repository) FindMessagesByRunID(ctx context.Context, runID string) ([]*AgentRunMessage, error) {
+	var msgs []*AgentRunMessage
+	err := r.db.NewSelect().
+		Model(&msgs).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
+// --- Agent Run Tool Calls ---
+
+// CreateToolCall creates a new agent run tool call record.
+func (r *Repository) CreateToolCall(ctx context.Context, tc *AgentRunToolCall) error {
+	_, err := r.db.NewInsert().
+		Model(tc).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindToolCallsByRunID returns all tool calls for a run, ordered by creation time.
+func (r *Repository) FindToolCallsByRunID(ctx context.Context, runID string) ([]*AgentRunToolCall, error) {
+	var tcs []*AgentRunToolCall
+	err := r.db.NewSelect().
+		Model(&tcs).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tcs, nil
+}
+
+// RunLogEntry is a unified log entry merging a message or tool call from a run,
+// ordered by creation time. Used by the GET /api/v1/runs/:runId/logs endpoint.
+type RunLogEntry struct {
+	// Kind is either "message" or "tool_call"
+	Kind       string    `json:"kind"`
+	StepNumber int       `json:"stepNumber"`
+	CreatedAt  time.Time `json:"createdAt"`
+	// Message fields (Kind == "message")
+	Role    string         `json:"role,omitempty"`
+	Content map[string]any `json:"content,omitempty"`
+	// Tool call fields (Kind == "tool_call")
+	ToolName   string         `json:"toolName,omitempty"`
+	Input      map[string]any `json:"input,omitempty"`
+	Output     map[string]any `json:"output,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	DurationMs *int           `json:"durationMs,omitempty"`
+}
+
+// FindRunLogEntries returns a unified, chronologically ordered log for a run by
+// merging agent_run_messages and agent_run_tool_calls. This powers the
+// GET /api/v1/runs/:runId/logs streaming endpoint.
+func (r *Repository) FindRunLogEntries(ctx context.Context, runID string) ([]*RunLogEntry, error) {
+	msgs, err := r.FindMessagesByRunID(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("FindRunLogEntries messages: %w", err)
+	}
+	tcs, err := r.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("FindRunLogEntries tool_calls: %w", err)
+	}
+
+	entries := make([]*RunLogEntry, 0, len(msgs)+len(tcs))
+	for _, m := range msgs {
+		entries = append(entries, &RunLogEntry{
+			Kind:       "message",
+			StepNumber: m.StepNumber,
+			CreatedAt:  m.CreatedAt,
+			Role:       m.Role,
+			Content:    m.Content,
+		})
+	}
+	for _, tc := range tcs {
+		entries = append(entries, &RunLogEntry{
+			Kind:       "tool_call",
+			StepNumber: tc.StepNumber,
+			CreatedAt:  tc.CreatedAt,
+			ToolName:   tc.ToolName,
+			Input:      tc.Input,
+			Output:     tc.Output,
+			Status:     tc.Status,
+			DurationMs: tc.DurationMs,
+		})
+	}
+
+	// Sort by created_at ascending; break ties with messages before tool_calls
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
+			return entries[i].Kind == "message" && entries[j].Kind == "tool_call"
+		}
+		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
+	})
+
+	return entries, nil
+}
+
+// --- Project-scoped Run History ---
+
+// RunFilters holds optional filters for querying agent runs.
+type RunFilters struct {
+	AgentID *string
+	Status  *AgentRunStatus
+}
+
+// FindRunsByProjectPaginated returns paginated agent runs for a project.
+func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID string, filters RunFilters, limit, offset int) ([]*AgentRun, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	q := r.db.NewSelect().
+		Model((*AgentRun)(nil)).
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("a.project_id = ?", projectID)
+
+	if filters.AgentID != nil {
+		q = q.Where("ar.agent_id = ?", *filters.AgentID)
+	}
+	if filters.Status != nil {
+		q = q.Where("ar.status = ?", *filters.Status)
+	}
+
+	totalCount, err := q.Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var runs []*AgentRun
+	err = q.Order("ar.started_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(ctx, &runs)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return runs, totalCount, nil
+}
+
+// FindRunByIDForProject returns a specific run scoped to a project.
+func (r *Repository) FindRunByIDForProject(ctx context.Context, runID, projectID string) (*AgentRun, error) {
+	run := new(AgentRun)
+	err := r.db.NewSelect().
+		Model(run).
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("ar.id = ?", runID).
+		Where("a.project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return run, nil
+}
+
+// --- Agent Webhook Hooks ---
+
+// CreateWebhookHook creates a new webhook hook for an agent
+func (r *Repository) CreateWebhookHook(ctx context.Context, hook *AgentWebhookHook) error {
+	_, err := r.db.NewInsert().
+		Model(hook).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindWebhookHooksByAgent returns all webhook hooks for a specific agent
+func (r *Repository) FindWebhookHooksByAgent(ctx context.Context, agentID string, projectID string) ([]*AgentWebhookHook, error) {
+	var hooks []*AgentWebhookHook
+	err := r.db.NewSelect().
+		Model(&hooks).
+		Where("agent_id = ?", agentID).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return hooks, nil
+}
+
+// FindWebhookHookByID returns a webhook hook by its ID
+func (r *Repository) FindWebhookHookByID(ctx context.Context, id string) (*AgentWebhookHook, error) {
+	hook := new(AgentWebhookHook)
+	err := r.db.NewSelect().
+		Model(hook).
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return hook, nil
+}
+
+// DeleteWebhookHook deletes a webhook hook
+func (r *Repository) DeleteWebhookHook(ctx context.Context, id string, projectID string) error {
+	res, err := r.db.NewDelete().
+		Model((*AgentWebhookHook)(nil)).
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return errors.New("webhook hook not found or not authorized")
+	}
+	return nil
+}
+
+// --- Agent Questions ---
+
+// CreateQuestion inserts a new agent question record.
+func (r *Repository) CreateQuestion(ctx context.Context, q *AgentQuestion) error {
+	_, err := r.db.NewInsert().Model(q).Exec(ctx)
+	return err
+}
+
+// FindQuestionByID returns a question by ID.
+func (r *Repository) FindQuestionByID(ctx context.Context, id string) (*AgentQuestion, error) {
+	question := new(AgentQuestion)
+	err := r.db.NewSelect().
+		Model(question).
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return question, nil
+}
+
+// FindPendingQuestionsByRunID returns all pending questions for a run.
+func (r *Repository) FindPendingQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error) {
+	var questions []*AgentQuestion
+	err := r.db.NewSelect().
+		Model(&questions).
+		Where("run_id = ?", runID).
+		Where("status = ?", QuestionStatusPending).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
+// CancelPendingQuestionsForRun cancels all pending questions for a run.
+func (r *Repository) CancelPendingQuestionsForRun(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("status = ?", QuestionStatusCancelled).
+		Set("updated_at = ?", time.Now()).
+		Where("run_id = ?", runID).
+		Where("status = ?", QuestionStatusPending).
+		Exec(ctx)
+	return err
+}
+
+// AnswerQuestion atomically claims a pending question by recording the user's
+// response. Returns true when this call won the claim (the question was
+// pending), false when it was already answered/cancelled (lost a concurrent
+// claim). Callers must only resume the run when claimed is true.
+func (r *Repository) AnswerQuestion(ctx context.Context, id string, response string, respondedBy string) (bool, error) {
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("response = ?", response).
+		Set("responded_by = ?", respondedBy).
+		Set("responded_at = ?", now).
+		Set("status = ?", QuestionStatusAnswered).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Where("status = ?", QuestionStatusPending).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CreateToolApproval inserts a pending tool-approval audit record.
+func (r *Repository) CreateToolApproval(ctx context.Context, a *AgentToolApproval) error {
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = time.Now()
+	}
+	if a.UpdatedAt.IsZero() {
+		a.UpdatedAt = time.Now()
+	}
+	_, err := r.db.NewInsert().Model(a).Exec(ctx)
+	return err
+}
+
+// UpdateToolApprovalDecision records the human decision on a tool-approval audit
+// record, keyed by question ID. Only a pending record is updated (idempotent).
+func (r *Repository) UpdateToolApprovalDecision(ctx context.Context, questionID, decision, message, decidedBy string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentToolApproval)(nil)).
+		Set("decision = ?", decision).
+		Set("message = ?", message).
+		Set("decided_by = ?", decidedBy).
+		Set("decided_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("question_id = ?", questionID).
+		Where("decision = ?", "pending").
+		Exec(ctx)
+	return err
+}
+
+// CancelQuestion atomically claims a pending question by marking it cancelled.
+// Returns true when this call won the claim, false when the question was
+// already answered/cancelled. Callers must only resume the run when claimed.
+func (r *Repository) CancelQuestion(ctx context.Context, id string) (bool, error) {
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("status = ?", QuestionStatusCancelled).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Where("status = ?", QuestionStatusPending).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ReopenQuestion reverts a claimed question back to pending so the user can
+// retry after a resume-setup failure. Used only on the error path after a
+// successful claim, so a failed resume does not leave the run stuck paused.
+func (r *Repository) ReopenQuestion(ctx context.Context, id string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("status = ?", QuestionStatusPending).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+// ListToolApprovals returns tool-approval audit records for a project, newest
+// first, optionally filtered by decision (pending, approved, rejected, cancelled).
+// Each record's ConversationID is resolved by joining agent_runs (on run_id)
+// then chat_conversations (on session_id); it is nil for runs without a
+// chat conversation.
+func (r *Repository) ListToolApprovals(ctx context.Context, projectID string, decision *string) ([]*AgentToolApproval, error) {
+	type approvalRow struct {
+		AgentToolApproval
+		ConversationID *string `bun:"conversation_id"`
+	}
+	query := `SELECT ata.id, ata.run_id, ata.project_id, ata.agent_id, ata.question_id,
+	                 ata.tool_name, ata.args_summary, ata.decision, ata.message,
+	                 ata.decided_by, ata.decided_at, ata.created_at, ata.updated_at,
+	                 cc.id AS conversation_id
+	          FROM kb.agent_tool_approvals ata
+	          LEFT JOIN kb.agent_runs ar ON ar.id = ata.run_id
+	          LEFT JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+	          WHERE ata.project_id = ?`
+	args := []any{projectID}
+	if decision != nil {
+		query += " AND ata.decision = ?"
+		args = append(args, *decision)
+	}
+	query += " ORDER BY ata.created_at DESC"
+	var rows []approvalRow
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, err
+	}
+	approvals := make([]*AgentToolApproval, len(rows))
+	for i := range rows {
+		a := rows[i].AgentToolApproval
+		a.ConversationID = rows[i].ConversationID
+		approvals[i] = &a
+	}
+	return approvals, nil
+}
+
+// ConversationIDForRun resolves the chat conversation a run belongs to via
+// kb.agent_runs.session_id -> kb.chat_conversations.session_id. It returns ""
+// when the run has no session or no conversation is linked (scheduled/background
+// runs), or on any lookup error, so callers can fall back to a
+// conversation-less target instead of failing notification creation.
+func (r *Repository) ConversationIDForRun(ctx context.Context, runID string) string {
+	if runID == "" {
+		return ""
+	}
+	var conversationID string
+	err := r.db.NewRaw(`
+		SELECT cc.id
+		FROM kb.agent_runs ar
+		JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+		WHERE ar.id = ?`, runID).Scan(ctx, &conversationID)
+	if err != nil {
+		return ""
+	}
+	return conversationID
+}
+
+// ListQuestionsByRunID returns all questions for a run, ordered by creation time.
+func (r *Repository) ListQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error) {
+	var questions []*AgentQuestion
+	err := r.db.NewSelect().
+		Model(&questions).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
+// ListQuestionsByProject returns questions for a project, newest first,
+// optionally filtered by status. Each question's ConversationID is resolved by
+// joining agent_runs (on run_id) then chat_conversations (on session_id); it is
+// nil for runs without a chat conversation.
+func (r *Repository) ListQuestionsByProject(ctx context.Context, projectID string, status *AgentQuestionStatus) ([]*AgentQuestion, error) {
+	type questionRow struct {
+		AgentQuestion
+		ConversationID *string `bun:"conversation_id"`
+	}
+	query := `SELECT aq.id, aq.run_id, aq.agent_id, aq.project_id, aq.question, aq.proposal,
+	                 aq.options, aq.interaction_type, aq.placeholder, aq.max_length,
+	                 aq.response, aq.responded_by, aq.responded_at, aq.status,
+	                 aq.notification_id, aq.created_at, aq.updated_at,
+	                 cc.id AS conversation_id
+	          FROM kb.agent_questions aq
+	          LEFT JOIN kb.agent_runs ar ON ar.id = aq.run_id
+	          LEFT JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+	          WHERE aq.project_id = ?`
+	args := []any{projectID}
+	if status != nil {
+		query += " AND aq.status = ?"
+		args = append(args, *status)
+	}
+	query += " ORDER BY aq.created_at DESC"
+	var rows []questionRow
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, err
+	}
+	questions := make([]*AgentQuestion, len(rows))
+	for i := range rows {
+		q := rows[i].AgentQuestion
+		q.ConversationID = rows[i].ConversationID
+		questions[i] = &q
+	}
+	return questions, nil
+}
+
+// FindPendingQuestionByConversation returns the most recent pending question
+// whose run belongs to the given chat conversation, or nil. It lets the chat
+// send path recognise that an incoming message is the answer to a paused run
+// rather than a fresh turn.
+func (r *Repository) FindPendingQuestionByConversation(ctx context.Context, projectID, conversationID string) (*AgentQuestion, error) {
+	type questionRow struct {
+		AgentQuestion
+		ConversationID *string `bun:"conversation_id"`
+	}
+	query := `SELECT aq.id, aq.run_id, aq.agent_id, aq.project_id, aq.question, aq.proposal,
+	                 aq.options, aq.interaction_type, aq.placeholder, aq.max_length,
+	                 aq.response, aq.responded_by, aq.responded_at, aq.status,
+	                 aq.notification_id, aq.created_at, aq.updated_at,
+	                 cc.id AS conversation_id
+	          FROM kb.agent_questions aq
+	          JOIN kb.agent_runs ar ON ar.id = aq.run_id
+	          JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+	          WHERE aq.project_id = ? AND cc.id = ? AND aq.status = ?
+	          ORDER BY aq.created_at DESC
+	          LIMIT 1`
+	var rows []questionRow
+	if err := r.db.NewRaw(query, projectID, conversationID, QuestionStatusPending).Scan(ctx, &rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	q := rows[0].AgentQuestion
+	q.ConversationID = rows[0].ConversationID
+	return &q, nil
+}
+
+// UpdateQuestionNotificationID sets the notification_id on a question record.
+func (r *Repository) UpdateQuestionNotificationID(ctx context.Context, questionID string, notificationID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("notification_id = ?", notificationID).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", questionID).
+		Exec(ctx)
+	return err
+}
+
+// UpdateNotificationActionStatus updates the action_status fields on a notification.
+// This is a cross-domain update used when a user responds to an agent question.
+func (r *Repository) UpdateNotificationActionStatus(ctx context.Context, notificationID string, status string, userID string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.notifications").
+		Set("action_status = ?", status).
+		Set("action_status_at = ?", now).
+		Set("action_status_by = ?", userID).
+		Set("updated_at = ?", now).
+		Where("id = ?", notificationID).
+		Exec(ctx)
+	return err
+}
+
+// --- ADK Sessions ---
+
+// FindADKSessionsByProject returns ADK sessions associated with a specific project
+// by joining against the agent_runs and agents tables.
+func (r *Repository) FindADKSessionsByProject(ctx context.Context, projectID string, limit, offset int) ([]*bunsession.ADKSession, int, error) {
+	var sessions []*bunsession.ADKSession
+
+	// To enforce tenant isolation, we only return sessions where the session ID matches an agent run ID
+	// or where there is a path from the run to the project.
+	// We'll use an EXISTS subquery to check if there's a matching run for this project.
+
+	q := r.db.NewSelect().
+		Model(&sessions).
+		Where("EXISTS (SELECT 1 FROM kb.agent_runs ar JOIN kb.agents a ON ar.agent_id = a.id WHERE ar.id::text = \"as\".id AND a.project_id = ?)", projectID).
+		Order("update_time DESC")
+
+	count, err := q.Limit(limit).Offset(offset).ScanAndCount(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return sessions, count, nil
+}
+
+// FindADKSessionByIDForProject returns a specific ADK session and its events,
+// ensuring the session belongs to the given project.
+func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID string, projectID string) (*bunsession.ADKSession, []*bunsession.ADKEvent, error) {
+	// First verify the session belongs to the project
+	var exists bool
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("ar.id::text = ?", sessionID).
+		Where("a.project_id = ?", projectID).
+		ColumnExpr("1").
+		Limit(1).
+		Scan(ctx, &exists)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil // Not found or no access
+		}
+		return nil, nil, err
+	}
+
+	if !exists {
+		return nil, nil, nil
+	}
+
+	// Fetch the session
+	session := new(bunsession.ADKSession)
+	err = r.db.NewSelect().
+		Model(session).
+		Where("id = ?", sessionID).
+		Scan(ctx)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+
+	// Fetch events
+	var events []*bunsession.ADKEvent
+	err = r.db.NewSelect().
+		Model(&events).
+		Where("session_id = ?", sessionID).
+		Order("timestamp ASC").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return session, events, nil
+}
+
+// ============================================================================
+// Worker Pool Repository Methods (agent_run_jobs)
+// ============================================================================
+
+// CreateRunQueued creates an agent_runs row with status=queued and an
+// agent_run_jobs row in the same transaction. Returns the new run.
+func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int, opts ...CreateRunQueuedOptions) (*AgentRun, error) {
+	var o CreateRunQueuedOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, o.Queue, o.Priority)
+	var run *AgentRun
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		run, err = r.enqueueWorkRunInTx(ctx, tx, agentID, maxAttempts, o, projectID, queue, priority)
+		return err
+	})
+	if err != nil {
+		// Unwrap QueueFullError from the transaction wrapper so callers can type-assert it.
+		var qfe *QueueFullError
+		if errors.As(err, &qfe) {
+			return nil, qfe
+		}
+		return nil, err
+	}
+	return run, nil
+}
+
+// enqueueWorkRunInTx builds and inserts a queued run and its dispatch job inside
+// tx, applying the queue-depth guard. It is the shared body of CreateRunQueued
+// and the deduped object-driven dispatch enqueue.
+func (r *Repository) enqueueWorkRunInTx(ctx context.Context, tx bun.Tx, agentID string, maxAttempts int, o CreateRunQueuedOptions, projectID, queue string, priority int) (*AgentRun, error) {
+	run := &AgentRun{
+		AgentID:           agentID,
+		Status:            RunStatusQueued,
+		StartedAt:         time.Now(),
+		Summary:           make(map[string]any),
+		ParentRunID:       o.ParentRunID,
+		RootRunID:         nilIfEmpty(o.RootRunID),
+		TriggerMessage:    o.TriggerMessage,
+		TriggerMetadata:   o.TriggerMetadata,
+		TrustedInternal:   o.TrustedInternal,
+		SubjectObjectID:   o.SubjectObjectID,
+		SubjectObjectType: o.SubjectObjectType,
+		Tools:             []string{},
+	}
+
+	// Queue depth check inside the transaction so the count and insert are
+	// atomic. This prevents the TOCTOU race where multiple concurrent workers
+	// each see count < max and all insert new jobs simultaneously, causing
+	// exponential queue growth. Only enforced when MaxPendingJobs > 0.
+	if o.MaxPendingJobs > 0 {
+		var count int
+		err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM kb.agent_run_jobs arj
+			JOIN kb.agent_runs ar ON ar.id = arj.run_id
+			WHERE ar.agent_id = $1
+			  AND arj.status IN ('pending', 'processing')
+		`, agentID).Scan(&count)
+		if err != nil {
+			// Fail-open on count error so a DB hiccup doesn't halt agents.
+			// Callers log the error; we proceed with the insert.
+		} else if count >= o.MaxPendingJobs {
+			return nil, &QueueFullError{
+				AgentID:        agentID,
+				PendingJobs:    count,
+				MaxPendingJobs: o.MaxPendingJobs,
+			}
+		}
+	}
+
+	if _, err := tx.NewInsert().Model(run).Returning("*").Exec(ctx); err != nil {
+		return nil, fmt.Errorf("insert agent_runs: %w", err)
+	}
+	job := &AgentRunJob{
+		RunID:       run.ID,
+		Status:      JobStatusPending,
+		MaxAttempts: maxAttempts,
+		Queue:       queue,
+		Priority:    priority,
+		ProjectID:   strPtrIfNotEmpty(projectID),
+		NextRunAt:   time.Now(),
+	}
+	if o.NextRunAt != nil && o.NextRunAt.After(time.Now()) {
+		job.NextRunAt = *o.NextRunAt
+	}
+	if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("insert agent_run_jobs: %w", err)
+	}
+	return run, nil
+}
+
+// EnqueueWorkRunDeduped atomically claims the dispatch dedup slot in
+// kb.agent_processing_log and enqueues a queued run for the work object in a
+// single transaction. The advisory lock serializes concurrent deliveries of the
+// same dispatch key, so only one wins the claim; and because the log row and the
+// run commit together, a failed enqueue leaves no orphaned log row to permanently
+// suppress redelivery. It returns claimed=false when the key is already taken.
+func (r *Repository) EnqueueWorkRunDeduped(ctx context.Context, logEntry *AgentProcessingLog, agentID string, maxAttempts int, opts CreateRunQueuedOptions) (*AgentRun, bool, error) {
+	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, opts.Queue, opts.Priority)
+	var run *AgentRun
+	claimed := false
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		lockKey := fmt.Sprintf("apl-dispatch|%s|%s|%d|%s",
+			logEntry.AgentID, logEntry.GraphObjectID, logEntry.ObjectVersion, logEntry.EventType)
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey); err != nil {
+			return fmt.Errorf("acquire dispatch dedup lock: %w", err)
+		}
+		existing, err := r.findProcessingLogByKeyInTx(ctx, tx, logEntry.AgentID, logEntry.GraphObjectID, logEntry.ObjectVersion, logEntry.EventType)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			return nil // already dispatched
+		}
+		if _, err := tx.NewInsert().Model(logEntry).Exec(ctx); err != nil {
+			return fmt.Errorf("insert processing log: %w", err)
+		}
+		claimed = true
+		run, err = r.enqueueWorkRunInTx(ctx, tx, agentID, maxAttempts, opts, projectID, queue, priority)
+		return err
+	})
+	if err != nil {
+		var qfe *QueueFullError
+		if errors.As(err, &qfe) {
+			return nil, claimed, qfe
+		}
+		return nil, claimed, err
+	}
+	return run, claimed, nil
+}
+
+// findProcessingLogByKeyInTx returns any processing-log entry matching the
+// dispatch dedup key within tx (nil when none), mirroring FindProcessingLogByKey.
+func (r *Repository) findProcessingLogByKeyInTx(ctx context.Context, tx bun.Tx, agentID, objectID string, version int, eventType ReactionEventType) (*AgentProcessingLog, error) {
+	log := new(AgentProcessingLog)
+	err := tx.NewSelect().
+		Model(log).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("object_version = ?", version).
+		Where("event_type = ?", eventType).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return log, nil
+}
+
+// CreateRunJob inserts a new agent_run_jobs row for an existing run. When queue
+// is empty it is resolved from the run's agent binding (config override →
+// definition default → "default"); priority 0 means DefaultQueuePriority.
+func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) error {
+	var projectID string
+	if run, err := r.FindRunByID(ctx, runID); err == nil && run != nil {
+		projectID, queue, priority = r.resolveAgentRouting(ctx, run.AgentID, queue, priority)
+	}
+	if queue == "" {
+		queue = DefaultQueueName
+	}
+	if priority == 0 {
+		priority = DefaultQueuePriority
+	}
+	job := &AgentRunJob{
+		RunID:       runID,
+		Status:      JobStatusPending,
+		MaxAttempts: maxAttempts,
+		Queue:       queue,
+		Priority:    priority,
+		ProjectID:   strPtrIfNotEmpty(projectID),
+		NextRunAt:   time.Now(),
+	}
+	_, err := r.db.NewInsert().Model(job).Exec(ctx)
+	return err
+}
+
+// ClaimNextJob atomically claims the next pending job from any project/queue.
+// It is the queue-agnostic entry point; the worker supervisor uses
+// ClaimNextJobInQueue.
+func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
+	return r.ClaimNextJobInQueue(ctx, "", "")
+}
+
+// ClaimNextJobInQueue atomically claims the next pending job from the given
+// project and queue (empty = any), choosing the lowest priority value first and
+// otherwise the earliest next_run_at. Both project and queue are required to
+// match so a claim never crosses a project boundary (queue names are unique per
+// project). It transitions job→processing and run→running in a single
+// transaction. Returns nil, nil when no job is available.
+func (r *Repository) ClaimNextJobInQueue(ctx context.Context, projectID, queue string) (*AgentRunJob, error) {
+	var job *AgentRunJob
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		j := new(AgentRunJob)
+		q := tx.NewSelect().
+			Model(j).
+			Where("arj.status = ?", JobStatusPending).
+			Where("arj.next_run_at <= now()")
+		if projectID != "" {
+			q = q.Where("arj.project_id = ?", projectID)
+		}
+		if queue != "" {
+			q = q.Where("arj.queue = ?", queue)
+		}
+		err := q.
+			OrderExpr("arj.priority ASC, arj.next_run_at ASC").
+			Limit(1).
+			For("UPDATE SKIP LOCKED").
+			Scan(ctx)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // no job available
+			}
+			return fmt.Errorf("select next job: %w", err)
+		}
+
+		// Transition the run to running only if it is still claimable. A run
+		// moved to "cancelling" by a cancel request — possibly served by another
+		// instance — must not be resurrected to "working": that would discard the
+		// durable cancel and let the worker execute a run the endpoint already
+		// reported cancelled (issue #1166). The guarded UPDATE is atomic with
+		// the claim, so a cancel that lands concurrently wins.
+		res, err := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("status = ?", RunStatusRunning).
+			Where("id = ?", j.RunID).
+			Where("status = ?", RunStatusQueued).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("update run to running: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			// The run is no longer claimable (cancelling or already terminal).
+			// Retire the job without touching the run so it is not reprocessed;
+			// the committed cancel is finalized by its owner or the reaper.
+			if _, err := tx.NewUpdate().
+				Model((*AgentRunJob)(nil)).
+				Set("status = ?", JobStatusCompleted).
+				Set("completed_at = ?", time.Now()).
+				Where("id = ?", j.ID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("retire non-claimable job: %w", err)
+			}
+			return nil
+		}
+
+		// Transition job to processing
+		if _, err := tx.NewUpdate().
+			Model(j).
+			Set("status = ?", JobStatusProcessing).
+			Set("attempt_count = attempt_count + 1").
+			WherePK().
+			Returning("*").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("claim job: %w", err)
+		}
+
+		job = j
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// CompleteJob marks a job as completed and the run as success. The run write is
+// cancel-aware and guarded like every other terminal writer: a run carrying the
+// durable "cancelling" intent (or already cancelled) is finalized as cancelled,
+// never overwritten to "completed" (issue #1166).
+func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error {
+	now := time.Now()
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().
+			Model((*AgentRunJob)(nil)).
+			Set("status = ?", JobStatusCompleted).
+			Set("completed_at = ?", now).
+			Where("id = ?", jobID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("complete job: %w", err)
+		}
+		if _, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("completed_at = ?", now).
+			Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+			Where("id = ?", runID), RunStatusSuccess))).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("complete run: %w", err)
+		}
+		return nil
+	})
+}
+
+// PauseJob marks a job as completed (preventing reprocessing) without overwriting
+// the run status, which has already been set to paused by PauseRun.
+func (r *Repository) PauseJob(ctx context.Context, jobID string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRunJob)(nil)).
+		Set("status = ?", JobStatusCompleted).
+		Set("completed_at = ?", now).
+		Where("id = ?", jobID).
+		Exec(ctx)
+	return err
+}
+
+// FailJob marks a job failed. If requeue=true and attempt_count < max_attempts,
+// sets job back to pending with exponential backoff; otherwise marks job failed
+// and run error.
+//
+// Both branches honour a durable cancel (issue #1166): a run in "cancelling" (or
+// already terminal) is never reset to queued for another attempt, and is never
+// overwritten to "failed" — a committed cancel always resolves to "cancelled".
+func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, requeue bool, nextRunAt time.Time) error {
+	now := time.Now()
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if requeue {
+			// Reset the run to queued only if it is still claimable. A run moved
+			// to "cancelling" by a cancel request, or already terminal, must not
+			// be requeued: that would erase the durable cancel and let the worker
+			// run it again.
+			res, err := tx.NewUpdate().
+				Model((*AgentRun)(nil)).
+				Set("status = ?", RunStatusQueued).
+				Where("id = ?", runID).
+				Where("status IN (?)", bun.In([]string{string(RunStatusQueued), string(RunStatusRunning)})).
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("requeue run: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				// Cancelling or terminal: do not requeue. Retire the job so it is
+				// not reprocessed; the committed cancel is finalized by its owner
+				// or the reaper.
+				if _, err := tx.NewUpdate().
+					Model((*AgentRunJob)(nil)).
+					Set("status = ?", JobStatusCompleted).
+					Set("completed_at = ?", now).
+					Where("id = ?", jobID).
+					Exec(ctx); err != nil {
+					return fmt.Errorf("retire cancelled job: %w", err)
+				}
+				return nil
+			}
+			if _, err := tx.NewUpdate().
+				Model((*AgentRunJob)(nil)).
+				Set("status = ?", JobStatusPending).
+				Set("next_run_at = ?", nextRunAt).
+				Where("id = ?", jobID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("requeue job: %w", err)
+			}
+			return nil
+		}
+
+		if _, err := tx.NewUpdate().
+			Model((*AgentRunJob)(nil)).
+			Set("status = ?", JobStatusFailed).
+			Set("completed_at = ?", now).
+			Where("id = ?", jobID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("fail job: %w", err)
+		}
+		if _, err := guardTerminalTransition(setTerminalStatus(tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("completed_at = ?", now).
+			Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+			Set("error_message = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, userCancelReason, errMsg).
+			Where("id = ?", runID), RunStatusError)).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("fail run: %w", err)
+		}
+		return nil
+	})
+}
+
+// FindRunByIDForAgent returns a run by ID scoped to a project (via agent join).
+// Returns nil, nil if not found or belongs to different project.
+func (r *Repository) FindRunByIDProjectScoped(ctx context.Context, runID, projectID string) (*AgentRun, error) {
+	return r.FindRunByIDForProject(ctx, runID, projectID)
+}
+
+// RequeueOrphanedQueuedRuns finds agent_runs with status=queued that have no
+// active agent_run_jobs row (pending or processing) and inserts a new job row
+// for each. Called at startup after MarkOrphanedRunsAsError.
+func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error) {
+	// Find queued runs that have no pending/processing job
+	type runRow struct {
+		ID string `bun:"id"`
+	}
+	var runs []runRow
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		ColumnExpr("ar.id").
+		Where("ar.status = ?", RunStatusQueued).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM kb.agent_run_jobs arj
+			WHERE arj.run_id = ar.id
+			  AND arj.status IN ('pending', 'processing')
+		)`).
+		Scan(ctx, &runs)
+	if err != nil {
+		return 0, fmt.Errorf("find orphaned queued runs: %w", err)
+	}
+
+	for _, row := range runs {
+		if err := r.CreateRunJob(ctx, row.ID, 1, "", 0); err != nil {
+			return 0, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
+		}
+	}
+	return len(runs), nil
+}
+
+// GetRunTokenUsage returns aggregated LLM token counts and estimated cost for a
+// single agent run, reading from kb.llm_usage_events. Returns nil when no usage
+// events exist for the run.
+func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error) {
+	type row struct {
+		TotalInput  int64   `bun:"total_input"`
+		TotalOutput int64   `bun:"total_output"`
+		TotalCached int64   `bun:"total_cached"`
+		TotalCost   float64 `bun:"total_cost"`
+		Provider    string  `bun:"provider"`
+		Model       string  `bun:"model"`
+	}
+	var result row
+	err := r.db.NewRaw(`
+		SELECT
+			COALESCE(SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens), 0) AS total_input,
+			COALESCE(SUM(output_tokens), 0)        AS total_output,
+			COALESCE(SUM(cached_tokens), 0)        AS total_cached,
+			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost,
+			COALESCE(
+				(SELECT provider FROM kb.llm_usage_events
+				 WHERE run_id = ?
+				 GROUP BY provider ORDER BY COUNT(*) DESC LIMIT 1), ''
+			) AS provider,
+			COALESCE(
+				(SELECT model FROM kb.llm_usage_events
+				 WHERE run_id = ?
+				 GROUP BY model ORDER BY COUNT(*) DESC LIMIT 1), ''
+			) AS model
+		FROM kb.llm_usage_events
+		WHERE run_id = ?`,
+		runID, runID, runID,
+	).Scan(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("get run token usage: %w", err)
+	}
+	// Return nil when there is no recorded usage for this run.
+	if result.TotalInput == 0 && result.TotalOutput == 0 && result.TotalCost == 0 {
+		return nil, nil
+	}
+	usage := &RunTokenUsage{
+		TotalInputTokens:  result.TotalInput,
+		TotalOutputTokens: result.TotalOutput,
+		CachedTokens:      result.TotalCached,
+		EstimatedCostUSD:  result.TotalCost,
+		Provider:          result.Provider,
+		Model:             result.Model,
+	}
+	return usage, nil
+}
+
+// GetRunsTokenUsage returns aggregated LLM token counts and estimated cost for
+// a batch of agent runs in a single query. The returned map is keyed by run ID.
+// Runs with no usage events are absent from the map.
+func (r *Repository) GetRunsTokenUsage(ctx context.Context, runIDs []string) (map[string]*RunTokenUsage, error) {
+	if len(runIDs) == 0 {
+		return map[string]*RunTokenUsage{}, nil
+	}
+
+	type row struct {
+		RunID       string  `bun:"run_id"`
+		TotalInput  int64   `bun:"total_input"`
+		TotalOutput int64   `bun:"total_output"`
+		TotalCached int64   `bun:"total_cached"`
+		TotalCost   float64 `bun:"total_cost"`
+		Provider    string  `bun:"provider"`
+		Model       string  `bun:"model"`
+	}
+
+	var rows []row
+	err := r.db.NewRaw(`
+		SELECT
+			run_id,
+			COALESCE(SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens), 0) AS total_input,
+			COALESCE(SUM(output_tokens), 0)        AS total_output,
+			COALESCE(SUM(cached_tokens), 0)        AS total_cached,
+			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost,
+			(SELECT provider FROM kb.llm_usage_events sub
+			 WHERE sub.run_id = main.run_id
+			 GROUP BY provider ORDER BY COUNT(*) DESC LIMIT 1) AS provider,
+			(SELECT model FROM kb.llm_usage_events sub
+			 WHERE sub.run_id = main.run_id
+			 GROUP BY model ORDER BY COUNT(*) DESC LIMIT 1) AS model
+		FROM kb.llm_usage_events AS main
+		WHERE run_id = ANY(?)
+		GROUP BY run_id`,
+		bun.In(runIDs),
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("get runs token usage: %w", err)
+	}
+
+	result := make(map[string]*RunTokenUsage, len(rows))
+	for _, r := range rows {
+		if r.RunID == "" {
+			continue
+		}
+		result[r.RunID] = &RunTokenUsage{
+			TotalInputTokens:  r.TotalInput,
+			TotalOutputTokens: r.TotalOutput,
+			CachedTokens:      r.TotalCached,
+			EstimatedCostUSD:  r.TotalCost,
+			Provider:          r.Provider,
+			Model:             r.Model,
+		}
+	}
+	return result, nil
+}
+
+// GetOrgIDByProjectID returns the organization ID for the given project ID.
+// It queries kb.projects directly. Returns an empty string (no error) when
+// the project is not found.
+func (r *Repository) GetOrgIDByProjectID(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("GetOrgIDByProjectID: %w", err)
+	}
+	return orgID, nil
+}
+
+// GetFirstProjectIDByOrgID returns the ID of the first project in the given org.
+// Used as an infrastructure project sentinel when no project context is active.
+// Returns an empty string (no error) when no projects exist for the org.
+func (r *Repository) GetFirstProjectIDByOrgID(ctx context.Context, orgID string) (string, error) {
+	var projectID string
+	q := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("id").
+		OrderExpr("created_at ASC").
+		Limit(1)
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	err := q.Scan(ctx, &projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("GetFirstProjectIDByOrgID: %w", err)
+	}
+	return projectID, nil
+}
+
+// ============================================================================
+// Agent Safeguards Repository Methods
+// ============================================================================
+
+// CountPendingJobsForAgent returns the number of pending and processing jobs
+// for the given agent. Used to enforce per-agent queue depth limits.
+func (r *Repository) CountPendingJobsForAgent(ctx context.Context, agentID string) (int, error) {
+	var count int
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_run_jobs AS arj").
+		ColumnExpr("COUNT(*)").
+		Join("JOIN kb.agent_runs AS ar ON ar.id = arj.run_id").
+		Where("ar.agent_id = ?", agentID).
+		Where("arj.status IN (?)", bun.In([]string{
+			string(JobStatusPending),
+			string(JobStatusProcessing),
+		})).
+		Scan(ctx, &count)
+	if err != nil {
+		return 0, fmt.Errorf("CountPendingJobsForAgent: %w", err)
+	}
+	return count, nil
+}
+
+// IncrementFailureCounter atomically increments the consecutive_failures counter
+// for the given agent.
+func (r *Repository) IncrementFailureCounter(ctx context.Context, agentID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("consecutive_failures = consecutive_failures + 1").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("IncrementFailureCounter: %w", err)
+	}
+	return nil
+}
+
+// ResetFailureCounter resets the consecutive_failures counter to 0 for the
+// given agent (called after a successful run).
+func (r *Repository) ResetFailureCounter(ctx context.Context, agentID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("consecutive_failures = 0").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("ResetFailureCounter: %w", err)
+	}
+	return nil
+}
+
+// DisableAgent sets enabled=false for the given agent. The reason is logged by
+// the caller and persisted to the disabled_reason column.
+func (r *Repository) DisableAgent(ctx context.Context, agentID string, reason string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("enabled = false").
+		Set("disabled_reason = ?", reason).
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("DisableAgent(%s): %w", reason, err)
+	}
+	return nil
+}
+
+// EnableAgent sets enabled=true and clears disabled_reason for the given agent.
+func (r *Repository) EnableAgent(ctx context.Context, agentID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("enabled = true").
+		Set("disabled_reason = NULL").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("EnableAgent: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// ACP Repository Methods
+// ---------------------------------------------------------------------------
+
+// FindExternalAgentDefinitions returns all agent definitions with visibility = 'external'
+// for the given project. Used by ACP agent discovery endpoints.
+func (r *Repository) FindExternalAgentDefinitions(ctx context.Context, projectID string) ([]*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	err := r.db.NewSelect().
+		Model(&defs).
+		Where("project_id = ?", projectID).
+		Where("visibility = ?", VisibilityExternal).
+		Order("name ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("FindExternalAgentDefinitions: %w", err)
+	}
+	return defs, nil
+}
+
+// FindExternalAgentBySlug returns an external agent definition matching the given
+// ACP slug within a project. Since slugs are computed (not stored), this fetches
+// all external definitions and matches in-memory.
+// Returns nil, nil when no matching agent is found.
+func (r *Repository) FindExternalAgentBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, error) {
+	defs, err := r.FindExternalAgentDefinitions(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, def := range defs {
+		if acpslug.FromName(def.Name) == slug {
+			return def, nil
+		}
+	}
+	return nil, nil
+}
+
+// FindAgentDefinitionBySlug returns any agent definition (regardless of visibility)
+// matching the given ACP slug within a project. Used as a fallback when the agent
+// is not marked as external but should still be accessible via ACP by name.
+// Returns nil, nil when no matching agent is found.
+func (r *Repository) FindAgentDefinitionBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	err := r.db.NewSelect().
+		Model(&defs).
+		Where("project_id = ?", projectID).
+		Order("name ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("FindAgentDefinitionBySlug: %w", err)
+	}
+	for _, def := range defs {
+		if acpslug.FromName(def.Name) == slug {
+			return def, nil
+		}
+	}
+	return nil, nil
+}
+
+// CreateSession inserts a new session record.
+//
+// RETURNING lists the model's own columns explicitly rather than "*": the
+// migrated table carries a retained `is_archived` column that the Session model
+// no longer maps (the archive field was dropped as dead code), and a
+// `RETURNING *` would hand bun a column it has no field for, failing the scan.
+// The list is a single comma-joined string: bun's signature is
+// Returning(query string, args ...any), so separate arguments would be treated
+// as placeholders for one column and only the first would be returned.
+func (r *Repository) CreateSession(ctx context.Context, session *Session) error {
+	_, err := r.db.NewInsert().
+		Model(session).
+		Returning("id, project_id, agent_name, title, created_at, updated_at").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("CreateSession: %w", err)
+	}
+	return nil
+}
+
+// GetSession returns a session by ID, scoped to the given project.
+// Returns nil, nil when not found.
+func (r *Repository) GetSession(ctx context.Context, projectID, sessionID string) (*Session, error) {
+	session := new(Session)
+	err := r.db.NewSelect().
+		Model(session).
+		Where("id = ?", sessionID).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetSession: %w", err)
+	}
+	return session, nil
+}
+
+// EnsureSessionForContext is the single create-or-get path for A2A context
+// resolution. When contextID is supplied the session must already exist (nil is
+// returned for an unknown id, which callers map to a validation error);
+// otherwise a new session is created and returned.
+func (r *Repository) EnsureSessionForContext(ctx context.Context, projectID, contextID string, agentName *string) (*Session, error) {
+	if contextID != "" {
+		return r.GetSession(ctx, projectID, contextID)
+	}
+	session := &Session{ProjectID: projectID, AgentName: agentName}
+	if err := r.CreateSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("EnsureSessionForContext: %w", err)
+	}
+	return session, nil
+}
+
+// ListSessionRunsByProjectID returns all agent runs that belong to any session
+// in the given project, with Agent relation loaded, ordered by created_at ASC.
+// Results are grouped by session_id for building history URLs.
+func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID string) (map[string][]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Relation("Agent").
+		Join("JOIN kb.sessions AS s ON s.id = ar.session_id").
+		Where("s.project_id = ?", projectID).
+		Where("ar.session_id IS NOT NULL").
+		Order("ar.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ListSessionRunsByProjectID: %w", err)
+	}
+	grouped := make(map[string][]*AgentRun, len(runs))
+	for _, run := range runs {
+		if run.SessionID != nil {
+			sid := *run.SessionID
+			grouped[sid] = append(grouped[sid], run)
+		}
+	}
+	return grouped, nil
+}
+
+// ListBoardRunsByProjectID returns the project's object-driven (board/work)
+// runs: kb.agent_runs rows with a non-null subject_object_id, newest first,
+// capped at limit. The Agent relation is loaded (as ListSessionRunsByProjectID
+// does) so ToDTO can resolve AgentName. The project is scoped through the run's
+// owning agent (kb.agents.project_id) via a manual join under a distinct alias
+// so it never collides with the Agent relation's own join.
+func (r *Repository) ListBoardRunsByProjectID(ctx context.Context, projectID string, limit int) ([]*AgentRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Relation("Agent").
+		Join("JOIN kb.agents AS proj ON proj.id = ar.agent_id").
+		Where("proj.project_id = ?", projectID).
+		Where("ar.subject_object_id IS NOT NULL").
+		Order("ar.created_at DESC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ListBoardRunsByProjectID: %w", err)
+	}
+	return runs, nil
+}
+
+// SessionStats holds aggregated stats for a single session.
+type SessionStats struct {
+	SessionID    string  `bun:"session_id"`
+	MessageCount int64   `bun:"message_count"`
+	TotalTokens  int64   `bun:"total_tokens"`
+	TotalCostUSD float64 `bun:"total_cost_usd"`
+}
+
+// GetSessionStatsByProjectID returns aggregated message count, token usage, and
+// estimated cost for every session in the given project.
+func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID string) (map[string]*SessionStats, error) {
+	var rows []SessionStats
+	err := r.db.NewRaw(`
+		SELECT
+			s.id                                                            AS session_id,
+			COUNT(DISTINCT CASE WHEN m.role = 'user' THEN m.id END)        AS message_count,
+			COALESCE(SUM(u.text_input_tokens + u.output_tokens), 0)        AS total_tokens,
+			COALESCE(SUM(u.estimated_cost_usd), 0)                         AS total_cost_usd
+		FROM kb.sessions s
+		LEFT JOIN kb.agent_runs     ar ON ar.session_id = s.id
+		LEFT JOIN kb.agent_run_messages m ON m.run_id = ar.id
+		LEFT JOIN kb.llm_usage_events   u  ON u.run_id  = ar.id
+		WHERE s.project_id = ?
+		GROUP BY s.id
+	`, projectID).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetSessionStatsByProjectID: %w", err)
+	}
+	out := make(map[string]*SessionStats, len(rows))
+	for i := range rows {
+		out[rows[i].SessionID] = &rows[i]
+	}
+	return out, nil
+}
+
+// GetSessionStatsBySessionID returns aggregated message count, token usage, and
+// estimated cost for a single session.
+func (r *Repository) GetSessionStatsBySessionID(ctx context.Context, sessionID string) (*SessionStats, error) {
+	var stats SessionStats
+	err := r.db.NewRaw(`
+		SELECT
+			s.id                                                            AS session_id,
+			COUNT(DISTINCT CASE WHEN m.role = 'user' THEN m.id END)        AS message_count,
+			COALESCE(SUM(u.text_input_tokens + u.output_tokens), 0)        AS total_tokens,
+			COALESCE(SUM(u.estimated_cost_usd), 0)                         AS total_cost_usd
+		FROM kb.sessions s
+		LEFT JOIN kb.agent_runs         ar ON ar.session_id = s.id
+		LEFT JOIN kb.agent_run_messages m  ON m.run_id = ar.id
+		LEFT JOIN kb.llm_usage_events   u  ON u.run_id = ar.id
+		WHERE s.id = ?
+		GROUP BY s.id
+	`, sessionID).Scan(ctx, &stats)
+	if err != nil {
+		return nil, fmt.Errorf("GetSessionStatsBySessionID: %w", err)
+	}
+	return &stats, nil
+}
+
+// GetSessionRunHistory returns all agent runs linked to the given session,
+// ordered by created_at ascending (oldest first).
+func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Relation("Agent").
+		Where("ar.session_id = ?", sessionID).
+		Order("ar.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetSessionRunHistory: %w", err)
+	}
+	return runs, nil
+}
+
+// InsertRunEvent persists an SSE event emitted during a run.
+func (r *Repository) InsertRunEvent(ctx context.Context, event *RunEvent) error {
+	_, err := r.db.NewInsert().
+		Model(event).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("InsertRunEvent: %w", err)
+	}
+	return nil
+}
+
+// GetRunEvents returns all persisted SSE events for a run, ordered by
+// created_at ascending. Used to serve the events replay endpoint.
+func (r *Repository) GetRunEvents(ctx context.Context, runID string) ([]*RunEvent, error) {
+	var events []*RunEvent
+	err := r.db.NewSelect().
+		Model(&events).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunEvents: %w", err)
+	}
+	return events, nil
+}
+
+// GetRunEventsByRunIDs returns all persisted SSE events for the given run IDs
+// in a single query, grouped by run ID. Used to bulk-load events for session history.
+func (r *Repository) GetRunEventsByRunIDs(ctx context.Context, runIDs []string) (map[string][]*RunEvent, error) {
+	if len(runIDs) == 0 {
+		return map[string][]*RunEvent{}, nil
+	}
+	var events []*RunEvent
+	err := r.db.NewSelect().
+		Model(&events).
+		Where("run_id IN (?)", bun.In(runIDs)).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunEventsByRunIDs: %w", err)
+	}
+	grouped := make(map[string][]*RunEvent, len(runIDs))
+	for _, e := range events {
+		grouped[e.RunID] = append(grouped[e.RunID], e)
+	}
+	return grouped, nil
+}
+
+// SetRunCancelling transitions a run to the "cancelling" intermediate state.
+// This is the first step of the ACP two-step cancel protocol: the intent is
+// acknowledged but the executor hasn't stopped yet. It is guarded to non-terminal
+// rows so a cancel intent cannot overwrite a run that already finished.
+func (r *Repository) SetRunCancelling(ctx context.Context, runID string) error {
+	_, err := guardTerminalTransition(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelling).
+		Where("id = ?", runID)).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("SetRunCancelling: %w", err)
+	}
+	return nil
+}
+
+// RequestRunCancellation records a durable cancel intent for a run by moving a
+// non-terminal row to the intermediate "cancelling" status (issue #1166). The
+// write is a single guarded UPDATE, so it is authoritative in Postgres and
+// visible to every server instance — unlike the per-process cancel registry,
+// which only reaches a run executing in the same process.
+//
+// It is idempotent: a row already in "cancelling" is matched again and reported
+// as transitioned, so a repeated cancel keeps returning accepted. It returns
+// false only when the run has already reached a terminal state, in which case
+// nothing is changed.
+//
+// Finalization to the terminal "cancelled" status is not done here: the
+// executing instance (or, for a run with no live executor, the stale-run reaper)
+// observes the durable signal and takes the guarded terminal transition. This
+// keeps exactly one terminal writer while letting any instance request the stop.
+func (r *Repository) RequestRunCancellation(ctx context.Context, runID string) (bool, error) {
+	res, err := guardTerminalTransition(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelling).
+		Where("id = ?", runID)).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("RequestRunCancellation: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// RunIsCancelling reports whether the run currently carries the durable cancel
+// intent (status "cancelling"). The executor calls this at step boundaries to
+// observe a cancel committed by any instance, including one whose local cancel
+// registry does not know about this run (issue #1166). A missing run reports
+// false so observation never blocks a run on a read race with deletion.
+func (r *Repository) RunIsCancelling(ctx context.Context, runID string) (bool, error) {
+	var cancelling bool
+	err := r.db.NewRaw(
+		`SELECT status = ? FROM kb.agent_runs WHERE id = ?`,
+		string(RunStatusCancelling), runID,
+	).Scan(ctx, &cancelling)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return cancelling, nil
+}
+
+// FinalizeCancellingRuns transitions runs parked in the intermediate
+// "cancelling" status to the terminal "cancelled" status. It is the safety net
+// for a durable cancel whose executing instance never observed it — because the
+// process died, or the run was queued and never picked up. A committed cancel
+// always resolves to "cancelled", so this never turns a cancel into a failure.
+//
+// It is always age/heartbeat-aware: only runs whose last activity (COALESCE of
+// last_step_at and started_at) is older than olderThan are finalized. A live
+// executor refreshes last_step_at, so a run still being observed — including one
+// owned by another instance during a rolling restart — is never finalized. A
+// non-positive olderThan is rejected: an unconditional sweep would finalize a
+// live run (issue #1166).
+func (r *Repository) FinalizeCancellingRuns(ctx context.Context, olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		return 0, fmt.Errorf("FinalizeCancellingRuns: olderThan must be positive")
+	}
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = COALESCE(NULLIF(error_message, ''), ?)", userCancelReason).
+		Where("status = ?", RunStatusCancelling).
+		Where("COALESCE(last_step_at, started_at) < ?", now.Add(-olderThan)).
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("FinalizeCancellingRuns: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// FinalizeOrphanedCancellingRuns is the startup-safe sweep for runs parked in
+// "cancelling". It finalizes only runs idle past staleRunThreshold, so a live
+// executor on another instance (which refreshes last_step_at) is never finalized
+// during a rolling restart. It is the single entry point used by both startup
+// recovery and the stale-run reaper; a committed cancel is resolved to
+// "cancelled", never to a failure (issue #1166).
+func (r *Repository) FinalizeOrphanedCancellingRuns(ctx context.Context) (int, error) {
+	return r.FinalizeCancellingRuns(ctx, staleRunThreshold)
+}
+
+// UpdateSessionTitle sets the title field on a session.
+func (r *Repository) UpdateSessionTitle(ctx context.Context, projectID, sessionID, title string) error {
+	_, err := r.db.NewUpdate().
+		Model((*Session)(nil)).
+		Set("title = ?", title).
+		Set("updated_at = now()").
+		Where("id = ?", sessionID).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("UpdateSessionTitle: %w", err)
+	}
+	return nil
+}
+
+// ConversationHistoryItem represents one event in the unified session timeline.
+type ConversationHistoryItem struct {
+	// Kind is one of: "user_message", "assistant_message", "tool_call", "tool_result", "run_start", "run_end"
+	Kind string `json:"kind"`
+	// RunID is the agent run this item belongs to.
+	RunID string `json:"run_id"`
+	// StepNumber within the run (0 for run_start/run_end).
+	StepNumber int `json:"step_number"`
+	// CreatedAt is the wall-clock time of this item.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Fields populated for user_message / assistant_message
+	//
+	// Role holds the message author (the ADK event Author for an assistant
+	// turn) — the sanitized agent name such as "coder", not the literal
+	// "assistant" (an empty Author falls back to "assistant"). DO NOT compare
+	// Role to "assistant"; classify it with IsAgentReplyRole (the runrole-guard
+	// gate enforces this).
+	Role    string         `json:"role,omitempty"`
+	Content map[string]any `json:"content,omitempty"`
+
+	// Citations carries the grounded object/relationship citations derived for
+	// an assistant message (see GetConversationFullHistory).
+	Citations []citations.Citation `json:"citations,omitempty"`
+
+	// Fields populated for tool_call / tool_result
+	ID         string         `json:"id,omitempty"`
+	ToolName   string         `json:"tool_name,omitempty"`
+	ToolInput  map[string]any `json:"tool_input,omitempty"`
+	ToolOutput map[string]any `json:"tool_output,omitempty"`
+	ToolStatus string         `json:"tool_status,omitempty"` // completed | error
+	DurationMs *int           `json:"duration_ms,omitempty"`
+
+	// Fields populated for run_start / run_end
+	RunStatus    string     `json:"run_status,omitempty"`
+	RunModel     *string    `json:"run_model,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage *string    `json:"error_message,omitempty"`
+}
+
+// GetConversationFullHistory returns the unified ordered timeline for a session:
+// run lifecycle events, all LLM messages (user + assistant), and all tool invocations.
+// Items are ordered by (run.created_at asc, item.step_number asc, item.created_at asc).
+func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error) {
+	// Fetch runs ordered by start time
+	var runs []*AgentRun
+	if err := r.db.NewSelect().
+		Model(&runs).
+		Where("ar.session_id = ?", sessionID).
+		OrderExpr("ar.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("GetConversationFullHistory runs: %w", err)
+	}
+	if len(runs) == 0 {
+		return []*ConversationHistoryItem{}, nil
+	}
+
+	runIDs := make([]string, len(runs))
+	for i, r := range runs {
+		runIDs[i] = r.ID
+	}
+
+	// Fetch all messages for these runs
+	var messages []*AgentRunMessage
+	if err := r.db.NewSelect().
+		Model(&messages).
+		Where("arm.run_id IN (?)", bun.In(runIDs)).
+		OrderExpr("arm.step_number ASC, arm.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("GetConversationFullHistory messages: %w", err)
+	}
+
+	// Fetch all tool calls for these runs
+	var toolCalls []*AgentRunToolCall
+	if err := r.db.NewSelect().
+		Model(&toolCalls).
+		Where("artc.run_id IN (?)", bun.In(runIDs)).
+		OrderExpr("artc.step_number ASC, artc.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("GetConversationFullHistory tool_calls: %w", err)
+	}
+
+	// Group messages and tool calls by run ID
+	msgsByRun := make(map[string][]*AgentRunMessage, len(runs))
+	for _, m := range messages {
+		msgsByRun[m.RunID] = append(msgsByRun[m.RunID], m)
+	}
+	tcByRun := make(map[string][]*AgentRunToolCall, len(runs))
+	for _, tc := range toolCalls {
+		tcByRun[tc.RunID] = append(tcByRun[tc.RunID], tc)
+	}
+
+	// Derive per-run citation candidates from the tool calls already fetched
+	// above so assistant messages can be annotated without extra queries.
+	candsByRun := make(map[string]map[string]citations.Reference, len(runs))
+	for runID, tcs := range tcByRun {
+		outputs := make([]citations.ToolCall, 0, len(tcs))
+		for _, tc := range tcs {
+			if tc != nil {
+				outputs = append(outputs, citations.ToolCall{Output: tc.Output})
+			}
+		}
+		candsByRun[runID] = citations.Candidates(outputs)
+	}
+
+	var items []*ConversationHistoryItem
+
+	for _, run := range runs {
+		// run_start
+		items = append(items, &ConversationHistoryItem{
+			Kind:      "run_start",
+			RunID:     run.ID,
+			CreatedAt: run.CreatedAt,
+			RunStatus: string(run.Status),
+			RunModel:  run.Model,
+		})
+
+		// Merge messages and tool calls into a single ordered slice by step_number + created_at
+		// We interleave them: for each step, tool calls come after messages in same step
+		type timelineEntry struct {
+			step      int
+			createdAt time.Time
+			item      *ConversationHistoryItem
+		}
+		var entries []timelineEntry
+
+		for _, m := range msgsByRun[run.ID] {
+			item := &ConversationHistoryItem{
+				Kind:       "message",
+				RunID:      run.ID,
+				StepNumber: m.StepNumber,
+				CreatedAt:  m.CreatedAt,
+				Role:       m.Role,
+				Content:    m.Content,
+			}
+			if IsAgentReplyRole(m.Role) {
+				item.Citations = deriveMessageCitations(m.Content, candsByRun[run.ID])
+			}
+			entries = append(entries, timelineEntry{
+				step:      m.StepNumber,
+				createdAt: m.CreatedAt,
+				item:      item,
+			})
+		}
+		for _, tc := range tcByRun[run.ID] {
+			kind := "tool_call"
+			entries = append(entries, timelineEntry{
+				step:      tc.StepNumber,
+				createdAt: tc.CreatedAt,
+				item: &ConversationHistoryItem{
+					Kind:       kind,
+					RunID:      run.ID,
+					StepNumber: tc.StepNumber,
+					CreatedAt:  tc.CreatedAt,
+					ID:         tc.ID,
+					ToolName:   tc.ToolName,
+					ToolInput:  tc.Input,
+					ToolOutput: tc.Output,
+					ToolStatus: tc.Status,
+					DurationMs: tc.DurationMs,
+				},
+			})
+		}
+
+		// Sort by step then created_at
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].step != entries[j].step {
+				return entries[i].step < entries[j].step
+			}
+			return entries[i].createdAt.Before(entries[j].createdAt)
+		})
+
+		for _, e := range entries {
+			items = append(items, e.item)
+		}
+
+		// run_end
+		items = append(items, &ConversationHistoryItem{
+			Kind:         "run_end",
+			RunID:        run.ID,
+			CreatedAt:    run.CreatedAt,
+			RunStatus:    string(run.Status),
+			CompletedAt:  run.CompletedAt,
+			ErrorMessage: run.ErrorMessage,
+		})
+	}
+
+	return items, nil
+}
+
+// deriveMessageCitations derives grounded citations for an assistant message
+// from its text content (including any embedded A2UI surface) and the run's
+// citation candidates. It is a pure read-side derivation — the same inputs the
+// live turn uses — so a reloaded transcript renders the same citations.
+func deriveMessageCitations(content map[string]any, candidates map[string]citations.Reference) []citations.Citation {
+	if content == nil {
+		return nil
+	}
+	text, _ := content["text"].(string)
+	surfaces, stripped, _ := a2ui.ExtractFromText(text)
+	return citations.Derive(stripped, surfaces, candidates)
+}
+
+// GetConversationFullHistoryRaw implements mcp.SessionHistoryProvider.
+// Returns the same unified timeline as GetConversationFullHistory but serialised
+// as []map[string]any so the mcp package can consume it without importing agents.
+//
+// The session is ownership-checked at this data-access layer before any
+// history is loaded, reusing the shared sessiontodos.SessionAccessibleQuery
+// predicate (the #1010 conversation ownership model): the session must be in
+// the caller's project and, when it is linked to a chat conversation, that
+// conversation must be owned by the caller or non-private. A foreign or
+// unknown session id fails closed to the domain's 404 convention so its
+// existence (and any stored messages / composed system prompt) cannot leak
+// (issue #1032).
+func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, sessionID string) ([]map[string]any, error) {
+	ok, err := sessiontodos.SessionAccessibleQuery(ctx, r.db, sessionID, projectID, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, apperror.NewNotFound("session", sessionID)
+	}
+
+	items, err := r.GetConversationFullHistory(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		m := map[string]any{
+			"kind":        item.Kind,
+			"run_id":      item.RunID,
+			"step_number": item.StepNumber,
+			"created_at":  item.CreatedAt,
+		}
+		if item.Role != "" {
+			m["role"] = item.Role
+		}
+		if item.Content != nil {
+			m["content"] = item.Content
+		}
+		if item.ToolName != "" {
+			m["tool_name"] = item.ToolName
+			m["tool_input"] = item.ToolInput
+			m["tool_output"] = item.ToolOutput
+			m["tool_status"] = item.ToolStatus
+			if item.ID != "" {
+				m["id"] = item.ID
+			}
+		}
+		if item.DurationMs != nil {
+			m["duration_ms"] = *item.DurationMs
+		}
+		if item.RunStatus != "" {
+			m["run_status"] = item.RunStatus
+		}
+		if item.CompletedAt != nil {
+			m["completed_at"] = item.CompletedAt
+		}
+		if item.ErrorMessage != nil {
+			m["error_message"] = *item.ErrorMessage
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// EnsureConversationSession returns the session_id linked to the given
+// chat conversation, creating a new Session (and persisting the FK back onto
+// the conversation row) if one does not yet exist.
+//
+// The chat_conversations table must have a session_id uuid column (added by
+// migration 00115) and kb.sessions must exist (added earlier).
+func (r *Repository) EnsureConversationSession(ctx context.Context, conversationID, projectID string, agentName *string) (string, error) {
+	var sessionID string
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock the conversation row so two concurrent first turns on a new
+		// conversation serialize: the first creates the Session and writes the
+		// backlink, the second blocks on the lock, then observes the committed
+		// backlink and reuses it. Without the lock both could read NULL and
+		// create divergent Session rows for one thread.
+		var existing struct {
+			SessionID *string `bun:"session_id"`
+		}
+		if err := tx.NewSelect().
+			TableExpr("kb.chat_conversations").
+			ColumnExpr("session_id::text").
+			Where("id = ?", conversationID).
+			For("UPDATE").
+			Scan(ctx, &existing); err != nil {
+			return fmt.Errorf("EnsureConversationSession read: %w", err)
+		}
+		if existing.SessionID != nil && *existing.SessionID != "" {
+			sessionID = *existing.SessionID
+			return nil
+		}
+
+		session := &Session{
+			ProjectID: projectID,
+			AgentName: agentName,
+		}
+		// Explicit, comma-joined column list (see CreateSession): the retained
+		// `is_archived` column is not mapped by the Session model, so
+		// `RETURNING *` would fail the scan.
+		if _, err := tx.NewInsert().
+			Model(session).
+			Returning("id, project_id, agent_name, title, created_at, updated_at").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("EnsureConversationSession create: %w", err)
+		}
+
+		// Persist the FK back onto the conversation row in the same
+		// transaction: if the backlink cannot be written the Session is rolled
+		// back too, so a thread is never left with an orphaned Session.
+		if _, err := tx.NewUpdate().
+			TableExpr("kb.chat_conversations").
+			Set("session_id = ?", session.ID).
+			Where("id = ?", conversationID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("EnsureConversationSession backlink: %w", err)
+		}
+
+		sessionID = session.ID
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return sessionID, nil
+}
+
+// UpdateRunSessionID sets the session_id column on an agent run.
+func (r *Repository) UpdateRunSessionID(ctx context.Context, runID, sessionID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("session_id = ?", sessionID).
+		Where("id = ?", runID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("UpdateRunSessionID: %w", err)
+	}
+	return nil
+}
+
+// --- Analytics store methods ---
+
+// RunStatsRow is an intermediate struct for scanning per-agent run aggregates.
+type RunStatsRow struct {
+	AgentName       string  `bun:"agent_name"`
+	Total           int64   `bun:"total"`
+	Success         int64   `bun:"success"`
+	Failed          int64   `bun:"failed"`
+	Errored         int64   `bun:"errored"`
+	AvgDurationMs   float64 `bun:"avg_duration_ms"`
+	MaxDurationMs   int64   `bun:"max_duration_ms"`
+	AvgCostUSD      float64 `bun:"avg_cost_usd"`
+	TotalCostUSD    float64 `bun:"total_cost_usd"`
+	AvgInputTokens  float64 `bun:"avg_input_tokens"`
+	AvgOutputTokens float64 `bun:"avg_output_tokens"`
+}
+
+// GetRunStatsOverview returns aggregate run counts/cost for a project within a time window.
+func (r *Repository) GetRunStatsOverview(ctx context.Context, projectID string, agentID *string, since, until time.Time) ([]RunStatsRow, error) {
+	agentFilter := ""
+	args := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		args = append(args, *agentID)
+	}
+	var rows []RunStatsRow
+	err := r.db.NewRaw(`
+		SELECT
+			a.name                                                   AS agent_name,
+			COUNT(*)                                                  AS total,
+			COUNT(*) FILTER (WHERE ar.status = 'completed')          AS success,
+			COUNT(*) FILTER (WHERE ar.status = 'failed')             AS failed,
+			COUNT(*) FILTER (WHERE ar.status = 'cancelled')          AS errored,
+			COALESCE(AVG(ar.duration_ms), 0)                         AS avg_duration_ms,
+			COALESCE(MAX(ar.duration_ms), 0)                         AS max_duration_ms,
+			COALESCE(AVG(u.total_cost), 0)                           AS avg_cost_usd,
+			COALESCE(SUM(u.total_cost), 0)                           AS total_cost_usd,
+			COALESCE(AVG(u.total_input), 0)                          AS avg_input_tokens,
+			COALESCE(AVG(u.total_output), 0)                         AS avg_output_tokens
+		FROM kb.agent_runs ar
+		JOIN kb.agents a ON a.id = ar.agent_id
+		LEFT JOIN (
+			SELECT run_id,
+				SUM(estimated_cost_usd) AS total_cost,
+				SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens) AS total_input,
+				SUM(output_tokens) AS total_output
+			FROM kb.llm_usage_events
+			GROUP BY run_id
+		) u ON u.run_id = ar.id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?`+agentFilter+`
+		GROUP BY a.name
+		ORDER BY total DESC`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsOverview: %w", err)
+	}
+	return rows, nil
+}
+
+// GetProjectInfo returns the project_info markdown string for a project,
+// or "" if none is set. Used by the agentcompat layer to inject KB context
+// into the agent's system prompt without requiring a tool call.
+func (r *Repository) GetProjectInfo(ctx context.Context, projectID string) (string, error) {
+	var info *string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("project_info").
+		Where("id = ?", projectID).
+		Scan(ctx, &info)
+	if err != nil {
+		return "", fmt.Errorf("GetProjectInfo: %w", err)
+	}
+	if info == nil {
+		return "", nil
+	}
+	return *info, nil
+}
+
+// GetRunStatsTopErrors returns the most frequent error messages within the window.
+func (r *Repository) GetRunStatsTopErrors(ctx context.Context, projectID string, agentID *string, since, until time.Time, limit int) ([]RunStatsErrorRow, error) {
+	agentFilter := ""
+	// Base args for first half of UNION (runs) and second half (tool calls).
+	// Both halves use: projectID, since, until [, agentID]
+	halfArgs := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		halfArgs = append(halfArgs, *agentID)
+	}
+	// Full args = first half + second half + limit
+	allArgs := append(append(halfArgs, halfArgs...), limit)
+	var rows []RunStatsErrorRow
+	err := r.db.NewRaw(`
+		SELECT message, COUNT(*) AS cnt FROM (
+			SELECT ar.error_message AS message
+			FROM kb.agent_runs ar
+			JOIN kb.agents a ON a.id = ar.agent_id
+			WHERE a.project_id = ?
+			  AND ar.started_at >= ?
+			  AND ar.started_at <= ?
+			  AND ar.error_message IS NOT NULL`+agentFilter+`
+			UNION ALL
+			SELECT tc.output->>'error' AS message
+			FROM kb.agent_run_tool_calls tc
+			JOIN kb.agent_runs ar ON ar.id = tc.run_id
+			JOIN kb.agents a ON a.id = ar.agent_id
+			WHERE a.project_id = ?
+			  AND ar.started_at >= ?
+			  AND ar.started_at <= ?
+			  AND tc.status = 'failed'
+			  AND tc.output->>'error' IS NOT NULL`+agentFilter+`
+		) AS errs
+		WHERE message IS NOT NULL AND message <> ''
+		GROUP BY message
+		ORDER BY cnt DESC
+		LIMIT ?`,
+		allArgs...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsTopErrors: %w", err)
+	}
+	return rows, nil
+}
+
+// RunStatsErrorRow holds an error message and its frequency count.
+type RunStatsErrorRow struct {
+	Message string `bun:"message"`
+	Count   int64  `bun:"cnt"`
+}
+
+// RunStatsToolRow is an intermediate struct for scanning per-tool aggregates.
+type RunStatsToolRow struct {
+	ToolName      string  `bun:"tool_name"`
+	Total         int64   `bun:"total"`
+	Success       int64   `bun:"success"`
+	Failed        int64   `bun:"failed"`
+	AvgDurationMs float64 `bun:"avg_duration_ms"`
+	MaxDurationMs int64   `bun:"max_duration_ms"`
+}
+
+// GetRunStatsTools returns per-tool call aggregates within the time window.
+func (r *Repository) GetRunStatsTools(ctx context.Context, projectID string, agentID *string, since, until time.Time) ([]RunStatsToolRow, error) {
+	agentFilter := ""
+	args := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		args = append(args, *agentID)
+	}
+	var rows []RunStatsToolRow
+	err := r.db.NewRaw(`
+		SELECT
+			tc.tool_name,
+			COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE tc.status = 'completed')      AS success,
+			COUNT(*) FILTER (WHERE tc.status = 'failed')         AS failed,
+			COALESCE(AVG(tc.duration_ms), 0)                     AS avg_duration_ms,
+			COALESCE(MAX(tc.duration_ms), 0)                     AS max_duration_ms
+		FROM kb.agent_run_tool_calls tc
+		JOIN kb.agent_runs ar ON ar.id = tc.run_id
+		JOIN kb.agents a ON a.id = ar.agent_id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?`+agentFilter+`
+		GROUP BY tc.tool_name
+		ORDER BY total DESC`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsTools: %w", err)
+	}
+	return rows, nil
+}
+
+// RunStatsHourRow is an intermediate struct for scanning hourly run counts.
+type RunStatsHourRow struct {
+	Hour      time.Time `bun:"hour"`
+	AgentName string    `bun:"agent_name"`
+	Runs      int64     `bun:"runs"`
+}
+
+// GetRunStatsTimeSeries returns hourly run counts by agent within the time window.
+func (r *Repository) GetRunStatsTimeSeries(ctx context.Context, projectID string, agentID *string, since, until time.Time) ([]RunStatsHourRow, error) {
+	agentFilter := ""
+	args := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		args = append(args, *agentID)
+	}
+	var rows []RunStatsHourRow
+	err := r.db.NewRaw(`
+		SELECT
+			date_trunc('hour', ar.started_at) AS hour,
+			a.name                             AS agent_name,
+			COUNT(*)                           AS runs
+		FROM kb.agent_runs ar
+		JOIN kb.agents a ON a.id = ar.agent_id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?`+agentFilter+`
+		GROUP BY hour, a.name
+		ORDER BY hour ASC`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsTimeSeries: %w", err)
+	}
+	return rows, nil
+}
+
+// RunSessionRow is an intermediate struct for scanning session-level aggregates.
+type RunSessionRow struct {
+	Platform      string    `bun:"platform"`
+	ChannelID     string    `bun:"channel_id"`
+	ThreadID      string    `bun:"thread_id"`
+	TotalRuns     int64     `bun:"total_runs"`
+	ActiveRuns    int64     `bun:"active_runs"`
+	LastRunAt     time.Time `bun:"last_run_at"`
+	AvgDurationMs float64   `bun:"avg_duration_ms"`
+	TotalCostUSD  float64   `bun:"total_cost_usd"`
+}
+
+// GetRunSessionStats returns session-level analytics grouped by trigger metadata.
+// A "session" is the unique (platform, channelId, threadId) tuple from trigger_metadata.
+func (r *Repository) GetRunSessionStats(ctx context.Context, projectID string, platform *string, since, until time.Time, topN int) ([]RunSessionRow, error) {
+	platformFilter := ""
+	args := []interface{}{projectID, since, until}
+	if platform != nil {
+		platformFilter = " AND ar.trigger_metadata->>'platform' = ?"
+		args = append(args, *platform)
+	}
+	args = append(args, topN)
+	var rows []RunSessionRow
+	err := r.db.NewRaw(`
+		SELECT
+			COALESCE(ar.trigger_metadata->>'platform', 'unknown')  AS platform,
+			COALESCE(ar.trigger_metadata->>'channelId', '')        AS channel_id,
+			COALESCE(ar.trigger_metadata->>'threadId', '')         AS thread_id,
+			COUNT(*)                                               AS total_runs,
+			COUNT(*) FILTER (WHERE ar.status IN ('working','submitted','input-required')) AS active_runs,
+			MAX(ar.started_at)                                     AS last_run_at,
+			COALESCE(AVG(ar.duration_ms), 0)                       AS avg_duration_ms,
+			COALESCE(SUM(u.total_cost), 0)                         AS total_cost_usd
+		FROM kb.agent_runs ar
+		JOIN kb.agents a ON a.id = ar.agent_id
+		LEFT JOIN (
+			SELECT run_id, SUM(estimated_cost_usd) AS total_cost
+			FROM kb.llm_usage_events
+			GROUP BY run_id
+		) u ON u.run_id = ar.id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?
+		  AND ar.trigger_metadata IS NOT NULL
+		  AND ar.trigger_metadata->>'platform' IS NOT NULL`+platformFilter+`
+		GROUP BY platform, channel_id, thread_id
+		ORDER BY total_runs DESC
+		LIMIT ?`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunSessionStats: %w", err)
+	}
+	return rows, nil
+}
+
+// ============================================================================
+// A2A Repository Methods
+// ============================================================================
+
+// FindLatestRunInChain follows a run's resume chain forward (resumed_from links)
+// to the most recent run, loading the Agent relation on the final run. Returns
+// the input run itself when it has no resume continuations. A resume chain is
+// linear (AnswerQuestion atomically claims each question), so there is at most
+// one child per run.
+func (r *Repository) FindLatestRunInChain(ctx context.Context, runID string) (*AgentRun, error) {
+	current, err := r.FindRunByID(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, nil
+	}
+
+	for i := 0; i < MaxTotalStepsPerRun; i++ {
+		next := new(AgentRun)
+		err := r.db.NewSelect().
+			Model(next).
+			Relation("Agent").
+			Where("ar.resumed_from = ?", current.ID).
+			Order("created_at DESC").
+			Limit(1).
+			Scan(ctx)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return current, nil
+			}
+			return nil, err
+		}
+		current = next
+	}
+	return current, nil
+}
+
+// ListA2ARuns returns the logical A2A tasks for a project, optionally filtered
+// by context (session_id) and a set of internal statuses, with the total
+// count. Each logical task is represented by its resume-chain tail: a resumed
+// task leaves its root run in a non-terminal "working" state while the terminal
+// state lives on the child run created by executor.Resume, so listing the roots
+// alone would report a completed/failed resumed task as WORKING forever and
+// break completed/failed filters.
+//
+// Behaviour change: status filtering is applied to the chain tail (not the
+// root), and pagination happens in memory after tail resolution, so this scans
+// all root runs for the project (bounded in practice by per-project task volume
+// and the A2A page size). The returned runs keep the stable root ID as the task
+// id while carrying the tail's status/updated fields.
+func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID string, statuses []AgentRunStatus, limit, offset int) ([]*AgentRun, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	rootsQuery := r.db.NewSelect().
+		Model((*AgentRun)(nil)).
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("a.project_id = ?", projectID).
+		Where("ar.resumed_from IS NULL")
+
+	if contextID != "" {
+		rootsQuery = rootsQuery.Where("ar.session_id = ?", contextID)
+	}
+
+	var roots []*AgentRun
+	if err := rootsQuery.Order("ar.created_at DESC").Scan(ctx, &roots); err != nil {
+		return nil, 0, fmt.Errorf("ListA2ARuns roots: %w", err)
+	}
+
+	tails := make([]*AgentRun, 0, len(roots))
+	for _, root := range roots {
+		tail, err := r.FindLatestRunInChain(ctx, root.ID)
+		if err != nil {
+			return nil, 0, fmt.Errorf("ListA2ARuns chain: %w", err)
+		}
+		if len(statuses) > 0 && !containsAgentRunStatus(statuses, tail.Status) {
+			continue
+		}
+		tails = append(tails, a2aListingRun(root, tail))
+	}
+
+	totalCount := len(tails)
+
+	if offset >= len(tails) {
+		return []*AgentRun{}, totalCount, nil
+	}
+	end := offset + limit
+	if end > len(tails) {
+		end = len(tails)
+	}
+
+	return tails[offset:end], totalCount, nil
+}
+
+// containsAgentRunStatus reports whether s is in statuses.
+func containsAgentRunStatus(statuses []AgentRunStatus, s AgentRunStatus) bool {
+	for _, x := range statuses {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// a2aListingRun returns the run that should represent a logical task in a
+// listing: the chain tail's state/fields, but with the stable root ID as the
+// task id (the id clients receive from message:send and use in subsequent
+// get/cancel/subscribe calls). Pure and unit-testable.
+func a2aListingRun(root, tail *AgentRun) *AgentRun {
+	if tail == nil {
+		tail = root
+	}
+	effective := *tail
+	effective.ID = root.ID
+	return &effective
+}

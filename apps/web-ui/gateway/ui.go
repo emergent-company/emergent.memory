@@ -1,0 +1,1711 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/a-h/templ"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/render"
+	"github.com/emergent-company/go-daisy/shared"
+	"github.com/labstack/echo/v4"
+	"golang.org/x/sync/errgroup"
+)
+
+// appBrand is the product name rendered in the browser title, the standalone
+// web-app title, and the navigation brand label.
+const appBrand = "Memory"
+
+// pageTitle builds the browser <title> for a page. It trims and drops blank
+// segments, appends the brand last, and joins everything with " — " so every
+// page ends with the same pageTitle("<label>") shape.
+func pageTitle(segments ...string) string {
+	parts := make([]string, 0, len(segments)+1)
+	for _, s := range segments {
+		if s = strings.TrimSpace(s); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	parts = append(parts, appBrand)
+	return strings.Join(parts, " — ")
+}
+
+// pageTestID derives a stable data-testid anchor for the main content root from
+// the page title's first segment: "Agents — Memory" → "page-agents". Used by the
+// e2e suite to navigate deterministically (see tests/e2e/README.md).
+func pageTestID(title string) string {
+	seg := title
+	if i := strings.Index(title, " — "); i >= 0 {
+		seg = title[:i]
+	}
+	var b strings.Builder
+	b.WriteString("page-")
+	dash := false
+	for _, r := range strings.ToLower(seg) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
+}
+
+// sidebarGroups returns the app navigation for a project-context page, with
+// every href prefixed by the page's scope base (/o/{org}/p/{project}). Active
+// state is derived per request via layout.ActiveSidebarGroups. isOrgAdmin gates
+// the Backups entry (org-scoped backups require org_admin of the active
+// project's owning org — see #997); it is threaded in by page() from the
+// caller's access tree.
+func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
+	return sidebarGroupsWithWarn(base, isOrgAdmin, 0)
+}
+
+// sidebarGroupsWithWarn is sidebarGroups plus the Documents attention badge.
+// The badge counts document-related terminal failures only (extraction,
+// conversion, chunk embeddings); other areas surface in the Documents panel
+// and can earn their own badge later.
+func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []layout.SidebarGroup {
+	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
+	if documentsWarn > 0 {
+		documentsItem.Warn = sidebarWarnBadge(documentsWarn)
+	}
+	memoryBrowser := []layout.SidebarItem{
+		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
+		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
+		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
+		documentsItem,
+		{Label: "Data Sources", Href: base + "/data-sources", Icon: "lucide--cloud"},
+	}
+	if isOrgAdmin {
+		// Backups are org-scoped and org_admin-gated (see #997). Hiding the
+		// entry beats landing a non-admin on a page that degrades to an error.
+		memoryBrowser = append(memoryBrowser, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
+	}
+	return []layout.SidebarGroup{
+		{
+			// Ungrouped top-level entries: pulled out of their groups to sit
+			// at the very top of the sidebar.
+			Items: []layout.SidebarItem{
+				{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
+				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
+				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
+				{Label: "Board", Href: base + "/board", Icon: "lucide--kanban-square"},
+				{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
+			},
+		},
+		{
+			Label: "Agents",
+			Items: []layout.SidebarItem{
+				{Label: "Agents", Href: base + "/agents", Icon: "lucide--bot"},
+				{Label: "Schedules", Href: base + "/schedules", Icon: "lucide--calendar-clock"},
+			},
+		},
+		{
+			Label: "Memory Browser",
+			Items: memoryBrowser,
+		},
+		{
+			Label: "Settings",
+			Items: []layout.SidebarItem{
+				{Label: "Project", Href: base + "/settings", Icon: "lucide--settings"},
+				{Label: "Members", Href: base + "/settings/members", Icon: "lucide--users"},
+				{Label: "API Tokens", Href: base + "/settings/tokens", Icon: "lucide--key-round"},
+				{Label: "MCP Servers", Href: base + "/settings/mcp-servers", Icon: "lucide--server"},
+				{Label: "MCP Registry", Href: base + "/settings/mcp-registry", Icon: "lucide--globe"},
+				{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
+				{Label: "Skills", Href: base + "/skills", Icon: "lucide--sparkles"},
+			},
+		},
+	}
+}
+
+// orgSidebarGroups returns the organization-scoped navigation shown when an
+// organization (not a project) is the active context. Links are path-scoped to
+// the org scope base (/o/{org}); the Settings hub holds the tool overrides and
+// the delete-org danger zone. isOrgAdmin gates the Members entry (the page
+// exposes whole-org member PII, org_admin-only per #1015).
+func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
+	items := []layout.SidebarItem{
+		{Label: "Projects", Href: base, Icon: "lucide--folder"},
+	}
+	if isOrgAdmin {
+		items = append(items, layout.SidebarItem{Label: "Members", Href: base + "/members", Icon: "lucide--users"})
+	}
+	items = append(items, layout.SidebarItem{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"})
+	return []layout.SidebarGroup{{Label: "Organization", Items: items}}
+}
+
+// partialWithTitle prefixes an hx-boost partial fragment with a <title> element
+// so htmx keeps document.title in sync during in-page navigation. Partial
+// responses have no <head> (the shell's title lives there), and htmx extracts
+// the first <title> from a swapped response and applies it to document.title
+// before the innerHTML swap — without this, tab titles go stale on every
+// boosted navigation. The title is HTML-escaped (labels can carry user text).
+func partialWithTitle(title string, content templ.Component) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		if _, err := io.WriteString(w, "<title>"+template.HTMLEscapeString(title)+"</title>"); err != nil {
+			return err
+		}
+		return content.Render(ctx, w)
+	})
+}
+
+// toastDurationMs is the auto-dismiss timeout for a toast kind. Error toasts
+// are persistent (0 = the queue renders a close button and keeps them until it
+// is used); every other kind auto-dismisses. Mirror any change in app.js's
+// toastDuration so server- and client-originated toasts agree.
+func toastDurationMs(kind string) int {
+	if kind == "error" {
+		return 0
+	}
+	return 4200
+}
+
+// flashToast renders PRG feedback (create/update/delete flows) as a toast.
+// Navigation is hx-boosted (in-place swaps), so the message must reach the
+// Alpine toast queue two ways:
+//  1. when the shell is already loaded (boosted swap), push straight into the
+//     #toast-container Alpine queue;
+//  2. on a full page load the Alpine runtime is not up yet when this inline
+//     script runs, so fall back to stashing under the "memory-toast" key that
+//     app.js's flushStashedToast reads on DOMContentLoaded.
+//
+// Errors are persistent (duration 0, dismissed via the toast's close button);
+// all other kinds auto-dismiss — see toastDurationMs.
+//
+// Go's encoding/json escapes < as \u003c, so message text cannot break out of
+// the <script> block.
+func flashToast(kind, message string) templ.Component {
+	payload, err := json.Marshal(map[string]any{
+		"kind":     kind,
+		"message":  message,
+		"duration": toastDurationMs(kind),
+	})
+	if err != nil {
+		payload = []byte(`{"kind":"info","message":"","duration":4200}`)
+	}
+	encoded, err := json.Marshal(string(payload))
+	if err != nil {
+		encoded = []byte(`""`)
+	}
+	script := `(function(){try{var p=JSON.parse(` + string(encoded) + `);var c=document.getElementById("toast-container");if(c&&window.Alpine){var q=window.Alpine.$data(c);if(q&&q.add){q.add({type:p.kind,message:p.message,duration:p.duration});return;}}sessionStorage.setItem("memory-toast",JSON.stringify(p));}catch(e){}})();`
+	return templ.Raw(`<script type="text/javascript">` + script + `</script>`)
+}
+
+// redirectWithError redirects to path, carrying the real error message as ?err=
+// so the target page can surface it instead of a generic "operation failed".
+// When path already carries a query (e.g. a form selector like
+// ?providerType=google_drive&method=credentials), the error is appended with
+// `&` so the existing params are preserved and the URL stays well-formed.
+func redirectWithError(c echo.Context, path string, err error) error {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return c.Redirect(http.StatusSeeOther, path+sep+"err="+url.QueryEscape(err.Error()))
+}
+
+// flashError decodes the ?err= query param into an error for PRG flash feedback.
+// "1" is the legacy sentinel for a generic failure; any other value is the
+// actual error message surfaced by redirectWithError.
+func flashError(c echo.Context) error {
+	msg := c.QueryParam("err")
+	if msg == "" {
+		return nil
+	}
+	if msg == "1" {
+		return fmt.Errorf("operation failed")
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+// flashParam maps one PRG query param to the flash message shown when it is set.
+type flashParam struct {
+	key string
+	msg string
+}
+
+// flashFromQuery returns the flash message for the first non-empty query param
+// among params, in slice order (which preserves the precedence of the prior
+// switch statements — only one param is set by a given PRG flow, so order only
+// matters if a malformed URL sets several). It returns "" when none are set.
+// The ?err= path is separate: flashError decodes it into FlashErr.
+func flashFromQuery(c echo.Context, params []flashParam) string {
+	for _, p := range params {
+		if c.QueryParam(p.key) != "" {
+			return p.msg
+		}
+	}
+	return ""
+}
+
+// page renders content through the go-daisy render package. Full browser
+// loads and htmx history restores (browser back/forward) get the sidebar
+// shell; inline HTMX partials (sidebar navigation, boosted links) get the bare
+// content for swapping into #main-content.
+//
+// History restores must return the full shell. htmx v4 restores by selecting
+// the [hx-history-elt] element out of the response (see hx-history-elt on
+// <main>) and outerSync-swapping it into #main-content. A bare fragment has no
+// such element, so the swap would fail; without an hx-history-elt at all htmx
+// falls back to targeting document.body, whose outerSync swap replaces the
+// stylesheet <link> and scripts that live in <body> (ui.templ), leaving a
+// partial page with no CSS or JS.
+func (s *Server) page(c echo.Context, title string, content templ.Component) error {
+	w, r := c.Response().Writer, c.Request()
+	// Scope base for link generation and the pre-rewrite path for sidebar
+	// active-state matching. Both come from the scope stashed by scopeRewrite;
+	// an unscoped request leaves the base empty (legacy absolute links).
+	linkBase := ""
+	activePath := r.URL.Path
+	if rs, ok := scopeFromContext(r.Context()); ok {
+		linkBase = rs.base()
+		if rs.OriginalPath != "" {
+			activePath = rs.OriginalPath
+		}
+	}
+	r = r.WithContext(withLinkBase(r.Context(), linkBase))
+	if render.IsPartial(r) {
+		// The shell navigates via hx-boost (in-place swaps), so the <title>
+		// lives only in the full page's <head> — partials would otherwise leave
+		// document.title stale on every navigation. htmx extracts the first
+		// <title> from a swapped response and applies it to document.title, so
+		// the partial carries one alongside the content.
+		s.renderScoped(w, r, partialWithTitle(title, content), linkBase)
+		return nil
+	}
+	agents, err := s.memory.ListAgentDefinitions(c.Request().Context())
+	captureError(err)
+	assistant := s.assistantAgentID(c.Request().Context(), agents)
+	// Tenancy chrome for the shell's project switcher (best-effort, same
+	// style as the agents fetch above): projects/orgs for the dropdown, the
+	// active project resolved against the list — from the session when one is
+	// attached, else the server's static MemoryProjectID (dev/API-key mode) —
+	// and its org name for the "Org / Project" trigger label.
+	projects, err := s.memory.ListProjects(c.Request().Context())
+	captureError(err)
+	orgs, err := s.memory.ListOrgs(c.Request().Context())
+	captureError(err)
+	// The caller's org→project access tree supplies the org role used to gate
+	// the Backups (project nav) and Members (org nav) sidebar entries. It is
+	// threaded once per request (see orgAccessTree): the page-data builders
+	// compute it first and page() reuses the cached result, so a render never
+	// re-fetches it. A failure degrades to "not admin", which hides the gated
+	// entries rather than surfacing an error (mirroring the org landing's
+	// transfer affordance).
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	activeProjectID := ""
+	var activeOrgID string
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok {
+		activeProjectID = sc.ProjectID
+		activeOrgID = sc.OrgID
+	} else {
+		activeProjectID = s.cfg.MemoryProjectID
+	}
+	var current *ProjectRef
+	if activeProjectID != "" {
+		for i := range projects {
+			if projects[i].ID == activeProjectID {
+				current = &projects[i]
+				break
+			}
+		}
+	}
+	currentOrgName := ""
+	if current != nil {
+		currentOrgName = orgNameFor(orgs, current.OrgID)
+	}
+	// Active org for the org-context shell (picker trigger + org sidebar) and
+	// the new-project modal's default org. Resolve from the session org whenever
+	// it is set — including when a project is active (its org is the session
+	// org) — so the modal defaults to the current project's org instead of
+	// "Select an organization".
+	var activeOrg *Org
+	if activeOrgID != "" {
+		for i := range orgs {
+			if orgs[i].ID == activeOrgID {
+				activeOrg = &orgs[i]
+				break
+			}
+		}
+	}
+	// Sidebar selection by context: project → project nav; org → org nav;
+	// none → no sidebar (wizard / account pages). The governing org's admin
+	// role (from the access tree) gates the Backups and Members entries.
+	var groups []layout.SidebarGroup
+	providersMissing := false
+	if activeProjectID != "" {
+		// The active project's owning org governs the Backups gate. Fall back
+		// to the session org when the project list didn't resolve (best-effort).
+		backupsOrgID := activeOrgID
+		if current != nil {
+			backupsOrgID = current.OrgID
+		}
+		// Documents badge: document-related terminal failures. Best-effort and
+		// cached for 30s, so a page render does not run the aggregate every
+		// time; a failure just hides the badge.
+		documentsWarn := 0
+		if report, err := s.cachedProcessingProblems(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			documentsWarn = processingDocumentsCount(report)
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(linkBase, isOrgAdmin(tree, backupsOrgID), documentsWarn), activePath)
+		// Warn in the settings nav when the active project has zero configured
+		// LLM providers. Fail-safe helper: false on lookup errors.
+		providersMissing = s.projectHasNoProviders(c.Request().Context())
+	} else if activeOrgID != "" {
+		// Org pages reached through the legacy /orgs/:id routes carry no scope
+		// base; fall back to the canonical /o/{org} so the sidebar links are
+		// still scoped. Scoped requests already have linkBase set.
+		orgNavBase := linkBase
+		if orgNavBase == "" {
+			orgNavBase = "/o/" + activeOrgID
+		}
+		groups = layout.ActiveSidebarGroups(orgSidebarGroups(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
+	}
+	// Recent projects for the picker's "Recent" section (only when the user
+	// has more than ten projects). Recent ids come from the durable cookie,
+	// filtered to still-accessible projects.
+	var recent []ProjectRef
+	showRecent := len(projects) > 10
+	if showRecent {
+		if rc, ok := s.readRecentProjects(c); ok {
+			var sub string
+			if sc, ok := sessionContextFrom(c.Request().Context()); ok {
+				sub = sc.Sub
+			}
+			for _, id := range rc.Recent[sub] {
+				for i := range projects {
+					if projects[i].ID == id {
+						recent = append(recent, projects[i])
+						break
+					}
+				}
+			}
+		}
+	}
+	// Signed-in identity for the account menu: show the menu for any session
+	// with a known account sub, even when the session lacks a name/email
+	// (Zitadel may not emit them). Fill the display name and email lazily from
+	// the Memory profile when the IdP token omits them. Dev/API-key requests
+	// have no session → no menu.
+	var user *currentUser
+	var accounts []currentUser
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
+		user = &currentUser{Name: sc.Name, Email: sc.Email, Picture: resolveAvatar(sc.AvatarOverrideURL, sc.Picture), Sub: sc.Sub}
+		if user.Name == "" || user.Email == "" {
+			if p, err := s.memory.GetProfile(c.Request().Context()); err == nil && p != nil {
+				if user.Name == "" {
+					user.Name = profileDisplayNameOf(p)
+				}
+				if user.Email == "" {
+					user.Email = p.Email
+				}
+			}
+		}
+		if installID, ok := s.readInstallID(c); ok {
+			for _, a := range s.reg().list(installID) {
+				accounts = append(accounts, currentUser{Name: a.Name, Email: a.Email, Picture: resolveAvatar(a.AvatarOverrideURL, a.Picture), Sub: a.Sub})
+			}
+		}
+	}
+	// Compiled type name → human label for the chat client's citation sources.
+	// Best-effort, like the fetches above: a failure degrades to an empty map, so
+	// the client falls back to humanized type names rather than erroring. The
+	// result is cached per project (objectTypeUIMap) so a full page render
+	// doesn't pay a serial GetCompiledTypes HTTP GET on the critical path.
+	objectTypes := s.objectTypeUIMap(c.Request().Context())
+	// Unread notification count for the topbar bell (inbox subsystem).
+	// Session-only and best-effort: dev/API-key mode has no bearer, and any
+	// counts failure degrades to 0 so the shell still renders. The bell counts
+	// the SAME scope the inbox is showing (account everywhere except the
+	// project-scoped inbox), so the badge can never disagree with the list it
+	// links to — see notificationUnread / inboxBellScope.
+	unreadNotifications := 0
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
+		bellScope, bellProject := s.inboxBellScope(c)
+		unreadNotifications = s.notificationUnread(c.Request().Context(), bellScope, bellProject)
+	}
+	// Route the full page through renderScoped too: internal content links
+	// (literal href/action/hx-* in the page templates) must carry the scope base
+	// just like htmx partials, otherwise the first navigation after a full load
+	// hits an unscoped app path and 404s under the session-mode hard cut.
+	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
+	return nil
+}
+
+// renderScoped renders a page or partial and rewrites its URL-bearing
+// attributes to the request's scope base, so links and htmx/form actions stay
+// in the active org/project context. It mirrors render.RenderPage /
+// render.RenderPartial's headers (see those for the partial/history contract).
+func (s *Server) renderScoped(w http.ResponseWriter, r *http.Request, content templ.Component, base string) {
+	var buf bytes.Buffer
+	if err := content.Render(r.Context(), &buf); err != nil {
+		captureError(err)
+		http.Error(w, "render error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if render.IsPartial(r) {
+		w.Header().Add("Vary", "HX-Request-Type, HX-Request")
+	}
+	_, _ = w.Write([]byte(rewriteScopedHTML(buf.String(), base)))
+}
+
+// currentProjectID returns the active project id for shell-level data
+// attributes (e.g. the inbox client's active-project scope), or "" when no
+// project is active.
+func currentProjectID(p *ProjectRef) string {
+	if p == nil {
+		return ""
+	}
+	return p.ID
+}
+
+// currentOrgID returns the active org id for shell-level scope propagation:
+// the active project's org when a project is active, else the active org.
+func currentOrgID(p *ProjectRef, activeOrg *Org) string {
+	if p != nil {
+		return p.OrgID
+	}
+	if activeOrg != nil {
+		return activeOrg.ID
+	}
+	return ""
+}
+
+// currentUserID returns the signed-in account's stable id for shell-level
+// scope propagation (e.g. the assistant drawer's localStorage key), or "" in
+// dev / API-key mode where no user session exists.
+func currentUserID(u *currentUser) string {
+	if u == nil {
+		return ""
+	}
+	return u.Sub
+}
+
+// currentUser is the signed-in identity shown in the account menu.
+type currentUser struct {
+	Name    string
+	Email   string
+	Picture string // avatar URL, may be empty
+	Sub     string // stable account id (Zitadel subject)
+}
+
+// initials returns the first letters of up to two space-separated words of
+// name, uppercased ("Ada Lovelace" → "AL", "ada" → "A", "" → ""). Rune-safe:
+// a multi-byte first character is kept whole.
+func initials(name string) string {
+	fields := strings.Fields(name)
+	if len(fields) == 0 {
+		return ""
+	}
+	first, _ := utf8.DecodeRuneInString(fields[0])
+	out := strings.ToUpper(string(first))
+	if len(fields) > 1 {
+		second, _ := utf8.DecodeRuneInString(fields[1])
+		out += strings.ToUpper(string(second))
+	}
+	return out
+}
+
+// resolveAvatar picks the avatar URL to display: the uploaded Memory photo
+// (override) wins when present, else the IdP picture, else "" (initials).
+func resolveAvatar(override, picture string) string {
+	if override != "" {
+		return override
+	}
+	return picture
+}
+
+// uiAgents renders the agents management page (list + create/edit/delete).
+// The model catalog (derived from configured providers), the skill list, and
+// the project's pinned default model are best-effort: the create/edit dialog
+// falls back to a free-choice model list, an empty skill picker, and the
+// generic "Auto — default model" label when any of them is unreachable.
+func (s *Server) uiAgents(c echo.Context) error {
+	ctx := c.Request().Context()
+	var (
+		agents          []AgentDefinitionSummary
+		agentsErr       error
+		providers       []ProjectProviderConfig
+		providersErr    error
+		defaultModel    string
+		defaultModelErr error
+	)
+	var g errgroup.Group
+	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
+	g.Go(func() error { providers, providersErr = s.memory.ListProjectProviders(ctx); return nil })
+	g.Go(func() error {
+		mc, err := s.memory.GetProjectModelConfig(ctx)
+		if err != nil {
+			defaultModelErr = err
+			return nil
+		}
+		if mc != nil {
+			defaultModel = mc.GenerativeModel
+		}
+		return nil
+	})
+	_ = g.Wait()
+	if agentsErr != nil {
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", userFacingError(agentsErr)))
+	}
+	captureError(providersErr)
+	captureError(defaultModelErr)
+
+	// Offer only configured providers' models — the global catalog includes
+	// unconfigured providers, which would break chats.
+	var models []Model
+	if providersErr == nil {
+		models = s.configuredGenerativeModels(ctx, providers)
+	}
+
+	// Per-agent model info rides on the list response now (memory reports
+	// effectiveModel per summary), so there is no per-agent GET round-trip
+	// here — the agents page renders the card grid straight from the list.
+	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil))
+}
+
+// chatRailData loads the session-rail data (agents, agent appearance map, past
+// conversations, and scheduled-run rows) shared by the full chat page and the
+// /partial/chat-rail refresh endpoint. Each conversation row also carries its
+// derived run bucket and pending-work counts (best-effort: a failed history
+// fetch leaves the row at the "done" bucket with zero counts).
+// includeArchived is forwarded to the conversation list so the rail's
+// "Include archived" filter can reveal hidden sessions on refresh; the default
+// (false) matches the list surfaces' exclude-archived contract (design D6).
+func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, err error) {
+	agents, err = s.memory.ListAgentDefinitions(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	appearances = make(map[string]agentAppearance, len(agents))
+	for _, a := range agents {
+		appearances[a.ID] = agentAppearance{Name: a.Name, Icon: agentIcon(a.UIConfig), Color: agentColor(a.UIConfig)}
+	}
+	convs, cerr := s.memory.ListConversationsWithAncestors(ctx, includeArchived)
+	if cerr != nil {
+		convs = &ConversationList{}
+	}
+	// Project-wide snapshots fetched once for every row (not once per
+	// conversation), mirroring the poller's grouping; conversationState reuses
+	// them so each row only adds one history fetch.
+	approvals, aErr := s.memory.ListToolApprovals(ctx)
+	if aErr != nil {
+		captureError(aErr)
+		approvals = nil
+	}
+	questions, qErr := s.memory.ListAgentQuestions(ctx)
+	if qErr != nil {
+		captureError(qErr)
+		questions = nil
+	}
+	// Nested sub-chats are internal loopback sessions. Their transcript is not
+	// shown until the group is opened, so fetching one history per child would
+	// multiply the rail's request count for badges nobody sees (17 sub-chats in
+	// one observed chat). Pending approvals and questions are already in the
+	// project-wide snapshots, so badge those without loading a transcript; an
+	// orphan promoted to a root is not nested and keeps the full state fetch.
+	visible := make(map[string]bool, len(convs.Conversations))
+	for _, c := range convs.Conversations {
+		visible[c.ID] = true
+	}
+	isSubchat := make(map[string]bool, len(convs.Conversations))
+	for _, c := range convs.Conversations {
+		if c.ParentConversationID != "" && visible[c.ParentConversationID] {
+			isSubchat[c.ID] = true
+		}
+	}
+	for i := range convs.Conversations {
+		c := &convs.Conversations[i]
+		if isSubchat[c.ID] {
+			for _, a := range approvals {
+				if a.ConversationID == c.ID && a.Decision == "pending" {
+					c.PendingApprovals++
+				}
+			}
+			for _, q := range questions {
+				if q.ConversationID == c.ID && (q.Response == nil || *q.Response == "") {
+					c.PendingQuestions++
+				}
+			}
+			if c.PendingApprovals > 0 || c.PendingQuestions > 0 {
+				c.Bucket = runBucketNeedsInput
+			} else {
+				c.Bucket = runBucketDone
+			}
+			continue
+		}
+		st, serr := s.conversationState(ctx, c.ID, approvals, questions)
+		if serr != nil {
+			c.Bucket = runBucketDone
+			continue
+		}
+		c.Bucket = st.bucket
+		c.PendingApprovals = len(st.pendingApprovals)
+		c.PendingQuestions = len(st.pendingQuestions)
+	}
+	schedRuns = s.chatScheduledRuns(ctx, appearances)
+	shared = s.chatSharedSessions(ctx)
+	workRuns = s.chatWorkRuns(ctx, appearances)
+	return agents, appearances, convs, schedRuns, shared, workRuns, nil
+}
+
+// chatModelWarnings returns agentID → message for every agent whose chats
+// cannot currently run (the model-availability error state), or an empty map
+// when none apply. Best-effort: a failed default-model or provider fetch
+// degrades to "no default / no providers" (captured, mirroring uiAgent); an
+// agent whose definition can't be fetched is skipped. A failed provider fetch
+// degrades to "no providers"; a failed model-config fetch leaves the pinned
+// default unknown, so the classifier keeps its legacy resolved-model rule and
+// never fabricates an unpinned warning. The message text comes from
+// agentModelDashboardIssue so the chat banner matches the agent dashboard/
+// settings warnings exactly.
+func (s *Server) chatModelWarnings(ctx context.Context, agents []AgentDefinitionSummary) map[string]string {
+	warnings := map[string]string{}
+	if len(agents) == 0 {
+		return warnings
+	}
+	var defaultModel string
+	modelConfigKnown := false
+	if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
+		captureError(err)
+	} else {
+		if mc != nil {
+			defaultModel = mc.GenerativeModel
+		}
+		modelConfigKnown = true
+	}
+	providers := []string{}
+	if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
+		providers = projectProviderNames(ps)
+	} else {
+		captureError(err)
+	}
+	defs := make([]*AgentDefinition, len(agents))
+	runConcurrently(len(agents), func(i int) {
+		def, err := s.memory.GetAgentDefinition(ctx, agents[i].ID)
+		if err != nil {
+			return // agent vanished between the rail list and here
+		}
+		defs[i] = def
+	})
+	for i, def := range defs {
+		if def == nil {
+			continue
+		}
+		if sev, msg := agentModelDashboardIssue(def, defaultModel, modelConfigKnown, len(providers) > 0, providers); sev == "error" {
+			warnings[agents[i].ID] = msg
+		}
+	}
+	return warnings
+}
+
+// chatRunControl carries the active conversation's server-rendered run-control
+// surfaces — the pending-work dock and the session todo card — into ChatPage so
+// they exist before chat.js runs. It is threaded through ChatPage as an
+// optional variadic so existing callers stay source-compatible.
+type chatRunControl struct {
+	Approvals []ApprovalCard
+	Questions []QuestionCard
+	Todos     []TodoItem
+}
+
+// chatRunControlOrZero returns the supplied run-control data, or the zero
+// value when the caller passed none.
+func chatRunControlOrZero(opts []chatRunControl) chatRunControl {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return chatRunControl{}
+}
+
+// chatRunControlFor resolves the active conversation's pending-work dock cards
+// and session todos for server-side pre-render. Best-effort: an empty
+// conversation id, a missing ACP session, or any fetch failure degrades to zero
+// data rather than an error.
+func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunControl {
+	if convID == "" {
+		return chatRunControl{}
+	}
+	approvals, questions := s.pendingDockCards(ctx, convID)
+	var todos []TodoItem
+	if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.SessionID != "" {
+		if items, terr := s.memory.ListSessionTodos(ctx, detail.SessionID); terr == nil {
+			todos = todoItems(items)
+		} else {
+			captureError(terr)
+		}
+	}
+	return chatRunControl{Approvals: approvals, Questions: questions, Todos: todos}
+}
+
+// uiChat renders the chat workspace (the primary sessions surface):
+// agent picker, streaming log, and a resumable session list.
+// ?agent=<id> preselects an agent, ?c=<conversationId> resumes a conversation,
+// ?prompt=<msg> pre-fills (and auto-sends) a first message.
+func (s *Server) uiChat(c echo.Context) error {
+	ctx := c.Request().Context()
+	agents, appearances, convs, schedRuns, shared, workRuns, err := s.chatRailData(ctx, false)
+	if err != nil {
+		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, nil, "", "", "", userFacingError(err), true, nil))
+	}
+	modelWarnings := s.chatModelWarnings(ctx, agents)
+	convID := c.QueryParam("c")
+	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, appearances, schedRuns, shared, workRuns, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
+}
+
+// uiChatRail returns the session-rail list HTML as a fragment, so chat.js can
+// refresh the rail after a new conversation appears without rebuilding the
+// row markup client-side. ?includeArchived=true reveals archived sessions for
+// the rail's "Include archived" filter; absent/false keeps the default exclude.
+func (s *Server) uiChatRail(c echo.Context) error {
+	includeArchived := c.QueryParam("includeArchived") == "true"
+	_, appearances, convs, schedRuns, shared, workRuns, err := s.chatRailData(c.Request().Context(), includeArchived)
+	if err != nil {
+		convs = &ConversationList{}
+		appearances = map[string]agentAppearance{}
+		schedRuns = nil
+		shared = nil
+		workRuns = nil
+	}
+	renderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, shared, workRuns, c.QueryParam("c")))
+	return nil
+}
+
+// agentAppearance is one agent's rail presentation: its display name plus the
+// declared uiConfig icon/color (both empty when no appearance is declared).
+// Keyed by agent-definition id in chatRailData.
+type agentAppearance struct {
+	Name  string
+	Icon  string
+	Color string
+}
+
+// scheduledRunRow is one scheduled-agent run rendered in the chat session
+// rail (best-effort; a fetch failure yields an empty list).
+type scheduledRunRow struct {
+	ID        string
+	AgentName string
+	Status    string
+	StartedAt string
+	Summary   string
+	// Icon/Color carry the run agent's definition appearance (empty when
+	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
+	Icon  string
+	Color string
+}
+
+// sharedSessionRow is one owner-shared session rendered in the chat session
+// rail (data-origin="shared"). It opens a read-only transcript on a separate
+// page, so it carries no run/bucket state — just identity, title, and time.
+type sharedSessionRow struct {
+	ID                string
+	AgentDefinitionID string
+	AgentName         string
+	Title             string
+	IsArchived        bool
+	ActivityRelative  string
+}
+
+// chatSharedSessions collects the project's owner-shared sessions (created by
+// anonymous end users via agent-share links) for the chat session rail. Rows
+// open a read-only transcript on a separate page (data-action="open-share").
+func (s *Server) chatSharedSessions(ctx context.Context) []sharedSessionRow {
+	sessions, err := s.memory.ListShareSessionsByProject(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]sharedSessionRow, 0, len(sessions))
+	for _, sess := range sessions {
+		title := sess.Title
+		if title == "" {
+			title = sess.AgentName
+		}
+		last := sess.CreatedAt
+		if sess.LastActivityAt != nil {
+			last = *sess.LastActivityAt
+		}
+		out = append(out, sharedSessionRow{
+			ID:                sess.ID,
+			AgentDefinitionID: sess.AgentDefinitionID,
+			AgentName:         sess.AgentName,
+			Title:             title,
+			IsArchived:        sess.IsArchived,
+			ActivityRelative:  relTime(last.UTC().Format(time.RFC3339)),
+		})
+	}
+	return out
+}
+
+// chatScheduledRuns collects recent runs of schedule-triggered agents for the
+// chat session rail. Only agents with triggerType "schedule" contribute; runs
+// of manual/reaction/webhook agents are not on-demand sessions. Each run row
+// inherits the appearance of its agent definition (via agentDefinitionId).
+func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]agentAppearance) []scheduledRunRow {
+	agents, err := s.memory.ListScheduledAgents(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []scheduledRunRow
+	for _, a := range agents {
+		if a.TriggerType != "schedule" {
+			continue
+		}
+		var ap agentAppearance
+		if a.AgentDefinitionID != nil {
+			ap = appearances[*a.AgentDefinitionID]
+		}
+		runs, err := s.memory.ListScheduledAgentRuns(ctx, a.ID)
+		if err != nil {
+			continue
+		}
+		for _, r := range runs {
+			out = append(out, scheduledRunRow{
+				ID:        r.ID,
+				AgentName: a.Name,
+				Status:    r.Status,
+				StartedAt: r.StartedAt,
+				Summary:   scheduledRunPreview(r, a.Name),
+				Icon:      ap.Icon,
+				Color:     ap.Color,
+			})
+		}
+	}
+	return out
+}
+
+// chatWorkRuns collects the project's object-driven (board/work) runs and its
+// extraction runs for the chat session rail. Each run row is matched (once, in
+// Go) against the work-item board projection so its title is the work item's key
+// when known, falling back to the run agent's name. Rows inherit the run agent's
+// definition appearance.
+func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentAppearance) []workRunRow {
+	// A board-listing failure must not hide the extraction rows below.
+	runs, _ := s.memory.ListBoardRuns(ctx, 50)
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	bySubject := make(map[string]WorkItem, len(items))
+	for _, it := range items {
+		if it.CanonicalID != "" {
+			bySubject[it.CanonicalID] = it
+		}
+	}
+	out := make([]workRunRow, 0, len(runs))
+	for _, r := range runs {
+		title := r.AgentName
+		if r.SubjectObjectID != nil {
+			if it, ok := bySubject[*r.SubjectObjectID]; ok && it.Key != "" {
+				title = it.Key
+			}
+		}
+		ap := appearances[r.AgentID]
+		out = append(out, workRunRow{
+			// A board row IS the run: both the row id and the transcript target
+			// are the run id (the rail keys open-run off RunID).
+			ID:        r.ID,
+			RunID:     r.ID,
+			Origin:    "board",
+			Title:     title,
+			AgentName: r.AgentName,
+			Status:    r.Status,
+			StartedAt: r.StartedAt,
+			Icon:      ap.Icon,
+			Color:     ap.Color,
+		})
+	}
+	return append(out, s.extractionRunRows(ctx)...)
+}
+
+// extractionRunRows collects the project's recent extraction jobs for the chat
+// rail (data-origin="extraction") and the sessions API. An extraction is a job,
+// not a conversation, but since the worker records each job's pipeline as an
+// agent run the row opens that run's transcript in the chat workspace exactly
+// like a board or scheduled run. A job whose run could not be recorded (legacy
+// or recording failure) falls back to the document's extraction history page, so
+// the row is never dropped.
+func (s *Server) extractionRunRows(ctx context.Context) []workRunRow {
+	jobs, err := s.memory.ListProjectExtractionJobs(ctx, 50)
+	if err != nil {
+		return nil
+	}
+	// One documents page supplies filenames for the rows: the rail shows what was
+	// extracted, not a bare job id. Best-effort — an unresolvable document falls
+	// back to the job id.
+	titles := map[string]string{}
+	if docs, derr := s.memory.ListDocuments(ctx, DocumentListParams{Limit: 100}); derr == nil {
+		for _, d := range docs.Documents {
+			titles[d.ID] = d.Filename
+		}
+	}
+	out := make([]workRunRow, 0, len(jobs))
+	for _, job := range jobs {
+		title := ""
+		if job.SourceID != "" {
+			title = titles[job.SourceID]
+		}
+		if title == "" {
+			title = "Extraction " + shortID(job.ID)
+		}
+		startedAt := job.StartedAt
+		if startedAt == "" {
+			startedAt = job.CreatedAt
+		}
+		row := workRunRow{
+			ID:          job.ID,
+			Origin:      "extraction",
+			RunID:       job.RunID,
+			Title:       title,
+			AgentName:   "Extraction",
+			Status:      job.Status,
+			StartedAt:   startedAt,
+			CompletedAt: job.CompletedAt,
+		}
+		if row.RunID == "" && job.SourceID != "" {
+			row.Href = "/documents/" + url.PathEscape(job.SourceID) + "/extractions/" + url.PathEscape(job.ID)
+		}
+		if row.RunID == "" && row.Href == "" {
+			// A run-less job with no document (manual input) has no transcript and
+			// no history page to link; a dead row would be worse than no row.
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// modelGroups buckets the model catalog by provider for optgroup rendering.
+func modelGroups(models []Model) []modelGroup {
+	order := []string{}
+	seen := map[string]bool{}
+	for _, m := range models {
+		if !seen[m.Provider] {
+			seen[m.Provider] = true
+			order = append(order, m.Provider)
+		}
+	}
+	out := make([]modelGroup, 0, len(order))
+	for _, p := range order {
+		g := modelGroup{Provider: p}
+		for _, m := range models {
+			if m.Provider == p {
+				g.Models = append(g.Models, m)
+			}
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// modelOptionGroups adapts the model catalog into the shared option-group
+// renderer's shape for the agent model select, marking the agent's current
+// model as selected. Option labels are full provider/model references (#1441)
+// so the closed native <select> keeps the provider visible — a native select
+// can only show the selected option's text. The provider bucketing stays here;
+// the markup lives in components.
+func modelOptionGroups(models []Model, current *ModelConfig) []components.SelectOptionGroup {
+	var name string
+	if current != nil {
+		name = current.Name
+	}
+	return modelOptionGroupsFullRef(models, name)
+}
+
+// modelOptionGroupsFor adapts the catalog into option groups with short
+// display-name labels, for callers holding the current model as a bare
+// provider-prefixed name. The provider-settings selects already group by
+// provider instance and name it in the field help, and friendly model names
+// read better there. Agent-facing selects use modelOptionGroupsFullRef.
+func modelOptionGroupsFor(models []Model, current string) []components.SelectOptionGroup {
+	return modelOptionGroupsWith(models, current, false)
+}
+
+// modelOptionGroupsFullRef labels each option with the full provider/model
+// reference (#1441), so the selected option's text carries its provider even
+// when the native dropdown is closed.
+func modelOptionGroupsFullRef(models []Model, current string) []components.SelectOptionGroup {
+	return modelOptionGroupsWith(models, current, true)
+}
+
+// modelOptionGroupsWith buckets the catalog by provider and marks current as
+// selected. fullRef chooses the option label: the full provider/model value
+// (true) or the catalog's short display name (false).
+func modelOptionGroupsWith(models []Model, current string, fullRef bool) []components.SelectOptionGroup {
+	groups := modelGroups(models)
+	out := make([]components.SelectOptionGroup, 0, len(groups))
+	for _, g := range groups {
+		opts := make([]components.SelectOption, 0, len(g.Models))
+		for _, m := range g.Models {
+			value := m.Provider + "/" + m.ModelName
+			label := modelDisplay(m)
+			if fullRef {
+				label = value
+			}
+			opts = append(opts, components.SelectOption{
+				Value:    value,
+				Label:    label,
+				Selected: current != "" && value == current,
+			})
+		}
+		out = append(out, components.SelectOptionGroup{Label: g.Provider, Options: opts})
+	}
+	return out
+}
+
+// modelDisplay prefers the catalog's display name, falling back to
+// provider/modelName for models without one.
+func modelDisplay(m Model) string {
+	if m.DisplayName != "" {
+		return m.DisplayName
+	}
+	if m.Provider != "" {
+		return m.Provider + "/" + m.ModelName
+	}
+	return m.ModelName
+}
+
+// modelGroup is one provider bucket of catalog models.
+type modelGroup struct {
+	Provider string
+	Models   []Model
+}
+
+// --- display helpers (shared by templates) ---
+
+// plural returns "s" for counts other than 1.
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// countLabel renders a count with correct pluralisation ("1 memory" /
+// "7 memories"). singular/plural are the noun forms.
+func countLabel(n int, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return strconv.Itoa(n) + " " + plural
+}
+
+// shortID truncates an opaque ID for table display.
+func shortID(id string) string {
+	if len(id) <= 10 {
+		return id
+	}
+	return id[:10]
+}
+
+// relTime humanizes an RFC3339 timestamp via shared.RelativeTime. Unlike the
+// upstream helper (which returns "—" on a parse error), the app preserves the
+// raw timestamp when it can't be parsed, so the wrapper falls back to iso when
+// RelativeTime reports "—" for a non-empty input.
+func relTime(iso string) string {
+	if iso == "" {
+		return "—"
+	}
+	if out := shared.RelativeTime(iso); out != "—" {
+		return out
+	}
+	return iso
+}
+
+// visibilityIntent maps visibility to a badge color. It resolves through
+// normalizedVisibility (the same single source as the label and the Settings
+// control), so a project badge can never render with a ghost intent and the
+// intent always agrees with the label.
+func visibilityIntent(v string) ui.BadgeIntent {
+	switch normalizedVisibility(v) {
+	case agentVisibilityExternal:
+		return ui.BadgeSuccess
+	case agentVisibilityProject:
+		return ui.BadgeInfo
+	case agentVisibilityInternal:
+		return ui.BadgeNeutral
+	default:
+		return ui.BadgeGhost
+	}
+}
+
+// visibilityLabel displays a friendly visibility label. It normalizes the
+// stored value through the same single source as the Settings control
+// (normalizedVisibility), so the dashboard badge and Settings can never
+// disagree: empty or unknown reads as "project" (the server default).
+//
+// NOTE: blueprint manifest surfaces deliberately bypass this helper and echo the
+// raw value verbatim (proposal.templ agent apply preview, blueprints.templ
+// detail view and version diff). Those render user-authored YAML — a faithful
+// preview of the author's own content, not a persisted kb.agent_definitions
+// row — and the blueprint apply path rejects invalid values with a 400, so a
+// raw odd value can never be persisted through that route. Normalising it there
+// would hide what the author actually wrote. This is a stated decision, not an
+// inconsistency to "fix".
+func visibilityLabel(v string) string {
+	return normalizedVisibility(v)
+}
+
+// Valid agent visibility levels, mirroring memory's AgentVisibility enum.
+// A missing value defaults to project (the server default).
+const (
+	agentVisibilityProject  = "project"
+	agentVisibilityExternal = "external"
+	agentVisibilityInternal = "internal"
+)
+
+// agentVisibilityOption is one selectable visibility level: the stored value,
+// its short display name, and the one-line description shown both in the
+// option label ("Name — description") and as the selected option's helper line.
+type agentVisibilityOption struct {
+	Value       string
+	Label       string
+	Description string
+}
+
+// agentVisibilityOptions is the ordered visibility list for the General
+// settings dropdown. Project leads as the default.
+var agentVisibilityOptions = []agentVisibilityOption{
+	{agentVisibilityProject, "Project", "Visible in this project's UI and chat. Not advertised in the project's A2A agent card."},
+	{agentVisibilityExternal, "External", "Advertised in the project's A2A agent card, so external A2A clients can discover it. The agent's name becomes its public skill id."},
+	{agentVisibilityInternal, "Internal", "Hidden from the agents list. For system agents that other agents call — open it by direct link."},
+}
+
+// Warning and note copy shown under the Visibility control. Kept factual:
+// project agents are not advertised in the A2A agent card but remain resolvable
+// by slug; internal agents are neither advertised nor A2A-resolvable (they can
+// still be invoked by other agents through delegation). Neither is ever
+// described as "not callable".
+const (
+	agentVisibilityExternalWarning = "External agents are listed in your project's A2A agent card. Anyone with a project API token can discover them (agents:read) and call them (agents:write). Review the system prompt and tools before exposing an agent."
+	agentVisibilityInternalNote    = "Internal agents don't appear in the agents list. You can still open this one from its direct link, and other agents can still call it."
+)
+
+// agentVisibilityNormalize maps a stored or submitted visibility to one of the
+// three valid levels, defaulting empty/missing to project (the server default).
+// It returns false for anything else, so callers never forward garbage.
+func agentVisibilityNormalize(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "":
+		return agentVisibilityProject, true
+	case agentVisibilityProject, agentVisibilityExternal, agentVisibilityInternal:
+		return v, true
+	default:
+		return "", false
+	}
+}
+
+// normalizedVisibility is the single source that maps a stored visibility to
+// its canonical level for display. It is shared by the dashboard badge label
+// (visibilityLabel), the badge intent (visibilityIntent), and the Settings
+// control (agentVisibilityValue), so all three surfaces agree for every input.
+// Empty or unknown falls back to project (the server default), matching the
+// Settings control.
+func normalizedVisibility(v string) string {
+	nv, ok := agentVisibilityNormalize(v)
+	if !ok {
+		return agentVisibilityProject
+	}
+	return nv
+}
+
+// agentVisibilityValue returns the agent's visibility normalized to a known
+// level: empty or unknown reads as project (the server default), so an older
+// server or a malformed value still preselects a valid option.
+func agentVisibilityValue(a *AgentDefinition) string {
+	if a == nil {
+		return agentVisibilityProject
+	}
+	return normalizedVisibility(a.Visibility)
+}
+
+// agentVisibilityDescription returns the one-line description for a visibility
+// value, matching what the dropdown renders for its selected option. Unknown
+// values fall back to the project copy.
+func agentVisibilityDescription(v string) string {
+	nv, ok := agentVisibilityNormalize(v)
+	if !ok {
+		nv = agentVisibilityProject
+	}
+	for _, opt := range agentVisibilityOptions {
+		if opt.Value == nv {
+			return opt.Description
+		}
+	}
+	return ""
+}
+
+// chatPlaceholder picks a placeholder mentioning the active agent name.
+func chatPlaceholder(agents []AgentDefinitionSummary, preselect string) string {
+	name := "Memory"
+	id := defaultAgentID(agents, preselect)
+	for _, a := range agents {
+		if a.ID == id {
+			name = a.Name
+			break
+		}
+	}
+	return "Message " + name + "…"
+}
+
+// defaultAgentID returns the preselect id if valid, else the first agent id.
+func defaultAgentID(agents []AgentDefinitionSummary, preselect string) string {
+	if preselect != "" {
+		for _, a := range agents {
+			if a.ID == preselect {
+				return preselect
+			}
+		}
+	}
+	if len(agents) > 0 {
+		return agents[0].ID
+	}
+	return ""
+}
+
+// agentSummaryByID finds an agent summary by id, reporting whether it exists.
+func agentSummaryByID(agents []AgentDefinitionSummary, id string) (AgentDefinitionSummary, bool) {
+	for _, a := range agents {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return AgentDefinitionSummary{}, false
+}
+
+// activeChatAgent resolves the agent whose identity the chat pane header should
+// show: the agent of the conversation named by convID when it is still in the
+// list, otherwise the default/preselected agent. ok is false only when there is
+// no agent to show at all, so the caller keeps the generic header copy. A
+// conversation whose agent is missing from the (possibly stale) list falls back
+// to the default agent rather than leaving the header blank.
+func activeChatAgent(agents []AgentDefinitionSummary, convs *ConversationList, preselect, convID string) (AgentDefinitionSummary, bool) {
+	activeID := ""
+	if convs != nil && convID != "" {
+		for _, c := range convs.Conversations {
+			if c.ID == convID {
+				activeID = c.AgentDefinitionID
+				break
+			}
+		}
+	}
+	if a, ok := agentSummaryByID(agents, activeID); ok {
+		return a, true
+	}
+	return agentSummaryByID(agents, defaultAgentID(agents, preselect))
+}
+
+// assistantAgentID returns the configured assistant agent's ID, or "" when
+// unset or the referenced agent no longer exists.
+func (s *Server) assistantAgentID(ctx context.Context, agents []AgentDefinitionSummary) string {
+	ps, err := s.memory.GetProjectSetting(ctx, settingsAssistantCategory, settingsAssistantKey)
+	if err != nil || ps == nil {
+		return ""
+	}
+	id, _ := ps.Value["agentId"].(string)
+	if id == "" {
+		return ""
+	}
+	for _, a := range agents {
+		if a.ID == id {
+			return id
+		}
+	}
+	return ""
+}
+
+// chatTitle is the display title of a conversation, falling back to a
+// shortened id for untitled chats.
+func chatTitle(c Conversation) string {
+	if c.Title != "" {
+		return c.Title
+	}
+	return "Chat " + shortID(c.ID)
+}
+
+// --- document browser helpers ---
+
+// documentName is the display name of a document, falling back to a shortened
+// id for untitled documents.
+func documentName(d Document) string {
+	if d.Filename != "" {
+		return d.Filename
+	}
+	return "Document " + shortID(d.ID)
+}
+
+// documentStatusIntent maps an extraction/processing status to a badge colour.
+// Unknown statuses stay neutral.
+func documentStatusIntent(status string) ui.BadgeIntent {
+	switch strings.ToLower(status) {
+	case "completed":
+		return ui.BadgeSuccess
+	case "failed", "dead_letter":
+		return ui.BadgeError
+	case "running", "processing":
+		return ui.BadgeInfo
+	case "pending", "queued":
+		return ui.BadgeWarning
+	default:
+		return ui.BadgeNeutral
+	}
+}
+
+// uiDocument renders a document's Overview sub-page: metadata, the extraction
+// trigger, and a preview of the original file. Chunks and extraction history
+// live on their own sub-routes; a failed preview fetch degrades only the
+// preview card.
+func (s *Server) uiDocument(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	doc, err := s.memory.GetDocument(ctx, id)
+	if err != nil {
+		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, documentPreview{}, userFacingError(err), "", nil, false))
+	}
+
+	preview := s.loadDocumentPreview(ctx, doc)
+	blocked := s.extractionModelMissing(ctx)
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "extracted", msg: "Extraction triggered."},
+	})
+	flashErr := flashError(c)
+	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, preview, nil, flashMsg, flashErr, blocked))
+}
+
+// uiUploadDocument handles the documents page upload form (PRG): it forwards
+// the file to memory and redirects back to the list, or to ?err=1 on failure.
+func (s *Server) uiUploadDocument(c echo.Context) error {
+	file, err := c.FormFile("file")
+	if err != nil {
+		return redirectWithError(c, "/documents", fmt.Errorf("upload: select a file"))
+	}
+	if file.Size > maxUploadSize {
+		return redirectWithError(c, "/documents", fmt.Errorf("upload: file too large (max %d bytes)", maxUploadSize))
+	}
+	src, err := file.Open()
+	if err != nil {
+		return redirectWithError(c, "/documents", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	res, err := s.memory.UploadDocument(c.Request().Context(), file.Filename, src)
+	if err != nil {
+		return redirectWithError(c, "/documents", err)
+	}
+	if res.IsDuplicate {
+		return c.Redirect(http.StatusSeeOther, "/documents?duplicate=1")
+	}
+	return c.Redirect(http.StatusSeeOther, "/documents?uploaded=1")
+}
+
+// uiTriggerExtraction handles the extraction trigger form (PRG): it creates an
+// extraction job and redirects back to the document detail view.
+func (s *Server) uiTriggerExtraction(c echo.Context) error {
+	id := c.Param("id")
+	if s.extractionModelMissing(c.Request().Context()) {
+		return redirectWithError(c, "/documents/"+url.PathEscape(id), errNoGenerativeModel)
+	}
+	if _, err := s.memory.CreateExtractionJob(c.Request().Context(), id); err != nil {
+		return redirectWithError(c, "/documents/"+url.PathEscape(id), err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/documents/"+url.PathEscape(id)+"?extracted=1")
+}
+
+// errDocumentIDRequired guards the document mutation routes: every one of them
+// is project-scoped by the memory client (X-Project-ID from the session or the
+// static project id), and none of them can act without a document id.
+var errDocumentIDRequired = errors.New("document id is required")
+
+// uiDeleteDocument handles the delete form on the document detail header and
+// the per-row delete on the documents list (PRG, same shape as the project
+// deletes): it forwards to memory and redirects back to the list with a
+// ?deleted=1 flash, or to ?err=1 when memory rejects the deletion. HTMX
+// submits (the boosted form / hx-confirm path) get an HX-Redirect; plain form
+// posts get the 303.
+func (s *Server) uiDeleteDocument(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return redirectWithError(c, "/documents", errDocumentIDRequired)
+	}
+	if err := s.memory.DeleteDocument(c.Request().Context(), id); err != nil {
+		return redirectWithError(c, "/documents", err)
+	}
+	redirectAfterMutation(c, "/documents?deleted=1")
+	return nil
+}
+
+// uiBlueprints renders the blueprint gallery: applied blueprints (unapply),
+// the project's private drafts (install), and available blueprints
+// (install/upgrade/remove). Available blueprints are best-effort (a failure
+// still renders the page).
+func (s *Server) uiBlueprints(c echo.Context) error {
+	ctx := c.Request().Context()
+	var flashErr error
+	var flashMsg string
+	flashErr = flashError(c)
+	if c.QueryParam("installed") != "" {
+		flashMsg = "Blueprint installed."
+	}
+	if c.QueryParam("removed") != "" {
+		flashMsg = "Blueprint removed."
+	}
+	if c.QueryParam("checkQueued") != "" {
+		flashMsg = "Update check queued. Refresh in a moment to see the result."
+	}
+	if c.QueryParam("updateQueued") != "" {
+		flashMsg = "Update queued. The row shows progress; reload to refresh it."
+	}
+	if c.QueryParam("ghCredentialSaved") != "" {
+		flashMsg = "GitHub access token saved."
+	}
+	if d := c.QueryParam("derived"); d != "" {
+		flashMsg = "Draft " + d + " created."
+	}
+
+	var (
+		applied    []AppliedBlueprint
+		appliedErr error
+		records    []BlueprintRecord
+		recordsErr error
+		drafts     []BlueprintRecord
+	)
+	var g errgroup.Group
+	g.Go(func() error { applied, appliedErr = s.memory.ListAppliedBlueprints(ctx); return nil })
+	g.Go(func() error { records, recordsErr = s.memory.ListBlueprints(ctx); return nil })
+	g.Go(func() error { drafts, _ = s.listPrivateDrafts(ctx); return nil })
+	_ = g.Wait()
+
+	if appliedErr != nil {
+		return s.page(c, pageTitle("Blueprints"), BlueprintsPage(nil, nil, nil, nil, userFacingError(appliedErr), flashMsg, flashErr))
+	}
+	// The applied list carries no job, so resolve each repo-imported row's
+	// latest update job separately (best effort) — this is what lets the Update
+	// control show queued/running/succeeded/failed across reloads. A missing
+	// status (404) is normal before any check has run.
+	lastJobs := make([]*BlueprintUpdateJob, len(applied))
+	var jg errgroup.Group
+	for i := range applied {
+		if applied[i].SourceURL == "" {
+			continue
+		}
+		jg.Go(func() error {
+			st, err := s.memory.GetBlueprintUpdates(ctx, applied[i].Name)
+			if err != nil {
+				if !isMemoryNotFound(err) {
+					captureError(err)
+				}
+				return nil
+			}
+			lastJobs[i] = st.LatestJob
+			return nil
+		})
+	}
+	_ = jg.Wait()
+	for i := range applied {
+		applied[i].LatestJob = lastJobs[i]
+	}
+	captureError(recordsErr)
+	available := buildAvailableList(records, applied)
+	var upgrades, avail []AvailableSchemaItem
+	for _, a := range available {
+		if a.Upgrade {
+			upgrades = append(upgrades, a)
+		} else {
+			avail = append(avail, a)
+		}
+	}
+	return s.page(c, pageTitle("Blueprints"), BlueprintsPage(applied, upgrades, avail, drafts, nil, flashMsg, flashErr))
+}
+
+// --- skill browser helpers ---
+
+// scopeIntent maps a skill scope to a badge colour, mirroring
+// visibilityIntent: the widest reach reads as the strongest intent.
+func scopeIntent(scope string) ui.BadgeIntent {
+	switch strings.ToLower(scope) {
+	case "global":
+		return ui.BadgeSuccess
+	case "org":
+		return ui.BadgeInfo
+	case "project":
+		return ui.BadgeNeutral
+	default:
+		return ui.BadgeGhost
+	}
+}
+
+// scopeLabel displays a friendly scope label. Skills created from the gateway
+// are project-scoped, so an empty scope from an older service renders as
+// "project".
+func scopeLabel(scope string) string {
+	if scope == "" {
+		return "project"
+	}
+	return scope
+}
+
+// provenanceLabel renders a skill's source/license/version provenance as one
+// "source · license · vX" string, or "" when nothing is recorded.
+func provenanceLabel(m *SkillMetadata) string {
+	if m == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if m.Source != "" {
+		parts = append(parts, m.Source)
+	}
+	if m.License != "" {
+		parts = append(parts, m.License)
+	}
+	if m.Version != "" {
+		parts = append(parts, "v"+strings.TrimPrefix(m.Version, "v"))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// skillUsage counts, for each skill name, how many agent definitions list it
+// in their Skills. The list summary now carries Skills, so no per-agent fetch.
+func (s *Server) skillUsage(agents []AgentDefinitionSummary) map[string]int {
+	counts := map[string]int{}
+	for _, a := range agents {
+		for _, name := range a.Skills {
+			counts[name]++
+		}
+	}
+	return counts
+}
+
+// usageLabel renders a skill's agent-usage count as a short label.
+func usageLabel(n int) string {
+	switch n {
+	case 0:
+		return "Unused"
+	case 1:
+		return "1 agent"
+	default:
+		return strconv.Itoa(n) + " agents"
+	}
+}
+
+// usageIntent maps a skill's agent-usage count to a badge colour.
+func usageIntent(n int) ui.BadgeIntent {
+	if n == 0 {
+		return ui.BadgeGhost
+	}
+	return ui.BadgeInfo
+}
+
+// uiSkills renders the skills management page: the create form plus the list
+// of skills. A failed list fetch renders the whole-page error state;
+// ?created=1 / ?deleted=1 / ?err=1 surface PRG feedback from the
+// create/delete flows.
+func (s *Server) uiSkills(c echo.Context) error {
+	ctx := c.Request().Context()
+	var (
+		skills    []Skill
+		skillsErr error
+		agents    []AgentDefinitionSummary
+		agentErr  error
+	)
+	var g errgroup.Group
+	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
+	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
+	_ = g.Wait()
+
+	var flashMsg string
+	flashErr := flashError(c)
+	switch {
+	case c.QueryParam("created") != "":
+		flashMsg = "Skill created."
+	case c.QueryParam("deleted") != "":
+		flashMsg = "Skill deleted."
+	}
+	captureError(agentErr)
+	assistant := s.assistantAgentID(ctx, agents)
+	usedBy := s.skillUsage(agents)
+	var loadErr error
+	if skillsErr != nil {
+		loadErr = userFacingError(skillsErr)
+	}
+	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, flashMsg, flashErr, assistant, usedBy))
+}
+
+// uiSkill renders one skill: scope + provenance badges, the full content, the
+// edit form (description + content only — name is immutable), and a delete
+// button with a confirm dialog. ?updated=1 / ?err=1 surface PRG feedback from
+// the update flow.
+func (s *Server) uiSkill(c echo.Context) error {
+	id := c.Param("id")
+	skill, err := s.memory.GetSkill(c.Request().Context(), id)
+	var flashMsg string
+	flashErr := flashError(c)
+	if c.QueryParam("updated") != "" {
+		flashMsg = "Skill updated."
+	}
+	if err != nil {
+		return s.page(c, pageTitle("Skill"), SkillDetailPage(nil, userFacingError(err), "", nil))
+	}
+	return s.page(c, pageTitle(skill.Name), SkillDetailPage(skill, nil, flashMsg, flashErr))
+}
+
+// uiNewSkill renders the create form page. ?err=1 surfaces PRG feedback from
+// the create flow.
+func (s *Server) uiNewSkill(c echo.Context) error {
+	return s.page(c, pageTitle("New skill"), SkillNewPage(flashError(c)))
+}
+
+// uiCreateSkill handles the create form on the new-skill page (PRG): it
+// forwards the fields to memory and redirects back to the list, or to
+// ?err=1 when memory rejects the values (invalid slug, empty
+// description/content, content over 1 MiB).
+func (s *Server) uiCreateSkill(c echo.Context) error {
+	ctx := c.Request().Context()
+	name := c.FormValue("name")
+	description := c.FormValue("description")
+	content := c.FormValue("content")
+	if _, err := s.memory.CreateSkill(ctx, name, description, content); err != nil {
+		return redirectWithError(c, "/skills/new", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/skills?created=1")
+}
+
+// uiUpdateSkill handles the edit form on the detail page (PRG). Only
+// description and content are sent — name and scope are not updatable.
+func (s *Server) uiUpdateSkill(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	description := c.FormValue("description")
+	content := c.FormValue("content")
+	if _, err := s.memory.UpdateSkill(ctx, id, description, content); err != nil {
+		return redirectWithError(c, "/skills/"+url.PathEscape(id), err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/skills/"+url.PathEscape(id)+"?updated=1")
+}
+
+// uiDeleteSkill handles the delete confirm form on the detail page (PRG).
+func (s *Server) uiDeleteSkill(c echo.Context) error {
+	id := c.Param("id")
+	if err := s.memory.DeleteSkill(c.Request().Context(), id); err != nil {
+		return redirectWithError(c, "/skills", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/skills?deleted=1")
+}

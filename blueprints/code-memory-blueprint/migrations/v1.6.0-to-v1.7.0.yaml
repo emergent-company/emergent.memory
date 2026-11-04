@@ -1,0 +1,86 @@
+# Migration: v1.6.0 → v1.7.0
+# Adds Method as a first-class object type, replacing Service.methods[] array.
+# Removes remaining string properties that should be relationships.
+# Removes Module.language (language belongs on SourceFile, not Module).
+# Adds applies_to relationship for Middleware.
+# Extends defines to cover APIContract.
+#
+# Live data impact:
+#   - Service objects: strip the `methods` array property.
+#     Create a Method object per method and link via Service --has→ Method.
+#   - Middleware objects: strip the `applies_to` string property.
+#     Create Middleware --applies_to→ APIEndpoint relationships instead.
+#   - APIContract objects: strip the `file_path` string property.
+#     Create SourceFile --defines→ APIContract relationships instead.
+#   - Module objects: strip the `language` property (belongs on SourceFile).
+#   - SourceFile objects: strip the `purpose` property if present.
+
+from: 1.6.0
+to: 1.7.0
+
+objectTypeSchemas:
+
+  add:
+    - name: Method
+      description: >
+        A public method on a Service — a named operation the service exposes
+        to callers. Replaces the Service.methods[] string array. Each Method
+        is now a node linked via Service --has→ Method, enabling per-method
+        relationships, test coverage, and signature queries.
+
+  remove: []
+
+  properties:
+
+    # Service.methods[] → replaced by: Service --has→ Method (new object type)
+    - objectType: Service
+      remove:
+        - name: methods
+          reason: >
+            Was a string[] array of method names/signatures. Replace by
+            creating a Method object per method and linking via
+            Service --has→ Method.
+
+    # Middleware.applies_to string → replaced by: Middleware --applies_to→ APIEndpoint
+    - objectType: Middleware
+      remove:
+        - name: applies_to
+          reason: >
+            Was a freeform string describing route scope (e.g. "all routes",
+            "/api/*"). Replace with explicit Middleware --applies_to→ APIEndpoint
+            relationships for each covered endpoint.
+
+    # APIContract.file_path → replaced by: SourceFile --defines→ APIContract
+    - objectType: APIContract
+      remove:
+        - name: file_path
+          reason: >
+            Stored a string path to the spec file. Replace with a
+            SourceFile --defines→ APIContract relationship.
+
+    # Module.language → language belongs on SourceFile, not Module
+    - objectType: Module
+      remove:
+        - name: language
+          reason: >
+            A module can contain files in multiple languages. Language is
+            a property of SourceFile, not Module.
+
+    # SourceFile.purpose → too vague; use description instead
+    - objectType: SourceFile
+      remove:
+        - name: purpose
+          reason: >
+            Redundant with the standard `description` property on all types.
+            Use `description` instead.
+
+relationshipTypeSchemas:
+
+  add:
+    - name: applies_to
+      description: >
+        A middleware applies to a specific API endpoint.
+        Replaces the Middleware.applies_to string property.
+
+  rename: []
+  remove: []

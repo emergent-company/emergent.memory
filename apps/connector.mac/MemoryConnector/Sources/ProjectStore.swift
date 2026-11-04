@@ -1,0 +1,712 @@
+import Foundation
+import Observation
+
+/// Binds `ProjectStore` to one account's storage + environment.
+///
+/// The shared/nil-account scope keeps the legacy single-account behaviour
+/// (profiles in `UserDefaults`, tokens in the shared secret dir). An account
+/// scope points profiles/tokens at the account's own 0600 directory under
+/// `accounts/<id>/` and namespaces the persisted active-project key, so two
+/// accounts can never see each other's projects, tokens or connection flag.
+struct ProjectStoreScope {
+    let accountID: String?
+    let environment: Environment?
+    let secrets: AppSecretStore
+    let profileStore: ProjectProfileStore
+    let activeProjectIDKey: String
+
+    /// Per-account scope rooted at `rootDirectory/accounts/<accountID>/`.
+    static func account(_ account: Account,
+                        environment: Environment,
+                        rootDirectory: URL) -> ProjectStoreScope
+    {
+        let accountSecrets = AppSecretStore(
+            baseDirectory: rootDirectory
+                .appendingPathComponent(AccountStore.accountsDirectoryName, isDirectory: true)
+                .appendingPathComponent(AccountStore.directoryName(for: account.id), isDirectory: true)
+        )
+        return ProjectStoreScope(
+            accountID: account.id,
+            environment: environment,
+            secrets: accountSecrets,
+            profileStore: ProjectProfileStore(secrets: accountSecrets),
+            activeProjectIDKey: "\(ProjectStore.activeProjectIDKey).\(account.id)"
+        )
+    }
+
+    /// Single-account/shared scope (no account): legacy defaults + secrets.
+    static func shared(defaults: UserDefaults, secrets: AppSecretStore) -> ProjectStoreScope {
+        ProjectStoreScope(
+            accountID: nil,
+            environment: nil,
+            secrets: secrets,
+            profileStore: ProjectProfileStore(defaults: defaults),
+            activeProjectIDKey: ProjectStore.activeProjectIDKey
+        )
+    }
+}
+
+/// Project selection + connection for the signed-in user session.
+///
+/// Two distinct user decisions:
+///
+/// - **select** (`selectProject`) = "which project am I viewing/configuring".
+///   It only loads/applies that project's profile; it never connects and never
+///   mints a token for a non-connected project.
+/// - **connect** (`connect`) = "the engine serves this project". It asks the
+///   connector CLI to mint or reuse the project's long-lived token, write that
+///   project's engine config, and start that project's child. Any number of
+///   projects may be connected at once — connecting B does NOT disconnect A.
+///
+/// The engine runs one child per connected project. Selecting a non-connected
+///   project writes no project-bound config; when nothing is connected every
+///   child is stopped so no connection lingers for a project the user is only
+///   viewing.
+///
+/// This store is only driven when a signed-in account exists; the connector CLI
+/// owns tokens, sessions, and engine-config writing.
+@MainActor
+@Observable
+final class ProjectStore {
+    enum State: Equatable {
+        case idle
+        case loading
+        case loaded
+        /// The connector CLI has no valid session for the active account, so
+        /// projects cannot be listed even though the app still has an account
+        /// in its index. The UI shows a signed-out prompt with a Sign in
+        /// action instead of a raw error.
+        case signedOut
+        case error(String)
+    }
+
+    nonisolated static let activeProjectIDKey = "connector.activeProjectId"
+
+    private(set) var projects: [ProjectInfo] = []
+    private(set) var activeProjectID: String?
+    private(set) var state: State = .idle
+    /// The projects whose profiles are connected: one engine child per id.
+    /// Persisted via `ProjectProfile.connected`; any number may be connected at
+    /// once. Empty → no connection (all engine children should be stopped).
+    private(set) var connectedProjectIDs: Set<String> = []
+    /// org id → display name, resolved from `GET /api/orgs` (best-effort).
+    private(set) var organizationNames: [String: String] = [:]
+
+    private let settings: ConnectorSettings
+    private let defaults: UserDefaults
+    private var profileStore: ProjectProfileStore
+    /// Active account environment; `nil` → shared/single-account defaults.
+    private var scopedEnvironment: Environment?
+    private var scopedAccountID: String?
+    /// Persisted selection key (namespaced per account when scoped).
+    private var activeProjectIDKey: String
+    /// (Re)starts the engine child for `projectID`, bound to `configPath` and
+    /// `port`. Wired to the engine supervisor in the app; tests count calls.
+    private let restart: @MainActor (String, String, Int) -> Void
+    /// Stops the engine child for `projectID` (its project was disconnected).
+    private let stopProject: @MainActor (String) -> Void
+    /// Stops ALL engine children (scope teardown / disconnect-last).
+    private let stop: @MainActor () -> Void
+
+    // MARK: - Connector CLI seam
+
+    //
+    // Project listing, token minting/reuse, and engine-config writing all run
+    // through the bundled `memory-connector` CLI. Injectable so tests can
+    // supply a scripted runner; `cliConfigPath` is the `--config` path the CLI
+    // writes.
+
+    /// CLI wrapper used for `projects list` / `projects use`. Tests assign a
+    /// `ConnectorCLI` built with a fake runner.
+    var connectorCLI: ConnectorCLI = .init()
+    /// `--config` path passed to the connector CLI.
+    var cliConfigPath: String = EngineConfigSync.configURL.path
+
+    /// Best-effort hook the app graph installs to re-establish the connector
+    /// CLI session after an auth failure (see `AppEnvironment`). It returns
+    /// true when the CLI holds a valid session afterwards, in which case the
+    /// project load is retried once. Defaults to "no repair available", so
+    /// tests that do not install a hook surface `.signedOut` directly.
+    var repairConnectorSession: @MainActor () async -> Bool = { false }
+
+    /// Best-effort hook the app graph installs to resolve organisation ids to
+    /// display names (via `GET /api/orgs` on the active account). Returns an
+    /// `org id → name` map; an empty map (the default) leaves grouping to fall
+    /// back to "Other". Never throws, so a resolver failure can never fail the
+    /// project load.
+    var organizationNameLoader: @MainActor () async -> [String: String] = { [:] }
+
+    init(settings: ConnectorSettings,
+         defaults: UserDefaults = .standard,
+         profileStore: ProjectProfileStore? = nil,
+         restart: @escaping @MainActor (String, String, Int) -> Void = { _, _, _ in },
+         stopProject: @escaping @MainActor (String) -> Void = { _ in },
+         stop: @escaping @MainActor () -> Void = {})
+    {
+        self.settings = settings
+        self.defaults = defaults
+        let store = profileStore ?? ProjectProfileStore(defaults: defaults)
+        self.profileStore = store
+        scopedEnvironment = nil
+        scopedAccountID = nil
+        activeProjectIDKey = Self.activeProjectIDKey
+        self.restart = restart
+        self.stopProject = stopProject
+        self.stop = stop
+        activeProjectID = defaults.string(forKey: Self.activeProjectIDKey)
+        connectedProjectIDs = store.connectedProjectIDs()
+    }
+
+    /// The server URL backing the active scope (account environment or shared).
+    private var effectiveServerURL: String {
+        scopedEnvironment?.serverURLString ?? settings.serverURL
+    }
+
+    // MARK: - Account scope
+
+    /// Swaps the store to `scope` (an account or the shared scope).
+    ///
+    /// The engine is stopped and in-memory project/connection state is dropped
+    /// first; the previous scope's persisted profiles/tokens/selection remain
+    /// on disk untouched. The new scope's own persisted selection + connected
+    /// project are then loaded. No engine start happens here — a connection is
+    /// only materialised by `connect`/`selectProject` for the active account.
+    func applyScope(_ scope: ProjectStoreScope) {
+        connectedProjectIDs = []
+        stop()
+        projects = []
+        organizationNames = [:]
+        state = .idle
+        activeProjectID = nil
+
+        scopedAccountID = scope.accountID
+        scopedEnvironment = scope.environment
+        profileStore = scope.profileStore
+        activeProjectIDKey = scope.activeProjectIDKey
+        activeProjectID = defaults.string(forKey: scope.activeProjectIDKey)
+        connectedProjectIDs = scope.profileStore.connectedProjectIDs()
+    }
+
+    /// Account id of the active scope, or nil for the shared scope.
+    var scopedAccount: String? {
+        scopedAccountID
+    }
+
+    /// Re-materialises the engine config for EVERY connected project through the
+    /// CLI (`projects use` reuses the stored token), so a scope swap can never
+    /// leave a config file pointing at another account's project (and thus can
+    /// never run another account's connection).
+    ///
+    /// Returns `true` when the CLI wrote a valid config for every connected
+    /// project. Returns `false` when nothing is connected or any CLI call
+    /// fails. An auth/session failure keeps every connected intent and the
+    /// running children (their long-lived project tokens and on-disk configs
+    /// still bind them), surfacing re-auth for management actions only; a
+    /// non-auth failure for one project tears down ONLY that project (per-
+    /// project failure isolation).
+    @discardableResult
+    func reassertConnection() async -> Bool {
+        let ids = connectedProjectIDs
+        guard !ids.isEmpty else {
+            stop()
+            return false
+        }
+        var sawAuthFailure = false
+        var sawNonAuthFailure = false
+        for id in ids.sorted() {
+            let profile = resolvedProfile(for: id)
+            let target = engineTarget(for: id, profile: profile)
+            do {
+                try await runProjectsUse(projectID: id, profile: profile, configPath: target.configPath)
+            } catch {
+                if await Self.isAuthFailure(error, cli: connectorCLI,
+                                            serverURL: effectiveServerURL,
+                                            configPath: cliConfigPath)
+                {
+                    sawAuthFailure = true
+                } else {
+                    sawNonAuthFailure = true
+                    disconnect(projectID: id)
+                }
+            }
+        }
+        if sawAuthFailure {
+            state = .signedOut
+            return false
+        }
+        if sawNonAuthFailure {
+            state = .error("Couldn't re-establish one or more project connections.")
+            return false
+        }
+        return true
+    }
+
+    private func persistActiveProjectID() {
+        if let activeProjectID {
+            defaults.set(activeProjectID, forKey: activeProjectIDKey)
+        } else {
+            defaults.removeObject(forKey: activeProjectIDKey)
+        }
+    }
+
+    /// Name for the active project, when known from the loaded list.
+    var activeProjectName: String? {
+        guard let activeProjectID else { return nil }
+        return projects.first { $0.id == activeProjectID }?.name
+    }
+
+    /// True when a project is selected (per-project profile editing applies).
+    var hasActiveProject: Bool {
+        activeProjectID != nil
+    }
+
+    /// The active project's stored profile, when one exists.
+    var activeProfile: ProjectProfile? {
+        guard let activeProjectID else { return nil }
+        return profileStore.profile(for: activeProjectID)
+    }
+
+    /// Effective disabled-tool set for the active project; shared values when
+    /// no project is active or none has been stored yet.
+    var activeDisabledTools: Set<String> {
+        guard let profile = activeProfile else { return settings.disabledTools }
+        return Set(profile.disabledTools)
+    }
+
+    /// Effective connector instance id for the active project; falls back to
+    /// the shared `ConnectorSettings.instanceID`.
+    var activeInstanceID: String {
+        activeProfile?.instanceID ?? settings.instanceID
+    }
+
+    /// True when some project is connected (at least one engine child should be
+    /// running).
+    var hasConnectedProject: Bool {
+        !connectedProjectIDs.isEmpty
+    }
+
+    /// The number of connected projects (for the footer "N projects connected").
+    var connectedProjectCount: Int {
+        connectedProjectIDs.count
+    }
+
+    /// True when `projectID` is connected.
+    func isConnected(_ projectID: String) -> Bool {
+        connectedProjectIDs.contains(projectID)
+    }
+
+    /// The persisted management port for a connected project, when assigned.
+    /// Used to project-scope the hosted-MCP-servers client.
+    func managementPort(for projectID: String) -> Int? {
+        profileStore.profile(for: projectID)?.managementPort
+    }
+
+    // MARK: - Loading
+
+    /// Loads the user's projects from the connector CLI
+    /// (`projects list --json`). On success, keeps the persisted selection if
+    /// it still exists, otherwise selects the first project; then resolves
+    /// organisation names best-effort so the switcher can group by real
+    /// organisation. On failure the existing selection is preserved.
+    ///
+    /// The CLI's project rows carry an organisation id; the `accessToken`
+    /// parameter is retained for API compatibility but is no longer needed to
+    /// list projects.
+    func loadProjects(accessToken _: String) async {
+        state = .loading
+        do {
+            try await fetchProjects()
+        } catch {
+            await handleLoadFailure(error)
+        }
+    }
+
+    /// Runs `projects list` and adopts the result (keeps the persisted
+    /// selection when it still exists, otherwise selects the first project),
+    /// then resolves organisation names best-effort.
+    private func fetchProjects() async throws {
+        let rows = try await connectorCLI.projectsList(serverURL: effectiveServerURL,
+                                                       configPath: cliConfigPath)
+        let loaded = rows.map { ProjectInfo(id: $0.id, name: $0.name, orgID: $0.orgId) }
+        projects = loaded
+        if let current = activeProjectID, loaded.contains(where: { $0.id == current }) {
+            // keep
+        } else {
+            activeProjectID = loaded.first?.id
+            persistActiveProjectID()
+        }
+        organizationNames = [:]
+        state = .loaded
+        await resolveOrganizationNames(for: loaded)
+    }
+
+    /// Resolves display names for the organisations the loaded projects
+    /// reference, via the injected `organizationNameLoader`. Best-effort: the
+    /// loader never throws and unresolvable ids simply stay unnamed (grouped
+    /// under "Other"). Only ids a loaded project references are registered.
+    private func resolveOrganizationNames(for projects: [ProjectInfo]) async {
+        let referenced = Set(projects.compactMap(\.orgID))
+        guard !referenced.isEmpty else { return }
+        let names = await organizationNameLoader()
+        for (orgID, name) in names where referenced.contains(orgID) {
+            registerOrganizationName(name, forOrgID: orgID)
+        }
+    }
+
+    /// Classifies a failed project load. An auth/session failure becomes
+    /// `.signedOut` (after one best-effort session repair + retry); anything
+    /// else stays a `.error`, as before.
+    private func handleLoadFailure(_ error: Error) async {
+        guard await Self.isAuthFailure(error, cli: connectorCLI,
+                                       serverURL: effectiveServerURL,
+                                       configPath: cliConfigPath)
+        else {
+            state = .error(error.localizedDescription)
+            return
+        }
+
+        // Auth failure: the app may still think it is signed in. Give the graph
+        // one chance to re-import the session into the connector CLI, then
+        // retry the list exactly once.
+        if await repairConnectorSession() {
+            do {
+                try await fetchProjects()
+                return
+            } catch {
+                if await !(Self.isAuthFailure(error, cli: connectorCLI,
+                                              serverURL: effectiveServerURL,
+                                              configPath: cliConfigPath))
+                {
+                    state = .error(error.localizedDescription)
+                    return
+                }
+            }
+        }
+        state = .signedOut
+    }
+
+    /// True when `error` is an auth/session failure: either the connector CLI
+    /// reports no valid session, or the failure text is one of the known
+    /// not-signed-in / rejected-token signals. The CLI status is the reliable
+    /// signal; the text match is the fallback when the status cannot be read
+    /// (e.g. the bundled binary is missing).
+    static func isAuthFailure(_ error: Error,
+                              cli: ConnectorCLI,
+                              serverURL: String,
+                              configPath: String) async -> Bool
+    {
+        if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath),
+           !status.signedIn
+        {
+            return true
+        }
+        return errorLooksLikeAuthFailure(error)
+    }
+
+    /// Text fallback for the auth-failure classification.
+    static func errorLooksLikeAuthFailure(_ error: Error) -> Bool {
+        AuthFailure.looksLikeAuthFailure(error)
+    }
+
+    // MARK: - Organisation grouping
+
+    /// A dropdown section: one organisation (nil = unknown/"Other").
+    struct ProjectGroup: Identifiable, Equatable {
+        let id: String
+        let organization: String?
+        let projects: [ProjectInfo]
+
+        /// Guaranteed non-empty menu header. Unknown or blank organisation
+        /// names fall back to "Other", so EVERY project row lives under a
+        /// `Section` header and renders uniformly indented.
+        var sectionTitle: String {
+            let trimmed = (organization ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "Other" : trimmed
+        }
+    }
+
+    /// Organisation display name for a project, when known.
+    func organizationName(for project: ProjectInfo) -> String? {
+        guard let orgID = project.orgID else { return nil }
+        if let name = organizationNames[orgID], !name.isEmpty {
+            return name
+        }
+        return nil
+    }
+
+    /// Records an organisation id → name mapping resolved elsewhere (e.g. the
+    /// dashboard's `GET /api/orgs` lookup) so project grouping can use it.
+    /// Ignores blank ids/names and unchanged values.
+    func registerOrganizationName(_ name: String, forOrgID orgID: String) {
+        let trimmedID = orgID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedID.isEmpty, !trimmedName.isEmpty else { return }
+        guard organizationNames[trimmedID] != trimmedName else { return }
+        organizationNames[trimmedID] = trimmedName
+    }
+
+    /// Projects grouped by organisation name, named groups sorted
+    /// alphabetically, unknown-org projects in a final `nil` group (only when
+    /// non-empty). Deterministic (projects sorted by name within a group).
+    var projectsByOrganization: [ProjectGroup] {
+        let grouped = Dictionary(grouping: projects) { organizationName(for: $0) }
+        var groups: [ProjectGroup] = grouped
+            .filter { $0.key != nil }
+            .sorted { ($0.key ?? "") < ($1.key ?? "") }
+            .map { name, items in
+                ProjectGroup(id: name ?? "", organization: name,
+                             projects: items.sorted { ($0.name ?? "") < ($1.name ?? "") })
+            }
+        if let unknown = grouped[nil], !unknown.isEmpty {
+            groups.append(ProjectGroup(id: "__unknown__", organization: nil,
+                                       projects: unknown.sorted { ($0.name ?? "") < ($1.name ?? "") }))
+        }
+        return groups
+    }
+
+    // MARK: - Selection (view / configure — never connects)
+
+    /// Brings a project into focus for viewing/configuring. It never connects
+    /// and never mints a token for a non-connected project.
+    ///
+    /// - If `id` IS a connected project: refresh that project's engine config
+    ///   through the CLI (token reuse + rewrite) and restart that project's
+    ///   child, so profile edits take effect.
+    /// - Otherwise: only apply/seed the profile for editing; no project-bound
+    ///   config is written. If nothing is connected every child is stopped, so
+    ///   no connection lingers for a project the user is merely viewing. If
+    ///   other projects are connected, their children are left untouched.
+    func selectProject(_ id: String, accessToken _: String) async {
+        state = .loading
+        let profile = resolvedProfile(for: id)
+
+        if isConnected(id) {
+            do {
+                let target = engineTarget(for: id, profile: profile)
+                try await runProjectsUse(projectID: id, profile: profile, configPath: target.configPath)
+                restart(id, target.configPath, target.port)
+            } catch {
+                state = .error(Self.switchErrorMessage(error, projectID: id))
+                return
+            }
+        } else if connectedProjectIDs.isEmpty {
+            // No connected project: the engine must not run for a project the
+            // user only selected.
+            stop()
+        }
+
+        activeProjectID = id
+        persistActiveProjectID()
+        state = .loaded
+    }
+
+    // MARK: - Connect / disconnect (explicit user decision)
+
+    /// Connects an engine child to `projectID`: the connector CLI mints or
+    /// reuses that project's least-privilege token and writes its engine config
+    /// (to the legacy path when it is the first/primary project, a per-project
+    /// path otherwise), then that project's child restarts and the project is
+    /// marked connected. Connecting B does NOT disconnect A — any number of
+    /// projects may be connected at once. Works with zero tools enabled — the
+    /// node may report 0 tools while the user tunes them.
+    func connect(projectID: String, accessToken _: String) async {
+        state = .loading
+        do {
+            // Seed the project's profile (all tools OFF) the first time, then
+            // let the CLI mint/reuse the token and write the config BEFORE
+            // flipping the connected flag so a failure leaves the previous
+            // connections intact.
+            let seeded = resolvedProfile(for: projectID)
+            let target = engineTarget(for: projectID, profile: seeded)
+            try await runProjectsUse(projectID: projectID, profile: seeded, configPath: target.configPath)
+            // Persist/announce the connection, then start THIS project's child
+            // with its config + port.
+            profileStore.setConnected(true, for: projectID)
+            connectedProjectIDs.insert(projectID)
+            activeProjectID = projectID
+            persistActiveProjectID()
+            restart(projectID, target.configPath, target.port)
+            state = .loaded
+        } catch {
+            state = .error(Self.switchErrorMessage(error, projectID: projectID))
+        }
+    }
+
+    /// Disconnects `projectID` and stops only its engine child (other connected
+    /// projects keep running). Stops everything when it was the last connected
+    /// project. Safe to call for a project that is not connected (no-op).
+    func disconnect(projectID: String) {
+        guard connectedProjectIDs.contains(projectID) else { return }
+        profileStore.setConnected(false, for: projectID)
+        connectedProjectIDs.remove(projectID)
+        if connectedProjectIDs.isEmpty {
+            stop()
+        } else {
+            stopProject(projectID)
+        }
+        state = .loaded
+    }
+
+    /// Enables or disables EVERY `ToolCatalog` tool for `projectID` in one
+    /// persisted write. When that project is connected its engine config is
+    /// rewritten and that child restarted; otherwise only the stored profile
+    /// changes.
+    @discardableResult
+    func setAllTools(enabled: Bool, projectID: String) async -> ProjectProfile {
+        let profile = profileStore.setAllTools(enabled: enabled, for: projectID)
+        await syncEngineIfConnected(projectID: projectID, profile: profile)
+        return profile
+    }
+
+    /// Actionable switch failure text (surfaced in the toolbar picker's help).
+    static func switchErrorMessage(_ error: Error, projectID: String) -> String {
+        if let apiError = error as? MemoryAPIError {
+            return "Couldn't switch to project \(projectID): \(apiError.errorDescription ?? "\(apiError)")"
+        }
+        if let cliError = error as? ConnectorCLIError {
+            return "Couldn't switch to project \(projectID): \(cliError.errorDescription ?? "\(cliError)")"
+        }
+        return "Couldn't switch to project \(projectID): \(error.localizedDescription)"
+    }
+
+    /// Applies edited connector settings to the active project's profile. The
+    /// engine is only touched when that project is connected; a non-connected
+    /// project's tools are persisted for later. With no active project it
+    /// updates the shared defaults, which seed the next project's profile; the
+    /// engine stays untouched.
+    func saveActiveProfile(disabledTools: Set<String>, instanceID: String) async {
+        if let activeProjectID {
+            // Preserve the connected flag + management port: editing tools must
+            // not disconnect or rebind the child.
+            let existing = profileStore.profile(for: activeProjectID)
+            let profile = ProjectProfile(disabledTools: disabledTools.sorted(),
+                                         instanceID: instanceID,
+                                         connected: existing?.connected ?? false,
+                                         managementPort: existing?.managementPort)
+            profileStore.save(profile, for: activeProjectID)
+            await syncEngineIfConnected(projectID: activeProjectID, profile: profile)
+            return
+        }
+
+        // No active project: update the shared defaults used to seed profiles.
+        settings.instanceID = instanceID
+        settings.updateDisabledTools(disabledTools)
+    }
+
+    /// Sign-out teardown: stop every engine child, clear every connection, and
+    /// forget the active project's selection. Connector tokens are owned by the
+    /// CLI and are cleaned up on sign-out, so nothing token-related is touched
+    /// here.
+    func stopAndClear() {
+        disconnectAll()
+        stop()
+        activeProjectID = nil
+        persistActiveProjectID()
+        projects = []
+        state = .idle
+    }
+
+    /// Clears the connected flag on every connected profile and empties the
+    /// in-memory set, WITHOUT stopping children (see `stopAndClear` for the
+    /// combined teardown). Scope teardown uses this with an explicit `stop()`.
+    func disconnectAll() {
+        for id in connectedProjectIDs {
+            profileStore.setConnected(false, for: id)
+        }
+        connectedProjectIDs = []
+    }
+
+    // MARK: - Internals
+
+    /// A project's stored profile, or — on first switch — one seeded from the
+    /// current shared settings so this project starts from today's values.
+    private func resolvedProfile(for id: String) -> ProjectProfile {
+        if let existing = profileStore.profile(for: id) {
+            return existing
+        }
+        let seeded = ProjectProfile(disabledTools: Array(settings.disabledTools).sorted(),
+                                    instanceID: settings.instanceID)
+        profileStore.save(seeded, for: id)
+        return seeded
+    }
+
+    /// Resolves the engine target (config path + management port) for a
+    /// project, allocating and persisting a port when the project has none yet.
+    ///
+    /// The FIRST connected project keeps the legacy config path (`cliConfigPath`)
+    /// and port `8931`; additional projects get probed ports (from `8932`
+    /// upward) and a per-project config file beside the legacy one (same parent
+    /// directory, so the CLI's account-session store stays shared). A legacy
+    /// connected profile with no port is treated as the primary.
+    private func engineTarget(for projectID: String, profile: ProjectProfile) -> (configPath: String, port: Int) {
+        let used = usedPorts(excluding: projectID)
+        let port: Int
+        if let existing = profile.managementPort {
+            port = existing
+        } else if !used.contains(ManagementPortProbe.primaryPort) {
+            port = ManagementPortProbe.primaryPort
+            profileStore.setManagementPort(port, for: projectID)
+        } else {
+            port = ManagementPortProbe.allocateFreePort(excluding: used)
+            profileStore.setManagementPort(port, for: projectID)
+        }
+        let configPath = (port == ManagementPortProbe.primaryPort)
+            ? cliConfigPath
+            : additionalConfigPath(for: projectID)
+        return (configPath, port)
+    }
+
+    /// The per-project config path for an ADDITIONAL connected project: beside
+    /// the legacy config (same parent directory), so the engine CLI's
+    /// account-session store (`<configDir>/memory-connector/`, derived from the
+    /// config file's parent) stays shared across all of an account's projects.
+    private func additionalConfigPath(for projectID: String) -> String {
+        let legacyURL = URL(fileURLWithPath: cliConfigPath)
+        return legacyURL.deletingLastPathComponent()
+            .appendingPathComponent("memory-connector-\(projectID).yml").path
+    }
+
+    /// Public accessor for the engine reconcile: the target (config path + port)
+    /// for a connected project, allocating/persisting a port when the project
+    /// has none yet (e.g. a legacy connected profile at launch).
+    func engineTarget(for projectID: String) -> (configPath: String, port: Int) {
+        let profile = profileStore.profile(for: projectID) ?? ProjectProfileStore.newProfile()
+        return engineTarget(for: projectID, profile: profile)
+    }
+
+    /// Management ports already bound by other connected projects.
+    private func usedPorts(excluding projectID: String) -> Set<Int> {
+        var ports: Set<Int> = []
+        for id in connectedProjectIDs where id != projectID {
+            if let port = profileStore.profile(for: id)?.managementPort {
+                ports.insert(port)
+            }
+        }
+        return ports
+    }
+
+    /// Runs `projects use` for a project's profile. The CLI mints or reuses the
+    /// least-privilege token and writes the engine config at `configPath`.
+    private func runProjectsUse(projectID: String, profile: ProjectProfile, configPath: String) async throws {
+        _ = try await connectorCLI.projectsUse(project: projectID,
+                                               serverURL: effectiveServerURL,
+                                               instanceID: profile.instanceID,
+                                               disabledTools: profile.disabledTools,
+                                               configPath: configPath)
+    }
+
+    /// Rewrites the engine config + restarts that project's child iff
+    /// `projectID` is connected. Non-connected projects are never written to the
+    /// engine.
+    private func syncEngineIfConnected(projectID: String, profile: ProjectProfile) async {
+        guard isConnected(projectID) else { return }
+        do {
+            let target = engineTarget(for: projectID, profile: profile)
+            try await runProjectsUse(projectID: projectID, profile: profile, configPath: target.configPath)
+            restart(projectID, target.configPath, target.port)
+            state = .loaded
+        } catch {
+            state = .error(Self.switchErrorMessage(error, projectID: projectID))
+        }
+    }
+}

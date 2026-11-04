@@ -1,0 +1,724 @@
+package mcp
+
+import (
+	"context"
+	"time"
+)
+
+// sessionIDKey is the context key for propagating session ID into tool execution.
+type sessionIDKey struct{}
+
+// RelaySession is a minimal view of a connected MCP relay session.
+type RelaySession struct {
+	ProjectID  string
+	InstanceID string
+	Tools      map[string]any // raw tools/list result from the relay
+}
+
+// RelayToolProvider is the interface for querying connected MCP relay sessions.
+// Implemented by mcprelay.Service — defined here to avoid a circular import.
+type RelayToolProvider interface {
+	ListByProject(projectID string) []*RelaySession
+	CallTool(ctx context.Context, projectID, instanceID, toolName string, args map[string]any) (map[string]any, error)
+}
+
+// SessionTitleHandler is the interface for updating session titles.
+// Implemented by the agents domain to avoid circular imports.
+type SessionTitleHandler interface {
+	UpdateSessionTitle(ctx context.Context, projectID, sessionID, title string) error
+}
+
+// SessionHistoryProvider retrieves the unified timeline for a session.
+// Implemented by agents.Repository to avoid a circular import (mcp → agents).
+// Returns items as map[string]any so no shared types are needed across the boundary.
+//
+// projectID and ownerUserID are the caller's identity, resolved from the
+// run/auth context; the implementation enforces the conversation ownership
+// model (#1010) at the data-access layer and refuses a foreign/unknown session
+// with a 404 (issue #1032).
+type SessionHistoryProvider interface {
+	GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, sessionID string) ([]map[string]any, error)
+}
+
+// GraphObjectPatcher patches graph object Properties.title when set_session_title runs.
+// Satisfied by graph.Service.PatchGraphObjectTitle — defined as a func type to avoid
+// a circular import (mcp already imports graph).
+type GraphObjectPatcher func(ctx context.Context, projectID, objectID, title string) error
+
+// ProjectOrgAdminAuthorizer asserts the caller is an org_admin of the addressed
+// organization. Satisfied by projects.Service.AuthorizeOrgAdmin; declared as a
+// func type to avoid a circular import (mcp cannot import projects directly:
+// projects → agents → mcp). The zero value (nil) is fail-closed: a caller must
+// treat a nil authorizer as "not configured" and refuse the write (issue #1041).
+type ProjectOrgAdminAuthorizer func(ctx context.Context, orgID, userID string) error
+
+// ContextWithSessionID stores the session ID in context.
+// Called by the agent executor before running tools so that built-in tools
+// like set_session_title can update session metadata.
+func ContextWithSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionIDKey{}, sessionID)
+}
+
+// SessionIDFromContext retrieves the session ID from context.
+// Returns empty string if not set.
+func SessionIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(sessionIDKey{}).(string)
+	return v
+}
+
+// trustedInternalKey is the context key for propagating the run's trust marker
+// into tool execution, so the in-process dispatch path (ExecuteTool) can enforce
+// AgentOnly consistently with the HTTP transports. It mirrors the fail-closed
+// kb.agent_runs.trusted_internal marker persisted on the run row.
+type trustedInternalKey struct{}
+
+// ContextWithTrustedInternal stores whether the calling run was started through a
+// trusted/internal surface (session UI, scheduler, MCP-triggered agent) as
+// opposed to an external surface (webhook, A2A, agentcompat, public share). The
+// agent executor sets it before running tools; ExecuteTool reads it to gate
+// AgentOnly tools. The zero value (marker absent) is untrusted, so a caller that
+// forgets to declare itself cannot reach agent-only tools (issue #994).
+func ContextWithTrustedInternal(ctx context.Context, trusted bool) context.Context {
+	return context.WithValue(ctx, trustedInternalKey{}, trusted)
+}
+
+// TrustedInternalFromContext reports whether the run in ctx was started through a
+// trusted/internal surface. Absent marker resolves to false (untrusted, fail-closed).
+func TrustedInternalFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(trustedInternalKey{}).(bool)
+	return v
+}
+
+// transportEnforcedKey is the context key marking an ExecuteTool call whose
+// per-tool authority was already enforced by an HTTP transport before dispatch.
+// It is deliberately DISTINCT from trustedInternalKey: the trust marker means
+// "a genuinely internal agent run", while this marker means "an HTTP transport
+// already ran the per-tool AgentOnly / RequiredScope / SuperadminOnly checks".
+// Conflating the two let the relay fallback treat an authenticated HTTP call as
+// an internal run (issue #1017).
+type transportEnforcedKey struct{}
+
+// ContextWithTransportEnforced marks ctx as an ExecuteTool call whose per-tool
+// authority was already enforced by an HTTP transport, so the in-process gate
+// does not re-fire for an authenticated HTTP client. It does NOT mark the call
+// as a genuinely internal run: relay (agent-only) tools are gated on
+// trustedInternal only, so this marker can never satisfy them.
+func ContextWithTransportEnforced(ctx context.Context) context.Context {
+	return context.WithValue(ctx, transportEnforcedKey{}, true)
+}
+
+// TransportEnforcedFromContext reports whether the ExecuteTool call was already
+// authorized by an HTTP transport. Absent marker resolves to false.
+func TransportEnforcedFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(transportEnforcedKey{}).(bool)
+	return v
+}
+
+// ContextWithoutTransportEnforced strips the transport-enforced marker when
+// crossing into a nested agent run. The marker is per-dispatch evidence that an
+// HTTP transport authorized ONE ExecuteTool call; it must not be inherited by
+// the child run's own tool calls, which are re-gated on the run's trusted
+// marker (issue #1133). The run executor calls this at the agent-run boundary.
+func ContextWithoutTransportEnforced(ctx context.Context) context.Context {
+	return context.WithValue(ctx, transportEnforcedKey{}, false)
+}
+
+// MCPRegistryToolHandler is the interface for executing MCP registry management tools.
+// Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
+type MCPRegistryToolHandler interface {
+	ExecuteListMCPServers(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteListDeviceMCPServers(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteUpdateMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteToggleMCPServerTool(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteSyncMCPServerTools(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Official MCP Registry browse/install tools
+	ExecuteSearchMCPRegistry(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetMCPRegistryServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteInstallMCPFromRegistry(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Inspect/test-connection tool
+	ExecuteInspectMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// GetMCPRegistryToolDefinitions returns tool definitions for all MCP registry tools
+	GetMCPRegistryToolDefinitions() []ToolDefinition
+
+	// ResolveBuiltinToolSettings resolves the effective enabled/config for a builtin tool
+	// using three-tier inheritance: project → org → global.
+	// source is one of "project", "org", or "global".
+	ResolveBuiltinToolSettings(ctx context.Context, projectID, toolName string) (enabled bool, config map[string]any, source string, err error)
+
+	// ResolveBuiltinToolConfig resolves only the effective config map for a builtin tool.
+	ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (config map[string]any, source string, err error)
+}
+
+// AgentToolHandler is the interface for executing agent-related MCP tools.
+// Implemented by the agents domain to avoid circular imports (agents → mcp).
+type AgentToolHandler interface {
+	// Agent Definitions
+	ExecuteListAgentDefinitions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteUpdateAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agents (runtime)
+	ExecuteListAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteUpdateAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteTriggerAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agent Runs
+	ExecuteListAgentRuns(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentRun(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentRunMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentRunToolCalls(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteRememberStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agent Catalog
+	ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agent Questions
+	ExecuteListAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteListProjectAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteRespondToAgentQuestion(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agent Hooks
+	ExecuteListAgentHooks(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateAgentHook(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteAgentHook(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// ADK Sessions
+	ExecuteListADKSessions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetADKSession(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// GetAgentToolDefinitions returns tool definitions for all agent tools
+	GetAgentToolDefinitions() []ToolDefinition
+
+	// GetAgentToolDefinitionsForProject returns tool definitions with the trigger_agent
+	// description dynamically enriched with the live agent catalog for the given project.
+	// Falls back to GetAgentToolDefinitions when projectID is empty.
+	GetAgentToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
+
+	// RunAgentOnce runs one agent synchronously with a bounded step/time budget
+	// and returns the assistant reply text plus the run ID. It is used by the
+	// per-agent MCP endpoint. An AgentRunError is returned (wrapped) for
+	// unavailable agents, failed runs, human-input pauses, and budget exhaustion.
+	RunAgentOnce(ctx context.Context, projectID, agentID, message string, budget AgentRunBudget) (reply string, runID string, err error)
+
+	// RunAgentInSession runs one agent turn inside a persistent conversation
+	// session. It behaves exactly like RunAgentOnce but carries sessionRef to the
+	// executor as ExecuteRequest.ConversationKey so successive turns share context.
+	// The returned steps is the number of agent steps the executor ran, used for
+	// the cumulative session budget.
+	RunAgentInSession(ctx context.Context, projectID, agentID, sessionRef, message string, budget AgentRunBudget) (reply string, runID string, steps int, err error)
+
+	// ResolveAgentDefinitionID resolves the kb.agent_definitions id backing a
+	// runtime agent (kb.agents id), or "" when the agent or its definition cannot
+	// be resolved. Used by the per-agent MCP endpoint to stamp actor provenance
+	// with the canonical definition id.
+	ResolveAgentDefinitionID(ctx context.Context, projectID, agentID string) string
+}
+
+// AgentRunBudget bounds a single synchronous run started by the per-agent MCP
+// endpoint so a call fits within an MCP client's tools/call timeout.
+type AgentRunBudget struct {
+	// MaxSteps caps the number of agent steps. Zero means "use the default".
+	MaxSteps int
+	// Timeout caps wall-clock execution. Zero means "use the default".
+	Timeout time.Duration
+}
+
+// AgentRunErrorKind classifies a RunAgentOnce failure so the transport layer can
+// map it to a structured tool error without inspecting error strings.
+type AgentRunErrorKind string
+
+const (
+	// AgentRunErrorUnavailable means the agent is missing, disabled, or foreign.
+	AgentRunErrorUnavailable AgentRunErrorKind = "agent_unavailable"
+	// AgentRunErrorFailed means the run failed.
+	AgentRunErrorFailed AgentRunErrorKind = "run_failed"
+	// AgentRunErrorPaused means the run paused for human input.
+	AgentRunErrorPaused AgentRunErrorKind = "input_required"
+	// AgentRunErrorBudget means the run exceeded its step/time budget.
+	AgentRunErrorBudget AgentRunErrorKind = "budget_exceeded"
+)
+
+// AgentRunError is a structured, machine-classifiable failure from RunAgentOnce.
+type AgentRunError struct {
+	Kind AgentRunErrorKind
+	// Message is a human-readable description safe to return to the client.
+	Message string
+	// Question carries the pending question when Kind is AgentRunErrorPaused.
+	Question string
+	// RunID is the run associated with the failure, when one was created.
+	RunID string
+}
+
+// Error implements the error interface.
+func (e *AgentRunError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	return string(e.Kind)
+}
+
+// InitializeParams represents the params for initialize method
+type InitializeParams struct {
+	ProtocolVersion string     `json:"protocolVersion"`
+	Capabilities    any        `json:"capabilities"`
+	ClientInfo      ClientInfo `json:"clientInfo"`
+	ProjectID       string     `json:"project_id,omitempty"` // Optional project context
+}
+
+// ClientInfo represents client metadata
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// InitializeResult represents the result of initialize method
+type InitializeResult struct {
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    ServerCapabilities `json:"capabilities"`
+	ServerInfo      map[string]string  `json:"serverInfo"`
+	ProjectContext  map[string]string  `json:"projectContext,omitempty"`
+}
+
+// ServerCapabilities describes what the server supports
+type ServerCapabilities struct {
+	Tools     ToolsCapability     `json:"tools"`
+	Resources ResourcesCapability `json:"resources"`
+	Prompts   PromptsCapability   `json:"prompts"`
+}
+
+// ToolsCapability describes tool-related capabilities
+type ToolsCapability struct {
+	ListChanged bool `json:"listChanged"`
+}
+
+// ResourcesCapability describes resource-related capabilities
+type ResourcesCapability struct {
+	Subscribe   bool `json:"subscribe"`
+	ListChanged bool `json:"listChanged"`
+}
+
+// PromptsCapability describes prompt-related capabilities
+type PromptsCapability struct {
+	ListChanged bool `json:"listChanged"`
+}
+
+// ToolsListResult represents the result of tools/list method
+type ToolsListResult struct {
+	Tools []ToolDefinition `json:"tools"`
+}
+
+// ResourcesListResult represents the result of resources/list method
+type ResourcesListResult struct {
+	Resources []ResourceDefinition `json:"resources"`
+}
+
+// ResourceDefinition describes an MCP resource
+type ResourceDefinition struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+// ResourceReadParams represents params for resources/read method
+type ResourceReadParams struct {
+	URI string `json:"uri"`
+}
+
+// ResourceContents represents the contents of a resource
+type ResourceContents struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
+}
+
+// ResourceReadResult represents the result of resources/read method
+type ResourceReadResult struct {
+	Contents []ResourceContents `json:"contents"`
+}
+
+// PromptsListResult represents the result of prompts/list method
+type PromptsListResult struct {
+	Prompts []PromptDefinition `json:"prompts"`
+}
+
+// PromptDefinition describes an MCP prompt template
+type PromptDefinition struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+}
+
+// PromptArgument describes a prompt template argument
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+// PromptGetParams represents params for prompts/get method
+type PromptGetParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+}
+
+// PromptMessage represents a message in a prompt result
+type PromptMessage struct {
+	Role    string        `json:"role"`
+	Content PromptContent `json:"content"`
+}
+
+// PromptContent represents the content of a prompt message
+type PromptContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// PromptGetResult represents the result of prompts/get method
+type PromptGetResult struct {
+	Description string          `json:"description,omitempty"`
+	Messages    []PromptMessage `json:"messages"`
+}
+
+// ToolDefinition describes an MCP tool
+type ToolDefinition struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	InputSchema InputSchema `json:"inputSchema"`
+	// OutputSchema is the JSON schema for the tool's structured result
+	// (MCP 2025-06-18 `outputSchema`). Nil for tools that do not declare
+	// structured output (e.g. prose or wrapResult-backed tools).
+	OutputSchema *InputSchema `json:"outputSchema,omitempty"`
+	// ConfigKeys lists setup-time configuration keys required by this tool
+	// (e.g. ["api_key"]). Empty for tools that need no configuration.
+	ConfigKeys []string `json:"configKeys,omitempty"`
+	// RequiredScope is the MCP token scope required to list and call this tool.
+	// Empty means the tool is accessible to any authenticated token.
+	RequiredScope string `json:"requiredScope,omitempty"`
+	// AgentOnly marks tools that are only available to internal memory agents,
+	// not to external MCP clients regardless of their scopes.
+	AgentOnly bool `json:"agentOnly,omitempty"`
+	// SuperadminOnly marks deployment-wide operator tools that require an active
+	// superadmin_full grant (resolved from core.superadmins) rather than a token
+	// scope. A bare admin / admin:all token cannot satisfy it, because neither is
+	// minted from the platform-admin authority (issue #948).
+	SuperadminOnly bool `json:"superadminOnly,omitempty"`
+}
+
+// InputSchema is a JSON schema for tool parameters
+type InputSchema struct {
+	Type                 string                    `json:"type"`
+	Properties           map[string]PropertySchema `json:"properties,omitempty"`
+	Required             []string                  `json:"required,omitempty"`
+	AdditionalProperties *bool                     `json:"additionalProperties,omitempty"`
+}
+
+// PropertySchema describes a single property in a JSON schema
+type PropertySchema struct {
+	Type        string          `json:"type"`
+	Description string          `json:"description,omitempty"`
+	Enum        []string        `json:"enum,omitempty"`
+	Minimum     *int            `json:"minimum,omitempty"`
+	Maximum     *int            `json:"maximum,omitempty"`
+	Default     any             `json:"default,omitempty"`
+	Items       *PropertySchema `json:"items,omitempty"` // for type: "array"
+}
+
+// ToolsCallParams represents the params for tools/call method
+type ToolsCallParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+// ToolResult represents the result of a tool call (MCP content format)
+type ToolResult struct {
+	Content []ContentBlock `json:"content"`
+	IsError bool           `json:"isError,omitempty"`
+	// StructuredContent is the structured JSON object result (MCP 2025-06-18
+	// `structuredContent`). It mirrors the JSON object serialized into the text
+	// content block and is only set when that payload is a JSON object.
+	StructuredContent map[string]any `json:"structuredContent,omitempty"`
+}
+
+// ContentBlock represents a piece of content in tool results
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// EntityType represents an entity type with count
+type EntityType struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Count       int    `json:"count"`
+}
+
+// RelationshipType represents a relationship type with source/destination type info
+type RelationshipType struct {
+	Type     string `json:"type"`
+	FromType string `json:"from_type"`
+	ToType   string `json:"to_type"`
+	Count    int    `json:"count"`
+}
+
+// EntityTypesResult represents the result of list_entity_types tool
+type EntityTypesResult struct {
+	ProjectID     string             `json:"projectId"`
+	Types         []EntityType       `json:"types"`
+	Relationships []RelationshipType `json:"relationships"`
+	Total         int                `json:"total"`
+}
+
+// Entity represents a graph entity
+type Entity struct {
+	ID         string         `json:"id"`
+	Key        string         `json:"key"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Version    int            `json:"version"`
+	Properties map[string]any `json:"properties"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
+	BranchID   *string        `json:"branch_id,omitempty"`
+	BranchName *string        `json:"branch_name,omitempty"`
+}
+
+// PaginationInfo contains pagination metadata
+type PaginationInfo struct {
+	Total   int  `json:"total"`
+	Limit   int  `json:"limit"`
+	Offset  int  `json:"offset"`
+	HasMore bool `json:"has_more"`
+}
+
+// QueryEntitiesResult represents the result of query_entities tool
+type QueryEntitiesResult struct {
+	ProjectID  string          `json:"projectId"`
+	Entities   []Entity        `json:"entities"`
+	Pagination *PaginationInfo `json:"pagination"`
+	Warning    string          `json:"warning,omitempty"`
+}
+
+// SearchEntitiesResult represents the result of search_entities tool
+type SearchEntitiesResult struct {
+	ProjectID string   `json:"projectId"`
+	Query     string   `json:"query"`
+	Entities  []Entity `json:"entities"`
+	Count     int      `json:"count"`
+}
+
+// SchemaVersionResult represents the result of schema_version tool
+type SchemaVersionResult struct {
+	Version      string `json:"version"`
+	Timestamp    string `json:"timestamp"`
+	PackCount    int    `json:"pack_count"`
+	CacheHintTTL int    `json:"cache_hint_ttl"`
+}
+
+// QueryEntitiesArgs represents arguments for query_entities tool
+type QueryEntitiesArgs struct {
+	TypeName  string `json:"type_name"`
+	Limit     int    `json:"limit"`
+	Offset    int    `json:"offset"`
+	SortBy    string `json:"sort_by"`
+	SortOrder string `json:"sort_order"`
+}
+
+// SearchEntitiesArgs represents arguments for search_entities tool
+type SearchEntitiesArgs struct {
+	Query    string `json:"query"`
+	TypeName string `json:"type_name,omitempty"`
+	Limit    int    `json:"limit"`
+}
+
+// EdgeInfo represents a relationship edge with connected entity info
+type EdgeInfo struct {
+	RelationshipID   string          `json:"relationship_id"`
+	RelationshipType string          `json:"relationship_type"`
+	ConnectedEntity  ConnectedEntity `json:"connected_entity"`
+	Properties       map[string]any  `json:"properties,omitempty"`
+}
+
+// ConnectedEntity represents basic info about an entity connected via an edge
+type ConnectedEntity struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Key        string         `json:"key,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// GetEntityEdgesResult represents the result of get_entity_edges tool
+type GetEntityEdgesResult struct {
+	EntityID string     `json:"entity_id"`
+	Incoming []EdgeInfo `json:"incoming"`
+	Outgoing []EdgeInfo `json:"outgoing"`
+}
+
+// ============================================================================
+// Schema DTOs
+// ============================================================================
+
+// MemorySchema represents a memory schema from the global registry
+type MemorySchema struct {
+	ID                      string         `json:"id"`
+	Name                    string         `json:"name"`
+	Version                 string         `json:"version"`
+	Description             string         `json:"description,omitempty"`
+	Author                  string         `json:"author,omitempty"`
+	Source                  string         `json:"source,omitempty"`
+	License                 string         `json:"license,omitempty"`
+	RepositoryURL           string         `json:"repository_url,omitempty"`
+	DocumentationURL        string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas       map[string]any `json:"object_type_schemas"`
+	RelationshipTypeSchemas map[string]any `json:"relationship_type_schemas,omitempty"`
+	UIConfigs               map[string]any `json:"ui_configs,omitempty"`
+	ExtractionPrompts       map[string]any `json:"extraction_prompts,omitempty"`
+	SQLViews                []any          `json:"sql_views,omitempty"`
+	Checksum                string         `json:"checksum,omitempty"`
+	Draft                   bool           `json:"draft"`
+	PublishedAt             string         `json:"published_at"`
+	DeprecatedAt            string         `json:"deprecated_at,omitempty"`
+	CreatedAt               string         `json:"created_at"`
+	UpdatedAt               string         `json:"updated_at"`
+}
+
+// MemorySchemaSummary represents a summary of a memory schema (for listings)
+type MemorySchemaSummary struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description,omitempty"`
+	Author       string   `json:"author,omitempty"`
+	Source       string   `json:"source,omitempty"`
+	ObjectTypes  []string `json:"object_types"`
+	TypeCount    int      `json:"type_count"`
+	PublishedAt  string   `json:"published_at"`
+	DeprecatedAt string   `json:"deprecated_at,omitempty"`
+}
+
+// ListSchemasResult represents the result of list_schemas tool
+type ListSchemasResult struct {
+	Packs   []MemorySchemaSummary `json:"packs"`
+	Total   int                   `json:"total"`
+	Page    int                   `json:"page"`
+	Limit   int                   `json:"limit"`
+	HasMore bool                  `json:"has_more"`
+}
+
+// GetSchemaResult represents the result of get_schema tool
+type GetSchemaResult struct {
+	Pack *MemorySchema `json:"pack"`
+}
+
+// ObjectTypeInfo represents info about an object type in a template
+type ObjectTypeInfo struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+	SampleCount int    `json:"sample_count"`
+}
+
+// AvailableTemplate represents a template available for a project
+type AvailableTemplate struct {
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	Version           string           `json:"version"`
+	Description       string           `json:"description,omitempty"`
+	Author            string           `json:"author,omitempty"`
+	Source            string           `json:"source,omitempty"`
+	ObjectTypes       []ObjectTypeInfo `json:"object_types"`
+	RelationshipTypes []string         `json:"relationship_types,omitempty"`
+	RelationshipCount int              `json:"relationship_count"`
+	Installed         bool             `json:"installed"`
+	Active            bool             `json:"active,omitempty"`
+	AssignmentID      string           `json:"assignment_id,omitempty"`
+	PublishedAt       string           `json:"published_at"`
+}
+
+// GetAvailableTemplatesResult represents the result of get_available_templates tool
+type GetAvailableTemplatesResult struct {
+	ProjectID string              `json:"project_id"`
+	Templates []AvailableTemplate `json:"templates"`
+	Total     int                 `json:"total"`
+}
+
+// InstalledTemplate represents an installed memory schema
+type InstalledTemplate struct {
+	AssignmentID   string           `json:"assignment_id"`
+	SchemaID       string           `json:"schema_id"`
+	Name           string           `json:"name"`
+	Version        string           `json:"version"`
+	Description    string           `json:"description,omitempty"`
+	ObjectTypes    []ObjectTypeInfo `json:"object_types"`
+	Active         bool             `json:"active"`
+	InstalledAt    string           `json:"installed_at"`
+	Customizations map[string]any   `json:"customizations,omitempty"`
+}
+
+// GetInstalledTemplatesResult represents the result of get_installed_templates tool
+type GetInstalledTemplatesResult struct {
+	ProjectID string              `json:"project_id"`
+	Templates []InstalledTemplate `json:"templates"`
+	Total     int                 `json:"total"`
+}
+
+// AssignSchemaResult represents the result of assign_schema tool
+type AssignSchemaResult struct {
+	Success        bool           `json:"success"`
+	AssignmentID   string         `json:"assignment_id"`
+	InstalledTypes []string       `json:"installed_types"`
+	DisabledTypes  []string       `json:"disabled_types,omitempty"`
+	Conflicts      []TypeConflict `json:"conflicts,omitempty"`
+}
+
+// TypeConflict represents a type installation conflict
+type TypeConflict struct {
+	Type       string `json:"type"`
+	Issue      string `json:"issue"`
+	Resolution string `json:"resolution"`
+}
+
+// UpdateTemplateAssignmentResult represents the result of update_template_assignment tool
+type UpdateTemplateAssignmentResult struct {
+	Success      bool   `json:"success"`
+	AssignmentID string `json:"assignment_id"`
+	Active       bool   `json:"active"`
+	Message      string `json:"message"`
+}
+
+// UninstallSchemaResult represents the result of uninstall_schema tool
+type UninstallSchemaResult struct {
+	Success      bool   `json:"success"`
+	AssignmentID string `json:"assignment_id"`
+	Message      string `json:"message"`
+}
+
+// CreateSchemaResult represents the result of create_schema tool
+type CreateSchemaResult struct {
+	Success bool          `json:"success"`
+	Pack    *MemorySchema `json:"pack"`
+	Message string        `json:"message"`
+}
+
+// DeleteSchemaResult represents the result of delete_schema tool
+type DeleteSchemaResult struct {
+	Success  bool   `json:"success"`
+	SchemaID string `json:"schema_id"`
+	Message  string `json:"message"`
+}

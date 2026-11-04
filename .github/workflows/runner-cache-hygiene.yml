@@ -1,0 +1,230 @@
+name: Runner Cache Hygiene
+
+# Persistent self-hosted runners (actions-runner-memory-*) keep Go's build cache
+# on local disk between jobs, so GOCACHE grows without bound (measured at ~30G;
+# GOMODCACHE ~14G). This workflow caps that growth by pruning ONLY the build
+# cache once it crosses a size threshold. It never touches the module cache
+# (re-downloading ~14G is the exact cost we are avoiding) and uses no GitHub
+# Actions cache layer at all.
+#
+# Cache ownership: GOCACHE is derived from the job user's HOME unless the runner
+# overrides it — the `memory` runners set `GOCACHE=/srv/cache/go-build` in their
+# `actions-runner*/.env`, and the Mac runner uses ~/Library/Caches/go-build.
+# Never assume the path: every run logs what `go env GOCACHE` resolved to, and a
+# missing directory raises a warning annotation instead of silently skipping the
+# prune forever.
+#
+# The second job prunes the *GitHub Actions* cache (the repo-level 10 GB budget)
+# rather than local disk. Docker `build-push-action` `type=gha` layer caches
+# accumulated ~7 GB across 411 entries and pushed the repo over its budget,
+# evicting useful Go/Swift cache and slowing every job. It deletes entries not
+# accessed for 14 days; this is orthogonal to the Go build cache above.
+#
+# The third job prunes *Actions artifacts*. Artifact storage is an ACCOUNT-wide
+# quota shared with the sibling repo, and when it is exhausted every upload in
+# both repos fails — usually surfacing obliquely in an unrelated workflow that
+# ships a 2 KB credentials file (emergent-company/emergent.memory#1834). The
+# manual stopgap there was "keep the newest 2 per artifact name, delete nothing
+# younger than 6 h"; this job applies that rule unattended, so reproducible
+# build output cannot accumulate into the quota again.
+#
+# Scheduler note: the three memory runners share a single `memory` label (no
+# per-runner labels), so one job run can only land on one of them. Running every
+# 6 h therefore also covers the pool over time as the scheduler picks whichever
+# runner is idle (the Go cache prune needs all three eventually, the artifact
+# prune is repo-wide and host-independent); `workflow_dispatch` triggers an
+# on-demand prune.
+#
+# The macOS runner (`mac` label) gets its own Go cache prune: it is a separate
+# pool, and a job targeting `memory` can never reach its ~/Library/Caches/go-build.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 6 hours — matches the artifact keep-window below, see scheduler note.
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  prune-actions-cache:
+    name: Prune stale Actions caches
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required to DELETE repo-level Actions cache entries.
+      actions: write
+    steps:
+      - name: Delete caches untouched for 14 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Deleting Actions caches last accessed before $CUTOFF"
+          gh api --paginate "repos/$REPO/actions/caches" \
+            --jq ".actions_caches[] | select(.last_accessed_at < \"$CUTOFF\") | .id" \
+            | while read -r id; do
+                [ -n "$id" ] && gh api -X DELETE "repos/$REPO/actions/caches/$id" >/dev/null && echo "deleted cache $id"
+              done
+          gh api "repos/$REPO/actions/cache/usage" \
+            --jq '"Active cache size: \(.active_caches_size_in_bytes) bytes across \(.active_caches_count) entries"'
+
+  prune-go-build-cache:
+    name: Prune Go build cache
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache: false
+
+      - name: Report cache usage
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          GOMODCACHE="$(go env GOMODCACHE)"
+          echo "GOCACHE=$GOCACHE"
+          echo "GOMODCACHE=$GOMODCACHE"
+          df -h "$GOCACHE" "$GOMODCACHE"
+          du -sh "$GOCACHE" "$GOMODCACHE"
+
+      - name: Prune Go build cache when oversized
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          if [ ! -d "$GOCACHE" ]; then
+            echo "::warning::GOCACHE ($GOCACHE) missing — nothing to prune. Check the job user's HOME."
+            exit 0
+          fi
+          SIZE_MB=$(du -sm "$GOCACHE" | cut -f1)
+          echo "GOCACHE=$GOCACHE is ${SIZE_MB} MB (threshold 20000 MB)"
+          if [ "$SIZE_MB" -gt 20000 ]; then
+            echo "Over threshold — running 'go clean -cache'."
+            go clean -cache
+          else
+            echo "Under threshold — skipping prune."
+          fi
+          # NOTE: never add `go clean -modcache` here. GOMODCACHE is the shared
+          # module cache; deleting it forces a ~14G re-download, which is exactly
+          # the overhead this workflow exists to avoid.
+          exit 0
+
+      - name: Report post-prune cache usage
+        run: |
+          # The module cache is never touched, so it is not re-measured here.
+          GOCACHE="$(go env GOCACHE)"
+          df -h "$GOCACHE"
+          du -sh "$GOCACHE"
+
+  # Same prune for the macOS runner (`mac` label, the Mac build host). Its
+  # GOCACHE is ~/Library/Caches/go-build (verified: 1.4 GB, so the prune is a
+  # safety valve rather than a routine reclaim) and grows with every release
+  # build; the Linux job above cannot reach it because it targets the `memory`
+  # label. The host is a workstation that goes offline, so a scheduled run may
+  # sit queued until it returns — harmless, the prune is threshold-gated and
+  # idempotent. `du -sm`/`df -h`/`go clean -cache` are all BSD-compatible.
+  prune-go-build-cache-mac:
+    name: Prune Go build cache (macOS)
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache: false
+
+      - name: Report cache usage
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          GOMODCACHE="$(go env GOMODCACHE)"
+          echo "GOCACHE=$GOCACHE"
+          echo "GOMODCACHE=$GOMODCACHE"
+          df -h "$GOCACHE" "$GOMODCACHE"
+          du -sh "$GOCACHE" "$GOMODCACHE"
+
+      - name: Prune Go build cache when oversized
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          if [ ! -d "$GOCACHE" ]; then
+            echo "::warning::GOCACHE ($GOCACHE) missing — nothing to prune. Check the job user's HOME."
+            exit 0
+          fi
+          SIZE_MB=$(du -sm "$GOCACHE" | cut -f1)
+          echo "GOCACHE=$GOCACHE is ${SIZE_MB} MB (threshold 20000 MB)"
+          if [ "$SIZE_MB" -gt 20000 ]; then
+            echo "Over threshold — running 'go clean -cache'."
+            go clean -cache
+          else
+            echo "Under threshold — skipping prune."
+          fi
+          # Never `go clean -modcache`: GOMODCACHE is the shared module cache and
+          # re-downloading it is the cost this workflow exists to avoid.
+          exit 0
+
+      - name: Report post-prune cache usage
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          df -h "$GOCACHE"
+          du -sh "$GOCACHE"
+
+  prune-actions-artifacts:
+    name: Prune stale Actions artifacts
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required to DELETE repo-level artifacts.
+      actions: write
+    steps:
+      - name: Delete artifacts outside the keep window
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # Keep the newest N artifacts per name; never delete anything younger
+          # than MIN_AGE_HOURS. Same rule as the 2026-10-14 manual stopgap.
+          KEEP_PER_NAME: 2
+          MIN_AGE_HOURS: 6
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d "$MIN_AGE_HOURS hours ago" +%Y-%m-%dT%H:%M:%SZ)
+          LIST=$(mktemp)
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | [.id, .name, .created_at, (.expired|tostring), (.size_in_bytes|tostring)] | @tsv' \
+            > "$LIST"
+
+          awk -F'\t' '{ s += $5 } END { printf "Artifact storage before: %.2f GiB across %d artifacts\n", s/1073741824, NR }' "$LIST"
+          echo "Deleting artifacts beyond the newest $KEEP_PER_NAME per name that are older than $CUTOFF"
+
+          # Sort by name, newest first, then drop the kept prefix. Names are
+          # per-run unique in most workflows, so the age window is what actually
+          # reclaims space; the keep count protects the odd reused name.
+          # `release-*` is exempt: it is tag-only and declares 30 days on purpose,
+          # so a 6 h window here would silently void that intent.
+          sort -t $'\t' -k2,2 -k3,3r "$LIST" \
+            | awk -F'\t' -v keep="$KEEP_PER_NAME" -v cutoff="$CUTOFF" '
+                { n[$2]++; if ($2 !~ /^release-/ && n[$2] > keep && ($4 == "true" || $3 < cutoff)) print $1 }
+              ' \
+            | while read -r id; do
+                [ -n "$id" ] || continue
+                if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
+                  echo "deleted artifact $id"
+                else
+                  echo "::warning::could not delete artifact $id (already gone or expired)"
+                fi
+              done
+
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[].size_in_bytes' \
+            | awk '{ s += $1 } END { printf "Artifact storage after: %.2f GiB\n", s/1073741824 }'
+          rm -f "$LIST"

@@ -1,0 +1,311 @@
+package mcp
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/pkg/agentexec"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// ============================================================================
+// Query Knowledge Tool Definition
+// ============================================================================
+
+func queryToolDefinitions() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:          "search-knowledge",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "search",
+			Description: "Ask a natural language question against the project's knowledge graph. The system finds relevant entities and relationships, " +
+				"then generates a grounded answer using the connected LLM provider. " +
+				"Returns the assembled answer text and a session_id to continue the conversation. " +
+				"If the underlying query is cancelled or exceeds its time budget the tool call fails with an error, so an empty answer " +
+				"always means the corpus had nothing to say — never a silent timeout. " +
+				"Pass session_id from a prior call to continue a previous conversation. Pass branch to scope the query to a specific branch (e.g. \"plan/main\").",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"question": {
+						Type:        "string",
+						Description: "The question to ask against the knowledge base",
+					},
+					"mode": {
+						Type:        "string",
+						Description: "Query mode (default: 'graph'). Use 'semantic' for embedding-based search, 'hybrid' for combined.",
+						Enum:        []string{"graph", "semantic", "hybrid"},
+					},
+					"session_id": {
+						Type:        "string",
+						Description: "Optional session ID to continue a previous query conversation. Use the session_id returned from a prior search-knowledge call.",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to query (e.g. \"plan/main\"). When provided, the question is answered in the context of that branch. Omit for main branch.",
+					},
+				},
+				Required: []string{"question"},
+			},
+		},
+	}
+}
+
+// ============================================================================
+// Query Knowledge Tool Handler
+// ============================================================================
+
+// Raised from 60s to 120s: the internal graph-query-agent performs multi-step
+// graph research (search-hybrid + entity-type-list + several LLM turns), and a
+// 60s ceiling was canceling runs mid-flight and returning an empty answer
+// (issue #915). The 105s entity-type-list query is also fixed by migration 00179.
+const queryKnowledgeTimeout = 120 * time.Second
+
+func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	question, _ := args["question"].(string)
+	if question == "" {
+		return nil, fmt.Errorf("query_knowledge: 'question' is required")
+	}
+
+	// Prepend branch context so the graph-query-agent scopes its tool calls correctly.
+	if branch, ok := args["branch"].(string); ok && branch != "" {
+		question = fmt.Sprintf("[Branch: %s]\n\n%s", branch, question)
+	}
+
+	// Build the request body
+	body := map[string]any{"message": question, "spawn_source": "search-knowledge"}
+	if branch, ok := args["branch"].(string); ok && branch != "" {
+		body["branch"] = branch
+	}
+	if mode, ok := args["mode"].(string); ok && mode != "" {
+		body["mode"] = mode
+	}
+	if sessionID, ok := args["session_id"].(string); ok && sessionID != "" {
+		body["conversation_id"] = sessionID
+	}
+
+	// Thread the caller's graph type scope through the /query loopback so the
+	// internal graph-query-agent enforces the SAME boundary instead of leaking
+	// (issue #1695 follow-up). The internal agent's definition carries no
+	// allowlist, so the executor's own scope derivation is a no-op and preserves
+	// this scope for the whole internal run. A caller can only ever NARROW the
+	// unrestricted internal run, never widen it.
+	scope := TypeScopeFromContext(ctx)
+	if scope.HasObjectRestriction() {
+		body["object_types"] = scope.ObjectTypes()
+	}
+	if scope.HasRelationshipRestriction() {
+		body["relationship_types"] = scope.RelationshipTypes()
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("query_knowledge: marshal request: %w", err)
+	}
+
+	// The query endpoint is on the same server — use the server's own listen address.
+	url := fmt.Sprintf("%s/api/projects/%s/query", s.baseURL(), projectID)
+
+	// Capture the tool-imposed budget deadline before deriving the request
+	// context: the caller's context may carry its own (possibly shorter) deadline,
+	// and both surface as context.DeadlineExceeded on queryCtx, so this value lets
+	// queryKnowledgeCtxError attribute an expiry to the right cause (issue #1187).
+	internalDeadline := time.Now().Add(queryKnowledgeTimeout)
+	queryCtx, cancel := context.WithTimeout(ctx, queryKnowledgeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(queryCtx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("query_knowledge: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Forward auth headers from the incoming context if available
+	if token := tokenFromContext(ctx); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
+	}
+	// Forward caller run IDs so QueryStream can set parent_run_id on the internal agent run.
+	if callerRunID := provider.RunIDFromContext(ctx); callerRunID != "" {
+		req.Header.Set("X-Parent-Run-Id", callerRunID)
+	}
+	if rootRunID := provider.RootRunIDFromContext(ctx); rootRunID != "" {
+		req.Header.Set("X-Root-Run-Id", rootRunID)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctxErr := queryCtx.Err(); ctxErr != nil {
+			return nil, queryKnowledgeCtxError(ctx, internalDeadline, ctxErr)
+		}
+		return nil, fmt.Errorf("query_knowledge: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, mcpHTTPError("query_knowledge", resp)
+	}
+
+	// Collect SSE token events, capture the session ID, and record whether the
+	// stream reached its terminal event (`done` chunk or `[DONE]` sentinel). A
+	// stream that ends without it is incomplete and must not be reported as a
+	// successful answer.
+	var parts []string
+	var returnedSessionID string
+	var returnedRunID string
+	terminal := false
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			terminal = true
+			continue
+		}
+		var chunk map[string]any
+		if json.Unmarshal([]byte(payload), &chunk) != nil {
+			continue
+		}
+		switch chunk["type"] {
+		case "token":
+			if token, ok := chunk["token"].(string); ok {
+				parts = append(parts, token)
+			}
+		case "meta":
+			if id, ok := chunk["conversationId"].(string); ok && id != "" {
+				returnedSessionID = id
+			}
+		case "done":
+			terminal = true
+			if rid, ok := chunk["runId"].(string); ok && rid != "" {
+				returnedRunID = rid
+			}
+		case "error":
+			if errMsg, ok := chunk["error"].(string); ok && errMsg != "" {
+				// The kill switch error already names the condition; do not
+				// double-wrap it as "agent error: ...".
+				if strings.Contains(errMsg, agentexec.ErrExecutionDisabled.Error()) {
+					return nil, fmt.Errorf("query_knowledge: %s", agentexec.ErrExecutionDisabled.Error())
+				}
+				return nil, fmt.Errorf("query_knowledge: agent error: %s", errMsg)
+			}
+		}
+		if queryCtx.Err() != nil {
+			break
+		}
+	}
+
+	// A stream only counts as complete once it emitted its terminal event. A
+	// proxy/backend disconnect (or a read error) ends the stream without one and
+	// must be reported as a failure rather than assembled into a partial or empty
+	// "success". A budget/cancellation that lands before the terminal event is
+	// likewise a failed call, attributed to whichever context expired. This is
+	// what lets a caller tell "timed out"/"disconnected" apart from "the corpus
+	// has no answer" (issue #1187).
+	if !terminal {
+		if ctxErr := queryCtx.Err(); ctxErr != nil {
+			return nil, queryKnowledgeCtxError(ctx, internalDeadline, ctxErr)
+		}
+		if serr := scanner.Err(); serr != nil {
+			return nil, fmt.Errorf("query_knowledge: query stream interrupted: %w", serr)
+		}
+		return nil, fmt.Errorf("query_knowledge: query stream ended without a terminal event")
+	}
+
+	answer := strings.Join(parts, "")
+	result := map[string]any{
+		"answer": answer,
+	}
+	if returnedSessionID != "" {
+		result["session_id"] = returnedSessionID
+	}
+	if returnedRunID != "" {
+		result["run_id"] = returnedRunID
+	}
+	return s.wrapResult(result)
+}
+
+// queryKnowledgeCtxError converts an expired or cancelled query context into a
+// tool error. The tool's own budget (queryKnowledgeTimeout) and a caller-supplied
+// deadline both surface as context.DeadlineExceeded on the derived context, so
+// the caller's deadline is compared against the captured internal deadline to
+// attribute the expiry accurately; a plain cancellation is propagated as such.
+// Returning an error — rather than a {"ok":true,"answer":""} result — lets
+// callers tell a failed query apart from one that simply found no answer
+// (issue #1187).
+func queryKnowledgeCtxError(callerCtx context.Context, internalDeadline time.Time, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("query_knowledge: query cancelled: %w", err)
+	}
+	// A caller deadline that is not later than the tool budget is the one that
+	// expired; report it as a caller cancellation instead of mis-attributing it
+	// to queryKnowledgeTimeout.
+	if callerDeadline, ok := callerCtx.Deadline(); ok && !callerDeadline.After(internalDeadline) {
+		return fmt.Errorf("query_knowledge: query cancelled: caller deadline %s exceeded before the %s query budget",
+			callerDeadline.UTC().Format(time.RFC3339), queryKnowledgeTimeout)
+	}
+	return fmt.Errorf("query_knowledge: query timed out after %s", queryKnowledgeTimeout)
+}
+
+// tokenFromContext extracts the raw bearer/API token stored by the auth middleware.
+// Returns empty string if none is found.
+func tokenFromContext(ctx context.Context) string {
+	return auth.RawTokenFromContext(ctx)
+}
+
+// mcpHTTPError converts a failed loopback HTTP response into a readable error.
+// The server's error envelope is {"error":{code,message,details:{missing:[...]}}};
+// surfacing code + missing scopes makes permission failures actionable
+// (e.g. "query_knowledge: 403 forbidden: Insufficient permissions — token missing required scope(s): chat:use").
+func mcpHTTPError(toolName string, resp *http.Response) error {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return fmt.Errorf("%s: server returned %d", toolName, resp.StatusCode)
+	}
+
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Details struct {
+				Missing []interface{} `json:"missing"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	// Non-JSON bodies (empty, plain text, …) fall back to the bare status error.
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Error.Message == "" {
+		return fmt.Errorf("%s: server returned %d", toolName, resp.StatusCode)
+	}
+
+	var missing []string
+	for _, m := range envelope.Error.Details.Missing {
+		if scope, ok := m.(string); ok && scope != "" {
+			missing = append(missing, scope)
+		}
+	}
+
+	msg := fmt.Sprintf("%s: %d %s: %s", toolName, resp.StatusCode, envelope.Error.Code, envelope.Error.Message)
+	if len(missing) > 0 {
+		msg += " — token missing required scope(s): " + strings.Join(missing, ", ")
+	}
+	return errors.New(msg)
+}

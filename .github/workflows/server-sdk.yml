@@ -1,0 +1,212 @@
+name: Go SDK CI
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'apps/server/pkg/sdk/**'
+      - '.github/workflows/server-sdk.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'apps/server/pkg/sdk/**'
+      - '.github/workflows/server-sdk.yml'
+  workflow_dispatch:
+
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: '1.26'
+
+# Least privilege: PR-controlled source runs on the self-hosted runner only
+# behind the fork guard; keep the checkout token read-only as defense-in-depth.
+# (create-sdk-tag below keeps its own job-level `contents: write`.)
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
+          # with no hosted fallback, and the runner is persistent:
+          # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
+          # GH cache is redundant — it tries to upload ~10GB and always exceeds
+          # the 10GB cache limit.
+          cache: false
+
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: golangci-lint
+        working-directory: apps/server/pkg/sdk
+        env:
+          # Per-job cache dir: the self-hosted runner shares HOME across
+          # concurrent jobs, which makes the default golangci-lint lock
+          # collide ("parallel golangci-lint is running").
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+        run: golangci-lint run ./...
+
+  test:
+    name: Test
+    # Hosted runner by choice, not for a missing toolchain: both hosts of the
+    # self-hosted `memory` pool can build cgo now, so `-race` would work there.
+    # It stays hosted because this unprivileged test job is fork-safe on hosted
+    # ubuntu, its 30-minute timeout fits that runner, and `-race` would compete
+    # with the jobs sharing the pool. Revisit together with those, not alone.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # Cache only the SDK module set. The old 10GB overflow was the
+          # persistent self-hosted GOMODCACHE, not this module.
+          cache: true
+          cache-dependency-path: apps/server/pkg/sdk/go.sum
+
+      - name: Run tests
+        working-directory: apps/server/pkg/sdk
+        run: go test -v -race ./...
+
+      - name: Generate coverage
+        working-directory: apps/server/pkg/sdk
+        # Go 1.24 emits benign 'covdata' warnings to stderr for packages without
+        # test files when using -coverprofile with ./... — filter those specific
+        # lines while preserving real errors.
+        run: |
+          go test -coverprofile=coverage.out -covermode=atomic ./... 2>&1 \
+            | grep -v 'covdata' \
+            | cat; true
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: apps/server/pkg/sdk/coverage.out
+          flags: go-sdk
+          fail_ci_if_error: false
+
+  build-examples:
+    name: Build Examples
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    needs: [lint, test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
+          # with no hosted fallback, and the runner is persistent:
+          # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
+          # GH cache is redundant — it tries to upload ~10GB and always exceeds
+          # the 10GB cache limit.
+          cache: false
+
+      - name: Build basic example
+        working-directory: apps/server/pkg/sdk/examples/basic
+        run: go build -o basic .
+
+      - name: Build documents example
+        working-directory: apps/server/pkg/sdk/examples/documents
+        run: go build -o documents .
+
+      - name: Build search example
+        working-directory: apps/server/pkg/sdk/examples/search
+        run: go build -o search .
+
+      - name: Build projects example
+        working-directory: apps/server/pkg/sdk/examples/projects
+        run: go build -o projects .
+
+  create-sdk-tag:
+    name: Create SDK Module Tag
+    runs-on: [self-hosted, linux, x64, memory]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # RELEASE_TOKEN must be a PAT (classic) with `repo` + `workflow` scope,
+          # or the GitHub App must be granted the `workflows` permission; otherwise
+          # the fallback GITHUB_TOKEN push will still be rejected for modifying .github/workflows/.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Create SDK module tag
+        run: |
+          SDK_TAG="apps/server/pkg/sdk/${GITHUB_REF#refs/tags/}"
+          echo "Creating SDK module tag: $SDK_TAG"
+          if git rev-parse "$SDK_TAG" >/dev/null 2>&1; then
+            echo "Tag $SDK_TAG already exists, skipping"
+          else
+            git tag "$SDK_TAG"
+            git push origin "$SDK_TAG"
+          fi
+
+  server-sdk-ci-status:
+    name: server-sdk-ci-status
+    # Always-run, hosted aggregate so a fork PR (whose self-hosted lint /
+    # build-examples jobs are skipped by the fork guard) still yields a single
+    # satisfiable status check. `test` runs on hosted for everyone.
+    # 'skipped' is treated as pass — guarded jobs are legitimately skipped on
+    # fork PRs (and lint/test are skipped on tag pushes) — so only
+    # 'failure'/'cancelled' fail the gate. ubuntu-latest keeps this summary off
+    # the self-hosted runner and it needs no secrets.
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, test, build-examples]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs['lint'].result }}" "${{ needs['test'].result }}" "${{ needs['build-examples'].result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "Server SDK CI passed"

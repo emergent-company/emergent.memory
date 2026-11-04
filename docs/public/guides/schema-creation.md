@@ -1,0 +1,858 @@
+---
+id: schema-creation
+title: Schema Creation Guide
+category: guides
+tags: [schemas, mcp, api]
+description: Create and manage schemas through MCP and the REST API
+lastUpdated: 2026-03-22
+readTime: 15
+related: []
+---
+
+# Schema Creation Guide
+
+This guide explains how to create and manage **schemas** in Memory. Schemas define reusable definitions for entity types, relationships, UI configurations, and extraction prompts.
+
+## What is a Schema?
+
+A **schema** is a versioned collection of:
+
+- **Entity type schemas** (required) - Define object types and their properties
+- **Relationship type schemas** (optional) - Define connections between entities
+- **UI configurations** (optional) - Control how entities are displayed
+- **Extraction prompts** (optional) - Guide AI extraction for entity types
+
+## Access Methods
+
+Schemas can be created via:
+
+1. **MCP Tool** - `schema-create` (AI agents, programmatic access)
+2. **REST API** - `/api/schemas/projects/:projectId/*` (HTTP clients)
+3. **CLI** - `memory schemas create --file <path>` (JSON or YAML files)
+
+Both MCP and REST methods use identical field definitions and validation.
+
+---
+
+## Field Definitions
+
+### Required Fields
+
+| Field                 | Type   | Description                                                   | Example                                         |
+| --------------------- | ------ | ------------------------------------------------------------- | ----------------------------------------------- |
+| `name`                | string | Name of the schema                                            | `"Research Project Schema"`                     |
+| `version`             | string | Semantic version string                                       | `"1.0.0"`                                       |
+| `object_type_schemas` | object | JSON Schema definitions for entity types (at least one required) | See [Entity Type Schemas](#entity-type-schemas) |
+
+### Optional Fields
+
+| Field                       | Type   | Description                                    | Example                                                     |
+| --------------------------- | ------ | ---------------------------------------------- | ----------------------------------------------------------- |
+| `description`               | string | Description of the schema                      | `"Schema for academic research projects"`                   |
+| `author`                    | string | Author name or organization                    | `"Emergent Research Team"`                                  |
+| `relationship_type_schemas` | object | JSON Schema definitions for relationship types | See [Relationship Type Schemas](#relationship-type-schemas) |
+| `ui_configs`                | object | UI display configuration per entity type       | See [UI Configurations](#ui-configurations)                 |
+| `extraction_prompts`        | object | AI extraction prompts per entity type          | See [Extraction Prompts](#extraction-prompts)               |
+
+### Auto-Generated Fields
+
+The following fields are **automatically generated** by the system and **cannot be specified** during creation:
+
+| Field          | Type      | Description                                  | Format           |
+| -------------- | --------- | -------------------------------------------- | ---------------- |
+| `id`           | UUID      | Unique identifier                            | `"550e8400-..."` |
+| `checksum`     | string    | Content hash for version tracking            | SHA-256 hash     |
+| `draft`        | boolean   | Draft status (always `false` after creation) | `false`          |
+| `published_at` | timestamp | Publication timestamp                        | RFC3339          |
+| `created_at`   | timestamp | Creation timestamp                           | RFC3339          |
+| `updated_at`   | timestamp | Last modification timestamp                  | RFC3339          |
+
+**Date Format**: All timestamps use **RFC3339** format (e.g., `"2025-02-10T09:26:57Z"`).
+
+---
+
+## Entity Type Schemas
+
+Entity type schemas use **JSON Schema** to define object properties, validation rules, and constraints.
+
+### Minimal Example
+
+```json
+{
+  "object_type_schemas": {
+    "Person": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full name"
+        },
+        "email": {
+          "type": "string",
+          "title": "Email",
+          "description": "Contact address"
+        }
+      },
+      "required": ["name"]
+    }
+  }
+}
+```
+
+### Advanced Example with Validation
+
+```json
+{
+  "object_type_schemas": {
+    "ResearchPaper": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 500,
+          "description": "Paper title"
+        },
+        "abstract": {
+          "type": "string",
+          "description": "Abstract or summary"
+        },
+        "publication_date": {
+          "type": "date",
+          "title": "Publication date",
+          "description": "Date published (YYYY-MM-DD)"
+        },
+        "link": {
+          "type": "url",
+          "title": "Link",
+          "description": "Canonical https URL for the paper"
+        },
+        "content_hash": {
+          "type": "sha256",
+          "title": "Content hash",
+          "description": "Hex SHA-256 of the source content"
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "List of author names"
+        },
+        "citations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of citations"
+        },
+        "peer_reviewed": {
+          "type": "boolean",
+          "default": false
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["title", "authors", "publication_date"]
+    }
+  }
+}
+```
+
+### Supported JSON Schema Features
+
+| Feature        | Type        | Example                                        |
+| -------------- | ----------- | ---------------------------------------------- |
+| **String**     | `string`    | `"type": "string"`                             |
+| **Label**      | `title`     | `"title": "Publication date"` (human-friendly field name) |
+| **URL**        | `url`       | `"type": "url"` (http/https, validated)         |
+| **MD5**        | `md5`       | `"type": "md5"` (32 hex characters)            |
+| **SHA-1**      | `sha1`      | `"type": "sha1"` (40 hex characters)           |
+| **SHA-256**    | `sha256`    | `"type": "sha256"` (64 hex characters)         |
+| **SHA-512**    | `sha512`    | `"type": "sha512"` (128 hex characters)        |
+| **Number**     | `number`    | `"type": "number"`                             |
+| **Integer**    | `integer`   | `"type": "integer", "minimum": 0`              |
+| **Boolean**    | `boolean`   | `"type": "boolean", "default": false`          |
+| **Date**       | `date`      | `"type": "date"` (ISO 8601 stored as RFC 3339) |
+| **Array**      | `array`     | `"type": "array", "items": {"type": "string"}` |
+| **Object**     | `object`    | `"type": "object", "properties": {...}`        |
+| **Enum**       | `enum`      | `"enum": ["draft", "published", "archived"]`   |
+| **Format**     | `format`    | `"format": "email"` — documentation only (not enforced) |
+| **Validation** | constraints | `minLength`, `maxLength`, `minimum`, `maximum` — documentation only (not enforced) |
+| **Required**   | `required`  | `"required": ["field1", "field2"]`             |
+
+Only the types above are interpreted: `type` drives coercion and validation for
+`date`, `url`, the four hex-digest types, `number`, `boolean`, `array` and
+`object`. An array's `items.type` is interpreted as well: every element is
+coerced to that type, and an element of the wrong type is rejected with its
+index (`authors: element 2: expected string, got float64`). A nested array's
+own `items` recurses the same way; an `items` schema with no `type` constrains
+nothing. `required` is interpreted per property, `default` is applied when an
+object is created, and `enum` drives the editor's select. The remaining
+JSON-Schema keywords (`format`, `pattern`, `minLength`, `maxLength`, `minItems`,
+`maxItems`, `minimum`, `maximum`) are carried through for documentation and
+tooling but are **not** enforced when an object is written — including `enum`:
+a write that bypasses the form is not rejected. Use `date`, `url`, a
+hex-digest type, or an array's `items` when you need write-time validation.
+
+`url` and the four hex-digest types are validated on write: a URL must be an
+absolute `http`/`https` URL with a host, and a hash must be exactly its digest
+length of hexadecimal characters (upper-case input is stored lower-case). A
+`title` is display-only — it becomes the property's label in the UI (schemas and
+object forms), with the machine key shown beneath it; extraction still uses the
+keyed property name.
+
+These types have no "empty" value: an unknown URL, date or digest must be left
+out of the payload (or sent as `null`), not sent as `""` — `{"source_url": ""}`
+is rejected and fails the whole write.
+
+---
+
+## Relationship Type Schemas
+
+Define how entities can be connected to each other.
+
+### Example
+
+```json
+{
+  "relationship_type_schemas": {
+    "authored_by": {
+      "type": "object",
+      "description": "Paper authored by Person",
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["Person"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["primary", "co-author", "contributor"],
+          "default": "co-author"
+        },
+        "affiliation_at_time": {
+          "type": "string",
+          "description": "Author's affiliation when paper was written"
+        }
+      }
+    },
+    "cites": {
+      "type": "object",
+      "description": "Paper cites another paper",
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["ResearchPaper"],
+      "properties": {
+        "context": {
+          "type": "string",
+          "description": "How the citation is used"
+        }
+      }
+    }
+  }
+}
+```
+
+### Fields
+
+| Field         | Required | Description                                           |
+| ------------- | -------- | ----------------------------------------------------- |
+| `sourceTypes` | Yes      | Array of entity types that originate the relationship |
+| `targetTypes` | Yes      | Array of entity types that receive the relationship   |
+| `description` | No       | Human-readable description                            |
+| `properties`  | No       | JSON Schema for relationship metadata                 |
+
+> **Note:** The server also accepts `fromTypes`/`toTypes`, `source_types`/`target_types`, and singular `source`/`target` strings for backward compatibility, but `sourceTypes`/`targetTypes` is the canonical format.
+
+---
+
+## UI Configurations
+
+Control how entities are displayed in the UI.
+
+### Example
+
+```json
+{
+  "ui_configs": {
+    "ResearchPaper": {
+      "icon": "file-text",
+      "color": "#3B82F6",
+      "display_template": "{{title}} ({{publication_date}})",
+      "summary_fields": ["title", "authors", "publication_date"],
+      "card_layout": {
+        "title": "{{title}}",
+        "subtitle": "{{authors}}",
+        "metadata": ["publication_date", "citations", "peer_reviewed"]
+      },
+      "list_view": {
+        "primary": "title",
+        "secondary": "authors",
+        "badge": "citations"
+      }
+    }
+  }
+}
+```
+
+### Configuration Options
+
+| Field              | Type   | Description                            |
+| ------------------ | ------ | -------------------------------------- |
+| `icon`             | string | Lucide icon name from the closed catalog (kebab-case, e.g. `file-text`; PascalCase `FileText` and `lucide--file-text` also accepted) |
+| `color`            | string | Hex color code for entity type, e.g. `"#3B82F6"` |
+| `display_template` | string | Handlebars template for entity display |
+| `summary_fields`   | array  | Fields to show in summary view         |
+| `card_layout`      | object | Configuration for card view            |
+| `list_view`        | object | Configuration for list view            |
+
+### Available Icons
+
+Icons are a **closed catalog** of 65 Lucide names. A name outside the catalog silently falls back to a generic box, so always pick from this list:
+
+```text
+box, file-text, file, git-branch, git-commit, git-merge, git-pull-request,
+shield, shield-check, zap, layers, tag, star, heart, alert-triangle, bell,
+book, book-open, briefcase, calendar, camera, check, check-circle, circle,
+clock, cloud, code, cog, settings, database, edit, eye, folder, globe, hash,
+home, image, info, key, link, list, lock, mail, map, map-pin,
+message-circle, monitor, package, paperclip, pen, phone, play, plus, puzzle,
+search, send, server, share, sparkles, terminal, trash, user, users, wrench, x
+```
+
+Values may be written in kebab-case (`file-text`), PascalCase (`FileText`), or iconify form (`lucide--file-text`). MCP agents can call the `schema-icon-list` tool to fetch the current list at runtime.
+
+---
+
+## Extraction Prompts
+
+Guide AI systems on how to extract entities from documents.
+
+### Example
+
+```json
+{
+  "extraction_prompts": {
+    "ResearchPaper": {
+      "system_prompt": "You are extracting research paper metadata from academic documents.",
+      "extraction_instructions": "Identify the title, authors, publication date, and abstract. Look for DOI numbers and citation counts if available.",
+      "examples": [
+        {
+          "input": "Machine Learning for Healthcare by J. Smith et al., published in Nature 2024.",
+          "output": {
+            "title": "Machine Learning for Healthcare",
+            "authors": ["J. Smith"],
+            "publication_date": "2024-01-01",
+            "peer_reviewed": true
+          }
+        }
+      ],
+      "field_hints": {
+        "title": "Usually at the top of the document in larger font",
+        "authors": "Listed below title or at end with affiliations",
+        "publication_date": "Check header, footer, or metadata",
+        "abstract": "Section labeled 'Abstract' or 'Summary'"
+      }
+    }
+  }
+}
+```
+
+### Prompt Structure
+
+| Field                     | Type   | Description                                      |
+| ------------------------- | ------ | ------------------------------------------------ |
+| `system_prompt`           | string | High-level instructions for the AI               |
+| `extraction_instructions` | string | Detailed extraction guidance                     |
+| `examples`                | array  | Example input/output pairs for few-shot learning |
+| `field_hints`             | object | Per-field extraction hints                       |
+
+---
+
+## Complete Example
+
+Here's a complete schema for a research project domain:
+
+```json
+{
+  "name": "Academic Research Schema",
+  "version": "1.0.0",
+  "description": "Schema for academic research projects with papers, people, and citations",
+  "author": "Emergent Research Team",
+  "object_type_schemas": {
+    "ResearchPaper": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 10 },
+        "abstract": { "type": "string" },
+        "publication_date": { "type": "string", "format": "date" },
+        "authors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "doi": { "type": "string", "pattern": "^10\\.\\d+/.+$" },
+        "citations": { "type": "integer", "minimum": 0 },
+        "peer_reviewed": { "type": "boolean", "default": false }
+      },
+      "required": ["title", "authors", "publication_date"]
+    },
+    "Person": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "title": "Email" },
+        "affiliation": { "type": "string" },
+        "h_index": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["name"]
+    }
+  },
+  "relationship_type_schemas": {
+    "authored_by": {
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["Person"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["primary", "co-author", "contributor"]
+        }
+      }
+    },
+    "cites": {
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["ResearchPaper"],
+      "properties": {
+        "context": { "type": "string" }
+      }
+    }
+  },
+  "ui_configs": {
+    "ResearchPaper": {
+      "icon": "file-text",
+      "color": "#3B82F6",
+      "display_template": "{{title}} ({{publication_date}})",
+      "summary_fields": ["title", "authors", "publication_date"]
+    },
+    "Person": {
+      "icon": "user",
+      "color": "#10B981",
+      "display_template": "{{name}} ({{affiliation}})",
+      "summary_fields": ["name", "affiliation", "h_index"]
+    }
+  },
+  "extraction_prompts": {
+    "ResearchPaper": {
+      "system_prompt": "Extract research paper metadata from academic documents.",
+      "extraction_instructions": "Identify title, authors, publication date, abstract, and DOI.",
+      "field_hints": {
+        "title": "At the top in larger font",
+        "authors": "Listed below title",
+        "doi": "Digital Object Identifier (10.xxxx/yyyy format)"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Creating via CLI
+
+The `memory` CLI accepts both JSON and YAML schema files. YAML is often easier to read and write than JSON for complex schemas.
+
+### JSON format
+
+```bash
+memory schemas create --file my-schema.json --project <projectId>
+```
+
+### YAML format
+
+```yaml
+# my-schema.yaml
+name: Academic Research Schema
+version: 1.0.0
+description: Schema for academic research
+author: Emergent Research Team
+object_type_schemas:
+  ResearchPaper:
+    type: object
+    properties:
+      title:
+        type: string
+        minLength: 10
+      authors:
+        type: array
+        items:
+          type: string
+    required:
+      - title
+      - authors
+```
+
+```bash
+memory schemas create --file my-schema.yaml --project <projectId>
+```
+
+### Diff two schemas before applying
+
+```bash
+memory schemas diff schema-v1.yaml schema-v2.yaml
+```
+
+This compares local files without making any API calls — useful before creating a new version.
+
+---
+
+## Creating via MCP
+
+### Using the `schema-create` Tool
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "schema-create",
+    "arguments": {
+      "name": "Academic Research Schema",
+      "version": "1.0.0",
+      "description": "Schema for research projects",
+      "author": "Emergent Research Team",
+      "object_type_schemas": {
+        "ResearchPaper": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "authors": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["title", "authors"]
+        }
+      }
+    }
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Academic Research Schema",
+    "version": "1.0.0",
+    "checksum": "a3f5b2c1...",
+    "created_at": "2025-02-11T09:26:57Z",
+    "published_at": "2025-02-11T09:26:57Z",
+    "draft": false
+  }
+}
+```
+
+---
+
+## Creating via REST API
+
+### Endpoint
+
+```
+POST /api/schemas/projects/:projectId/
+```
+
+### Headers
+
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+Same structure as MCP arguments (see [Complete Example](#complete-example)).
+
+### Response
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Academic Research Schema",
+  "version": "1.0.0",
+  "checksum": "a3f5b2c1...",
+  "created_at": "2025-02-11T09:26:57Z",
+  "published_at": "2025-02-11T09:26:57Z",
+  "draft": false
+}
+```
+
+---
+
+## Validation Rules
+
+### Required Validations
+
+1. **Name** - Non-empty string
+2. **Version** - Valid semantic version (e.g., `1.0.0`)
+3. **Object Type Schemas** - At least one entity type defined
+4. **JSON Schema Validity** - All schemas must be valid JSON Schema
+
+### Recommended Validations
+
+1. **Entity Type Names** - PascalCase (e.g., `ResearchPaper`, not `research_paper`)
+2. **Relationship Type Names** - snake_case (e.g., `authored_by`, not `AuthoredBy`)
+3. **Version Incrementing** - Follow semantic versioning rules
+4. **Description** - Provide meaningful context for users
+
+### Common Errors
+
+| Error                       | Cause                                               | Fix                                        |
+| --------------------------- | --------------------------------------------------- | ------------------------------------------ |
+| `missing_required_field`    | Missing `name`, `version`, or `object_type_schemas` | Add all required fields                    |
+| `invalid_version_format`    | Version not semver                                  | Use `X.Y.Z` format                         |
+| `invalid_json_schema`       | Malformed JSON Schema                               | Validate against JSON Schema specification |
+| `empty_object_type_schemas` | No entity types defined                             | Add at least one entity type               |
+| `duplicate_schema_name`     | Schema with same name/version exists                | Increment version or change name           |
+
+---
+
+## Best Practices
+
+### 1. Start Simple, Iterate
+
+Begin with minimal schemas and expand based on usage:
+
+```json
+{
+  "object_type_schemas": {
+    "Task": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "completed": { "type": "boolean" }
+      },
+      "required": ["title"]
+    }
+  }
+}
+```
+
+Then add more fields as needed in version `1.1.0`, `1.2.0`, etc.
+
+### 2. Use Descriptive Names
+
+- **Good**: `ResearchPaper`, `OrganizationUnit`, `ProjectMilestone`
+- **Bad**: `Item`, `Thing`, `Data`
+
+### 3. Provide Rich Metadata
+
+- Always include `description` for entity types and fields
+- Use `format` for typed fields (email, date, uri)
+- Add `examples` in extraction prompts
+
+### 4. Design for Relationships
+
+Think about how entities connect:
+
+```json
+{
+  "relationship_type_schemas": {
+    "part_of": {
+      "sourceTypes": ["Task"],
+      "targetTypes": ["Project"]
+    },
+    "depends_on": {
+      "sourceTypes": ["Task"],
+      "targetTypes": ["Task"]
+    }
+  }
+}
+```
+
+### 5. Version Semantically
+
+- **Major** (1.0.0 → 2.0.0) - Breaking changes (removed fields, changed types)
+- **Minor** (1.0.0 → 1.1.0) - New features (added fields, new entity types)
+- **Patch** (1.0.0 → 1.0.1) - Bug fixes (description updates, UI tweaks)
+
+### 6. Test Extraction Prompts
+
+If using `extraction_prompts`, test with real documents to ensure AI extracts correctly.
+
+---
+
+## Advanced schema management
+
+### View compiled types
+
+The compiled types view merges all active installed schemas into a single type registry. Use `verbose` to see which schema each type comes from and whether any type names are shadowed (defined by more than one schema):
+
+**Via MCP:**
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "schema-compiled-types",
+    "arguments": { "verbose": true }
+  }
+}
+```
+
+**Via CLI:**
+```bash
+memory schemas compiled-types --project <projectId> --verbose
+```
+
+### View schema history
+
+See all schemas that have been installed or uninstalled in a project (includes soft-deleted assignments):
+
+**Via MCP:**
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "schema-history",
+    "arguments": {}
+  }
+}
+```
+
+**Via CLI:**
+```bash
+memory schemas history --project <projectId>
+```
+
+### Migrate types (rename types and properties)
+
+Rename object/edge types or property keys across existing live data when you publish a new schema version with different names:
+
+**Via CLI:**
+```bash
+# Dry run to preview changes
+memory schemas migrate --project <projectId> \
+  --rename-type OldType=NewType \
+  --rename-prop "NewType.oldProp=newProp" \
+  --dry-run
+
+# Apply the migration
+memory schemas migrate --project <projectId> \
+  --rename-type OldType=NewType \
+  --rename-prop "NewType.oldProp=newProp"
+```
+
+**Via REST API:**
+```
+POST /api/schemas/projects/:projectId/migrate
+```
+```json
+{
+  "type_renames": [{"from": "OldType", "to": "NewType"}],
+  "property_renames": [{"type_name": "NewType", "from": "oldProp", "to": "newProp"}],
+  "dry_run": true
+}
+```
+
+### Bulk uninstall
+
+Remove multiple schema assignments at once:
+
+```bash
+# Keep only specific schemas, remove the rest
+memory schemas uninstall --project <projectId> --all-except "core,legal-entities"
+
+# Keep only the most recently installed version of each schema name
+memory schemas uninstall --project <projectId> --keep-latest
+
+# Preview before applying
+memory schemas uninstall --project <projectId> --all-except "core" --dry-run
+```
+
+---
+
+## Deleting Schemas
+
+### Via MCP
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "schema-delete",
+    "arguments": {
+      "schema_id": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  }
+}
+```
+
+### Via REST API
+
+```
+DELETE /api/schemas/projects/:projectId/:schemaId
+```
+
+### Restrictions
+
+- Cannot delete **system schemas** (built-in schemas)
+- Cannot delete schemas that are **currently installed** in any project
+- Must uninstall from all projects first using `schema-uninstall`
+
+---
+
+## Related Resources
+
+- **[MCP servers](../../site/developer-guide/mcp-servers.md)** - connect an MCP client and see the tool surface
+- **[Blueprint schema reference](../../site/developer-guide/schema.md)** - how schemas, object types and relationships fit together
+- **[Example pack](../../../reference/togaf-core-template-pack.json)** - a complete multi-object-type schema in JSON
+
+---
+
+## FAQ
+
+### Q: Can I modify a schema after creation?
+
+**A**: No. Schemas are **immutable** once published. To make changes:
+
+1. Create a new version (e.g., `1.0.0` → `1.1.0`)
+2. Uninstall the old version from projects
+3. Install the new version
+
+### Q: What happens to entities if I delete a schema?
+
+**A**: You **cannot delete** a schema that has entities associated with it. You must first:
+
+1. Uninstall the schema from all projects
+2. Migrate or delete entities using that schema
+3. Then delete the schema
+
+### Q: Can I have multiple versions of the same schema?
+
+**A**: Yes. Each `name` + `version` combination is unique. Projects can have different versions installed simultaneously (e.g., Project A uses `1.0.0`, Project B uses `1.1.0`).
+
+### Q: How do I share schemas between projects?
+
+**A**: Schemas are **global** by default. Once created, they appear in the **schema catalog** (`emergent://schemas/catalog` via MCP) and can be installed in any project using `assign_schema`.
+
+### Q: What date format should I use for timestamps?
+
+**A**: All timestamps **auto-generated by the system** use **RFC3339** format (e.g., `2025-02-10T09:26:57Z`). For **entity properties**, you can use any format defined in your JSON Schema (e.g., `"format": "date"` for YYYY-MM-DD).
+
+---
+
+## Summary
+
+**Schemas** are the foundation of structured knowledge in Memory:
+
+- **Define once, use everywhere** - Reusable schemas across projects
+- **Type-safe** - JSON Schema validation ensures data quality
+- **AI-friendly** - Extraction prompts guide automated entity creation
+- **Versioned** - Semantic versioning enables safe evolution
+- **Accessible** - Available via MCP, REST API, and CLI (JSON or YAML)
+- **Migratable** - Rename types and properties across live data without data loss
+
+Start with simple schemas, iterate based on usage, and leverage extraction prompts for AI-powered knowledge extraction.

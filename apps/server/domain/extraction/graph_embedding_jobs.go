@@ -1,0 +1,809 @@
+package extraction
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"math"
+	"time"
+
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/processingproblems"
+	"github.com/emergent-company/emergent.memory/internal/jobs"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// GraphEmbeddingJobsService manages the graph embedding job queue.
+// It provides methods to enqueue, dequeue, and manage embedding jobs for graph objects.
+//
+// Key features:
+// - Idempotent enqueue (won't create duplicate active jobs for same object)
+// - Atomic dequeue with FOR UPDATE SKIP LOCKED
+// - Exponential backoff for retries
+// - Stale job recovery
+// - Dead-letter queue after MaxAttempts failures
+// - Queue statistics
+type GraphEmbeddingJobsService struct {
+	db  bun.IDB
+	log *slog.Logger
+	cfg *GraphEmbeddingConfig
+}
+
+// GraphEmbeddingConfig contains configuration for graph embedding jobs
+type GraphEmbeddingConfig struct {
+	// BaseRetryDelaySec is the base delay in seconds for retries (default: 60)
+	BaseRetryDelaySec int
+	// MaxRetryDelaySec is the maximum delay in seconds (default: 3600)
+	MaxRetryDelaySec int
+	// MaxAttempts is the maximum number of attempts before moving to dead_letter (default: 500, 0 = unlimited)
+	MaxAttempts int
+	// WorkerIntervalMs is the polling interval in milliseconds (default: 5000)
+	WorkerIntervalMs int
+	// WorkerBatchSize is the number of jobs to dequeue per poll (default: 50)
+	WorkerBatchSize int
+	// WorkerConcurrency is the maximum number of jobs in flight at once
+	// (default: 200); the system-health scaler may adapt it when adaptive
+	// scaling is enabled.
+	WorkerConcurrency int
+	// EmbeddingRequestBatchSize is the maximum number of objects sent in a
+	// single multi-object embedding request (default: 100). Requests are
+	// additionally split per project, because embedding credentials and
+	// budgets are resolved per project. A value of 0 uses the default; a
+	// negative value disables multi-object requests, so every object is
+	// embedded by its own request.
+	EmbeddingRequestBatchSize int
+	// EnableAdaptiveScaling enables dynamic concurrency adjustment based on system health
+	EnableAdaptiveScaling bool
+	// MinConcurrency is the minimum concurrency when adaptive scaling is enabled (default: 1)
+	MinConcurrency int
+	// MaxConcurrency is the maximum concurrency when adaptive scaling is enabled (default: 10)
+	MaxConcurrency int
+}
+
+// DefaultGraphEmbeddingConfig returns default configuration
+func DefaultGraphEmbeddingConfig() *GraphEmbeddingConfig {
+	return &GraphEmbeddingConfig{
+		BaseRetryDelaySec:         60,
+		MaxRetryDelaySec:          3600,
+		MaxAttempts:               500,
+		WorkerIntervalMs:          5000,
+		WorkerBatchSize:           200,
+		WorkerConcurrency:         200,
+		EmbeddingRequestBatchSize: 100,
+		EnableAdaptiveScaling:     true,
+		MinConcurrency:            50,
+		MaxConcurrency:            500,
+	}
+}
+
+// WorkerInterval returns the worker interval as a Duration
+func (c *GraphEmbeddingConfig) WorkerInterval() time.Duration {
+	return time.Duration(c.WorkerIntervalMs) * time.Millisecond
+}
+
+// NewGraphEmbeddingJobsService creates a new graph embedding jobs service
+func NewGraphEmbeddingJobsService(db bun.IDB, log *slog.Logger, cfg *GraphEmbeddingConfig) *GraphEmbeddingJobsService {
+	if cfg == nil {
+		cfg = DefaultGraphEmbeddingConfig()
+	}
+	return &GraphEmbeddingJobsService{
+		db:  db,
+		log: log.With(logger.Scope("graph.embedding.jobs")),
+		cfg: cfg,
+	}
+}
+
+// DB returns the underlying database handle (used for diagnostics).
+func (s *GraphEmbeddingJobsService) DB() bun.IDB { return s.db }
+
+// EnqueueOptions contains options for enqueuing a graph embedding job
+type EnqueueOptions struct {
+	ObjectID   string     // Required: the graph object ID to generate embedding for
+	Priority   int        // Optional: higher = more urgent (default: 0)
+	ScheduleAt *time.Time // Optional: when to process (default: now)
+}
+
+// Enqueue creates a new graph embedding job or returns existing active job.
+// Idempotent: if an active (pending|processing) job exists for the object, returns it.
+func (s *GraphEmbeddingJobsService) Enqueue(ctx context.Context, opts EnqueueOptions) (*GraphEmbeddingJob, error) {
+	// Check for existing active job
+	existing := &GraphEmbeddingJob{}
+	err := s.db.NewSelect().
+		Model(existing).
+		Where("object_id = ?", opts.ObjectID).
+		Where("status IN ('pending', 'processing')").
+		Limit(1).
+		Scan(ctx)
+
+	if err == nil {
+		// Active job exists, return it
+		return existing, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("check existing job: %w", err)
+	}
+
+	// No active job, create new one
+	scheduleAt := time.Now()
+	if opts.ScheduleAt != nil {
+		scheduleAt = *opts.ScheduleAt
+	}
+
+	job := &GraphEmbeddingJob{
+		ObjectID:     opts.ObjectID,
+		Status:       JobStatusPending,
+		AttemptCount: 0,
+		Priority:     opts.Priority,
+		ScheduledAt:  scheduleAt,
+	}
+
+	_, err = s.db.NewInsert().
+		Model(job).
+		On("CONFLICT (object_id) WHERE status IN ('pending', 'processing') DO NOTHING").
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("enqueue graph embedding job: %w", err)
+	}
+	// If the ON CONFLICT clause suppressed the insert, job.ID will be empty —
+	// another goroutine raced us and already enqueued. Return nil (best-effort).
+	if job.ID == "" {
+		return nil, nil
+	}
+
+	s.log.Debug("enqueued graph embedding job",
+		slog.String("job_id", job.ID),
+		slog.String("object_id", job.ObjectID),
+		slog.Int("priority", job.Priority))
+
+	return job, nil
+}
+
+// EnqueueBatch creates multiple graph embedding jobs in a single transaction.
+// Skips objects that already have active jobs.
+func (s *GraphEmbeddingJobsService) EnqueueBatch(ctx context.Context, objectIDs []string, priority int) (int, error) {
+	if len(objectIDs) == 0 {
+		return 0, nil
+	}
+
+	// Get objects that already have active jobs
+	var existingObjectIDs []string
+	err := s.db.NewSelect().
+		Model((*GraphEmbeddingJob)(nil)).
+		Column("object_id").
+		Where("object_id IN (?)", bun.In(objectIDs)).
+		Where("status IN ('pending', 'processing')").
+		Scan(ctx, &existingObjectIDs)
+	if err != nil {
+		return 0, fmt.Errorf("check existing jobs: %w", err)
+	}
+
+	// Filter out objects with existing jobs
+	existingSet := make(map[string]bool, len(existingObjectIDs))
+	for _, id := range existingObjectIDs {
+		existingSet[id] = true
+	}
+
+	var toEnqueue []string
+	for _, id := range objectIDs {
+		if !existingSet[id] {
+			toEnqueue = append(toEnqueue, id)
+		}
+	}
+
+	if len(toEnqueue) == 0 {
+		return 0, nil
+	}
+
+	// Create jobs
+	now := time.Now()
+	jobs := make([]*GraphEmbeddingJob, len(toEnqueue))
+	for i, objectID := range toEnqueue {
+		jobs[i] = &GraphEmbeddingJob{
+			ObjectID:     objectID,
+			Status:       JobStatusPending,
+			AttemptCount: 0,
+			Priority:     priority,
+			ScheduledAt:  now,
+		}
+	}
+
+	_, err = s.db.NewInsert().
+		Model(&jobs).
+		On("CONFLICT (object_id) WHERE status IN ('pending', 'processing') DO NOTHING").
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue batch: %w", err)
+	}
+
+	s.log.Debug("enqueued graph embedding jobs batch",
+		slog.Int("count", len(jobs)),
+		slog.Int("skipped", len(existingObjectIDs)))
+
+	return len(jobs), nil
+}
+
+// Dequeue atomically claims jobs for processing.
+// Uses PostgreSQL's FOR UPDATE SKIP LOCKED for concurrent workers.
+func (s *GraphEmbeddingJobsService) Dequeue(ctx context.Context, batchSize int) ([]*GraphEmbeddingJob, error) {
+	if batchSize <= 0 {
+		batchSize = s.cfg.WorkerBatchSize
+	}
+
+	var jobs []*GraphEmbeddingJob
+
+	// Strategic SQL: FOR UPDATE SKIP LOCKED for concurrent workers
+	// Order by priority DESC (higher = more urgent) then by scheduled_at ASC
+	err := s.db.NewRaw(`WITH cte AS (
+		SELECT id FROM kb.graph_embedding_jobs
+		WHERE status = 'pending' 
+			AND scheduled_at <= now()
+		ORDER BY priority DESC, scheduled_at ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT ?
+	)
+	UPDATE kb.graph_embedding_jobs j 
+	SET status = 'processing', 
+		started_at = now(),
+		attempt_count = attempt_count + 1,
+		updated_at = now()
+	FROM cte WHERE j.id = cte.id
+	RETURNING j.*`, batchSize).Scan(ctx, &jobs)
+	if err != nil {
+		return nil, fmt.Errorf("dequeue graph embedding jobs: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// MarkCompleted marks a job as successfully completed
+func (s *GraphEmbeddingJobsService) MarkCompleted(ctx context.Context, id string) error {
+	now := time.Now()
+	_, err := s.db.NewUpdate().
+		Model((*GraphEmbeddingJob)(nil)).
+		Set("status = ?", JobStatusCompleted).
+		Set("completed_at = ?", now).
+		Set("last_error = NULL").
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Exec(ctx)
+
+	if err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+
+	s.log.Debug("graph embedding job completed", slog.String("job_id", id))
+	return nil
+}
+
+// MarkFailed marks a job as failed and schedules retry with exponential backoff.
+// If MaxAttempts is configured (>0) and the job has reached the limit, it is
+// moved to dead_letter status instead so it no longer blocks the queue.
+func (s *GraphEmbeddingJobsService) MarkFailed(ctx context.Context, id string, jobErr error) error {
+	job := &GraphEmbeddingJob{}
+	err := s.db.NewSelect().
+		Model(job).
+		Column("id", "attempt_count").
+		Where("id = ?", id).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			s.log.Warn("graph embedding job not found when marking as failed", slog.String("job_id", id))
+			return nil
+		}
+		return fmt.Errorf("get job for mark failed: %w", err)
+	}
+
+	errorMessage := truncateError(jobErr.Error())
+
+	// Move to dead_letter once MaxAttempts is reached (0 = unlimited).
+	if s.cfg.MaxAttempts > 0 && job.AttemptCount >= s.cfg.MaxAttempts {
+		_, updateErr := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+			SET status = 'dead_letter',
+				last_error = ?,
+				updated_at = now()
+			WHERE id = ?`,
+			errorMessage, id).Exec(ctx)
+		if updateErr != nil {
+			return fmt.Errorf("move job to dead_letter: %w", updateErr)
+		}
+		s.log.Warn("graph embedding job moved to dead_letter after max attempts",
+			slog.String("job_id", id),
+			slog.Int("attempt_count", job.AttemptCount),
+			slog.Int("max_attempts", s.cfg.MaxAttempts),
+			slog.String("error", errorMessage))
+		return nil
+	}
+
+	// Calculate exponential backoff: base * attempt^2, capped at max
+	delaySeconds := int(math.Min(
+		float64(s.cfg.MaxRetryDelaySec),
+		float64(s.cfg.BaseRetryDelaySec)*float64(job.AttemptCount)*float64(job.AttemptCount),
+	))
+	if delaySeconds < s.cfg.BaseRetryDelaySec {
+		delaySeconds = s.cfg.BaseRetryDelaySec
+	}
+
+	// Requeue for retry
+	_, updateErr := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs 
+		SET status = 'pending', 
+			last_error = ?, 
+			scheduled_at = now() + (? || ' seconds')::interval,
+			updated_at = now()
+		WHERE id = ?`,
+		errorMessage, fmt.Sprintf("%d", delaySeconds), id).Exec(ctx)
+	if updateErr != nil {
+		return fmt.Errorf("requeue failed job: %w", updateErr)
+	}
+
+	s.log.Warn("graph embedding job failed, retrying",
+		slog.String("job_id", id),
+		slog.Int("attempt", job.AttemptCount),
+		slog.Duration("retry_delay", time.Duration(delaySeconds)*time.Second),
+		slog.String("error", errorMessage))
+
+	return nil
+}
+
+// MarkPermanentlyFailed marks a job as failed without scheduling a retry.
+// Use this for terminal errors where retrying will never succeed (e.g. the
+// referenced object has been deleted).
+func (s *GraphEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, id string, jobErr error) error {
+	errorMessage := truncateError(jobErr.Error())
+	_, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'failed',
+			last_error = ?,
+			updated_at = now()
+		WHERE id = ?`,
+		errorMessage, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark permanently failed: %w", err)
+	}
+	s.log.Warn("graph embedding job permanently failed (no retry)",
+		slog.String("job_id", id),
+		slog.String("error", errorMessage))
+	return nil
+}
+
+// RecoverStaleJobs recovers jobs stuck in 'processing' status.
+// This can happen when the server restarts while jobs are being processed.
+func (s *GraphEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleThresholdMinutes int) (int, error) {
+	if staleThresholdMinutes <= 0 {
+		staleThresholdMinutes = 10
+	}
+
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs 
+		SET status = 'pending', 
+			started_at = NULL,
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE status = 'processing' 
+			AND started_at < now() - (? || ' minutes')::interval`,
+		fmt.Sprintf("%d", staleThresholdMinutes)).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("recover stale jobs: %w", err)
+	}
+
+	count, _ := result.RowsAffected()
+
+	if count > 0 {
+		s.log.Warn("recovered stale graph embedding jobs",
+			slog.Int64("count", count),
+			slog.Int("threshold_minutes", staleThresholdMinutes))
+	}
+
+	return int(count), nil
+}
+
+// RecoverOrphanedProcessingJobs resets ALL 'processing' jobs to 'pending'.
+// Called on worker startup: a freshly-started process has no in-flight work, so
+// every 'processing' job was left behind by a previous process that crashed or
+// was restarted. Resetting them makes the queue restart-resistant. (In a
+// multi-instance deployment this may briefly double-process a peer's job, which
+// is harmless because embedding generation is idempotent.)
+func (s *GraphEmbeddingJobsService) RecoverOrphanedProcessingJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'pending',
+			started_at = NULL,
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE status = 'processing'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("recover orphaned processing jobs: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	if count > 0 {
+		s.log.Warn("recovered orphaned graph embedding jobs on startup", slog.Int64("count", count))
+	}
+	return int(count), nil
+}
+
+// GetJob retrieves a job by ID
+func (s *GraphEmbeddingJobsService) GetJob(ctx context.Context, id string) (*GraphEmbeddingJob, error) {
+	job := &GraphEmbeddingJob{}
+	err := s.db.NewSelect().
+		Model(job).
+		Where("id = ?", id).
+		Scan(ctx)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get job: %w", err)
+	}
+
+	return job, nil
+}
+
+// GetActiveJobForObject returns the active job for an object, if any.
+func (s *GraphEmbeddingJobsService) GetActiveJobForObject(ctx context.Context, objectID string) (*GraphEmbeddingJob, error) {
+	job := &GraphEmbeddingJob{}
+	err := s.db.NewSelect().
+		Model(job).
+		Where("object_id = ?", objectID).
+		Where("status IN ('pending', 'processing')").
+		Order("created_at DESC").
+		Limit(1).
+		Scan(ctx)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get active job for object: %w", err)
+	}
+
+	return job, nil
+}
+
+// FindByObjectIDs returns all graph embedding jobs for the given object IDs,
+// newest first. Used by remember-status to report embedding readiness for the
+// objects a remember run created. Returns nil for an empty input.
+func (s *GraphEmbeddingJobsService) FindByObjectIDs(ctx context.Context, objectIDs []string) ([]*GraphEmbeddingJob, error) {
+	if len(objectIDs) == 0 {
+		return nil, nil
+	}
+	var jobs []*GraphEmbeddingJob
+	err := s.db.NewSelect().
+		Model(&jobs).
+		Where("object_id IN (?)", bun.In(objectIDs)).
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("find graph embedding jobs by object ids: %w", err)
+	}
+	return jobs, nil
+}
+
+// Stats returns queue statistics
+func (s *GraphEmbeddingJobsService) Stats(ctx context.Context) (*GraphEmbeddingQueueStats, error) {
+	stats := &GraphEmbeddingQueueStats{}
+
+	// failed counts only genuine failures: rows terminal-failed by the stale-job
+	// sweep (last_error = jobs.StaleJobMessage) are historical cleanup artifacts,
+	// not current breakage, and are reported separately as staleFailed.
+	//
+	// A single `GROUP BY status` aggregate is satisfied by an index-only scan
+	// over the status b-tree index (IDX_f0021c2230e47af51928f35975). The previous
+	// shape — six `COUNT(*) FILTER (WHERE status = ...)` with no WHERE clause —
+	// forced a full table scan on every call (issue #1098). stale_failed needs
+	// last_error, which the status index does not cover, so it is a separate,
+	// index-backed count over status='failed' only.
+	type statusCount struct {
+		Status string `bun:"status"`
+		Count  int64  `bun:"count"`
+	}
+	var rows []statusCount
+	err := s.db.NewRaw(`
+		SELECT status, COUNT(*) AS count
+		FROM kb.graph_embedding_jobs
+		GROUP BY status`).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("get stats: %w", err)
+	}
+	for _, r := range rows {
+		switch r.Status {
+		case string(JobStatusPending):
+			stats.Pending = r.Count
+		case string(JobStatusProcessing):
+			stats.Processing = r.Count
+		case string(JobStatusCompleted):
+			stats.Completed = r.Count
+		case string(JobStatusFailed):
+			stats.Failed = r.Count
+		case string(JobStatusDeadLetter):
+			stats.DeadLetter = r.Count
+		}
+	}
+
+	if err := s.db.NewRaw(`
+		SELECT COUNT(*) FROM kb.graph_embedding_jobs
+		WHERE status = 'failed' AND last_error = ?`, jobs.StaleJobMessage).Scan(ctx, &stats.StaleFailed); err != nil {
+		return nil, fmt.Errorf("get stale-failed stats: %w", err)
+	}
+	stats.Failed -= stats.StaleFailed
+
+	return stats, nil
+}
+
+// GraphEmbeddingQueueStats contains queue statistics
+type GraphEmbeddingQueueStats struct {
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	DeadLetter  int64 `json:"deadLetter"`
+}
+
+// ResetDeadLetterJobs requeues dead_letter jobs for immediate retry.
+// Used by operators after fixing the underlying credential/model issue.
+// Returns the number of jobs reset.
+func (s *GraphEmbeddingJobsService) ResetDeadLetterJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'pending',
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE id IN (
+			SELECT DISTINCT ON (x.object_id) x.id
+			FROM kb.graph_embedding_jobs x
+			WHERE x.status = 'dead_letter'
+			  AND NOT EXISTS (
+				SELECT 1 FROM kb.graph_embedding_jobs a
+				WHERE a.object_id = x.object_id
+				  AND a.status IN ('pending', 'processing')
+			  )
+			ORDER BY x.object_id, x.updated_at DESC
+		)`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reset dead_letter jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("reset dead_letter graph embedding jobs for retry",
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// ResetSchedule sets scheduled_at = now() for all pending jobs so they are
+// immediately eligible for dequeue regardless of their backoff delay.
+// Returns the number of rows updated.
+func (s *GraphEmbeddingJobsService) ResetSchedule(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET scheduled_at = now(), updated_at = now()
+		WHERE status = 'pending'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reset schedule graph embedding jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("reset schedule for pending graph embedding jobs", slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// ClearPendingJobs deletes all pending and processing jobs from the queue.
+// Returns the number of rows deleted.
+func (s *GraphEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`DELETE FROM kb.graph_embedding_jobs
+		WHERE status IN ('pending', 'processing')`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("clear pending graph embedding jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("cleared pending/processing graph embedding jobs", slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// StatsByProject returns queue statistics filtered to a single project.
+// failed excludes stale-sweep reaps; see Stats.
+func (s *GraphEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*GraphEmbeddingQueueStats, error) {
+	stats := &GraphEmbeddingQueueStats{}
+
+	// Same index-friendly shape as Stats: one `GROUP BY status` aggregate (plus a
+	// separate stale_failed count), so the object-embedding queue counts do not
+	// full-scan the jobs table on every /api/embeddings/progress call (issue
+	// #1098). The project scope still requires the graph_objects join (the jobs
+	// table carries object_id but no project_id).
+	type statusCount struct {
+		Status string `bun:"status"`
+		Count  int64  `bun:"count"`
+	}
+	var rows []statusCount
+	err := s.db.NewRaw(`
+		SELECT j.status, COUNT(*) AS count
+		FROM kb.graph_embedding_jobs j
+		JOIN kb.graph_objects o ON o.id = j.object_id
+		WHERE o.project_id = ?
+		GROUP BY j.status`, projectID).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("get project stats: %w", err)
+	}
+	for _, r := range rows {
+		switch r.Status {
+		case string(JobStatusPending):
+			stats.Pending = r.Count
+		case string(JobStatusProcessing):
+			stats.Processing = r.Count
+		case string(JobStatusCompleted):
+			stats.Completed = r.Count
+		case string(JobStatusFailed):
+			stats.Failed = r.Count
+		case string(JobStatusDeadLetter):
+			stats.DeadLetter = r.Count
+		}
+	}
+
+	if err := s.db.NewRaw(`
+		SELECT COUNT(*)
+		FROM kb.graph_embedding_jobs j
+		JOIN kb.graph_objects o ON o.id = j.object_id
+		WHERE o.project_id = ? AND j.status = 'failed' AND j.last_error = ?`,
+		projectID, jobs.StaleJobMessage).Scan(ctx, &stats.StaleFailed); err != nil {
+		return nil, fmt.Errorf("get project stale-failed stats: %w", err)
+	}
+	stats.Failed -= stats.StaleFailed
+
+	return stats, nil
+}
+
+// Coverage returns deployment-wide embedding coverage for live graph objects:
+// how many already hold an embedding vector (embedded) versus how many are
+// still awaiting one (awaiting). Callers must have been authorized
+// (superadmin_full) by the Coverage handler.
+func (s *GraphEmbeddingJobsService) Coverage(ctx context.Context) (*EmbeddingCoverage, error) {
+	var row struct {
+		Embedded int64 `bun:"embedded"`
+		Awaiting int64 `bun:"awaiting"`
+	}
+	err := s.db.NewRaw(`
+		SELECT
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE embedding_v2 IS NOT NULL AND deleted_at IS NULL) AS embedded,
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE embedding_v2 IS NULL AND deleted_at IS NULL) AS awaiting`).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get object embedding coverage: %w", err)
+	}
+	return &EmbeddingCoverage{Embedded: row.Embedded, Awaiting: row.Awaiting, Total: row.Embedded + row.Awaiting}, nil
+}
+
+// CoverageByProject returns embedding coverage for live graph objects scoped to
+// a single project.
+//
+// Each half is a separate scalar subquery so the planner can serve the two
+// disjoint predicates from their own partial indexes — the embedded side from
+// idx_graph_objects_embedding_coverage (embedding_v2 IS NOT NULL) and the
+// awaiting side from idx_graph_objects_missing_embedding (embedding_v2 IS NULL)
+// — without a sequential scan of kb.graph_objects. A single
+// `COUNT(*) FILTER (WHERE embedding_v2 IS ...)` aggregate would not push the
+// embedding predicate into the scan and would fall back to a seq scan.
+func (s *GraphEmbeddingJobsService) CoverageByProject(ctx context.Context, projectID string) (*EmbeddingCoverage, error) {
+	var row struct {
+		Embedded int64 `bun:"embedded"`
+		Awaiting int64 `bun:"awaiting"`
+	}
+	err := s.db.NewRaw(`
+		SELECT
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ? AND embedding_v2 IS NOT NULL AND deleted_at IS NULL) AS embedded,
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ? AND embedding_v2 IS NULL AND deleted_at IS NULL) AS awaiting`,
+		projectID, projectID).Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get project object embedding coverage: %w", err)
+	}
+	return &EmbeddingCoverage{Embedded: row.Embedded, Awaiting: row.Awaiting, Total: row.Embedded + row.Awaiting}, nil
+}
+
+// RetriggerByProject resets failed and dead_letter jobs for a project to pending.
+// Returns the number of jobs reset. It is RetriggerByProjectWithOptions with the
+// default (safe) filter.
+func (s *GraphEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
+	return s.RetriggerByProjectWithOptions(ctx, projectID, BulkRetryOptions{})
+}
+
+// RetriggerByProjectWithOptions resets failed and dead_letter graph embedding
+// jobs for a project. Retryable-class failures only are re-run unless
+// IncludeNonRetryable is set, which only the panel's explicit "after fixing the
+// cause" action does (a missing model is deterministic).
+//
+// At most one active (pending/processing) job may exist per object — enforced by
+// the partial unique index uidx_graph_embedding_jobs_active. The embedding sweep
+// may already have queued an object while a stale failed row for it remained, so
+// a blind failed->pending UPDATE aborts on that index and rolls the whole
+// statement back. Skip objects that already have an active job, and reset the
+// object only when its most recent row is a terminal failure.
+func (s *GraphEmbeddingJobsService) RetriggerByProjectWithOptions(ctx context.Context, projectID string, opts BulkRetryOptions) (int, error) {
+	// See RetriggerByProjectWithOptions on the chunk queue: classify in Go
+	// before resetting so a project-wide action cannot re-drive a deterministic
+	// failure unless the caller explicitly says the cause is fixed.
+	candidates := make([]retryCandidate, 0)
+	err := s.db.NewRaw(`SELECT DISTINCT ON (x.object_id) x.id, x.last_error
+		FROM kb.graph_embedding_jobs x
+		WHERE x.object_id IN (
+		  SELECT id FROM kb.graph_objects WHERE project_id = ? AND deleted_at IS NULL
+		  )
+		  AND x.status IN ('failed', 'dead_letter')
+		  AND NOT EXISTS (
+			SELECT 1 FROM kb.graph_embedding_jobs a
+			WHERE a.object_id = x.object_id
+			  AND a.status IN ('pending', 'processing')
+		  )
+		ORDER BY x.object_id, x.updated_at DESC`, projectID).Scan(ctx, &candidates)
+	if err != nil {
+		return 0, fmt.Errorf("find retryable graph embedding jobs: %w", err)
+	}
+	if !opts.IncludeNonRetryable {
+		candidates = filterRetryable(processingproblems.QueueGraphEmbedding, candidates)
+	}
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		ids[i] = candidate.ID
+	}
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'pending',
+			attempt_count = 0,
+			scheduled_at = now(),
+			last_error = NULL,
+			updated_at = now()
+		WHERE status IN ('failed', 'dead_letter')
+		  AND id IN (?)`, bun.In(ids)).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("retrigger graph embedding jobs for project: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("retriggered graph embedding jobs for project",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// CancelByProject deletes pending and processing jobs for a project.
+// Returns the number of jobs deleted.
+func (s *GraphEmbeddingJobsService) CancelByProject(ctx context.Context, projectID string) (int, error) {
+	result, err := s.db.NewRaw(`DELETE FROM kb.graph_embedding_jobs
+		WHERE status IN ('pending', 'processing')
+		  AND object_id IN (
+			SELECT id FROM kb.graph_objects WHERE project_id = ?
+		  )`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cancel graph embedding jobs for project: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("cancelled pending graph embedding jobs for project",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// DeleteJob removes a job from the queue entirely.
+// Use when the referenced object no longer exists and the job should not be retried.
+func (s *GraphEmbeddingJobsService) DeleteJob(ctx context.Context, id string) error {
+	_, err := s.db.NewRaw(`DELETE FROM kb.graph_embedding_jobs WHERE id = ?`, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("delete graph embedding job: %w", err)
+	}
+	s.log.Info("graph embedding job deleted (object missing)", slog.String("job_id", id))
+	return nil
+}
+
+// truncateError truncates an error message to 1000 characters.
+// Deprecated: use jobs.TruncateError(msg, 1000).
+func truncateError(msg string) string {
+	if len(msg) > 1000 {
+		return msg[:1000]
+	}
+	return msg
+}

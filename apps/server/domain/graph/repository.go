@@ -1,0 +1,4374 @@
+package graph
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"math"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
+)
+
+// Repository handles database operations for graph objects and relationships.
+type Repository struct {
+	db           bun.IDB
+	log          *slog.Logger
+	maxListLimit int
+	// bulkStatementTimeout is attached to bulk-endpoint contexts so each item
+	// transaction sets PostgreSQL statement_timeout (issue #1481). 0 disables.
+	bulkStatementTimeout time.Duration
+	// bulkConcurrency bounds the per-request worker pool used by the bulk
+	// create/upsert/update endpoints (issue #1573). Always >= 1.
+	bulkConcurrency int
+}
+
+// defaultBulkConcurrency is the worker-pool size used by bulk endpoints when
+// GRAPH_BULK_CONCURRENCY is unset or non-positive. It is deliberately modest:
+// each in-flight item holds a pooled connection for the duration of its item
+// transaction, so the pool must be able to hold the workers plus other traffic.
+const defaultBulkConcurrency = 8
+
+// effectiveBulkConcurrency clamps a configured bulk worker count to a sane
+// range: at least 1, and never more than the connection pool minus one
+// (DB_MAX_OPEN_CONNS-1) so a bulk request can never try to open more
+// connections than the pool will ever hand out (issue #1482) and always leaves
+// one pooled connection for other traffic (health checks, concurrent requests,
+// the embedding workers) rather than claiming the whole pool. A pool of one
+// still permits a single worker.
+func effectiveBulkConcurrency(configured, maxOpenConns int) int {
+	c := configured
+	if c <= 0 {
+		c = defaultBulkConcurrency
+	}
+	if maxOpenConns > 0 {
+		limit := maxOpenConns - 1
+		if limit < 1 {
+			limit = 1
+		}
+		if c > limit {
+			c = limit
+		}
+	}
+	if c < 1 {
+		c = 1
+	}
+	return c
+}
+
+// BulkConcurrency returns the bounded number of items a bulk request processes
+// in parallel. Callers clamp it further to the item count.
+func (r *Repository) BulkConcurrency() int {
+	if r.bulkConcurrency < 1 {
+		return 1
+	}
+	return r.bulkConcurrency
+}
+
+func (r *Repository) DB() bun.IDB {
+	return r.db
+}
+
+// BulkContext returns ctx with the configured per-statement timeout attached,
+// so transactions begun from it bound each statement with PostgreSQL's
+// statement_timeout. Bulk endpoints use it to keep a runaway statement from
+// holding a pool connection past the request budget. Returns ctx unchanged when
+// the timeout is disabled.
+func (r *Repository) BulkContext(ctx context.Context) context.Context {
+	return database.WithStatementTimeout(ctx, r.bulkStatementTimeout)
+}
+
+// MaxListLimit returns the configured maximum number of items per list page.
+func (r *Repository) MaxListLimit() int {
+	return r.maxListLimit
+}
+
+// NewRepository creates a new graph repository.
+func NewRepository(db bun.IDB, log *slog.Logger, cfg *config.Config) *Repository {
+	return &Repository{
+		db:                   db,
+		log:                  log.With(logger.Scope("graph.repo")),
+		maxListLimit:         cfg.Graph.MaxListLimit,
+		bulkStatementTimeout: cfg.Database.BulkStatementTimeout,
+		bulkConcurrency:      effectiveBulkConcurrency(cfg.Graph.BulkConcurrency, cfg.Database.MaxOpenConns),
+	}
+}
+
+// UpdateAccessTimestamps updates last_accessed_at for the given object IDs.
+// This is used to track when graph objects are accessed via search queries.
+func (r *Repository) UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error {
+	if len(objectIDs) == 0 {
+		return nil
+	}
+
+	_, err := r.db.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("last_accessed_at = ?", time.Now()).
+		Where("id IN (?)", bun.In(objectIDs)).
+		Exec(ctx)
+
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// GetMostAccessed returns the most frequently accessed graph objects.
+// minAccessCount filters objects that have been accessed at least N times (not implemented yet - always 1).
+// Only returns HEAD versions (supersedes_id IS NULL) that have been accessed.
+func (r *Repository) GetMostAccessed(ctx context.Context, projectID uuid.UUID, limit int, minAccessCount int) ([]*GraphObject, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var objects []*GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("last_accessed_at IS NOT NULL").
+		Where("deleted_at IS NULL").
+		Order("last_accessed_at DESC", "id ASC").
+		Limit(limit).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
+// GetUnused returns graph objects that haven't been accessed in the specified number of days.
+// Only returns HEAD versions (supersedes_id IS NULL).
+// Objects with NULL last_accessed_at are considered never accessed (included if threshold allows).
+func (r *Repository) GetUnused(ctx context.Context, projectID uuid.UUID, limit int, daysThreshold int) ([]*GraphObject, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if daysThreshold <= 0 {
+		daysThreshold = 30
+	}
+
+	cutoffTime := time.Now().AddDate(0, 0, -daysThreshold)
+
+	var objects []*GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.
+				WhereOr("last_accessed_at IS NULL").
+				WhereOr("last_accessed_at < ?", cutoffTime)
+		}).
+		Order("last_accessed_at ASC NULLS FIRST", "id ASC").
+		Limit(limit).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
+// PropertyOrderSpec describes an optional ORDER BY on a user-defined JSONB property.
+type PropertyOrderSpec struct {
+	Path      string // dot-notation path, e.g. ds_score, address.city
+	Direction string // asc or desc
+}
+
+// Provenance filter modes for the object actor filter (issue #1193).
+const (
+	ProvenanceAny     = "any"
+	ProvenanceCreated = "created"
+	ProvenanceUpdated = "updated"
+)
+
+// validProvenance reports whether m is a known provenance mode.
+func validProvenance(m string) bool {
+	switch m {
+	case ProvenanceAny, ProvenanceCreated, ProvenanceUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+// validActorType reports whether t is a known actor type. The actor provenance
+// filter is keyed on the (actor_type, actor_id) pair, so an unknown actor_type
+// is rejected at the boundary rather than silently matching nothing.
+func validActorType(t string) bool {
+	switch t {
+	case ActorUser, ActorAgent, ActorSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+// ListParams contains parameters for listing graph objects.
+type ListParams struct {
+	ProjectID       uuid.UUID
+	BranchID        *uuid.UUID
+	Type            *string  // Single type filter
+	Types           []string // Multiple types
+	Label           *string  // Single label filter
+	Labels          []string // Multiple labels
+	Status          *string
+	Key             *string
+	IncludeDeleted  bool
+	Limit           int
+	Cursor          *string
+	Order           string             // "asc" or "desc" (default: "desc")
+	RelatedToID     *uuid.UUID         // Filter by related object
+	IDs             []uuid.UUID        // Filter by specific IDs
+	Keys            []string           // Filter by specific keys (comma-separated `keys` query param)
+	ExtractionJobID *uuid.UUID         // Filter by extraction job
+	PropertyFilters []PropertyFilter   // JSONB property filters
+	Fields          []string           // Property field projection (include only these property keys)
+	ExcludeFields   []string           // Property field projection (drop these property keys)
+	Namespace       *string            // Filter by namespace
+	PropertyOrder   *PropertyOrderSpec // optional property-based ordering
+
+	// Actor provenance filter (issue #1193). Filtering is ALWAYS keyed on the
+	// (actor_type, actor_id) pair — actor_id alone is ignored/rejected upstream.
+	// A nil ActorID means the NULL actor_id (the `system` actor).
+	ActorType  *string    // "user" | "agent" | "system"
+	ActorID    *uuid.UUID // user UUID for user, kb.agents UUID for agent, NULL for system
+	Provenance string     // "created" | "updated" | "any" ("" defaults to "any")
+
+	// Write-stamp filter (#2468): credential, run and data class of the version
+	// row. The zero value filters nothing.
+	Stamp WriteStampFilters
+
+	// SkipTotal tells the list service not to run the exact COUNT(*) that
+	// populates SearchGraphObjectsResponse.Total. The zero value (false) keeps
+	// the default behaviour: an exact total is always computed. Callers that
+	// only need a page (keyset/cursor pagination, list views that ignore the
+	// total) can set it to avoid the count, which is the latency floor for a
+	// project that dominates a large kb.graph_objects table (issue #733).
+	SkipTotal bool
+
+	// IncludeMigrationArchive selects the migration_archive column in List
+	// results. It is opt-in because List also backs the public graph list/search
+	// API, and the archive JSON must not leak into those responses. Only callers
+	// that actually read or write obj.MigrationArchive (schema migrate/rollback)
+	// should set it.
+	IncludeMigrationArchive bool
+
+	// OnlyWithMigrationArchive bounds the scan to objects that carry at least
+	// one migration_archive entry (migration_archive <> '[]'::jsonb). It is an
+	// opt-in scan bound for batch callers (schema rollback) and relies on the
+	// existing partial index idx_graph_objects_has_archive. It MUST NOT be used
+	// by forward migration, which must also visit archive-free objects (a
+	// first-ever migration has zero archived objects).
+	OnlyWithMigrationArchive bool
+}
+
+// numericPropertyKeywords are substrings that hint a property path holds a
+// numeric value, used to choose between text and numeric ORDER BY expressions.
+var numericPropertyKeywords = []string{"score", "count", "price", "amount", "number", "run_date"}
+
+// isNumericPropertyPath reports whether a property path likely holds a numeric value.
+func isNumericPropertyPath(path string) bool {
+	lower := strings.ToLower(path)
+	for _, kw := range numericPropertyKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyPropertyFilters applies JSONB property filters to a Bun select query.
+// Each PropertyFilter generates a WHERE clause against the properties JSONB column.
+// Supported operators: eq, neq, gt, gte, lt, lte, contains, exists, in
+// propertyAccessors computes the text (->>) and json (->) JSONB accessors for a
+// dot-notation property path.
+// "name"         → ("properties->>'name'", "properties->'name'")
+// "address.city" → ("properties->'address'->>'city'", "properties->'address'->'city'")
+func propertyAccessors(path string) (textAccessor, jsonAccessor string, ok bool) {
+	segments := strings.Split(path, ".")
+	if len(segments) == 0 {
+		return "", "", false
+	}
+	if len(segments) == 1 {
+		return "properties->>'" + segments[0] + "'", "properties->'" + segments[0] + "'", true
+	}
+	var b strings.Builder
+	b.WriteString("properties")
+	for _, seg := range segments[:len(segments)-1] {
+		b.WriteString("->'" + seg + "'")
+	}
+	base := b.String()
+	last := segments[len(segments)-1]
+	return base + "->>'" + last + "'", base + "->'" + last + "'", true
+}
+
+// bulkFilterPredicate is a single WHERE fragment plus its bind arguments. It is
+// the shared currency for building the bulk-action filter predicate set so the
+// same conditions can be applied to bun Select, Update, and Delete queries.
+type bulkFilterPredicate struct {
+	cond string
+	args []any
+}
+
+// applyPredicates appends each predicate via Where. It is generic over bun's
+// query types (SelectQuery, UpdateQuery, DeleteQuery), all of which expose
+// Where(string, ...any) returning the same concrete query type.
+func applyPredicates[Q interface {
+	Where(query string, args ...any) Q
+}](q Q, preds []bulkFilterPredicate) Q {
+	for _, p := range preds {
+		q = q.Where(p.cond, p.args...)
+	}
+	return q
+}
+
+// propertyFilterPredicates renders the JSONB property-filter WHERE predicates
+// for a []PropertyFilter. This is the single implementation for both the bulk
+// action path and the non-bulk ListParams path (previously two operator-for-
+// operator identical helpers: applyPropertyFilters and applyPropertyFiltersUpdate).
+// Supported operators: eq, neq, gt, gte, lt, lte, contains, exists, in.
+func propertyFilterPredicates(filters []PropertyFilter) []bulkFilterPredicate {
+	preds := make([]bulkFilterPredicate, 0, len(filters))
+	for _, f := range filters {
+		textAccessor, jsonAccessor, ok := propertyAccessors(f.Path)
+		if !ok {
+			continue
+		}
+		switch f.Op {
+		case "eq":
+			preds = append(preds, bulkFilterPredicate{cond: textAccessor + " = ?", args: []any{fmt.Sprintf("%v", f.Value)}})
+		case "neq":
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + " IS NULL OR " + textAccessor + " != ?)", args: []any{fmt.Sprintf("%v", f.Value)}})
+		case "gt":
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric > ?::numeric", args: []any{f.Value}})
+		case "gte":
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric >= ?::numeric", args: []any{f.Value}})
+		case "lt":
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric < ?::numeric", args: []any{f.Value}})
+		case "lte":
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric <= ?::numeric", args: []any{f.Value}})
+		case "contains":
+			preds = append(preds, bulkFilterPredicate{cond: textAccessor + " ILIKE ?", args: []any{"%" + fmt.Sprintf("%v", f.Value) + "%"}})
+		case "exists":
+			preds = append(preds, bulkFilterPredicate{cond: jsonAccessor + " IS NOT NULL"})
+		case "in":
+			if arr, ok := f.Value.([]interface{}); ok {
+				strVals := make([]string, 0, len(arr))
+				for _, v := range arr {
+					strVals = append(strVals, fmt.Sprintf("%v", v))
+				}
+				preds = append(preds, bulkFilterPredicate{cond: textAccessor + " IN (?)", args: []any{bun.In(strVals)}})
+			}
+		}
+	}
+	return preds
+}
+
+// buildObjectBaseQuery constructs a SELECT query for HEAD graph objects with all
+// ListParams filters applied (project, branch, IDs, types, labels, status, key,
+// extraction job, namespace, deleted, property filters, and related-to).
+// Cursor, ordering, and LIMIT are NOT applied — callers add those as needed.
+func (r *Repository) buildObjectBaseQuery(params ListParams) *bun.SelectQuery {
+	return r.buildObjectBaseQueryWith(r.db, params)
+}
+
+// buildObjectBaseQueryWith is buildObjectBaseQuery against a caller-supplied
+// handle (a *bun.DB or a bun.Tx), so batch iterators can run their scans inside
+// an existing transaction.
+func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bun.SelectQuery {
+	q := db.NewSelect().
+		Model((*GraphObject)(nil)).
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL") // HEAD versions only
+
+	if params.OnlyWithMigrationArchive {
+		// Opt-in scan bound: only objects with at least one archive entry. Uses
+		// the partial index idx_graph_objects_has_archive.
+		q = q.Where("migration_archive <> '[]'::jsonb")
+	}
+
+	if params.BranchID != nil {
+		q = q.Where("branch_id = ?", *params.BranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	// Filter by specific IDs (accepts both physical id and canonical_id)
+	if len(params.IDs) > 0 {
+		q = q.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
+	}
+
+	// Support both single type and multiple types
+	if params.Type != nil {
+		q = q.Where("type = ?", *params.Type)
+	} else if len(params.Types) > 0 {
+		q = q.Where("type IN (?)", bun.In(params.Types))
+	}
+
+	// Support both single label and multiple labels
+	if params.Label != nil {
+		q = q.Where("? = ANY(labels)", *params.Label)
+	} else if len(params.Labels) > 0 {
+		q = q.Where("labels && ?::text[]", formatTextArray(params.Labels))
+	}
+
+	if params.Status != nil {
+		q = q.Where("status = ?", *params.Status)
+	}
+
+	if params.Key != nil {
+		q = q.Where("key = ?", *params.Key)
+	} else if len(params.Keys) > 0 {
+		q = q.Where("key IN (?)", bun.In(params.Keys))
+	}
+
+	if params.ExtractionJobID != nil {
+		q = q.Where("extraction_job_id = ?", *params.ExtractionJobID)
+	}
+
+	if params.Namespace != nil {
+		q = q.Where("namespace = ?", *params.Namespace)
+	}
+
+	if !params.IncludeDeleted {
+		q = q.Where("deleted_at IS NULL")
+	}
+
+	if len(params.PropertyFilters) > 0 {
+		q = applyPredicates(q, propertyFilterPredicates(params.PropertyFilters))
+	}
+
+	// Filter by related object: only return objects that are dst_id in a relationship
+	// where src_id = RelatedToID and the relationship is a HEAD (supersedes_id IS NULL).
+	if params.RelatedToID != nil {
+		q = q.Where(`canonical_id IN (
+			SELECT dst_id FROM kb.graph_relationships
+			WHERE src_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL AND project_id = ?
+		)`, *params.RelatedToID, params.ProjectID)
+	}
+
+	// Actor provenance filter (issue #1193). Always keyed on the (actor_type,
+	// actor_id) pair — actor_id alone is rejected upstream. A nil ActorID selects
+	// actor_id IS NULL (the `system` actor).
+	//
+	// Provenance selects which version row must carry the pair:
+	//   - updated (or any): the HEAD row (supersedes_id IS NULL) authored by the actor.
+	//   - created: the root version=1 row authored by the actor (earliest surviving).
+	//     Scoped to the same project/branch as the outer query: on a named branch,
+	//     version=1 is the branch's fork-time copy, so "created by" there is the
+	//     fork-time version's author, not necessarily the object's original creator
+	//     on main (see BulkCopyObjectsToBranch, which carries the HEAD row's actor).
+	//   - any: creator (version=1) OR latest updater (HEAD).
+	//
+	// The `created` mode is implemented as `canonical_id IN (SELECT canonical_id
+	// FROM kb.graph_objects WHERE actor_type=? AND actor_id=? AND version=1 AND
+	// deleted_at IS NULL)` so the partial actor index (idx_graph_objects_actor)
+	// drives the inner scan — NOT a correlated EXISTS/LATERAL over every HEAD row.
+	// Because it is a plain WHERE-IN filter it composes with both keyset cursor
+	// pagination (created_at, id) and property-based ordering, so no pagination
+	// guard is required here (unlike PropertyOrder, which rewrites ORDER BY).
+	if params.ActorType != nil {
+		// The `created` subquery must be scoped to the SAME project and branch as
+		// the outer query; otherwise a system-actor (NULL actor_id) filter would
+		// materialize every system-authored version=1 row deployment-wide, not
+		// just this project's. The project/branch predicates ride as residual
+		// filters after the (actor_type, actor_id) index lookup, preserving the
+		// partial-index-friendly shape.
+		scopeCond := "project_id = ? AND branch_id IS NULL"
+		scopeArgs := []any{params.ProjectID}
+		if params.BranchID != nil {
+			scopeCond = "project_id = ? AND branch_id = ?"
+			scopeArgs = []any{params.ProjectID, *params.BranchID}
+		}
+
+		args := []any{*params.ActorType}
+		pairCond := "actor_type = ? AND actor_id IS NULL"
+		createdCond := "actor_type = ? AND actor_id IS NULL AND version = 1 AND deleted_at IS NULL"
+		if params.ActorID != nil {
+			args = append(args, *params.ActorID)
+			pairCond = "actor_type = ? AND actor_id = ?"
+			createdCond = "actor_type = ? AND actor_id = ? AND version = 1 AND deleted_at IS NULL"
+		}
+		createdSub := "SELECT canonical_id FROM kb.graph_objects WHERE " + createdCond + " AND " + scopeCond
+		createdArgs := append(append([]any{}, args...), scopeArgs...)
+
+		switch params.Provenance {
+		case ProvenanceCreated:
+			q = q.Where("canonical_id IN ("+createdSub+")", createdArgs...)
+		case ProvenanceUpdated:
+			q = q.Where(pairCond, args...)
+		default: // "" or "any": creator OR latest updater
+			q = q.Where("("+pairCond+") OR canonical_id IN ("+createdSub+")", append(args, createdArgs...)...)
+		}
+	}
+
+	// Write-stamp filter (#2468). Plain equality on the stamp columns (plus the
+	// run_id/root_run_id pair), so it composes with the keyset cursor and with
+	// property ordering without a pagination guard.
+	q = applyWriteStampFilters(q, params.Stamp)
+
+	return q
+}
+
+// List returns graph objects matching the given parameters.
+// Returns only HEAD versions (latest version per canonical_id).
+func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	return r.list(ctx, r.db, params)
+}
+
+// list runs a single List query against the given handle. It is shared by List
+// (r.db) and the streaming batch iterators (ListEachTx), which pass a bun.Tx.
+func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([]*GraphObject, error) {
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	// Only clamp when a positive cap is configured; an unset/non-positive
+	// maxListLimit must not collapse the page size to zero.
+	if r.maxListLimit > 0 && params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
+	}
+	if params.Order == "" {
+		params.Order = "desc"
+	}
+
+	columns := []string{"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+		"type", "key", "status", "properties", "labels", "change_summary",
+		"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
+		"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+		"content_hash", "embedding_updated_at",
+		// Write stamp (#2376). Selected here as well as in the detail list: a
+		// stale list/GET projection would make an edit read DataClass = "" and
+		// silently re-default a source-owned object to synthesized.
+		"credential_kind", "credential_id", "run_id", "root_run_id",
+		"data_class", "owner_source_id", "input_hash"}
+	if params.IncludeMigrationArchive {
+		// Opt-in only — see ListParams.IncludeMigrationArchive. Without this the
+		// column is omitted and obj.MigrationArchive always scans as empty.
+		columns = append(columns, "migration_archive")
+	}
+	q := r.buildObjectBaseQueryWith(db, params).Column(columns...).
+		ColumnExpr(embeddingStatusExpr + " AS embedding_status")
+
+	// Property-based ordering: ORDER BY the JSONB property accessor with id as a
+	// tiebreaker. Keyset cursor pagination encodes (created_at, id), which is
+	// incompatible with this sort order, so reject it explicitly.
+	if params.PropertyOrder != nil {
+		if params.Cursor != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("cursor-based pagination is not supported with property ordering")
+		}
+
+		textAccessor, _, ok := propertyAccessors(params.PropertyOrder.Path)
+		if !ok {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid property order path")
+		}
+		dir := strings.ToUpper(params.PropertyOrder.Direction)
+		if dir == "" {
+			dir = "DESC"
+		}
+		if isNumericPropertyPath(params.PropertyOrder.Path) {
+			q = q.OrderExpr(fmt.Sprintf("(%s)::numeric %s NULLS LAST", textAccessor, dir))
+		} else {
+			q = q.OrderExpr(fmt.Sprintf("%s %s NULLS LAST", textAccessor, dir))
+		}
+		q = q.Order("id " + dir)
+	} else {
+		// Pagination via cursor (created_at, id)
+		if params.Cursor != nil {
+			cursorData, err := decodeCursor(*params.Cursor)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage("invalid cursor")
+			}
+			if params.Order == "asc" {
+				q = q.Where("(created_at, id) > (?, ?)", cursorData.CreatedAt, cursorData.ID)
+			} else {
+				q = q.Where("(created_at, id) < (?, ?)", cursorData.CreatedAt, cursorData.ID)
+			}
+		}
+
+		if params.Order == "asc" {
+			q = q.Order("created_at ASC", "id ASC")
+		} else {
+			q = q.Order("created_at DESC", "id DESC")
+		}
+	}
+	q = q.Limit(params.Limit + 1)
+
+	var objects []*GraphObject
+	if err := q.Scan(ctx, &objects); err != nil {
+		r.log.Error("failed to list graph objects", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
+// ListEach streams every HEAD object matching params to fn one page at a time,
+// without materialising the full result set. It mirrors ListAll's keyset-cursor
+// walk (defaulting Order to "desc" and paging at MaxListLimit), but invokes
+// fn(page) per page and stops as soon as fn returns an error — that error is
+// propagated immediately and no further pages are fetched. Property ordering is
+// rejected because it is incompatible with the (created_at, id) cursor.
+//
+// Callers that read or write obj.MigrationArchive must set
+// params.IncludeMigrationArchive.
+func (r *Repository) ListEach(ctx context.Context, params ListParams, fn func([]*GraphObject) error) error {
+	return r.ListEachTx(ctx, r.db, params, fn)
+}
+
+// ListEachTx is ListEach against a caller-supplied handle (a *bun.DB or a
+// bun.Tx), so a batch scan can run inside an existing transaction.
+func (r *Repository) ListEachTx(ctx context.Context, db bun.IDB, params ListParams, fn func([]*GraphObject) error) error {
+	if params.PropertyOrder != nil {
+		return apperror.NewBadRequest("property ordering is not supported for full list scans")
+	}
+	if params.Order == "" {
+		params.Order = "desc"
+	}
+	// Mirror List's own default so an unconfigured (non-positive) maxListLimit
+	// does not collapse the page size.
+	pageSize := r.maxListLimit
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+
+	for {
+		page := params
+		page.Limit = pageSize
+		objects, err := r.list(ctx, db, page)
+		if err != nil {
+			return err
+		}
+		if err := fn(objects); err != nil {
+			return err
+		}
+
+		// list fetches Limit+1 rows so callers can detect a further page; a page
+		// no larger than the requested size means the result set is exhausted.
+		if len(objects) <= pageSize {
+			return nil
+		}
+		last := objects[len(objects)-1]
+		cursor := encodeCursor(last.CreatedAt, last.ID)
+		params.Cursor = &cursor
+	}
+}
+
+// ListAll returns every HEAD object matching params. Unlike List — which clamps
+// the page size to MaxListLimit and fetches at most one page — ListAll walks the
+// result set with keyset cursors so batch callers (schema migrate/rollback) are
+// not silently capped at a single page.
+//
+// Callers that read or write obj.MigrationArchive must set
+// params.IncludeMigrationArchive. Property ordering is rejected because it is
+// incompatible with the (created_at, id) keyset cursor.
+func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	all := make([]*GraphObject, 0)
+	err := r.ListEach(ctx, params, func(page []*GraphObject) error {
+		all = append(all, page...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+// Count returns the total count of graph objects matching the given parameters.
+// This is used for pagination to return the true total, not just the page count.
+func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) {
+	count, err := r.buildObjectBaseQuery(params).Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count graph objects", logger.Error(err))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return count, nil
+}
+
+// graphObjectDetailColumns lists every persisted GraphObject column except the
+// pgvector embedding_v2 (which has no struct field and cannot be scanned by
+// Bun). GetByID/GetHeadByCanonicalID select these explicitly alongside the
+// computed embedding_status; selecting go.* would pull in embedding_v2 and
+// fail the scan with "does not have column embedding_v2".
+var graphObjectDetailColumns = []string{
+	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+	"merged_to_canonical_id", "type", "key", "status", "assignee", "namespace",
+	"properties", "labels", "change_summary", "content_hash",
+	"created_at", "updated_at", "deleted_at", "delete_reason", "last_accessed_at",
+	"fts", "embedding_updated_at",
+	"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+	"actor_type", "actor_id", "schema_version", "migration_archive",
+	// Write stamp (#2376).
+	"credential_kind", "credential_id", "run_id", "root_run_id",
+	"data_class", "owner_source_id", "input_hash",
+}
+
+// resolveObjectByID applies the deterministic object-resolution contract shared
+// by GetByID and GetByIDIncludeDeleted.
+//
+// objects must be ordered `supersedes_id ASC NULLS FIRST, id ASC` (HEAD rows
+// first, then id-ascending). Resolution priority:
+//
+//  1. an explicit physical id that is a HEAD — an explicit id always wins;
+//  2. the main-branch HEAD (branch_id IS NULL) — this is what makes a lookup
+//     with no branch context resolve to main even when a fork copy shares the
+//     canonical_id and sorts first by UUID (issue #1245);
+//  3. any HEAD (a branch-only object / several branch copies) — smallest id;
+//  4. the explicit physical id match on a non-HEAD version;
+//  5. the first row (a stable, caller-ordered fallback).
+func resolveObjectByID(objects []GraphObject, id uuid.UUID) *GraphObject {
+	for i := range objects {
+		if objects[i].ID == id && objects[i].SupersedesID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].SupersedesID == nil && objects[i].BranchID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].SupersedesID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].ID == id {
+			return &objects[i]
+		}
+	}
+	return &objects[0]
+}
+
+// objectIdentityColumns are the minimal columns needed to resolve an object's
+// canonical identity without loading the (potentially large) properties JSONB.
+var objectIdentityColumns = []string{
+	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "type",
+}
+
+// GetObjectIdentity resolves a graph object's canonical identity (canonical_id,
+// branch_id) from a physical or canonical ID, applying the same deterministic
+// resolution contract as GetByID but projecting only identity columns. The graph
+// Patch path uses it to acquire the advisory lock and pick the target branch
+// before doing a single authoritative full-row fetch inside the transaction.
+func (r *Repository) GetObjectIdentity(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	var objects []GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Column(objectIdentityColumns...).
+		Where("(id = ? OR canonical_id = ?)", id, id).
+		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to get graph object identity", logger.Error(err), slog.String("id", id.String()))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+	return resolveObjectByID(objects, id), nil
+}
+
+// GetByID returns a graph object by its physical ID or canonical ID.
+// It accepts either type of ID transparently:
+//   - If the ID matches a physical id, returns that object
+//   - If the ID matches a canonical_id, returns the HEAD version
+//
+// HEAD versions (supersedes_id IS NULL) are preferred when multiple rows match.
+// When several HEADs share a canonical_id (an object forked to one or more
+// branches) the main-branch HEAD wins deterministically, so a lookup that
+// carries no branch context can never land on a fork copy; pass the fork copy's
+// physical id, or resolve with GetHeadByCanonicalID(branchID), to target a
+// branch explicitly. See resolveObjectByID for the full priority.
+func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	var objects []GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Column(graphObjectDetailColumns...).
+		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
+		Where("(id = ? OR canonical_id = ?)", id, id).
+		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
+		// HEAD-first with a deterministic id tie-break so the non-HEAD fallback
+		// (objects[0]) is stable when multiple non-HEAD rows match.
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to get graph object", logger.Error(err), slog.String("id", id.String()))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	return resolveObjectByID(objects, id), nil
+}
+
+// GetByIDIncludeDeleted returns a graph object by ID or canonical ID, including soft-deleted objects.
+func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	var objects []GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Column(graphObjectDetailColumns...).
+		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
+		Where("(id = ? OR canonical_id = ?)", id, id).
+		Where("project_id = ?", projectID).
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC"). // HEAD first, id tie-break
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to get graph object (include deleted)", logger.Error(err), slog.String("id", id.String()))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	return resolveObjectByID(objects, id), nil
+}
+
+// GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
+func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphObject, error) {
+	var obj GraphObject
+	q := db.NewSelect().
+		Model(&obj).
+		Column(graphObjectDetailColumns...).
+		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
+		Where("canonical_id = ?", canonicalID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL") // HEAD version
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.ErrNotFound
+		}
+		r.log.Error("failed to get graph object by canonical ID", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &obj, nil
+}
+
+// initGraphObject sets default fields on a new (version 1) GraphObject.
+// Must be called before inserting a new object.
+func initGraphObject(obj *GraphObject) {
+	if obj.ID == uuid.Nil {
+		obj.ID = uuid.New()
+	}
+	if obj.CanonicalID == uuid.Nil {
+		obj.CanonicalID = obj.ID // First version: canonical_id == id
+	}
+	obj.Version = 1
+	obj.ContentHash = computeContentHash(obj.Properties, obj.Status, obj.Key, obj.Labels)
+	now := time.Now()
+	obj.CreatedAt = now
+	obj.UpdatedAt = now
+	if obj.Properties == nil {
+		obj.Properties = make(map[string]any)
+	}
+	if obj.Labels == nil {
+		obj.Labels = []string{}
+	}
+}
+
+// insertGraphObject executes the INSERT for a new graph object using the given db handle.
+// Returns a formatted conflict error on duplicate key, or a database error.
+func (r *Repository) insertGraphObject(ctx context.Context, db bun.IDB, obj *GraphObject) error {
+	applyWriteStampFromContext(ctx, obj)
+	_, err := db.NewInsert().Model(obj).Exec(ctx)
+	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			r.log.Warn("graph object with same key already exists",
+				slog.String("project_id", obj.ProjectID.String()),
+				slog.String("type", obj.Type),
+				slog.Any("key", obj.Key),
+				logger.Error(err))
+			keyStr := "<nil>"
+			if obj.Key != nil {
+				keyStr = *obj.Key
+			}
+			return apperror.New(409, "conflict", fmt.Sprintf(
+				"Graph object with type '%s' and key '%s' already exists",
+				obj.Type, keyStr))
+		}
+		r.log.Error("failed to create graph object", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// Create inserts a new graph object (version 1).
+func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
+	initGraphObject(obj)
+	// Bulk endpoints attach a statement_timeout to ctx via BulkContext so each
+	// item transaction is bounded. Create is otherwise a bare single-statement
+	// insert with no transaction to carry the setting, so when a bound is
+	// present run the insert in a transaction to apply it. Ordinary creates
+	// carry no bound and keep the single-statement path (no extra round trip).
+	if _, ok := database.StatementTimeoutFromContext(ctx); ok {
+		tx, err := database.BeginSafeTx(ctx, r.db)
+		if err != nil {
+			return fmt.Errorf("begin create transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+		if err := r.insertGraphObject(ctx, tx.Tx, obj); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit create transaction: %w", err)
+		}
+		return nil
+	}
+	return r.insertGraphObject(ctx, r.db, obj)
+}
+
+// CreateVersion creates a new version of an existing graph object.
+// The previous HEAD's supersedes_id is set to the new version's ID.
+func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *GraphObject, newVersion *GraphObject) error {
+	// New version setup
+	newVersion.ID = uuid.New()
+	newVersion.CanonicalID = prevHead.CanonicalID
+	newVersion.SupersedesID = nil // New version is HEAD
+	newVersion.Version = prevHead.Version + 1
+	newVersion.ProjectID = prevHead.ProjectID
+	newVersion.BranchID = prevHead.BranchID
+	newVersion.Namespace = prevHead.Namespace
+	// Callers that already know the content is unchanged (assignee-only writes,
+	// branch fast-forwards) pre-set ContentHash to the previous HEAD's hash to
+	// avoid a full re-marshal of the properties JSONB. Otherwise compute it.
+	if len(newVersion.ContentHash) == 0 {
+		newVersion.ContentHash = computeContentHash(newVersion.Properties, newVersion.Status, newVersion.Key, newVersion.Labels)
+	}
+	now := time.Now()
+	newVersion.CreatedAt = now
+	newVersion.UpdatedAt = now
+
+	// A new version inherits the previous version's source tagging unless the
+	// caller decided otherwise (#2376). Every update path — patch, upsert,
+	// tombstone, restore — builds its version from the current row, and without
+	// this an ordinary edit of a source-owned object would be re-defaulted to
+	// synthesized and lose its owner.
+	if newVersion.DataClass == "" {
+		newVersion.DataClass = prevHead.DataClass
+	}
+	if newVersion.DataClass == DataClassSource {
+		if newVersion.OwnerSourceID == nil {
+			newVersion.OwnerSourceID = prevHead.OwnerSourceID
+		}
+	} else {
+		// The CHECK constraint allows an owner only on source-owned rows.
+		newVersion.OwnerSourceID = nil
+	}
+
+	// Record what the writer saw before writing: the previous version's content
+	// hash (#2376). A later reader compares it against the superseded row's hash
+	// to detect an edit that happened in flight; no replay of the write needed.
+	// Callers that set it explicitly (a source push comparing against the
+	// revision it read) keep their value.
+	if newVersion.InputHash == nil && len(prevHead.ContentHash) > 0 {
+		inputHash := hex.EncodeToString(prevHead.ContentHash)
+		newVersion.InputHash = &inputHash
+	}
+
+	applyWriteStampFromContext(ctx, newVersion)
+
+	// Update previous HEAD first to clear the unique index slot.
+	// The unique index IDX_graph_objects_upsert_main enforces one HEAD
+	// (supersedes_id IS NULL) per (project_id, type, key), so the old HEAD
+	// must be marked as superseded before the new HEAD can be inserted.
+	_, err := tx.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("supersedes_id = ?", newVersion.ID).
+		Set("updated_at = ?", now).
+		Where("id = ?", prevHead.ID).
+		Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if newVersion.ExtractionJobID == nil {
+		newVersion.ExtractionJobID = prevHead.ExtractionJobID
+	}
+
+	// Insert new version as HEAD
+	_, err = tx.NewInsert().
+		Model(newVersion).
+		Exec(ctx)
+	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			// This should rarely happen since we just updated the old HEAD
+			// Indicates a race condition or logic error
+			r.log.Error("duplicate key when creating new version - possible race condition",
+				slog.String("project_id", newVersion.ProjectID.String()),
+				slog.String("type", newVersion.Type),
+				slog.Any("key", newVersion.Key),
+				slog.Int("version", newVersion.Version),
+				logger.Error(err))
+			keyStr := "<nil>"
+			if newVersion.Key != nil {
+				keyStr = *newVersion.Key
+			}
+			return apperror.New(409, "conflict", fmt.Sprintf(
+				"Failed to create new version for type '%s' and key '%s' - concurrent modification detected",
+				newVersion.Type, keyStr))
+		}
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return nil
+}
+
+// CopyEmbedding copies the pgvector embedding (and its timestamp) from one
+// graph_objects row to another within the same transaction, leaving the source
+// row untouched. It is used when a new version is created but the embedding-
+// relevant text is unchanged, so the new HEAD inherits the existing embedding
+// instead of being re-embedded (issue #1478). Reports whether a non-NULL
+// embedding was actually copied.
+func (r *Repository) CopyEmbedding(ctx context.Context, tx bun.Tx, fromID, toID uuid.UUID) (bool, error) {
+	res, err := tx.NewRaw(`
+		UPDATE kb.graph_objects AS dst
+		SET embedding_v2 = src.embedding_v2,
+		    embedding_updated_at = src.embedding_updated_at
+		FROM kb.graph_objects AS src
+		WHERE dst.id = ? AND src.id = ? AND src.embedding_v2 IS NOT NULL`,
+		toID, fromID).Exec(ctx)
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	return n > 0, nil
+}
+
+// SoftDelete marks a graph object as deleted by creating a tombstone version.
+func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID, reason *string) error {
+	now := time.Now()
+	tombstone := &GraphObject{
+		Type:         obj.Type,
+		Key:          obj.Key,
+		Status:       obj.Status,
+		Properties:   obj.Properties,
+		Labels:       obj.Labels,
+		DeletedAt:    &now,
+		DeleteReason: reason,
+		ActorType:    &actorType,
+		ActorID:      actorID,
+	}
+
+	return r.CreateVersion(ctx, tx, obj, tombstone)
+}
+
+// SoftDeleteOnBranch creates a branch-local tombstone for an object that only exists on main.
+// Unlike SoftDelete (which inherits branch from prevHead), this inserts a new HEAD directly
+// on the target branch with deleted_at set, without modifying the main-branch HEAD.
+func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead *GraphObject, branchID *uuid.UUID, actorType string, actorID *uuid.UUID, reason *string) error {
+	now := time.Now()
+	tombstone := &GraphObject{
+		ID:              uuid.New(),
+		CanonicalID:     mainHead.CanonicalID,
+		ProjectID:       mainHead.ProjectID,
+		BranchID:        branchID,
+		Type:            mainHead.Type,
+		Key:             mainHead.Key,
+		Status:          mainHead.Status,
+		Namespace:       mainHead.Namespace,
+		Properties:      mainHead.Properties,
+		Labels:          mainHead.Labels,
+		DeletedAt:       &now,
+		DeleteReason:    reason,
+		ActorID:         actorID,
+		ActorType:       &actorType,
+		Version:         mainHead.Version + 1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExtractionJobID: mainHead.ExtractionJobID,
+		// Carry the source tagging so a branch tombstone does not re-class a
+		// source-owned object as synthesized (#2376).
+		DataClass:     mainHead.DataClass,
+		OwnerSourceID: mainHead.OwnerSourceID,
+	}
+	tombstone.ContentHash = computeContentHash(tombstone.Properties, tombstone.Status, tombstone.Key, tombstone.Labels)
+	applyWriteStampFromContext(ctx, tombstone)
+
+	_, err := tx.NewInsert().Model(tombstone).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to create branch tombstone", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// Restore removes the deleted_at flag by creating a new non-deleted version.
+func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID) error {
+	restored := &GraphObject{
+		Type:       obj.Type,
+		Key:        obj.Key,
+		Status:     obj.Status,
+		Properties: obj.Properties,
+		Labels:     obj.Labels,
+		DeletedAt:  nil,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+
+	return r.CreateVersion(ctx, tx, obj, restored)
+}
+
+// GetHistory returns all versions of a graph object by canonical ID.
+func (r *Repository) GetHistory(ctx context.Context, projectID, canonicalID uuid.UUID) ([]*GraphObject, error) {
+	var versions []*GraphObject
+	err := r.db.NewSelect().
+		Model(&versions).
+		Where("canonical_id = ?", canonicalID).
+		Where("project_id = ?", projectID).
+		Order("version DESC").
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to get object history", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return versions, nil
+}
+
+// GetEdges returns incoming and outgoing relationships for an object by its canonical_id.
+// Relationships store canonical_id values in src_id/dst_id, so this matches directly.
+func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.UUID, params GetEdgesParams) ([]*GraphRelationship, []*GraphRelationship, error) {
+	var incoming []*GraphRelationship
+	var outgoing []*GraphRelationship
+
+	// Collect relationship types to filter by
+	var typeFilter []string
+	if params.Type != "" {
+		typeFilter = append(typeFilter, params.Type)
+	}
+	if len(params.Types) > 0 {
+		typeFilter = append(typeFilter, params.Types...)
+	}
+
+	// Get incoming edges (object is destination) unless direction is "outgoing"
+	if params.Direction != "outgoing" {
+		q := r.db.NewSelect().
+			Model(&incoming).
+			Where("dst_id = ?", canonicalID).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		if params.Limit > 0 {
+			q = q.Limit(params.Limit)
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	// Get outgoing edges (object is source) unless direction is "incoming"
+	if params.Direction != "incoming" {
+		q := r.db.NewSelect().
+			Model(&outgoing).
+			Where("src_id = ?", canonicalID).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		if params.Limit > 0 {
+			q = q.Limit(params.Limit)
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	return incoming, outgoing, nil
+}
+
+// EdgesForObject holds the incoming and outgoing relationships for one object.
+type EdgesForObject struct {
+	Incoming []*GraphRelationship
+	Outgoing []*GraphRelationship
+}
+
+// GetEdgesForObjects returns incoming and outgoing relationships for multiple
+// objects by canonical_id in a single batched query. The result map is keyed by
+// canonical ID. Returns an empty map (not an error) when canonicalIDs is empty.
+func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID, canonicalIDs []uuid.UUID, params GetEdgesParams) (map[uuid.UUID]*EdgesForObject, error) {
+	result := make(map[uuid.UUID]*EdgesForObject)
+
+	if len(canonicalIDs) == 0 {
+		return result, nil
+	}
+
+	// Collect relationship types to filter by (same as GetEdges)
+	var typeFilter []string
+	if params.Type != "" {
+		typeFilter = append(typeFilter, params.Type)
+	}
+	if len(params.Types) > 0 {
+		typeFilter = append(typeFilter, params.Types...)
+	}
+
+	// Get incoming edges (object is destination) unless direction is "outgoing"
+	if params.Direction != "outgoing" {
+		var incoming []*GraphRelationship
+		q := r.db.NewSelect().
+			Model(&incoming).
+			Where("dst_id IN (?)", bun.In(canonicalIDs)).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		if params.Limit > 0 {
+			q = q.Limit(params.Limit)
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		for _, rel := range incoming {
+			entry := result[rel.DstID]
+			if entry == nil {
+				entry = &EdgesForObject{}
+				result[rel.DstID] = entry
+			}
+			entry.Incoming = append(entry.Incoming, rel)
+		}
+	}
+
+	// Get outgoing edges (object is source) unless direction is "incoming"
+	if params.Direction != "incoming" {
+		var outgoing []*GraphRelationship
+		q := r.db.NewSelect().
+			Model(&outgoing).
+			Where("src_id IN (?)", bun.In(canonicalIDs)).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		if params.Limit > 0 {
+			q = q.Limit(params.Limit)
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		for _, rel := range outgoing {
+			entry := result[rel.SrcID]
+			if entry == nil {
+				entry = &EdgesForObject{}
+				result[rel.SrcID] = entry
+			}
+			entry.Outgoing = append(entry.Outgoing, rel)
+		}
+	}
+
+	return result, nil
+}
+
+// AcquireObjectLock acquires an advisory lock for a graph object.
+// The lock is released when the transaction commits or rolls back.
+func (r *Repository) AcquireObjectLock(ctx context.Context, tx bun.Tx, canonicalID uuid.UUID) error {
+	lockKey := "obj|" + canonicalID.String()
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// FindHeadByTypeAndKey returns the HEAD version of an object identified by (project_id, type, key).
+// Returns nil, nil if not found (not an error).
+func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+	return r.FindHeadByTypeAndKeyNS(ctx, db, projectID, branchID, nil, objType, key)
+}
+
+// FindHeadByTypeAndKeyNS is like FindHeadByTypeAndKey but also filters by namespace.
+func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, namespace *string, objType string, key string) (*GraphObject, error) {
+	var obj GraphObject
+	q := db.NewSelect().
+		Model(&obj).
+		Where("project_id = ?", projectID).
+		Where("type = ?", objType).
+		Where("key = ?", key).
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if namespace != nil {
+		q = q.Where("namespace = ?", *namespace)
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found is not an error for this method
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &obj, nil
+}
+
+// FindHeadsByTypeAndKeys returns HEAD rows (supersedes_id IS NULL) for the given
+// project + type + branch (main graph when branchID is nil) whose key is one of keys.
+// It matches FindHeadByTypeAndKeyNS semantics: the type IS filtered, deleted_at is
+// NOT filtered (deleted heads are returned so callers can restore them), and branch
+// IS filtered. An empty keys slice returns an empty slice (not an error).
+func (r *Repository) FindHeadsByTypeAndKeys(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, objType string, keys []string) ([]*GraphObject, error) {
+	if len(keys) == 0 {
+		return []*GraphObject{}, nil
+	}
+
+	var objs []*GraphObject
+	q := db.NewSelect().
+		Model(&objs).
+		Where("project_id = ?", projectID).
+		Where("type = ?", objType).
+		Where("supersedes_id IS NULL").
+		Where("key IN (?)", bun.In(keys))
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objs, nil
+}
+
+// listWorkObjectsByStatus returns the HEAD rows of board-enabled work objects
+// currently in the given status, on the main graph, ordered by updated_at
+// ascending. refs is the set of per-project board-enabled (project_id, type)
+// pairs (resolved from active project schema assignments), so a type enabled in
+// one project never makes another project's objects work items. olderThan
+// non-zero restricts to objects last written before olderThan.
+func (r *Repository) listWorkObjectsByStatus(ctx context.Context, refs []boardEnabledTypeRef, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
+	if len(refs) == 0 {
+		return []*GraphObject{}, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	cols := make([]string, 0, len(graphObjectDetailColumns))
+	for _, c := range graphObjectDetailColumns {
+		cols = append(cols, "go."+c)
+	}
+	values := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*2+3)
+	for _, ref := range refs {
+		values = append(values, "(?::uuid, ?)")
+		args = append(args, ref.ProjectID.String(), ref.Type)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM kb.graph_objects go
+		JOIN (VALUES %s) AS bt(project_id, type)
+		  ON go.project_id = bt.project_id AND go.type = bt.type
+		WHERE go.branch_id IS NULL
+		  AND go.supersedes_id IS NULL
+		  AND go.deleted_at IS NULL
+		  AND go.status = ?`,
+		strings.Join(cols, ", "), strings.Join(values, ", "))
+	args = append(args, status)
+	if !olderThan.IsZero() {
+		query += "\n\t\t  AND go.updated_at < ?"
+		args = append(args, olderThan)
+	}
+	query += "\n\t\tORDER BY go.updated_at ASC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	objs := make([]*GraphObject, 0)
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &objs); err != nil {
+		return nil, fmt.Errorf("list work objects by status: %w", err)
+	}
+	return objs, nil
+}
+
+// boardEnabledTypeRef is a (project_id, type) pair whose type is board-enabled
+// via an active, non-removed project schema assignment.
+type boardEnabledTypeRef struct {
+	ProjectID uuid.UUID
+	Type      string
+}
+
+// listBoardEnabledTypeRefs returns the (project_id, type) pairs that are
+// board-enabled. Board enablement is per-project: it is resolved from the active,
+// non-removed kb.project_schemas assignments, so a type enabled in one project
+// does not make every project's objects of that type work items (the multi-tenant
+// leak). projectID nil = all projects; non-nil restricts to one project.
+func (r *Repository) listBoardEnabledTypeRefs(ctx context.Context, projectID *uuid.UUID) ([]boardEnabledTypeRef, error) {
+	type row struct {
+		ProjectID         uuid.UUID       `bun:"project_id"`
+		ObjectTypeSchemas json.RawMessage `bun:"object_type_schemas"`
+	}
+	query := `
+		SELECT ps.project_id, gs.object_type_schemas
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+		WHERE ps.active = true
+		  AND ps.removed_at IS NULL
+		  AND gs.object_type_schemas IS NOT NULL`
+	args := make([]any, 0, 1)
+	if projectID != nil {
+		query += ` AND ps.project_id = ?`
+		args = append(args, *projectID)
+	}
+	var rows []row
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("list board-enabled type refs: %w", err)
+	}
+	seen := make(map[string]bool)
+	var out []boardEnabledTypeRef
+	for _, r := range rows {
+		for _, name := range boardEnabledTypeNamesFromRaw(r.ObjectTypeSchemas) {
+			key := r.ProjectID.String() + "\x00" + name
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, boardEnabledTypeRef{ProjectID: r.ProjectID, Type: name})
+		}
+	}
+	return out, nil
+}
+
+// boardEnabledTypeNamesFromRaw extracts the names of object types flagged
+// boardEnabled from an object_type_schemas JSONB value, supporting both the
+// array and map storage formats.
+func boardEnabledTypeNamesFromRaw(raw json.RawMessage) []string {
+	var arr []struct {
+		Name         string `json:"name"`
+		BoardEnabled bool   `json:"boardEnabled"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) > 0 {
+		var out []string
+		for _, e := range arr {
+			if e.Name != "" && e.BoardEnabled {
+				out = append(out, e.Name)
+			}
+		}
+		return out
+	}
+	var m map[string]struct {
+		BoardEnabled bool `json:"boardEnabled"`
+	}
+	if err := json.Unmarshal(raw, &m); err == nil {
+		var out []string
+		for name, e := range m {
+			if e.BoardEnabled {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// listBoardWorkObjects returns the HEAD rows of board-enabled work objects on
+// the main graph, optionally filtered by status and/or type, ordered by
+// updated_at ascending. refs is the set of per-project board-enabled
+// (project_id, type) pairs. status empty means all statuses; typeName empty
+// means all board-enabled types.
+func (r *Repository) listBoardWorkObjects(ctx context.Context, refs []boardEnabledTypeRef, status, typeName string, limit int) ([]*GraphObject, error) {
+	if len(refs) == 0 {
+		return []*GraphObject{}, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	cols := make([]string, 0, len(graphObjectDetailColumns))
+	for _, c := range graphObjectDetailColumns {
+		cols = append(cols, "go."+c)
+	}
+	values := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*2+3)
+	for _, ref := range refs {
+		values = append(values, "(?::uuid, ?)")
+		args = append(args, ref.ProjectID.String(), ref.Type)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM kb.graph_objects go
+		JOIN (VALUES %s) AS bt(project_id, type)
+		  ON go.project_id = bt.project_id AND go.type = bt.type
+		WHERE go.branch_id IS NULL
+		  AND go.supersedes_id IS NULL
+		  AND go.deleted_at IS NULL`,
+		strings.Join(cols, ", "), strings.Join(values, ", "))
+	if status != "" {
+		query += "\n\t\t  AND go.status = ?"
+		args = append(args, status)
+	}
+	if typeName != "" {
+		query += "\n\t\t  AND go.type = ?"
+		args = append(args, typeName)
+	}
+	query += "\n\t\tORDER BY go.updated_at ASC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	objs := make([]*GraphObject, 0)
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &objs); err != nil {
+		return nil, fmt.Errorf("list board work objects: %w", err)
+	}
+	return objs, nil
+}
+
+// workItemRunProjection is the latest-run join for a work item (the execution
+// badge source): the most recent kb.agent_runs row whose subject_object_id is
+// the object's canonical_id, plus the total run count for that subject.
+type workItemRunProjection struct {
+	CanonicalID  uuid.UUID  `bun:"canonical_id"`
+	RunID        string     `bun:"run_id"`
+	Status       string     `bun:"status"`
+	FailureClass *string    `bun:"failure_class"`
+	CompletedAt  *time.Time `bun:"completed_at"`
+	RunCount     int        `bun:"run_count"`
+}
+
+// listLatestRunsForSubjects returns, keyed by subject canonical id, the latest
+// run's projection plus the total run count. Subjects with no runs are absent
+// from the map (the board renders them without an execution badge).
+func (r *Repository) listLatestRunsForSubjects(ctx context.Context, canonicalIDs []uuid.UUID) (map[uuid.UUID]*workItemRunProjection, error) {
+	out := make(map[uuid.UUID]*workItemRunProjection)
+	if len(canonicalIDs) == 0 {
+		return out, nil
+	}
+	rows := make([]*workItemRunProjection, 0)
+	err := r.db.NewRaw(`
+		SELECT DISTINCT ON (subject_object_id)
+			subject_object_id AS canonical_id,
+			id AS run_id,
+			status,
+			failure_class,
+			completed_at,
+			COUNT(*) OVER (PARTITION BY subject_object_id) AS run_count
+		FROM kb.agent_runs
+		WHERE subject_object_id IN (?)
+		ORDER BY subject_object_id, created_at DESC`,
+		bun.In(canonicalIDs),
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("list latest runs for subjects: %w", err)
+	}
+	for _, row := range rows {
+		out[row.CanonicalID] = row
+	}
+	return out, nil
+}
+
+// AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).
+// The lock is released when the transaction commits or rolls back.
+func (r *Repository) AcquireObjectUpsertLock(ctx context.Context, tx bun.Tx, projectID uuid.UUID, objType string, key string) error {
+	lockKey := "obj-upsert|" + projectID.String() + "|" + objType + "|" + key
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// CreateInTx inserts a new graph object (version 1) within an existing transaction.
+func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject) error {
+	initGraphObject(obj)
+	return r.insertGraphObject(ctx, tx, obj)
+}
+
+// BeginTx starts a new database transaction.
+// Returns a SafeTx that's safe to call Rollback after Commit (important for savepoints).
+func (r *Repository) BeginTx(ctx context.Context) (*database.SafeTx, error) {
+	return database.BeginSafeTx(ctx, r.db)
+}
+
+// Cursor represents pagination state.
+type Cursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func decodeCursor(encoded string) (*Cursor, error) {
+	// For now, simple JSON - could use base64 encoding
+	var c Cursor
+	if err := json.Unmarshal([]byte(encoded), &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func encodeCursor(createdAt time.Time, id uuid.UUID) string {
+	c := Cursor{CreatedAt: createdAt, ID: id}
+	data, _ := json.Marshal(c)
+	return string(data)
+}
+
+// computeContentHash creates a SHA-256 hash of an object's content for change detection.
+// It includes properties, status, key, and labels so that changes to any of these
+// fields are correctly detected during branch merge classification.
+func computeContentHash(properties map[string]any, status *string, key *string, labels []string) []byte {
+	if properties == nil {
+		properties = make(map[string]any)
+	}
+
+	// encoding/json marshals map[string]any with object keys in sorted order, so
+	// no explicit key sort or map copy is needed for determinism.
+
+	// Sort labels for deterministic ordering (labels is a slice; order matters).
+	sortedLabels := make([]string, len(labels))
+	copy(sortedLabels, labels)
+	sort.Strings(sortedLabels)
+
+	hashInput := struct {
+		Properties map[string]any `json:"p"`
+		Status     *string        `json:"s,omitempty"`
+		Key        *string        `json:"k,omitempty"`
+		Labels     []string       `json:"l,omitempty"`
+	}{
+		Properties: properties,
+		Status:     status,
+		Key:        key,
+		Labels:     sortedLabels,
+	}
+
+	data, _ := json.Marshal(hashInput)
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
+
+// =============================================================================
+// Relationship Operations
+// =============================================================================
+
+// RelationshipListParams contains parameters for listing relationships.
+type RelationshipListParams struct {
+	ProjectID      uuid.UUID
+	BranchID       *uuid.UUID
+	Type           *string
+	Types          []string
+	SrcID          *uuid.UUID
+	DstID          *uuid.UUID
+	IncludeDeleted bool
+	Limit          int
+	Cursor         *string
+	Order          string // "asc" or "desc"
+
+	// Write-stamp filter (#2468): credential and run of the version row. A
+	// DataClass filter is rejected at the HTTP boundary — relationships record no
+	// data class.
+	Stamp WriteStampFilters
+}
+
+// CountRelationships returns the total count of relationships matching the given parameters.
+func (r *Repository) CountRelationships(ctx context.Context, params RelationshipListParams) (int, error) {
+	q := r.db.NewSelect().
+		Model((*GraphRelationship)(nil)).
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL") // HEAD versions only
+
+	if params.BranchID != nil {
+		q = q.Where("branch_id = ?", *params.BranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if params.Type != nil {
+		q = q.Where("type = ?", *params.Type)
+	}
+
+	if len(params.Types) > 0 {
+		q = q.Where("type IN (?)", bun.In(params.Types))
+	}
+
+	if params.SrcID != nil {
+		q = q.Where("src_id = ?", *params.SrcID)
+	}
+
+	if params.DstID != nil {
+		q = q.Where("dst_id = ?", *params.DstID)
+	}
+
+	q = applyRelationshipWriteStampFilters(q, params.Stamp)
+
+	if !params.IncludeDeleted {
+		q = q.Where("deleted_at IS NULL")
+	}
+
+	count, err := q.Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count relationships", logger.Error(err))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return count, nil
+}
+
+// ListRelationships returns relationships matching the given parameters.
+// Returns only HEAD versions (supersedes_id IS NULL).
+func (r *Repository) ListRelationships(ctx context.Context, params RelationshipListParams) ([]*GraphRelationship, error) {
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
+	}
+	if params.Order == "" {
+		params.Order = "asc"
+	}
+
+	q := r.db.NewSelect().
+		Model((*GraphRelationship)(nil)).
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL") // HEAD versions only
+
+	if params.BranchID != nil {
+		q = q.Where("branch_id = ?", *params.BranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if params.Type != nil {
+		q = q.Where("type = ?", *params.Type)
+	}
+
+	if len(params.Types) > 0 {
+		q = q.Where("type IN (?)", bun.In(params.Types))
+	}
+
+	if params.SrcID != nil {
+		q = q.Where("src_id = ?", *params.SrcID)
+	}
+
+	if params.DstID != nil {
+		q = q.Where("dst_id = ?", *params.DstID)
+	}
+
+	q = applyRelationshipWriteStampFilters(q, params.Stamp)
+
+	if !params.IncludeDeleted {
+		q = q.Where("deleted_at IS NULL")
+	}
+
+	// Pagination via cursor (created_at)
+	if params.Cursor != nil {
+		cursorData, err := decodeCursor(*params.Cursor)
+		if err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid cursor")
+		}
+		if params.Order == "desc" {
+			q = q.Where("(created_at, id) < (?, ?)", cursorData.CreatedAt, cursorData.ID)
+		} else {
+			q = q.Where("(created_at, id) > (?, ?)", cursorData.CreatedAt, cursorData.ID)
+		}
+	}
+
+	if params.Order == "desc" {
+		q = q.Order("created_at DESC", "id DESC")
+	} else {
+		q = q.Order("created_at ASC", "id ASC")
+	}
+
+	q = q.Limit(params.Limit + 1)
+
+	var rels []*GraphRelationship
+	err := q.Scan(ctx, &rels)
+	if err != nil {
+		r.log.Error("failed to list relationships", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rels, nil
+}
+
+// resolveRelationshipByID mirrors resolveObjectByID for relationships: an
+// explicit physical id that is a HEAD wins, then the main-branch HEAD, then any
+// HEAD, then the non-HEAD explicit id, then the stable first row. See
+// resolveObjectByID for the rationale (issue #1245).
+func resolveRelationshipByID(rels []GraphRelationship, id uuid.UUID) *GraphRelationship {
+	for i := range rels {
+		if rels[i].ID == id && rels[i].SupersedesID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].SupersedesID == nil && rels[i].BranchID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].SupersedesID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].ID == id {
+			return &rels[i]
+		}
+	}
+	return &rels[0]
+}
+
+// GetRelationshipByID returns a relationship by its physical ID or canonical ID.
+// Accepts either type of ID transparently, preferring the HEAD version. When
+// several HEADs share a canonical_id (a relationship forked to a branch) the
+// main-branch HEAD wins deterministically, so a branch-less lookup cannot land
+// on a fork copy. See resolveRelationshipByID.
+func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationship, error) {
+	var rels []GraphRelationship
+	err := r.db.NewSelect().
+		Model(&rels).
+		Where("(id = ? OR canonical_id = ?)", id, id).
+		Where("project_id = ?", projectID).
+		// Mirror GetByID: HEAD-first with a deterministic id tie-break so the
+		// non-HEAD fallback (rels[0]) and the HEAD pick are stable when several
+		// rows match (multi-branch versions share a canonical_id).
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to get relationship", logger.Error(err), slog.String("id", id.String()))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(rels) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	return resolveRelationshipByID(rels, id), nil
+}
+
+// GetRelationshipHead returns the HEAD version of a relationship by type, src, dst.
+func (r *Repository) GetRelationshipHead(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, relType string, srcID, dstID uuid.UUID) (*GraphRelationship, error) {
+	var rel GraphRelationship
+	q := db.NewSelect().
+		Model(&rel).
+		Where("project_id = ?", projectID).
+		Where("type = ?", relType).
+		Where("src_id = ?", srcID).
+		Where("dst_id = ?", dstID).
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found is not an error for this method
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &rel, nil
+}
+
+// CreateRelationship inserts a new relationship (version 1).
+// Uses INSERT ... ON CONFLICT DO NOTHING to avoid advisory lock contention.
+// Returns (created=true) if a new row was inserted, (created=false) if the HEAD
+// already existed (conflict on the partial unique index). The caller must
+// re-fetch HEAD when created=false to get the existing relationship.
+func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship) (created bool, err error) {
+	// Set defaults
+	if rel.ID == uuid.Nil {
+		rel.ID = uuid.New()
+	}
+	if rel.CanonicalID == uuid.Nil {
+		rel.CanonicalID = rel.ID // First version: canonical_id == id
+	}
+	rel.Version = 1
+	rel.ContentHash = computeContentHash(rel.Properties, nil, nil, nil)
+	rel.CreatedAt = time.Now()
+
+	if rel.Properties == nil {
+		rel.Properties = make(map[string]any)
+	}
+
+	// ON CONFLICT DO NOTHING uses the partial unique indexes:
+	//   uq_graph_relationships_head_main   (project_id, type, src_id, dst_id)       WHERE supersedes_id IS NULL AND branch_id IS NULL
+	//   uq_graph_relationships_head_branch (project_id, branch_id, type, src_id, dst_id) WHERE supersedes_id IS NULL AND branch_id IS NOT NULL
+	// No advisory lock needed — the unique index makes the insert atomic.
+	// Use Returning("") to suppress bun's auto-generated RETURNING clause so that
+	// when ON CONFLICT DO NOTHING fires (0 rows returned), bun uses exec() path
+	// and returns rowsAffected=0 without error.
+	applyRelationshipWriteStampFromContext(ctx, rel)
+	res, insertErr := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx)
+	if insertErr != nil {
+		r.log.Error("failed to create relationship", logger.Error(insertErr))
+		return false, apperror.ErrDatabase.WithInternal(insertErr)
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	return rowsAffected > 0, nil
+}
+
+// CreateRelationshipVersion creates a new version of an existing relationship.
+func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, prevHead *GraphRelationship, newVersion *GraphRelationship) error {
+	// The new version inherits the prev-head's branch, because a version chain
+	// cannot span branches: the write supersedes prevHead in place, so writing
+	// the replacement to a different branch would strand prevHead's branch and
+	// resurrect a HEAD on the caller's branch. Callers that pass an explicit
+	// (non-nil) BranchID are asserting which branch this version belongs to, so
+	// a disagreement with prevHead means the caller resolved the wrong head
+	// (e.g. a branch-less, main-preferring lookup for a branch-scoped write) —
+	// fail loudly instead of silently writing to the wrong branch.
+	if newVersion.BranchID != nil && (prevHead.BranchID == nil || *newVersion.BranchID != *prevHead.BranchID) {
+		prevBranch := "main"
+		if prevHead.BranchID != nil {
+			prevBranch = prevHead.BranchID.String()
+		}
+		return fmt.Errorf("relationship version branch mismatch: requested branch %s but prev-head %s is on branch %s",
+			newVersion.BranchID, prevHead.ID, prevBranch)
+	}
+
+	// New version setup
+	newVersion.ID = uuid.New()
+	newVersion.CanonicalID = prevHead.CanonicalID
+	newVersion.SupersedesID = nil // New version is HEAD
+	newVersion.Version = prevHead.Version + 1
+	newVersion.ProjectID = prevHead.ProjectID
+	newVersion.Namespace = prevHead.Namespace // denormalised from the src object; inherited across versions
+	newVersion.BranchID = prevHead.BranchID
+	newVersion.Type = prevHead.Type
+	newVersion.SrcID = prevHead.SrcID
+	newVersion.DstID = prevHead.DstID
+	newVersion.ContentHash = computeContentHash(newVersion.Properties, nil, nil, nil)
+	newVersion.CreatedAt = time.Now()
+	applyRelationshipWriteStampFromContext(ctx, newVersion)
+
+	// Update previous HEAD first — set supersedes_id to point to the new version.
+	// This must happen BEFORE inserting the new version to avoid a momentary window
+	// where both the old and new versions have supersedes_id IS NULL simultaneously,
+	// which would violate the partial unique index uq_graph_relationships_head_main.
+	_, err := tx.NewUpdate().
+		Model((*GraphRelationship)(nil)).
+		Set("supersedes_id = ?", newVersion.ID).
+		Where("id = ?", prevHead.ID).
+		Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Now insert the new HEAD version — old version no longer has supersedes_id IS NULL.
+	_, err = tx.NewInsert().
+		Model(newVersion).
+		Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return nil
+}
+
+// SoftDeleteRelationship marks a relationship as deleted by creating a tombstone version.
+func (r *Repository) SoftDeleteRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship, actorType string, actorID *uuid.UUID, reason *string) error {
+	now := time.Now()
+	tombstone := &GraphRelationship{
+		Properties:   rel.Properties,
+		Weight:       rel.Weight,
+		DeletedAt:    &now,
+		DeleteReason: reason,
+		ActorType:    &actorType,
+		ActorID:      actorID,
+	}
+
+	return r.CreateRelationshipVersion(ctx, tx, rel, tombstone)
+}
+
+// RestoreRelationship removes the deleted_at flag by creating a new non-deleted version.
+func (r *Repository) RestoreRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship, actorType string, actorID *uuid.UUID) error {
+	restored := &GraphRelationship{
+		Properties: rel.Properties,
+		Weight:     rel.Weight,
+		DeletedAt:  nil,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+
+	return r.CreateRelationshipVersion(ctx, tx, rel, restored)
+}
+
+// GetRelationshipHistory returns all versions of a relationship by canonical ID.
+func (r *Repository) GetRelationshipHistory(ctx context.Context, projectID, canonicalID uuid.UUID) ([]*GraphRelationship, error) {
+	var versions []*GraphRelationship
+	err := r.db.NewSelect().
+		Model(&versions).
+		Where("canonical_id = ?", canonicalID).
+		Where("project_id = ?", projectID).
+		Order("version DESC").
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to get relationship history", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return versions, nil
+}
+
+// GetRelationshipHeadByCanonicalID returns the HEAD version by canonical ID.
+//
+// The original single-row scan had no ORDER BY, so when a relationship has been
+// forked to a branch (two HEADs sharing a canonical_id) the selected row was
+// heap-order dependent. It now deterministically prefers the main-branch HEAD
+// (branch_id IS NULL) and falls back to the smallest-id branch HEAD, mirroring
+// GetHeadByCanonicalID's nil-branch default. Callers that need a specific branch
+// HEAD must pass that branchID (the merge fast-forward path does).
+//
+// A non-nil branchID scopes the lookup to exactly that branch's HEAD. A nil
+// branchID keeps the branch-less #1247 default above: prefer main, then the
+// smallest-id branch HEAD.
+func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphRelationship, error) {
+	var rels []GraphRelationship
+	q := r.db.NewSelect().
+		Model(&rels).
+		Where("canonical_id = ?", canonicalID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID).OrderExpr("id ASC")
+	} else {
+		q = q.OrderExpr("(branch_id IS NULL) DESC, id ASC")
+	}
+
+	err := q.Limit(1).Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.ErrNotFound
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(rels) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	return &rels[0], nil
+}
+
+// AcquireRelationshipLock acquires an advisory lock for a relationship.
+func (r *Repository) AcquireRelationshipLock(ctx context.Context, tx bun.Tx, projectID uuid.UUID, relType string, srcID, dstID uuid.UUID) error {
+	lockKey := "rel|" + projectID.String() + "|" + relType + "|" + srcID.String() + "|" + dstID.String()
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// ValidateEndpoints checks that src and dst objects exist and are not deleted.
+func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID, srcID, dstID uuid.UUID) (*GraphObject, *GraphObject, error) {
+	var objects []*GraphObject
+
+	// Look up objects by physical ID or canonical_id (supports both).
+	// The caller may pass either the physical id (from a specific version) or
+	// the canonical_id (stable logical identity). We resolve to the HEAD version
+	// so that relationships are always anchored to canonical identities.
+	err := tx.NewSelect().
+		Model(&objects).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In([]uuid.UUID{srcID, dstID}), bun.In([]uuid.UUID{srcID, dstID})).
+		Where("supersedes_id IS NULL"). // HEAD versions only
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	var srcObj, dstObj *GraphObject
+	for _, obj := range objects {
+		// Match by physical id or canonical_id
+		if obj.ID == srcID || obj.CanonicalID == srcID {
+			srcObj = obj
+		}
+		if obj.ID == dstID || obj.CanonicalID == dstID {
+			dstObj = obj
+		}
+	}
+
+	if srcObj == nil {
+		return nil, nil, apperror.ErrNotFound.WithMessage("src_object_not_found")
+	}
+	if dstObj == nil {
+		return nil, nil, apperror.ErrNotFound.WithMessage("dst_object_not_found")
+	}
+
+	if srcObj.DeletedAt != nil {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("src_object_deleted")
+	}
+	if dstObj.DeletedAt != nil {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("dst_object_deleted")
+	}
+
+	// Prevent self-referencing relationships (src and dst resolve to the same logical object)
+	if srcObj.CanonicalID == dstObj.CanonicalID {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("self_referencing_relationship_not_allowed")
+	}
+
+	// Verify same project
+	if srcObj.ProjectID != projectID || dstObj.ProjectID != projectID {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("relationship_project_mismatch")
+	}
+
+	return srcObj, dstObj, nil
+}
+
+// =============================================================================
+// Search Operations
+// =============================================================================
+
+// searchFilters contains common filter parameters for search queries.
+type searchFilters struct {
+	ProjectID      uuid.UUID
+	BranchID       *uuid.UUID
+	Types          []string
+	Labels         []string
+	Namespace      *string
+	Status         *string
+	IncludeDeleted bool
+}
+
+// buildSearchFilters builds WHERE conditions and args for common search filters.
+// Returns conditions and args to be appended to existing slices.
+func buildSearchFilters(filters searchFilters) (conditions []string, args []any) {
+	if filters.BranchID != nil {
+		conditions = append(conditions, "branch_id = ?")
+		args = append(args, *filters.BranchID)
+	} else {
+		conditions = append(conditions, "branch_id IS NULL")
+	}
+
+	if len(filters.Types) > 0 {
+		// Exact match keeps index-friendly fast path; lower() fallback keeps the
+		// filter consistent with the case-insensitive post-filter used by MCP tools.
+		conditions = append(conditions, "(type = ANY(?::text[]) OR lower(type) = ANY(?::text[]))")
+		args = append(args, formatTextArray(filters.Types), formatTextArray(lowerStrings(filters.Types)))
+	}
+
+	if len(filters.Labels) > 0 {
+		conditions = append(conditions, "(labels && ?::text[] OR EXISTS (SELECT 1 FROM unnest(labels) l WHERE lower(l) = ANY(?::text[])))")
+		args = append(args, formatTextArray(filters.Labels), formatTextArray(lowerStrings(filters.Labels)))
+	}
+
+	if filters.Namespace != nil {
+		conditions = append(conditions, "namespace = ?")
+		args = append(args, *filters.Namespace)
+	}
+
+	if filters.Status != nil {
+		conditions = append(conditions, "status = ?")
+		args = append(args, *filters.Status)
+	}
+
+	if !filters.IncludeDeleted {
+		conditions = append(conditions, "deleted_at IS NULL")
+	}
+
+	return conditions, args
+}
+
+// buildWhereClause joins conditions into a WHERE clause.
+func buildWhereClause(conditions []string) string {
+	if len(conditions) == 0 {
+		return ""
+	}
+	return "WHERE " + strings.Join(conditions, " AND ")
+}
+
+// embeddingStatusExpr is the SQL CASE expression that computes the per-object
+// embedding status. It must be selected with an `AS embedding_status` alias and
+// scanned into the GraphObject.EmbeddingStatus scanonly field.
+//
+// Classification precedence:
+//  1. embedding_v2 IS NOT NULL -> 'embedded'
+//  2. latest kb.graph_embedding_jobs row (ordered by created_at DESC):
+//     pending/processing/failed/dead_letter pass through; completed/cancelled -> 'missing'
+//  3. no job row -> 'missing'
+//
+// The newest job wins; equal created_at ties are broken by id so the selected
+// status label is deterministic rather than arbitrary.
+//
+// Uses the `go` table alias from the GraphObject bun model. Keep in sync with
+// embeddingStatus() in embedding_status_test.go.
+const embeddingStatusExpr = `CASE
+	WHEN go.embedding_v2 IS NOT NULL THEN 'embedded'
+	ELSE COALESCE((
+		SELECT CASE j.status
+			WHEN 'pending' THEN 'pending'
+			WHEN 'processing' THEN 'processing'
+			WHEN 'failed' THEN 'failed'
+			WHEN 'dead_letter' THEN 'dead_letter'
+			ELSE 'missing'
+		END
+		FROM kb.graph_embedding_jobs j
+		WHERE j.object_id = go.id
+		ORDER BY j.created_at DESC, j.id ASC
+		LIMIT 1
+	), 'missing')
+END`
+
+// graphObjectColumns is the list of columns to select for GraphObject.
+//
+// The write stamp belongs here as well as in the bun projections: search
+// results are GraphObjects handed to the same DTO, and a missing column scans as
+// the zero value — a search hit would report "" for credential_kind and
+// data_class, an out-of-enum value that contradicts what GET returns for the
+// same row (#2376).
+const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_id, version,
+	type, key, status, namespace, properties, labels, change_summary, content_hash,
+	created_at, updated_at, deleted_at, fts, embedding_updated_at,
+	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
+	actor_type, actor_id, schema_version,
+	credential_kind, credential_id, run_id, root_run_id,
+	data_class, owner_source_id, input_hash`
+
+// vectorOverfetchLimit is the candidate window fetched via the HNSW index so the
+// outer deterministic ORDER BY (distance, id) can break exact ties without
+// defeating the index.
+const vectorOverfetchLimit = 64
+
+// scanGraphObject scans a row from a raw SQL query into a GraphObject.
+// Uses JSONMap and pq.StringArray intermediaries because database/sql's rows.Scan()
+// cannot directly scan JSONB ([]uint8) into map[string]any or PostgreSQL arrays into []string.
+func scanGraphObject(rows *sql.Rows, obj *GraphObject, extraDest ...any) error {
+	var props JSONMap
+	var changeSummary JSONMap
+	var labels pq.StringArray
+
+	dest := []any{
+		&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
+		&obj.Type, &obj.Key, &obj.Status, &obj.Namespace, &props, &labels, &changeSummary, &obj.ContentHash,
+		&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
+		&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
+		&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
+		&obj.CredentialKind, &obj.CredentialID, &obj.RunID, &obj.RootRunID,
+		&obj.DataClass, &obj.OwnerSourceID, &obj.InputHash,
+	}
+	dest = append(dest, extraDest...)
+
+	if err := rows.Scan(dest...); err != nil {
+		return err
+	}
+
+	obj.Properties = map[string]any(props)
+	obj.ChangeSummary = map[string]any(changeSummary)
+	obj.Labels = []string(labels)
+	return nil
+}
+
+// FTSSearchParams contains parameters for full-text search.
+type FTSSearchParams struct {
+	ProjectID      uuid.UUID
+	Query          string
+	BranchID       *uuid.UUID
+	Types          []string
+	Labels         []string
+	Namespace      *string
+	Status         *string
+	IncludeDeleted bool
+	Limit          int
+	Offset         int
+}
+
+// FTSSearchResult represents a single FTS search result with score.
+type FTSSearchResult struct {
+	Object *GraphObject
+	Rank   float32
+}
+
+// FTSSearch performs full-text search using PostgreSQL's websearch_to_tsquery.
+// Returns objects sorted by relevance (ts_rank_cd with length normalization).
+//
+// It is a convenience wrapper over FTSSearchWithFallback for callers that do
+// not need to know whether a fallback pass produced the results.
+func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, error) {
+	results, _, err := r.FTSSearchWithFallback(ctx, params)
+	return results, err
+}
+
+// FTSSearchWithFallback is FTSSearch with an additional fellBack signal: it is
+// true when the strict and relaxed queries matched nothing and the result set
+// came from the disjoined (OR) fallback — or, equivalently, from the relaxed
+// fallback — rather than the strict query.
+//
+// The signal matters because the Relax/Disjoin fallbacks are gated to the first
+// page only (params.Offset > 0 skips them), so a fallback result cannot promise
+// a second page: computing HasMore from a `limit+1` disjoined result set would
+// advertise a page that returns empty. Callers that surface HasMore must consult
+// fellBack before reporting more results than actually exist.
+func (r *Repository) FTSSearchWithFallback(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, bool, error) {
+	results, err := r.ftsSearch(ctx, params, params.Query, false)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(results) > 0 {
+		return results, false, nil
+	}
+
+	// Only relax or disjoin on the first page. FTSSearch supports offset
+	// pagination, so a later page returning zero rows means the caller has
+	// paged past every strict match, not that the strict query matched nothing.
+	// Falling back here would refill the page with matches the strict query
+	// never surfaced on earlier pages.
+	if params.Offset > 0 {
+		return results, false, nil
+	}
+
+	// A single unsatisfiable term in the strict query — typically a hyphenated
+	// identifier that websearch_to_tsquery rewrites into a phrase that cannot
+	// match — zeroes the whole AND clause. Migration 00174 now makes the common
+	// composite-key/identifier case satisfiable directly (normalised key +
+	// bounded fts), so this is a safety net for tokens the index still cannot
+	// represent rather than the primary recovery path. Retry once without
+	// numeric terms before reporting no results.
+	relaxed, ok := ftsquery.Relax(params.Query)
+	if ok {
+		relaxedResults, err := r.ftsSearch(ctx, params, relaxed, false)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(relaxedResults) > 0 {
+			return relaxedResults, true, nil
+		}
+	}
+
+	// A natural multi-term query with no single object containing every term
+	// matches nothing under AND semantics even though each term is individually
+	// well represented (issue #996). Retry once with the terms OR-joined and
+	// ranked by ts_rank_cd, which rewards objects covering more of the terms, so
+	// recall is restored without collapsing ranking to "any one term".
+	disjoined, ok := ftsquery.Disjoin(params.Query)
+	if !ok {
+		return results, false, nil
+	}
+	disjoinedResults, err := r.ftsSearch(ctx, params, disjoined, true)
+	if err != nil {
+		return nil, false, err
+	}
+	return disjoinedResults, true, nil
+}
+
+// ftsSearch runs the lexical query for queryText. It is separate from FTSSearch
+// so that the relaxed and disjoined fallbacks can reuse it verbatim. When
+// disjoin is true, queryText is a `|`-joined term disjunction and the query is
+// matched with to_tsquery (OR semantics) instead of websearch_to_tsquery (AND).
+func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, queryText string, disjoin bool) ([]*FTSSearchResult, error) {
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
+	}
+
+	// tsqueryFn selects the query constructor. The strict and relaxed passes use
+	// websearch_to_tsquery (AND semantics over the parsed terms); the disjoined
+	// fallback uses to_tsquery (OR semantics over an explicit `|` disjunction).
+	// Both take (config, text) and both apply the configuration's stemmer.
+	tsqueryFn := "websearch_to_tsquery"
+	if disjoin {
+		tsqueryFn = "to_tsquery"
+	}
+
+	// Build WHERE conditions.
+	//
+	// The tsvector is a concatenation of an identifier space built with the
+	// `simple` configuration (raw + separator-normalised key, type) and a prose
+	// space built with `norwegian` (bounded title/name/description, see
+	// migration 00174). Lexemes carry no configuration, so a single `@@` against
+	// one query configuration only sees half the index. Match both: `simple`
+	// keeps identifier components verbatim, `norwegian` applies stemming to
+	// prose terms (`aksjeloven` -> `aksj`).
+	conditions := []string{
+		"project_id = ?",
+		"supersedes_id IS NULL", // HEAD versions only
+		"(fts @@ " + tsqueryFn + "('simple', ?) OR fts @@ " + tsqueryFn + "('norwegian', ?))",
+	}
+	args := []any{params.ProjectID, queryText, queryText}
+
+	// Add common filters
+	filterConds, filterArgs := buildSearchFilters(searchFilters{
+		ProjectID:      params.ProjectID,
+		BranchID:       params.BranchID,
+		Types:          params.Types,
+		Labels:         params.Labels,
+		Namespace:      params.Namespace,
+		Status:         params.Status,
+		IncludeDeleted: params.IncludeDeleted,
+	})
+	conditions = append(conditions, filterConds...)
+	args = append(args, filterArgs...)
+
+	whereClause := buildWhereClause(conditions)
+
+	// Build the query with ts_rank_cd (cover density) + normalization flag 1 (divide by 1+log(ndoc)).
+	// ts_rank_cd rewards documents where query terms appear close together and cover the query well.
+	// Flag 1 (log-length normalization) is gentler than flag 32 (raw length division), preventing
+	// short documents with rare n-grams from dominating over longer documents that match all query terms.
+	// The rank is the better of the two configurations, mirroring the OR in the WHERE clause.
+	query := `
+		SELECT ` + graphObjectColumns + `,
+			GREATEST(
+				ts_rank_cd(fts, ` + tsqueryFn + `('simple', ?), 1),
+				ts_rank_cd(fts, ` + tsqueryFn + `('norwegian', ?), 1)
+			) AS rank
+		FROM kb.graph_objects
+		` + whereClause + `
+		ORDER BY rank DESC, id ASC
+		LIMIT ?
+		OFFSET ?
+	`
+
+	// Prepend the two query params for ts_rank, append limit and offset
+	finalArgs := append([]any{queryText, queryText}, args...)
+	finalArgs = append(finalArgs, params.Limit, params.Offset)
+
+	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
+	if err != nil {
+		r.log.Error("FTS search failed", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer rows.Close()
+
+	var results []*FTSSearchResult
+	for rows.Next() {
+		obj := &GraphObject{}
+		var rank float32
+		err := scanGraphObject(rows, obj, &rank)
+		if err != nil {
+			r.log.Error("FTS search row scan failed", logger.Error(err))
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		results = append(results, &FTSSearchResult{Object: obj, Rank: rank})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return results, nil
+}
+
+// VectorSearchParams contains parameters for vector similarity search.
+type VectorSearchParams struct {
+	ProjectID      uuid.UUID
+	Vector         []float32
+	BranchID       *uuid.UUID
+	Types          []string
+	Labels         []string
+	Namespace      *string
+	Status         *string
+	IncludeDeleted bool
+	MaxDistance    *float32
+	Limit          int
+	Offset         int
+}
+
+// VectorSearchResult represents a single vector search result with distance.
+type VectorSearchResult struct {
+	Object   *GraphObject
+	Distance float32
+}
+
+// VectorSearch performs vector similarity search using pgvector's cosine distance.
+// Returns objects sorted by similarity (ascending distance).
+func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams) ([]*VectorSearchResult, error) {
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
+	}
+
+	// Format vector as PostgreSQL array string: '[0.1,0.2,...]'
+	vectorStr := pgutils.FormatVector(params.Vector)
+
+	// Build WHERE conditions
+	conditions := []string{
+		"project_id = ?",
+		"supersedes_id IS NULL",    // HEAD versions only
+		"embedding_v2 IS NOT NULL", // Must have embedding
+	}
+	args := []any{params.ProjectID}
+
+	// Add common filters
+	filterConds, filterArgs := buildSearchFilters(searchFilters{
+		ProjectID:      params.ProjectID,
+		BranchID:       params.BranchID,
+		Types:          params.Types,
+		Labels:         params.Labels,
+		Namespace:      params.Namespace,
+		Status:         params.Status,
+		IncludeDeleted: params.IncludeDeleted,
+	})
+	conditions = append(conditions, filterConds...)
+	args = append(args, filterArgs...)
+
+	// Max distance filter (specific to vector search)
+	if params.MaxDistance != nil {
+		conditions = append(conditions, "(embedding_v2 <=> ?::vector) <= ?")
+		args = append(args, vectorStr, *params.MaxDistance)
+	}
+
+	whereClause := buildWhereClause(conditions)
+
+	// Build the query with cosine distance.
+	//
+	// The distance ordering lives in an ANN subquery that orders by the raw
+	// `embedding_v2 <=> ?::vector` expression only, so the planner can use the
+	// HNSW index (IDX_graph_objects_embedding_v2_hnsw). Adding a secondary sort
+	// key (e.g. `, id ASC`) to that ORDER BY defeats the index and forces a full
+	// Seq Scan + Sort over every project row. The outer query applies the
+	// deterministic (distance, id) tie-break on the already-limited window.
+	innerLimit := params.Limit + params.Offset
+	query := `
+		SELECT ` + graphObjectColumns + `, _dist AS distance
+		FROM (
+			SELECT ` + graphObjectColumns + `,
+				(embedding_v2 <=> ?::vector) AS _dist
+			FROM kb.graph_objects
+			` + whereClause + `
+			ORDER BY embedding_v2 <=> ?::vector ASC
+			LIMIT ?
+		) AS ann
+		ORDER BY _dist ASC, id ASC
+		LIMIT ?
+		OFFSET ?
+	`
+
+	// Outer vector param, WHERE args, ANN ORDER BY param, inner LIMIT, outer LIMIT/OFFSET.
+	finalArgs := append([]any{vectorStr}, args...)
+	finalArgs = append(finalArgs, vectorStr, innerLimit, params.Limit, params.Offset)
+
+	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
+	if err != nil {
+		r.log.Error("Vector search failed", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer rows.Close()
+
+	var results []*VectorSearchResult
+	for rows.Next() {
+		obj := &GraphObject{}
+		var distance float32
+		err := scanGraphObject(rows, obj, &distance)
+		if err != nil {
+			r.log.Error("Vector search row scan failed", logger.Error(err))
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		results = append(results, &VectorSearchResult{Object: obj, Distance: distance})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return results, nil
+}
+
+// lowerStrings lowercases each element of in, returning a new slice.
+// Used to build case-insensitive fallback arguments for search filters.
+func lowerStrings(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strings.ToLower(s)
+	}
+	return out
+}
+
+// formatTextArray converts a string slice to PostgreSQL text array literal format.
+// Example: ["foo", "bar baz"] -> {foo,"bar baz"}
+func formatTextArray(arr []string) string {
+	if len(arr) == 0 {
+		return "{}"
+	}
+
+	var buf strings.Builder
+	buf.WriteByte('{')
+
+	for i, s := range arr {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		// Quote strings that contain special characters
+		needsQuote := strings.ContainsAny(s, `{},"\`)
+		if needsQuote {
+			buf.WriteByte('"')
+			// Escape backslashes and quotes
+			for _, c := range s {
+				if c == '\\' || c == '"' {
+					buf.WriteByte('\\')
+				}
+				buf.WriteRune(c)
+			}
+			buf.WriteByte('"')
+		} else {
+			buf.WriteString(s)
+		}
+	}
+
+	buf.WriteByte('}')
+	return buf.String()
+}
+
+// GetDistinctTagsParams holds optional filtering parameters for tag retrieval.
+type GetDistinctTagsParams struct {
+	ObjectType string // Filter tags to objects of this type
+	Prefix     string // Filter tags that start with this prefix
+	Limit      int    // Maximum number of tags to return (0 = no limit)
+}
+
+// GetDistinctTags returns all distinct tags (labels) used by objects in a project.
+func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, params *GetDistinctTagsParams) ([]string, error) {
+	var tags []string
+
+	args := []interface{}{projectID}
+
+	// cardinality(labels) > 0 is semantically a no-op (unnest of an empty array
+	// yields no rows) but lets the planner use the partial index
+	// idx_graph_objects_labels_head (project_id) WHERE ... cardinality(labels) > 0
+	// instead of scanning every object in the project (#1104).
+	query := `
+		SELECT DISTINCT unnest(labels) as tag
+		FROM kb.graph_objects
+		WHERE project_id = ?
+		  AND supersedes_id IS NULL
+		  AND deleted_at IS NULL
+		  AND cardinality(labels) > 0`
+
+	if params != nil && params.ObjectType != "" {
+		query += `
+		  AND type = ?`
+		args = append(args, params.ObjectType)
+	}
+
+	// Wrap with a subquery to apply prefix filter and ordering
+	outerQuery := `SELECT tag FROM (` + query + `) AS t`
+
+	if params != nil && params.Prefix != "" {
+		outerQuery += ` WHERE tag ILIKE ?`
+		args = append(args, params.Prefix+"%")
+	}
+
+	outerQuery += ` ORDER BY tag`
+
+	if params != nil && params.Limit > 0 {
+		outerQuery += ` LIMIT ?`
+		args = append(args, params.Limit)
+	}
+
+	err := r.db.NewRaw(outerQuery, args...).Scan(ctx, &tags)
+	if err != nil {
+		r.log.Error("failed to get distinct tags", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if tags == nil {
+		return []string{}, nil
+	}
+	return tags, nil
+}
+
+// objectHeadRef identifies a HEAD object by its canonical id, physical id, and
+// type. Used to route board-enabled bulk status updates through the versioned
+// transition path while mapping results back to the request order.
+type objectHeadRef struct {
+	ID          uuid.UUID
+	CanonicalID uuid.UUID
+	Type        string
+}
+
+// listHeadObjectRefsByIDs returns the HEAD (id, canonical_id, type) for each
+// object matched by id or canonical_id in the project.
+func (r *Repository) listHeadObjectRefsByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) ([]objectHeadRef, error) {
+	type row struct {
+		ID          uuid.UUID `bun:"id"`
+		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Type        string    `bun:"type"`
+	}
+	var rows []row
+	err := r.db.NewSelect().
+		Model((*GraphObject)(nil)).
+		Column("id", "canonical_id", "type").
+		Where("project_id = ?", projectID).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
+		Where("supersedes_id IS NULL").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("list head object refs by ids: %w", err)
+	}
+	refs := make([]objectHeadRef, 0, len(rows))
+	for _, r := range rows {
+		refs = append(refs, objectHeadRef(r))
+	}
+	return refs, nil
+}
+
+// BulkUpdateStatus updates the status of multiple objects.
+// Accepts either physical ids or canonical_ids.
+func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID, status string, actorType string, actorID *uuid.UUID) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// Default an empty actor type to "user" (mirrors BulkActionByFilter) so the
+	// actor_type UPDATE never violates chk_graph_objects_actor_type.
+	if actorType == "" {
+		actorType = ActorUser
+	}
+
+	now := time.Now()
+	result, err := r.db.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("status = ?", status).
+		Set("updated_at = ?", now).
+		Set("actor_type = ?", actorType).
+		Set("actor_id = ?", actorID).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL"). // Only update HEAD versions
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to bulk update status", logger.Error(err))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return int(rowsAffected), nil
+}
+
+// =============================================================================
+// Similar Objects Search
+// =============================================================================
+
+// SimilarSearchParams contains parameters for finding similar objects.
+type SimilarSearchParams struct {
+	ProjectID   uuid.UUID
+	ObjectID    uuid.UUID
+	BranchID    *uuid.UUID
+	Type        *string
+	KeyPrefix   *string
+	LabelsAll   []string
+	LabelsAny   []string
+	MaxDistance *float32
+	Limit       int
+}
+
+// SimilarSearchResult represents a single similar object result.
+type SimilarSearchResult struct {
+	ID          uuid.UUID
+	CanonicalID uuid.UUID
+	Version     int
+	Distance    float32
+	ProjectID   uuid.UUID
+	BranchID    *uuid.UUID
+	Type        string
+	Key         *string
+	Status      *string
+	Properties  map[string]any
+	Labels      []string
+	CreatedAt   time.Time
+}
+
+// FindSimilarObjects finds objects similar to a given object using stored embeddings.
+func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearchParams) ([]*SimilarSearchResult, error) {
+	if params.Limit <= 0 {
+		params.Limit = 10
+	}
+	if params.Limit > 100 {
+		params.Limit = 100
+	}
+
+	// First get the embedding for the source object (accepts physical id or canonical_id).
+	// Cast to text so pgx/bun can scan it without a registered pgvector codec.
+	var embStr string
+	err := r.db.NewRaw(`
+		SELECT embedding_v2::text
+		FROM kb.graph_objects
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
+		AND supersedes_id IS NULL
+		LIMIT 1
+	`, params.ObjectID, params.ObjectID, params.ProjectID).Scan(ctx, &embStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.ErrNotFound
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	embedding, err := pgutils.ParseVector(embStr)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(embedding) == 0 {
+		// No embedding available for source object
+		return []*SimilarSearchResult{}, nil
+	}
+
+	// Build query for similar objects
+	vectorStr := pgutils.FormatVector(embedding)
+
+	conditions := []string{
+		"project_id = ?",
+		"(id != ? AND canonical_id != ?)", // Exclude source object by either ID type
+		"supersedes_id IS NULL",
+		"deleted_at IS NULL",
+		"embedding_v2 IS NOT NULL",
+	}
+	args := []any{params.ProjectID, params.ObjectID, params.ObjectID}
+
+	if params.BranchID != nil {
+		conditions = append(conditions, "branch_id = ?")
+		args = append(args, *params.BranchID)
+	} else {
+		conditions = append(conditions, "branch_id IS NULL")
+	}
+
+	if params.Type != nil {
+		conditions = append(conditions, "type = ?")
+		args = append(args, *params.Type)
+	}
+
+	if params.KeyPrefix != nil {
+		conditions = append(conditions, "key ILIKE ?")
+		args = append(args, *params.KeyPrefix+"%")
+	}
+
+	if len(params.LabelsAll) > 0 {
+		conditions = append(conditions, "labels @> ?::text[]")
+		args = append(args, formatTextArray(params.LabelsAll))
+	}
+
+	if len(params.LabelsAny) > 0 {
+		conditions = append(conditions, "labels && ?::text[]")
+		args = append(args, formatTextArray(params.LabelsAny))
+	}
+
+	if params.MaxDistance != nil {
+		conditions = append(conditions, "(embedding_v2 <=> ?::vector) <= ?")
+		args = append(args, vectorStr, *params.MaxDistance)
+	}
+
+	whereClause := buildWhereClause(conditions)
+
+	// Same HNSW-safe shape as VectorSearch: the inner ANN subquery orders by the
+	// raw distance expression only (so the HNSW index is usable); the outer query
+	// applies the deterministic (distance, id) tie-break on the limited window.
+	query := `
+		SELECT id, canonical_id, version, project_id, branch_id,
+			type, key, status, properties, labels, created_at,
+			_dist AS distance
+		FROM (
+			SELECT id, canonical_id, version, project_id, branch_id,
+				type, key, status, properties, labels, created_at,
+				(embedding_v2 <=> ?::vector) AS _dist
+			FROM kb.graph_objects
+			` + whereClause + `
+			ORDER BY embedding_v2 <=> ?::vector ASC
+			LIMIT ?
+		) AS ann
+		ORDER BY _dist ASC, id ASC
+		LIMIT ?
+	`
+
+	finalArgs := append([]any{vectorStr}, args...)
+	finalArgs = append(finalArgs, vectorStr, params.Limit, params.Limit)
+
+	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
+	if err != nil {
+		r.log.Error("similar objects search failed", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer rows.Close()
+
+	var results []*SimilarSearchResult
+	for rows.Next() {
+		result := &SimilarSearchResult{}
+		var props JSONMap
+		var labels pq.StringArray
+		err := rows.Scan(
+			&result.ID, &result.CanonicalID, &result.Version, &result.ProjectID, &result.BranchID,
+			&result.Type, &result.Key, &result.Status, &props, &labels, &result.CreatedAt,
+			&result.Distance,
+		)
+		if err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		result.Properties = map[string]any(props)
+		result.Labels = []string(labels)
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return results, nil
+}
+
+// =============================================================================
+// Graph Expand/Traverse Operations
+// =============================================================================
+
+// cosineSimilarity computes cosine similarity between two vectors.
+// Returns the dot product divided by the product of magnitudes.
+// For unit-normalized vectors (as produced by Vertex AI), this simplifies to dot(a, b).
+// Returns 0.0 if either vector is empty or has zero magnitude.
+func cosineSimilarity(a, b []float32) float32 {
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return 0.0
+	}
+
+	var dot, magA, magB float64
+	for i := range a {
+		ai, bi := float64(a[i]), float64(b[i])
+		dot += ai * bi
+		magA += ai * ai
+		magB += bi * bi
+	}
+
+	mag := math.Sqrt(magA * magB)
+	if mag == 0 {
+		return 0.0
+	}
+
+	return float32(dot / mag)
+}
+
+// ExpandParams contains parameters for graph expansion.
+type ExpandParams struct {
+	ProjectID         uuid.UUID
+	RootIDs           []uuid.UUID
+	Direction         string // "out", "in", "both"
+	MaxDepth          int
+	MaxNodes          int
+	MaxEdges          int
+	RelationshipTypes []string
+	ObjectTypes       []string
+	Labels            []string
+	BranchID          *uuid.UUID
+	QueryContext      string    // Optional query context for relevance-based edge ordering
+	QueryVector       []float32 // Pre-computed embedding of QueryContext; if nil and QueryContext is set, service layer embeds it
+}
+
+// ExpandResult contains the raw results of graph expansion.
+type ExpandResult struct {
+	Nodes           map[uuid.UUID]*GraphObject
+	Edges           []*GraphRelationship
+	NodeDepths      map[uuid.UUID]int
+	Truncated       bool
+	MaxDepthReached int
+}
+
+// ExpandGraph performs BFS graph expansion from root nodes.
+func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*ExpandResult, error) {
+	result := &ExpandResult{
+		Nodes:      make(map[uuid.UUID]*GraphObject),
+		Edges:      []*GraphRelationship{},
+		NodeDepths: make(map[uuid.UUID]int),
+	}
+
+	// Initialize with root nodes at depth 0
+	currentLevel := make([]uuid.UUID, 0, len(params.RootIDs))
+	visited := make(map[uuid.UUID]bool)
+
+	// Fetch root objects — accept physical id or canonical_id
+	var rootObjects []*GraphObject
+	err := r.db.NewSelect().
+		Model(&rootObjects).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.RootIDs), bun.In(params.RootIDs)).
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Use canonical_id for traversal since relationships store canonical IDs in src_id/dst_id
+	for _, obj := range rootObjects {
+		result.Nodes[obj.CanonicalID] = obj
+		result.NodeDepths[obj.CanonicalID] = 0
+		visited[obj.CanonicalID] = true
+		currentLevel = append(currentLevel, obj.CanonicalID)
+	}
+
+	// Track seen edges to prevent duplicates at depth > 1
+	seenEdges := make(map[uuid.UUID]bool)
+
+	// BFS traversal
+	for depth := 0; depth < params.MaxDepth && len(currentLevel) > 0; depth++ {
+		// Check limits
+		if len(result.Nodes) >= params.MaxNodes {
+			result.Truncated = true
+			break
+		}
+		if len(result.Edges) >= params.MaxEdges {
+			result.Truncated = true
+			break
+		}
+
+		result.MaxDepthReached = depth + 1
+		nextLevel := []uuid.UUID{}
+
+		// Fetch relationships for current level nodes
+		var relationships []*GraphRelationship
+
+		// Build direction condition
+		var directionCond string
+		switch params.Direction {
+		case "out":
+			directionCond = "src_id IN (?)"
+		case "in":
+			directionCond = "dst_id IN (?)"
+		default: // "both"
+			directionCond = "(src_id IN (?) OR dst_id IN (?))"
+		}
+
+		q := r.db.NewSelect().
+			Model(&relationships).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+
+		if params.BranchID != nil {
+			q = q.Where("branch_id = ?", *params.BranchID)
+		} else {
+			q = q.Where("branch_id IS NULL")
+		}
+
+		switch params.Direction {
+		case "out":
+			q = q.Where(directionCond, bun.In(currentLevel))
+		case "in":
+			q = q.Where(directionCond, bun.In(currentLevel))
+		default:
+			q = q.Where(directionCond, bun.In(currentLevel), bun.In(currentLevel))
+		}
+
+		if len(params.RelationshipTypes) > 0 {
+			q = q.Where("type IN (?)", bun.In(params.RelationshipTypes))
+		}
+
+		// id is the kb.graph_relationships PK → unique → total order. This makes
+		// edge order and MaxEdges truncation deterministic even when the
+		// similarity sort below is skipped (no QueryVector) or the similarity
+		// query fails (graceful degradation to raw BFS order).
+		q = q.OrderExpr("id ASC")
+
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		// Sort edges by cosine similarity to query vector when provided.
+		// This ensures that when MaxEdges/MaxNodes limits cause truncation,
+		// the most query-relevant edges survive.
+		if len(params.QueryVector) > 0 && len(relationships) > 1 {
+			// Fetch similarity scores from the database for relationships that have embeddings
+			relIDs := make([]uuid.UUID, len(relationships))
+			for i, rel := range relationships {
+				relIDs[i] = rel.ID
+			}
+
+			type similarityResult struct {
+				ID         uuid.UUID `bun:"id"`
+				Similarity float64   `bun:"similarity"`
+			}
+
+			var similarities []similarityResult
+			vecStr := vectorToString(params.QueryVector)
+			simErr := r.db.NewRaw(
+				"SELECT id, (1 - (embedding <=> ?::vector)) AS similarity FROM kb.graph_relationships WHERE id IN (?) AND embedding IS NOT NULL",
+				vecStr, bun.In(relIDs),
+			).Scan(ctx, &similarities)
+
+			if simErr == nil && len(similarities) > 0 {
+				// Build similarity map (relationships without embeddings get 0.0)
+				simMap := make(map[uuid.UUID]float64, len(similarities))
+				for _, s := range similarities {
+					simMap[s.ID] = s.Similarity
+				}
+
+				sort.Slice(relationships, func(i, j int) bool {
+					if simMap[relationships[i].ID] != simMap[relationships[j].ID] {
+						return simMap[relationships[i].ID] > simMap[relationships[j].ID]
+					}
+					// Tie-break on the unique relationship id so equal-similarity
+					// (e.g. all-missing-embedding → 0.0) ordering is deterministic.
+					return slices.Compare(relationships[i].ID[:], relationships[j].ID[:]) < 0
+				})
+			}
+			// If similarity query fails, fall through to standard BFS order (graceful degradation)
+		}
+
+		// Collect neighbor IDs
+		neighborIDs := make(map[uuid.UUID]bool)
+		for _, rel := range relationships {
+			// Skip already-seen edges (prevents duplicates at depth > 1)
+			if seenEdges[rel.ID] {
+				continue
+			}
+			seenEdges[rel.ID] = true
+
+			// Check edge limit
+			if len(result.Edges) >= params.MaxEdges {
+				result.Truncated = true
+				break
+			}
+
+			result.Edges = append(result.Edges, rel)
+
+			// Determine the neighbor ID based on direction
+			var neighborID uuid.UUID
+			if visited[rel.SrcID] && !visited[rel.DstID] {
+				neighborID = rel.DstID
+			} else if visited[rel.DstID] && !visited[rel.SrcID] {
+				neighborID = rel.SrcID
+			} else {
+				continue // Both already visited or edge within current frontier
+			}
+
+			if !neighborIDs[neighborID] {
+				neighborIDs[neighborID] = true
+			}
+		}
+
+		if result.Truncated {
+			break
+		}
+
+		// Fetch neighbor objects — neighborIDs are canonical_id values
+		if len(neighborIDs) > 0 {
+			neighborIDList := make([]uuid.UUID, 0, len(neighborIDs))
+			for id := range neighborIDs {
+				neighborIDList = append(neighborIDList, id)
+			}
+
+			var neighbors []*GraphObject
+			nq := r.db.NewSelect().
+				Model(&neighbors).
+				Where("canonical_id IN (?)", bun.In(neighborIDList)).
+				Where("project_id = ?", params.ProjectID).
+				Where("supersedes_id IS NULL").
+				Where("deleted_at IS NULL")
+
+			if len(params.ObjectTypes) > 0 {
+				nq = nq.Where("type IN (?)", bun.In(params.ObjectTypes))
+			}
+
+			if len(params.Labels) > 0 {
+				nq = nq.Where("labels && ?::text[]", formatTextArray(params.Labels))
+			}
+
+			// canonical_id groups versions; id is the unique PK. Together they give
+			// a deterministic total order so MaxNodes truncation selects the same
+			// neighbours on every run regardless of the scan order.
+			nq = nq.OrderExpr("canonical_id ASC, id ASC")
+
+			err := nq.Scan(ctx)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, apperror.ErrDatabase.WithInternal(err)
+			}
+
+			for _, obj := range neighbors {
+				if !visited[obj.CanonicalID] {
+					// Check node limit
+					if len(result.Nodes) >= params.MaxNodes {
+						result.Truncated = true
+						break
+					}
+
+					result.Nodes[obj.CanonicalID] = obj
+					result.NodeDepths[obj.CanonicalID] = depth + 1
+					visited[obj.CanonicalID] = true
+					nextLevel = append(nextLevel, obj.CanonicalID)
+				}
+			}
+		}
+
+		currentLevel = nextLevel
+	}
+
+	return result, nil
+}
+
+// GetNeighborObjects returns objects connected to the given object via relationships.
+// This is used by search-with-neighbors to find relationship-connected neighbors.
+// objectID can be a physical id or canonical_id; it is used to match against
+// src_id/dst_id in relationships, which store canonical_id values.
+func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID, objectID uuid.UUID, branchID *uuid.UUID, maxNeighbors int) ([]*GraphObject, error) {
+	// Resolve objectID to canonical_id by looking up the object
+	var resolvedObj GraphObject
+	err := r.db.NewSelect().
+		Model(&resolvedObj).
+		Column("canonical_id").
+		Where("(id = ? OR canonical_id = ?)", objectID, objectID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		OrderExpr("id ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []*GraphObject{}, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	canonicalID := resolvedObj.CanonicalID
+
+	// Get all connected object IDs via relationships (src_id/dst_id store canonical IDs)
+	var neighborIDs []uuid.UUID
+
+	// Get outgoing relationships
+	var outgoing []uuid.UUID
+	outQ := r.db.NewSelect().
+		Column("dst_id").
+		Model((*GraphRelationship)(nil)).
+		Where("src_id = ?", canonicalID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		OrderExpr("dst_id ASC, id ASC")
+
+	if branchID != nil {
+		outQ = outQ.Where("branch_id = ?", *branchID)
+	} else {
+		outQ = outQ.Where("branch_id IS NULL")
+	}
+
+	err = outQ.Scan(ctx, &outgoing)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	neighborIDs = append(neighborIDs, outgoing...)
+
+	// Get incoming relationships
+	var incoming []uuid.UUID
+	inQ := r.db.NewSelect().
+		Column("src_id").
+		Model((*GraphRelationship)(nil)).
+		Where("dst_id = ?", canonicalID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		OrderExpr("src_id ASC, id ASC")
+
+	if branchID != nil {
+		inQ = inQ.Where("branch_id = ?", *branchID)
+	} else {
+		inQ = inQ.Where("branch_id IS NULL")
+	}
+
+	err = inQ.Scan(ctx, &incoming)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	neighborIDs = append(neighborIDs, incoming...)
+
+	if len(neighborIDs) == 0 {
+		return []*GraphObject{}, nil
+	}
+
+	// Dedupe (neighborIDs are canonical_id values)
+	seen := make(map[uuid.UUID]bool)
+	unique := make([]uuid.UUID, 0)
+	for _, id := range neighborIDs {
+		if !seen[id] && id != canonicalID {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
+
+	if len(unique) == 0 {
+		return []*GraphObject{}, nil
+	}
+
+	// Limit
+	if maxNeighbors > 0 && len(unique) > maxNeighbors {
+		unique = unique[:maxNeighbors]
+	}
+
+	// Fetch HEAD objects by canonical_id
+	var objects []*GraphObject
+	err = r.db.NewSelect().
+		Model(&objects).
+		Where("canonical_id IN (?)", bun.In(unique)).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		OrderExpr("id ASC").
+		Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
+// GetObjectEmbedding returns the embedding vector for an object.
+// Accepts either physical id or canonical_id, returns the HEAD version's embedding.
+func (r *Repository) GetObjectEmbedding(ctx context.Context, projectID, objectID uuid.UUID) ([]float32, error) {
+	// Cast to text so pgx/bun can scan it without a registered pgvector codec.
+	var embStr string
+	err := r.db.NewRaw(`
+		SELECT embedding_v2::text
+		FROM kb.graph_objects
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
+		AND supersedes_id IS NULL
+		LIMIT 1
+	`, objectID, objectID, projectID).Scan(ctx, &embStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.ErrNotFound
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	embedding, err := pgutils.ParseVector(embStr)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return embedding, nil
+}
+
+// =============================================================================
+// Branch Operations
+// =============================================================================
+
+// GetBranchByID returns a branch by its ID.
+func (r *Repository) GetBranchByID(ctx context.Context, projectID, branchID uuid.UUID) (*Branch, error) {
+	var branch Branch
+	err := r.db.NewSelect().
+		Model(&branch).
+		Where("id = ?", branchID).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.ErrNotFound
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &branch, nil
+}
+
+// IsAncestorBranch checks if ancestorBranchID is an ancestor of branchID.
+func (r *Repository) IsAncestorBranch(ctx context.Context, branchID, ancestorBranchID uuid.UUID) (bool, error) {
+	count, err := r.db.NewSelect().
+		Model((*BranchLineage)(nil)).
+		Where("branch_id = ?", branchID).
+		Where("ancestor_branch_id = ?", ancestorBranchID).
+		Count(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return count > 0, nil
+}
+
+// BranchObjectHead represents HEAD object version per canonical_id on a branch.
+// Carries all fields needed for merge classification and cloning.
+type BranchObjectHead struct {
+	CanonicalID uuid.UUID
+	ID          uuid.UUID
+	ContentHash []byte
+	Type        string
+	Key         *string
+	Status      *string
+	Namespace   *string
+	Labels      []string
+	Properties  map[string]any
+	DeletedAt   *time.Time
+	// MergedToCanonicalID is non-nil when this source object was already cloned
+	// to a target branch by a prior merge (the merge ledger).
+	MergedToCanonicalID *uuid.UUID
+	ExtractionJobID     *uuid.UUID
+	ActorType           *string
+	ActorID             *uuid.UUID
+	// Write stamp halves needed to preserve attribution across a merge (#2376).
+	DataClass     string
+	OwnerSourceID *uuid.UUID
+}
+
+// GetBranchObjectHeads returns HEAD versions of all objects on a branch.
+// Fetches all fields required for merge classification and cloning.
+func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID) (map[uuid.UUID]*BranchObjectHead, error) {
+	var objects []*GraphObject
+
+	q := r.db.NewSelect().
+		Model(&objects).
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id", "actor_type", "actor_id", "data_class", "owner_source_id").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	result := make(map[uuid.UUID]*BranchObjectHead)
+	for _, obj := range objects {
+		result[obj.CanonicalID] = &BranchObjectHead{
+			CanonicalID:         obj.CanonicalID,
+			ID:                  obj.ID,
+			ContentHash:         obj.ContentHash,
+			Type:                obj.Type,
+			Key:                 obj.Key,
+			Status:              obj.Status,
+			Namespace:           obj.Namespace,
+			Labels:              obj.Labels,
+			Properties:          obj.Properties,
+			DeletedAt:           obj.DeletedAt,
+			MergedToCanonicalID: obj.MergedToCanonicalID,
+			ExtractionJobID:     obj.ExtractionJobID,
+			ActorType:           obj.ActorType,
+			ActorID:             obj.ActorID,
+			DataClass:           obj.DataClass,
+			OwnerSourceID:       obj.OwnerSourceID,
+		}
+	}
+
+	return result, nil
+}
+
+// BranchRelationshipHead represents HEAD relationship version per canonical_id on a branch.
+// Carries all fields required for merge classification and cloning.
+type BranchRelationshipHead struct {
+	CanonicalID uuid.UUID
+	ID          uuid.UUID
+	ContentHash []byte
+	Type        string
+	Properties  map[string]any
+	SrcID       uuid.UUID
+	DstID       uuid.UUID
+	Namespace   *string
+	ActorType   *string
+	ActorID     *uuid.UUID
+}
+
+// GetBranchRelationshipHeads returns HEAD versions of all relationships on a branch.
+// Fetches all fields required for merge classification and cloning.
+func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID) (map[uuid.UUID]*BranchRelationshipHead, error) {
+	var rels []*GraphRelationship
+
+	q := r.db.NewSelect().
+		Model(&rels).
+		Column("id", "canonical_id", "content_hash", "type", "properties", "src_id", "dst_id", "namespace", "actor_type", "actor_id").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	result := make(map[uuid.UUID]*BranchRelationshipHead)
+	for _, rel := range rels {
+		result[rel.CanonicalID] = &BranchRelationshipHead{
+			CanonicalID: rel.CanonicalID,
+			ID:          rel.ID,
+			ContentHash: rel.ContentHash,
+			Type:        rel.Type,
+			Properties:  rel.Properties,
+			SrcID:       rel.SrcID,
+			DstID:       rel.DstID,
+			Namespace:   rel.Namespace,
+			ActorType:   rel.ActorType,
+			ActorID:     rel.ActorID,
+		}
+	}
+
+	return result, nil
+}
+
+// =============================================================================
+// Move Object Repository Methods
+// =============================================================================
+
+// MoveObjectVersionChain updates branch_id on all versions of an object (by canonical_id)
+// within the given transaction.
+func (r *Repository) MoveObjectVersionChain(ctx context.Context, tx bun.Tx, projectID, canonicalID uuid.UUID, targetBranchID *uuid.UUID) (int, error) {
+	res, err := tx.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("branch_id = ?", targetBranchID).
+		Set("updated_at = now()").
+		Where("project_id = ?", projectID).
+		Where("canonical_id = ?", canonicalID).
+		Exec(ctx)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// MoveRelationshipVersionChain updates branch_id on all versions of a relationship (by canonical_id)
+// within the given transaction.
+func (r *Repository) MoveRelationshipVersionChain(ctx context.Context, tx bun.Tx, projectID, canonicalID uuid.UUID, targetBranchID *uuid.UUID) (int, error) {
+	res, err := tx.NewUpdate().
+		Model((*GraphRelationship)(nil)).
+		Set("branch_id = ?", targetBranchID).
+		Where("project_id = ?", projectID).
+		Where("canonical_id = ?", canonicalID).
+		Exec(ctx)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// GetRelationshipsByEndpoint returns all HEAD (non-superseded, non-deleted) relationships
+// on a given branch where the specified canonical_id is either src_id or dst_id.
+func (r *Repository) GetRelationshipsByEndpoint(ctx context.Context, tx bun.Tx, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) ([]*GraphRelationship, error) {
+	var rels []*GraphRelationship
+
+	q := tx.NewSelect().
+		Model(&rels).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		Where("(src_id = ? OR dst_id = ?)", canonicalID, canonicalID)
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rels, nil
+}
+
+// CheckObjectExistsOnBranch checks whether a HEAD object with the given type+key
+// already exists on the target branch. Returns the conflicting object or nil.
+func (r *Repository) CheckObjectExistsOnBranch(ctx context.Context, tx bun.Tx, projectID uuid.UUID, targetBranchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+	return r.FindHeadByTypeAndKey(ctx, tx, projectID, targetBranchID, objType, key)
+}
+
+// CreateBranch inserts a new branch record into kb.branches.
+func (r *Repository) CreateBranch(ctx context.Context, branch *Branch) error {
+	_, err := r.db.NewInsert().Model(branch).Returning("*").Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// GetBranchByNameAndProject checks if a branch with the given name already exists for a project.
+func (r *Repository) GetBranchByNameAndProject(ctx context.Context, name string, projectID uuid.UUID) (*Branch, error) {
+	branch := new(Branch)
+	err := r.db.NewSelect().Model(branch).
+		Where("name = ?", name).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return branch, nil
+}
+
+// EnsureBranchLineage populates the branch_lineage closure table for a new branch.
+func (r *Repository) EnsureBranchLineage(ctx context.Context, branchID uuid.UUID, parentBranchID *uuid.UUID) {
+	// Self lineage (depth=0)
+	_, _ = r.db.NewRaw(`
+		INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+		VALUES (?, ?, 0)
+		ON CONFLICT DO NOTHING
+	`, branchID, branchID).Exec(ctx)
+
+	if parentBranchID != nil {
+		// Ensure parent self row exists
+		_, _ = r.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			VALUES (?, ?, 0)
+			ON CONFLICT DO NOTHING
+		`, *parentBranchID, *parentBranchID).Exec(ctx)
+
+		// Copy parent lineage rows with depth+1
+		_, _ = r.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			SELECT ?, ancestor_branch_id, depth + 1
+			FROM kb.branch_lineage
+			WHERE branch_id = ?
+			ON CONFLICT (branch_id, ancestor_branch_id) DO NOTHING
+		`, branchID, *parentBranchID).Exec(ctx)
+
+		// Add direct parent (depth=1) if not already captured
+		_, _ = r.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			VALUES (?, ?, 1)
+			ON CONFLICT (branch_id, ancestor_branch_id) DO NOTHING
+		`, branchID, *parentBranchID).Exec(ctx)
+	}
+}
+
+// BulkCopyObjectsToBranch copies HEAD object versions from one branch to another.
+// It inserts new rows with new IDs but preserving canonical_id, type, key, properties, etc.
+// If filterTypes is non-empty, only objects of those types are copied.
+// Returns the set of copied canonical_ids and the count.
+func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID, targetBranchID *uuid.UUID, filterTypes []string) (map[uuid.UUID]bool, int, error) {
+	// Get HEAD objects on source branch
+	var objects []*GraphObject
+	q := r.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+
+	if sourceBranchID != nil {
+		q = q.Where("branch_id = ?", *sourceBranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if len(filterTypes) > 0 {
+		q = q.Where("type IN (?)", bun.In(filterTypes))
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		if err == sql.ErrNoRows {
+			return make(map[uuid.UUID]bool), 0, nil
+		}
+		return nil, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(objects) == 0 {
+		return make(map[uuid.UUID]bool), 0, nil
+	}
+
+	copiedCanonicals := make(map[uuid.UUID]bool, len(objects))
+
+	// Insert copies in batches of 100
+	batch := make([]*GraphObject, 0, 100)
+	for _, obj := range objects {
+		newObj := &GraphObject{
+			ID:              uuid.New(),
+			ProjectID:       projectID,
+			BranchID:        targetBranchID,
+			CanonicalID:     obj.CanonicalID, // Preserve canonical ID for merge-back support
+			Version:         1,
+			Type:            obj.Type,
+			Key:             obj.Key,
+			Status:          obj.Status,
+			Properties:      obj.Properties,
+			Labels:          obj.Labels,
+			ContentHash:     obj.ContentHash,
+			ExtractionJobID: obj.ExtractionJobID,
+			// Carry the source row's actor so a fork copy is not actor-less.
+			ActorType: obj.ActorType,
+			ActorID:   obj.ActorID,
+			// Carry the source row's write stamp and data class for the same
+			// reason (#2376): a fork copy is a copy, not a new write, and losing
+			// the credential/run/source-tag here would launder the attribution
+			// the merge-back paths are required to preserve.
+			CredentialKind: obj.CredentialKind,
+			CredentialID:   obj.CredentialID,
+			RunID:          obj.RunID,
+			RootRunID:      obj.RootRunID,
+			DataClass:      obj.DataClass,
+			OwnerSourceID:  obj.OwnerSourceID,
+			InputHash:      obj.InputHash,
+		}
+		batch = append(batch, newObj)
+		copiedCanonicals[obj.CanonicalID] = true
+
+		if len(batch) >= 100 {
+			if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+				return nil, 0, apperror.ErrDatabase.WithInternal(err)
+			}
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+			return nil, 0, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	return copiedCanonicals, len(objects), nil
+}
+
+// BulkCopyRelationshipsToBranch copies HEAD relationships from one branch to another,
+// but only for relationships where both src and dst are in the copiedCanonicals set.
+// Returns (copied count, skipped count, error).
+func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID, targetBranchID *uuid.UUID, copiedCanonicals map[uuid.UUID]bool) (int, int, error) {
+	// Get HEAD relationships on source branch
+	var rels []*GraphRelationship
+	q := r.db.NewSelect().
+		Model(&rels).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+
+	if sourceBranchID != nil {
+		q = q.Where("branch_id = ?", *sourceBranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, 0, nil
+		}
+		return 0, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(rels) == 0 {
+		return 0, 0, nil
+	}
+
+	copied := 0
+	skipped := 0
+
+	batch := make([]*GraphRelationship, 0, 100)
+	for _, rel := range rels {
+		// Only copy relationships where both endpoints were copied
+		if !copiedCanonicals[rel.SrcID] || !copiedCanonicals[rel.DstID] {
+			skipped++
+			continue
+		}
+
+		newRel := &GraphRelationship{
+			ID:          uuid.New(),
+			ProjectID:   projectID,
+			BranchID:    targetBranchID,
+			CanonicalID: rel.CanonicalID, // Preserve canonical ID
+			Version:     1,
+			Type:        rel.Type,
+			SrcID:       rel.SrcID,
+			DstID:       rel.DstID,
+			Properties:  rel.Properties,
+			Weight:      rel.Weight,
+			ContentHash: rel.ContentHash,
+			Namespace:   rel.Namespace,
+			// Carry the source row's actor so a fork copy is not actor-less.
+			ActorType: rel.ActorType,
+			ActorID:   rel.ActorID,
+			// A fork copy is a copy, so it keeps the source row's stamp (#2376).
+			CredentialKind: rel.CredentialKind,
+			CredentialID:   rel.CredentialID,
+			RunID:          rel.RunID,
+			RootRunID:      rel.RootRunID,
+		}
+		batch = append(batch, newRel)
+		copied++
+
+		if len(batch) >= 100 {
+			if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+				return 0, 0, apperror.ErrDatabase.WithInternal(err)
+			}
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+			return 0, 0, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	return copied, skipped, nil
+}
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+// BulkActionParams contains all inputs for the BulkActionByFilter repository method.
+type BulkActionParams struct {
+	ProjectID  uuid.UUID
+	Filter     BulkActionFilter
+	Action     string
+	Value      string         // for update_status
+	Properties map[string]any // for merge/replace_properties
+	Labels     []string       // for add/remove/set_labels
+	Limit      int
+	DryRun     bool
+	ActorType  string
+	ActorID    *uuid.UUID
+}
+
+// BulkActionByFilter executes a filter-then-action bulk operation on graph objects.
+// Supports dry_run (returns count without mutating) and all BulkAction* action types.
+func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionParams) (matched int, affected int, err error) {
+	// An empty actor type (e.g. a direct repo caller that doesn't resolve the
+	// actor) defaults to "user" so the actor_type UPDATE never violates the
+	// chk_graph_objects_actor_type CHECK constraint.
+	if params.ActorType == "" {
+		params.ActorType = ActorUser
+	}
+
+	// Pre-process property filters: resolve relative time values.
+	resolvedFilters := make([]PropertyFilter, 0, len(params.Filter.PropertyFilters))
+	for _, pf := range params.Filter.PropertyFilters {
+		if strVal, ok := pf.Value.(string); ok && isRelativeTime(strVal) {
+			t, parseErr := parseRelativeTime(strVal)
+			if parseErr != nil {
+				return 0, 0, apperror.ErrBadRequest.WithMessage("invalid relative time: " + strVal)
+			}
+			pf.Value = t.Format(time.RFC3339)
+		}
+		resolvedFilters = append(resolvedFilters, pf)
+	}
+
+	// Build a base select to count matched objects, reusing the single bulk
+	// filter predicate set so the count query agrees with every action path.
+	countQ := r.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		ColumnExpr("COUNT(*) AS cnt")
+	countQ = applyPredicates(countQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters))
+
+	var cntResult struct{ Cnt int }
+	if err := countQ.Scan(ctx, &cntResult); err != nil {
+		return 0, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	matched = cntResult.Cnt
+
+	if params.DryRun || matched == 0 {
+		return matched, 0, nil
+	}
+
+	// Cap at limit.
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	// Execute the action.
+	now := time.Now().UTC()
+
+	switch params.Action {
+	case BulkActionUpdateStatus:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("status = ?", params.Value).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionSoftDelete:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("deleted_at = ?", now).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionHardDelete:
+		subQ := r.db.NewSelect().
+			TableExpr("kb.graph_objects").
+			ColumnExpr("id").
+			// Deterministic selection: a capped hard delete must consume the OLDEST
+			// matching rows first (FIFO retention intent), so repeated runs drain the
+			// set deterministically instead of deleting an arbitrary subset. created_at
+			// can tie (bulk inserts share NOW()); id (PK) makes the order total, and it
+			// is applied inside the subselect the LIMIT truncates.
+			OrderExpr("created_at ASC, id ASC").
+			Limit(limit)
+		subQ = applyPredicates(subQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters))
+		result, qErr := r.db.NewDelete().
+			TableExpr("kb.graph_objects").
+			Where("id IN (?)", subQ).
+			Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionMergeProperties:
+		propsJSON, jsonErr := json.Marshal(params.Properties)
+		if jsonErr != nil {
+			return matched, 0, apperror.ErrBadRequest.WithMessage("invalid properties")
+		}
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("properties = properties || ?::jsonb", string(propsJSON)).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionReplaceProperties:
+		propsJSON, jsonErr := json.Marshal(params.Properties)
+		if jsonErr != nil {
+			return matched, 0, apperror.ErrBadRequest.WithMessage("invalid properties")
+		}
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("properties = ?::jsonb", string(propsJSON)).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionSetLabels:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("labels = ?::text[]", formatTextArray(params.Labels)).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionAddLabels:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("labels = ARRAY(SELECT DISTINCT unnest(labels || ?::text[]))", formatTextArray(params.Labels)).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionRemoveLabels:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("labels = ARRAY(SELECT unnest(labels) EXCEPT SELECT unnest(?::text[]))", formatTextArray(params.Labels)).
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	default:
+		return matched, 0, apperror.ErrBadRequest.WithMessage("unsupported action: " + params.Action)
+	}
+
+	return matched, affected, nil
+}
+
+// bulkFilterPredicates returns the single ordered predicate set that selects the
+// objects a bulk action operates on. It is the ONE source of truth shared by all
+// four expansions — the count query, the hard-delete subselect, the outer UPDATE,
+// and the limit-enforcing inner subselect — so the inner/outer equality (the
+// LIMIT must count exactly the rows the update would accept) is structural rather
+// than coincidental.
+func bulkFilterPredicates(projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter) []bulkFilterPredicate {
+	preds := []bulkFilterPredicate{
+		{cond: "project_id = ?", args: []any{projectID}},
+		{cond: "supersedes_id IS NULL"},
+		{cond: "deleted_at IS NULL"},
+	}
+	if len(filter.Types) > 0 {
+		preds = append(preds, bulkFilterPredicate{cond: "type IN (?)", args: []any{bun.In(filter.Types)}})
+	}
+	if len(filter.Labels) > 0 {
+		preds = append(preds, bulkFilterPredicate{cond: "labels && ?::text[]", args: []any{formatTextArray(filter.Labels)}})
+	}
+	if filter.CreatedAfter != nil {
+		preds = append(preds, bulkFilterPredicate{cond: "created_at >= ?", args: []any{filter.CreatedAfter.UTC()}})
+	}
+	if filter.Namespace != nil {
+		preds = append(preds, bulkFilterPredicate{cond: "namespace = ?", args: []any{*filter.Namespace}})
+	}
+	return append(preds, propertyFilterPredicates(resolvedFilters)...)
+}
+
+// applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property
+// filters) to a Bun update query and enforces the deterministic cap via
+// `id IN (SELECT id ... ORDER BY created_at ASC, id ASC LIMIT n)`. Callers pass
+// limit already defaulted to 1000 when params.Limit <= 0, so the value here is
+// always a positive cap (Postgres has no UPDATE ... LIMIT).
+func (r *Repository) applyBulkFilterToUpdate(q *bun.UpdateQuery, projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
+	preds := bulkFilterPredicates(projectID, filter, resolvedFilters)
+	q = applyPredicates(q, preds)
+
+	// Postgres has no UPDATE ... LIMIT, so restrict the target set with a
+	// deterministic subselect that reuses the SAME predicate set as the outer
+	// update. Because both share `preds`, the LIMIT can only be consumed by rows
+	// the update would accept. Ordering matches the hard-delete convention
+	// (#797): created_at ASC, id ASC (oldest-first FIFO); id (PK) makes the
+	// order total and lives INSIDE the set the LIMIT truncates.
+	subQ := r.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		ColumnExpr("id").
+		OrderExpr("created_at ASC, id ASC").
+		Limit(limit)
+	subQ = applyPredicates(subQ, preds)
+
+	return q.Where("id IN (?)", subQ)
+}
+
+// IncrementSessionCounters atomically increments message_count by 1 and total_tokens
+// by tokenDelta (0 = no change) on the HEAD version of the Session object identified
+// by its canonical ID.  Must be called within an open transaction.
+func (r *Repository) IncrementSessionCounters(ctx context.Context, tx bun.Tx, projectID, sessionCanonicalID uuid.UUID, tokenDelta int) error {
+	_, err := tx.NewRaw(`
+		UPDATE kb.graph_objects
+		SET properties = jsonb_set(
+			jsonb_set(
+				properties,
+				'{message_count}',
+				to_jsonb(COALESCE((properties->>'message_count')::int, 0) + 1)
+			),
+			'{total_tokens}',
+			to_jsonb(COALESCE((properties->>'total_tokens')::int, 0) + ?)
+		),
+		updated_at = NOW()
+		WHERE project_id = ?
+		  AND canonical_id = ?
+		  AND supersedes_id IS NULL
+		  AND deleted_at IS NULL
+	`, tokenDelta, projectID, sessionCanonicalID).Exec(ctx)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Similarity-aware merge helpers
+// ---------------------------------------------------------------------------
+
+// CountUnembeddedObjectsInBranch returns the number of live objects in a branch
+// that do not yet have an embedding (embedding_v2 IS NULL). Used to check
+// readiness before a similarity-aware merge.
+func (r *Repository) CountUnembeddedObjectsInBranch(ctx context.Context, projectID, branchID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.NewRaw(`
+		SELECT COUNT(*) FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ?
+		  AND supersedes_id IS NULL AND deleted_at IS NULL
+		  AND embedding_v2 IS NULL`,
+		projectID, branchID,
+	).Scan(ctx, &count)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return count, nil
+}
+
+// GetBranchObjectEmbedding fetches the embedding_v2 vector for a single graph object
+// by its physical version ID. Returns nil when the object has no embedding yet.
+func (r *Repository) GetBranchObjectEmbedding(ctx context.Context, objectID uuid.UUID) ([]float32, error) {
+	var embStr string
+	err := r.db.NewRaw(`
+		SELECT COALESCE(embedding_v2::text, '')
+		FROM kb.graph_objects
+		WHERE id = ? LIMIT 1`, objectID,
+	).Scan(ctx, &embStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if embStr == "" {
+		return nil, nil
+	}
+	vec, err := pgutils.ParseVector(embStr)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return vec, nil
+}
+
+// FindSimilarObjectInBranch finds the nearest object of the same type in the
+// target branch (nil = main graph) by cosine distance. Returns nil when no
+// match within maxDistance is found or when no objects have embeddings.
+// excludeCanonicalIDs lists canonical_ids to skip (e.g. the source object itself).
+func (r *Repository) FindSimilarObjectInBranch(
+	ctx context.Context,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	objType string,
+	vector []float32,
+	excludeCanonicalIDs []uuid.UUID,
+	maxDistance float32,
+) (*GraphObject, float32, error) {
+	if len(vector) == 0 {
+		return nil, 0, nil
+	}
+	vectorStr := pgutils.FormatVector(vector)
+
+	// Build exclusion list.
+	excludeStr := "ARRAY[]::uuid[]"
+	if len(excludeCanonicalIDs) > 0 {
+		parts := make([]string, len(excludeCanonicalIDs))
+		for i, id := range excludeCanonicalIDs {
+			parts[i] = "'" + id.String() + "'"
+		}
+		excludeStr = "ARRAY[" + strings.Join(parts, ",") + "]::uuid[]"
+	}
+
+	branchCond := "branch_id IS NULL"
+	branchArg := []any{}
+	if branchID != nil {
+		branchCond = "branch_id = ?"
+		branchArg = []any{*branchID}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s, _dist
+		FROM (
+		  SELECT %s, (embedding_v2 <=> ?::vector) AS _dist
+		  FROM kb.graph_objects
+		  WHERE project_id = ? AND type = ? AND %s
+		    AND supersedes_id IS NULL AND deleted_at IS NULL
+		    AND embedding_v2 IS NOT NULL
+		    AND NOT (canonical_id = ANY(%s))
+		    AND (embedding_v2 <=> ?::vector) <= ?
+		  ORDER BY embedding_v2 <=> ?::vector
+		  LIMIT %d
+		) AS ann
+		ORDER BY _dist ASC, id ASC
+		LIMIT 1`,
+		graphObjectColumns, graphObjectColumns, branchCond, excludeStr, vectorOverfetchLimit)
+
+	args := []any{vectorStr, projectID, objType}
+	args = append(args, branchArg...)
+	args = append(args, vectorStr, maxDistance, vectorStr)
+
+	type row struct {
+		GraphObject
+		Dist float32 `bun:"_dist"`
+	}
+	var r2 row
+	err := r.db.NewRaw(query, args...).Scan(ctx, &r2)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, 0, nil
+		}
+		return nil, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &r2.GraphObject, r2.Dist, nil
+}
+
+// GetBranchRelationshipEmbedding fetches the embedding for a relationship version.
+// Returns nil when not yet embedded.
+//
+// Reads kb.graph_relationships.embedding (added in migration 00011, with
+// embedding_updated_at in 00013). This activation is deliberate and covered by
+// tests — it makes the relationship similarity-merge branch in applyMerge
+// (service.go) live.
+func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID uuid.UUID) ([]float32, error) {
+	var embStr string
+	err := r.db.NewRaw(`
+		SELECT COALESCE(embedding::text, '')
+		FROM kb.graph_relationships
+		WHERE id = ? LIMIT 1`, relID,
+	).Scan(ctx, &embStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if embStr == "" {
+		return nil, nil
+	}
+	vec, err := pgutils.ParseVector(embStr)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return vec, nil
+}
+
+// FindSimilarRelationshipInBranch finds the nearest relationship in the target branch
+// that has the same type and (remapped) src/dst endpoints, by cosine distance on the
+// relationship embedding. Returns nil when no match within maxDistance.
+func (r *Repository) FindSimilarRelationshipInBranch(
+	ctx context.Context,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	srcCanonicalID, dstCanonicalID uuid.UUID,
+	relType string,
+	vector []float32,
+	excludeIDs []uuid.UUID,
+	maxDistance float32,
+) (*GraphRelationship, float32, error) {
+	if len(vector) == 0 {
+		return nil, 0, nil
+	}
+	vectorStr := pgutils.FormatVector(vector)
+
+	excludeStr := "ARRAY[]::uuid[]"
+	if len(excludeIDs) > 0 {
+		parts := make([]string, len(excludeIDs))
+		for i, id := range excludeIDs {
+			parts[i] = "'" + id.String() + "'"
+		}
+		excludeStr = "ARRAY[" + strings.Join(parts, ",") + "]::uuid[]"
+	}
+
+	branchCond := "branch_id IS NULL"
+	branchArg := []any{}
+	if branchID != nil {
+		branchCond = "branch_id = ?"
+		branchArg = []any{*branchID}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
+		       type, src_id, dst_id, label, properties, weight,
+		       change_summary, deleted_at, created_at, _dist
+		FROM (
+		  SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
+		         type, src_id, dst_id, label, properties, weight,
+		         change_summary, deleted_at, created_at,
+		         (embedding <=> ?::vector) AS _dist
+		  FROM kb.graph_relationships
+		  WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
+		    AND supersedes_id IS NULL AND deleted_at IS NULL
+		    AND embedding IS NOT NULL
+		    AND NOT (id = ANY(%s))
+		    AND (embedding <=> ?::vector) <= ?
+		  ORDER BY embedding <=> ?::vector
+		  LIMIT %d
+		) AS ann
+		ORDER BY _dist ASC, id ASC LIMIT 1`,
+		branchCond, excludeStr, vectorOverfetchLimit)
+
+	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID, relType}
+	args = append(args, branchArg...)
+	args = append(args, vectorStr, maxDistance, vectorStr)
+
+	type relRow struct {
+		GraphRelationship
+		Dist float32 `bun:"_dist"`
+	}
+	var r2 relRow
+	err := r.db.NewRaw(query, args...).Scan(ctx, &r2)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, 0, nil
+		}
+		return nil, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &r2.GraphRelationship, r2.Dist, nil
+}

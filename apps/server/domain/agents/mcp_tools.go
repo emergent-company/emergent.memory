@@ -1,0 +1,1691 @@
+package agents
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// MCPToolHandler implements mcp.AgentToolHandler, providing 16 agent management
+// MCP tools. It bridges the mcp package (which cannot import agents) to the
+// agents domain by implementing the interface defined in mcp/entity.go.
+type MCPToolHandler struct {
+	repo     *Repository
+	executor *AgentExecutor
+	// extractionJobs resolves ObjectExtractionJob records for remember-status so
+	// it can follow queue-reextraction tool calls to the async extraction jobs
+	// that actually perform the graph mutations. Optional (interface defined in
+	// mcp to avoid an import cycle agents → extraction → projects → agents).
+	// Nil disables job-following.
+	extractionJobs mcp.ExtractionJobFinder
+	// embeddingJobs resolves graph-embedding job status for the objects a
+	// remember run created, so remember-status can report embedding readiness
+	// (recall/search searchability). Optional; nil disables embedding tracking.
+	embeddingJobs mcp.EmbeddingJobFinder
+	log           *slog.Logger
+
+	// onceRepo / onceRunner back RunAgentOnce (per-agent MCP endpoint). They
+	// default to repo / executor in NewMCPToolHandler and are overridable in
+	// tests via a fake repository / runner.
+	onceRepo   agentOnceRepository
+	onceRunner agentRunner
+}
+
+// NewMCPToolHandler creates a new MCPToolHandler.
+func NewMCPToolHandler(repo *Repository, executor *AgentExecutor, log *slog.Logger, extractionJobs mcp.ExtractionJobFinder, embeddingJobs mcp.EmbeddingJobFinder) *MCPToolHandler {
+	return &MCPToolHandler{
+		repo:           repo,
+		executor:       executor,
+		log:            log,
+		extractionJobs: extractionJobs,
+		embeddingJobs:  embeddingJobs,
+		onceRepo:       repo,
+		onceRunner:     executor,
+	}
+}
+
+// wrapResult marshals data as indented JSON into an MCP ToolResult.
+func wrapResult(data any) (*mcp.ToolResult, error) {
+	jsonBytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{
+			{
+				Type: "text",
+				Text: string(jsonBytes),
+			},
+		},
+		StructuredContent: mcp.StructuredContentFromJSON(jsonBytes),
+	}, nil
+}
+
+// errResult creates an error ToolResult (non-fatal tool error returned to LLM).
+func errResult(msg string) (*mcp.ToolResult, error) {
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{
+			{Type: "text", Text: fmt.Sprintf(`{"error": %q}`, msg)},
+		},
+	}, nil
+}
+
+// ============================================================================
+// Agent Definition Tools
+// ============================================================================
+
+// ExecuteListAgentDefinitions lists all agent definitions for a project.
+func (h *MCPToolHandler) ExecuteListAgentDefinitions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	includeInternal, _ := args["include_internal"].(bool)
+
+	definitions, err := h.repo.FindAllDefinitions(ctx, projectID, includeInternal)
+	if err != nil {
+		return errResult("failed to list agent definitions: " + err.Error())
+	}
+
+	dtos := make([]*AgentDefinitionSummaryDTO, len(definitions))
+	for i, def := range definitions {
+		dtos[i] = def.ToSummaryDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteGetAgentDefinition gets a single agent definition by ID.
+func (h *MCPToolHandler) ExecuteGetAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["definition_id"].(string)
+	if id == "" {
+		return errResult("definition_id is required")
+	}
+
+	def, err := h.repo.FindDefinitionByID(ctx, id, &projectID)
+	if err != nil {
+		return errResult("failed to get agent definition: " + err.Error())
+	}
+	if def == nil {
+		return errResult(fmt.Sprintf("agent definition not found: %s", id))
+	}
+
+	return wrapResult(def.ToDTO())
+}
+
+// ExecuteCreateAgentDefinition creates a new agent definition.
+func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	name, _ := args["name"].(string)
+	if name == "" {
+		return errResult("name is required")
+	}
+
+	// Set defaults
+	visibility := VisibilityProject
+	if v, ok := args["visibility"].(string); ok && v != "" {
+		nv, ok := NormalizeVisibility(AgentVisibility(v))
+		if !ok {
+			return errResult("visibility must be one of project, external, internal")
+		}
+		visibility = nv
+	}
+
+	isDefault := false
+	if d, ok := args["is_default"].(bool); ok {
+		isDefault = d
+	}
+
+	tools := []string{}
+	if t, ok := args["tools"].([]any); ok {
+		for _, v := range t {
+			if s, ok := v.(string); ok {
+				tools = append(tools, s)
+			}
+		}
+	}
+
+	config := map[string]any{}
+	if c, ok := args["config"].(map[string]any); ok {
+		config = c
+	}
+
+	def := &AgentDefinition{
+		ProjectID:   projectID,
+		Name:        name,
+		Visibility:  visibility,
+		IsDefault:   isDefault,
+		Tools:       tools,
+		Config:      config,
+		Skills:      []string{},
+		BannedTools: []string{},
+	}
+
+	// Optional fields
+	if desc, ok := args["description"].(string); ok {
+		def.Description = &desc
+	}
+	if sp, ok := args["system_prompt"].(string); ok {
+		def.SystemPrompt = &sp
+	}
+	if ms, ok := args["max_steps"].(float64); ok {
+		v := int(ms)
+		def.MaxSteps = &v
+	}
+	if dt, ok := args["default_timeout"].(float64); ok {
+		v := int(dt)
+		def.DefaultTimeout = &v
+	}
+
+	modelName, _ := args["model"].(string)
+	provider, _ := args["provider"].(string)
+	if modelName != "" || provider != "" {
+		mc := &ModelConfig{Name: modelName, Provider: provider}
+		if err := NormalizeAgentModelConfig(mc); err != nil {
+			return errResult(err.Error())
+		}
+		if mc.Name != "" {
+			def.Model = mc
+		}
+	}
+
+	if err := h.repo.CreateDefinition(ctx, def); err != nil {
+		return errResult("failed to create agent definition: " + err.Error())
+	}
+
+	return wrapResult(def.ToDTO())
+}
+
+// ExecuteUpdateAgentDefinition updates an existing agent definition (partial update).
+func (h *MCPToolHandler) ExecuteUpdateAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["definition_id"].(string)
+	if id == "" {
+		return errResult("definition_id is required")
+	}
+
+	// Validate the model reference before touching the repository, so a
+	// malformed value is rejected with the same 400-equivalent error as the
+	// REST write path instead of being persisted verbatim.
+	modelName, _ := args["model"].(string)
+	providerName, _ := args["provider"].(string)
+	hasModel := false
+	var normalizedModel string
+	if modelName != "" || providerName != "" {
+		mc := &ModelConfig{Name: modelName, Provider: providerName}
+		if err := NormalizeAgentModelConfig(mc); err != nil {
+			return errResult(err.Error())
+		}
+		if mc.Name != "" {
+			hasModel = true
+			normalizedModel = mc.Name
+		}
+	}
+
+	def, err := h.repo.FindDefinitionByID(ctx, id, &projectID)
+	if err != nil {
+		return errResult("failed to get agent definition: " + err.Error())
+	}
+	if def == nil {
+		return errResult(fmt.Sprintf("agent definition not found: %s", id))
+	}
+
+	// Apply partial updates
+	if name, ok := args["name"].(string); ok {
+		def.Name = name
+	}
+	if desc, ok := args["description"].(string); ok {
+		def.Description = &desc
+	}
+	if sp, ok := args["system_prompt"].(string); ok {
+		def.SystemPrompt = &sp
+	}
+	if v, ok := args["visibility"].(string); ok {
+		nv, ok := NormalizeVisibility(AgentVisibility(v))
+		if !ok {
+			return errResult("visibility must be one of project, external, internal")
+		}
+		def.Visibility = nv
+	}
+	if d, ok := args["is_default"].(bool); ok {
+		def.IsDefault = d
+	}
+	if t, ok := args["tools"].([]any); ok {
+		tools := []string{}
+		for _, v := range t {
+			if s, ok := v.(string); ok {
+				tools = append(tools, s)
+			}
+		}
+		def.Tools = tools
+	}
+	if ms, ok := args["max_steps"].(float64); ok {
+		v := int(ms)
+		def.MaxSteps = &v
+	}
+	if dt, ok := args["default_timeout"].(float64); ok {
+		v := int(dt)
+		def.DefaultTimeout = &v
+	}
+	if hasModel {
+		if def.Model == nil {
+			def.Model = &ModelConfig{}
+		}
+		def.Model.Name = normalizedModel
+		def.Model.Provider = ""
+	}
+	if c, ok := args["config"].(map[string]any); ok {
+		def.Config = c
+	}
+
+	if err := h.repo.UpdateDefinition(ctx, def); err != nil {
+		return errResult("failed to update agent definition: " + err.Error())
+	}
+
+	return wrapResult(def.ToDTO())
+}
+
+// ExecuteDeleteAgentDefinition deletes an agent definition by ID.
+func (h *MCPToolHandler) ExecuteDeleteAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["definition_id"].(string)
+	if id == "" {
+		return errResult("definition_id is required")
+	}
+
+	def, err := h.repo.FindDefinitionByID(ctx, id, &projectID)
+	if err != nil {
+		return errResult("failed to get agent definition: " + err.Error())
+	}
+	if def == nil {
+		return errResult(fmt.Sprintf("agent definition not found: %s", id))
+	}
+
+	if err := h.repo.DeleteDefinition(ctx, id); err != nil {
+		return errResult("failed to delete agent definition: " + err.Error())
+	}
+
+	return wrapResult(map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Agent definition %q deleted", def.Name),
+	})
+}
+
+// ============================================================================
+// Agent (Runtime) Tools
+// ============================================================================
+
+// ExecuteListAgents lists all agents for a project, enriched with definition metadata.
+func (h *MCPToolHandler) ExecuteListAgents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agents, err := h.repo.FindAll(ctx, projectID)
+	if err != nil {
+		return errResult("failed to list agents: " + err.Error())
+	}
+
+	dtos := make([]*AgentWithDefinitionDTO, len(agents))
+	for i, agent := range agents {
+		dto := &AgentWithDefinitionDTO{
+			ID:            agent.ID,
+			ProjectID:     agent.ProjectID,
+			Name:          agent.Name,
+			Enabled:       agent.Enabled,
+			TriggerType:   agent.TriggerType,
+			ExecutionMode: agent.ExecutionMode,
+			LastRunAt:     agent.LastRunAt,
+			LastRunStatus: agent.LastRunStatus,
+		}
+
+		// Enrich with definition metadata (best-effort; ignore errors)
+		if def, defErr := h.repo.ResolveDefinitionForAgent(ctx, agent); defErr == nil && def != nil {
+			dto.Description = def.Description
+			dto.Model = FoldAgentModelRef(def.Model)
+			// Extract agentType and tier from definition config
+			if agentType, ok := def.Config["agentType"].(string); ok && agentType != "" {
+				dto.AgentType = &agentType
+			}
+			if tier, ok := def.Config["tier"].(string); ok && tier != "" {
+				dto.Tier = &tier
+			}
+		}
+
+		dtos[i] = dto
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteGetAgent gets a single agent by ID.
+func (h *MCPToolHandler) ExecuteGetAgent(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["agent_id"].(string)
+	if id == "" {
+		return errResult("agent_id is required")
+	}
+
+	agent, err := h.repo.FindByID(ctx, id, &projectID)
+	if err != nil {
+		return errResult("failed to get agent: " + err.Error())
+	}
+	if agent == nil {
+		return errResult(fmt.Sprintf("agent not found: %s", id))
+	}
+
+	return wrapResult(agent.ToDTO())
+}
+
+// ExecuteCreateAgent creates a new agent.
+func (h *MCPToolHandler) ExecuteCreateAgent(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	name, _ := args["name"].(string)
+	if name == "" {
+		return errResult("name is required")
+	}
+
+	strategyType, _ := args["strategy_type"].(string)
+	if strategyType == "" {
+		return errResult("strategy_type is required")
+	}
+
+	cronSchedule, _ := args["cron_schedule"].(string)
+	if cronSchedule == "" {
+		return errResult("cron_schedule is required")
+	}
+
+	// Defaults
+	enabled := true
+	if e, ok := args["enabled"].(bool); ok {
+		enabled = e
+	}
+
+	triggerType := TriggerTypeSchedule
+	if tt, ok := args["trigger_type"].(string); ok && tt != "" {
+		triggerType = AgentTriggerType(tt)
+	}
+
+	executionMode := ExecutionModeExecute
+	if em, ok := args["execution_mode"].(string); ok && em != "" {
+		executionMode = AgentExecutionMode(em)
+	}
+
+	config := map[string]any{}
+	if c, ok := args["config"].(map[string]any); ok {
+		config = c
+	}
+
+	agent := &Agent{
+		ProjectID:     projectID,
+		Name:          name,
+		StrategyType:  strategyType,
+		CronSchedule:  cronSchedule,
+		Enabled:       enabled,
+		TriggerType:   triggerType,
+		ExecutionMode: executionMode,
+		Config:        config,
+	}
+
+	// Optional fields
+	if prompt, ok := args["prompt"].(string); ok {
+		agent.Prompt = &prompt
+	}
+	if desc, ok := args["description"].(string); ok {
+		agent.Description = &desc
+	}
+
+	if err := h.repo.Create(ctx, agent); err != nil {
+		return errResult("failed to create agent: " + err.Error())
+	}
+
+	return wrapResult(agent.ToDTO())
+}
+
+// ExecuteUpdateAgent updates an existing agent (partial update).
+func (h *MCPToolHandler) ExecuteUpdateAgent(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["agent_id"].(string)
+	if id == "" {
+		return errResult("agent_id is required")
+	}
+
+	agent, err := h.repo.FindByID(ctx, id, &projectID)
+	if err != nil {
+		return errResult("failed to get agent: " + err.Error())
+	}
+	if agent == nil {
+		return errResult(fmt.Sprintf("agent not found: %s", id))
+	}
+
+	// Apply partial updates
+	if name, ok := args["name"].(string); ok {
+		agent.Name = name
+	}
+	if prompt, ok := args["prompt"].(string); ok {
+		agent.Prompt = &prompt
+	}
+	if enabled, ok := args["enabled"].(bool); ok {
+		agent.Enabled = enabled
+	}
+	if cs, ok := args["cron_schedule"].(string); ok {
+		agent.CronSchedule = cs
+	}
+	if tt, ok := args["trigger_type"].(string); ok {
+		agent.TriggerType = AgentTriggerType(tt)
+	}
+	if em, ok := args["execution_mode"].(string); ok {
+		agent.ExecutionMode = AgentExecutionMode(em)
+	}
+	if c, ok := args["config"].(map[string]any); ok {
+		agent.Config = c
+	}
+	if desc, ok := args["description"].(string); ok {
+		agent.Description = &desc
+	}
+
+	if err := h.repo.Update(ctx, agent); err != nil {
+		return errResult("failed to update agent: " + err.Error())
+	}
+
+	return wrapResult(agent.ToDTO())
+}
+
+// ExecuteDeleteAgent deletes an agent by ID.
+func (h *MCPToolHandler) ExecuteDeleteAgent(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["agent_id"].(string)
+	if id == "" {
+		return errResult("agent_id is required")
+	}
+
+	agent, err := h.repo.FindByID(ctx, id, &projectID)
+	if err != nil {
+		return errResult("failed to get agent: " + err.Error())
+	}
+	if agent == nil {
+		return errResult(fmt.Sprintf("agent not found: %s", id))
+	}
+
+	// Repository.Delete also removes the agent's in-memory trigger
+	// registrations, keeping the MCP delete path in lockstep with the row.
+	if err := h.repo.Delete(ctx, id); err != nil {
+		return errResult("failed to delete agent: " + err.Error())
+	}
+
+	return wrapResult(map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Agent %q deleted", agent.Name),
+	})
+}
+
+// ExecuteTriggerAgent triggers an immediate run of an agent.
+// Accepts either agent_id (UUID) or agent_name (string); agent_name is resolved to an ID.
+func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	var agent *Agent
+
+	agentName, hasName := args["agent_name"].(string)
+	agentID, hasID := args["agent_id"].(string)
+
+	switch {
+	case hasName && agentName != "":
+		// Resolve name → runtime agent
+		var err error
+		agent, err = h.repo.FindByName(ctx, projectID, agentName)
+		if err != nil {
+			return errResult("failed to look up agent by name: " + err.Error())
+		}
+		if agent == nil {
+			return errResult(fmt.Sprintf("agent not found with name %q", agentName))
+		}
+	case hasID && agentID != "":
+		// Legacy UUID path
+		var err error
+		agent, err = h.repo.FindByID(ctx, agentID, &projectID)
+		if err != nil {
+			return errResult("failed to get agent: " + err.Error())
+		}
+		if agent == nil {
+			return errResult(fmt.Sprintf("agent not found: %s", agentID))
+		}
+	default:
+		return errResult("either agent_id or agent_name is required")
+	}
+
+	// Check if executor is available
+	if h.executor == nil {
+		// Stub mode: create a run record but skip execution
+		run, err := h.repo.CreateRun(ctx, agent.ID)
+		if err != nil {
+			return errResult("failed to create run: " + err.Error())
+		}
+		_ = h.repo.SkipRun(ctx, run.ID, "Executor not available")
+		return wrapResult(map[string]any{
+			"success": true,
+			"run_id":  run.ID,
+			"message": "Agent triggered (stub mode)",
+		})
+	}
+
+	// Look up the agent definition for this agent (if one exists)
+	agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
+
+	// Inherit the caller's trust: a run invoking trigger_agent through the
+	// ToolPool carries its run ID in context, so the triggered child keeps that
+	// run's trust marker (same as spawn_agents). A direct authenticated MCP
+	// client has no parent run and is an external-facing surface — untrusted.
+	trusted := inheritedTrust(ctx, h.repo.FindRunByID)
+
+	// Respect target visibility: an untrusted caller must not trigger an
+	// internal-visible agent ("callable only by other agents, never via A2A").
+	if agentDef != nil {
+		if reason, blocked := spawnTargetBlocked(trusted, agentDef); blocked {
+			return errResult(reason)
+		}
+	}
+
+	// Type-scope delegation guard: a scoped caller must not hand work to an
+	// agent whose declared allowlist would let the model reach excluded types
+	// (#1695). Applies to both the sync and queued branches below.
+	if delegationDeniedByTypeScope(ctx, agentDef) {
+		return errResult(delegationScopeError())
+	}
+
+	// Build the user message from structured input
+	// Accepts: message as a JSON object { instructions, task_id } or legacy plain string
+	userMessage := "Execute agent tasks"
+	var taskID string
+	if msgObj, ok := args["message"].(map[string]any); ok {
+		if instr, ok := msgObj["instructions"].(string); ok && instr != "" {
+			userMessage = instr
+		}
+		if tid, ok := msgObj["task_id"].(string); ok && tid != "" {
+			taskID = tid
+		}
+	} else if msgStr, ok := args["message"].(string); ok && msgStr != "" {
+		// Legacy plain-string fallback
+		userMessage = msgStr
+	} else if agent.Prompt != nil && *agent.Prompt != "" {
+		userMessage = *agent.Prompt
+	}
+	// Prepend task_id hint when present
+	if taskID != "" {
+		userMessage = fmt.Sprintf("[task_id: %s] %s", taskID, userMessage)
+	}
+
+	// Resolve the caller's orchestration root once. A delegated child must inherit
+	// the delegator's root unchanged in either dispatch mode; the sync branch
+	// below would otherwise self-root the child and split the tree.
+	rootOverride := rootOverrideFromContext(ctx)
+
+	// Dispatch routing: queued vs sync
+	if agentDef != nil && agentDef.DispatchMode == DispatchModeQueued {
+		// Queued branch: create run + job atomically and return immediately.
+		// Pass the caller's run ID as ParentRunID so the server can re-enqueue
+		// the parent when this child run completes. Pass the user message as
+		// TriggerMessage so the worker uses it instead of the agent's prompt.
+		queuedOpts := CreateRunQueuedOptions{
+			TriggerMessage:  &userMessage,
+			MaxPendingJobs:  h.executor.safeguards.MaxPendingJobs,
+			TrustedInternal: trusted,
+		}
+		if callerRunID := callerRunIDFromContext(ctx); callerRunID != "" {
+			queuedOpts.ParentRunID = &callerRunID
+		}
+		if rootOverride != nil {
+			queuedOpts.RootRunID = rootOverride
+		}
+		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1, queuedOpts)
+		if err != nil {
+			return errResult("failed to enqueue agent run: " + err.Error())
+		}
+		return wrapResult(map[string]any{
+			"success": true,
+			"run_id":  run.ID,
+			"status":  string(RunStatusQueued),
+			"message": "Agent run queued. The server will notify the calling agent when the run completes — do NOT poll get_run_status. Proceed with other work or exit.",
+		})
+	}
+
+	// Resolve the org that owns the agent's project so the tracking model can
+	// attribute LLM usage events to the correct tenant.
+	//
+	// OrgIDFromContext is non-empty only when a caller has already resolved the
+	// org: the executor injects req.OrgID into context before a delegated child's
+	// trigger_agent tool call, and the auth middleware derives it from a
+	// token/project binding. It is empty for human/OAuth session callers with no
+	// project binding, so fall back to the authoritative kb.projects lookup. Both
+	// sources resolve the same owning org; the context read is a short-circuit
+	// that skips the DB round-trip on the loopback/token paths and is never the
+	// sole source of truth.
+	orgID := auth.OrgIDFromContext(ctx)
+	if orgID == "" {
+		orgID, _ = h.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
+	}
+
+	// Sync branch (default): block until execution completes
+	execReq := ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: agentDef,
+		ProjectID:       agent.ProjectID,
+		OrgID:           orgID,
+		UserMessage:     userMessage,
+		TrustedInternal: trusted, // inherit the caller's trust; never force true
+	}
+	if rootOverride != nil {
+		execReq.RootRunID = rootOverride
+	}
+	result, err := h.executor.Execute(ctx, execReq)
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
+	if err != nil {
+		return errResult("failed to execute agent: " + err.Error())
+	}
+
+	return wrapResult(map[string]any{
+		"success":  true,
+		"run_id":   result.RunID,
+		"status":   result.Status,
+		"steps":    result.Steps,
+		"duration": result.Duration.String(),
+		"message":  "Agent triggered successfully",
+	})
+}
+
+// ============================================================================
+// Agent Run Tools
+// ============================================================================
+
+// ExecuteListAgentRuns lists agent runs for a project with pagination and filters.
+func (h *MCPToolHandler) ExecuteListAgentRuns(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	// Parse pagination
+	limit := 20
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+		if limit > 100 {
+			limit = 100
+		}
+	}
+	offset := 0
+	if o, ok := args["offset"].(float64); ok && o >= 0 {
+		offset = int(o)
+	}
+
+	// Parse filters
+	var filters RunFilters
+	if agentID, ok := args["agent_id"].(string); ok && agentID != "" {
+		filters.AgentID = &agentID
+	}
+	if statusStr, ok := args["status"].(string); ok && statusStr != "" {
+		status := AgentRunStatus(statusStr)
+		filters.Status = &status
+	}
+
+	runs, totalCount, err := h.repo.FindRunsByProjectPaginated(ctx, projectID, filters, limit, offset)
+	if err != nil {
+		return errResult("failed to list agent runs: " + err.Error())
+	}
+
+	dtos := make([]*AgentRunDTO, len(runs))
+	for i, run := range runs {
+		dtos[i] = run.ToDTO()
+	}
+
+	return wrapResult(PaginatedResponse[*AgentRunDTO]{
+		Items:      dtos,
+		TotalCount: totalCount,
+		Limit:      limit,
+		Offset:     offset,
+	})
+}
+
+// ExecuteGetAgentRun gets a single agent run by ID.
+func (h *MCPToolHandler) ExecuteGetAgentRun(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return errResult("failed to get agent run: " + err.Error())
+	}
+	if run == nil {
+		return errResult(fmt.Sprintf("agent run not found: %s", runID))
+	}
+
+	dto := run.ToDTO()
+	// Omit TokenUsage and Workspace from agent tool responses — these are
+	// observability fields not useful to the agent and add unnecessary tokens.
+	dto.TokenUsage = nil
+	dto.Workspace = nil
+
+	return wrapResult(dto)
+}
+
+// ExecuteGetRunStatus returns the status of a queued or running agent run.
+// Intended for polling after trigger_agent returns status=queued.
+func (h *MCPToolHandler) ExecuteGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return errResult("failed to get run status: " + err.Error())
+	}
+	if run == nil {
+		return errResult(fmt.Sprintf("agent run not found: %s", runID))
+	}
+
+	result := map[string]any{
+		"run_id": run.ID,
+		"status": string(run.Status),
+	}
+	if run.ErrorMessage != nil && *run.ErrorMessage != "" {
+		result["error"] = *run.ErrorMessage
+	}
+	if len(run.Summary) > 0 {
+		result["summary"] = run.Summary
+	}
+
+	return wrapResult(result)
+}
+
+// ExecuteGetAgentRunMessages gets messages for an agent run.
+func (h *MCPToolHandler) ExecuteGetAgentRunMessages(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	// Verify the run belongs to this project
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return errResult("failed to get agent run: " + err.Error())
+	}
+	if run == nil {
+		return errResult(fmt.Sprintf("agent run not found: %s", runID))
+	}
+
+	messages, err := h.repo.FindMessagesByRunID(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run messages: " + err.Error())
+	}
+
+	// Fetch tool calls and group by step number to attach outputs as function_responses.
+	toolCalls, err := h.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run tool calls: " + err.Error())
+	}
+
+	type funcResponse struct {
+		Name   string         `json:"name"`
+		Output map[string]any `json:"output"`
+		Status string         `json:"status"`
+	}
+	stepResponses := make(map[int][]funcResponse)
+	for _, tc := range toolCalls {
+		stepResponses[tc.StepNumber] = append(stepResponses[tc.StepNumber], funcResponse{
+			Name:   tc.ToolName,
+			Output: tc.Output,
+			Status: tc.Status,
+		})
+	}
+
+	dtos := make([]*AgentRunMessageDTO, len(messages))
+	for i, msg := range messages {
+		dto := msg.ToDTO()
+		if _, hasCalls := dto.Content["function_calls"]; hasCalls {
+			if responses, ok := stepResponses[msg.StepNumber]; ok && len(responses) > 0 {
+				enriched := make(map[string]any, len(dto.Content)+1)
+				for k, v := range dto.Content {
+					enriched[k] = v
+				}
+				enriched["function_responses"] = responses
+				dto.Content = enriched
+			}
+		}
+		dtos[i] = dto
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteGetAgentRunToolCalls gets tool calls for an agent run.
+func (h *MCPToolHandler) ExecuteGetAgentRunToolCalls(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	// Verify the run belongs to this project
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return errResult("failed to get agent run: " + err.Error())
+	}
+	if run == nil {
+		return errResult(fmt.Sprintf("agent run not found: %s", runID))
+	}
+
+	toolCalls, err := h.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run tool calls: " + err.Error())
+	}
+
+	dtos := make([]*AgentRunToolCallDTO, len(toolCalls))
+	for i, tc := range toolCalls {
+		dtos[i] = tc.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ============================================================================
+// Agent Catalog Tools
+// ============================================================================
+
+// ExecuteListAvailableAgents returns a lightweight catalog of all agent definitions
+// for the project, including name, description, tools, and visibility.
+// Unlike list_agent_definitions, this returns a simplified summary without IDs or timestamps,
+// matching the format used by agent coordination tools (spawn_agents).
+func (h *MCPToolHandler) ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	// Always include internal — MCP callers should see the full catalog
+	defs, err := h.repo.FindAllDefinitions(ctx, projectID, true)
+	if err != nil {
+		return errResult("failed to list available agents: " + err.Error())
+	}
+
+	agents := make([]AgentSummary, 0, len(defs))
+	for _, def := range defs {
+		desc := ""
+		if def.Description != nil {
+			desc = *def.Description
+		}
+		agents = append(agents, AgentSummary{
+			Name:        def.Name,
+			Description: desc,
+			Tools:       def.Tools,
+			Visibility:  string(def.Visibility),
+		})
+	}
+
+	return wrapResult(ListAvailableAgentsResult{
+		Agents: agents,
+		Count:  len(agents),
+	})
+}
+
+// ============================================================================
+// Tool Definitions
+// ============================================================================
+
+// GetAgentToolDefinitions returns MCP tool definitions for all agent tools.
+func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
+	return []mcp.ToolDefinition{
+		// --- Agent Definitions ---
+		{
+			Name:        "agent-def-list",
+			Description: "List all agent definitions for the current project. Agent definitions store agent configurations (system prompt, tools, visibility, ACP config). Returns summary DTOs with tool counts.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"include_internal": {
+						Type:        "boolean",
+						Description: "Include internal-visibility definitions (default: false)",
+						Default:     false,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:        "agent-def-get",
+			Description: "Get a single agent definition by ID with full details including system prompt, tools, model config, ACP config, and visibility settings.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"definition_id": {
+						Type:        "string",
+						Description: "The UUID of the agent definition to retrieve",
+					},
+				},
+				Required: []string{"definition_id"},
+			},
+		},
+		{
+			Name:        "agent-def-create",
+			Description: "Create a new agent definition. Defines the configuration template for an agent including its system prompt, available tools, and visibility.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Unique name for the agent definition",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Human-readable description of what this agent does",
+					},
+					"system_prompt": {
+						Type:        "string",
+						Description: "System prompt that instructs the LLM how to behave",
+					},
+					"tools": {
+						Type:        "string",
+						Description: "JSON array of tool names available to this agent (e.g. [\"query_entities\", \"create_entity\"])",
+					},
+					"visibility": {
+						Type:        "string",
+						Description: "Visibility level: external (ACP-discoverable), project (admin UI only), internal (other agents only)",
+						Enum:        []string{"external", "project", "internal"},
+						Default:     "project",
+					},
+					"is_default": {
+						Type:        "boolean",
+						Description: "Whether this is the default definition for the project",
+						Default:     false,
+					},
+					"max_steps": {
+						Type:        "integer",
+						Description: "Maximum number of steps per run (global cap: 500)",
+					},
+					"default_timeout": {
+						Type:        "integer",
+						Description: "Default timeout in seconds for agent runs",
+					},
+					"model": {
+						Type:        "string",
+						Description: "Model name. Use the 'provider/model' form to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'), or send a bare name together with the 'provider' field.",
+					},
+					"provider": {
+						Type:        "string",
+						Description: "Provider instance slug for the model (e.g. 'google', 'deepseek', 'openai'). Optional when 'model' already carries a provider prefix; when both are set they must agree.",
+					},
+					"config": {
+						Type:        "string",
+						Description: "Additional configuration as JSON object",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:        "update_agent_definition",
+			Description: "Update an existing agent definition. Only provided fields are updated (partial update).",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"definition_id": {
+						Type:        "string",
+						Description: "The UUID of the agent definition to update",
+					},
+					"name": {
+						Type:        "string",
+						Description: "New name for the agent definition",
+					},
+					"description": {
+						Type:        "string",
+						Description: "New description",
+					},
+					"system_prompt": {
+						Type:        "string",
+						Description: "New system prompt",
+					},
+					"visibility": {
+						Type:        "string",
+						Description: "New visibility level",
+						Enum:        []string{"external", "project", "internal"},
+					},
+					"is_default": {
+						Type:        "boolean",
+						Description: "Whether this is the default definition",
+					},
+					"max_steps": {
+						Type:        "integer",
+						Description: "New maximum steps per run",
+					},
+					"default_timeout": {
+						Type:        "integer",
+						Description: "New default timeout in seconds",
+					},
+					"model": {
+						Type:        "string",
+						Description: "Model name. Use the 'provider/model' form to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'), or send a bare name together with the 'provider' field.",
+					},
+					"provider": {
+						Type:        "string",
+						Description: "Provider instance slug for the model (e.g. 'google', 'deepseek', 'openai'). Optional when 'model' already carries a provider prefix; when both are set they must agree.",
+					},
+				},
+				Required: []string{"definition_id"},
+			},
+		},
+		{
+			Name:        "agent-def-delete",
+			Description: "Delete an agent definition by ID. This removes the configuration template but does not affect running agents.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"definition_id": {
+						Type:        "string",
+						Description: "The UUID of the agent definition to delete",
+					},
+				},
+				Required: []string{"definition_id"},
+			},
+		},
+
+		// --- Agents (runtime) ---
+		{
+			Name:        "agent-list",
+			Description: "List all runtime agents for the current project, enriched with definition metadata. Each entry includes: id, name, enabled, triggerType, executionMode, lastRunAt, lastRunStatus, description, model, agentType, and tier. Use agent_name (not id) with trigger_agent.",
+			InputSchema: mcp.InputSchema{
+				Type:       "object",
+				Properties: map[string]mcp.PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:        "agent-get",
+			Description: "Get a single runtime agent by ID with full details including schedule, trigger type, execution mode, and last run status.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_id": {
+						Type:        "string",
+						Description: "The UUID of the agent to retrieve",
+					},
+				},
+				Required: []string{"agent_id"},
+			},
+		},
+		{
+			Name:        "agent-create",
+			Description: "Create a new runtime agent with schedule, trigger type, and execution configuration.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Name for the agent",
+					},
+					"strategy_type": {
+						Type:        "string",
+						Description: "Strategy type for the agent (e.g. 'extraction', 'enrichment', 'analysis')",
+					},
+					"cron_schedule": {
+						Type:        "string",
+						Description: "Cron expression for scheduling (e.g. '0 */6 * * *' for every 6 hours)",
+					},
+					"prompt": {
+						Type:        "string",
+						Description: "Prompt/instructions for the agent",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Human-readable description",
+					},
+					"enabled": {
+						Type:        "boolean",
+						Description: "Whether the agent is enabled (default: true)",
+						Default:     true,
+					},
+					"trigger_type": {
+						Type:        "string",
+						Description: "How the agent is triggered",
+						Enum:        []string{"schedule", "manual", "reaction"},
+						Default:     "schedule",
+					},
+					"execution_mode": {
+						Type:        "string",
+						Description: "How the agent executes actions",
+						Enum:        []string{"suggest", "execute", "hybrid"},
+						Default:     "execute",
+					},
+					"config": {
+						Type:        "string",
+						Description: "Additional configuration as JSON object",
+					},
+				},
+				Required: []string{"name", "strategy_type", "cron_schedule"},
+			},
+		},
+		{
+			Name:        "update_agent",
+			Description: "Update an existing runtime agent. Only provided fields are updated (partial update).",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_id": {
+						Type:        "string",
+						Description: "The UUID of the agent to update",
+					},
+					"name": {
+						Type:        "string",
+						Description: "New name",
+					},
+					"prompt": {
+						Type:        "string",
+						Description: "New prompt/instructions",
+					},
+					"description": {
+						Type:        "string",
+						Description: "New description",
+					},
+					"enabled": {
+						Type:        "boolean",
+						Description: "Enable or disable the agent",
+					},
+					"cron_schedule": {
+						Type:        "string",
+						Description: "New cron schedule",
+					},
+					"trigger_type": {
+						Type:        "string",
+						Description: "New trigger type",
+						Enum:        []string{"schedule", "manual", "reaction"},
+					},
+					"execution_mode": {
+						Type:        "string",
+						Description: "New execution mode",
+						Enum:        []string{"suggest", "execute", "hybrid"},
+					},
+				},
+				Required: []string{"agent_id"},
+			},
+		},
+		{
+			Name:        "agent-delete",
+			Description: "Delete a runtime agent by ID. This stops any scheduled runs and removes the agent.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_id": {
+						Type:        "string",
+						Description: "The UUID of the agent to delete",
+					},
+				},
+				Required: []string{"agent_id"},
+			},
+		},
+		{
+			Name:        "trigger_agent",
+			Description: "Trigger a run of an agent. Provide either agent_name (preferred) or agent_id (UUID). Optionally provide a structured message object with instructions and/or a task_id hint. For agents with dispatch_mode=queued, returns immediately with run_id and status=queued; use get_run_status to poll for completion. For sync agents, blocks until execution completes.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_name": {
+						Type:        "string",
+						Description: "The name of the agent to trigger (e.g. \"research-manager\"). Preferred over agent_id.",
+					},
+					"agent_id": {
+						Type:        "string",
+						Description: "The UUID of the agent to trigger. Use agent_name instead when possible.",
+					},
+					"message": {
+						Type:        "object",
+						Description: "Optional structured message for this run. Provide { \"instructions\": \"...\", \"task_id\": \"...\" }. Both fields are optional. task_id is an advisory hint. Alternatively, a plain string is also accepted for backward compatibility.",
+					},
+				},
+				Required: []string{},
+			},
+		},
+
+		// --- Agent Runs ---
+		{
+			Name:        "agent-run-list",
+			Description: "List agent runs for the current project with pagination and optional filters by agent ID or status.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_id": {
+						Type:        "string",
+						Description: "Filter by agent ID (UUID)",
+					},
+					"status": {
+						Type:        "string",
+						Description: "Filter by run status",
+						Enum:        []string{"submitted", "working", "completed", "skipped", "failed", "input-required", "cancelled"},
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum number of results (1-100, default: 20)",
+						Default:     20,
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+					},
+					"offset": {
+						Type:        "integer",
+						Description: "Number of results to skip (default: 0)",
+						Default:     0,
+						Minimum:     intPtr(0),
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:        "agent-run-get",
+			Description: "Get details of a single agent run including status, duration, step count, and error information.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"run_id": {
+						Type:        "string",
+						Description: "The UUID of the agent run to retrieve",
+					},
+				},
+				Required: []string{"run_id"},
+			},
+		},
+		{
+			Name:        "agent-run-messages",
+			Description: "Get all LLM messages exchanged during an agent run, ordered by step number. Includes system, user, assistant, and tool_result messages.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"run_id": {
+						Type:        "string",
+						Description: "The UUID of the agent run",
+					},
+				},
+				Required: []string{"run_id"},
+			},
+		},
+		{
+			Name:        "agent-run-tool-calls",
+			Description: "Get all tool calls made during an agent run, including input, output, status, and duration for each call.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"run_id": {
+						Type:        "string",
+						Description: "The UUID of the agent run",
+					},
+				},
+				Required: []string{"run_id"},
+			},
+		},
+		{
+			Name:        "agent-run-status",
+			Description: "Poll the status of an agent run by ID. Intended for use after trigger_agent returns status=queued. Returns run_id, status, and optionally error/summary fields.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"run_id": {
+						Type:        "string",
+						Description: "The UUID of the agent run to poll",
+					},
+				},
+				Required: []string{"run_id"},
+			},
+		},
+		{
+			Name:        "remember-status",
+			Description: "Check the completion state and graph-mutation summary of an async remember/forget run. Accepts the run_id returned by remember or forget in async mode. Returns status (running/completed/failed), objects_created, objects_updated, relationships_created counts, created_object_ids, created_relationship_ids, discovered_types, and a summary. Use this after remember/forget async to see whether the run finished and what it actually created.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"run_id": {
+						Type:        "string",
+						Description: "The UUID of the remember/forget agent run to check",
+					},
+				},
+				Required: []string{"run_id"},
+			},
+		},
+
+		// --- Agent Catalog ---
+		{
+			Name:        "agent-list-available",
+			Description: "List all available agents in the project catalog. Returns a lightweight summary with name, description, tools list, and visibility for each agent definition. Does not include system prompts or IDs — use list_agent_definitions for full details.",
+			InputSchema: mcp.InputSchema{
+				Type:       "object",
+				Properties: map[string]mcp.PropertySchema{},
+				Required:   []string{},
+			},
+		},
+	}
+}
+
+// GetAgentToolDefinitionsForProject returns tool definitions with the trigger_agent
+// description dynamically enriched with the live agent catalog for the given project.
+// Falls back to GetAgentToolDefinitions when projectID is empty or the catalog cannot
+// be fetched.
+func (h *MCPToolHandler) GetAgentToolDefinitionsForProject(ctx context.Context, projectID string) []mcp.ToolDefinition {
+	defs := h.GetAgentToolDefinitions()
+	if projectID == "" {
+		return defs
+	}
+
+	// Build a compact catalog string: "- name: description\n" per agent
+	agents, err := h.repo.FindAllDefinitions(ctx, projectID, true)
+	if err != nil || len(agents) == 0 {
+		return defs
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\nAvailable agents in this project:\n")
+	for _, a := range agents {
+		desc := ""
+		if a.Description != nil {
+			desc = *a.Description
+		}
+		// Trim whitespace from multi-line YAML descriptions
+		desc = strings.TrimSpace(strings.ReplaceAll(desc, "\n", " "))
+		if desc != "" {
+			fmt.Fprintf(&sb, "- %s: %s\n", a.Name, desc)
+		} else {
+			fmt.Fprintf(&sb, "- %s\n", a.Name)
+		}
+	}
+	catalog := sb.String()
+
+	// Inject catalog into trigger_agent description
+	for i, tool := range defs {
+		if tool.Name == "trigger_agent" {
+			defs[i].Description = tool.Description + catalog
+			break
+		}
+	}
+
+	return defs
+}
+
+// intPtr returns a pointer to an int value.
+func intPtr(i int) *int {
+	return &i
+}
+
+// ============================================================================
+// Agent Questions
+// ============================================================================
+
+// ExecuteListAgentQuestions lists all questions for a specific agent run.
+func (h *MCPToolHandler) ExecuteListAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	questions, err := h.repo.ListQuestionsByRunID(ctx, runID)
+	if err != nil {
+		return errResult("failed to list agent questions: " + err.Error())
+	}
+
+	dtos := make([]*AgentQuestionDTO, len(questions))
+	for i, q := range questions {
+		dtos[i] = q.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteListProjectAgentQuestions lists agent questions across all runs in a project.
+func (h *MCPToolHandler) ExecuteListProjectAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	var statusFilter *AgentQuestionStatus
+	if s, ok := args["status"].(string); ok && s != "" {
+		qs := AgentQuestionStatus(s)
+		statusFilter = &qs
+	}
+
+	questions, err := h.repo.ListQuestionsByProject(ctx, projectID, statusFilter)
+	if err != nil {
+		return errResult("failed to list project agent questions: " + err.Error())
+	}
+
+	dtos := make([]*AgentQuestionDTO, len(questions))
+	for i, q := range questions {
+		dtos[i] = q.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteRespondToAgentQuestion submits a response to a pending agent question.
+func (h *MCPToolHandler) ExecuteRespondToAgentQuestion(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	questionID, _ := args["question_id"].(string)
+	response, _ := args["response"].(string)
+	if questionID == "" {
+		return errResult("question_id is required")
+	}
+	if response == "" {
+		return errResult("response is required")
+	}
+
+	question, err := h.repo.FindQuestionByID(ctx, questionID)
+	if err != nil {
+		return errResult("failed to find question: " + err.Error())
+	}
+	if question == nil {
+		return errResult("question not found: " + questionID)
+	}
+	if question.Status != QuestionStatusPending {
+		return errResult(fmt.Sprintf("question is already %s", question.Status))
+	}
+
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return errResult(err.Error())
+		}
+	}
+
+	claimed, err := h.repo.AnswerQuestion(ctx, questionID, response, "mcp-tool")
+	if err != nil {
+		return errResult("failed to answer question: " + err.Error())
+	}
+	if !claimed {
+		return errResult("question is no longer pending")
+	}
+
+	// Resume the agent in a background goroutine (non-blocking)
+	if h.executor != nil {
+		run, err := h.repo.FindRunByID(ctx, question.RunID)
+		if err == nil && run != nil && run.Status == RunStatusPaused {
+			agent, err := h.repo.FindByID(ctx, run.AgentID, nil)
+			if err == nil && agent != nil {
+				agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
+				userMessage := fmt.Sprintf(
+					"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
+					question.Question, response,
+				)
+				go func() {
+					bgCtx := context.Background()
+					resumeResult, _ := h.executor.Resume(bgCtx, run, ExecuteRequest{
+						Agent:           agent,
+						AgentDefinition: agentDef,
+						ProjectID:       agent.ProjectID,
+						UserMessage:     userMessage,
+					})
+					if resumeResult != nil && resumeResult.Cleanup != nil {
+						resumeResult.Cleanup()
+					}
+				}()
+			}
+		}
+	}
+
+	return wrapResult(map[string]any{
+		"success":     true,
+		"question_id": questionID,
+		"status":      "answered",
+	})
+}
+
+// ============================================================================
+// Agent Webhook Hooks
+// ============================================================================
+
+// ExecuteListAgentHooks lists all webhook hooks for a given agent.
+func (h *MCPToolHandler) ExecuteListAgentHooks(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentID, _ := args["agent_id"].(string)
+	if agentID == "" {
+		return errResult("agent_id is required")
+	}
+
+	hooks, err := h.repo.FindWebhookHooksByAgent(ctx, agentID, projectID)
+	if err != nil {
+		return errResult("failed to list agent hooks: " + err.Error())
+	}
+
+	dtos := make([]*AgentWebhookHookDTO, len(hooks))
+	for i, hook := range hooks {
+		dtos[i] = hook.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteCreateAgentHook creates a new webhook hook for an agent.
+func (h *MCPToolHandler) ExecuteCreateAgentHook(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentID, _ := args["agent_id"].(string)
+	label, _ := args["label"].(string)
+	if agentID == "" {
+		return errResult("agent_id is required")
+	}
+	if label == "" {
+		return errResult("label is required")
+	}
+
+	agent, err := h.repo.FindByID(ctx, agentID, &projectID)
+	if err != nil {
+		return errResult("failed to find agent: " + err.Error())
+	}
+	if agent == nil {
+		return errResult("agent not found: " + agentID)
+	}
+
+	// Refuse binding a public webhook hook to an internal-visibility agent
+	// (fail-closed) unless explicitly opted in — the webhook receiver is a
+	// public surface authenticated only by a shared per-hook bearer token.
+	allowInternal, _ := args["allow_internal"].(bool)
+	if err := hookInternalBindingErr(ctx, h.repo, agent, allowInternal); err != nil {
+		return errResult(err.Error())
+	}
+
+	rawToken, err := GenerateWebhookToken()
+	if err != nil {
+		return errResult("failed to generate token: " + err.Error())
+	}
+
+	hashedToken, err := HashWebhookToken(rawToken)
+	if err != nil {
+		return errResult("failed to hash token: " + err.Error())
+	}
+
+	hook := &AgentWebhookHook{
+		AgentID:       agent.ID,
+		ProjectID:     agent.ProjectID,
+		Label:         label,
+		TokenHash:     hashedToken,
+		Enabled:       true,
+		AllowInternal: allowInternal,
+	}
+
+	if err := h.repo.CreateWebhookHook(ctx, hook); err != nil {
+		return errResult("failed to create webhook hook: " + err.Error())
+	}
+
+	hook.Token = &rawToken
+	return wrapResult(hook.ToDTO())
+}
+
+// ExecuteDeleteAgentHook deletes a webhook hook by ID.
+func (h *MCPToolHandler) ExecuteDeleteAgentHook(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	hookID, _ := args["hook_id"].(string)
+	if hookID == "" {
+		return errResult("hook_id is required")
+	}
+
+	if err := h.repo.DeleteWebhookHook(ctx, hookID, projectID); err != nil {
+		return errResult("failed to delete webhook hook: " + err.Error())
+	}
+
+	return wrapResult(map[string]any{
+		"success": true,
+		"hook_id": hookID,
+	})
+}
+
+// ============================================================================
+// ADK Sessions
+// ============================================================================
+
+// ExecuteListADKSessions lists ADK sessions for the current project.
+func (h *MCPToolHandler) ExecuteListADKSessions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	limit := 50
+	offset := 0
+
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+	if o, ok := args["offset"].(float64); ok && o >= 0 {
+		offset = int(o)
+	}
+
+	sessions, count, err := h.repo.FindADKSessionsByProject(ctx, projectID, limit, offset)
+	if err != nil {
+		return errResult("failed to list adk sessions: " + err.Error())
+	}
+
+	dtos := make([]*ADKSessionDTO, len(sessions))
+	for i, s := range sessions {
+		dtos[i] = &ADKSessionDTO{
+			ID:         s.ID,
+			AppName:    s.AppName,
+			UserID:     s.UserID,
+			State:      s.State,
+			CreateTime: s.CreateTime,
+			UpdateTime: s.UpdateTime,
+		}
+	}
+
+	return wrapResult(map[string]any{
+		"items":       dtos,
+		"total_count": count,
+		"limit":       limit,
+		"offset":      offset,
+	})
+}
+
+// ExecuteGetADKSession gets a single ADK session with all its events.
+func (h *MCPToolHandler) ExecuteGetADKSession(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	sessionID, _ := args["session_id"].(string)
+	if sessionID == "" {
+		return errResult("session_id is required")
+	}
+
+	session, events, err := h.repo.FindADKSessionByIDForProject(ctx, sessionID, projectID)
+	if err != nil {
+		return errResult("failed to get adk session: " + err.Error())
+	}
+	if session == nil {
+		return errResult("adk session not found: " + sessionID)
+	}
+
+	dto := &ADKSessionDTO{
+		ID:         session.ID,
+		AppName:    session.AppName,
+		UserID:     session.UserID,
+		State:      session.State,
+		CreateTime: session.CreateTime,
+		UpdateTime: session.UpdateTime,
+	}
+
+	eventDTOs := make([]*ADKEventDTO, len(events))
+	for i, e := range events {
+		eventDTOs[i] = &ADKEventDTO{
+			ID:                     e.ID,
+			SessionID:              e.SessionID,
+			InvocationID:           e.InvocationID,
+			Author:                 e.Author,
+			Timestamp:              e.Timestamp,
+			Branch:                 e.Branch,
+			Actions:                e.Actions,
+			LongRunningToolIDsJSON: e.LongRunningToolIDsJSON,
+			Content:                e.Content,
+			Partial:                e.Partial,
+			TurnComplete:           e.TurnComplete,
+			ErrorCode:              e.ErrorCode,
+			ErrorMessage:           e.ErrorMessage,
+			Interrupted:            e.Interrupted,
+		}
+	}
+	dto.Events = eventDTOs
+
+	return wrapResult(dto)
+}

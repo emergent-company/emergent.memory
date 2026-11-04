@@ -1,0 +1,47 @@
+{
+  "name": "e2e-meeting-notes",
+  "version": "1.0.0",
+  "description": "Schema for extracting people and architecture decisions from meeting notes. Used by e2e extraction tests.",
+  "objectTypeSchemas": [
+    {
+      "name": "Person",
+      "description": "A person mentioned in the document, with their name and role.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The full name of the person."
+        },
+        "role": {
+          "type": "string",
+          "description": "The person's title or role (e.g., VP of Engineering, Lead Architect)."
+        }
+      }
+    },
+    {
+      "name": "Decision",
+      "description": "An architecture or product decision recorded in the document.",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "A short title summarising what was decided."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Why this decision was made."
+        },
+        "decided_by": {
+          "type": "string",
+          "description": "The person or group who made the decision."
+        }
+      }
+    }
+  ],
+  "relationshipTypeSchemas": [
+    {
+      "name": "mentions",
+      "description": "Links a decision to a person",
+      "sourceType": "Decision",
+      "targetType": "Person"
+    }
+  ]
+}

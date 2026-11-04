@@ -1,0 +1,5 @@
+{"type":"AgentPool","key":"pool-research","properties":{"name":"Research Pool","taskType":"research","selectionStrategy":"cheapest_first","proactiveTestRate":0.1,"isActive":true}}
+{"type":"AgentPool","key":"pool-coding","properties":{"name":"Coding Pool","taskType":"coding","selectionStrategy":"cheapest_first","proactiveTestRate":0.1,"isActive":true}}
+{"type":"AgentPool","key":"pool-review","properties":{"name":"Review Pool","taskType":"review","selectionStrategy":"cheapest_first","proactiveTestRate":0.05,"isActive":true}}
+{"type":"AgentPool","key":"pool-enrichment","properties":{"name":"Enrichment Pool","taskType":"enrichment","selectionStrategy":"cheapest_first","proactiveTestRate":0.05,"isActive":true}}
+{"type":"AgentPool","key":"pool-design","properties":{"name":"Design Pool","taskType":"design","selectionStrategy":"cheapest_first","proactiveTestRate":0.1,"isActive":true}}

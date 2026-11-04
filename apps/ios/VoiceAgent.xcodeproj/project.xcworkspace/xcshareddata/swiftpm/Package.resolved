@@ -1,0 +1,51 @@
+{
+  "originHash" : "6839f4bd29f2adb3d0e40e187448c3f9297ddd0401edecacf2e4f96cbdeff01d",
+  "pins" : [
+    {
+      "identity" : "client-sdk-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/client-sdk-swift",
+      "state" : {
+        "revision" : "79fb2beee98e45556bffebefa50b5d05c3382af1",
+        "version" : "2.16.0"
+      }
+    },
+    {
+      "identity" : "components-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/components-swift",
+      "state" : {
+        "revision" : "9f28db3ae5d2b51f3033ea725c952ddacb5657d0",
+        "version" : "0.1.7"
+      }
+    },
+    {
+      "identity" : "livekit-uniffi-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/livekit-uniffi-xcframework.git",
+      "state" : {
+        "revision" : "7c161254ce7cd55debc48023f69a917076b12a26",
+        "version" : "0.0.6"
+      }
+    },
+    {
+      "identity" : "swift-protobuf",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-protobuf.git",
+      "state" : {
+        "revision" : "e3f69fd321d0c9fcdc16fb576a0cdd956675face",
+        "version" : "1.31.0"
+      }
+    },
+    {
+      "identity" : "webrtc-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/webrtc-xcframework.git",
+      "state" : {
+        "revision" : "46f2af86f06b9a8a9158d37cadda5cb5a214e4c4",
+        "version" : "144.7559.11"
+      }
+    }
+  ],
+  "version" : 3
+}

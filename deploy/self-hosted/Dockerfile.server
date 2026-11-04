@@ -1,0 +1,251 @@
+# Memory Server with CLI — Consolidated Image
+# Includes: Go server, swagger docs, migration binary, CLI binary
+# Build context: REPOSITORY ROOT (.)
+#
+# Optimizations:
+#   - Cross-compilation (GOARCH) instead of QEMU emulation for arm64
+#   - swag version derived from go.mod for deterministic builds
+#   - Swag layer cached on go.mod/go.sum, not on source
+#   - Go build cache mounts for faster incremental builds
+#   - Parallel builder stages for server + CLI
+
+# ── Global build args ──────────────────────────────────────────────
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+# Pinned github-mcp-server release baked into the runtime image. Used by the
+# MCP registry to run a stdio GitHub server with native GitHub App auth
+# (the server mints/refreshes installation tokens itself; no token stored).
+ARG GITHUB_MCP_SERVER_VERSION=1.12.1
+
+# ── Stage 1: Server + Migration + Swagger ──────────────────────────
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS server-builder
+
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
+
+# Install build dependencies (git needed for swag)
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build/server
+
+# Copy go.mod/go.sum first for dependency caching
+# Also copy pkg/sdk go.mod/go.sum needed by the replace directive in apps/server/go.mod
+COPY apps/server/go.mod apps/server/go.sum ./
+COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
+RUN go mod download
+
+# Install swag at the version go.mod requires, so the generator can never
+# disagree with the compiled github.com/swaggo/swag library. The layer caches on
+# go.mod/go.sum (the COPY above), not on source.
+RUN go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+
+# Copy source code (cache invalidation point for source changes)
+COPY apps/server/ ./
+
+# Committed module files must already be tidy. This step used to be a bare
+# `go mod tidy`, which silently repaired tags whose go.mod/go.sum were out of
+# sync — that is how #309 was "fixed", and it meant a released image could be
+# built from a dependency graph the tag never contained. #2190 (complete
+# go.sum) and the CI guard scripts/preflight/go-mod-tidy.sh (#2195) remove the
+# need: `-diff` prints what is wrong and fails the build instead of repairing it.
+#
+# Keep this image's Go minor in step with `.github/workflows/ci.yml`
+# (go-version): tidy output is version-sensitive, so a mismatch can pass the
+# CI guard and fail here, or pass here and mask drift the guard would catch.
+RUN go mod tidy -diff || { \
+      echo "" >&2; \
+      echo "ERROR: apps/server/go.mod or go.sum is not tidy in this tree." >&2; \
+      echo "       Run 'go mod tidy' in apps/server, commit go.mod+go.sum, cut a new tag." >&2; \
+      echo "       No diff above means the module graph or an import failed to load." >&2; \
+      exit 1; \
+    }
+
+# Generate swagger docs (runs on build platform, not target)
+# Note: apps/server/docs may be a symlink on the host — remove it entirely first
+RUN rm -rf docs && mkdir -p docs/swagger && \
+    /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+
+# Cross-compile server binary for target platform
+# Re-declare VERSION/GIT_COMMIT/BUILD_TIME here so BuildKit invalidates
+# the cache when they change (build args don't bust cache inside RUN steps
+# unless re-declared in the same stage scope immediately before use).
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w \
+      -X github.com/emergent-company/emergent.memory/internal/version.Version=${VERSION} \
+      -X github.com/emergent-company/emergent.memory/internal/version.GitCommit=${GIT_COMMIT} \
+      -X github.com/emergent-company/emergent.memory/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /out/emergent-server \
+    ./cmd/server
+
+# Cross-compile migration binary
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w" \
+    -o /out/emergent-migrate \
+    ./cmd/migrate
+
+# Cross-compile the one-shot object-store bucket bootstrap binary. Runs as the
+# storage-init compose service (gated by service_completed_successfully) to
+# create the documents/document-temp buckets before the server starts, using
+# the same backend-agnostic S3 client as the server.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w" \
+    -o /out/emergent-storage-init \
+    ./cmd/storage-init
+
+# ── Stage 2: CLI ───────────────────────────────────────────────────
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS cli-builder
+
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
+
+WORKDIR /build/cli
+
+# Copy SDK first (needed for go.mod replace directive)
+COPY apps/server/pkg/sdk/ /apps/server/pkg/sdk/
+
+# Copy go.mod/go.sum for dependency caching
+COPY apps/cli/go.mod apps/cli/go.sum ./
+RUN go mod download
+
+# Copy CLI source
+COPY apps/cli/ ./
+
+# Same rule as the server stage: the committed module files are tidy (apps/cli
+# included in scripts/preflight/go-mod-tidy.sh), so `-diff` fails the build on
+# drift instead of repairing a tag whose go.mod/go.sum are out of sync.
+RUN go mod tidy -diff || { \
+      echo "" >&2; \
+      echo "ERROR: apps/cli/go.mod or go.sum is not tidy in this tree." >&2; \
+      echo "       Run 'go mod tidy' in apps/cli, commit go.mod+go.sum, cut a new tag." >&2; \
+      echo "       No diff above means the module graph or an import failed to load." >&2; \
+      exit 1; \
+    }
+
+# Cross-compile CLI binary
+# Re-declare version args to bust cache when version changes.
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w \
+      -X main.Version=${VERSION} \
+      -X main.Commit=${GIT_COMMIT} \
+      -X main.BuildTime=${BUILD_TIME}" \
+    -o /out/memory \
+    ./cmd
+
+# ── Stage 2b: GitHub MCP server (stdio) ───────────────────────────
+# Baked so the MCP registry can run a stdio GitHub server with native GitHub
+# App auth; the server mints and refreshes installation tokens itself, so no
+# long-lived token is stored in config. The tarball is arch-specific but the
+# download runs on the build platform (no emulation).
+FROM --platform=$BUILDPLATFORM alpine:3.23 AS github-mcp-builder
+
+ARG TARGETARCH
+ARG GITHUB_MCP_SERVER_VERSION
+
+RUN apk add --no-cache curl tar coreutils
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) asset_arch=x86_64 ;; \
+      arm64) asset_arch=arm64 ;; \
+      *) echo "unsupported TARGETARCH for github-mcp-server: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_SERVER_VERSION}"; \
+    asset="github-mcp-server_Linux_${asset_arch}.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "/tmp/${asset}" "${base}/${asset}"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
+    expected="$(awk -v a="${asset}" '$2==a || $2=="*"a {print $1}' /tmp/github-mcp-checksums.txt)"; \
+    test -n "${expected}"; \
+    echo "${expected}  /tmp/${asset}" | sha256sum -c -; \
+    mkdir -p /out; \
+    tar -xzf "/tmp/${asset}" -C /out github-mcp-server; \
+    chmod +x /out/github-mcp-server; \
+    test -s /out/github-mcp-server
+
+# ── Stage 3: Runtime ──────────────────────────────────────────────
+FROM alpine:3.23
+
+# pg_dump refuses to dump a server newer than itself, and the in-app backup
+# task hard-fails when its client major is older than the server. So the client
+# major must be >= the database image major; it does not have to equal it,
+# and both are 18 since the database image moved to pg18.
+# Override at build time with --build-arg PG_CLIENT_MAJOR=<major>.
+# PG_CLIENT_MAJOR must name a client major available in this base image's
+# package repositories (alpine:3.23 ships postgresql16/17/18-client; 3.21 had
+# 15/16/17). A newer major still requires bumping the base image tag first — the
+# apk add below fails the build rather than producing a silently older client.
+ARG PG_CLIENT_MAJOR=18
+
+# Install runtime dependencies
+# Includes Firecracker prerequisites: iptables (NAT), iproute2 (TAP), e2fsprogs (mkfs.ext4)
+RUN apk --no-cache add \
+    ca-certificates \
+    curl \
+    wget \
+    bash \
+    jq \
+    postgresql${PG_CLIENT_MAJOR}-client \
+    iptables \
+    iproute2 \
+    e2fsprogs \
+    coreutils
+
+WORKDIR /app
+
+# Copy binaries from builders
+COPY --from=server-builder /out/emergent-server /usr/local/bin/
+COPY --from=server-builder /out/emergent-migrate /usr/local/bin/
+COPY --from=server-builder /out/emergent-storage-init /usr/local/bin/
+COPY --from=cli-builder /out/memory /usr/local/bin/
+
+# GitHub MCP server (stdio) — invoked by the MCP registry with GitHub App auth
+COPY --from=github-mcp-builder /out/github-mcp-server /usr/local/bin/github-mcp-server
+RUN chmod +x /usr/local/bin/github-mcp-server
+
+# Copy swagger docs (server looks for ./docs/swagger relative to WORKDIR)
+COPY --from=server-builder /build/server/docs/swagger /app/docs/swagger
+
+# Copy email templates (Handlebars .hbs files for invite emails, etc.)
+COPY apps/server/templates/ /app/templates/
+
+# Copy migrations
+COPY apps/server/migrations/*.sql /app/migrations/
+
+# Copy entrypoint and CLI wrapper
+COPY deploy/self-hosted/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+COPY deploy/self-hosted/memory-wrapper.sh /usr/local/bin/emergent
+RUN chmod +x /usr/local/bin/emergent
+
+# Create directory for CLI config
+RUN mkdir -p /root/.emergent
+
+EXPOSE 3002
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -sf http://localhost:3002/health || exit 1

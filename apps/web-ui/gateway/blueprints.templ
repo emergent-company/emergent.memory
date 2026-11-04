@@ -1,0 +1,1298 @@
+package main
+
+import (
+	"net/url"
+	"strings"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Blueprints ---
+
+// BlueprintsPage renders the blueprint gallery: applied blueprints (unapply),
+// the project's private drafts (install), and available packs (enable/install).
+// A failed applied fetch renders the whole-page error state; flashMsg/flashErr
+// surface PRG feedback.
+templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem, available []AvailableSchemaItem, drafts []BlueprintRecord, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@blueprintsHeader(len(applied), loadErr == nil)
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageError("Failed to load blueprints", loadErr)
+		} else {
+			@installedSection(applied, upgradeByName(upgrades))
+			@draftsSection(drafts)
+			@upgradesSection(upgrades)
+			@availableSection(available)
+		}
+	}
+	@deriveBlueprintDialog()
+	@importDialog()
+	@githubTokenDialog()
+	@ui.PopoverScript()
+}
+
+templ blueprintsHeader(count int, ok bool) {
+	@pageHeader("Knowledge", "Blueprints", "Schema packs that extend the graph — install and remove them.") {
+		if ok {
+			@countBadgeLabel(countLabel(count, "blueprint", "blueprints"), "lucide--library")
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--download",
+			Attrs: templ.Attributes{
+				"data-dialog-open": "blueprint-import-modal",
+				"data-testid":      "blueprint-import-open",
+			},
+		}) {
+			Import
+		}
+		@blueprintActionsMenu()
+	}
+}
+
+// blueprintActionsMenu is the header overflow menu: the page's secondary
+// actions (Migrations, Save as blueprint) collapse into a kebab so the header
+// carries one primary action (Import) plus an options control. It reuses
+// go-daisy's Popover — the same component the project row-action menus use —
+// which owns positioning, click-away, Escape, exclusivity, and the truthful
+// aria-expanded state.
+templ blueprintActionsMenu() {
+	@ui.Popover(ui.PopoverRootProps{}) {
+		@ui.PopoverTrigger(ui.PopoverTriggerProps{
+			Class: "btn btn-ghost btn-sm btn-square",
+			Attrs: templ.Attributes{
+				"aria-haspopup": "menu",
+				"aria-label":    "Blueprint actions",
+				"data-testid":   "blueprints-actions-menu",
+			},
+		}) {
+			@ui.IconSpan("lucide--ellipsis-vertical", "size-5")
+		}
+		@ui.PopoverContent(ui.PopoverContentProps{
+			Placement: ui.PopoverBottomEnd,
+			Offset:    4,
+			Exclusive: true,
+			Class:     "w-48",
+			Attrs:     templ.Attributes{"role": "menu"},
+		}) {
+			<ul class="menu menu-sm p-1">
+				<li>
+					<a href="/blueprints/migrations" class="flex items-center gap-2" data-testid="blueprints-migrations-link">
+						@ui.IconSpan("lucide--git-branch", "size-4")
+						<span>Migrations</span>
+					</a>
+				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2" data-dialog-open="derive-blueprint-modal" data-testid="blueprints-save-as-link">
+						@ui.IconSpan("lucide--save", "size-4")
+						<span>Save as blueprint</span>
+					</button>
+				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2" data-dialog-open="blueprint-github-token-modal" data-testid="blueprints-github-token-link">
+						@ui.IconSpan("lucide--key-round", "size-4")
+						<span>GitHub access token</span>
+					</button>
+				</li>
+			</ul>
+		}
+	}
+}
+
+// importDialog is the gallery's "Import from GitHub" modal, opened from the
+// header's Import button: a repository URL plus optional ref and token.
+// Submitting posts to /blueprints/import, which creates, publishes, and applies
+// the blueprint. The token is only for private repositories. It was previously
+// an inline card in the page body; the fields, ids, action, and test hooks are
+// unchanged.
+templ importDialog() {
+	@ui.Dialog(ui.DialogProps{ID: "blueprint-import-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "blueprint-import-title"}}) {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "blueprint-import-title"}) { Import from GitHub }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) { Paste a GitHub repository URL to install the blueprint it contains. Add a ref for a branch or tag, and a token for a private repository. }
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": "blueprint-import-modal"},
+			})
+		</div>
+		<form method="post" action="/blueprints/import" class="flex flex-col gap-4">
+			@form.FormControl("blueprint-import-url", "Repository URL", form.LabelAbove, "", "", nil) {
+				<input id="blueprint-import-url" name="url" type="url" required placeholder="https://github.com/org/repo" autocomplete="off" class="input w-full" data-testid="blueprint-import-url"/>
+			}
+			@form.FormControl("blueprint-import-ref", "Ref", form.LabelAbove, "Optional. Branch, tag, or commit to install.", "", nil) {
+				<input id="blueprint-import-ref" name="ref" type="text" placeholder="main or v1.2.3" autocomplete="off" class="input w-full font-mono" data-testid="blueprint-import-ref"/>
+			}
+			@form.FormControl("blueprint-import-token", "Access token", form.LabelAbove, "Optional. Needed only for a private repository.", "", nil) {
+				<input id="blueprint-import-token" name="token" type="password" autocomplete="off" class="input w-full" data-testid="blueprint-import-token"/>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--download",
+					Attrs:   templ.Attributes{"data-testid": "blueprint-import-submit"},
+				}) {
+					Import
+				}
+			}
+		</form>
+	}
+}
+
+// githubTokenDialog stores the project's encrypted GitHub personal access token
+// used to check private repositories for updates. It reuses the import
+// dialog's field pattern and the same PRG flow; the token is posted to
+// /blueprints/github-credentials and is never echoed back. The field is a
+// password input with autocomplete off so the stored value is never suggested
+// or revealed.
+templ githubTokenDialog() {
+	@ui.Dialog(ui.DialogProps{ID: "blueprint-github-token-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "blueprint-github-token-title"}}) {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "blueprint-github-token-title"}) { GitHub access token }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) { Store a personal access token so updates can be checked for blueprints imported from private repositories. It is stored encrypted and never shown again. }
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": "blueprint-github-token-modal"},
+			})
+		</div>
+		<form method="post" action="/blueprints/github-credentials" class="flex flex-col gap-4">
+			@form.FormControl("blueprint-github-token", "Access token", form.LabelAbove, "Needed only to check blueprints from private repositories.", "", nil) {
+				<input id="blueprint-github-token" name="token" type="password" required autocomplete="off" class="input w-full" data-testid="blueprint-github-token"/>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--key-round",
+					Attrs:   templ.Attributes{"data-testid": "blueprint-github-token-save"},
+				}) {
+					Save token
+				}
+			}
+		</form>
+	}
+}
+
+templ installedSection(applied []AppliedBlueprint, upgrades map[string]AvailableSchemaItem) {
+	@cardList("Installed", cardListProps{
+		Margin:    "mb-8",
+		Empty:     len(applied) == 0,
+		EmptyIcon: "lucide--library", EmptyTitle: "No blueprints installed", EmptyDesc: "Install a blueprint to extend the graph schema.",
+	}) {
+		for _, b := range applied {
+			@appliedRow(b, upgrades[b.Name])
+		}
+	}
+}
+
+// appliedRow renders one installed blueprint. When upgrade carries a newer
+// version of this blueprint, an "Update available" badge plus an Update action
+// re-applies it through the existing /blueprints/install path (schemaId = the
+// blueprint id); Remove stays available either way.
+//
+// A GitHub-imported blueprint (SourceURL set) additionally shows its upstream
+// repo and ref, the latest update-check outcome when one exists, a "Check for
+// updates" action, and a live Update action that enqueues the asynchronous
+// apply. The Update control reflects the latest update job (queued/running/
+// succeeded/failed) loaded from the update-status endpoint, so its state
+// persists across reloads.
+templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
+	<div class="flex flex-wrap items-center gap-3 px-4 py-3">
+		@ui.IconTile("lucide--library", ui.IconTileProps{Tone: "primary"})
+		<div class="min-w-0 grow">
+			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.BlueprintID)) }>{ b.Name }</a>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { v{ b.Version } · { relTime(b.AppliedAt) } }
+			if b.SourceURL != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 flex-wrap", Icon: "lucide--github"}) {
+					<a class="truncate hover:text-primary" href={ templ.URL(b.SourceURL) } target="_blank" rel="noopener noreferrer" data-testid="blueprint-source-link">{ blueprintSourceLabel(b.SourceURL) }</a>
+					if b.SourceRef != "" {
+						<span class="text-muted-faint">{ "@" }</span>
+						<span class="font-mono">{ b.SourceRef }</span>
+					}
+					if b.LastCheckedAt != "" {
+						<span class="text-muted-faint">·</span>
+						<span>checked { relTime(b.LastCheckedAt) }</span>
+					}
+				}
+			}
+		</div>
+		if b.SourceURL != "" {
+			if b.UpdateBadgeVisible() {
+				@ui.Badge(ui.BadgeProps{
+					Label:   "Update available: v" + b.Version + " → v" + b.LatestVersion,
+					Variant: ui.BadgeInfo,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--arrow-up-circle",
+				})
+			}
+			// The Update control reflects the latest update job (loaded from the
+			// update-status endpoint by the page handler), so its state survives
+			// reloads: available → queued/running → succeeded (badge cleared) or
+			// failed (error + retry).
+			switch b.UpdateAction() {
+				case blueprintUpdateActionAvailable:
+					@updateApplyForm(b)
+				case blueprintUpdateActionQueued:
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonPrimary,
+						Size:      ui.ButtonSM,
+						Loading:   true,
+						AriaLabel: "Update queued for " + b.Name,
+						Attrs:     templ.Attributes{"data-testid": "blueprint-update-pending-" + b.Name},
+					}) {
+						Queued…
+					}
+				case blueprintUpdateActionRunning:
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonPrimary,
+						Size:      ui.ButtonSM,
+						Loading:   true,
+						AriaLabel: "Updating " + b.Name,
+						Attrs:     templ.Attributes{"data-testid": "blueprint-update-running-" + b.Name},
+					}) {
+						Updating…
+					}
+				case blueprintUpdateActionSucceeded:
+					<span class="inline-flex items-center gap-1.5 text-xs text-success" data-testid={ "blueprint-update-succeeded-" + b.Name }>
+						@ui.IconSpan("lucide--circle-check", "size-4")
+						if b.LatestJob.IsNoop() {
+							<span>Already up to date</span>
+						} else {
+							<span>Updated</span>
+						}
+					</span>
+				case blueprintUpdateActionFailed:
+					<div class="flex flex-wrap items-center gap-2">
+						<span class="inline-flex items-center gap-1.5 text-xs text-error" data-testid={ "blueprint-update-error-" + b.Name } title={ b.LatestJob.LastError }>
+							@ui.IconSpan("lucide--circle-alert", "size-4")
+							<span>{ blueprintUpdateFailureLabel(b.LatestJob.LastError) }</span>
+						</span>
+						@updateApplyForm(b)
+					</div>
+			}
+			<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.Name) + "/updates/check") } x-data="{ checking: false }" @submit="checking = true">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeSubmit,
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Icon:      "lucide--refresh-cw",
+					AriaLabel: "Check for updates for " + b.Name,
+					Attrs: templ.Attributes{
+						"data-testid": "blueprint-check-updates-" + b.Name,
+						":disabled":   "checking",
+					},
+				}) {
+					<span x-show="!checking">Check for updates</span>
+					<span x-show="checking" class="inline-flex items-center gap-1">
+						<span class="loading loading-spinner loading-xs"></span>
+						<span>Checking…</span>
+					</span>
+				}
+			</form>
+		}
+		if upgrade.Version != "" {
+			@ui.Badge(ui.BadgeProps{Label: "Update available", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-circle"})
+			<form method="post" action="/blueprints/install">
+				<input type="hidden" name="schemaId" value={ upgrade.ID }/>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--arrow-up-circle",
+				}) {
+					Update
+				}
+			</form>
+		}
+		<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.BlueprintID) + "/unapply") }>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeSubmit,
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Icon:       "lucide--trash-2",
+				ExtraClass: "text-error hover:text-error",
+				AriaLabel:  "Remove " + b.Name,
+			}) {
+				Remove
+			}
+		</form>
+	</div>
+}
+
+// updateApplyForm is the live Update action for one repo-imported blueprint:
+// it enqueues the asynchronous apply and shows a client-side pending state
+// until the PRG redirect returns the page (where the server-side job status
+// takes over). Shared by the available and failed/retry states.
+templ updateApplyForm(b AppliedBlueprint) {
+	<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.Name) + "/updates/apply") } x-data="{ updating: false }" @submit="updating = true">
+		@ui.Button(ui.ButtonProps{
+			Type:      ui.ButtonTypeSubmit,
+			Variant:   ui.ButtonPrimary,
+			Size:      ui.ButtonSM,
+			Icon:      "lucide--arrow-up-circle",
+			AriaLabel: "Update " + b.Name + " to the latest version",
+			Attrs: templ.Attributes{
+				"data-testid": "blueprint-update-" + b.Name,
+				":disabled":   "updating",
+			},
+		}) {
+			<span x-show="!updating">Update</span>
+			<span x-show="updating" class="inline-flex items-center gap-1">
+				<span class="loading loading-spinner loading-xs"></span>
+				<span>Updating…</span>
+			</span>
+		}
+	</form>
+}
+
+// draftsSection renders the project's unpublished (draft) blueprints with an
+// install action — the "enable → install → list drafts" loop's last stage.
+// Hidden entirely when there are no drafts.
+templ draftsSection(drafts []BlueprintRecord) {
+	if len(drafts) > 0 {
+		@cardList("Drafts", cardListProps{Margin: "mb-8"}) {
+			for _, b := range drafts {
+				<div class="flex flex-wrap items-center gap-3 px-4 py-3">
+					@ui.IconTile("lucide--file-pen", ui.IconTileProps{Tone: "neutral"})
+					<div class="min-w-0 grow">
+						<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
+						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { v{ b.Version } · draft }
+					</div>
+					<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.ID) + "/install") }>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							AriaLabel: "Install " + b.Name,
+						}) {
+							Install
+						}
+					</form>
+				</div>
+			}
+		}
+	}
+}
+
+templ upgradesSection(upgrades []AvailableSchemaItem) {
+	if len(upgrades) > 0 {
+		@cardList("Upgrades", cardListProps{Margin: "mb-8"}) {
+			for _, b := range upgrades {
+				@availableRow(b)
+			}
+		}
+	}
+}
+
+templ availableSection(available []AvailableSchemaItem) {
+	@cardList("Available", cardListProps{
+		Margin:    "mb-8",
+		Empty:     len(available) == 0,
+		EmptyIcon: "lucide--package-plus", EmptyTitle: "No blueprints available", EmptyDesc: "Nothing new to install — every available blueprint is already in use.",
+	}) {
+		for _, b := range available {
+			@availableRow(b)
+		}
+	}
+}
+
+// availableRow renders one available blueprint row: a Built-in badge for
+// built-ins, an Install (or Upgrade) action that applies the blueprint by id
+// via /blueprints/install, and — for non-built-in blueprints — a Remove action
+// that deletes it from the registry after a confirm dialog.
+templ availableRow(b AvailableSchemaItem) {
+	<div class="flex flex-wrap items-center gap-3 px-4 py-3" data-testid={ "available-blueprint-" + b.Name }>
+		@ui.IconSpan("lucide--package", "size-4 shrink-0 text-muted-faint")
+		<div class="min-w-0 grow">
+			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { v{ b.Version } · { b.Source } }
+		</div>
+		if b.Source == "builtin" {
+			@ui.Badge(ui.BadgeProps{Label: "Built-in", Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "blueprint-builtin-" + b.Name}})
+		}
+		<form method="post" action="/blueprints/install">
+			<input type="hidden" name="schemaId" value={ b.ID }/>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+				Attrs:   templ.Attributes{"data-testid": "blueprint-install-" + b.Name},
+			}) {
+				if b.Upgrade {
+					Upgrade
+				} else {
+					Install
+				}
+			}
+		</form>
+		if b.Source != "builtin" {
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeButton,
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Shape:      ui.ButtonShapeSquare,
+				Icon:       "lucide--trash-2",
+				ExtraClass: "text-error hover:text-error",
+				AriaLabel:  "Remove " + b.Name,
+				Attrs:      templ.Attributes{"data-testid": "blueprint-remove-" + b.ID},
+				OnClick:    templ.JSFuncCall("openDialogByID", "blueprint-remove-"+b.ID),
+			})
+		}
+	</div>
+	if b.Source != "builtin" {
+		@blueprintRemoveDialog(b)
+	}
+}
+
+// blueprintRemoveDescription is the remove-confirm detail paragraph for a
+// blueprint (the name span is filled server-side).
+templ blueprintRemoveDescription(b AvailableSchemaItem) {
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+		This removes the <span class="font-medium text-base-content">{ b.Name }</span> blueprint from the registry. Projects that already installed it are unaffected.
+	}
+}
+
+// blueprintRemoveDialog confirms removal before the POST to
+// /blueprints/:id/remove. It renders only for non-built-in blueprints.
+templ blueprintRemoveDialog(b AvailableSchemaItem) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "blueprint-remove-" + b.ID, Noun: "blueprint", Title: "Remove " + b.Name + "?"}, blueprintRemoveDescription(b)) {
+		<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.ID) + "/remove") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+					Attrs:   templ.Attributes{"data-testid": "blueprint-remove-confirm-" + b.ID},
+				}) {
+					Remove blueprint
+				}
+			}
+		</form>
+	}
+}
+
+// --- Blueprint details ---
+
+// BlueprintDetailPage renders one blueprint's full definition: schema metadata,
+// object types (with properties), relationship types, and any agent definitions
+// the blueprint carries.
+templ BlueprintDetailPage(detail *BlueprintDetail, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Blueprint unavailable", loadErr)
+		} else {
+			@blueprintDetailHeader(detail)
+			@flashToasts(detail.FlashMsg, detail.FlashErr)
+			@blueprintDetailMeta(detail)
+			@blueprintVersions(detail)
+			if detail.IsDraft && len(detail.CompareOptions) > 0 {
+				@blueprintDiffCard(detail)
+			}
+			@blueprintObjectTypes(detail)
+			@blueprintRelationshipTypes(detail)
+			@blueprintAgents(detail)
+			if detail.CanDeriveVersion {
+				@deriveVersionDialog(detail)
+			}
+		}
+	}
+}
+
+templ blueprintDetailHeader(d *BlueprintDetail) {
+	@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", d.Name, "/blueprints/"+url.PathEscape(d.CanonicalID), "v"+d.Version)), "", d.Name, d.Description, detailHeaderOpts{
+		TitleAdornment: ui.Badge(ui.BadgeProps{Label: "v" + d.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--tag"}),
+	}) {
+		if d.CanDeriveVersion {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--save",
+				Attrs:   templ.Attributes{"data-dialog-open": "derive-version-modal"},
+			}) {
+				Save as new version
+			}
+		}
+	}
+}
+
+// blueprintVersions lists a blueprint record's versions newest-first. Each row
+// links to that exact version; the row being viewed is highlighted and carries
+// a "Viewing" chip. A Release badge (Draft/Published) and, when applicable, an
+// "Installed" marker make the lifecycle state scannable at a glance. Hidden for
+// registry schemas (no version history).
+templ blueprintVersions(d *BlueprintDetail) {
+	if len(d.Versions) > 0 {
+		@cardList("Versions", cardListProps{Margin: "mb-6"}) {
+			for _, v := range d.Versions {
+				<a
+					href={ templ.URL("/blueprints/" + url.PathEscape(v.ID)) }
+					class={
+						"flex flex-wrap items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/50",
+						templ.KV("bg-base-200/50 ring-1 ring-base-300", v.Current),
+					}
+					if v.Current {
+						aria-current="true"
+					}
+				>
+					<p class="font-mono text-xs font-medium">v{ v.Version }</p>
+					@releaseBadge(v.Status)
+					if v.Installed {
+						@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+					}
+					if v.CreatedAt != "" {
+						<span class="text-muted text-xs">{ relTime(v.CreatedAt) }</span>
+					}
+					if v.Current {
+						<div class="ml-auto">
+							@ui.Badge(ui.BadgeProps{Label: "Viewing", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+						</div>
+					}
+				</a>
+			}
+		}
+	}
+}
+
+// releaseBadge maps a blueprint lifecycle status to the Release badge used in
+// both the version list and the detail meta row: Draft → warning, Published →
+// success. Empty status renders nothing.
+templ releaseBadge(status string) {
+	switch status {
+		case "draft":
+			@components.StatusBadge("Draft", ui.BadgeWarning, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+		case "published":
+			@components.StatusBadge("Published", ui.BadgeSuccess, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+		default:
+			if status != "" {
+				@components.StatusBadge(status, ui.BadgeNeutral, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+			}
+	}
+}
+
+// --- version comparison (draft only) ---
+
+// blueprintDiffCard is the "Changes" panel shown for a draft with at least one
+// comparison option. The selector is a plain GET form so it works without JS;
+// onchange submits it immediately for one-click switching.
+templ blueprintDiffCard(d *BlueprintDetail) {
+	@components.TableCard(nil, components.TableCardOpt{CardClass: "mb-6 overflow-hidden"}) {
+		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-base-200 px-4 py-3">
+			<h2 class="text-lg font-semibold tracking-tight">
+				Changes
+				if d.CompareVersion != "" {
+					<span class="text-muted-strong font-normal">vs</span> <span class="font-mono text-base">v{ d.CompareVersion }</span>
+				}
+			</h2>
+			<form method="get" action={ templ.URL("/blueprints/" + url.PathEscape(d.ID)) } class="flex items-center gap-2">
+				<label for="compare-version" class="sr-only">Compare with version</label>
+				<select id="compare-version" name="compare" class="select select-sm w-44" onchange="this.form.submit()">
+					for _, o := range d.CompareOptions {
+						<option value={ o.ID } if o.Version == d.CompareVersion { selected }>{ versionOptionLabel(o) }</option>
+					}
+				</select>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--git-compare"}) {
+					Compare
+				}
+			</form>
+		</div>
+		<div class="p-4">
+			if d.Diff == nil {
+				@ui.EmptyNote() { Select a version to compare. }
+			} else {
+				@blueprintDiffBody(d.Diff)
+			}
+		</div>
+	}
+}
+
+// versionOptionLabel renders a comparison option's label, e.g. "v1.0.0 · Draft".
+func versionOptionLabel(v BlueprintVersionView) string {
+	s := "v" + v.Version
+	if v.Status != "" {
+		s += " · " + strings.ToUpper(v.Status[:1]) + v.Status[1:]
+	}
+	return s
+}
+
+// blueprintDiffBody renders the three diff sections, or a single "no changes"
+// state when every section is empty.
+templ blueprintDiffBody(diff *BlueprintDiff) {
+	if len(diff.ObjectTypes) == 0 && len(diff.RelationshipTypes) == 0 && len(diff.Agents) == 0 {
+		@ui.SoftBox(ui.SoftBoxProps{Padding: "px-4 py-8", Class: "text-center"}) {
+			@ui.EmptyNote() {
+				No changes between <span class="font-mono">v{ diff.BaseVersion }</span> and <span class="font-mono">v{ diff.TargetVersion }</span>.
+			}
+		}
+	} else {
+		<div class="flex flex-col gap-6">
+			if len(diff.ObjectTypes) > 0 {
+				<section class="flex flex-col gap-2">
+					@diffSection("Object types")
+					for _, ot := range diff.ObjectTypes {
+						@objectTypeDiffBlock(ot)
+					}
+				</section>
+			}
+			if len(diff.RelationshipTypes) > 0 {
+				<section class="flex flex-col gap-2">
+					@diffSection("Relationship types")
+					for _, rt := range diff.RelationshipTypes {
+						@relationshipDiffBlock(rt)
+					}
+				</section>
+			}
+			if len(diff.Agents) > 0 {
+				<section class="flex flex-col gap-2">
+					@diffSection("Agents")
+					for _, a := range diff.Agents {
+						@agentDiffBlock(a)
+					}
+				</section>
+			}
+		</div>
+	}
+}
+
+templ diffSection(title string) {
+	<h3 class="text-muted-faint text-[11px] font-semibold tracking-[0.16em] uppercase">{ title }</h3>
+}
+
+// diffBlockClass is the shared entity/property block tint, keyed to the change
+// kind: green for added, red for removed, an orange left accent for changed.
+func diffBlockClass(c DiffChange) string {
+	switch c {
+	case DiffChangeAdded:
+		return "border-success/30 bg-success/10"
+	case DiffChangeRemoved:
+		return "border-error/30 bg-error/10"
+	case DiffChangeChanged:
+		return "border-base-content/10 border-l-2 border-l-warning bg-warning/10"
+	default:
+		return "border-base-content/10"
+	}
+}
+
+// diffChangeChip is the text label that keeps the diff readable without relying
+// on colour alone.
+templ diffChangeChip(c DiffChange) {
+	switch c {
+	case DiffChangeAdded:
+		@ui.Badge(ui.BadgeProps{Label: "Added", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+	case DiffChangeRemoved:
+		@ui.Badge(ui.BadgeProps{Label: "Removed", Variant: ui.BadgeError, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+	case DiffChangeChanged:
+		@ui.Badge(ui.BadgeProps{Label: "Changed", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+	}
+}
+
+// diffValue renders one text field's before/after per its change kind. The
+// +/-/→ markers keep meaning without colour.
+templ diffValue(f FieldDiff) {
+	switch f.Change {
+		case DiffChangeAdded:
+			<span class="text-success font-medium" title="Added">+ { f.After }</span>
+		case DiffChangeRemoved:
+			<span class="text-error line-through decoration-error/50" title="Removed">- { f.Before }</span>
+		case DiffChangeChanged:
+			<span class="inline-flex flex-wrap items-baseline gap-1.5">
+				<span class="text-error line-through decoration-error/50" title="Removed">{ f.Before }</span>
+				<span class="text-muted-faint" aria-hidden="true">→</span>
+				<span class="text-success font-medium" title="Added">{ f.After }</span>
+			</span>
+		default:
+			if f.After != "" {
+				<span class="text-muted-strong">{ f.After }</span>
+			} else if f.Before != "" {
+				<span class="text-muted-strong">{ f.Before }</span>
+			}
+	}
+}
+
+// diffField renders a labelled field row; it is skipped entirely when the field
+// carries no value at all (e.g. an added entity's empty description).
+templ diffField(label string, f FieldDiff) {
+	if f.Before != "" || f.After != "" {
+		<div class="mt-1 flex flex-wrap items-baseline gap-1.5 text-xs">
+			<span class="text-muted-faint text-[10px] font-semibold tracking-[0.14em] uppercase">{ label }</span>
+			@diffValue(f)
+		</div>
+	}
+}
+
+// diffFlag renders a value-less field (widget) as a chip tinted by its change.
+templ diffFlag(label string, f FieldDiff) {
+	switch f.Change {
+		case DiffChangeAdded:
+			@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"title": "Added"}})
+		case DiffChangeRemoved:
+			@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeError, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"title": "Removed"}})
+		case DiffChangeChanged:
+			@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"title": "Changed"}})
+	}
+}
+
+// requiredBadge tints the boolean "required" flag by its change kind. Unchanged
+// requirements carry no value in the frozen diff type, so they render nothing.
+templ requiredBadge(f FieldDiff) {
+	if f.Change != DiffChangeNone {
+		<span class={ templ.KV("line-through decoration-error/50", f.Change == DiffChangeRemoved) }>
+			@ui.Badge(ui.BadgeProps{Label: "required", Variant: requiredIntent(f.Change), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"title": requiredTitle(f.Change)}})
+		</span>
+	}
+}
+
+func requiredIntent(c DiffChange) ui.BadgeIntent {
+	switch c {
+	case DiffChangeAdded:
+		return ui.BadgeSuccess
+	case DiffChangeRemoved:
+		return ui.BadgeError
+	default:
+		return ui.BadgeWarning
+	}
+}
+
+func requiredTitle(c DiffChange) string {
+	switch c {
+	case DiffChangeAdded:
+		return "Required added"
+	case DiffChangeRemoved:
+		return "Required removed"
+	default:
+		return "Required changed"
+	}
+}
+
+// propertyDiffRow is a compact property diff: name, type, required and widget
+// on one line, description below. The row itself is tinted for added/removed
+// properties.
+templ propertyDiffRow(p PropertyDiff) {
+	<div class={ "rounded-box border px-2.5 py-2", diffBlockClass(p.Change) }>
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="font-mono text-xs font-medium">{ p.Name }</span>
+			if p.Change != DiffChangeNone {
+				@diffChangeChip(p.Change)
+			}
+			if p.Type.Change != DiffChangeNone {
+				<span class="text-muted-faint text-[10px] font-semibold tracking-[0.14em] uppercase">Type</span>
+				@diffValue(p.Type)
+			} else if p.Type.After != "" {
+				@ui.Badge(ui.BadgeProps{Label: p.Type.After, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+			}
+			@requiredBadge(p.Required)
+			@diffFlag("widget", p.Widget)
+		</div>
+		@diffField("Label", p.Title)
+		if p.Description.Change != DiffChangeNone {
+			<div class="mt-1 text-xs">@diffValue(p.Description)</div>
+		} else if p.Description.After != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { p.Description.After } }
+		}
+	</div>
+}
+
+templ objectTypeDiffBlock(ot ObjectTypeDiff) {
+	<div class={ "rounded-box border p-3", diffBlockClass(ot.Change) }>
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="font-mono text-sm font-medium">{ ot.Name }</p>
+			@diffChangeChip(ot.Change)
+		</div>
+		@diffField("Label", ot.Label)
+		@diffField("Description", ot.Description)
+		if len(ot.Properties) > 0 {
+			<div class="mt-2 flex flex-col gap-1.5">
+				for _, p := range ot.Properties {
+					@propertyDiffRow(p)
+				}
+			</div>
+		}
+	</div>
+}
+
+templ relationshipDiffBlock(rt RelationshipTypeDiff) {
+	<div class={ "rounded-box border p-3", diffBlockClass(rt.Change) }>
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="font-mono text-sm font-medium">{ rt.Name }</p>
+			@diffChangeChip(rt.Change)
+			if rt.SourceType.Change != DiffChangeNone || rt.TargetType.Change != DiffChangeNone {
+				<div class="flex items-center gap-1.5 text-xs">
+					@diffValue(rt.SourceType)
+					<span class="text-muted-faint" aria-hidden="true">→</span>
+					@diffValue(rt.TargetType)
+				</div>
+			} else if rt.SourceType.After != "" || rt.TargetType.After != "" {
+				@ui.Badge(ui.BadgeProps{Label: rt.SourceType.After + " → " + rt.TargetType.After, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--git-branch"})
+			}
+		</div>
+		@diffField("Label", rt.Label)
+		@diffField("Description", rt.Description)
+	</div>
+}
+
+templ agentDiffBlock(a AgentDiff) {
+	<div class={ "rounded-box border p-3", diffBlockClass(a.Change) }>
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="font-mono text-sm font-medium">{ a.Name }</p>
+			@diffChangeChip(a.Change)
+		</div>
+		@diffField("Model", a.Model)
+		@diffField("Visibility", a.Visibility)
+		@diffField("Description", a.Description)
+		if a.SystemPrompt.Change != DiffChangeNone {
+			@systemPromptDiff(a.SystemPrompt)
+		}
+		if hasChipDiff(a.Tools) {
+			@chipDiffRow("Tools", a.Tools)
+		}
+		if hasChipDiff(a.BannedTools) {
+			@chipDiffRow("Banned tools", a.BannedTools)
+		}
+		if hasChipDiff(a.Skills) {
+			@chipDiffRow("Skills", a.Skills)
+		}
+	</div>
+}
+
+// systemPromptDiff renders a changed/added/removed system prompt as tinted
+// prompt blocks rather than an inline text run (prompts are multi-line).
+templ systemPromptDiff(f FieldDiff) {
+	<div class="mt-3">
+		@ui.Eyebrow("System prompt", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1.5"})
+		if f.Change == DiffChangeAdded {
+			<pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-box border border-success/30 bg-success/10 p-2 font-mono text-[11px] leading-relaxed" title="Added">+ { f.After }</pre>
+		} else if f.Change == DiffChangeRemoved {
+			<pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-box border border-error/30 bg-error/10 p-2 font-mono text-[11px] leading-relaxed text-error/90" title="Removed">- { f.Before }</pre>
+		} else if f.Change == DiffChangeChanged {
+			<div class="flex flex-col gap-2">
+				<pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-box border border-error/30 bg-error/10 p-2 font-mono text-[11px] leading-relaxed text-error/90" title="Removed">{ f.Before }</pre>
+				<pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-box border border-success/30 bg-success/10 p-2 font-mono text-[11px] leading-relaxed" title="Added">{ f.After }</pre>
+			</div>
+		}
+	</div>
+}
+
+// chipDiffRow renders a set difference as green "+" chips and red "-" chips.
+templ chipDiffRow(label string, cd ChipDiff) {
+	@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[10px]", Margin: "mt-3 mb-1.5"})
+	<div class="flex flex-wrap gap-1.5">
+		for _, s := range cd.Added {
+			<span class="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">+ { s }</span>
+		}
+		for _, s := range cd.Removed {
+			<span class="rounded-full border border-error/30 bg-error/10 px-2 py-0.5 font-mono text-[11px] text-error line-through">- { s }</span>
+		}
+	</div>
+}
+
+func hasChipDiff(cd ChipDiff) bool {
+	return len(cd.Added) > 0 || len(cd.Removed) > 0
+}
+
+// deriveVersionDialog forks a new draft version of the current blueprint from
+// the project's effective object types.
+templ deriveVersionDialog(d *BlueprintDetail) {
+	@ui.Dialog(ui.DialogProps{ID: "derive-version-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "derive-version-title"}}) {
+		<div class="flex items-start gap-3">
+			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--git-branch", "size-5")
+			</div>
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-version-title"}) { Save as new version }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) { Create a new draft version of { d.Name } from the object types currently in this project. }
+			</div>
+		</div>
+		<form method="post" action={ templ.URL("/schema/blueprints/" + url.PathEscape(d.ID) + "/versions/derive") } hx-boost="false" class="mt-4 flex flex-col gap-4">
+			<input type="hidden" name="_ui" value="1"/>
+			@form.FormControl("derive-version-label", "Version", form.LabelAbove, "A label for the new draft version.", "", nil) {
+				<input id="derive-version-label" name="version" type="text" required value={ d.SuggestedVersion } placeholder="e.g. 1.2.4" class="input w-full font-mono"/>
+			}
+			@form.FormControl("derive-version-description", "Description", form.LabelAbove, "Optional. What changed in this version.", "", nil) {
+				<textarea id="derive-version-description" name="description" rows="2" placeholder="Derived from the current project schema." class="textarea w-full resize-none"></textarea>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-dialog-close": "derive-version-modal"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
+					Create version
+				}
+			}
+		</form>
+	}
+}
+
+templ blueprintDetailMeta(d *BlueprintDetail) {
+	<div class="mb-6 flex flex-wrap items-center gap-2">
+		@ui.Badge(ui.BadgeProps{Label: d.Source, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+		@releaseBadge(d.Status)
+		if d.Installed {
+			@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+		}
+		if d.Author != "" {
+			@ui.Badge(ui.BadgeProps{Label: d.Author, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--user"})
+		}
+		if d.License != "" {
+			@ui.Badge(ui.BadgeProps{Label: d.License, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+		}
+		if d.RepositoryURL != "" {
+			<a class="text-xs font-medium text-primary hover:underline" href={ templ.URL(d.RepositoryURL) } target="_blank" rel="noopener noreferrer">Repository</a>
+		}
+		if d.DocumentationURL != "" {
+			<a class="text-xs font-medium text-primary hover:underline" href={ templ.URL(d.DocumentationURL) } target="_blank" rel="noopener noreferrer">Documentation</a>
+		}
+		@monoMeta(d.ID, "text-muted-faint")
+	</div>
+}
+
+templ blueprintObjectTypes(d *BlueprintDetail) {
+	@cardList("Object types", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(d.ObjectTypes) == 0,
+		EmptyIcon: "lucide--box", EmptyTitle: "No object types", EmptyDesc: "This blueprint defines no object types.",
+	}) {
+		for _, ot := range d.ObjectTypes {
+			@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "", ot.BoardEnabled, ot.AllowedStatuses)
+		}
+	}
+}
+
+// objectTypeWorkStatuses renders a compact work-status summary for a
+// board-enabled object type: a "Board" indicator badge plus each allowed status
+// as a small status badge, in declaration order. It renders nothing when the
+// type is neither board-enabled nor declares statuses, so callers may invoke it
+// unconditionally. data-testid="object-type-work" and the per-status
+// data-status hook are the test contract.
+templ objectTypeWorkStatuses(boardEnabled bool, allowedStatuses []string) {
+	if boardEnabled || len(allowedStatuses) > 0 {
+		<div class="mt-2 flex flex-wrap items-center gap-1.5" data-testid="object-type-work">
+			if boardEnabled {
+				@ui.Badge(ui.BadgeProps{Label: "Board", Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--kanban-square"})
+			}
+			for _, status := range allowedStatuses {
+				@components.StatusBadge(boardStatusLabel(status), boardStatusIntent(status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true, Attrs: templ.Attributes{"data-status": status}})
+			}
+		</div>
+	}
+}
+
+// objectTypeRow renders one object type definition: the human label (falling
+// back to the machine name), with the machine name (key) shown on an info-icon
+// tooltip when it differs, plus description and inline properties. Shared by
+// the blueprint browser and the schema browser. schemaLabel appends the mono
+// source-schema line used on the schema page (empty on the blueprint page).
+// icon/color carry the type's declared ui accent (schema page only — blueprint
+// rows pass empty, so they render exactly as before). boardEnabled/allowedStatuses
+// carry the type's work-status config and render a summary when present.
+templ objectTypeRow(name string, label string, description string, properties []PropertyDetail, href string, schemaLabel string, icon string, color string, boardEnabled bool, allowedStatuses []string) {
+	<div class="px-4 py-3">
+		<div class="flex flex-wrap items-center gap-2">
+			if icon != "" || color != "" {
+				@typeIconTile(icon, color)
+			}
+			if label != "" {
+				@objectTypeNameLink(label, href)
+				if label != name {
+					@components.HelpTip("Label: " + label + " · Key: " + name, components.HelpTipProps{Position: "bottom"})
+				}
+			} else {
+				@objectTypeNameLink(name, href)
+			}
+		</div>
+		if description != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { description } }
+		}
+		@objectTypeWorkStatuses(boardEnabled, allowedStatuses)
+		if len(properties) > 0 {
+			@objectTypeProperties(properties, true)
+		}
+		if schemaLabel != "" {
+			<p class="text-muted mt-2 font-mono text-[11px]">{ schemaLabel }</p>
+		}
+	</div>
+}
+
+// objectTypeNameLink renders an object type's primary name: a link when href is
+// set (schema browser), plain text otherwise (blueprint browser).
+templ objectTypeNameLink(display string, href string) {
+	if href != "" {
+		<a class="text-sm font-medium text-primary hover:underline" href={ templ.URL(href) }>{ display }</a>
+	} else {
+		<p class="text-sm font-medium">{ display }</p>
+	}
+}
+
+// The four tones below have no distinct semantic tone in the app's single
+// (dark) theme without aliasing another type, so they get page-local badge
+// tones. The class names are rendered by ui.Badge and their --badge-color is
+// set from theme tokens in webui/css/app.css ("Schema property-type badges") —
+// the palette never hardcodes a colour. See TestPropertyTypeToneHuesSeparated
+// for the measured hue separation this guards.
+//
+// `identifier` covers url and the four hex-digest types together: the six
+// semantic tones plus boolean/array/object already leave a single free hue at
+// the guard's 40-degree floor, and url/digest are both "structured string value"
+// types, so they share the one slot rather than re-tinting a semantic tone and
+// colliding with it. The badge label always carries the type name.
+const (
+	propertyTypeBadgeBoolean    ui.BadgeIntent = "memory-prop-type-badge--boolean"
+	propertyTypeBadgeArray      ui.BadgeIntent = "memory-prop-type-badge--array"
+	propertyTypeBadgeObject     ui.BadgeIntent = "memory-prop-type-badge--object"
+	propertyTypeBadgeIdentifier ui.BadgeIntent = "memory-prop-type-badge--identifier"
+)
+
+// propertyTypeIntent maps a schema property type to a badge tone so the type
+// column is scannable at a glance. The vocabulary is the set the schema
+// registry accepts and interprets, NOT the schema editor's select options
+// (propertyTypeOptions): string, url, number, integer, boolean, date, md5,
+// sha1, sha256, sha512, array, object. See
+// docs/public/guides/schema-creation.md and the coercion switches in
+// apps/server/domain/graph/validation.go. `integer` is a distinct registry type
+// (builtin_seeder.go, blueprint YAMLs) and deliberately shares number's tone;
+// url and the four hex-digest types share the `identifier` tone (see above).
+// `null`, `ref`/`object_ref`, `json`, `uuid` and `datetime`
+// are not accepted types, so they are not mapped. Anything else (empty, or a
+// type a future registry adds) falls back to the neutral tone deliberately, so
+// it still renders a readable badge.
+func propertyTypeIntent(t string) ui.BadgeIntent {
+	switch t {
+	case "string":
+		return ui.BadgeInfo
+	case "url", "md5", "sha1", "sha256", "sha512":
+		return propertyTypeBadgeIdentifier
+	case "number", "integer":
+		return ui.BadgeSuccess
+	case "boolean":
+		return propertyTypeBadgeBoolean
+	case "date":
+		return ui.BadgeWarning
+	case "array":
+		return propertyTypeBadgeArray
+	case "object":
+		return propertyTypeBadgeObject
+	default:
+		return ui.BadgeNeutral
+	}
+}
+
+// propertyTypeBadge renders one schema property type as a soft, colour-coded
+// badge. Colour is never the only signal: the type text stays in the label, and
+// the soft style keeps the label contrast adequate in the dark theme.
+templ propertyTypeBadge(t string) {
+	@ui.Badge(ui.BadgeProps{Label: t, Variant: propertyTypeIntent(t), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+}
+
+// propertyName renders one property's display name: the human label when the
+// schema declares a JSON-Schema `title`, with the machine key beneath it in mono
+// secondary text. A property with no label renders exactly as before — the key
+// in mono. Shared by the table and the mobile layout so the fallback is
+// identical in both.
+templ propertyName(p PropertyDetail) {
+	if p.ShowsKey() {
+		<div class="flex flex-col leading-tight">
+			<span class="text-xs font-medium text-base-content">{ p.PropertyLabel() }</span>
+			<span class="font-mono text-[11px] break-all text-muted-subtle">{ p.Name }</span>
+		</div>
+	} else {
+		// No distinct key to show: render the label (the key itself when the
+		// property declares no title), keeping today's mono style.
+		<span class="font-mono text-xs break-all text-muted-bright">{ p.PropertyLabel() }</span>
+	}
+}
+
+// objectTypeProperties lists an object type's property definitions: stacked
+// rows on mobile, a four-column table from md up. showLabel renders the inner
+// "Properties" title — true when the box has no outer section heading (blueprint
+// browser, schema browser), false when a parent <h2> already titles it (schema
+// object-type detail page). Shared by the blueprint browser and the schema
+// browser.
+templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "mt-2"}) {
+		if showLabel {
+			@ui.Eyebrow("Properties", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-2"})
+		}
+		<div class="flex flex-col gap-1.5 md:hidden">
+			for _, p := range properties {
+				<div class="flex flex-wrap items-center gap-2">
+					@propertyName(p)
+					if p.Type != "" {
+						@propertyTypeBadge(p.Type)
+					}
+					if p.Required {
+						@ui.Badge(ui.BadgeProps{Label: "required", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
+					}
+					if p.Description != "" {
+						<span class="text-muted text-xs">{ p.Description }</span>
+					}
+				</div>
+			}
+		</div>
+		<div class="hidden md:block">
+			<table class="table table-sm">
+				<thead>
+					<tr>
+						<th>Property</th>
+						<th>Type</th>
+						<th>Required</th>
+						<th>Description</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, p := range properties {
+						<tr>
+							<td>@propertyName(p)</td>
+							<td>
+								if p.Type != "" {
+									@propertyTypeBadge(p.Type)
+								}
+							</td>
+							<td>
+								if p.Required {
+									@ui.Badge(ui.BadgeProps{Label: "required", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
+								}
+							</td>
+							<td class="text-muted text-xs">{ p.Description }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ blueprintRelationshipTypes(d *BlueprintDetail) {
+	@cardList("Relationship types", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(d.RelationshipTypes) == 0,
+		EmptyIcon: "lucide--git-branch", EmptyTitle: "No relationship types", EmptyDesc: "This blueprint defines no relationship types.",
+	}) {
+		for _, rt := range d.RelationshipTypes {
+			@relationshipTypeRow(rt)
+		}
+	}
+}
+
+// relationshipTypeRow renders one relationship type definition. Shared by the
+// blueprint browser and the schema object-type detail page.
+templ relationshipTypeRow(rt RelationshipTypeDetail) {
+	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+		<p class="text-sm font-medium">{ rt.Name }</p>
+		if rt.SourceType != "" || rt.TargetType != "" {
+			@ui.Badge(ui.BadgeProps{Label: rt.SourceType + " → " + rt.TargetType, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--git-branch"})
+		}
+		if rt.Description != "" {
+			<span class="text-muted text-xs">{ rt.Description }</span>
+		}
+	</div>
+}
+
+// blueprintAgents renders the agent definitions a blueprint carries: name,
+// description, model, tools, skills, config, and full system prompt. It is a
+// read-only preview of the manifest — provider availability for a pinned model
+// is reviewed at install time (the model-map step), never here (#1955).
+templ blueprintAgents(d *BlueprintDetail) {
+	@cardList("Agents", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(d.Agents) == 0,
+		EmptyIcon: "lucide--bot", EmptyTitle: "No agents", EmptyDesc: "This blueprint defines no agents.",
+	}) {
+		for _, a := range d.Agents {
+			@agentDetailRow(a)
+		}
+	}
+}
+
+// agentDetailRow renders one agent definition in full: header (name + model +
+// visibility badges), description, tool list, skills, config, and system
+// prompt.
+templ agentDetailRow(a BundledAgent) {
+	<div class="px-4 py-4">
+		<div class="flex flex-wrap items-center gap-2">
+			if a.UI != nil && (a.UI.Icon != "" || a.UI.Color != "") {
+				@agentIconTile(a.UI.Icon, a.UI.Color)
+			}
+			<p class="text-sm font-medium">{ a.Name }</p>
+			if a.Model != "" {
+				@ui.Badge(ui.BadgeProps{Label: a.Model, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+			}
+			if a.Visibility != "" {
+				@ui.Badge(ui.BadgeProps{Label: a.Visibility, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			}
+		</div>
+		if a.Description != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { a.Description } }
+		}
+		if len(a.Tools) > 0 {
+			@chipRow("Tools", "mt-4 mb-2", false) {
+				for _, t := range a.Tools {
+					<span class="rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 font-mono text-[11px]">{ t }</span>
+				}
+			}
+		}
+		if len(a.BannedTools) > 0 {
+			@chipRow("Banned tools", "mt-4 mb-2", false) {
+				for _, t := range a.BannedTools {
+					<span class="rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 font-mono text-[11px] text-muted line-through">{ t }</span>
+				}
+			}
+		}
+		if len(a.Skills) > 0 {
+			@chipRow("Skills", "mt-4 mb-2", false) {
+				for _, s := range a.Skills {
+					@ui.Badge(ui.BadgeProps{Label: s, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+				}
+			}
+		}
+		if len(a.Config) > 0 {
+			@chipRow("Config", "mt-4 mb-2", false) {
+				for k, v := range a.Config {
+					@ui.Badge(ui.BadgeProps{Label: k + ": " + configValueString(v), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+			}
+		}
+		if a.SystemPrompt != "" {
+			@promptBlock(a.SystemPrompt)
+		}
+	</div>
+}

@@ -1,0 +1,416 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+)
+
+// --- Inbox page (web-inbox capability, task 9.x) ---
+
+// activeProjectIDFromContext resolves the request's active project: the
+// session's project when a session is attached, else the server's static
+// MemoryProjectID (dev/API-key mode).
+func activeProjectIDFromContext(ctx context.Context, fallback string) string {
+	if sc, ok := sessionContextFrom(ctx); ok && sc.ProjectID != "" {
+		return sc.ProjectID
+	}
+	return fallback
+}
+
+// Inbox tab keys. The server's lifecycle tabs (all/important/other/snoozed/
+// cleared) are adapted to the inbox's own tabs: "unread" and "action" are list
+// filters over the all tab, the rest map straight through.
+const (
+	inboxTabAll     = "all"
+	inboxTabUnread  = "unread"
+	inboxTabAction  = "action"
+	inboxTabSnoozed = "snoozed"
+	inboxTabCleared = "cleared"
+)
+
+// inboxTabDef is one tab in the inbox tab strip, in display order.
+type inboxTabDef struct {
+	Key   string
+	Label string
+	Icon  string
+}
+
+// inboxTabs is the ordered tab strip (spec: All / Unread / Action required /
+// Snoozed / Cleared).
+var inboxTabDefs = []inboxTabDef{
+	{Key: inboxTabAll, Label: "All", Icon: "lucide--inbox"},
+	{Key: inboxTabUnread, Label: "Unread", Icon: "lucide--circle-dot"},
+	{Key: inboxTabAction, Label: "Action required", Icon: "lucide--hand"},
+	{Key: inboxTabSnoozed, Label: "Snoozed", Icon: "lucide--alarm-clock"},
+	{Key: inboxTabCleared, Label: "Cleared", Icon: "lucide--archive"},
+}
+
+// inboxTabFor normalizes a raw tab query value, defaulting to all.
+func inboxTabFor(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case inboxTabUnread:
+		return inboxTabUnread
+	case inboxTabAction:
+		return inboxTabAction
+	case inboxTabSnoozed:
+		return inboxTabSnoozed
+	case inboxTabCleared:
+		return inboxTabCleared
+	default:
+		return inboxTabAll
+	}
+}
+
+// inboxView is the render state for InboxPage.
+type inboxView struct {
+	Scope string
+	Tab   string
+	// Notifications is the filtered list for the active scope+tab.
+	Notifications []Notification
+	// Counts is the per-tab summary for the active scope (nil when unavailable).
+	Counts *NotificationCounts
+	// Project is the active project (nil when none is selected).
+	Project *Project
+	// ProjectSelected is true when project scope has a resolvable project.
+	ProjectSelected bool
+	// ProjectNames maps a project id to its display name, for account-scope row
+	// attribution (best-effort: an unresolved id renders no chip).
+	ProjectNames map[string]string
+	// ProjectFilter is the account-scope project filter (?project=), validated
+	// against the fetched project list; "" means "all projects".
+	ProjectFilter string
+	// ProjectOptions is the ordered project list the account filter offers
+	// ("All projects" + the caller's projects).
+	ProjectOptions []ProjectRef
+	// LoadErr is a real list-load failure (Memory unreachable); empty states are
+	// not errors.
+	LoadErr  error
+	FlashMsg string
+	// WarnMsg is the optional warning toast (e.g. a partial merge that left
+	// objects on the branch for review).
+	WarnMsg  string
+	FlashErr error
+}
+
+// inboxProjectFilter returns the effective project filter for an inbox scope.
+// The Project scope narrows to the active project. Everything and Account pass
+// through the user's explicit project filter (?project=): "" lists every row in
+// scope, a non-empty id narrows to that project. That filter is an explicit
+// user choice, not the #1342 auto-narrow — that defect passed the ACTIVE
+// project id for every scope, so a user with 11 account unread spread across 7
+// projects saw only the 2 belonging to the active project while the bell (all
+// account unread) read 11.
+func inboxProjectFilter(scope string, project *Project, filter string) string {
+	if scope == inboxScopeProject {
+		if project == nil {
+			return ""
+		}
+		return project.ID
+	}
+	return filter
+}
+
+// inboxListParams maps the inbox tab onto memory's list filters.
+func inboxListParams(scope, projectID, tab string) NotificationListParams {
+	p := NotificationListParams{Scope: scope, ProjectID: projectID}
+	switch tab {
+	case inboxTabUnread:
+		p.Tab = "all"
+		p.UnreadOnly = true
+	case inboxTabAction:
+		p.Tab = "all"
+		p.RequiresAction = true
+	case inboxTabSnoozed:
+		p.Tab = "snoozed"
+	case inboxTabCleared:
+		p.Tab = "cleared"
+	default:
+		p.Tab = "all"
+	}
+	return p
+}
+
+// uiInbox renders the inbox page: scope switch, tabs, list, and empty states.
+func (s *Server) uiInbox(c echo.Context) error {
+	ctx := c.Request().Context()
+	scope := notificationScope(c.QueryParam("scope"))
+	tab := inboxTabFor(c.QueryParam("tab"))
+	flashMsg, warnMsg, _ := mergeFlashFromQuery(c)
+	view := inboxView{
+		Scope:    scope,
+		Tab:      tab,
+		FlashMsg: flashMsg,
+		WarnMsg:  warnMsg,
+		FlashErr: flashError(c),
+	}
+
+	// Resolve the active project for the Project scope + its opt-in entry.
+	if p, err := s.memory.GetCurrentProject(ctx); err == nil && p != nil {
+		view.Project = p
+	}
+	if scope == inboxScopeProject {
+		if view.Project == nil {
+			// No active project: the Project inbox cannot list anything. Render
+			// the "select a project" empty state without a list call.
+			return s.page(c, pageTitle("Inbox"), InboxPage(view))
+		}
+		view.ProjectSelected = true
+	}
+
+	// Projects for row attribution and the project filter. Everything and
+	// Account both list rows from several projects, so both need the name map
+	// and the option list. Best-effort: a failure leaves an empty name map and
+	// option list, so rows render without a chip and the filter offers only
+	// "All projects". The list itself must still render.
+	if scope != inboxScopeProject {
+		if projects, err := s.memory.ListProjects(ctx); err == nil {
+			view.ProjectOptions = projects
+			view.ProjectNames = make(map[string]string, len(projects))
+			for _, p := range projects {
+				view.ProjectNames[p.ID] = p.Name
+			}
+			// Validate ?project= against the fetched list (fail closed: an
+			// unknown id is ignored, leaving the account inbox unfiltered).
+			if raw := strings.TrimSpace(c.QueryParam("project")); raw != "" {
+				for _, p := range projects {
+					if p.ID == raw {
+						view.ProjectFilter = raw
+						break
+					}
+				}
+			}
+		}
+	}
+
+	projectID := inboxProjectFilter(scope, view.Project, view.ProjectFilter)
+	items, err := s.memory.ListNotifications(ctx, inboxListParams(notificationUpstreamScope(scope), projectID, tab))
+	if err != nil {
+		view.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Inbox"), InboxPage(view))
+	}
+	if items == nil {
+		items = []Notification{}
+	}
+	view.Notifications = items
+
+	// Counts are best-effort: a counts failure must not fail the list render.
+	if counts, cerr := s.memory.NotificationCounts(ctx, notificationUpstreamScope(scope), projectID); cerr != nil {
+		captureError(cerr)
+	} else {
+		view.Counts = counts
+	}
+	return s.page(c, pageTitle("Inbox"), InboxPage(view))
+}
+
+// inboxBellScope resolves the inbox scope a request is displaying, so the bell
+// can count exactly the inbox it links to. Only the inbox route carries a
+// scope; every other page defaults to the Everything inbox — the one the bell
+// lands on. Project scope resolves the active project and never falls back to a
+// different scope.
+//
+// Two regressions live in this function's history. #1342: the bell summed the
+// account and project scopes while the inbox listed only one, so a user with 9
+// project unread and 2 account unread saw a bell of 11 over an inbox of 2.
+// #document-lifecycle: the default scope was account, so project activity (a
+// document uploaded by a teammate) never ticked the bell on any other page.
+// Both are fixed by the same invariant — the bell counts the scope the inbox
+// lists, and the default inbox now lists everything.
+func (s *Server) inboxBellScope(c echo.Context) (scope, projectID string) {
+	scope = inboxScopeAll
+	if c.Path() == "/inbox" {
+		scope = notificationScope(c.QueryParam("scope"))
+	}
+	if scope == inboxScopeProject {
+		projectID = activeProjectIDFromContext(c.Request().Context(), s.cfg.MemoryProjectID)
+	}
+	return scope, projectID
+}
+
+// notificationUnread returns the bell's unread count for one inbox scope: the
+// number of unread rows the inbox list for that scope will show. It is the ONLY
+// number the bell renders, so the badge can never disagree with the list it
+// links to. Best-effort — any failure degrades to 0 so a counts hiccup never
+// blocks a page render. Project scope with no resolvable project has no inbox
+// to list, so it counts as zero rather than falling back to every project.
+func (s *Server) notificationUnread(ctx context.Context, scope, projectID string) int {
+	if scope == inboxScopeProject && projectID == "" {
+		return 0
+	}
+	c, err := s.memory.NotificationCounts(ctx, notificationUpstreamScope(scope), projectID)
+	if err != nil || c == nil {
+		return 0
+	}
+	return c.Unread
+}
+
+// inboxFilterHref builds an inbox link preserving the scope, tab, and account
+// project filter. The project param is dropped when empty, so project-scope
+// tabs and an unfiltered account inbox keep a clean URL.
+func inboxFilterHref(scope, tab, project string) string {
+	q := url.Values{"scope": {scope}, "tab": {tab}}
+	if project != "" {
+		q.Set("project", project)
+	}
+	return "/inbox?" + q.Encode()
+}
+
+// inboxScopeHref builds a scope-switch link (resets to the all tab and drops
+// the project filter). Everything is the default scope, so its link is the bare
+// inbox URL.
+func inboxScopeHref(scope string) string {
+	if scope == inboxScopeAll {
+		return "/inbox"
+	}
+	return "/inbox?" + url.Values{"scope": {scope}}.Encode()
+}
+
+// inboxScopeCount returns the unread count shown next to the scope switch's
+// Project entry (account count is covered by the bell).
+func (v inboxView) scopeUnread() int {
+	if v.Counts == nil {
+		return 0
+	}
+	return v.Counts.Unread
+}
+
+// --- Notification preferences page (project-inbox opt-in, task 9.3) ---
+
+// notificationPrefsView is the render state for NotificationPreferencesPage.
+type notificationPrefsView struct {
+	// Project is the active project whose preferences are being managed (nil
+	// when no project is selected).
+	Project     *Project
+	Preferences []NotificationPreference
+	LoadErr     error
+	FlashMsg    string
+	FlashErr    error
+}
+
+// uiNotificationPreferences renders the project-event opt-in page reachable
+// from the Project inbox. Preferences are project-scoped: the page resolves the
+// active project and reads that project's effective preferences.
+func (s *Server) uiNotificationPreferences(c echo.Context) error {
+	ctx := c.Request().Context()
+	view := notificationPrefsView{
+		FlashMsg: flashFromQuery(c, []flashParam{{key: "saved", msg: "Notification preferences saved."}}),
+		FlashErr: flashError(c),
+	}
+	if p, err := s.memory.GetCurrentProject(ctx); err == nil && p != nil {
+		view.Project = p
+	}
+	if view.Project == nil {
+		// No active project: nothing to scope preferences to. Render the
+		// select-a-project empty state instead of an inert global toggle list.
+		return s.page(c, pageTitle("Notification settings"), NotificationPreferencesPage(view))
+	}
+	prefs, err := s.memory.ListNotificationPreferences(ctx, view.Project.ID)
+	if err != nil {
+		view.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Notification settings"), NotificationPreferencesPage(view))
+	}
+	sort.SliceStable(prefs, func(i, j int) bool { return prefs[i].Label < prefs[j].Label })
+	view.Preferences = prefs
+	return s.page(c, pageTitle("Notification settings"), NotificationPreferencesPage(view))
+}
+
+// uiNotificationPreferencesSave persists every submitted toggle and redirects
+// back to the page (PRG). Each project-event key is submitted as
+// "pref_<eventKey>" → "on"|"off"; required keys are never toggled off.
+func (s *Server) uiNotificationPreferencesSave(c echo.Context) error {
+	ctx := c.Request().Context()
+	form, err := c.FormParams()
+	if err != nil {
+		return redirectWithError(c, "/inbox/preferences", err)
+	}
+	// Preferences are project-scoped. Prefer the project carried by the form;
+	// fall back to the active project so a direct POST still resolves.
+	projectID := strings.TrimSpace(form.Get("project_id"))
+	if projectID == "" {
+		if p, perr := s.memory.GetCurrentProject(ctx); perr == nil && p != nil {
+			projectID = p.ID
+		}
+	}
+	if projectID == "" {
+		return redirectWithError(c, "/inbox/preferences", errors.New("no active project selected"))
+	}
+	keys := make([]string, 0, len(form))
+	for k := range form {
+		if key, ok := strings.CutPrefix(k, "pref_"); ok {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		enabled := form.Get("pref_"+key) != ""
+		if err := s.memory.SetNotificationPreference(ctx, projectID, key, "in_app", enabled); err != nil {
+			return redirectWithError(c, "/inbox/preferences", err)
+		}
+	}
+	return c.Redirect(http.StatusSeeOther, "/inbox/preferences?saved=1")
+}
+
+// --- extraction review merge (inbox CTA, task: extraction review UI) ---
+
+// uiInboxMergePreview renders the merge preview modal for a review-ready inbox
+// notification: the server's predicted split before the user confirms. The
+// document and job ids come from the notification's details payload and travel
+// on the lazy preview URL. It shares mergePreviewModal with the document flow.
+func (s *Server) uiInboxMergePreview(c echo.Context) error {
+	ctx := c.Request().Context()
+	documentID := strings.TrimSpace(c.QueryParam("document"))
+	jobID := strings.TrimSpace(c.QueryParam("job"))
+	actionURL := inboxMergeActionURL(documentID, jobID)
+
+	job, err := s.findExtractionJob(ctx, documentID, jobID)
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		return nil
+	}
+	branchID, _, ok := s.extractionJobBranch(ctx, job)
+	if !ok {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, fmt.Errorf("this extraction has no staging branch to merge")))
+		return nil
+	}
+	res, err := s.memory.PreviewMergeBranch(ctx, branchID, "partial")
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		return nil
+	}
+	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, nil))
+	return nil
+}
+
+// uiInboxMerge merges the staging branch of a review-ready notification's
+// extraction job, resolves the branch's review-ready notifications, and
+// PRG-redirects to the inbox with the truthful result query (?merged=N, plus
+// ?review=M when the merge was partial).
+func (s *Server) uiInboxMerge(c echo.Context) error {
+	ctx := c.Request().Context()
+	documentID := strings.TrimSpace(c.QueryParam("document"))
+	jobID := strings.TrimSpace(c.QueryParam("job"))
+
+	res, branchID, err := s.mergeExtractionBranch(ctx, documentID, jobID)
+	if err != nil {
+		return redirectWithError(c, "/inbox", err)
+	}
+	// Resolve the branch's review-ready notifications only when the merge closed
+	// the branch (nothing left for review, no conflicts) — the same predicate the
+	// server uses to stamp merged_at. On a partial merge the branch stays open
+	// with objects still to review, so the reminder must stay actionable and the
+	// user retries after handling the conflicts. Best-effort: a resolve failure
+	// must not hide the merge result.
+	if res != nil && res.LeftForReviewCount == 0 && res.ConflictCount == 0 {
+		if err := s.memory.ResolveNotificationsForResource(ctx, "graph_branch", branchID); err != nil {
+			captureError(err)
+		}
+	}
+	redirectAfterMutation(c, "/inbox"+mergeResultQuery(res, ""))
+	return nil
+}

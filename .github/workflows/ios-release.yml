@@ -1,0 +1,281 @@
+name: iOS Release (TestFlight)
+
+# Stable channel: tag vX.Y.Z → archive VoiceAgent, export IPA, upload to TestFlight.
+#
+# The skip decision diffs apps/ios/** against the last commit that was actually
+# uploaded (an `ios-release-uploaded/vX.Y.Z` marker tag written by the build job
+# on success), falling back to the previous `vX.Y.Z` app tag before any marker
+# exists. This is deliberately *not* `git describe HEAD^` against the nearest
+# tag: both `vX.Y.Z` and `apps/server/pkg/sdk/vX.Y.Z` are pushed per release, so
+# the nearest-tag choice is nondeterministic, and diffing against the immediate
+# predecessor lets an unbuilt tag "consume" a change forever. (See #1612.)
+# Logic: .github/scripts/ios-release-should-build.sh (unit-tested in meta CI).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force build even if unchanged'
+        type: boolean
+        default: false
+      version:
+        description: 'Release version X.Y.Z. Required when dispatching from a branch; ignored for v* tag refs.'
+        type: string
+        required: false
+        default: ''
+      xcode_path:
+        description: 'Xcode bundle to build with (e.g. /Applications/Xcode_27.1.app). Defaults to the ACCEPTED_XCODE_PATH repository variable, then the newest installed release.'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check if changed
+    runs-on: [self-hosted, linux, x64, memory]
+    outputs:
+      changed: ${{ steps.c.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Diff since last uploaded build
+        id: c
+        shell: bash
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: .github/scripts/ios-release-should-build.sh >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build & upload to TestFlight
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    # contents: write is needed only to push the ios-release-uploaded/* marker
+    # tag that records a successful upload (used by the next run's skip check).
+    permissions:
+      contents: write
+    # Team comes from a secret when set; the scripts below fall back to this
+    # repo's team (74LC88G9SC) so forks only set the secret.
+    env:
+      DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        id: xcode
+        env:
+          # A tag push cannot take inputs, so the durable pin is the repository
+          # variable; `xcode_path` is the one-off override for a re-run. Chosen
+          # deliberately and reported, because App Store Connect accepts an SDK
+          # only once Apple opens submissions for it — a newer Xcode installed
+          # mid-release is the usual cause of an upload rejected with 90534.
+          ACCEPTED_XCODE_PATH: ${{ inputs.xcode_path || vars.ACCEPTED_XCODE_PATH }}
+        run: |
+          XCODE=$(.github/scripts/select-xcode.sh)
+          CURRENT="$(xcode-select -p 2>/dev/null || true)"
+          if [ "$CURRENT" != "$XCODE/Contents/Developer" ]; then
+            if ! sudo -n xcode-select -s "$XCODE"; then
+              echo "::error::Cannot switch to selected Xcode '$XCODE': 'sudo -n xcode-select -s' failed (passwordless sudo unavailable on this runner). Point ACCEPTED_XCODE_PATH at the already-active bundle, or grant the runner passwordless sudo."
+              exit 1
+            fi
+          fi
+          BUNDLE_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$XCODE/Contents/Info.plist")"
+          ACTIVE_VERSION="$(xcodebuild -version | awk 'NR==1 {print $2}')"
+          if [ "$ACTIVE_VERSION" != "$BUNDLE_VERSION" ]; then
+            echo "::error::xcode-select -s '$XCODE' did not take effect: xcodebuild reports '$ACTIVE_VERSION', selected bundle is '$BUNDLE_VERSION'."
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Derive version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            MARKETING="${GITHUB_REF_NAME#v}"
+          else
+            MARKETING="${INPUT_VERSION:-}"
+          fi
+          # A branch dispatch used to silently produce MARKETING_VERSION=0.0.0.
+          # Require a real version: dispatch from a v* tag ref, or pass the
+          # `version` input.
+          if [[ ! "$MARKETING" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::No release version resolved (ref=${GITHUB_REF}). Dispatch from a v* tag, or pass the 'version' input (X.Y.Z)."
+            exit 1
+          fi
+          echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
+          echo "build_number=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Write App Store Connect API key
+        run: |
+          mkdir -p /tmp/private_keys
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+          chmod 600 /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+
+      - name: Import signing certificate
+        env:
+          APPLE_DIST_CERT_BASE64: ${{ secrets.APPLE_DIST_CERT_BASE64 }}
+          APPLE_DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/ios-signing.keychain-db
+          # Idempotent: a leftover keychain from an earlier attempt on this runner
+          # would make create-keychain fail under `bash -e`.
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          security create-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          echo "$APPLE_DIST_CERT_BASE64" | base64 --decode -o "$RUNNER_TEMP/ios-dist.p12"
+          security import "$RUNNER_TEMP/ios-dist.p12" -P "$APPLE_DIST_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # Grant codesign non-interactive access to the imported private key.
+          # Without this, exportArchive fails on a headless runner with
+          # errSecInternalComponent / "unable to build chain to self-signed root"
+          # when signing nested binaries during export.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "temp-keychain-password" "$KEYCHAIN_PATH"
+          # PREPEND the signing keychain to the existing search list (do not
+          # replace it): the Apple Distribution intermediate/root in the System
+          # and login keychains must stay reachable so codesign can build the chain.
+          security list-keychain -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Archive
+        working-directory: apps/ios
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          xcodebuild archive \
+            -project VoiceAgent.xcodeproj \
+            -scheme VoiceAgent \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/VoiceAgent.xcarchive \
+            DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-74LC88G9SC}" \
+            CODE_SIGNING_ALLOWED=NO \
+            SWIFT_VERSION=5 \
+            MARKETING_VERSION="${MARKETING_VERSION}" \
+            CURRENT_PROJECT_VERSION="${BUILD_NUMBER}"
+
+      - name: Export IPA
+        working-directory: apps/ios
+        run: |
+          # xcodebuild -exportOptionsPlist cannot read the environment, so render
+          # a resolved copy of the tracked template with the configured team
+          # (defaults to this repo's team so forks only set the secret).
+          DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-74LC88G9SC}"
+          mkdir -p build
+          cp ExportOptions.plist build/ExportOptions.plist
+          plutil -replace teamID -string "$DEVELOPMENT_TEAM" build/ExportOptions.plist
+          xcodebuild -exportArchive \
+            -archivePath build/VoiceAgent.xcarchive \
+            -exportPath build/Export \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.APP_STORE_CONNECT_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-ios-${{ github.sha }}
+          path: apps/ios/build/Export/*.ipa
+          # The IPA is uploaded to TestFlight in this same job, so the Actions
+          # artifact is a debug convenience only — App Store Connect is the
+          # durable store. Keep retention short (#1834).
+          retention-days: 7
+
+      - name: Upload to TestFlight
+        # The toolchain goes through env, never into the run body: step outputs
+        # are dynamic values, and check-injection.py rightly rejects expanding
+        # them inline.
+        env:
+          XCODE_PATH: ${{ steps.xcode.outputs.xcode }}
+          XCODE_VERSION: ${{ steps.xcode.outputs.version }}
+          IOS_SDK: ${{ steps.xcode.outputs.sdk }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+          IPA=$(find apps/ios/build/Export -name "*.ipa" -type f | head -1)
+          [ -z "$IPA" ] && { echo "::error::No IPA found"; exit 1; }
+          # App Store Connect refuses an SDK it has not opened for submissions
+          # with `IrisAPI -19241 / code 90534`, which says nothing about which
+          # toolchain was used. Say it, and name the fix: the same build passes
+          # once the last accepted Xcode is pinned.
+          set +e
+          xcrun altool --upload-app \
+            -f "$IPA" \
+            -t ios \
+            --apiKey "${{ secrets.APP_STORE_CONNECT_KEY_ID }}" \
+            --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
+            --output-format xml 2>&1 | tee /tmp/altool-upload.log
+          status=${PIPESTATUS[0]}
+          set -e
+          # Match the rejection by its text, not only by the exit status: a
+          # zero-exit altool that still reported 90534 would otherwise be
+          # treated as a successful upload and write the marker tag the next
+          # release's skip check relies on.
+          if grep -qE '90534|Unsupported SDK or Xcode version' /tmp/altool-upload.log; then
+            echo "::error::App Store Connect rejected this build as an unsupported SDK or Xcode (90534). It was built with ${XCODE_PATH} (Xcode ${XCODE_VERSION}, iOS SDK ${IOS_SDK}). Apple accepts an SDK only from an Xcode release it supports, so a newer Xcode installed after the last good release is the usual cause. Pin the last accepted bundle with the ACCEPTED_XCODE_PATH repository variable or the xcode_path dispatch input, then re-run."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::TestFlight upload failed (altool exit $status); see the altool output above."
+            exit "$status"
+          fi
+
+      - name: Record upload marker
+        # Only meaningful for tag releases; marks this commit as uploaded so the
+        # next tag's skip check diffs against it instead of the nearest tag.
+        # Best-effort: a missing marker only costs one redundant rebuild later.
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: |
+          tag="ios-release-uploaded/v${MARKETING}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Marker $tag already exists; nothing to do."
+            exit 0
+          fi
+          git tag "$tag"
+          if git push origin "refs/tags/$tag"; then
+            echo "Recorded upload marker $tag"
+          else
+            echo "::warning::Could not push upload marker $tag; the next release will fall back to the previous app tag."
+          fi
+
+      - name: Clean up signing keychain and p12
+        # Runs even when an earlier step failed, so signing material never
+        # survives the job. Every command is best-effort (`|| true`) so cleanup
+        # cannot mask the real job result.
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/ios-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH" 2>/dev/null || true
+            # Remove the imported distribution identity before dropping the keychain.
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null \
+              | awk '/"Apple Distribution/ {print $2}' \
+              | while read -r HASH; do
+                  if [ -n "$HASH" ]; then
+                    security delete-identity -Z "$HASH" "$KEYCHAIN_PATH" 2>/dev/null || true
+                  fi
+                done
+          fi
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          # Restore the user keychain search list so no dangling temp entry is
+          # left behind on the (self-hosted) runner.
+          security list-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/ios-dist.p12"

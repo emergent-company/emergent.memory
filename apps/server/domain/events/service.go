@@ -1,0 +1,267 @@
+package events
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// Subscriber is a callback function for receiving events
+type Subscriber func(event EntityEvent)
+
+// subscriberEntry holds a subscriber with a unique ID for removal
+type subscriberEntry struct {
+	id       uint64
+	callback Subscriber
+}
+
+// Service handles event pub/sub for real-time updates
+type Service struct {
+	log         *slog.Logger
+	subscribers map[string][]subscriberEntry // projectID -> subscribers
+	mu          sync.RWMutex
+	nextID      uint64
+}
+
+// NewService creates a new events service
+func NewService(log *slog.Logger) *Service {
+	return &Service{
+		log:         log.With(logger.Scope("events.service")),
+		subscribers: make(map[string][]subscriberEntry),
+	}
+}
+
+// Subscribe registers a callback for events on a specific project.
+// If projectID is "*", it subscribes to events across all projects.
+// Returns an unsubscribe function
+func (s *Service) Subscribe(projectID string, callback Subscriber) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.nextID++
+	id := s.nextID
+	entry := subscriberEntry{id: id, callback: callback}
+	s.subscribers[projectID] = append(s.subscribers[projectID], entry)
+
+	// Return unsubscribe function
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		subs := s.subscribers[projectID]
+		for i, sub := range subs {
+			if sub.id == id {
+				s.subscribers[projectID] = append(subs[:i], subs[i+1:]...)
+				break
+			}
+		}
+
+		// Clean up empty subscriber lists
+		if len(s.subscribers[projectID]) == 0 {
+			delete(s.subscribers, projectID)
+		}
+	}
+}
+
+// Emit broadcasts an event to all subscribers for the project, and to global subscribers.
+func (s *Service) Emit(event EntityEvent) {
+	s.mu.RLock()
+	projectSubs := s.subscribers[event.ProjectID]
+	globalSubs := s.subscribers["*"]
+
+	// Create a combined list of subscribers
+	var subs []subscriberEntry
+	if len(projectSubs) > 0 {
+		subs = append(subs, projectSubs...)
+	}
+	if len(globalSubs) > 0 {
+		subs = append(subs, globalSubs...)
+	}
+	s.mu.RUnlock()
+
+	if len(subs) == 0 {
+		return
+	}
+
+	s.log.Debug("emitting event",
+		slog.String("type", string(event.Type)),
+		slog.String("entity", string(event.Entity)),
+		slog.String("project_id", event.ProjectID),
+		slog.Int("subscribers", len(subs)),
+	)
+
+	for _, sub := range subs {
+		// Call subscriber in goroutine to avoid blocking
+		go sub.callback(event)
+	}
+}
+
+// resolveActor returns the actor to stamp on an emitted event. An explicit
+// opts.Actor is authoritative; when it is nil the actor stamped on ctx via
+// auth.WithActor is used, and nil is returned when neither is present.
+//
+// This is the single choke point that connects auth.WithActor (stamped at the
+// agent run / MCP endpoint / extraction boundaries) to EntityEvent.Actor, which
+// the reaction trigger gate reads (see agent-reaction-triggers).
+func resolveActor(ctx context.Context, opts *EmitOptions) *ActorContext {
+	if opts != nil && opts.Actor != nil {
+		return opts.Actor
+	}
+	return actorFromContext(ctx)
+}
+
+// actorFromContext reads the actor stamped on ctx by auth.WithActor. It returns
+// nil when no actor is present — including the "clear" form, which shadows a
+// parent context's actor.
+func actorFromContext(ctx context.Context) *ActorContext {
+	if ctx == nil {
+		return nil
+	}
+	actorType, actorID, ok := auth.ActorFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	actor := &ActorContext{ActorType: ActorType(actorType)}
+	if actorID != nil {
+		actor.ActorID = actorID.String()
+	}
+	return actor
+}
+
+// EmitCreated emits an entity.created event
+func (s *Service) EmitCreated(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeCreated,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Data = opts.Data
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
+// EmitUpdated emits an entity.updated event
+func (s *Service) EmitUpdated(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeUpdated,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Data = opts.Data
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
+// EmitDeleted emits an entity.deleted event
+func (s *Service) EmitDeleted(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeDeleted,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
+// EmitStatusChanged emits an entity.status_changed event
+func (s *Service) EmitStatusChanged(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeStatusChanged,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Data = opts.Data
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
+// EmitAssigned emits an entity.assigned event
+func (s *Service) EmitAssigned(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeAssigned,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Data = opts.Data
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
+// EmitBatch emits an entity.batch event for multiple entities
+func (s *Service) EmitBatch(ctx context.Context, entity EntityType, ids []string, projectID string, data map[string]any) {
+	event := EntityEvent{
+		Type:      EventTypeBatch,
+		Entity:    entity,
+		ID:        nil,
+		IDs:       ids,
+		ProjectID: projectID,
+		Data:      data,
+		Actor:     actorFromContext(ctx),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	s.Emit(event)
+}
+
+// GetSubscriberCount returns the number of subscribers for a project
+func (s *Service) GetSubscriberCount(projectID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subscribers[projectID])
+}
+
+// GetTotalSubscriberCount returns the total number of subscribers across all projects
+func (s *Service) GetTotalSubscriberCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	total := 0
+	for _, subs := range s.subscribers {
+		total += len(subs)
+	}
+	return total
+}

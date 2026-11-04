@@ -1,0 +1,75 @@
+name: Dispatch dev deploy
+
+# Thin caller that tells the private infra repo emergent-company/emergent.memory.infra
+# to deploy the new product `main` to dev. The durable dev-deploy trigger is a
+# `repository_dispatch` fired by the event that matters — a product merge to
+# `main` — rather than a sub-daily cron in the infra repo, where GitHub throttles
+# every schedule (a `*/15` declaration delivers a handful of runs a day, so no
+# cron there can gate dev at sub-hour). The decision and its measurements live in
+# the infra repo's dev auto-deploy doc.
+#
+# Depends on the infra receiver being on that repo's default branch. Until its
+# `repository_dispatch: types: [dev-deploy]` trigger is merged, the POST below is
+# accepted (HTTP 204) but no infra workflow consumes it, so this caller is a
+# harmless no-op; the first real deploy fires from the next product push after
+# the receiver lands. Once live, the infra workflow owns all the real logic
+# (drift gate, deploy, health gate) and this job only forwards the product repo
+# and SHA and mints the dispatch token.
+#
+# Why a standalone workflow rather than a step in ci.yml: `ci` is a
+# branch-protection-required check. If this credential or the network were
+# unavailable, a step in that job would red a required check and block every
+# merge. This caller is not required, so a refused dispatch surfaces as its own
+# red run without gating merges.
+#
+# Client payload contract with the infra workflow:
+#   repository -> github.repository (trace/logging)
+#   sha        -> github.sha, informational only. The infra drift gate compares
+#                 its own origin/main with the deployed marker, so a stale or
+#                 duplicate payload can never deploy an older commit, and a
+#                 duplicate dispatch is a seconds-long no-op.
+#
+# Dispatch token: the job mints a short-lived installation token scoped to
+# emergent-company/emergent.memory.infra using the GitHub App identified by
+# secrets GH_APP_ID / GH_APP_PRIVATE_KEY. That App must be installed on the infra
+# repo with `contents: write`, which is what POST
+# /repos/{owner}/{repo}/dispatches requires.
+
+on:
+  push:
+    branches: [main]
+
+# A burst of merges collapses to one in-flight dispatch: the infra drift gate
+# deploys whatever `main` is when the run starts, so a superseded dispatch has
+# nothing extra to do.
+concurrency:
+  group: dispatch-dev-deploy
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: Dispatch dev deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Mint infra dispatch token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: emergent-company
+          repositories: emergent.memory.infra
+      - name: Dispatch dev-deploy event to infra
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api repos/emergent-company/emergent.memory.infra/dispatches \
+            --method POST \
+            -f event_type=dev-deploy \
+            -f "client_payload[repository]=$REPO" \
+            -f "client_payload[sha]=$SHA"

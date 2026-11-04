@@ -1,0 +1,593 @@
+name: E2E Tests
+
+# Path-filtered: E2E builds the server image (and the CLI inside it) from
+# apps/server/** and apps/cli/** (plus deploy/**, e2e/**, and the root
+# .dockerignore), then runs the compose stack in e2e/**.
+# It is NOT a required check, so a path filter cannot wedge unrelated PRs the
+# way an unfiltered required check would.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+      - 'apps/cli/**'
+      - 'deploy/**'
+      - 'e2e/**'
+      - 'go.work'
+      - 'VERSION'
+      - '.github/workflows/e2e.yml'
+      - '.dockerignore'
+  pull_request:
+    paths:
+      - 'apps/server/**'
+      - 'apps/cli/**'
+      - 'deploy/**'
+      - 'e2e/**'
+      - 'go.work'
+      - 'VERSION'
+      - '.github/workflows/e2e.yml'
+      - '.dockerignore'
+  workflow_dispatch:
+    inputs:
+      TEST_RUN:
+        description: "Optional -run filter (e.g. TestCLIInstalled_Version)"
+        required: false
+        default: ""
+
+# Serialise runs on the same ref instead of cancelling the in-flight one.
+# Cancelling a running e2e job is precisely what strands a compose project on the
+# shared self-hosted Docker host: the runner stops the job mid-step, the
+# `if: always()` teardown steps never execute, and the stack survives as a
+# "healthy" zombie (#2008). A superseded PR run therefore queues behind the older
+# one. `teardown` below reaps anything an earlier attempt of the same run left
+# behind.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # integration: full Docker Compose stack (server + CLI test runner)
+  # ───────────────────────────────────────────────────────────────────────────
+  integration:
+    name: CLI Install Tests
+    # Fork PRs must never execute on the self-hosted runner (read-only token,
+    # no org hardware). Same-repo PRs and main pushes run normally.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: e2e
+
+    env:
+      # Per-run, per-job image tag (#2008): the three jobs here share one
+      # self-hosted Docker daemon, so a single `memory-server:ci` tag let them
+      # build over each other's image and made a leaked container
+      # unattributable. `teardown` removes every `memory-server:ci-<run_id>-*`
+      # image this run leaves behind.
+      MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-integration
+      # e2e is a standalone module with its own workspace (e2e/go.work), so the
+      # root build list cannot perturb it: runlog pins an older
+      # google.golang.org/adk whose telemetry does not compile against the
+      # otel/log version adk/v2 selects. GOWORK=off keeps CI independent of the
+      # workspace files entirely.
+      GOWORK: "off"
+      # Unique per run/job so concurrent jobs sharing one self-hosted Docker
+      # daemon never collide on container names, the default network, or host
+      # ports. Paired with ephemeral loopback port bindings in docker-compose.
+      # The attempt is in the name so a re-run starts from an empty project
+      # rather than adopting a cancelled attempt's containers and volumes;
+      # `teardown` reaps every attempt of this run id by label prefix.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-integration
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      # Pin the docker-container builder this action creates for the
+      # bare `docker build` / `docker compose ... --build` steps inside
+      # e2e/run_tests.sh. On the Linux runner the daemon-default builder (docker
+      # driver) hands build containers systemd-resolved's stub resolver
+      # 127.0.0.53, which is unreachable from the build netns, so every network
+      # `RUN` dies: `dial tcp: lookup proxy.golang.org on 127.0.0.53:53: network
+      # is unreachable`. The named builder resolves fine. Export its name so both
+      # the script (E2E_BUILDX_BUILDER) and compose (BUILDX_BUILDER) select it.
+      - name: Export buildx builder for bare docker builds
+        env:
+          BUILDER_NAME: ${{ steps.buildx.outputs.name }}
+        run: |
+          {
+            echo "E2E_BUILDX_BUILDER=${BUILDER_NAME}"
+            echo "BUILDX_BUILDER=${BUILDER_NAME}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build memory-server image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          load: true
+          push: false
+          tags: ${{ env.MEMORY_SERVER_IMAGE }}
+          # Mirror server.yml: PR runs only consume the cache; the default
+          # branch writes it. `mode=max` on every PR ref is what filled the
+          # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
+          cache-from: type=gha
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=min,ignore-error=true' || '' }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test. The server image is
+      # built locally ($MEMORY_SERVER_IMAGE) and the test client/registry services
+      # are built, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db seaweedfs mailpit
+
+      # Distinct infrastructure step: the test image build fetches the pinned
+      # opencode release binary (issue #944). A fetch failure must read as
+      # infrastructure, not as a failing test, so build the image here and let
+      # the test step below reuse the cached layer.
+      - name: "Preflight: build test image (fetches opencode)"
+        run: ./run_tests.sh --build-only
+
+      - name: Run CLI install tests
+        env:
+          TEST_RUN: ${{ inputs.TEST_RUN }}
+        run: ./run_tests.sh
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: e2e/test-logs/
+          retention-days: 7
+
+      # Distinct teardown step so a cancelled/killed test run cannot leak the
+      # per-run `e2e-<runid>-integration_default` network (#1876). Mirrors the
+      # `api` and `mailgun` jobs' `Stop server stack` step.
+      - name: Stop server stack
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # api: run HTTP API tests (tests/api/) against a fresh Docker Compose stack.
+  # ───────────────────────────────────────────────────────────────────────────
+  api:
+    name: API Tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: e2e
+
+    env:
+      # Per-run, per-job image tag (#2008) — see the `integration` job.
+      MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-api
+      # e2e is a standalone module with its own workspace (e2e/go.work), so the
+      # root build list cannot perturb it: runlog pins an older
+      # google.golang.org/adk whose telemetry does not compile against the
+      # otel/log version adk/v2 selects. GOWORK=off keeps CI independent of the
+      # workspace files entirely.
+      GOWORK: "off"
+      # Unique per run/job so concurrent jobs sharing one self-hosted Docker
+      # daemon never collide on container names, the default network, or host
+      # ports. Paired with ephemeral loopback port bindings in docker-compose.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      - name: Build memory-server image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          load: true
+          push: false
+          tags: ${{ env.MEMORY_SERVER_IMAGE }}
+          # Mirror server.yml: PR runs only consume the cache; the default
+          # branch writes it. `mode=max` on every PR ref is what filled the
+          # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
+          cache-from: type=gha
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=min,ignore-error=true' || '' }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: e2e/go.mod
+          # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
+          # disk between jobs, so the built-in Actions cache only adds multi-GB
+          # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).
+          cache: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test. The server image is
+      # built locally ($MEMORY_SERVER_IMAGE) and the test client/registry services
+      # are built, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db seaweedfs mailpit
+
+      - name: Start server stack
+        run: |
+          set -euo pipefail
+          cp .env.example .env 2>/dev/null || true
+          # Retry `docker compose up -d` up to twice (max 2 attempts) when the
+          # BuildKit transport dies mid-build — the builder-restart/GC race from
+          # #374, not a test failure (#449). Only the BuildKit transport markers
+          # below trigger a retry; a real compose/build/test failure is not.
+          compose_up_log="${RUNNER_TEMP}/docker-compose-up.log"
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            if docker compose up -d 2>&1 | tee "${compose_up_log}"; then
+              break
+            fi
+            if grep -Eq 'graceful_stop|error reading server preface|dial unix /run/buildkit/buildkitd\.sock|failed to receive status|code = Unavailable|error reading from server: EOF' "${compose_up_log}"; then
+              if [ "${attempt}" -lt 2 ]; then
+                echo "::warning::docker compose up -d hit a BuildKit transport error (attempt ${attempt}/2); retrying once (#449)"
+                sleep 5
+                continue
+              fi
+              echo "::error::docker compose up -d still failing with a BuildKit transport error after ${attempt} attempts"
+              exit 1
+            fi
+            echo "::error::docker compose up -d failed with a non-transport error; not retrying"
+            exit 1
+          done
+          # Ephemeral loopback bindings: discover the assigned host ports and
+          # export them for the host-run tests (and the health wait below).
+          SERVER_PORT=$(docker compose port test-emergent-server 3002 | head -1 | awk -F: '{print $NF}' || true)
+          MAILPIT_PORT=$(docker compose port mailpit 8025 | head -1 | awk -F: '{print $NF}' || true)
+          GITHUB_STUB_PORT=$(docker compose port github-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
+          GMAIL_STUB_PORT=$(docker compose port gmail-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
+          WEB_STUB_PORT=$(docker compose port web-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
+          if [ -z "$SERVER_PORT" ] || [ -z "$MAILPIT_PORT" ] || [ -z "$GITHUB_STUB_PORT" ] || [ -z "$GMAIL_STUB_PORT" ] || [ -z "$WEB_STUB_PORT" ]; then
+            echo "::error::could not resolve published host ports (server='$SERVER_PORT' mailpit='$MAILPIT_PORT' github-stub='$GITHUB_STUB_PORT' gmail-stub='$GMAIL_STUB_PORT' web-stub='$WEB_STUB_PORT')"
+            docker compose ps
+            exit 1
+          fi
+          {
+            echo "MEMORY_TEST_SERVER=http://127.0.0.1:${SERVER_PORT}"
+            echo "MAILPIT_BASE_URL=http://127.0.0.1:${MAILPIT_PORT}"
+            echo "GITHUB_STUB_URL=http://127.0.0.1:${GITHUB_STUB_PORT}"
+            echo "GMAIL_STUB_URL=http://127.0.0.1:${GMAIL_STUB_PORT}"
+            echo "WEB_STUB_URL=http://127.0.0.1:${WEB_STUB_PORT}"
+          } >> "$GITHUB_ENV"
+          echo "Resolved server=http://127.0.0.1:${SERVER_PORT} mailpit=127.0.0.1:${MAILPIT_PORT} github-stub=127.0.0.1:${GITHUB_STUB_PORT} gmail-stub=127.0.0.1:${GMAIL_STUB_PORT} web-stub=127.0.0.1:${WEB_STUB_PORT}"
+          for i in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:${SERVER_PORT}/health" > /dev/null 2>&1; then
+              echo "Server is healthy"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run API tests
+        env:
+          # MEMORY_TEST_SERVER / MAILPIT_BASE_URL come from $GITHUB_ENV (the ports
+          # are ephemeral, so they cannot be hard-coded).
+          MEMORY_TEST_TOKEN: e2e-test-user
+          MEMORY_AUTH_MODE: standalone
+        # A clean run is ~13m on the self-hosted runner, so a 15m budget failed
+        # PRs on elapsed time alone when the runner was slow (issue #1971). Keep
+        # this in step with the `test:e2e` Taskfile target, and leave the job's
+        # 30m timeout as the outer bound.
+        run: go test -v ./tests/api/... -timeout 25m
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          docker compose logs --tail=100
+          echo "=== email-worker / SMTP logs ==="
+          docker compose logs test-emergent-server --tail=1000 2>/dev/null | grep -iE "email|smtp|template|enqueue|dequeue" || echo "(no email-related server log lines)"
+
+      - name: Stop server stack
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # mailgun: run the same e2e stack with the Mailgun email transport pointed at
+  # the local mailgun-stub (no real creds, no egress). The default `api` job
+  # above keeps the SMTP/Mailpit stack and is unchanged.
+  # ───────────────────────────────────────────────────────────────────────────
+  mailgun:
+    name: Mailgun Transport Test
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: e2e
+
+    env:
+      # Per-run, per-job image tag (#2008) — see the `integration` job.
+      MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-mailgun
+      # e2e is a standalone module with its own workspace (e2e/go.work), so the
+      # root build list cannot perturb it: runlog pins an older
+      # google.golang.org/adk whose telemetry does not compile against the
+      # otel/log version adk/v2 selects. GOWORK=off keeps CI independent of the
+      # workspace files entirely.
+      GOWORK: "off"
+      # Switch the stack's email transport from SMTP/Mailpit to Mailgun and
+      # point the Mailgun SDK base URL at the local stub. The override includes
+      # the /v3 path segment because Mailgun's SetAPIBase replaces the whole
+      # base URL (the default already ends in /v3).
+      E2E_EMAIL_TRANSPORT: mailgun
+      E2E_MAILGUN_DOMAIN: test.example.com
+      E2E_MAILGUN_API_KEY: test-key
+      E2E_MAILGUN_API_BASE: http://mailgun-stub:8080/v3
+      E2E_MAILGUN_REGION: us
+      E2E_MAILGUN_STUB_URL: http://mailgun-stub:8080
+      # Unique per run/job so concurrent jobs sharing one self-hosted Docker
+      # daemon never collide on container names, the default network, or host
+      # ports. Paired with ephemeral loopback port bindings in docker-compose.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-mailgun
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      - name: Build memory-server image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          load: true
+          push: false
+          tags: ${{ env.MEMORY_SERVER_IMAGE }}
+          # Mirror server.yml: PR runs only consume the cache; the default
+          # branch writes it. `mode=max` on every PR ref is what filled the
+          # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
+          cache-from: type=gha
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=min,ignore-error=true' || '' }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: e2e/go.mod
+          cache: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test. The server image is
+      # built locally ($MEMORY_SERVER_IMAGE) and the mailgun stub is built from
+      # source, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db seaweedfs
+
+      - name: Start server stack (Mailgun transport)
+        run: |
+          set -euo pipefail
+          cp .env.example .env 2>/dev/null || true
+          docker compose --profile mailgun up -d --build mailgun-stub test-emergent-server
+          # Ephemeral loopback bindings: discover the assigned host ports and
+          # export them for the host-run test (and the health wait below).
+          SERVER_PORT=$(docker compose --profile mailgun port test-emergent-server 3002 | head -1 | awk -F: '{print $NF}' || true)
+          STUB_PORT=$(docker compose --profile mailgun port mailgun-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
+          if [ -z "$SERVER_PORT" ] || [ -z "$STUB_PORT" ]; then
+            echo "::error::could not resolve published host ports (server='$SERVER_PORT' stub='$STUB_PORT')"
+            docker compose --profile mailgun ps
+            exit 1
+          fi
+          {
+            echo "MEMORY_TEST_SERVER=http://127.0.0.1:${SERVER_PORT}"
+            echo "MAILGUN_STUB_URL=http://127.0.0.1:${STUB_PORT}"
+          } >> "$GITHUB_ENV"
+          echo "Resolved server=127.0.0.1:${SERVER_PORT} mailgun-stub=127.0.0.1:${STUB_PORT}"
+          healthy=0
+          for i in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:${SERVER_PORT}/health" > /dev/null 2>&1; then
+              echo "Server is healthy"
+              healthy=1
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+          if [ "$healthy" -ne 1 ]; then
+            echo "::error::server did not become healthy within 60s; failing instead of letting the only Mailgun test skip"
+            docker compose --profile mailgun logs --tail=100 test-emergent-server || true
+            exit 1
+          fi
+
+      - name: Run Mailgun transport test
+        env:
+          # MEMORY_TEST_SERVER / MAILGUN_STUB_URL come from $GITHUB_ENV (the ports
+          # are ephemeral, so they cannot be hard-coded).
+          MEMORY_TEST_TOKEN: e2e-test-user
+          MEMORY_AUTH_MODE: standalone
+        run: go test -v ./tests/api/... -run 'TestInvite_EmailDeliveredViaMailgunTransport' -timeout 15m
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          docker compose --profile mailgun logs --tail=100
+          echo "=== email-worker / Mailgun logs ==="
+          docker compose --profile mailgun logs test-emergent-server --tail=1000 2>/dev/null | grep -iE "email|mailgun|template|enqueue|dequeue" || echo "(no email-related server log lines)"
+
+      - name: Stop server stack
+        if: always()
+        run: docker compose --profile mailgun down -v --remove-orphans
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # teardown: reap every compose project and per-run image this run left behind
+  # (#2008), plus abandoned stacks from earlier runs.
+  #
+  # `if: always()` on a step inside a job is not enough. When a job is cancelled
+  # the runner stops after the in-flight step, so the `Stop server stack` steps
+  # above never execute and the project survives as a "healthy" zombie stack —
+  # 12 of them, 48 containers, from 2026-10-07. This job depends on all three
+  # with `if: always()`, so it runs even when one of them failed or was
+  # cancelled, and it reaps by Docker label instead of re-reading a compose file
+  # that may not resolve from the runner's working directory.
+  #
+  # Stacks from *other* runs are swept too, but only once they are older than any
+  # job here could live (job timeout 30m; the gate is 6h). That is what makes a
+  # cancelled run that is never re-run reclaimable by the next run, not only by
+  # the host-side reaper that sweeps leftover stacks on the CI hosts.
+  #
+  # It reaps only the Docker daemon it lands on. The self-hosted `memory` pool
+  # spans two Linux hosts, each with its own Docker daemon, and the runners
+  # carry no host label to target one (they all expose exactly `self-hosted,
+  # Linux, X64, memory`); the macOS runner is not in the pool at all, it
+  # carries the separate `mac` label and runs no `memory` job. A leftover on
+  # the other host is therefore reaped by a later attempt or run
+  # whose teardown job lands there; deterministic per-host reaping needs a host
+  # label on the runners, which is fleet-owned.
+  # ───────────────────────────────────────────────────────────────────────────
+  teardown:
+    name: Reap e2e stacks
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [integration, api, mailgun]
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 10
+
+    steps:
+      - name: Reap compose projects and per-run images
+        # No checkout: this step must not depend on the workspace or on a compose
+        # file, only on the Docker labels compose itself wrote.
+        run: |
+          set -uo pipefail
+          run_id="${{ github.run_id }}"
+          now=$(date +%s)
+          reap=()
+
+          # Project names are `e2e-<run_id>-<attempt>-<job>` (COMPOSE_PROJECT_NAME
+          # in the jobs above). A label filter is exact-match only, so enumerate
+          # the labels once and decide per project: anything carrying this run id
+          # is always ours (all three jobs, every earlier attempt of a re-run);
+          # anything else has to look like an e2e project and be stale.
+          while read -r project; do
+            [ -n "$project" ] || continue
+            case "$project" in
+              "e2e-${run_id}-"*) reap+=("$project"); continue ;;
+            esac
+            case "$project" in
+              e2e-*-*-integration|e2e-*-*-api|e2e-*-*-mailgun) ;;
+              *) continue ;;
+            esac
+            # Age of the project = creation time of one of its containers.
+            # `docker inspect .Created` is RFC3339; `docker ps`'s CreatedAt
+            # carries a trailing zone abbreviation ("+0000 UTC") that GNU date
+            # cannot parse, which would silently disable this gate.
+            oldest_id=$(docker ps -aq \
+              --filter "label=com.docker.compose.project=${project}" | sed -n '1p')
+            [ -n "$oldest_id" ] || continue
+            created=$(date -d "$(docker inspect -f '{{.Created}}' "$oldest_id")" +%s 2>/dev/null || echo "$now")
+            if [ $((now - created)) -gt 21600 ]; then
+              reap+=("$project")
+            fi
+          done < <(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u || true)
+
+          if [ "${#reap[@]}" -eq 0 ]; then
+            echo "No e2e compose project to reap for run ${run_id}."
+          fi
+
+          for project in "${reap[@]}"; do
+            echo "::group::Reaping ${project}"
+            containers=$(docker ps -aq --filter "label=com.docker.compose.project=${project}" || true)
+            if [ -n "$containers" ]; then
+              # shellcheck disable=SC2086 # intentional word-splitting of the id list
+              docker rm -f $containers || true
+            fi
+            networks=$(docker network ls -q --filter "label=com.docker.compose.project=${project}" || true)
+            if [ -n "$networks" ]; then
+              # shellcheck disable=SC2086 # intentional word-splitting
+              docker network rm $networks || true
+            fi
+            volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=${project}" || true)
+            if [ -n "$volumes" ]; then
+              # shellcheck disable=SC2086 # intentional word-splitting
+              docker volume rm -f $volumes || true
+            fi
+            echo "::endgroup::"
+          done
+
+          # Per-run server images (#2008). The run-id prefix covers every job and
+          # attempt of this run; another run's images are never touched.
+          images=$(docker images --format '{{.Repository}}:{{.Tag}}' \
+            | grep -E "^memory-server:ci-${run_id}-" || true)
+          if [ -n "$images" ]; then
+            # shellcheck disable=SC2086 # intentional word-splitting of the reference list
+            docker image rm -f $images || true
+          fi
+
+          # Fail loudly if a project of this run survived. A silent pass would
+          # leave the next run to discover the leak, which is how 12 stacks went
+          # unnoticed for two weeks.
+          leftover=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' \
+            | grep -E "^e2e-${run_id}-" | sort -u || true)
+          if [ -n "$leftover" ]; then
+            echo "::error::compose projects from run ${run_id} survived teardown: ${leftover}"
+            docker ps -a \
+              --filter "label=com.docker.compose.project" \
+              --format 'table {{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}' || true
+            exit 1
+          fi
+          echo "No e2e compose project left for run ${run_id}."
+

@@ -1,0 +1,464 @@
+package skills
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"log/slog"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
+)
+
+// Embedder generates description embeddings for skills.
+// *embeddings.Service implements this interface.
+type Embedder interface {
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
+// RepositoryOption configures a Repository.
+type RepositoryOption func(*Repository)
+
+// WithEmbedder sets the embedding service used to generate description
+// embeddings on every write path (Create/Update).
+func WithEmbedder(e Embedder) RepositoryOption {
+	return func(r *Repository) { r.embedder = e }
+}
+
+// WithMaxContentSize overrides the maximum allowed skill content size in bytes.
+// Values <= 0 fall back to DefaultMaxContentSize.
+func WithMaxContentSize(n int) RepositoryOption {
+	return func(r *Repository) { r.maxContentSize = n }
+}
+
+// Repository handles database operations for kb.skills.
+type Repository struct {
+	db             bun.IDB
+	log            *slog.Logger
+	embedder       Embedder // nil when embeddings are disabled/unavailable
+	maxContentSize int
+}
+
+// NewRepository creates a new skills repository.
+func NewRepository(db bun.IDB, log *slog.Logger, opts ...RepositoryOption) *Repository {
+	r := &Repository{
+		db:             db,
+		log:            log.With(logger.Scope("skills.repo")),
+		maxContentSize: DefaultMaxContentSize,
+	}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
+}
+
+// MaxContentSize returns the configured content size cap (normalized to the
+// default when unset).
+func (r *Repository) MaxContentSize() int {
+	return normalizeMaxContentSize(r.maxContentSize)
+}
+
+// computeContentHash returns the lowercase hex SHA-256 of the given content.
+func computeContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+// ensureMetadata guarantees a non-nil metadata object so jsonb writes never
+// produce NULL into the NOT NULL metadata column.
+func ensureMetadata(s *Skill) *SkillMetadata {
+	if s.Metadata == nil {
+		s.Metadata = &SkillMetadata{}
+	}
+	return s.Metadata
+}
+
+// embedDescription generates an embedding for the given text via the configured
+// embedder. On failure (or when no embedder is configured) it logs a warning
+// and returns nil — embedding generation is non-fatal for the skill write.
+func (r *Repository) embedDescription(ctx context.Context, text string) []float32 {
+	if text == "" || r.embedder == nil {
+		return nil
+	}
+	vec, err := r.embedder.EmbedQuery(ctx, text)
+	if err != nil {
+		r.log.Warn("skills: failed to generate description embedding (skill will have no embedding)",
+			logger.Error(err),
+		)
+		return nil
+	}
+	return vec
+}
+
+// FindAll returns skills for listing. Exactly one of projectID or orgID should be set:
+//   - projectID non-nil: returns only project-scoped skills for that project.
+//   - orgID non-nil: returns only org-scoped skills for that org.
+//   - both nil: returns only global skills (project_id IS NULL AND org_id IS NULL).
+func (r *Repository) FindAll(ctx context.Context, projectID *string, orgID *string) ([]*Skill, error) {
+	var skills []*Skill
+	q := r.db.NewSelect().Model(&skills)
+	switch {
+	case projectID != nil:
+		q = q.Where("s.project_id = ?", *projectID)
+	case orgID != nil:
+		q = q.Where("s.org_id = ? AND s.project_id IS NULL", *orgID)
+	default:
+		q = q.Where("s.project_id IS NULL AND s.org_id IS NULL")
+	}
+	q = q.OrderExpr("s.name ASC")
+	if err := q.Scan(ctx); err != nil {
+		return nil, apperror.NewInternal("failed to list skills", err)
+	}
+	return skills, nil
+}
+
+// FindForAgent returns the merged set of global + org-scoped + project-scoped skills for a
+// given project. Resolution order (project wins over org wins over global):
+//  1. Fetch all rows where project_id = projectID OR (org_id = orgID AND project_id IS NULL) OR
+//     (project_id IS NULL AND org_id IS NULL)
+//  2. De-duplicate by name: first occurrence wins when ordered project → org → global.
+//
+// If orgID is empty, org-scoped skills are not included.
+func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID string) ([]*Skill, error) {
+	var all []*Skill
+
+	q := r.db.NewSelect().Model(&all)
+	if orgID != "" {
+		q = q.Where(
+			"s.project_id = ? OR (s.org_id = ? AND s.project_id IS NULL) OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID, orgID,
+		)
+	} else {
+		q = q.Where(
+			"s.project_id = ? OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID,
+		)
+	}
+
+	// Sort so project rows appear first, then org rows, then global (NULL sorts last).
+	// Use CASE to define priority: project=1, org=2, global=3.
+	q = q.OrderExpr(`
+		CASE
+			WHEN s.project_id IS NOT NULL THEN 1
+			WHEN s.org_id IS NOT NULL THEN 2
+			ELSE 3
+		END ASC, s.name ASC`)
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, apperror.NewInternal("failed to list agent skills", err)
+	}
+
+	// De-duplicate: first occurrence of each name wins (project > org > global).
+	seen := make(map[string]struct{}, len(all))
+	result := make([]*Skill, 0, len(all))
+	for _, s := range all {
+		if _, ok := seen[s.Name]; ok {
+			continue
+		}
+		seen[s.Name] = struct{}{}
+		result = append(result, s)
+	}
+	return result, nil
+}
+
+// FindRelevant performs cosine similarity search against description embeddings.
+// Returns the topK most relevant skills for the given project (global + org + project-scoped).
+// The index on kb.skills.description_embedding is HNSW (idx_skills_embedding_hnsw,
+// migration 00170): HNSW needs no probe tuning, so no ivfflat.probes setting is
+// applied. Only considers skills with a non-NULL description_embedding.
+func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID string, vec []float32, topK int) ([]*Skill, error) {
+	vectorStr := pgutils.FormatVector(vec)
+
+	var skills []*Skill
+	q := r.db.NewSelect().
+		Model(&skills).
+		Where("s.description_embedding IS NOT NULL")
+
+	if orgID != "" {
+		q = q.Where(
+			"s.project_id = ? OR (s.org_id = ? AND s.project_id IS NULL) OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID, orgID,
+		)
+	} else {
+		q = q.Where(
+			"s.project_id = ? OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID,
+		)
+	}
+
+	q = q.OrderExpr("s.description_embedding <=> ?::vector ASC, s.id ASC", vectorStr).
+		Limit(topK)
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, apperror.NewInternal("failed to find relevant skills", err)
+	}
+
+	return skills, nil
+}
+
+// FindByID returns a single skill by its UUID.
+func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*Skill, error) {
+	skill := new(Skill)
+	err := r.db.NewSelect().
+		Model(skill).
+		Where("s.id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.NewNotFound("skill", id.String())
+		}
+		return nil, apperror.NewInternal("failed to get skill", err)
+	}
+	return skill, nil
+}
+
+// IsUserOrgMember reports whether the given user is a member of the given
+// organization, consulting kb.organization_memberships. It is the authoritative
+// membership source for skills org/project authorization (issue #849): the
+// caller's org must be derived from real membership, never from a
+// request-controlled path parameter. Mirrors domain/provider.Repository.
+// IsUserOrgMember (issue #844).
+func (r *Repository) IsUserOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
+	exists, err := r.db.NewSelect().
+		TableExpr("kb.organization_memberships").
+		Where("organization_id = ?", orgID).
+		Where("user_id = ?", userID).
+		Exists(ctx)
+
+	if err != nil {
+		r.log.Error("failed to check org membership",
+			logger.Error(err),
+			slog.String("orgID", orgID),
+			slog.String("userID", userID))
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	return exists, nil
+}
+
+// AuthorizeSkillAccess enforces tier-based read authority for a single skill
+// addressed by id. It is the single source of truth shared by the REST
+// GetSkill route and the MCP skill-get/skill-update/skill-delete tools, so the
+// two entrypoints cannot drift. A global skill (project_id IS NULL AND org_id
+// IS NULL) is platform catalogue accessible to any authenticated caller. An
+// org-scoped skill requires membership of the skill's org; a project-scoped
+// skill requires membership of the project's owning org (resolved server-side,
+// never from a caller-supplied path/header). Returns nil on access, a 404
+// apperror when the caller lacks authority over the addressed skill (so the
+// response does not leak the skill's existence), and 401 when no authenticated
+// user is present.
+func (r *Repository) AuthorizeSkillAccess(ctx context.Context, skill *Skill) error {
+	if skill.ProjectID == nil && skill.OrgID == nil {
+		return nil // global catalogue: accessible to any authenticated caller
+	}
+
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	if skill.OrgID != nil {
+		ok, err := r.IsUserOrgMember(ctx, *skill.OrgID, user.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return apperror.NewNotFound("skill", skill.ID.String())
+		}
+		return nil
+	}
+
+	orgID, err := r.GetOrgIDForProject(ctx, *skill.ProjectID)
+	if err != nil {
+		return err
+	}
+	ok, err := r.IsUserOrgMember(ctx, orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperror.NewNotFound("skill", skill.ID.String())
+	}
+	return nil
+}
+
+// AuthorizeSkillWrite enforces tier-based authority for mutating a single skill
+// addressed by id (the MCP skill-update/skill-delete tools). Org- and
+// project-scoped skills reuse AuthorizeSkillAccess (membership of the skill's
+// org / owning org). A global skill is refused: global writes require
+// superadmin_full, which the project-scoped MCP surface does not hold — this
+// mirrors the REST CreateGlobalSkill/UpdateGlobalSkill/DeleteGlobalSkill
+// requireSuperadminFull gate.
+func (r *Repository) AuthorizeSkillWrite(ctx context.Context, skill *Skill) error {
+	if skill.ProjectID == nil && skill.OrgID == nil {
+		return apperror.ErrForbidden
+	}
+	return r.AuthorizeSkillAccess(ctx, skill)
+}
+
+// GetOrgIDForProject looks up the organization ID for a given project.
+func (r *Repository) GetOrgIDForProject(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", apperror.ErrNotFound.WithMessage("project not found")
+		}
+		r.log.Error("failed to get org ID for project",
+			logger.Error(err),
+			slog.String("projectID", projectID))
+		return "", apperror.ErrDatabase.WithInternal(err)
+	}
+	return orgID, nil
+}
+
+// Create inserts a new skill. Always uses Bun ORM for the INSERT (excluding the vector
+// column to avoid pgx binding issues with vector(768)), then issues a separate raw UPDATE
+// to set description_embedding when an embedding was generated.
+//
+// The content hash is always computed server-side from s.Content — any caller-provided
+// content_hash is overwritten. The description embedding is generated here so every
+// write path (REST, MCP, CLI, blueprint) shares the same behavior; embedding failure is
+// non-fatal and leaves the embedding null.
+func (r *Repository) Create(ctx context.Context, s *Skill) error {
+	ensureMetadata(s)
+	s.Metadata.ContentHash = computeContentHash(s.Content)
+	embedding := r.embedDescription(ctx, s.Description)
+
+	// Step 1: insert via Bun ORM, skipping the vector column entirely.
+	_, err := r.db.NewInsert().Model(s).ExcludeColumn("description_embedding").Exec(ctx)
+	if err != nil {
+		return r.wrapDBError("failed to create skill", err)
+	}
+
+	// Step 2: if an embedding was generated, update the vector column via raw SQL.
+	// The ?::vector cast works correctly in an UPDATE (single parameter binding).
+	if embedding != nil {
+		vectorStr := pgutils.FormatVector(embedding)
+		_, err = r.db.ExecContext(ctx,
+			`UPDATE kb.skills SET description_embedding = ?::vector WHERE id = ?`,
+			vectorStr, s.ID,
+		)
+		if err != nil {
+			return r.wrapDBError("failed to set skill embedding", err)
+		}
+	}
+	return nil
+}
+
+// Update applies partial updates to an existing skill. When content changes the
+// content hash is recomputed server-side; all other provenance fields are
+// preserved verbatim. When the description changes a fresh embedding is
+// generated (non-fatal on failure — the old embedding is cleared as stale).
+func (r *Repository) Update(ctx context.Context, id uuid.UUID, dto *UpdateSkillDTO) (*Skill, error) {
+	// Load existing
+	existing, err := r.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+
+	if dto.Description != nil {
+		existing.Description = *dto.Description
+	}
+	if dto.Content != nil {
+		existing.Content = *dto.Content
+	}
+	if dto.Metadata != nil {
+		existing.Metadata = dto.Metadata
+	}
+	// content_hash is always server-computed and never trusted from callers
+	// (it is the one metadata field the server owns and may overwrite).
+	ensureMetadata(existing)
+	existing.Metadata.ContentHash = computeContentHash(existing.Content)
+	existing.UpdatedAt = now
+
+	descriptionChanged := dto.Description != nil
+	if descriptionChanged {
+		embedding := r.embedDescription(ctx, existing.Description)
+		if embedding != nil {
+			vectorStr := pgutils.FormatVector(embedding)
+			_, err = r.db.ExecContext(ctx,
+				`UPDATE kb.skills SET description = ?, content = ?, metadata = ?, description_embedding = ?::vector, updated_at = ? WHERE id = ?`,
+				existing.Description, existing.Content, existing.Metadata, vectorStr, now, id,
+			)
+			if err != nil {
+				return nil, r.wrapDBError("failed to update skill", err)
+			}
+			return existing, nil
+		}
+		// Description changed but no embedding available: clear the old (stale) embedding.
+		_, err = r.db.ExecContext(ctx,
+			`UPDATE kb.skills SET description = ?, content = ?, metadata = ?, description_embedding = NULL, updated_at = ? WHERE id = ?`,
+			existing.Description, existing.Content, existing.Metadata, now, id,
+		)
+		if err != nil {
+			return nil, r.wrapDBError("failed to update skill", err)
+		}
+		return existing, nil
+	}
+
+	// No description change: update other fields with Bun ORM
+	_, err = r.db.NewUpdate().Model(existing).
+		Column("description", "content", "metadata", "updated_at").
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, r.wrapDBError("failed to update skill", err)
+	}
+	return existing, nil
+}
+
+// Delete removes a skill by ID. Returns NotFound if the skill does not exist.
+func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+	result, err := r.db.NewDelete().
+		Model((*Skill)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return apperror.NewInternal("failed to delete skill", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return apperror.NewNotFound("skill", id.String())
+	}
+	return nil
+}
+
+// Count returns total number of skills accessible to an agent for a project (global + org + project).
+func (r *Repository) Count(ctx context.Context, projectID string, orgID string) (int, error) {
+	q := r.db.NewSelect().Model((*Skill)(nil))
+	if orgID != "" {
+		q = q.Where(
+			"project_id = ? OR (org_id = ? AND project_id IS NULL) OR (project_id IS NULL AND org_id IS NULL)",
+			projectID, orgID,
+		)
+	} else {
+		q = q.Where("project_id = ? OR (project_id IS NULL AND org_id IS NULL)", projectID)
+	}
+	n, err := q.Count(ctx)
+	if err != nil {
+		return 0, apperror.NewInternal("failed to count skills", err)
+	}
+	return n, nil
+}
+
+// wrapDBError wraps a DB error, detecting unique constraint violations.
+func (r *Repository) wrapDBError(msg string, err error) error {
+	if pgutils.IsUniqueViolation(err) {
+		return apperror.ErrConflict.WithMessage("a skill with this name already exists")
+	}
+	return apperror.NewInternal(msg, err)
+}

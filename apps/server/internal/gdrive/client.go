@@ -1,0 +1,524 @@
+// Package gdrive implements a Google Drive v3 transport client used by the
+// Drive data-source connector. It wraps google.golang.org/api/drive/v3 and
+// golang.org/x/oauth2 and is constructed so tests can inject an HTTP client
+// (option.WithHTTPClient) and a test endpoint (option.WithEndpoint) — no live
+// Google calls are made in tests.
+package gdrive
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/option"
+)
+
+const (
+	// DefaultMaxBytes is the default per-item size cap (25 MiB).
+	DefaultMaxBytes int64 = 25 << 20
+	// DefaultRequestTimeout is the default per-call request timeout.
+	DefaultRequestTimeout = 60 * time.Second
+
+	// folderMimeType identifies a Drive folder item.
+	folderMimeType = "application/vnd.google-apps.folder"
+
+	// maxListFolderPages caps the folder-listing walk at 5 pages (× 1000
+	// items each) so an unfiltered listing on a huge account always returns in
+	// seconds rather than paging through every folder and exhausting the
+	// request budget. The caller learns the listing was cut via ListFolders'
+	// truncated return value.
+	maxListFolderPages = 5
+
+	// driveReadonlyScope is the OAuth2 scope requested for the client when the
+	// stored credential carries no scope (legacy pasted-credential sources).
+	driveReadonlyScope = "https://www.googleapis.com/auth/drive.readonly"
+)
+
+// requestedScope resolves the OAuth2 scope for a credential: the stored scope
+// (the org-selected strategy at connect time) when present, else the legacy
+// drive.readonly default.
+func requestedScope(scope string) string {
+	if strings.TrimSpace(scope) != "" {
+		return scope
+	}
+	return driveReadonlyScope
+}
+
+// Credentials holds the OAuth2 client credentials and refresh token for a
+// Drive source. It is never stored in plaintext (see EncryptCredentials).
+type Credentials struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	RefreshToken string `json:"refresh_token"`
+	// Scope is the OAuth2 scope the refresh token was authorized for (the
+	// org-selected strategy at connect time). Empty falls back to
+	// driveReadonlyScope for legacy pasted-credential sources.
+	Scope string `json:"scope,omitempty"`
+}
+
+// Item is a single in-scope Drive item after enumeration.
+type Item struct {
+	ID           string
+	Name         string
+	MimeType     string
+	RevisionID   string
+	Trashed      bool
+	ModifiedTime time.Time
+}
+
+// Config controls client behaviour. Zero values fall back to DefaultConfig.
+type Config struct {
+	// MaxBytes is the per-item size cap for export/download. Default 25 MiB.
+	MaxBytes int64
+	// RequestTimeout is the per-call timeout. Default 60s.
+	RequestTimeout time.Duration
+}
+
+// DefaultConfig returns the sane defaults used when Config fields are unset.
+func DefaultConfig() Config {
+	return Config{
+		MaxBytes:       DefaultMaxBytes,
+		RequestTimeout: DefaultRequestTimeout,
+	}
+}
+
+// Client is a Google Drive v3 transport client.
+type Client struct {
+	svc *drive.Service
+	cfg Config
+	// tokenSource is the credential-backed OAuth2 source, when the client was
+	// built from refresh-token credentials. It is nil for NewWithHTTPClient.
+	// AccessToken uses it to mint short-lived tokens for the browser-side
+	// Google Picker.
+	tokenSource oauth2.TokenSource
+}
+
+// Folder is the resolved metadata of a Drive folder, independent of the parent
+// listing. DriveID is non-empty for folders inside a shared drive.
+type Folder struct {
+	ID      string
+	Name    string
+	DriveID string
+}
+
+// SizeError indicates a Drive response exceeded the configured MaxBytes cap.
+type SizeError struct {
+	Limit int64
+}
+
+func (e *SizeError) Error() string {
+	return fmt.Sprintf("google drive: content exceeds %d-byte size limit", e.Limit)
+}
+
+// New builds a Client from OAuth2 refresh-token credentials. It constructs an
+// oauth2 token source and a *drive.Service. Additional opts (e.g.
+// option.WithEndpoint) are appended after the credential-backed HTTP client.
+func New(ctx context.Context, creds Credentials, opts ...option.ClientOption) (*Client, error) {
+	if creds.RefreshToken == "" {
+		return nil, errors.New("google drive: refresh token is required")
+	}
+
+	oauthCfg := oauth2.Config{
+		ClientID:     creds.ClientID,
+		ClientSecret: creds.ClientSecret,
+		Endpoint:     google.Endpoint,
+		Scopes:       []string{requestedScope(creds.Scope)},
+	}
+	tokenSource := oauthCfg.TokenSource(ctx, &oauth2.Token{RefreshToken: creds.RefreshToken})
+	hc := oauth2.NewClient(ctx, tokenSource)
+
+	c, err := newClient(ctx, hc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.tokenSource = tokenSource
+	return c, nil
+}
+
+// NewWithHTTPClient builds a Client from an already-configured *http.Client
+// (no credentials). Intended for tests: pass option.WithEndpoint(server.URL)
+// to point the client at a mock Drive endpoint.
+func NewWithHTTPClient(hc *http.Client, opts ...option.ClientOption) (*Client, error) {
+	if hc == nil {
+		return nil, errors.New("google drive: http client is required")
+	}
+	return newClient(context.Background(), hc, opts...)
+}
+
+func newClient(ctx context.Context, hc *http.Client, opts ...option.ClientOption) (*Client, error) {
+	opts = append([]option.ClientOption{option.WithHTTPClient(hc)}, opts...)
+	svc, err := drive.NewService(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("google drive: create service: %w", err)
+	}
+	return &Client{svc: svc, cfg: DefaultConfig()}, nil
+}
+
+// WithConfig sets the client configuration, applying defaults for zero-valued
+// fields. It returns the client for chaining.
+func (c *Client) WithConfig(cfg Config) *Client {
+	if cfg.MaxBytes <= 0 {
+		cfg.MaxBytes = DefaultMaxBytes
+	}
+	if cfg.RequestTimeout <= 0 {
+		cfg.RequestTimeout = DefaultRequestTimeout
+	}
+	c.cfg = cfg
+	return c
+}
+
+// ListFolderItems enumerates the items directly or (when recursive) anywhere
+// beneath folderID, filtered to the given MIME-type allowlist (empty = all
+// non-folder types) and excluding trashed items. Results are paginated
+// breadth-first.
+func (c *Client) ListFolderItems(ctx context.Context, folderID string, mimeTypes []string, recursive bool, sharedDriveID string) ([]Item, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	var out []Item
+	queue := []string{folderID}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		files, err := c.listChildren(ctx, current, mimeTypes, recursive, sharedDriveID)
+		if err != nil {
+			return nil, fmt.Errorf("google drive: list folder %q: %w", current, err)
+		}
+
+		for _, f := range files {
+			if f.MimeType == folderMimeType {
+				if recursive {
+					queue = append(queue, f.Id)
+				}
+				continue
+			}
+			out = append(out, toItem(f))
+		}
+	}
+
+	return out, nil
+}
+
+// ListFolders lists Drive folders (optionally under parentID — empty lists all
+// accessible non-trashed folders) for the resource-selection step. A non-empty
+// name query limits the listing to folders whose name contains that text. The
+// walk is bounded to maxListFolderPages pages of 1000 items; truncated is true
+// only when the cap cut the walk short while Drive still returned more pages
+// (a complete listing — even one that fills the cap exactly — is false).
+func (c *Client) ListFolders(ctx context.Context, parentID, nameQuery string) ([]Item, bool, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	q := "mimeType = '" + folderMimeType + "' and trashed = false"
+	if strings.TrimSpace(parentID) != "" {
+		q = "'" + escapeDriveQueryValue(parentID) + "' in parents and " + q
+	}
+	if name := strings.TrimSpace(nameQuery); name != "" {
+		q += " and name contains '" + escapeDriveQueryValue(name) + "'"
+	}
+
+	var out []Item
+	pageToken := ""
+	for page := 0; page < maxListFolderPages; page++ {
+		call := c.svc.Files.List().
+			Q(q).
+			SupportsAllDrives(true).
+			IncludeItemsFromAllDrives(true).
+			PageSize(1000).
+			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,version,trashed,modifiedTime)")
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		fileList, err := call.Context(ctx).Do()
+		if err != nil {
+			return nil, false, fmt.Errorf("google drive: list folders: %w", err)
+		}
+		for _, f := range fileList.Files {
+			out = append(out, toItem(f))
+		}
+		if fileList.NextPageToken == "" {
+			return out, false, nil
+		}
+		pageToken = fileList.NextPageToken
+	}
+	// The cap was reached while Drive still returned a next-page token.
+	return out, true, nil
+}
+
+// listChildren lists one page (all pages) of children of a single folder,
+// returning both matching files and — when recursive — subfolders.
+func (c *Client) listChildren(ctx context.Context, folderID string, mimeTypes []string, recursive bool, sharedDriveID string) ([]*drive.File, error) {
+	q := fmt.Sprintf("'%s' in parents and trashed = false", escapeDriveQueryValue(folderID))
+
+	var clauses []string
+	for _, t := range mimeTypes {
+		clauses = append(clauses, fmt.Sprintf("mimeType = '%s'", escapeDriveQueryValue(t)))
+	}
+	// When a MIME filter is applied AND recursion is enabled, also include
+	// folders so subdirectories can be discovered. With no MIME filter, the
+	// unfiltered query already returns folders.
+	if recursive && len(mimeTypes) > 0 {
+		clauses = append(clauses, "mimeType = '"+folderMimeType+"'")
+	}
+	if len(clauses) > 0 {
+		q += " and (" + strings.Join(clauses, " or ") + ")"
+	}
+
+	var files []*drive.File
+	pageToken := ""
+	for {
+		call := c.svc.Files.List().
+			Q(q).
+			SupportsAllDrives(true).
+			IncludeItemsFromAllDrives(true).
+			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,version,trashed,modifiedTime)")
+		if sharedDriveID != "" {
+			call = call.DriveId(sharedDriveID)
+		}
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		fileList, err := call.Context(ctx).Do()
+		if err != nil {
+			return nil, err
+		}
+		if fileList.Files != nil {
+			files = append(files, fileList.Files...)
+		}
+		if fileList.NextPageToken == "" {
+			break
+		}
+		pageToken = fileList.NextPageToken
+	}
+
+	return files, nil
+}
+
+// AccessToken mints a fresh OAuth2 access token from the client's stored
+// refresh token. It is used to bootstrap the browser-side Google Picker with
+// exactly the source's own credentials, so the picker can never browse a
+// different Google account than the one the source syncs.
+func (c *Client) AccessToken(ctx context.Context) (string, time.Time, error) {
+	if c.tokenSource == nil {
+		return "", time.Time{}, errors.New("google drive: access token requires refresh-token credentials")
+	}
+	tok, err := c.tokenSource.Token()
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("google drive: mint access token: %w", err)
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return "", time.Time{}, errors.New("google drive: token endpoint returned an empty access token")
+	}
+	return tok.AccessToken, tok.Expiry, nil
+}
+
+// GetFolder resolves a folder id to its name and shared-drive id. It fails when
+// the id is not a folder (a file id) or the folder is trashed, so a picker
+// selection is validated against the source's own credentials before it is
+// persisted.
+func (c *Client) GetFolder(ctx context.Context, folderID string) (Folder, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	f, err := c.svc.Files.Get(folderID).
+		SupportsAllDrives(true).
+		Fields("id,name,mimeType,driveId,trashed").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return Folder{}, fmt.Errorf("google drive: get folder %q: %w", folderID, err)
+	}
+	if f.MimeType != folderMimeType {
+		return Folder{}, fmt.Errorf("google drive: %q is not a folder", folderID)
+	}
+	if f.Trashed {
+		return Folder{}, fmt.Errorf("google drive: folder %q is trashed", folderID)
+	}
+	return Folder{ID: f.Id, Name: f.Name, DriveID: f.DriveId}, nil
+}
+
+// AccountEmailFromToken reads the authenticated user's email address from
+// Drive's about.get using a bare OAuth2 access token. It is used right after a
+// connect exchange, when only the token response's access token is available.
+func AccountEmailFromToken(ctx context.Context, accessToken string) (string, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return "", errors.New("google drive: access token is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)&prettyPrint=false", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("google drive: read account email: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("google drive: read account email: status %d", resp.StatusCode)
+	}
+	var payload struct {
+		User struct {
+			EmailAddress string `json:"emailAddress"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return "", fmt.Errorf("google drive: decode account email: %w", err)
+	}
+	return payload.User.EmailAddress, nil
+}
+
+// GetRevision returns the item's change-detection revision (a cheap pre-filter)
+// by selecting only headRevisionId/version/modifiedTime. Google-native files
+// report no headRevisionId, so the version-based fallback from revisionFor
+// applies here too.
+func (c *Client) GetRevision(ctx context.Context, fileID string) (string, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	f, err := c.svc.Files.Get(fileID).
+		SupportsAllDrives(true).
+		Fields("headRevisionId,version,modifiedTime").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return "", fmt.Errorf("google drive: get file revision %q: %w", fileID, err)
+	}
+	return revisionFor(f), nil
+}
+
+// exportMime maps Google-native MIME types to a text export target the
+// ingestion pipeline can parse.
+var exportMime = map[string]string{
+	"application/vnd.google-apps.document":     "text/plain",
+	"application/vnd.google-apps.spreadsheet":  "text/csv",
+	"application/vnd.google-apps.presentation": "text/plain",
+}
+
+// ExportText exports a Google-native document to text, bounded by MaxBytes.
+func (c *Client) ExportText(ctx context.Context, fileID, mimeType string) ([]byte, error) {
+	target, ok := exportMime[mimeType]
+	if !ok {
+		return nil, fmt.Errorf("google drive: unsupported export MIME type %q", mimeType)
+	}
+
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	resp, err := c.svc.Files.Export(fileID, target).Context(ctx).Download()
+	if err != nil {
+		return nil, fmt.Errorf("google drive: export %q: %w", fileID, err)
+	}
+	defer resp.Body.Close()
+
+	return readBounded(resp.Body, c.cfg.MaxBytes)
+}
+
+// DownloadFile downloads a file's media bytes, bounded by MaxBytes.
+func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	resp, err := c.svc.Files.Get(fileID).SupportsAllDrives(true).Context(ctx).Download()
+	if err != nil {
+		return nil, fmt.Errorf("google drive: download %q: %w", fileID, err)
+	}
+	defer resp.Body.Close()
+
+	return readBounded(resp.Body, c.cfg.MaxBytes)
+}
+
+// TestConnection performs a cheap, bounded call (about.get) and returns a
+// descriptive error when the connection or credentials are invalid.
+func (c *Client) TestConnection(ctx context.Context) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	if _, err := c.svc.About.Get().Fields("user").Context(ctx).Do(); err != nil {
+		return fmt.Errorf("google drive: connection test failed: %w", err)
+	}
+	return nil
+}
+
+// withTimeout derives a per-call context bounded by the configured timeout.
+func (c *Client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.cfg.RequestTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, c.cfg.RequestTimeout)
+}
+
+// readBounded reads at most maxBytes bytes from r, returning a SizeError when
+// the content exceeds the cap.
+func readBounded(r io.Reader, maxBytes int64) ([]byte, error) {
+	lr := io.LimitReader(r, maxBytes+1)
+	data, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, &SizeError{Limit: maxBytes}
+	}
+	return data, nil
+}
+
+// escapeDriveQueryValue escapes a value for a Drive files.list `q` clause,
+// which uses single quotes and backslash escaping.
+func escapeDriveQueryValue(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	v = strings.ReplaceAll(v, `'`, `\'`)
+	return v
+}
+
+// toItem converts a *drive.File into a package-level Item, parsing the
+// RFC3339 ModifiedTime string.
+func toItem(f *drive.File) Item {
+	var modTime time.Time
+	if f.ModifiedTime != "" {
+		if t, err := time.Parse(time.RFC3339, f.ModifiedTime); err == nil {
+			modTime = t
+		}
+	}
+	return Item{
+		ID:           f.Id,
+		Name:         f.Name,
+		MimeType:     f.MimeType,
+		RevisionID:   revisionFor(f),
+		Trashed:      f.Trashed,
+		ModifiedTime: modTime,
+	}
+}
+
+// revisionFor derives the change-detection revision for a Drive item.
+//
+// Drive only populates headRevisionId for files with binary content; Google
+// native Docs, Sheets, and Slides never carry one (see the Drive v3 File
+// resource: "currently only available for files with binary content"). Those
+// are exactly the items the connector fetches via export, so an empty revision
+// would make every later sync compare "" against the stored "" and skip the
+// item forever. The file's monotonically increasing version number covers that
+// gap: Drive bumps it for every change made on the server, Google-native edits
+// included. modifiedTime is the last-resort signal, and an empty return means
+// "no revision signal" — callers must not treat it as an unchanged item.
+func revisionFor(f *drive.File) string {
+	if f.HeadRevisionId != "" {
+		return f.HeadRevisionId
+	}
+	if f.Version != 0 {
+		return fmt.Sprintf("v:%d", f.Version)
+	}
+	if f.ModifiedTime != "" {
+		return "mtime:" + f.ModifiedTime
+	}
+	return ""
+}

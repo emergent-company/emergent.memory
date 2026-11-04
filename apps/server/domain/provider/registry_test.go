@@ -1,0 +1,188 @@
+package provider
+
+import (
+	"testing"
+)
+
+func TestNewRegistry(t *testing.T) {
+	r := NewRegistry()
+
+	if len(r.providers) != 28 {
+		t.Fatalf("expected 28 providers, got %d", len(r.providers))
+	}
+
+	legacy := []ProviderType{ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek}
+	for _, pt := range legacy {
+		if !r.IsSupported(pt) {
+			t.Errorf("expected %q to be supported", pt)
+		}
+	}
+
+	for _, d := range r.List() {
+		if d.Protocol == "" {
+			t.Errorf("provider %q has empty protocol", d.Type)
+		}
+		if !validAuthStyle(d.Auth) {
+			t.Errorf("provider %q has invalid auth style %q", d.Type, d.Auth)
+		}
+	}
+}
+
+func validAuthStyle(a AuthStyle) bool {
+	switch a {
+	case AuthBearer, AuthAPIKeyHeader, AuthXAPIKey, AuthGoogleAPIKey, AuthNone, AuthSigned:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestRegistryGet(t *testing.T) {
+	r := NewRegistry()
+
+	// Google AI
+	googleDef, err := r.Get(ProviderGoogleAI)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if googleDef.DisplayName != "Google AI" {
+		t.Errorf("expected display name 'Google AI', got %q", googleDef.DisplayName)
+	}
+	if len(googleDef.CredentialFields) != 1 {
+		t.Fatalf("expected 1 credential field for Google AI, got %d", len(googleDef.CredentialFields))
+	}
+	if googleDef.CredentialFields[0].Name != "api_key" {
+		t.Errorf("expected field name 'api_key', got %q", googleDef.CredentialFields[0].Name)
+	}
+	if !googleDef.CredentialFields[0].Secret {
+		t.Error("expected api_key field to be secret")
+	}
+
+	// Vertex AI
+	vertexDef, err := r.Get(ProviderVertexAI)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vertexDef.DisplayName != "Vertex AI" {
+		t.Errorf("expected display name 'Vertex AI', got %q", vertexDef.DisplayName)
+	}
+	if len(vertexDef.CredentialFields) != 3 {
+		t.Fatalf("expected 3 credential fields for Vertex AI, got %d", len(vertexDef.CredentialFields))
+	}
+
+	// Verify field names
+	fieldNames := make(map[string]bool)
+	for _, f := range vertexDef.CredentialFields {
+		fieldNames[f.Name] = true
+	}
+	for _, expected := range []string{"service_account_json", "gcp_project", "location"} {
+		if !fieldNames[expected] {
+			t.Errorf("expected Vertex AI to have field %q", expected)
+		}
+	}
+
+	// Unsupported
+	_, err = r.Get(ProviderType("unknown-provider"))
+	if err == nil {
+		t.Error("expected error for unknown provider")
+	}
+}
+
+func TestRegistryList(t *testing.T) {
+	r := NewRegistry()
+
+	defs := r.List()
+	if len(defs) != 28 {
+		t.Fatalf("expected 28 definitions, got %d", len(defs))
+	}
+
+	types := make(map[ProviderType]bool)
+	for _, d := range defs {
+		types[d.Type] = true
+	}
+	if !types[ProviderGoogleAI] || !types[ProviderVertexAI] || !types[ProviderOpenAI] || !types[ProviderDeepSeek] {
+		t.Errorf("expected google, google-vertex, openai, and deepseek in list, got %v", types)
+	}
+}
+
+func TestRegistrySupportedTypes(t *testing.T) {
+	r := NewRegistry()
+
+	types := r.SupportedTypes()
+	if len(types) != 28 {
+		t.Fatalf("expected 28 types, got %d", len(types))
+	}
+
+	typeSet := make(map[ProviderType]bool)
+	for _, pt := range types {
+		typeSet[pt] = true
+	}
+	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] || !typeSet[ProviderOpenAI] || !typeSet[ProviderDeepSeek] {
+		t.Errorf("expected google, google-vertex, openai, and deepseek, got %v", typeSet)
+	}
+}
+
+// TestRegistryBuiltinsHaveIcons asserts every built-in vendor definition
+// carries a non-empty brand icon, so the definitions API can always emit an
+// icon data URI.
+func TestRegistryBuiltinsHaveIcons(t *testing.T) {
+	for _, d := range Builtins() {
+		if len(d.Icon) == 0 {
+			t.Errorf("provider %q has no icon", d.Type)
+		}
+	}
+}
+
+// TestRegistry_NoUnsupportedSignedVendor asserts no built-in vendor declares
+// the OpenAI-compatible protocol with signed auth: ApplyAuth has no signer hook
+// for that style, so such a vendor would be advertised but deterministically
+// fail. Service-account vendors are fine because they use the google-genai
+// path, which does not go through ApplyAuth.
+func TestRegistry_NoUnsupportedSignedVendor(t *testing.T) {
+	for _, d := range Builtins() {
+		if d.Auth == AuthSigned && d.Protocol == ProtocolOpenAIChat {
+			t.Errorf("vendor %q declares %s + %s auth, but no signer is implemented; it would always fail", d.Type, d.Protocol, d.Auth)
+		}
+	}
+}
+
+func TestProviderTypeConstants(t *testing.T) {
+	if ProviderGoogleAI != "google" {
+		t.Errorf("expected ProviderGoogleAI to be 'google', got %q", ProviderGoogleAI)
+	}
+	if ProviderVertexAI != "google-vertex" {
+		t.Errorf("expected ProviderVertexAI to be 'google-vertex', got %q", ProviderVertexAI)
+	}
+}
+
+func TestModelTypeConstants(t *testing.T) {
+	if ModelTypeEmbedding != "embedding" {
+		t.Errorf("expected ModelTypeEmbedding to be 'embedding', got %q", ModelTypeEmbedding)
+	}
+	if ModelTypeGenerative != "generative" {
+		t.Errorf("expected ModelTypeGenerative to be 'generative', got %q", ModelTypeGenerative)
+	}
+}
+
+func TestOperationTypeConstants(t *testing.T) {
+	if OperationGenerate != "generate" {
+		t.Errorf("expected OperationGenerate to be 'generate', got %q", OperationGenerate)
+	}
+	if OperationEmbed != "embed" {
+		t.Errorf("expected OperationEmbed to be 'embed', got %q", OperationEmbed)
+	}
+}
+
+// TestBuiltinsMemoized verifies Builtins returns the same cached slice rather
+// than rebuilding every vendor definition on each call (auto-selection resolves
+// the provider order per credential lookup).
+func TestBuiltinsMemoized(t *testing.T) {
+	a := Builtins()
+	b := Builtins()
+	if len(a) == 0 {
+		t.Fatal("Builtins() returned no definitions")
+	}
+	if &a[0] != &b[0] {
+		t.Errorf("Builtins() rebuilt the definitions: first elements differ (%p vs %p)", &a[0], &b[0])
+	}
+}

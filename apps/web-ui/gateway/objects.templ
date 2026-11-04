@@ -1,0 +1,1263 @@
+package main
+
+import (
+	"net/url"
+	"slices"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	fm "github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Objects browser ---
+
+// objectsSearchControls is the text-query search row: a query input plus a split
+// search button. The primary action submits the surrounding form with the
+// currently selected mode; the joined chevron opens a dropdown listing the three
+// modes, each with a one-line description. Every mode option is a plain submit
+// button (`name="mode" value=…`) inside the form, so choosing a mode works with
+// JavaScript disabled: daisyUI's CSS opens the dropdown on focus and the button
+// submits the GET form. An absent or unrecognised mode normalizes to unified —
+// the strongest ranking — so the default search is not keyword-only.
+//
+// The dropdown is daisyUI's CSS-only (focus/focus-within) dropdown, so the
+// trigger carries no aria-expanded (there is no JS to keep it truthful) and no
+// aria-haspopup; the selected option is announced via role="menuitemradio" +
+// aria-checked instead.
+//
+// It also carries the hidden filter inputs, so searching keeps the active
+// type/branch/actor filter instead of dropping it. Rendered by
+// objectsBrowserToolbar inside the search form.
+templ objectsSearchControls(data objectsPageData) {
+	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
+	<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+		<label class="input input-bordered flex w-full min-w-0 flex-1 items-center gap-2">
+			@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
+			<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
+		</label>
+		<div class="join shrink-0">
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeSubmit,
+				Variant:    ui.ButtonPrimary,
+				Size:       ui.ButtonSM,
+				Icon:       "lucide--search",
+				ExtraClass: "join-item gap-2",
+				Attrs:      templ.Attributes{"name": "mode", "value": mode},
+			}) {
+				{ objectsSearchModeLabel(mode) + " Search" }
+			}
+			@ui.Dropdown(ui.DropdownEnd, nil) {
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonPrimary,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--chevron-down",
+					ExtraClass: "join-item",
+					AriaLabel:  "Choose search mode",
+				})
+				@ui.DropdownMenu(templ.Attributes{"aria-label": "Search mode", "class": "w-80"}) {
+					for _, m := range objectsSearchModes() {
+						{{
+							checked := "false"
+							if m.Value == mode {
+								checked = "true"
+							}
+						}}
+						<li role="none">
+							<button
+								type="submit"
+								name="mode"
+								value={ m.Value }
+								role="menuitemradio"
+								aria-checked={ checked }
+								class={ "min-w-0 break-words text-left", templ.KV("menu-active", m.Value == mode) }
+							>
+								<span class="flex w-full items-start gap-2">
+									<span class="min-w-0 grow">
+										<span class="block text-sm font-medium">{ m.Label }</span>
+										<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
+									</span>
+									if m.Value == mode {
+										@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
+									}
+								</span>
+							</button>
+						</li>
+					}
+				}
+			}
+		</div>
+	</div>
+	if data.TypeFilter != "" {
+		<input type="hidden" name="type" value={ data.TypeFilter }/>
+	}
+	if data.BranchID != "" {
+		<input type="hidden" name="branch" value={ data.BranchID }/>
+	}
+}
+
+// objectsTargetURL is the URL the objects filter form submits to: the agent's
+// scoped route on the agent-scoped view, the generic browser otherwise.
+//
+// The provenance and actor controls are browse-only: the server's search
+// endpoints do not accept the actor filter, so they are hidden in search mode
+// rather than silently ignored (see objectsFilterControls).
+func objectsTargetURL(data objectsPageData) string {
+	if data.AgentID != "" {
+		return "/agents/" + url.PathEscape(data.AgentID) + "/objects"
+	}
+	return "/objects"
+}
+
+// objectsFilterControls holds the filter form's controls: the branch and type
+// dropdowns, the provenance toggle, and the actor picker. Every control applies
+// itself — the selects and radios on change, the actor picker on pick — so there
+// is no Apply button: a control that reloads the list anyway makes a second
+// "confirm" step pure ceremony. Rendered by objectsBrowserToolbar inside the
+// filter form.
+//
+// Every control sits under a form.FormControl legend. The named fields are what
+// make a filter row readable at a glance; a leading "Filter" caption cannot say
+// which control narrows what.
+templ objectsFilterControls(data objectsPageData) {
+	{{ scoped := data.AgentID != "" }}
+	if data.Query != "" {
+		<input type="hidden" name="q" value={ data.Query }/>
+		<input type="hidden" name="mode" value={ data.Mode }/>
+	}
+	if data.Order != "" {
+		<input type="hidden" name="order" value={ data.Order }/>
+	}
+	if scoped {
+		<input type="hidden" name="actor_type" value={ data.ActorType }/>
+		if data.ActorID != "" {
+			<input type="hidden" name="actor_id" value={ data.ActorID }/>
+		}
+	}
+	if len(data.Branches) > 0 {
+		@fm.FormControl("objects-filter-branch", "Branch", fm.LabelAbove, "", "", nil) {
+			<select id="objects-filter-branch" name="branch" class="select select-bordered select-sm" aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
+				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
+				for _, b := range data.Branches {
+					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
+				}
+			</select>
+		}
+	}
+	if len(data.Types) > 0 {
+		@fm.FormControl("objects-filter-type", "Type", fm.LabelAbove, "", "", nil) {
+			<select id="objects-filter-type" name="type" class="select select-bordered select-sm" aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
+				<option value="">All types</option>
+				for _, t := range data.Types {
+					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
+				}
+			</select>
+		}
+	}
+	if data.Query == "" {
+		if data.ActorType != "" {
+			@fm.FormControl("objects-filter-provenance", "Provenance", fm.LabelAbove, "", "", nil) {
+				@objectsProvenanceFilter(data)
+			}
+		}
+		if !scoped {
+			// "Actor", not "Created by": the provenance toggle already carries a
+			// Created by radio, and two controls with that name in one row read as
+			// one filter.
+			@fm.FormControl("objects-filter-actor", "Actor", fm.LabelAbove, "", "", nil) {
+				@objectsActorFilter(data)
+			}
+		}
+	}
+}
+
+// objectsProvenanceFilter is the "Created by / Updated by / Any" provenance
+// toggle: a joined group of radio buttons, each auto-submitting the filter form
+// on change so the list re-narrows without extra chrome. The labels are plain
+// (Any / Created by / Updated by) and never name a memory concept. The group's
+// accessible name comes from the FormControl legend that wraps it.
+templ objectsProvenanceFilter(data objectsPageData) {
+	<div class="join">
+		for _, m := range objectProvenanceModes() {
+			{{
+				extra := "join-item"
+				if data.Provenance == m.Value {
+					extra += " btn-active"
+				}
+			}}
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLabel,
+				Size:       ui.ButtonSM,
+				ExtraClass: extra,
+			}) {
+				<input
+					type="radio"
+					name="provenance"
+					value={ m.Value }
+					checked?={ data.Provenance == m.Value }
+					{ objectsFilterAutoApply(data.Preview)... }
+					class="sr-only"
+				/>
+				{ m.Label }
+			}
+		}
+	</div>
+}
+
+// objectsActorFilter narrows the browse list to one actor's provenance. The
+// control is a menu of real identities — the project's members under "Users"
+// (their avatar) and its agent definitions under "Agents" (their declared
+// glyph) — because a native <select> cannot render an avatar per option.
+//
+// Every row is a submit button carrying the whole (actor_type, actor_id) pair as
+// the `actor` value, so the two can never be submitted out of sync (the server
+// rejects actor_id without actor_type) and picking an identity needs no script:
+// the form submits like any other control in the bar. An active pair that is not
+// in the loaded lists (a former member, or a filter passed by URL) still renders
+// in the closed state so the control reflects the active filter.
+//
+// "Any actor" sits above a divider instead of inside either group: it is not an
+// identity, it clears the filter, and listing it among the people would read as
+// one more of them.
+templ objectsActorFilter(data objectsPageData) {
+	{{
+		selected := actorKey(data.ActorType, data.ActorID)
+		users := actorOptionsByType(data.ActorOptions, "user")
+		agents := actorOptionsByType(data.ActorOptions, "agent")
+		current, known := actorOptionOf(data.ActorOptions, data.ActorType, data.ActorID)
+	}}
+	@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "objects-actor-filter"}) {
+		<div
+			tabindex="0"
+			role="button"
+			aria-haspopup="menu"
+			aria-label={ "Actor: " + actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }
+			class="input input-bordered input-sm flex w-64 cursor-pointer items-center gap-2 text-left"
+		>
+			if selected != "" && known {
+				@objectsActorAvatar(current)
+			} else {
+				<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full">
+					@ui.IconSpan("lucide--users", "size-3.5")
+				</span>
+			}
+			<span class="truncate">{ actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }</span>
+			@ui.IconSpan("lucide--chevron-down", "ml-auto size-3.5 shrink-0 opacity-60")
+		</div>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Actor", "class": "w-72"}) {
+			<li role="none">
+				<button
+					type="submit"
+					name="actor"
+					value=""
+					role="menuitemradio"
+					aria-checked={ strconv.FormatBool(selected == "") }
+					class={ "min-w-0 text-left", templ.KV("menu-active", selected == "") }
+				>
+					<span class="flex min-w-0 items-center gap-2">
+						<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full">
+							@ui.IconSpan("lucide--users", "size-3.5")
+						</span>
+						<span class="min-w-0 truncate">Any actor</span>
+						if selected == "" {
+							@ui.IconSpan("lucide--check", "ml-auto size-4 shrink-0 text-primary")
+						}
+					</span>
+				</button>
+			</li>
+			// An empty <li> is daisyUI's menu divider (background + .1 opacity);
+			// the opacity utility restores it to a line you can actually see.
+			<li role="separator" class="bg-base-content/20 opacity-100 my-1 h-px"></li>
+			if len(users) > 0 {
+				@objectsActorGroup("Users", users, selected)
+			}
+			if len(agents) > 0 {
+				@objectsActorGroup("Agents", agents, selected)
+			}
+		}
+	}
+}
+
+// objectsActorGroup is one identity group in the actor menu: a name the group is
+// announced by, and one radio row per actor. The group carries the role (not the
+// caption) so assistive tech reports a boundary between members and agents
+// instead of a flat run of radios; the caption is visual only, because the group
+// itself is already named.
+templ objectsActorGroup(label string, options []objectActorOption, selected string) {
+	<li role="group" aria-label={ label }>
+		<span class="menu-title text-muted-faint text-[11px] font-semibold tracking-wide uppercase" aria-hidden="true">{ label }</span>
+		for _, o := range options {
+			@objectsActorOptionItem(o, selected)
+		}
+	</li>
+}
+
+// objectsActorOptionItem is one selectable identity in the actor picker: the
+// actor's avatar or declared glyph, its label, and a check on the active row.
+templ objectsActorOptionItem(o objectActorOption, selected string) {
+	{{ key := actorKey(o.Type, o.ID)
+		active := selected == key }}
+	<button
+		type="submit"
+		name="actor"
+		value={ key }
+		role="menuitemradio"
+		aria-checked={ strconv.FormatBool(active) }
+		class={ "min-w-0 text-left", templ.KV("menu-active", active) }
+	>
+		<span class="flex min-w-0 items-center gap-2">
+			@objectsActorAvatar(o)
+			<span class="min-w-0 truncate">{ o.Label }</span>
+			if active {
+				@ui.IconSpan("lucide--check", "ml-auto size-4 shrink-0 text-primary")
+			}
+		</span>
+	</button>
+}
+
+// objectsActorAvatar renders one actor's identity mark: a project member's
+// picture (or initials) and an agent's declared glyph tinted with its colour.
+//
+// The mark is decorative in both branches: the row's label already names the
+// actor, so an unpainted avatar would make the accessible name read "DW Dana
+// Whitfield" (or nothing at all) depending on which branch rendered it.
+templ objectsActorAvatar(o objectActorOption) {
+	if o.Type == "user" {
+		<span class="flex shrink-0 items-center" aria-hidden="true" data-actor-avatar="user">
+			@ui.AvatarFull(ui.AvatarProps{
+				Name:     o.Label,
+				Src:      o.AvatarURL,
+				Size:     ui.AvatarSize6,
+				Fallback: ui.AvatarFallbackInitials,
+			})
+		</span>
+	} else {
+		<span class="bg-base-200 text-base-content/70 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-actor-avatar="agent">
+			@agentInlineGlyph(o.Icon, o.Color)
+		</span>
+	}
+}
+
+// objectsSearchEmpty is the no-hits state: an empty state with a clear-search
+// escape hatch back to the full browse list.
+templ objectsSearchEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--search-x",
+		Title:       "No matching objects",
+		Description: "Nothing stored matches your search. Try different words, or clear it to keep browsing.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear search
+		}
+	}
+}
+
+// objectsEmpty is the Objects page's full-surface empty state (list
+// replacement); py-12 keeps the panel present under the filter bar.
+templ objectsEmpty(typeFilter string) {
+	if typeFilter != "" {
+		@objectsTypeEmpty()
+	} else {
+		@objectsBrowseEmpty()
+	}
+}
+
+// objectsTypeEmpty is the filtered-browse empty state: no object of the
+// selected type, with a clear-filter escape hatch.
+templ objectsTypeEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--filter-x",
+		Title:       "No objects of this type",
+		Description: "Nothing stored matches this type. Try another type, or view everything.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear filter
+		}
+	}
+}
+
+// objectsBrowseEmpty is the unfiltered browse empty state: nothing stored yet.
+templ objectsBrowseEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--box",
+		Title:       "No objects yet",
+		Description: "Entities will show up here once memory stores something.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}
+
+// --- Object creation ---
+
+// ObjectCreatePage renders the create-object form: a type selector constrained
+// to the project's compiled object types, then (once a type is picked) inputs
+// for key, workflow status, labels, and the selected type's schema-defined
+// properties (each rendered with a widget matching its declared data type).
+// Labels and array/object properties use a chip TagList; labelSuggestions feeds
+// the labels input's autocomplete from existing labels in the graph. status
+// carries the type's resolved workflow-status control; a type that declares no
+// workflow renders no status field (its own `status` property, when it has one,
+// is edited with the rest of its properties).
+templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error, status *objectStatusControl) {
+	if loadErr != nil {
+		<div class={ pageFormChromeClass }>
+			@pageError("Failed to load object types", loadErr)
+		</div>
+	} else if len(objectTypes) == 0 {
+		<div class={ pageFormChromeClass }>
+			@ui.Section("New object", ui.SectionProps{
+				Margin:    "mt-6",
+				BodyClass: "memory-density-comfortable",
+			}) {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--box",
+					Title:       "No object types available",
+					Description: "Install a schema pack to define object types before creating objects.",
+					Bordered:    true,
+				})
+			}
+		</div>
+	} else {
+		<div class={ pageFormChromeClass }>
+			@detailHeader(crumbsActive(nav.Crumbs("Objects", "/objects", "New object")), "", "New object", "Manually add an entity to the knowledge graph.", detailHeaderOpts{Margin: "mb-6"})
+			<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects/new">
+				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
+					<option value="" disabled selected?={ form.Type == "" }>Pick a type…</option>
+					for _, t := range objectTypes {
+						<option value={ t.Name } selected?={ t.Name == form.Type }>{ objectTypeDisplayName(t) }</option>
+					}
+				</select>
+				<noscript>
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
+						Continue 
+					}
+				</noscript>
+			</form>
+			if form.Error != "" {
+				<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium">{ form.Error }</p>
+			}
+			if form.Type == "" {
+				@ui.EmptyNote() {
+					Pick a type to see its fields.
+				}
+			}
+		</div>
+		if form.Type != "" {
+			<form method="post" action="/objects">
+				<div class={ pageFormFieldsClass }>
+					@ui.Section("Details", ui.SectionProps{
+						Margin:    "mt-6",
+						BodyClass: "memory-density-comfortable",
+					}) {
+						<div class="flex flex-col gap-4">
+							<input type="hidden" name="type" value={ form.Type }/>
+							@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
+								<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
+							}
+							if status != nil && status.Show {
+								@fm.FormControl("object-status", "Workflow status", fm.LabelAbove, "", "", nil) {
+									@objectStatusField("object-status", form.Status, status)
+								}
+							}
+							@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
+								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label...", Class: "memory-chip-list"})
+							}
+							for _, p := range propDefs {
+								@fm.FormControl(p.Name, p.Label(), fm.LabelAbove, p.KeyHint(), "", nil) {
+									@propertyInput(p, form.Props[p.Name], nil, form.JSONProps[p.Name])
+								}
+							}
+						</div>
+					}
+				</div>
+				@components.StickyFormActions(components.StickyFormActionsProps{}) {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plus",
+					}) {
+						Create object
+					}
+				}
+			</form>
+		}
+	}
+}
+
+// objectStatusField renders the built-in workflow-status control of the object
+// create/edit forms. A type that declares a workflow gets a native select of
+// its work statuses — the declared `allowedStatuses` when present, otherwise
+// the canonical board order. A stored value outside the option set
+// (agent-written data is not constrained) is kept as an extra selected option
+// so saving never drops it. Free is the degraded edit-form render where the
+// compiled types could not be loaded: the stored value stays editable as a text
+// input. ctrl.Show is checked by the caller, so this component never renders
+// for a type without a workflow.
+templ objectStatusField(id string, current string, ctrl *objectStatusControl) {
+	if ctrl != nil && len(ctrl.Options) > 0 {
+		<select id={ id } name="status" class="select w-full">
+			if current == "" {
+				<option value="" selected>Pick…</option>
+			}
+			for _, opt := range ctrl.Options {
+				<option value={ opt } selected?={ current == opt }>{ boardStatusLabel(opt) }</option>
+			}
+			if current != "" && !slices.Contains(ctrl.Options, current) {
+				<option value={ current } selected>{ current }</option>
+			}
+		</select>
+	} else if ctrl != nil && ctrl.Free {
+		<input id={ id } name="status" type="text" value={ current } class="input w-full"/>
+	}
+}
+
+// propertyInput renders a type-appropriate input for one schema property.
+// boolean → hidden false + toggle switch (so unchecked submits explicit false);
+// date → date picker; number/integer → numeric input; object → JSON text field
+// (an object is one document, not a set of values); array → chip TagList (one
+// chip per value) while every value is short and single-line and the declared
+// element type is one a chip can carry, else a JSON text field for the whole
+// array (an object or array element type always takes the JSON field); url →
+// url input; md5/sha1/sha256/sha512 → a
+// single-line hex input constrained to the digest length; string with a declared
+// enum → native select of the allowed values; string with widget: "input" →
+// single-line input; any other string/unknown → an auto-growing textarea (string
+// properties may hold arbitrarily long text; widget: "textarea" states that
+// intent explicitly). vals carries the property's raw submitted values (indexed
+// for multi-value props).
+templ propertyInput(def objectPropertyDef, vals []string, stored any, submittedJSON bool) {
+	{{
+		v := ""
+		if len(vals) > 0 {
+			v = vals[0]
+		}
+	}}
+	// Marker: this property was rendered in the form. It lets an empty (or
+	// emptied TagList) submission clear a stored value instead of being skipped
+	// (#2330). The prefix is distinct so the prop_* parser ignores it.
+	<input type="hidden" name={ "propm_present_" + def.Name } value="1"/>
+	if def.Type == "boolean" {
+		// Three-state so "unset" (omit/delete) and "false" stay distinguishable.
+		<select name={ "prop_" + def.Name } class="select w-full" aria-label={ def.Label() }>
+			<option value="" selected?={ v != "true" && v != "false" }>Not set</option>
+			<option value="true" selected?={ v == "true" }>Yes</option>
+			<option value="false" selected?={ v == "false" }>No</option>
+		</select>
+	} else if def.Type == "date" {
+		<input name={ "prop_" + def.Name } type="date" value={ dateInputValue(v) } class="input w-full"/>
+	} else if def.Type == "number" {
+		<input name={ "prop_" + def.Name } type="number" step="any" value={ v } class="input w-full"/>
+	} else if def.Type == "integer" {
+		<input name={ "prop_" + def.Name } type="number" step="1" value={ v } class="input w-full"/>
+	} else if def.Type == "url" {
+		<input name={ "prop_" + def.Name } type="url" value={ v } placeholder="https://…" spellcheck="false" autocapitalize="off" class="input w-full"/>
+	} else if isHashPropertyType(def.Type) {
+		<input name={ "prop_" + def.Name } type="text" value={ v } placeholder={ hashInputHint(def.Type) } pattern={ hashInputPattern(def.Type) } maxlength={ hashInputMaxLength(def.Type) } spellcheck="false" autocapitalize="off" autocomplete="off" class="input w-full font-mono"/>
+	} else if def.Type == "object" {
+		// An object property is one JSON document, never a set of tags: a chip
+		// cannot represent it (a chip is a fixed-height, single-line badge, and
+		// a multi-KB document painted over every field below it). Edit the
+		// document as JSON text instead.
+		@jsonTextarea("prop_"+def.Name, def.Label(), "JSON object", "saved as typed data; invalid JSON is rejected on save", jsonDocumentEditorValue(vals))
+	} else if def.Type == "array" && arrayUsesJSONEditor(def, vals, stored, submittedJSON) {
+		// The chip editor stays while every stored element is plain text and
+		// fits on one short line, and while the declared element type is one a
+		// chip can carry. A chip can only submit text, so a stored
+		// object/number/boolean element would be written back as a string, a
+		// long or multi-line element is unreadable as a chip, and a declared
+		// object/array element has no chip representation at all: each edits the
+		// whole array as JSON instead. submittedJSON keeps the editor — and the
+		// exact text — on a create form re-rendered after a rejected save.
+		@jsonTextarea("prop_"+def.Name, def.Label(), "JSON array", "one element per entry; invalid JSON is rejected on save", jsonArrayEditorValue(vals, stored, submittedJSON, def.ItemType != ""))
+	} else if def.Type == "array" {
+		@fm.TagList(fm.TagListProps{ID: "prop-" + def.Name, Name: "prop_" + def.Name, Values: vals, Placeholder: "Add an item...", Class: "memory-chip-list"})
+	} else if len(def.Enum) > 0 {
+		// enum-declared string → native select of the allowed values. A stored
+		// value outside the enum (agent-written data is not constrained) is
+		// kept as an extra selected option so saving never drops it.
+		<select name={ "prop_" + def.Name } class="select w-full">
+			if v == "" {
+				<option value="" selected>Pick…</option>
+			}
+			for _, opt := range def.Enum {
+				<option value={ opt } selected?={ v == opt }>{ opt }</option>
+			}
+			if v != "" && !slices.Contains(def.Enum, v) {
+				<option value={ v } selected>{ v }</option>
+			}
+		</select>
+	} else if def.Widget == "input" {
+		// explicit single-line override for short string fields
+		<input name={ "prop_" + def.Name } type="text" value={ v } class="input w-full"/>
+	} else {
+		// string/unknown → auto-growing textarea; string values are free-form
+		// and may hold long text (widget: "textarea" is the explicit form).
+		@longTextarea("prop_"+def.Name, v)
+	}
+}
+
+// longTextarea renders the free-form, multi-line string field used wherever an
+// object property may hold long text (schema string properties and stored
+// properties with no schema definition). It is an auto-growing, vertically
+// resizable textarea with a muted live character counter. The counter's initial
+// value is rendered server-side so it is correct before JS runs; app.js keeps
+// it in sync on input and re-initialises on HTMX swaps (boosted client-side
+// navigation does not fire DOMContentLoaded).
+templ longTextarea(name string, value string) {
+	<div class="w-full" data-char-counter>
+		<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
+		<div class="text-muted-faint mt-1 text-right text-xs" data-testid="char-count" data-char-count-value>{ charCountLabel(value) }</div>
+	</div>
+}
+
+// jsonTextarea renders a JSON document property (an `object`, or an `array`
+// whose values do not fit a chip): monospaced, auto-growing and vertically
+// resizable, with no character counter — the counter is the free-text string
+// field's affordance, not this one's. The submitted text is parsed back into a
+// typed value server-side (a map for an object, a list for an array), so a
+// document keeps its shape instead of being stored as one JSON string.
+templ jsonTextarea(name string, title string, kind string, hint string, value string) {
+	<div class="w-full">
+		// Marker: this property was submitted as one JSON document, not as chips.
+		// It only matters on the create form, which re-renders from the submitted
+		// values after a rejected save: without it an array document would come
+		// back as a chip (or, if it is not a list, wrapped into one).
+		<input type="hidden" name={ jsonPropMarker(name) } value="1"/>
+		<textarea
+			name={ name }
+			rows="1"
+			data-autogrow
+			spellcheck="false"
+			autocapitalize="off"
+			autocomplete="off"
+			aria-label={ title + " (" + kind + ")" }
+			class="textarea w-full min-h-20 max-h-96 resize-y font-mono text-xs leading-relaxed"
+		>{ value }</textarea>
+		<div class="text-muted-faint mt-1 text-xs">{ kind } — { hint }.</div>
+	</div>
+}
+
+// --- Object detail ---
+
+// objectDetailShellData is the shared chrome every object subpage renders:
+// identity header and the Overview / History / Relationships / Similar objects
+// rail. The loader also fetches the object's edges once so every subpage can
+// badge the Relationships rail item without a second request. Overview also
+// loads its own property form data; the other subpages load only their content.
+type objectDetailShellData struct {
+	Obj          *GraphObject
+	Branch       objectBranchRef
+	TypeUIByType map[string]typeUI
+	Status       *objectStatusControl
+	Assignees    []boardAssigneeCandidate
+	Trail        []nav.BreadcrumbItem
+	TypeLabel    string
+	Active       string
+	From         string
+	FlashMsg     string
+	FlashErr     error
+	LoadErr      error
+	// Compiled carries the schema used by the Overview/Relationships editors;
+	// History and Similar only need the header fields above.
+	Compiled *CompiledSchemaTypes
+	// Sources is the object's extraction provenance, rendered on Overview only.
+	Sources []objectSource
+	// Edges is the object's relationship list, fetched once here so every
+	// subpage can badge the Relationships rail item. EdgeCount is its length.
+	Edges     []GraphRelationship
+	EdgeCount int
+	EdgesErr  error
+}
+
+// workControlTarget builds the POST destination/context for the header's
+// workflow controls. The controls only render when the type declares a
+// workflow; from preserves the optional origin trail across a redirect.
+func (d objectDetailShellData) workControlTarget() objectWorkControlTarget {
+	id := ""
+	if d.Obj != nil {
+		id = d.Obj.ID
+	}
+	return objectWorkControlTarget{ObjectID: id, From: d.From}
+}
+
+// objectDetailShell renders the container, header, and sub-navigation rail
+// shared by every object subpage. Page-specific content (overview form, history
+// timeline, relationships list, deferred similar list) is passed as children.
+templ objectDetailShell(data objectDetailShellData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Object unavailable", data.LoadErr)
+		} else {
+			@objectDetailHeader(data.Obj, data.Branch, data.TypeUIByType, data.Trail, data.Status, data.Active)
+			@layout.Rail(objectSubNav(data.Obj.ID, data.Active, data.EdgeCount), nil) {
+				@flashToasts(data.FlashMsg, data.FlashErr)
+				{ children... }
+			}
+		}
+	}
+}
+
+// ObjectDetailPage renders the object Overview subpage: the shared header/rail
+// plus the workflow panel, record facts, editable properties, and type-property
+// form. Relationships moved to their own rail tab. flashErr surfaces PRG
+// feedback (e.g. the "no agents configured" chat hint) as an auto-dismissing
+// toast. typeUIByType carries the compiled types' declared ui accents
+// (icon/color) so the header chip can render the object type's icon. trail is
+// an optional origin trail (e.g. a document's extraction history); when nil the
+// header renders Objects > <object>. typeLabel is the object type's display
+// label ("" when the schema could not be loaded), used as the schema card's
+// heading.
+//
+// The editable fields live in two cards, matching the read-only preview
+// drawer: "Properties" carries the platform fields (key and labels) and
+// "<Type> Properties" carries the type's schema fields, so platform data and
+// schema data never blur together. Workflow status and assignee are edited by
+// the Workflow panel above; record facts are their own read-only panel. One
+// <form> spans both editable cards with a single terminal Save bar:
+// uiObjectUpdate always replaces labels with the submitted set, so a second,
+// labels-less form would wipe them.
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, assignees []boardAssigneeCandidate, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string, edgeCount int) {
+	{{ data := objectDetailShellData{
+		Obj:          obj,
+		Branch:       branch,
+		TypeUIByType: typeUIByType,
+		Status:       status,
+		Assignees:    assignees,
+		Trail:        trail,
+		TypeLabel:    typeLabel,
+		Active:       "overview",
+		FlashMsg:     flashMsg,
+		FlashErr:     flashErr,
+		LoadErr:      loadErr,
+		EdgeCount:    edgeCount,
+	} }}
+	@objectDetailShell(data) {
+		if obj != nil {
+			@objectSourceCard(sources)
+			@objectWorkflowPanel(obj, status, assignees, data.workControlTarget())
+			@objectDetailsCard(obj)
+			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
+				@objectBuiltinPropertiesCard(obj, labelSuggestions)
+				@objectTypePropertiesCard(obj, propDefs, typeLabel)
+				@components.StickyFormActions(components.StickyFormActionsProps{}) {
+					@components.SaveChangesButton()
+				}
+			</form>
+		}
+	}
+}
+
+// objectHistoryPage renders the History subpage: the shared shell plus the full
+// version timeline. A failed history fetch degrades only this section; the
+// object header and rail stay usable.
+templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, historyErr error) {
+	@objectDetailShell(data) {
+		@ui.Section("History", ui.SectionProps{
+			BodyClass: "memory-density-comfortable",
+		}) {
+			if historyErr != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--circle-x",
+					Message: historyErr.Error(),
+					Attrs:   templ.Attributes{"data-testid": "object-history-error"},
+				})
+			} else {
+				<div data-testid="object-history-page">
+					@objectPreviewHistory(versions)
+				</div>
+			}
+		}
+	}
+}
+
+// objectSimilarPage renders the Similar objects subpage. The vector search stays
+// off the critical path (issue #1096): the page paints the shared shell, then
+// the deferred placeholder fetches /objects/:id/similar/partial.
+templ objectSimilarPage(data objectDetailShellData) {
+	@objectDetailShell(data) {
+		@objectSimilarObjectsDeferred(data.Obj)
+	}
+}
+
+// objectRelationshipsPage renders the Relationships subpage: the shared object
+// shell plus the relationship list/empty state and the Connect dialog. Edge data
+// comes from the shell loader, so the rail count and this page share one fetch.
+templ objectRelationshipsPage(data objectDetailShellData, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, edgesErr error) {
+	@objectDetailShell(data) {
+		if edgesErr != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: edgesErr.Error(),
+				Attrs:   templ.Attributes{"data-testid": "object-relationships-error"},
+			})
+		} else {
+			@objectRelationships(data.Obj, relTypes, edges, related)
+		}
+	}
+}
+
+// objectBreadcrumbs returns the breadcrumb trail for the object detail header.
+// trail is an optional origin resolved from the ?from= query parameter (e.g. a
+// document's Extraction history); when it is empty the header falls back to the
+// plain Objects > <object> trail, with the object as the current item.
+//
+// An origin trail ends at a section page, not at the object: the object's own
+// title is the current page, so every origin crumb stays a navigable ancestor
+// and none is marked active (an active link would claim the section is current).
+func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.BreadcrumbItem {
+	if len(trail) > 0 {
+		return trail
+	}
+	return crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj)))
+}
+
+// objectDetailHeader intentionally does NOT use the shared detailHeader: it
+// renders a rich chip row (type chip + status/embedding badges) ABOVE the title
+// and uses items-start alignment, neither of which detailHeader models (kicker is
+// a plain string, TitleLeading is inline-before-title, Actions sit on the right,
+// and the flex is hardcoded items-center/items-end).
+templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, trail []nav.BreadcrumbItem, status *objectStatusControl, active string) {
+	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
+	<div class="mb-6">
+		@nav.Breadcrumbs(objectBreadcrumbs(obj, trail), nav.BreadcrumbsDividerDefault)
+		<div class="mt-2 flex flex-wrap items-start justify-between gap-4">
+			<div class="min-w-0">
+				<div class="mb-2 flex flex-wrap items-center gap-2">
+					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+					@objectBranchChip(branch)
+					// The Overview's Workflow panel already carries the editable
+					// status for a workflow type, so the badge would duplicate it.
+					// Every other subpage keeps the read-only badge.
+					if obj.Status != "" && !(active == "overview" && !objectWorkControlDisabled(status)) {
+						@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
+							Size:  ui.BadgeSizeSM,
+							Dot:   true,
+							Attrs: templ.Attributes{"data-status": obj.Status},
+						})
+					}
+					if obj.EmbeddingStatus != "" {
+						{{ lbl, variant := embeddingStatusBadge(obj.EmbeddingStatus) }}
+						@ui.Badge(ui.BadgeProps{
+							Label:   lbl,
+							Variant: variant,
+							Size:    ui.BadgeSizeSM,
+						})
+					}
+					if obj.EmbeddingUpdatedAt != "" {
+						<span class="text-muted text-xs">Embedded { relTime(obj.EmbeddingUpdatedAt) }</span>
+					}
+				</div>
+				<h1 class="text-2xl font-bold tracking-tight">{ graphObjectLabel(*obj) }</h1>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/objects/" + url.PathEscape(obj.ID) + "/chat",
+				Variant: ui.ButtonSecondary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--messages-square",
+			}) {
+				Chat about object
+			}
+		</div>
+	</div>
+}
+
+// objectBranchChip renders the object's branch as an always-present chip:
+// "main" for the implicit main graph, the branch name (linking to the filtered
+// object browser) for an open branch, and "<name> · merged <reltime>" for a
+// merged branch. A branch id that fails to resolve still renders a chip labelled
+// by its short id — the header never omits the chip or fails the page.
+templ objectBranchChip(branch objectBranchRef) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   objectBranchChipLabel(branch),
+		Variant: ui.BadgeNeutral,
+		Style:   ui.BadgeStyleSoft,
+		Size:    ui.BadgeSizeSM,
+		Icon:    objectBranchChipIcon(branch),
+		Href:    objectBranchChipHref(branch),
+		Attrs:   templ.Attributes{"data-testid": "object-branch-chip"},
+	})
+}
+
+// objectSourceCard renders the object's extraction provenance (where it came
+// from): one row per `_sources` record — source document, version, extraction
+// job, and extracted-at time. Omitted when the object carries no provenance.
+templ objectSourceCard(sources []objectSource) {
+	if len(sources) > 0 {
+		@ui.Section("Source", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-2" data-testid="object-source-card">
+				for _, src := range sources {
+					@objectSourceRow(src)
+				}
+			</div>
+		}
+	}
+}
+
+// objectSourceRow is one extraction-provenance record. The source document name
+// links to its document page; the extraction job links to the document's
+// extraction history; the rest render as muted metadata.
+templ objectSourceRow(src objectSource) {
+	<div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+		@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-subtle")
+		if src.DocumentID != "" {
+			<a
+				class="link link-hover text-sm font-medium"
+				href={ templ.URL("/documents/" + url.PathEscape(src.DocumentID)) }
+				title={ src.DocumentID }
+			>{ objectSourceDocumentLabel(src) }</a>
+		} else {
+			<span class="text-muted text-sm font-medium">Document</span>
+		}
+		if src.DocumentVersion != "" {
+			@ui.Badge(ui.BadgeProps{Label: "v" + src.DocumentVersion, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+		}
+		if src.JobID != "" {
+			if src.DocumentID != "" {
+				<a
+					class="link link-hover font-mono text-xs"
+					href={ templ.URL("/documents/" + url.PathEscape(src.DocumentID) + "/extractions") }
+					title={ src.JobID }
+				>job { shortID(src.JobID) }</a>
+			} else {
+				<span class="text-muted-faint font-mono text-xs">job { shortID(src.JobID) }</span>
+			}
+		}
+		if src.ExtractedAt != "" {
+			<span class="text-muted-faint text-xs">{ relTime(src.ExtractedAt) }</span>
+		}
+	</div>
+}
+
+// objectBuiltinPropertiesCard renders the editable platform fields of the
+// detail page: the key and labels. Workflow status and assignee are edited in
+// the Workflow panel, and record facts have their own read-only panel, so
+// neither is repeated here. POST /objects/{id} delta-merges the submitted
+// fields.
+templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string) {
+	@ui.Section("Properties", ui.SectionProps{
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-4" data-testid="object-builtin-properties">
+			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
+				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
+			}
+			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
+				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label...", Class: "memory-chip-list"})
+			}
+		</div>
+	}
+}
+
+// objectDetailsCard renders the read-only record facts as their own panel above
+// the editable Properties card.
+templ objectDetailsCard(obj *GraphObject) {
+	@ui.Section("Details", ui.SectionProps{
+		Margin:    "mt-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		@objectRecordFacts(obj)
+	}
+}
+
+// objectRecordFacts renders the object's read-only record facts: Version,
+// Created, and ID. Workflow status and assignee are editable in the Workflow
+// panel, so they are not duplicated here.
+templ objectRecordFacts(obj *GraphObject) {
+	<div class="flex flex-col gap-3" data-testid="object-record-facts">
+		<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+			@objectRecordFact("Version", objectPreviewVersionLabel(obj.Version), false)
+			@objectRecordFact("Created", objectPreviewCreated(obj.CreatedAt), false)
+			@objectRecordFact("ID", objectPreviewCanonicalID(*obj), true)
+		</dl>
+	</div>
+}
+
+// objectRecordFact is one read-only record fact: a small label over its value.
+// mono marks identifier values so they are scannable and copyable as a block.
+templ objectRecordFact(label string, value string, mono bool) {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<dt class="text-muted-faint text-xs font-medium">{ label }</dt>
+		<dd class={ "break-all", templ.KV("font-mono text-xs", mono), templ.KV("text-sm", !mono) }>
+			if value == "" {
+				@components.EmptyDash()
+			} else {
+				{ value }
+			}
+		</dd>
+	</div>
+}
+
+// objectTypePropertiesCard renders the object's schema fields under
+// "<Type> Properties" — the detail page's counterpart to the preview drawer's
+// second panel. Declared properties come first, in schema order, each with its
+// label and a type-appropriate input so a declared property with no stored value
+// can still be filled in; properties the type does not declare follow so an
+// agent-written key is never hidden. The card is omitted when there is nothing
+// to edit, matching the drawer.
+templ objectTypePropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, typeLabel string) {
+	{{ rows := objectTypePropertyRows(*obj, propDefs) }}
+	if len(rows) > 0 {
+		@ui.Section(typePropertiesPanelTitle(typeLabel), ui.SectionProps{
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4" data-testid="object-type-properties">
+				for _, r := range rows {
+					@objectTypePropertyField(r)
+				}
+			</div>
+		}
+	}
+}
+
+// objectTypePropertyField renders one schema field: the declared widget when the
+// type defines the property, otherwise the free-form long-text field an
+// undeclared stored value gets.
+templ objectTypePropertyField(r objectTypePropertyRow) {
+	{{ value := ""
+	if len(r.Values) > 0 {
+		value = r.Values[0]
+	} }}
+	@fm.FormControl(r.Name, r.Label, fm.LabelAbove, r.Hint, "", nil) {
+		if r.Declared {
+			@propertyInput(r.Def, r.Values, r.Stored, false)
+		} else {
+			<input type="hidden" name={ "propm_present_" + r.Name } value="1"/>
+			@longTextarea("prop_"+r.Name, value)
+		}
+	}
+}
+
+// objectRelationships lists the relationships touching an object, or — when
+// none exist — an empty state with a Connect CTA that opens the relationship
+// dialog. relTypes carries the schema's compiled relationship types.
+templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject) {
+	@ui.Section("Relationships", ui.SectionProps{
+		Margin:    "mt-6",
+		CardClass: "overflow-hidden",
+		BodyClass: "memory-density-flush",
+	}) {
+		if len(edges) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--link",
+				Title:       "No relationships",
+				Description: "This object is not connected to anything yet.",
+			}) {
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeButton,
+					Variant:   ui.ButtonSecondary,
+					Size:      ui.ButtonSM,
+					Icon:      "lucide--link",
+					AriaLabel: "Connect this object to another",
+					OnClick:   openObjectConnect(),
+				}) {
+					Connect
+				}
+			}
+		} else {
+			<div class="divide-y divide-base-200">
+				for _, r := range edges {
+					@objectRelationshipRow(obj, r, related)
+				}
+			</div>
+		}
+	}
+	@objectConnectDialog(obj, relTypes)
+}
+
+// objectConnectDialog is the "add relationship" modal: pick a relationship
+// type, confirm the source object (defaults to the current object), and pick
+// the target via search. Posts to /objects/{id}/relationships.
+templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
+	@ui.Dialog(ui.DialogProps{ID: "object-connect-modal", BoxClass: "max-w-sm", Attrs: templ.Attributes{"data-testid": "object-connect-modal"}}) {
+		@ui.DialogTitle() {
+			Connect object 
+		}
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+			Link this object to another one in the knowledge graph.
+		}
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships") }>
+			@fm.FormControl("connect-type", "Relationship type", fm.LabelAbove, "", "", nil) {
+				<select id="connect-type" name="type" required class="select w-full">
+					<option value="" disabled selected>Pick a relationship type…</option>
+					for _, rt := range relationshipOptions(relTypes, obj.Type) {
+						<option value={ rt.Name }>{ relTypeDisplayName(rt) }</option>
+					}
+				</select>
+			}
+			@fm.FormControl("connect-src", "Source object", fm.LabelAbove, "Defaults to this object — leave as-is to link from it.", "", nil) {
+				<input id="connect-src" name="src_id" type="text" value={ obj.ID } class="input w-full font-mono"/>
+			}
+			@fm.FormControl("connect-dst", "Target object", fm.LabelAbove, "Start typing to search, or paste an object id.", "", nil) {
+				<input id="connect-dst" name="dst_id" type="text" list="object-search-options" placeholder="Search for an object…" class="input w-full"/>
+				<datalist id="object-search-options"></datalist>
+			}
+			@fm.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--link",
+				}) {
+					Connect
+				}
+			}
+		</form>
+	}
+}
+
+// openObjectConnect opens the relationship dialog and lazily wires the target
+// autocomplete: typing fetches /objects/search and fills the <datalist> with
+// matching object ids (labels shown as option text). Pasting an id straight
+// into the field works without JS.
+
+script openObjectConnect() {
+	var d = document.getElementById("object-connect-modal");
+	if (!d) { return; }
+	var input = document.getElementById("connect-dst");
+	if (input && !input.dataset.wired) {
+		input.dataset.wired = "1";
+		var list = document.getElementById("object-search-options");
+		input.addEventListener("input", function () {
+			var q = input.value.trim();
+			if (!q || !list) { return; }
+			fetch("/objects/search?q=" + encodeURIComponent(q))
+				.then(function (r) { return r.json(); })
+				.then(function (items) {
+					list.innerHTML = "";
+					(items || []).forEach(function (it) {
+						var o = document.createElement("option");
+						o.value = it.id;
+						o.textContent = it.label;
+						list.appendChild(o);
+					});
+				})
+				.catch(function () { /* autocomplete is best-effort */ });
+		});
+	}
+	window.MemoryApp.openDialog("object-connect-modal");
+}
+
+templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []GraphObject) {
+	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+		@ui.Badge(ui.BadgeProps{
+			Label:   relationshipTypeLabel(r.Type),
+			Variant: ui.BadgeSecondary,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--link",
+		})
+		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.SrcID) }</span>
+		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-muted-subtle")
+		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.DstID) }</span>
+	</div>
+}
+
+// objectSimilarObjects lists objects semantically similar to the current one,
+// each with a Merge action that starts a merge session.
+templ objectSimilarObjects(obj *GraphObject, similar []SimilarObject) {
+	@cardList("Similar objects", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(similar) == 0,
+		EmptyIcon: "lucide--git-merge", EmptyTitle: "No similar objects", EmptyDesc: "No other objects look like this one yet.",
+	}) {
+		for _, so := range similar {
+			@similarObjectRow(obj, so)
+		}
+	}
+}
+
+// objectSimilarObjectsDeferred is the first-paint placeholder for the Similar
+// objects section: it renders the card title with a loading indicator and
+// triggers the deferred /objects/:id/similar/partial fetch, which swaps the real
+// results in after paint. Keeping the optional vector-similarity read off the
+// critical path means a slow /similar can no longer hold the object page (issue
+// #1096).
+//
+// hx-target="this" overrides the hx-target="#main-content" inherited from the
+// page shell's <main> (htmx implicitInheritance=true); without it the swap
+// would replace the whole main-content region with the similar-objects card.
+templ objectSimilarObjectsDeferred(obj *GraphObject) {
+	<div
+		id="object-similar"
+		hx-get={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/similar/partial") }
+		hx-trigger="load"
+		hx-target="this"
+		hx-swap="outerHTML"
+		data-testid="object-similar-deferred"
+	>
+		@ui.Section("Similar objects", ui.SectionProps{
+			Margin:    "mt-6",
+			CardClass: "overflow-hidden",
+			BodyClass: "memory-density-flush",
+			Rows:      true,
+		}) {
+			<div class="flex items-center gap-2 px-4 py-3">
+				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+				<span class="text-muted text-sm">Finding similar objects…</span>
+			</div>
+		}
+	</div>
+}
+
+// similarObjectRow is one similar object: label + type, similarity badge, and
+// a Merge button that deep-links into /chat with the merge instruction.
+templ similarObjectRow(obj *GraphObject, so SimilarObject) {
+	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "neutral"})
+		<div class="min-w-0 grow">
+			<p class="truncate text-sm font-medium">{ similarObjectLabel(so) }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				{ so.Type }
+			}
+		</div>
+		@ui.Badge(ui.BadgeProps{
+			Label:   similarityLabel(so.Distance),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeXS,
+		})
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects/" + url.PathEscape(obj.ID) + "/merge?with=" + url.QueryEscape(so.ID),
+			Variant: ui.ButtonSecondary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--git-merge",
+		}) {
+			Merge
+		}
+	</div>
+}

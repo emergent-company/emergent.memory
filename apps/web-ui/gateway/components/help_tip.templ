@@ -1,0 +1,56 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// HelpTipProps configures a HelpTip.
+type HelpTipProps struct {
+	// Position is the tooltip placement: "top" (default), "bottom", "left"
+	// or "right".
+	Position string
+	// ID, when set, is the id of a visually-hidden copy of the tip text. The
+	// control the tip explains must reference it with aria-describedby, so the
+	// explanation is announced with the control instead of existing only in a
+	// CSS ::before generated from data-tip (#2393). The trigger stays out of
+	// the tab order in that mode because the control carries the description.
+	//
+	// Leave ID empty when there is no control to reference it (a label/key
+	// note); the trigger then becomes focusable and is announced on its own.
+	ID string
+}
+
+// HelpTip renders a CSS-only daisyUI tooltip wrapping an info icon.
+//
+// The upstream ui.InfoTip exposes its text only through data-tip (a CSS
+// ::before), which is invisible to assistive tech. This wrapper keeps that
+// visual tooltip but also puts the text in the accessibility tree, either as
+// a visually-hidden description for a control (ID set) or as the accessible
+// name of a focusable note (ID empty).
+//
+//	@components.HelpTip(description, components.HelpTipProps{ID: "ds-tip-" + key})
+templ HelpTip(tip string, props ...HelpTipProps) {
+	{{ var p HelpTipProps
+	if len(props) > 0 {
+		p = props[0]
+	}
+	pos := p.Position
+	if pos == "" {
+		pos = "top"
+	}
+	// With a description target the control announces the text, so the icon
+	// needs no stop of its own. Without one the icon is the only way to reach
+	// the text, so make it focusable and name it with the tip.
+	triggerAttrs := templ.Attributes{}
+	if p.ID == "" {
+		triggerAttrs["tabindex"] = "0"
+		triggerAttrs["role"] = "note"
+		triggerAttrs["aria-label"] = tip
+	} }}
+	<span class={ "tooltip tooltip-" + pos } data-tip={ tip } { triggerAttrs... }>
+		@ui.IconSpan("lucide--info", "size-3.5 shrink-0 text-base-content/40 cursor-help")
+	</span>
+	if p.ID != "" {
+		<span id={ p.ID } class="sr-only">{ tip }</span>
+	}
+}

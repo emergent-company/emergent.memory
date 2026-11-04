@@ -1,0 +1,399 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// ============================================================================
+// Interfaces (break import cycle with extraction/discoveryjobs packages)
+// ============================================================================
+
+// DomainClassifierHandler classifies a document against installed schemas.
+// Implemented by a wrapper in the extraction package to avoid import cycles.
+type DomainClassifierHandler interface {
+	ClassifyDocument(ctx context.Context, projectID, documentID string) (ClassificationSnapshot, error)
+}
+
+// ClassificationSnapshot mirrors extraction.ClassificationResult for use in mcp.
+type ClassificationSnapshot struct {
+	SchemaID          *string `json:"schema_id"`
+	Label             string  `json:"label"`
+	Confidence        float32 `json:"confidence"`
+	Stage             string  `json:"stage"`
+	LLMReason         string  `json:"llm_reason,omitempty"`
+	DocumentExcerpt   string  `json:"document_excerpt,omitempty"`
+	SuggestedPackName string  `json:"suggested_pack_name,omitempty"`
+}
+
+// SchemaIndexHandler returns lightweight summaries of installed schema packs.
+// Implemented by extraction.MemorySchemaProvider.
+type SchemaIndexHandler interface {
+	ListInstalledSchemas(ctx context.Context, projectID string) ([]SchemaIndexEntry, error)
+}
+
+// SchemaIndexEntry mirrors extraction.InstalledSchemaSummary for use in mcp.
+type SchemaIndexEntry struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Keywords    []string `json:"keywords"`
+}
+
+// ReextractionQueuer queues a document for re-extraction with a specific schema.
+// Implemented by a wrapper around extraction.ObjectExtractionJobsService.
+type ReextractionQueuer interface {
+	QueueReextraction(ctx context.Context, projectID, documentID, schemaID string) (string, error)
+}
+
+// DiscoveryFinalizer finalizes a discovery job.
+// The implementation uses interface{} to avoid import cycles.
+type DiscoveryFinalizer interface {
+	FinalizeDiscoveryFromMCP(ctx context.Context, req interface{}) (interface{}, error)
+}
+
+// DiscoveryFinalizeRequest mirrors discoveryjobs.FinalizeDiscoveryRequest for mcp use.
+type DiscoveryFinalizeRequest struct {
+	JobID          string
+	DocumentID     string
+	ProjectID      string
+	Mode           string
+	PackName       string
+	ExistingPackID string
+	IncludedTypes  []map[string]any
+	IncludedRels   []map[string]any
+}
+
+// DiscoveryFinalizeResponse mirrors discoveryjobs.FinalizeDiscoveryResponse.
+type DiscoveryFinalizeResponse struct {
+	SchemaID string `json:"schema_id"`
+	Message  string `json:"message"`
+}
+
+// DocumentSignalsReader fetches stored classification signals for a document.
+// Used to recover suggestedPackName when an agent passes a forbidden pack_name.
+type DocumentSignalsReader interface {
+	GetDocumentClassificationSignals(ctx context.Context, projectID, documentID string) (map[string]any, error)
+}
+
+// ============================================================================
+// Domain Tool Definitions
+// ============================================================================
+
+func domainToolDefinitions() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:          "classify-document",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Classify a document against installed domain schema packs. Returns the matched schema, label, confidence, and classification stage. Read-only — does not write to the document.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"project_id": {
+						Type:        "string",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
+					},
+					"document_id": {
+						Type:        "string",
+						Description: "UUID of the document to classify",
+					},
+				},
+				Required: []string{"document_id"},
+			},
+		},
+		{
+			Name:          "list-installed-schemas",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "List all domain schema packs installed in a project, including their names, descriptions, and keywords used for classification.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"project_id": {
+						Type:        "string",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:          "finalize-discovery",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:write",
+			Description:   "Finalize domain discovery by creating a new schema pack or extending an existing one. Provide document_id to create a new discovery job on the fly (no job_id needed). job_id is only needed when resuming an existing pending discovery job.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"document_id": {
+						Type:        "string",
+						Description: "UUID of the document being processed (preferred — used to create discovery job automatically)",
+					},
+					"job_id": {
+						Type:        "string",
+						Description: "UUID of an existing discovery job to finalize (optional — omit if providing document_id)",
+					},
+					"project_id": {
+						Type:        "string",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
+					},
+					"org_id": {
+						Type:        "string",
+						Description: "UUID of the organization (optional — inferred from auth context if omitted)",
+					},
+					"mode": {
+						Type:        "string",
+						Description: "How to finalize: 'create' (sparse schema from agent-supplied types), 'extend' (add types), 'enrich' (LLM fills properties), 'create_rich' (LLM generates object schema from doc), 'create_rich_combined' (LLM generates object+rel schema in one call), 'create_rich_sequential' (LLM generates objects then rels)",
+					},
+					"pack_name": {
+						Type:        "string",
+						Description: "Descriptive name for the new schema pack (required when mode='create'). MUST reflect the document's structural format/type. Examples: 'Property Listing', 'AI Assistant Session', 'Medical Lab Report', 'Personal Notes', 'Supplier Agreement'. FORBIDDEN: 'new_domain', 'unknown', 'document', 'schema', 'domain', 'other', 'general'.",
+					},
+					"existing_pack_id": {
+						Type:        "string",
+						Description: "UUID of the existing schema pack to extend (required when mode='extend')",
+					},
+					"included_types": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "object"},
+						Description: "List of discovered types to include. Each item: {type_name, description, properties, required_properties, example_instances, frequency}",
+					},
+					"included_relationships": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "object"},
+						Description: "List of discovered relationships to include. Each item: {source_type, target_type, relation_type, description, cardinality}",
+					},
+				},
+				Required: []string{"mode", "included_types"},
+			},
+		},
+		{
+			Name:          "queue-reextraction",
+			RequiredScope: "schema:write",
+			Description:   "Queue a document for re-extraction using a specific domain schema pack. Use after domain discovery to enrich an existing document with typed entities.",
+			OutputSchema:  typedObjectOutputSchema(map[string]PropertySchema{"job_id": {Type: "string"}}, []string{"job_id"}),
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"project_id": {
+						Type:        "string",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
+					},
+					"document_id": {
+						Type:        "string",
+						Description: "UUID of the document to re-extract",
+					},
+					"schema_id": {
+						Type:        "string",
+						Description: "UUID of the schema pack to use for extraction",
+					},
+				},
+				Required: []string{"document_id", "schema_id"},
+			},
+		},
+	}
+}
+
+// ============================================================================
+// Domain Tool Handlers
+// ============================================================================
+
+func (s *Service) executeClassifyDocument(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.domainClassifier == nil {
+		return errorResult("domain classifier not available"), nil
+	}
+	documentID, _ := args["document_id"].(string)
+	if documentID == "" {
+		return errorResult("document_id is required"), nil
+	}
+
+	result, err := s.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("classification failed: %s", err)), nil
+	}
+
+	return s.wrapResultCompact(result)
+}
+
+func (s *Service) executeListInstalledSchemas(ctx context.Context, projectID string) (*ToolResult, error) {
+	if s.schemaIndex == nil {
+		return errorResult("schema index not available"), nil
+	}
+
+	entries, err := s.schemaIndex.ListInstalledSchemas(ctx, projectID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("list schemas failed: %s", err)), nil
+	}
+
+	return s.wrapResultCompact(entries)
+}
+
+func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.discoverySvc == nil {
+		return errorResult("discovery service not available"), nil
+	}
+
+	jobIDStr, _ := args["job_id"].(string)
+	documentIDStr, _ := args["document_id"].(string)
+	mode, _ := args["mode"].(string)
+	packName, _ := args["pack_name"].(string)
+	existingPackIDStr, _ := args["existing_pack_id"].(string)
+
+	// Validate required args per mode
+	if mode == "" {
+		return errorResult("missing required argument: mode (must be 'create' or 'extend')"), nil
+	}
+	if mode == "create" && strings.TrimSpace(packName) == "" {
+		return errorResult("missing required argument: pack_name (required when mode='create')"), nil
+	}
+	if mode == "create" {
+		forbidden := []string{"new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous"}
+		lowerName := strings.ToLower(strings.TrimSpace(packName))
+		isForbidden := false
+		for _, f := range forbidden {
+			if lowerName == f {
+				isForbidden = true
+				break
+			}
+		}
+		if isForbidden {
+			// Attempt auto-recovery: if we have a document_id and a signals reader,
+			// look up the suggestedPackName that was stored when classify-document ran.
+			recovered := ""
+			if documentIDStr != "" && s.docSignalsReader != nil {
+				if signals, err := s.docSignalsReader.GetDocumentClassificationSignals(ctx, projectID, documentIDStr); err == nil {
+					if v, ok := signals["suggestedPackName"].(string); ok && v != "" {
+						// Verify the stored suggestion is also not forbidden
+						lowerSugg := strings.ToLower(strings.TrimSpace(v))
+						isAlsoForbidden := false
+						for _, f := range forbidden {
+							if lowerSugg == f {
+								isAlsoForbidden = true
+								break
+							}
+						}
+						if !isAlsoForbidden {
+							recovered = v
+						}
+					}
+				}
+			}
+			if recovered != "" {
+				packName = recovered
+			} else {
+				return errorResult(fmt.Sprintf(
+					"invalid pack_name: %q is a generic placeholder and is not allowed. "+
+						"You MUST retry finalize-discovery immediately with a descriptive name that reflects the document's structural format. "+
+						"Look at the document_excerpt you received from classify-document and name the schema after the document type. "+
+						"Examples: 'AI Assistant Session', 'Personal Notes', 'Medical Lab Report', 'Property Listing', 'Supplier Agreement'. "+
+						"Do NOT give up — retry now with a better pack_name.", packName,
+				)), nil
+			}
+		}
+	}
+	if mode == "extend" && strings.TrimSpace(existingPackIDStr) == "" {
+		return errorResult("missing required argument: existing_pack_id (required when mode='extend')"), nil
+	}
+	if documentIDStr == "" && jobIDStr == "" {
+		return errorResult("missing required argument: document_id or job_id (at least one is required)"), nil
+	}
+
+	// Parse included_types
+	var includedTypes []map[string]any
+	if rawTypes, ok := args["included_types"]; ok {
+		b, _ := json.Marshal(rawTypes)
+		_ = json.Unmarshal(b, &includedTypes)
+	}
+
+	// Parse included_relationships
+	var includedRels []map[string]any
+	if rawRels, ok := args["included_relationships"]; ok {
+		b, _ := json.Marshal(rawRels)
+		_ = json.Unmarshal(b, &includedRels)
+	}
+
+	resp, err := s.discoverySvc.FinalizeDiscoveryFromMCP(ctx, DiscoveryFinalizeRequest{
+		JobID:          jobIDStr,
+		DocumentID:     documentIDStr,
+		ProjectID:      projectID,
+		Mode:           mode,
+		PackName:       packName,
+		ExistingPackID: existingPackIDStr,
+		IncludedTypes:  includedTypes,
+		IncludedRels:   includedRels,
+	})
+	if err != nil {
+		return errorResult(fmt.Sprintf("finalize discovery failed: %s", err)), nil
+	}
+
+	data := resp
+	out, _ := json.Marshal(resp)
+
+	// Auto-queue reextraction when a schema was created or enriched for a specific document.
+	// This removes the requirement for the agent to call queue-reextraction separately —
+	// DeepSeek consistently skips that step after tool-policy confirm resume.
+	if (mode == "create" || mode == "extend" || mode == "enrich" || mode == "create_rich" || mode == "create_rich_combined" || mode == "create_rich_sequential") && documentIDStr != "" && s.reextractionQueuer != nil {
+		// Extract schema_id from the JSON response (resp is interface{}).
+		var respMap map[string]any
+		schemaID := ""
+		if json.Unmarshal(out, &respMap) == nil {
+			if sid, ok := respMap["schema_id"].(string); ok {
+				schemaID = sid
+			}
+		}
+		if schemaID != "" {
+			jobID, qErr := s.reextractionQueuer.QueueReextraction(ctx, projectID, documentIDStr, schemaID)
+			if qErr != nil {
+				s.log.Warn("auto queue-reextraction failed after finalize-discovery",
+					slog.String("document_id", documentIDStr),
+					slog.String("schema_id", schemaID),
+					logger.Error(qErr),
+				)
+			} else {
+				s.log.Info("auto-queued reextraction after finalize-discovery",
+					slog.String("document_id", documentIDStr),
+					slog.String("schema_id", schemaID),
+					slog.String("job_id", jobID),
+				)
+				// Append reextraction job ID to the response so the agent can report it.
+				respMap["reextraction_job_id"] = jobID
+				data = respMap
+			}
+		}
+	}
+
+	return s.wrapResultCompact(data)
+}
+
+func (s *Service) executeQueueReextraction(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.reextractionQueuer == nil {
+		return errorResult("reextraction queuer not available"), nil
+	}
+
+	documentID, _ := args["document_id"].(string)
+	schemaID, _ := args["schema_id"].(string)
+	if documentID == "" || schemaID == "" {
+		return errorResult("document_id and schema_id are required"), nil
+	}
+
+	jobID, err := s.reextractionQueuer.QueueReextraction(ctx, projectID, documentID, schemaID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("queue reextraction failed: %s", err)), nil
+	}
+
+	return s.wrapResultCompact(map[string]string{"job_id": jobID})
+}
+
+// errorResult returns a ToolResult with an error message.
+func errorResult(msg string) *ToolResult {
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: msg}},
+		IsError: true,
+	}
+}

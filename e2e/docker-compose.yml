@@ -1,0 +1,365 @@
+# docker-compose.yml for memory CLI Docker-based installation tests.
+#
+# This compose file spins up:
+#   - test-db:               Postgres + pgvector (required by the server)
+#   - test-emergent-server:  the Memory backend API in standalone mode
+#   - test-emergent-client:  the Go test container that installs the CLI built
+#                            from the checked-out source and runs all tests
+#                            against the live server
+#
+# Usage:
+#   docker compose -f docker-compose.yml up --build --abort-on-container-exit
+#
+# The test-emergent-client container exits with the test process exit code, so CI can
+# inspect the exit code to determine pass/fail.
+#
+# Test logs are written to ./test-logs/ on the host (mounted into the container).
+#
+# Environment variables you can override:
+#   MEMORY_SERVER_IMAGE   - Memory server Docker image (default: ghcr.io/emergent-company/memory-server:latest)
+#   MEMORY_TEST_TOKEN     - static API key for the standalone server (default: e2e-test-user)
+#   MEMORY_TEST_SERVER    - override the server URL seen by tests (default: http://test-emergent-server:3002)
+#   TEST_RUN              - optional -run filter, e.g. TestCLIInstalled_Version
+#
+# No fixed container_name is set on any service: containers, the default network,
+# and any volumes are namespaced by COMPOSE_PROJECT_NAME. CI sets a unique project
+# per run, attempt, and job (e2e-<run_id>-<attempt>-<job>) so concurrent jobs
+# sharing one Docker daemon stay isolated — and so a re-run starts from an empty
+# project instead of adopting a cancelled attempt's containers and volumes.
+# Host-published ports are ephemeral loopback binds; host-run tests discover the
+# assigned port via `docker compose port <svc> <port>`.
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Postgres + pgvector (required by the Memory server)
+  # ─────────────────────────────────────────────────────────────────────────
+  test-db:
+    # Tracks PostgresImage in apps/cli/internal/installer/templates.go: the e2e
+    # suite must run the major every install and hosted environment runs, or a
+    # major-upgrade-only bug ships untested (postgres_pin_drift_test.go guards it).
+    image: pgvector/pgvector:pg18-trixie
+    environment:
+      POSTGRES_USER: emergent
+      POSTGRES_PASSWORD: emergent
+      POSTGRES_DB: emergent
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emergent -d emergent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SeaweedFS storage (required for document upload tests)
+  # ─────────────────────────────────────────────────────────────────────────
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    # Single node: master + volume + filer + S3 in one process. S3 API on 8333.
+    command: server -dir=/data -s3
+    environment:
+      AWS_ACCESS_KEY_ID: e2e-access
+      AWS_SECRET_ACCESS_KEY: e2e-secret
+    healthcheck:
+      # Readiness must prove BOTH raft leadership and that the S3 gateway is
+      # accepting on 8333 (#2004). /cluster/status answers 200 with `{}` while
+      # the S3 listener is still closed, and anonymous S3 GETs answer 403
+      # (fails `wget --spider`). `nc`/`grep` ship in the pinned image.
+      test: ["CMD-SHELL", "wget -q -O - --tries=1 http://127.0.0.1:9333/cluster/status | grep -q '\"IsLeader\":true' && nc -z 127.0.0.1 8333"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Bucket bootstrap (one-shot; the server's storage ping does HeadBucket on the
+  # documents bucket, so buckets must exist before start). Runs from the server
+  # image, which carries the emergent-storage-init binary.
+  storage-init:
+    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
+    entrypoint: ["/usr/local/bin/emergent-storage-init"]
+    restart: "no"
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: e2e-access
+      STORAGE_SECRET_KEY: e2e-secret
+      STORAGE_REGION: us-east-1
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stub MCP registry — impersonates the official MCP registry API so the
+  # server's registry client (and API e2e tests) never hit the live upstream.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-mcp-registry:
+    build:
+      context: ./stubs/mcp-registry
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stub GitHub API — impersonates a *private* GitHub repository over the REST
+  # v3 contract (tree + blob endpoints) so the GitHub data-source connector can
+  # be exercised end to end without a real repo, token, or egress. The server's
+  # GITHUB_API_BASE_URL points here; host-run API tests seed and mutate the
+  # repository through the stub's /_control routes.
+  # ─────────────────────────────────────────────────────────────────────────
+  github-stub:
+    build:
+      context: ./stubs/github
+    environment:
+      GITHUB_STUB_TOKEN: "e2e-github-token"
+    ports:
+      # Ephemeral loopback binding: host-run API tests discover the port with
+      # `docker compose port github-stub 8080`, so parallel jobs never collide.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stub Gmail API — impersonates Gmail v1 (thread listing with q/after/before,
+  # thread fetch with base64url MIME parts, labels, profile) plus the OAuth2
+  # refresh grant at /token, so the Gmail data-source connector can be exercised
+  # end to end without a Google account, credentials, or egress. The server's
+  # GMAIL_API_BASE_URL and GMAIL_TOKEN_URL point here; host-run API tests seed
+  # the mailbox and inject throttles through the /_control routes.
+  # ─────────────────────────────────────────────────────────────────────────
+  gmail-stub:
+    build:
+      context: ./stubs/gmail
+    ports:
+      # Ephemeral loopback binding: host-run API tests discover the port with
+      # `docker compose port gmail-stub 8080`, so parallel jobs never collide.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stub website — a hermetic small site (link following, robots.txt, 404/500,
+  # redirect, PDF) so the web data-source connector can be exercised end to end
+  # without a real site or egress. The server reaches it as http://web-stub:8080
+  # (scoped by WEB_SOURCE_ALLOWED_HOSTS); host-run API tests seed and mutate the
+  # site through the stub's /_control routes.
+  # ─────────────────────────────────────────────────────────────────────────
+  web-stub:
+    build:
+      context: ./stubs/web
+    ports:
+      # Ephemeral loopback binding: host-run API tests discover the port with
+      # `docker compose port web-stub 8080`, so parallel jobs never collide.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Mailpit — SMTP capture box (1025) + HTTP API/UI (8025). The server sends
+  # real email here via EMAIL_TRANSPORT=smtp; e2e tests read it back over the
+  # HTTP API. No healthcheck (the image has no shell).
+  # ─────────────────────────────────────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    # Publish on ephemeral loopback ports so parallel jobs on the same host
+    # never collide. Host-run tests discover the assigned port with
+    # `docker compose port mailpit 8025` (see .github/workflows/e2e.yml). The
+    # server container reaches Mailpit over the compose network by service name.
+    ports:
+      - "127.0.0.1::8025"
+      - "127.0.0.1::1025"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Mailgun stub — impersonates the Mailgun send API (POST /v3/{domain}/messages)
+  # so the server's Mailgun transport can be exercised hermetically. It lives
+  # behind the "mailgun" profile: the default stack (SMTP/Mailpit) never builds,
+  # starts it, or binds its host port. The Mailgun CI job opts in with
+  # `--profile mailgun`. Port 8080 is published so host-run API tests can read
+  # GET /captured.
+  # ─────────────────────────────────────────────────────────────────────────
+  mailgun-stub:
+    profiles: ["mailgun"]
+    build:
+      context: ./stubs/mailgun
+    ports:
+      # Ephemeral loopback binding: 8080 is commonly held by another proxy on
+      # shared hosts (e.g. traefik) and parallel jobs must not collide. Host-run
+      # tests discover the port with `docker compose port mailgun-stub 8080`.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Memory API server (standalone mode)
+  # ─────────────────────────────────────────────────────────────────────────
+  test-emergent-server:
+    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
+    depends_on:
+      test-db:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+      test-mcp-registry:
+        condition: service_healthy
+      github-stub:
+        condition: service_healthy
+      gmail-stub:
+        condition: service_healthy
+      web-stub:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      # Standalone mode — API key is used instead of Zitadel OAuth
+      STANDALONE_MODE: "true"
+      STANDALONE_API_KEY: ${MEMORY_TEST_TOKEN:-e2e-test-user}
+      STANDALONE_USER_EMAIL: "e2e@localhost"
+      STANDALONE_ORG_NAME: "E2E Org"
+      STANDALONE_PROJECT_NAME: "E2E Project"
+      STANDALONE_API_KEY_2: "e2e-test-user-2"
+      STANDALONE_USER_EMAIL_2: "invitee@localhost"
+
+      # Database
+      POSTGRES_HOST: test-db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: emergent
+      POSTGRES_PASSWORD: emergent
+      POSTGRES_DB: emergent
+
+      # Storage (SeaweedFS S3-compatible)
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: e2e-access
+      STORAGE_SECRET_KEY: e2e-secret
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_REGION: us-east-1
+      STORAGE_USE_SSL: 'false'
+
+      # Server
+      PORT: "3002"
+      GO_ENV: development
+
+      # Point the MCP registry client at the local stub instead of the live
+      # official registry (registry.modelcontextprotocol.io) for hermetic e2e.
+      MCP_REGISTRY_BASE_URL: "http://test-mcp-registry:8080"
+
+      # Point the GitHub data-source connector at the local private-repo stub.
+      # The API origin is a deployment setting (never per source), so this is
+      # what lets the connector target the stub instead of api.github.com.
+      GITHUB_API_BASE_URL: "http://github-stub:8080"
+      # Point the Gmail data-source connector at the local Gmail stub: the API
+      # origin and the OAuth2 refresh grant are both deployment settings, so a
+      # sync never reaches Google.
+      GMAIL_API_BASE_URL: "http://gmail-stub:8080"
+      GMAIL_TOKEN_URL: "http://gmail-stub:8080/token"
+      # Web-scraper data-source deployment policy (feeds internal/outbound's
+      # SSRF guard). AllowedHosts names the hermetic stub host, which lives on the
+      # compose bridge network (RFC1918 private space): an allow-listed host is
+      # dialable even though its addresses are private, both at pre-flight and at
+      # dial time. AllowPrivate stays unset so the harness keeps the strict
+      # production policy — the always-blocked link-local/metadata range
+      # (169.254.169.254) remains unreachable under every policy, so the SSRF
+      # scenario still holds.
+      WEB_SOURCE_ALLOWED_HOSTS: "web-stub"
+
+      # Data-source credentials are AES-256 encrypted at rest with the same
+      # operator-managed key as provider credentials. Without it every source
+      # create/test fails with "sources: encryption key is empty". The value is
+      # deliberately low-entropy and fake (32 bytes, hex) so secret scanners do
+      # not flag this hermetic test fixture.
+      LLM_ENCRYPTION_KEY: "e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0"
+
+      # Disable optional features that need external services
+      ENABLE_AGENT_WORKSPACES: "false"
+      XBERG_ENABLED: "false"
+      WHISPER_ENABLED: "false"
+
+      # Email — SMTP transport into Mailpit by default so e2e captures real
+      # email. The E2E_* overrides switch the same stack to the Mailgun
+      # transport pointed at the local mailgun-stub (see the Mailgun CI job).
+      # With no overrides set this resolves to exactly the previous values.
+      EMAIL_ENABLED: "true"
+      EMAIL_TRANSPORT: "${E2E_EMAIL_TRANSPORT:-smtp}"
+      SMTP_HOST: "${E2E_SMTP_HOST:-mailpit}"
+      SMTP_PORT: "1025"
+      SMTP_TLS: "none"
+      MAILGUN_DOMAIN: "${E2E_MAILGUN_DOMAIN:-}"
+      MAILGUN_API_KEY: "${E2E_MAILGUN_API_KEY:-}"
+      MAILGUN_API_BASE: "${E2E_MAILGUN_API_BASE:-}"
+      MAILGUN_REGION: "${E2E_MAILGUN_REGION:-us}"
+      EMAIL_WORKER_INTERVAL_MS: "1000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3002/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 60s
+    ports:
+      # Ephemeral loopback binding so parallel jobs/runs on one shared host
+      # never fight over a fixed 3002. Host-run tests discover the assigned port
+      # with `docker compose port test-emergent-server 3002`.
+      - "127.0.0.1::3002"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # CLI test runner
+  # Installs the memory CLI built from the checked-out source and runs all Go tests.
+  # Build context is the repo root so apps/cli + apps/server/pkg/sdk are available.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-emergent-client:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    depends_on:
+      test-emergent-server:
+        condition: service_healthy
+    environment:
+      MEMORY_TEST_SERVER: "${MEMORY_TEST_SERVER:-http://test-emergent-server:3002}"
+      STANDALONE_API_KEY_2: "e2e-test-user-2"
+      STANDALONE_USER_EMAIL_2: "invitee@localhost"
+      TEST_LOG_DIR: "/test-logs"
+      TEST_RUNNER: "docker"
+      CI: "true"
+      TEST_RUN: "${TEST_RUN:-}"
+      MAILPIT_BASE_URL: "http://mailpit:8025"
+      # Only set in the Mailgun-transport run; empty by default so the
+      # Mailgun invite-email test skips when the stack runs in SMTP mode.
+      MAILGUN_STUB_URL: "${E2E_MAILGUN_STUB_URL:-}"
+      # The GitHub and Gmail data-source tests seed/mutate their stub through
+      # its /_control routes; empty outside the api job so the tests skip.
+      GITHUB_STUB_URL: "${E2E_GITHUB_STUB_URL:-}"
+      GMAIL_STUB_URL: "${E2E_GMAIL_STUB_URL:-}"
+      WEB_STUB_URL: "${E2E_WEB_STUB_URL:-}"
+      # The image ships e2e/go.work (the module's own workspace). Run the suite
+      # in module mode, exactly as before that file existed — the module's own
+      # dependency graph, never the repo root's build list.
+      GOWORK: "off"
+    volumes:
+      # Persist test session logs to the host so they survive container exit.
+      - ./test-logs:/test-logs
+      # Share the runs DB so Docker and host runs both write to logs/runs.db.
+      - ./logs:/tests/logs
+    # entrypoint.sh installs the CLI then runs go test with optional -run filter.
+    # No command: override here — entrypoint.sh handles TEST_RUN filtering.

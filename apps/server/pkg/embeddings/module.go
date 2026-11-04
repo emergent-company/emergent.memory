@@ -1,0 +1,338 @@
+// Package embeddings provides embedding generation functionality.
+package embeddings
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	embgenai "github.com/emergent-company/emergent.memory/pkg/embeddings/genai"
+	embopenai "github.com/emergent-company/emergent.memory/pkg/embeddings/openai"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
+)
+
+// NewNoopService creates a service with a noop client (for testing)
+func NewNoopService(log *slog.Logger) *Service {
+	return &Service{
+		client:  NewNoopClient(),
+		log:     log,
+		enabled: false,
+	}
+}
+
+// NewTestEmbeddingsService creates a real embeddings service backed by a
+// per-project resolver, without requiring an fx lifecycle. Used in integration
+// tests that need semantic search (search-hybrid) to work with actual vectors.
+// The static client is a noop — all actual embedding calls go through the
+// resolver which fetches credentials from the project's provider config.
+func NewTestEmbeddingsService(resolver EmbeddingResolver, log *slog.Logger) *Service {
+	return &Service{
+		client:   NewNoopClient(), // fallback; resolver takes priority per-request
+		resolver: resolver,
+		log:      log,
+		enabled:  true,
+	}
+}
+
+// Module provides the embeddings fx.Module
+var Module = fx.Module("embeddings",
+	fx.Provide(NewService),
+)
+
+// serviceParams allows optional injection of an EmbeddingResolver via fx.
+type serviceParams struct {
+	fx.In
+
+	Lc       fx.Lifecycle
+	Cfg      *config.Config
+	Log      *slog.Logger
+	Resolver EmbeddingResolver `optional:"true"`
+	TestLLM  TestLLMChecker    `optional:"true"`
+}
+
+// Service provides embedding generation with automatic client selection
+type Service struct {
+	client   Client
+	resolver EmbeddingResolver // optional; nil → static config only
+	cfg      *config.Config    // kept for per-request transient client creation
+	log      *slog.Logger
+	testLLM  TestLLMChecker // optional; nil → no test-LLM mode
+	enabled  bool
+}
+
+// NewService creates a new embeddings service
+func NewService(p serviceParams) *Service {
+	embCfg := p.Cfg.Embeddings
+
+	if !embCfg.IsEnabled() && p.Resolver == nil && p.TestLLM == nil {
+		p.Log.Info("embeddings service disabled - no configuration provided")
+		return &Service{
+			client:  NewNoopClient(),
+			log:     p.Log,
+			enabled: false,
+		}
+	}
+
+	svc := &Service{
+		client:   NewNoopClient(), // Will be replaced on start
+		resolver: p.Resolver,
+		cfg:      p.Cfg,
+		log:      p.Log,
+		testLLM:  p.TestLLM,
+		enabled:  false,
+	}
+
+	// Initialize static client on startup (used when resolver returns nil or is absent)
+	if embCfg.IsEnabled() {
+		p.Lc.Append(fx.Hook{
+			OnStart: func(ctx context.Context) error {
+				if embCfg.UseVertexAI() {
+					p.Log.Info("initializing Vertex AI embeddings client",
+						slog.String("project", embCfg.GCPProjectID),
+						slog.String("location", embCfg.VertexAILocation),
+						slog.String("model", embCfg.Model),
+					)
+
+					client, err := vertex.NewClient(ctx, vertex.Config{
+						ProjectID: embCfg.GCPProjectID,
+						Location:  embCfg.VertexAILocation,
+						Model:     embCfg.Model,
+					}, vertex.WithLogger(p.Log))
+					if err != nil {
+						p.Log.Error("failed to initialize Vertex AI client", slog.String("error", err.Error()))
+						// Keep noop client
+						return nil // Don't fail startup
+					}
+					svc.client = client
+					svc.enabled = true
+					p.Log.Info("Vertex AI embeddings client initialized")
+				} else if embCfg.GoogleAPIKey != "" {
+					p.Log.Info("initializing Google Generative AI embeddings client",
+						slog.String("model", embCfg.Model),
+					)
+
+					client, err := embgenai.NewClient(ctx, embgenai.Config{
+						APIKey: embCfg.GoogleAPIKey,
+						Model:  embCfg.Model,
+					}, embgenai.WithLogger(p.Log))
+					if err != nil {
+						p.Log.Error("failed to initialize Generative AI client", slog.String("error", err.Error()))
+						return nil
+					}
+					svc.client = client
+					svc.enabled = true
+					p.Log.Info("Google Generative AI embeddings client initialized")
+				}
+				return nil
+			},
+		})
+	}
+
+	// If we have a resolver (or test-LLM mode), the service is considered enabled
+	// even without static config, because it can resolve credentials per-request
+	// (or produce deterministic canned vectors).
+	if p.Resolver != nil || p.TestLLM != nil {
+		svc.enabled = true
+	}
+
+	return svc
+}
+
+// IsEnabled returns true if embeddings are available
+func (s *Service) IsEnabled() bool {
+	return s.enabled
+}
+
+// EmbedQuery generates an embedding for a single query.
+// If an EmbeddingResolver is configured, per-request DB credentials are used.
+func (s *Service) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	if s.isTestLLM(ctx) {
+		return cannedEmbedding(query), nil
+	}
+	client, err := s.resolveClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.EmbedQuery(ctx, query)
+}
+
+// EmbedDocuments generates embeddings for multiple documents.
+// If an EmbeddingResolver is configured, per-request DB credentials are used.
+func (s *Service) EmbedDocuments(ctx context.Context, documents []string) ([][]float32, error) {
+	if s.isTestLLM(ctx) {
+		vecs := make([][]float32, len(documents))
+		for i, d := range documents {
+			vecs[i] = cannedEmbedding(d)
+		}
+		return vecs, nil
+	}
+	client, err := s.resolveClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.EmbedDocuments(ctx, documents)
+}
+
+// usageReportingClient is implemented by embedding clients whose responses
+// include token usage: the vertex client, the OpenAI-compatible client
+// (OpenAI direct or LiteLLM-style proxies), and the Google Generative AI
+// (genai) client. Clients without usage support (noop) fall back to plain
+// embedding results.
+type usageReportingClient interface {
+	EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error)
+	EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error)
+}
+
+// Compile-time guarantees that the concrete clients selected by
+// resolveClientWithMeta are usage-capable and will take the usage-reporting
+// branch of EmbedQueryWithUsage / EmbedDocumentsWithUsage.
+var (
+	_ usageReportingClient = (*vertex.Client)(nil)
+	_ usageReportingClient = (*embopenai.Client)(nil)
+	_ usageReportingClient = (*embgenai.Client)(nil)
+)
+
+// EmbedQueryWithUsage generates an embedding with usage data (if supported by client)
+func (s *Service) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
+	if s.isTestLLM(ctx) {
+		return &vertex.EmbedResult{Embedding: cannedEmbedding(query), Model: "test-llm", Provider: "test-llm"}, nil
+	}
+	client, model, provider, err := s.resolveClientWithMeta(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c, ok := client.(usageReportingClient); ok {
+		return c.EmbedQueryWithUsage(ctx, query)
+	}
+	// Fallback for clients without usage support
+	embedding, err := client.EmbedQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return &vertex.EmbedResult{Embedding: embedding, Model: model, Provider: provider}, nil
+}
+
+// EmbedDocumentsWithUsage generates embeddings with usage data (if supported by client)
+func (s *Service) EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error) {
+	if s.isTestLLM(ctx) {
+		vecs := make([][]float32, len(documents))
+		for i, d := range documents {
+			vecs[i] = cannedEmbedding(d)
+		}
+		return &vertex.BatchEmbedResult{Embeddings: vecs, Model: "test-llm", Provider: "test-llm"}, nil
+	}
+	client, model, provider, err := s.resolveClientWithMeta(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c, ok := client.(usageReportingClient); ok {
+		return c.EmbedDocumentsWithUsage(ctx, documents)
+	}
+	// Fallback for clients without usage support
+	embeddings, err := client.EmbedDocuments(ctx, documents)
+	if err != nil {
+		return nil, err
+	}
+	return &vertex.BatchEmbedResult{Embeddings: embeddings, Model: model, Provider: provider}, nil
+}
+
+// resolveClient returns the appropriate embeddings Client for this request.
+// If a resolver is configured and returns DB credentials, a transient client is created.
+// Otherwise, falls back to the static startup client.
+func (s *Service) resolveClient(ctx context.Context) (Client, error) {
+	client, _, _, err := s.resolveClientWithMeta(ctx)
+	return client, err
+}
+
+// resolveClientWithMeta returns the appropriate embeddings Client for this request
+// along with the model name and provider string used for usage tracking.
+func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, string, error) {
+	// Determine defaults from static config
+	staticModel := ""
+	staticProvider := ""
+	if s.cfg != nil {
+		staticModel = s.cfg.Embeddings.Model
+		if s.cfg.Embeddings.UseVertexAI() {
+			staticProvider = "vertex"
+		} else if s.cfg.Embeddings.GoogleAPIKey != "" {
+			staticProvider = "googleai"
+		}
+	}
+	if staticModel == "" {
+		staticModel = vertex.DefaultModel
+	}
+
+	if s.resolver == nil {
+		return s.client, staticModel, staticProvider, nil
+	}
+
+	cred, err := s.resolver.ResolveEmbedding(ctx)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("embedding credential resolver failed: %w", err)
+	}
+	if cred == nil {
+		// No DB credential — use static client
+		return s.client, staticModel, staticProvider, nil
+	}
+
+	// Build a transient client from the resolved credential
+	model := cred.EmbeddingModel
+	if model == "" && s.cfg != nil {
+		model = s.cfg.Embeddings.Model
+	}
+	if model == "" {
+		model = vertex.DefaultModel
+	}
+
+	if cred.IsVertexAI {
+		opts := []vertex.ClientOption{vertex.WithLogger(s.log)}
+		if cred.ServiceAccountJSON != "" {
+			opts = append(opts, vertex.WithCredentialsJSON([]byte(cred.ServiceAccountJSON)))
+		}
+		client, err := vertex.NewClient(ctx, vertex.Config{
+			ProjectID: cred.GCPProject,
+			Location:  cred.Location,
+			Model:     model,
+		}, opts...)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return client, model, "vertex", nil
+	}
+
+	if cred.IsGoogleAI && cred.APIKey != "" {
+		client, err := embgenai.NewClient(ctx, embgenai.Config{
+			APIKey: cred.APIKey,
+			Model:  model,
+		}, embgenai.WithLogger(s.log))
+		if err != nil {
+			return nil, "", "", err
+		}
+		return client, model, "googleai", nil
+	}
+
+	// OpenAI-compatible provider (includes LiteLLM proxies).
+	// APIKey + BaseURL are set for openai/deepseek providers.
+	if cred.APIKey != "" && cred.BaseURL != "" {
+		client, err := embopenai.NewClient(embopenai.Config{
+			APIKey:       cred.APIKey,
+			BaseURL:      cred.BaseURL,
+			Model:        model,
+			Dimensions:   EmbeddingDimension, // request 768-dim vectors to match DB vector(768)
+			Auth:         adk.AuthStyle(cred.Auth),
+			Extra:        cred.Extra,
+			ExtraHeaders: cred.ExtraHeaders,
+		}, embopenai.WithLogger(s.log))
+		if err != nil {
+			return nil, "", "", err
+		}
+		return client, model, "openai", nil
+	}
+
+	// Resolved credential doesn't have usable fields — fall back to static client
+	return s.client, staticModel, staticProvider, nil
+}

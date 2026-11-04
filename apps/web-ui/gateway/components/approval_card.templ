@@ -1,0 +1,130 @@
+package components
+
+import (
+	"cmp"
+	"strings"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// ApprovalCardMode is the approval card's decision state: it is either awaiting
+// a decision (pending) or a settled record (decided). Content, not presentation:
+// a decided card renders no default decision controls.
+type ApprovalCardMode string
+
+const (
+	ApprovalCardPending ApprovalCardMode = "pending"
+	ApprovalCardDecided ApprovalCardMode = "decided"
+)
+
+// ApprovalCardProps configures the shared pending-approval card. It renders the
+// same structure on every surface — the chat transcript (mirrored by
+// chat-stream.js), /settings/approvals, and the chat's no-JS dock.
+//
+// The decision controls are the integration site's: it supplies them through
+// Actions and owns the form/POST contract. When Actions is nil and the card is
+// pending, the card renders the canonical client-wired controls (the
+// reject-reason field plus cancel / reject / approve, as chat-stream.js builds
+// them); a decided card with no Actions renders no controls.
+type ApprovalCardProps struct {
+	// ToolName is the gated tool, rendered in the default header sentence.
+	ToolName string
+	// Title is the card heading. Default "Approve tool call"; the audit surface
+	// passes a neutral heading.
+	Title string
+	// Decision, when non-empty, renders a decision badge next to the title.
+	Decision string
+	// Message is the decision note (a reject reason), rendered when non-empty.
+	Message string
+	// ArgsJSON is the redacted argument summary as a JSON string.
+	ArgsJSON string
+	// Meta is a metadata slot (session link, timestamp) in the header row.
+	Meta templ.Component
+	// Actions is the decision-controls row. See the type doc for the default.
+	Actions templ.Component
+	// Mode is pending (default) or decided.
+	Mode ApprovalCardMode
+	// Class is appended to the card's base classes.
+	Class string
+	// Attrs is spread onto the card root, last.
+	Attrs templ.Attributes
+}
+
+// ApprovalCard renders the canonical pending-approval card.
+templ ApprovalCard(props ApprovalCardProps) {
+	{{ mode := props.Mode
+	title := cmp.Or(props.Title, "Approve tool call")
+	if mode == "" {
+		mode = ApprovalCardPending
+	} }}
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace("memory-approval " + props.Class), BodyClass: "gap-3 p-4", Attrs: props.Attrs}) {
+		<div class="flex items-start justify-between gap-3">
+			<div class="flex min-w-0 flex-wrap items-center gap-2">
+				@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD, Class: "memory-approval__title leading-snug break-words"}) {
+					{ title }
+				}
+				if props.Decision != "" {
+					@ui.Badge(ui.BadgeProps{
+						Label:   props.Decision,
+						Variant: ui.StatusIntentFor(props.Decision),
+						Size:    ui.BadgeSizeXS,
+					})
+				}
+			</div>
+			if props.Meta != nil {
+				<div class="flex shrink-0 items-center gap-3">@props.Meta</div>
+			}
+		</div>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Size: ui.EmptyNoteSizeXS, Class: "memory-approval__sentence mt-0.5"}) { The agent wants to run <code class="font-mono text-xs">{ props.ToolName }</code>. }
+		if props.Message != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Class: "memory-approval__message"}) {
+				{ props.Message }
+			}
+		}
+		if props.ArgsJSON != "" {
+			<pre class="memory-approval__args max-h-40 overflow-y-auto rounded-field bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{ props.ArgsJSON }</pre>
+		}
+		if props.Actions != nil {
+			@props.Actions
+		} else if mode == ApprovalCardPending {
+			<div class="memory-approval__reject hidden flex-col gap-2">
+				<input
+					type="text"
+					class="memory-approval__message input input-sm w-full"
+					placeholder="Reason (optional)"
+					maxlength="500"
+					aria-label="Rejection reason (optional)"
+				/>
+			</div>
+			<div class="memory-approval__actions flex items-center justify-end gap-2 pt-1">
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					ExtraClass: "memory-approval__cancel",
+					Attrs:      templ.Attributes{"data-testid": "chat-approval-cancel"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					ExtraClass: "memory-approval__reject-action text-error",
+					Attrs:      templ.Attributes{"data-testid": "chat-approval-reject"},
+				}) {
+					Reject
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonPrimary,
+					Size:       ui.ButtonSM,
+					ExtraClass: "memory-approval__approve",
+					Attrs:      templ.Attributes{"data-testid": "chat-approval-approve"},
+				}) {
+					Approve
+				}
+			</div>
+		}
+	}
+}

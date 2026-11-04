@@ -1,0 +1,293 @@
+package components
+
+import (
+	"strconv"
+	"strings"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// QuestionCardMode is the question card's interaction state: it is either
+// awaiting an answer (interactive) or a static record of the chosen answer
+// (answered). One enum rather than booleans, so the two states cannot combine.
+type QuestionCardMode string
+
+const (
+	QuestionCardInteractive QuestionCardMode = "interactive"
+	QuestionCardAnswered    QuestionCardMode = "answered"
+)
+
+// QuestionCardOption is one selectable answer row: the label the user reads, the
+// value submitted for it, an optional description, and per-option attributes the
+// integration site spreads onto the option control (for example the chat dock's
+// data-dock-option-value).
+type QuestionCardOption struct {
+	Label       string
+	Value       string
+	Description string
+	Attrs       templ.Attributes
+}
+
+// QuestionCardText configures a free-text question's input. A nil Text means the
+// question is answered through option rows instead.
+type QuestionCardText struct {
+	Placeholder string
+	MaxLength   int
+	Value       string
+	// AriaLabel labels the input; callers pass the question text.
+	AriaLabel string
+}
+
+// QuestionCardProps configures the shared pending-question card. Prompt is
+// pre-sanitized HTML (renderMarkdown on agent text, or templ.EscapeString for a
+// plain string) and is rendered with templ.Raw; every other string field is
+// escaped by templ.
+//
+// The card renders the same structure on every surface — the chat transcript
+// (mirrored by chat-stream.js), /settings/approvals, and the chat's no-JS dock.
+// The answer controls are the integration site's: it supplies them through
+// Controls (a footer slot) and owns the form/POST contract, so the same card can
+// post back to /settings/approvals/<id>/respond or be wired by the chat client.
+type QuestionCardProps struct {
+	// Prompt is the question text as sanitized HTML.
+	Prompt string
+	// Options are the selectable rows for a choice question.
+	Options []QuestionCardOption
+	// Multi selects the rows' indicator role: checkbox when true, radio when
+	// false.
+	Multi bool
+	// Text, when set, renders a free-text input instead of option rows.
+	Text *QuestionCardText
+	// Mode is interactive (default) or answered.
+	Mode QuestionCardMode
+	// Selected lists the selected option values: the answered choice, or an
+	// interactive pre-selection.
+	Selected []string
+	// Proposal is the sanitized proposal card, rendered above the controls.
+	Proposal templ.Component
+	// Meta is a header metadata slot (for example the session link).
+	Meta templ.Component
+	// Controls is the answer-controls footer. When nil the card renders the
+	// canonical default footer (the Esc hint + disabled submit).
+	Controls templ.Component
+	// FormID associates the option controls and the text input with the
+	// integration site's form (HTML `form=`), so a no-JS page can answer from a
+	// single form without nesting controls inside it.
+	FormID string
+	// ResponseName is the option controls' / input's form field name.
+	ResponseName string
+	// SubmitOptions makes single-choice option rows submit their form on click
+	// (type="submit"). Off by default, when the client wires option clicks.
+	SubmitOptions bool
+	// Class is appended to the card's base classes.
+	Class string
+	// Attrs is spread onto the card root, last.
+	Attrs templ.Attributes
+}
+
+// questionCardHint returns the interaction hint for a question: the multi-select
+// instruction, the single-select instruction, or nothing for free text. It is the
+// single definition of these strings (chat-stream.js mirrors them).
+func questionCardHint(multi, text bool) string {
+	switch {
+	case text:
+		return ""
+	case multi:
+		return "Select all answers that apply"
+	default:
+		return "Select one answer"
+	}
+}
+
+// questionCardHasValue reports whether value is in the card's selection.
+func questionCardHasValue(selected []string, value string) bool {
+	for _, s := range selected {
+		if s == value {
+			return true
+		}
+	}
+	return false
+}
+
+// questionCardOptionClass is the class list for a single-choice option row. Its
+// selection state swaps the border/background accent the client's selection
+// also applies.
+func questionCardOptionClass(selected bool) string {
+	base := "memory-question__option flex w-full items-start gap-3 rounded-field border px-3 py-2.5 text-left transition-colors duration-150 cursor-pointer border-base-300/70 bg-base-100"
+	if selected {
+		return base + " border-primary bg-primary/5 ring-1 ring-primary/40 hover:bg-primary/10"
+	}
+	return base + " hover:bg-base-200/50"
+}
+
+// questionCardOptionType is a single-choice option control's button type: submit
+// on a no-JS page (SubmitOptions), plain button when the client wires the click.
+func questionCardOptionType(submit bool) string {
+	if submit {
+		return "submit"
+	}
+	return "button"
+}
+
+// QuestionCard renders the canonical pending-question card.
+templ QuestionCard(props QuestionCardProps) {
+	{{ mode := props.Mode
+	text := props.Text != nil
+	if mode == "" {
+		mode = QuestionCardInteractive
+	}
+	hint := questionCardHint(props.Multi, text) }}
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace("memory-question " + props.Class), BodyClass: "gap-3 p-4", Attrs: props.Attrs}) {
+		<div class="memory-question__body memory-md text-base leading-snug break-words">@templ.Raw(props.Prompt)</div>
+		if hint != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "memory-question__hint mt-0.5"}) {
+				{ hint }
+			}
+		}
+		if props.Proposal != nil {
+			@props.Proposal
+		}
+		if props.Meta != nil {
+			@props.Meta
+		}
+		<div class="memory-question__options flex flex-col gap-2">
+			if props.Text != nil {
+				<input
+					type="text"
+					class="input w-full"
+					placeholder={ props.Text.Placeholder }
+					value={ props.Text.Value }
+					autocomplete="off"
+					aria-label={ props.Text.AriaLabel }
+					if props.Text.MaxLength > 0 {
+						maxlength={ strconv.Itoa(props.Text.MaxLength) }
+					}
+					if props.FormID != "" {
+						form={ props.FormID }
+					}
+					if props.ResponseName != "" {
+						name={ props.ResponseName }
+					}
+					if mode == QuestionCardInteractive {
+						required
+					} else {
+						readonly
+					}
+				/>
+			} else {
+				for _, opt := range props.Options {
+					@questionCardOption(props, mode, opt)
+				}
+			}
+		</div>
+		if props.Controls != nil {
+			@props.Controls
+		} else {
+			@questionCardFooter(mode)
+		}
+	}
+}
+
+// questionCardOption renders one option row: a checkbox input (multi-select) or a
+// role=radio button (single choice), each carrying the option's label and
+// optional description.
+templ questionCardOption(props QuestionCardProps, mode QuestionCardMode, opt QuestionCardOption) {
+	{{ selected := questionCardHasValue(props.Selected, opt.Value)
+	disabled := mode == QuestionCardAnswered }}
+	if props.Multi {
+		<label class={ questionCardOptionClass(false) }>
+			<input
+				type="checkbox"
+				role="checkbox"
+				class="checkbox checkbox-sm mt-0.5 shrink-0"
+				value={ opt.Value }
+				aria-label={ opt.Label }
+				if props.FormID != "" {
+					form={ props.FormID }
+				}
+				if props.ResponseName != "" {
+					name={ props.ResponseName }
+				}
+				if selected {
+					checked
+				}
+				if disabled {
+					disabled
+				}
+				{ opt.Attrs... }
+			/>
+			@questionCardOptionText(opt)
+		</label>
+	} else {
+		<button
+			type={ questionCardOptionType(props.SubmitOptions) }
+			role="radio"
+			aria-checked={ strconv.FormatBool(selected) }
+			class={ questionCardOptionClass(selected) }
+			value={ opt.Value }
+			data-testid="chat-question-option"
+			data-option-value={ opt.Value }
+			if props.FormID != "" {
+				form={ props.FormID }
+			}
+			if props.ResponseName != "" {
+				name={ props.ResponseName }
+			}
+			if disabled {
+				disabled
+			}
+			{ opt.Attrs... }
+		>
+			@questionCardIndicator(props.Multi, selected)
+			@questionCardOptionText(opt)
+		</button>
+	}
+}
+
+// questionCardIndicator renders an option's selection indicator: a square for a
+// multi-select, a circle for a single choice, filled with a check or dot when
+// selected.
+templ questionCardIndicator(multi, selected bool) {
+	<span class={ "memory-question__indicator mt-0.5 flex shrink-0 items-center justify-center border-2 size-4.5 transition-colors duration-150", templ.KV("rounded-selector", multi), templ.KV("rounded-full", !multi), templ.KV("border-primary bg-primary", selected), templ.KV("border-base-content/30", !selected) }>
+		if selected {
+			if multi {
+				@ui.IconSpan("lucide--check", "size-3 text-primary-content")
+			} else {
+				<span class="size-2 rounded-full bg-primary-content"></span>
+			}
+		}
+	</span>
+}
+
+// questionCardOptionText renders an option's label and optional description.
+templ questionCardOptionText(opt QuestionCardOption) {
+	<span class="flex min-w-0 grow flex-col">
+		<span class="memory-question__label text-sm leading-snug font-medium">{ opt.Label }</span>
+		if opt.Description != "" {
+			<span class="memory-question__description mt-0.5 text-xs leading-snug text-muted">{ opt.Description }</span>
+		}
+	</span>
+}
+
+// questionCardFooter is the canonical footer: the Esc hint and a disabled Submit
+// for a live card, or the "Answered" affordance for a settled one.
+templ questionCardFooter(mode QuestionCardMode) {
+	if mode == QuestionCardAnswered {
+		<div class="memory-question__footer flex items-center justify-end gap-2 pt-1">
+			@ui.Badge(ui.BadgeProps{Label: "Answered", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeSM, Icon: "lucide--check"})
+		</div>
+	} else {
+		<div class="memory-question__footer flex items-center justify-between gap-3 pt-1">
+			<span class="text-xs text-muted-faint">Esc to dismiss</span>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeButton,
+				Variant:    ui.ButtonPrimary,
+				Size:       ui.ButtonSM,
+				ExtraClass: "memory-question__submit min-w-28",
+				Attrs:      templ.Attributes{"data-testid": "chat-question-submit", "disabled": true},
+			}) {
+				Submit
+			}
+		</div>
+	}
+}

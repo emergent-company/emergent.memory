@@ -1,0 +1,538 @@
+// Package provider provides the Provider service client for the Memory API SDK.
+// It covers LLM provider config management, model catalog, and usage reporting.
+package provider
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+)
+
+// Client provides access to the Provider API.
+type Client struct {
+	http *http.Client
+	base string
+	auth auth.Provider
+}
+
+// NewClient creates a new provider client.
+func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provider) *Client {
+	return &Client{
+		http: httpClient,
+		base: baseURL,
+		auth: authProvider,
+	}
+}
+
+// --- Types ---
+
+// ProviderType identifies a supported LLM provider.
+type ProviderType = string
+
+const (
+	ProviderGoogleAI ProviderType = "google"
+	ProviderVertexAI ProviderType = "google-vertex"
+	ProviderOpenAI   ProviderType = "openai"
+	ProviderDeepSeek ProviderType = "deepseek"
+)
+
+// ModelType classifies a model.
+type ModelType = string
+
+const (
+	ModelTypeEmbedding  ModelType = "embedding"
+	ModelTypeGenerative ModelType = "generative"
+)
+
+// ProviderConfig is the public-safe representation of a stored provider config.
+// Credential fields (APIKey, ServiceAccountJSON) are never returned.
+type ProviderConfig struct {
+	ID              string            `json:"id"`
+	Provider        string            `json:"provider"`
+	Slug            string            `json:"slug"`
+	GCPProject      string            `json:"gcpProject,omitempty"`
+	Location        string            `json:"location,omitempty"`
+	BaseURL         string            `json:"baseUrl,omitempty"`
+	GenerativeModel string            `json:"generativeModel,omitempty"`
+	EmbeddingModel  string            `json:"embeddingModel,omitempty"`
+	ExtraConfig     map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+}
+
+// ProjectProviderConfig is the public-safe representation of a project-level
+// provider config override. It includes the ProjectID field.
+type ProjectProviderConfig struct {
+	ID              string            `json:"id"`
+	ProjectID       string            `json:"projectId"`
+	Provider        string            `json:"provider"`
+	Slug            string            `json:"slug"`
+	GCPProject      string            `json:"gcpProject,omitempty"`
+	Location        string            `json:"location,omitempty"`
+	BaseURL         string            `json:"baseUrl,omitempty"`
+	GenerativeModel string            `json:"generativeModel,omitempty"`
+	EmbeddingModel  string            `json:"embeddingModel,omitempty"`
+	ExtraConfig     map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+}
+
+// SupportedModel is a cached model entry from the provider catalog.
+type SupportedModel struct {
+	ID          string    `json:"id"`
+	Provider    string    `json:"provider"`
+	ModelName   string    `json:"modelName"`
+	ModelType   string    `json:"modelType"`
+	DisplayName string    `json:"displayName,omitempty"`
+	LastSynced  time.Time `json:"lastSynced"`
+}
+
+// UsageSummaryRow is a single row of aggregated usage data.
+type UsageSummaryRow struct {
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	TotalText        int64   `json:"total_text"`
+	TotalImage       int64   `json:"total_image"`
+	TotalVideo       int64   `json:"total_video"`
+	TotalAudio       int64   `json:"total_audio"`
+	TotalOutput      int64   `json:"total_output"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
+}
+
+// UsageSummary is the API response for a usage summary query.
+type UsageSummary struct {
+	Note string            `json:"note"`
+	Data []UsageSummaryRow `json:"data"`
+}
+
+// UsageTimeSeriesRow is a single time-bucketed row of usage data.
+type UsageTimeSeriesRow struct {
+	Period           time.Time `json:"period"`
+	Provider         string    `json:"provider"`
+	Model            string    `json:"model"`
+	TotalText        int64     `json:"total_text"`
+	TotalImage       int64     `json:"total_image"`
+	TotalVideo       int64     `json:"total_video"`
+	TotalAudio       int64     `json:"total_audio"`
+	TotalOutput      int64     `json:"total_output"`
+	EstimatedCostUSD float64   `json:"estimated_cost_usd"`
+}
+
+// UsageTimeSeries is the API response for a usage time-series query.
+type UsageTimeSeries struct {
+	Note string               `json:"note"`
+	Data []UsageTimeSeriesRow `json:"data"`
+}
+
+// OrgUsageByProjectRow is usage aggregated for a single project within an org.
+type OrgUsageByProjectRow struct {
+	ProjectID        string  `json:"project_id"`
+	ProjectName      string  `json:"project_name"`
+	TotalText        int64   `json:"total_text"`
+	TotalImage       int64   `json:"total_image"`
+	TotalVideo       int64   `json:"total_video"`
+	TotalAudio       int64   `json:"total_audio"`
+	TotalOutput      int64   `json:"total_output"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
+}
+
+// OrgUsageByProject is the API response for a per-project org usage query.
+type OrgUsageByProject struct {
+	Note string                 `json:"note"`
+	Data []OrgUsageByProjectRow `json:"data"`
+}
+
+// TestProviderResponse is returned by the provider test endpoint.
+type TestProviderResponse struct {
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Reply          string `json:"reply"`
+	LatencyMs      int64  `json:"latencyMs"`
+	EmbeddingModel string `json:"embeddingModel,omitempty"`
+	EmbeddingOK    bool   `json:"embeddingOk"`
+	EmbeddingError string `json:"embeddingError,omitempty"`
+}
+
+// --- Request types ---
+
+// UpsertProviderConfigRequest is the unified request body for creating or
+// updating a provider config (org-level or project-level).
+// For google: set APIKey.
+// For google-vertex: set ServiceAccountJSON, GCPProject, Location.
+// For openai-compatible: set APIKey, BaseURL, GenerativeModel.
+// GenerativeModel and EmbeddingModel are auto-selected from the catalog if omitted.
+type UpsertProviderConfigRequest struct {
+	// Slug optionally names the provider instance. When empty it defaults to
+	// the dialect name; a save with an existing slug updates in place.
+	Slug               string            `json:"slug,omitempty"`
+	APIKey             string            `json:"apiKey,omitempty"`
+	ServiceAccountJSON string            `json:"serviceAccountJson,omitempty"`
+	GCPProject         string            `json:"gcpProject,omitempty"`
+	Location           string            `json:"location,omitempty"`
+	BaseURL            string            `json:"baseUrl,omitempty"`
+	GenerativeModel    string            `json:"generativeModel,omitempty"`
+	EmbeddingModel     string            `json:"embeddingModel,omitempty"`
+	ExtraConfig        map[string]string `json:"extraConfig,omitempty"`
+}
+
+// --- Project Provider Config Methods ---
+
+// ListOrgConfigs is deprecated. Org-level provider config is no longer supported.
+// Use ListProjectConfigs instead.
+func (c *Client) ListOrgConfigs(_ context.Context, _ string) ([]ProviderConfig, error) {
+	return nil, fmt.Errorf("org-level provider config is deprecated; use project-level config via `memory provider configure-project`")
+}
+
+// UpsertOrgConfig is deprecated. Org-level provider config is no longer supported.
+// Use UpsertProjectConfig instead.
+func (c *Client) UpsertOrgConfig(_ context.Context, _, _ string, _ *UpsertProviderConfigRequest) (*ProviderConfig, error) {
+	return nil, fmt.Errorf("org-level provider config is deprecated; use project-level config via `memory provider configure-project`")
+}
+
+// ListProjectConfigsByOrg returns all project-level provider config overrides
+// for projects belonging to the given organization.
+func (c *Client) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfig, error) {
+	var result []ProjectProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/organizations/%s/project-providers", url.PathEscape(orgID)),
+		nil, &result)
+	return result, err
+}
+
+// ListProjectConfigs returns all provider config overrides for a specific project.
+func (c *Client) ListProjectConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfig, error) {
+	var result []ProjectProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/projects/%s/providers", url.PathEscape(projectID)),
+		nil, &result)
+	return result, err
+}
+
+// UpsertProjectConfig stores credentials and model selections for a project's provider.
+func (c *Client) UpsertProjectConfig(ctx context.Context, projectID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error) {
+	var result ProviderConfig
+	err := c.doJSON(ctx, "PUT",
+		fmt.Sprintf("/api/v1/projects/%s/providers/%s",
+			url.PathEscape(projectID), url.PathEscape(provider)),
+		req, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetProjectConfig returns the stored config metadata (no secrets) for a project's provider.
+func (c *Client) GetProjectConfig(ctx context.Context, projectID, provider string) (*ProviderConfig, error) {
+	var result ProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/projects/%s/providers/%s",
+			url.PathEscape(projectID), url.PathEscape(provider)),
+		nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteProjectConfig removes a provider config from a project.
+func (c *Client) DeleteProjectConfig(ctx context.Context, projectID, provider string) error {
+	return c.doJSON(ctx, "DELETE",
+		fmt.Sprintf("/api/v1/projects/%s/providers/%s",
+			url.PathEscape(projectID), url.PathEscape(provider)),
+		nil, nil)
+}
+
+// --- Model Catalog Methods ---
+
+// ListModels returns the cached model catalog for a provider.
+// modelType is optional ("embedding" or "generative"); pass "" for all models.
+func (c *Client) ListModels(ctx context.Context, provider, modelType string) ([]SupportedModel, error) {
+	path := fmt.Sprintf("/api/v1/providers/%s/models", url.PathEscape(provider))
+	if modelType != "" {
+		path += "?type=" + url.QueryEscape(modelType)
+	}
+	var result []SupportedModel
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	return result, err
+}
+
+// TestProvider sends a live generate call to verify provider credentials work.
+// projectID and orgID are optional context hints for credential resolution.
+func (c *Client) TestProvider(ctx context.Context, provider, projectID, orgID string) (*TestProviderResponse, error) {
+	path := fmt.Sprintf("/api/v1/providers/%s/test", url.PathEscape(provider))
+	params := url.Values{}
+	if projectID != "" {
+		params.Set("projectId", projectID)
+	}
+	if orgID != "" {
+		params.Set("orgId", orgID)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var result TestProviderResponse
+	err := c.doJSON(ctx, "POST", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// --- Usage & Cost Methods ---
+
+// GetProjectUsage returns aggregated usage and estimated cost for a project.
+func (c *Client) GetProjectUsage(ctx context.Context, projectID string, since, until time.Time) (*UsageSummary, error) {
+	path := fmt.Sprintf("/api/v1/projects/%s/usage", url.PathEscape(projectID))
+	path = appendTimeRange(path, since, until)
+
+	var result UsageSummary
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOrgUsage returns aggregated usage and estimated cost for all projects in an org.
+func (c *Client) GetOrgUsage(ctx context.Context, orgID string, since, until time.Time) (*UsageSummary, error) {
+	path := fmt.Sprintf("/api/v1/organizations/%s/usage", url.PathEscape(orgID))
+	path = appendTimeRange(path, since, until)
+
+	var result UsageSummary
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetProjectUsageTimeSeries returns time-bucketed usage for a project.
+// granularity is "day", "week", or "month" (defaults to "day" if empty).
+func (c *Client) GetProjectUsageTimeSeries(ctx context.Context, projectID, granularity string, since, until time.Time) (*UsageTimeSeries, error) {
+	path := fmt.Sprintf("/api/v1/projects/%s/usage/timeseries", url.PathEscape(projectID))
+	params := url.Values{}
+	if granularity != "" {
+		params.Set("granularity", granularity)
+	}
+	if !since.IsZero() {
+		params.Set("since", since.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		params.Set("until", until.UTC().Format(time.RFC3339))
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result UsageTimeSeries
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOrgUsageTimeSeries returns time-bucketed usage for all projects in an org.
+// granularity is "day", "week", or "month" (defaults to "day" if empty).
+func (c *Client) GetOrgUsageTimeSeries(ctx context.Context, orgID, granularity string, since, until time.Time) (*UsageTimeSeries, error) {
+	path := fmt.Sprintf("/api/v1/organizations/%s/usage/timeseries", url.PathEscape(orgID))
+	params := url.Values{}
+	if granularity != "" {
+		params.Set("granularity", granularity)
+	}
+	if !since.IsZero() {
+		params.Set("since", since.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		params.Set("until", until.UTC().Format(time.RFC3339))
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result UsageTimeSeries
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOrgUsageByProject returns usage aggregated per project for an org.
+func (c *Client) GetOrgUsageByProject(ctx context.Context, orgID string, since, until time.Time) (*OrgUsageByProject, error) {
+	path := fmt.Sprintf("/api/v1/organizations/%s/usage/by-project", url.PathEscape(orgID))
+	path = appendTimeRange(path, since, until)
+
+	var result OrgUsageByProject
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// --- Project Pricing Override Methods ---
+
+// ProjectPricingOverride mirrors the server's ProjectCustomPricing JSON shape.
+// Prices are in USD per 1 million tokens.
+type ProjectPricingOverride struct {
+	ID              string    `json:"id"`
+	ProjectID       string    `json:"projectId"`
+	Provider        string    `json:"provider"`
+	Model           string    `json:"model"`
+	TextInputPrice  float64   `json:"textInputPrice"`
+	ImageInputPrice float64   `json:"imageInputPrice"`
+	VideoInputPrice float64   `json:"videoInputPrice"`
+	AudioInputPrice float64   `json:"audioInputPrice"`
+	OutputPrice     float64   `json:"outputPrice"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+// UpsertProjectPricingOverrideRequest is the request body for upserting a
+// project pricing override. Prices are in USD per 1 million tokens.
+type UpsertProjectPricingOverrideRequest struct {
+	Provider        string  `json:"provider"`
+	Model           string  `json:"model"`
+	TextInputPrice  float64 `json:"textInputPrice"`
+	ImageInputPrice float64 `json:"imageInputPrice"`
+	VideoInputPrice float64 `json:"videoInputPrice"`
+	AudioInputPrice float64 `json:"audioInputPrice"`
+	OutputPrice     float64 `json:"outputPrice"`
+}
+
+// ListProjectPricingOverrides returns all pricing overrides for a project.
+func (c *Client) ListProjectPricingOverrides(ctx context.Context, projectID string) ([]ProjectPricingOverride, error) {
+	var result []ProjectPricingOverride
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/projects/%s/pricing-overrides", url.PathEscape(projectID)),
+		nil, &result)
+	return result, err
+}
+
+// UpsertProjectPricingOverride creates or updates a pricing override for a project.
+func (c *Client) UpsertProjectPricingOverride(ctx context.Context, projectID string, req *UpsertProjectPricingOverrideRequest) (*ProjectPricingOverride, error) {
+	var result ProjectPricingOverride
+	err := c.doJSON(ctx, "PUT",
+		fmt.Sprintf("/api/v1/projects/%s/pricing-overrides", url.PathEscape(projectID)),
+		req, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteProjectPricingOverride removes a pricing override from a project.
+func (c *Client) DeleteProjectPricingOverride(ctx context.Context, projectID, provider, model string) error {
+	return c.doJSON(ctx, "DELETE",
+		fmt.Sprintf("/api/v1/projects/%s/pricing-overrides/%s/%s",
+			url.PathEscape(projectID), url.PathEscape(provider), url.PathEscape(model)),
+		nil, nil)
+}
+
+// --- Global Retail Pricing Methods ---
+
+// ProviderPricing is a global retail pricing row for a provider + model.
+// Prices are in USD per 1 million tokens.
+type ProviderPricing struct {
+	ID              string    `json:"id"`
+	Provider        string    `json:"provider"`
+	Model           string    `json:"model"`
+	TextInputPrice  float64   `json:"textInputPrice"`
+	ImageInputPrice float64   `json:"imageInputPrice"`
+	VideoInputPrice float64   `json:"videoInputPrice"`
+	AudioInputPrice float64   `json:"audioInputPrice"`
+	OutputPrice     float64   `json:"outputPrice"`
+	LastSynced      time.Time `json:"lastSynced"`
+}
+
+// ListPricing returns all global retail pricing rows.
+func (c *Client) ListPricing(ctx context.Context) ([]ProviderPricing, error) {
+	var result []ProviderPricing
+	err := c.doJSON(ctx, "GET", "/api/v1/pricing", nil, &result)
+	return result, err
+}
+
+// ProviderDefinition mirrors the server's provider-definition registry entry:
+// one supported LLM vendor (id + display name), ordered by the registry's
+// display order.
+type ProviderDefinition struct {
+	Type        string `json:"type"`
+	DisplayName string `json:"displayName"`
+	Order       int    `json:"order"`
+}
+
+// ListProviderDefinitions lists every supported LLM vendor definition from the
+// server registry (GET /api/v1/provider-definitions).
+func (c *Client) ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error) {
+	var result []ProviderDefinition
+	err := c.doJSON(ctx, "GET", "/api/v1/provider-definitions", nil, &result)
+	return result, err
+}
+
+// --- Internal helpers ---
+
+func (c *Client) doJSON(ctx context.Context, method, path string, bodyIn, bodyOut any) error {
+	var bodyReader io.Reader
+	if bodyIn != nil {
+		b, err := json.Marshal(bodyIn)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request: %w", err)
+		}
+		bodyReader = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, bodyReader)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if bodyIn != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	if bodyOut != nil {
+		if err := json.NewDecoder(resp.Body).Decode(bodyOut); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}
+
+	return nil
+}
+
+func appendTimeRange(path string, since, until time.Time) string {
+	params := url.Values{}
+	if !since.IsZero() {
+		params.Set("since", since.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		params.Set("until", until.UTC().Format(time.RFC3339))
+	}
+	if len(params) > 0 {
+		return path + "?" + params.Encode()
+	}
+	return path
+}

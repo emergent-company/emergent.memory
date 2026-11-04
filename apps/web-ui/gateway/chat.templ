@@ -1,0 +1,961 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// ChatPage renders the chat workspace — the primary sessions surface.
+// agents may be nil when the agent list failed to load (loadErr set).
+// schedRuns are best-effort scheduled-agent runs shown in the session rail
+// (data-origin="scheduled"); convID is the ?c= conversation to resume on
+// load; prompt is the ?prompt= first message to auto-send on load.
+// voiceEnabled gates the voice controls (call/mute buttons, status readout,
+// level meter, audio element, and the voice client scripts) on the project's
+// voice setting. modelWarnings maps agentID → the error-level "model can't be
+// served" message shown by the chat workspace's warning banner for agents
+// whose chats cannot run (nil/empty when none apply).
+//
+// runControl optionally carries the active conversation's server-rendered
+// run-control surfaces (pending-work dock cards, session todos) so the dock and
+// todo card exist before chat.js runs. uiChat supplies it when ?c= names a
+// conversation; other callers omit it.
+templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string, runControl ...chatRunControl) {
+	<div class="h-full">
+		if loadErr != nil {
+			@layout.Container(layout.ContainerLG, nil) {
+				@pageError("Agents unavailable", loadErr)
+			}
+		} else if len(agents) == 0 {
+			@layout.Container(layout.ContainerLG, nil) {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--bot",
+					Title:       "No agents to talk to",
+					Description: "Create an agent first — then come back here and have a conversation.",
+					Variant:     ui.EmptyStateHero,
+					IconStyle:   ui.EmptyStateIconTile,
+					Bordered:    true,
+					ActionHref:  "/agents",
+					ActionLabel: "Create an agent",
+					ActionIcon:  "lucide--plus",
+				})
+			}
+		} else {
+			@chatWorkspace(agents, convs, appearances, schedRuns, shared, workRuns, preselect, convID, prompt, voiceEnabled, modelWarnings, chatRunControlOrZero(runControl))
+		}
+	</div>
+}
+
+// chatWorkspace is the full chat surface: a resumable session rail on the
+// left, and the streaming conversation (header, log, composer) on the right.
+// chat.js drives resume + streaming via the /api/* endpoints. runControl holds
+// the active conversation's server-rendered dock cards and session todos.
+templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
+	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
+		<!-- Mobile-only scrim behind the session rail. chat.js toggles it with
+		     the rail; it never shows at md+ where the rail is in flow. -->
+		<div id="chat-rail-backdrop" class="fixed inset-0 z-30 hidden bg-black/40 md:hidden" data-chat-rail-backdrop data-action="toggle-chat-rail"></div>
+		<aside id="chat-rail" aria-label="Sessions" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
+			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
+			     rail is a full-width overlay). Width is driven by chat.js
+			     (single source of truth, persisted to localStorage). -->
+			<div
+				id="chat-rail-resize"
+				class="hidden md:block"
+				role="separator"
+				aria-orientation="vertical"
+				aria-label="Resize session list"
+				title="Drag to resize"
+			></div>
+			<!-- No "Sessions" title bar: the aside's aria-label carries the name,
+			     and the list starts right below the controls. On mobile the rail
+			     is a full-width overlay, so its close control rides beside
+			     "New chat" (the chat header is covered while the overlay is up). -->
+			<div class="space-y-2 p-3 pb-1">
+				<div class="flex items-center gap-2">
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeLink,
+						Href:       "/chat",
+						Variant:    ui.ButtonPrimary,
+						Size:       ui.ButtonSM,
+						Icon:       "lucide--plus",
+						ExtraClass: "min-w-0 flex-1",
+						Attrs:      templ.Attributes{"data-testid": "new-chat"},
+					}) {
+						New chat
+					}
+					<!-- Bulk-selection toggle (#1385). aria-pressed is flipped by
+					     chat.js; while selection is on, every conversation row
+					     shows a checkbox and the footer action bar appears. -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--list-checks",
+						AriaLabel:  "Select sessions",
+						Attrs:      templ.Attributes{"data-action": "toggle-session-select", "data-testid": "toggle-session-select", "aria-pressed": "false"},
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--x",
+						AriaLabel:  "Close session list",
+						ExtraClass: "md:hidden",
+						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
+					})
+				</div>
+				<select id="chat-agent-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by agent">
+					<option value="">All agents</option>
+					for _, a := range agents {
+						<option value={ a.ID }>{ a.Name }</option>
+					}
+				</select>
+				<select id="chat-origin-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by type">
+					<option value="">All types</option>
+					<option value="manual">Manual</option>
+					<option value="scheduled">Scheduled</option>
+					<option value="board">Board</option>
+					<option value="extraction">Extraction</option>
+					<option value="shared">Shared</option>
+				</select>
+				<label class="flex cursor-pointer items-center gap-2 px-1 text-sm text-muted-strong select-none">
+					<input
+						id="chat-include-archived"
+						data-testid="chat-include-archived"
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						aria-label="Include archived"
+					/>
+					<span>Include archived</span>
+				</label>
+			</div>
+			<div id="chat-rail-list" data-testid="session-list" class="min-h-0 grow overflow-y-auto p-2">
+				@chatRailList(convs, appearances, schedRuns, shared, workRuns, convID)
+			</div>
+			<!-- Bulk-selection footer (#1385). Hidden until chat.js turns on
+			     selection mode; "Archive" applies to every checked conversation
+			     row via the same per-session lifecycle route the row menu uses.
+			     flex is added alongside the removal of hidden so the two display
+			     utilities never conflict. -->
+			<div
+				id="chat-bulk-bar"
+				data-testid="chat-bulk-bar"
+				class="hidden border-base-content/5 shrink-0 items-center gap-2 border-t p-3"
+				role="group"
+				aria-label="Bulk session actions"
+			>
+				<label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-strong select-none">
+					<input
+						id="chat-select-all"
+						data-testid="chat-select-all"
+						data-action="select-all-sessions"
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						aria-label="Select all sessions"
+					/>
+					<span>All</span>
+				</label>
+				<span id="chat-selection-count" data-testid="chat-selection-count" class="text-muted min-w-0 grow text-xs" aria-live="polite">0 selected</span>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonXS,
+					Attrs: templ.Attributes{
+						"id":          "chat-bulk-archive",
+						"data-action": "bulk-archive-sessions",
+						"data-testid": "chat-bulk-archive",
+						"disabled":    true,
+					},
+				}) {
+					Archive
+				}
+			</div>
+		</aside>
+		<div class="flex min-w-0 grow flex-col">
+			<div class="border-base-content/5 flex flex-wrap items-center justify-between gap-3 border-b bg-base-100 px-4 py-2 lg:px-6">
+				<div class="flex min-w-0 flex-1 items-center gap-3" data-testid="chat-agent-header">
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--panel-left",
+						AriaLabel:  "Toggle session list",
+						ExtraClass: "md:hidden",
+						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
+					})
+					{{
+						activeAgent, hasActiveAgent := activeChatAgent(agents, convs, preselect, convID)
+						headerTitle := "Chat with Memory"
+						headerDesc := ""
+						if hasActiveAgent {
+							headerTitle = activeAgent.Name
+							headerDesc = activeAgent.Description
+						}
+					}}
+					<div id="chat-header-icon" class="shrink-0">
+						if hasActiveAgent {
+							@agentIconTile(agentIcon(activeAgent.UIConfig), agentColor(activeAgent.UIConfig))
+						} else {
+							@ui.IconTile("lucide--messages-square", ui.IconTileProps{Tone: "primary"})
+						}
+					</div>
+					<div class="min-w-0">
+						<h1 id="chat-header-title" class="truncate text-sm font-semibold">{ headerTitle }</h1>
+						if hasActiveAgent {
+							<p id="chat-header-desc" class={ "text-muted-faint truncate text-xs", templ.KV("hidden", headerDesc == "") }>{ headerDesc }</p>
+						} else {
+							@ui.EmptyNote(ui.EmptyNoteProps{ID: "chat-header-desc", Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+								if voiceEnabled {
+									Chat by text or voice.
+								} else {
+									Chat by text.
+								}
+							}
+						}
+					</div>
+				</div>
+				<!-- Live turn status (working / waiting-on-you / failed), filled in
+				     place by chat.js from the refresh payload's run status. -->
+				<div id="chat-run-status" class="memory-run-status hidden" role="status" aria-live="polite"></div>
+			</div>
+			@chatModelWarningBanner(modelWarnings[defaultAgentID(agents, preselect)])
+			<div id="chat-log" class="min-h-0 grow overflow-y-auto">
+				<!-- Scroll-fill transcript column: the outer flex wrapper keeps the
+				     min-h-full/justify-end trick (short transcripts rest on the
+				     composer) while layout.Container supplies the shared padding
+				     plus a very generous width cap (only bites on very large
+				     screens) so the stream can actually fill the chat pane. -->
+				<div class="flex min-h-full min-w-0 flex-col justify-end">
+					<!-- Full-width guard (#1383): this flex wrapper makes
+					     layout.Container a flex item, and Container's mx-auto (auto
+					     cross-axis margins) suppresses flex stretch — so the column
+					     sized to its content and a short session collapsed to the
+					     width of its longest bubble. w-full pins the column to the
+					     pane width at every session length; bubbles stay
+					     content-sized. -->
+					<div class="w-full">
+						@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
+							<div class="flex w-full flex-col gap-3">
+								@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
+									<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
+										<label for="chat-agent" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Agent</label>
+										<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
+											for _, a := range agents {
+												<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } data-description={ a.Description } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
+											}
+										</select>
+									</div>
+									<div class="mt-1 flex flex-wrap justify-center gap-2">
+										@chatSuggestion("What can you do?")
+										@chatSuggestion("Summarize the latest conversations")
+										@chatSuggestion("Help me draft a status update")
+									</div>
+								}
+								<!-- Session todo card. Pre-rendered when the active
+							     conversation's ACP session has todos; chat.js
+							     refreshes it in place from /partial/chat-todos. -->
+								<div id="chat-todos" class={ templ.KV("hidden", len(runControl.Todos) == 0) }>
+									@TodoCard(runControl.Todos)
+								</div>
+								<div id="chat-messages" class="flex flex-col gap-3"></div>
+							</div>
+						}
+					</div>
+				</div>
+			</div>
+			<div class="border-base-content/5 border-t bg-base-100">
+				<!-- No-JS fallback only. With scripting, pending ask_user questions
+				     and tool approvals render inline in the transcript as agent
+				     bubbles (chat-stream.js renderQuestion/renderApproval), so the
+				     server-rendered DockPanel lives inside <noscript> and never
+				     enters the live DOM — the pre-render and the inline cards can
+				     never both render the same pending item. -->
+				<noscript>
+					@DockPanel(convID, runControl.Approvals, runControl.Questions)
+				</noscript>
+				<!-- Composer queue lane; chat.js renders queued rows here and
+				     toggles the hidden class. -->
+				<div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
+				<form id="chat-form" hx-boost="false">
+					<!-- Width + gutter come from the shared Container, so the composer
+					     can never drift from the message column above. The wider
+					     container matches the transcript's. -->
+					@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
+						<div class="flex flex-wrap items-stretch gap-2">
+							<textarea
+								id="chat-input"
+								data-testid="chat-input"
+								rows="1"
+								class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow basis-48 resize-none"
+								placeholder={ chatPlaceholder(agents, preselect) }
+								aria-label="Message"
+							></textarea>
+							<div class="flex shrink-0 flex-wrap items-stretch gap-1.5 sm:gap-2">
+								if voiceEnabled {
+									<div class="flex h-9 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
+										<span id="voice-status" class="text-muted-faint text-xs whitespace-nowrap" aria-live="polite">idle</span>
+										<span class="bg-base-content/10 h-3.5 w-px" aria-hidden="true"></span>
+										<div id="voice-level" class="voice-level" aria-hidden="true">
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+										</div>
+									</div>
+									@ui.Button(ui.ButtonProps{
+										Type:       ui.ButtonTypeButton,
+										Variant:    ui.ButtonGhost,
+										Size:       ui.ButtonSM,
+										Shape:      ui.ButtonShapeSquare,
+										Icon:       "lucide--mic",
+										AriaLabel:  "Mute microphone",
+										ExtraClass: "hidden h-full min-h-11 w-11 shrink-0",
+										Attrs:      templ.Attributes{"id": "voice-mute-btn"},
+									})
+									@ui.Button(ui.ButtonProps{
+										Type:       ui.ButtonTypeButton,
+										Variant:    ui.ButtonPrimary,
+										Size:       ui.ButtonSM,
+										Icon:       "lucide--phone",
+										AriaLabel:  "Start voice call",
+										ExtraClass: "h-full min-h-11 shrink-0",
+										Attrs:      templ.Attributes{"id": "voice-call-btn"},
+									}) {
+										<span class="voice-call-label voice-call-start">Call</span>
+										<span class="voice-call-label voice-call-stop hidden">Hang up</span>
+									}
+								}
+								@ui.Button(ui.ButtonProps{
+									Type:       ui.ButtonTypeSubmit,
+									Variant:    ui.ButtonPrimary,
+									Size:       ui.ButtonSM,
+									Shape:      ui.ButtonShapeSquare,
+									Icon:       "lucide--arrow-up",
+									AriaLabel:  "Send",
+									ExtraClass: "h-full min-h-11 w-11 shrink-0",
+									Attrs:      templ.Attributes{"id": "chat-send", "data-testid": "chat-send"},
+								})
+								<span id="chat-stop" class="hidden shrink-0">
+									@ui.Button(ui.ButtonProps{
+										Type:       ui.ButtonTypeButton,
+										Variant:    ui.ButtonNeutral,
+										Size:       ui.ButtonSM,
+										Shape:      ui.ButtonShapeSquare,
+										Icon:       "lucide--square",
+										AriaLabel:  "Stop generating",
+										ExtraClass: "h-full min-h-11 w-11 shrink-0",
+									})
+								</span>
+							</div>
+						</div>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-1.5 text-center"}) { Enter to send · Shift+Enter for a new line · responses stream in live }
+					}
+				</form>
+			</div>
+		</div>
+		if voiceEnabled {
+			<audio id="agent-audio" class="hidden" autoplay playsinline></audio>
+		}
+		<style>
+			/* The model-availability banner sits between the chat header and the
+			   transcript. Its layout.Container supplies width + gutter, but when
+			   there is no warning the alert is .hidden and the Container's own
+			   block padding would leave an empty band — collapse it so the slot
+			   takes no vertical space until chat.js reveals the alert. */
+			div:has(> #chat-model-warning.hidden) {
+				padding-block: 0;
+			}
+			/* Voice controls — meter + button states driven by voice.js.
+			   voice.js sets --level (0.0–1.0) on #voice-level every animation
+			   frame and toggles .voice-speaking while the mic is above
+			   threshold; it flips #voice-call-btn to .voice-calling and
+			   #voice-mute-btn to .voice-muted. Unlayered CSS on purpose, so
+			   these overrides beat daisyUI's layered component styles. */
+			#voice-level {
+				--level: 0;
+				display: inline-flex;
+				align-items: flex-end;
+				gap: 2px;
+				height: 1rem;
+			}
+			#voice-level .voice-level-bar {
+				position: relative;
+				width: 3px;
+				height: 100%;
+				border-radius: 2px;
+				overflow: hidden;
+				background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+				transition: background-color 120ms ease, box-shadow 120ms ease;
+			}
+			#voice-level .voice-level-fill {
+				position: absolute;
+				inset: 0;
+				border-radius: inherit;
+				background: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+				transform: scaleY(0);
+				transform-origin: bottom;
+				transition: transform 70ms ease-out, background-color 120ms ease;
+			}
+			/* arc profile: middle bars rise highest, edges stay lower */
+			#voice-level .voice-level-bar:nth-child(1) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.4)); }
+			#voice-level .voice-level-bar:nth-child(2) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.7)); }
+			#voice-level .voice-level-bar:nth-child(3) .voice-level-fill { transform: scaleY(calc(var(--level) * 1)); }
+			#voice-level .voice-level-bar:nth-child(4) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.7)); }
+			#voice-level .voice-level-bar:nth-child(5) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.4)); }
+			/* mic is picking up the user's voice — brass + soft glow */
+			#voice-level.voice-speaking .voice-level-bar {
+				background: color-mix(in oklch, var(--color-primary) 25%, transparent);
+				box-shadow: 0 0 6px color-mix(in oklch, var(--color-primary) 50%, transparent);
+			}
+			#voice-level.voice-speaking .voice-level-fill {
+				background: var(--color-primary);
+			}
+			/* call button: idle = primary "Call"; .voice-calling = hang-up.
+			   Hover/active derive from --btn-color, so the whole button
+			   re-themes red when voice.js flips the class. */
+			#voice-call-btn.voice-calling {
+				--btn-color: var(--color-error);
+				--btn-fg: var(--color-error-content);
+			}
+			#voice-call-btn.voice-calling .voice-call-start { display: none; }
+			#voice-call-btn.voice-calling .voice-call-stop { display: inline-flex; }
+			/* mute button: .voice-muted shows the mic is off */
+			#voice-mute-btn.voice-muted {
+				background: color-mix(in oklch, var(--color-error) 12%, transparent);
+				border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
+				color: var(--color-error);
+			}
+		</style>
+		if voiceEnabled {
+			<script src={ templ.SafeURL(webui.AssetPath("/js/vendor/livekit-client.umd.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/voice.js")) }></script>
+		}
+		<!-- TodoCard (chat_dock.templ) renders a plain toggle button plus a list;
+		     chat.js's applyTodoCollapse only understands daisyUI <details>/
+		     collapse markup, so wire the button here. Delegated on document so
+		     it survives a swap of #chat-root, and guarded so it binds once.
+		     Visibility is CSS-driven off aria-expanded. -->
+		<script>
+			(function () {
+				if (window.__memoryTodoToggleWired) return;
+				window.__memoryTodoToggleWired = true;
+				document.addEventListener("click", function (ev) {
+					var toggle = ev.target && ev.target.closest ? ev.target.closest(".todo-card-toggle") : null;
+					var mount = toggle && toggle.closest ? toggle.closest("#chat-todos") : null;
+					if (!toggle || !mount) return;
+					var open = toggle.getAttribute("aria-expanded") !== "true";
+					toggle.setAttribute("aria-expanded", open ? "true" : "false");
+					mount.dataset.expanded = open ? "1" : "0";
+				});
+			})();
+		</script>
+		<!-- Chat client scripts (chat-transport.js, chat-components.js,
+		     chat-stream.js, chat-host.js, chat.js) load ONCE from the shell
+		     (ui.templ), not inside this swapped #chat-root fragment: htmx
+		     re-executing them in-fragment races the swap and leaves the
+		     composer unbound. chat.js re-inits on htmx:after:swap against the
+		     fresh root. -->
+		@chatDeleteConfirmDialog()
+		@ui.PopoverScript()
+	</div>
+}
+
+// chatDeleteConfirmDialog is the rail's Delete confirmation: one dialog for the
+// whole workspace (not one per row). chat.js opens it with the target session's
+// id + title and only issues DELETE /api/conversations/:id from the confirm
+// button — the method="dialog" backdrop/Cancel path closes it with no request.
+templ chatDeleteConfirmDialog() {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "chat-delete-confirm-modal", Noun: "session"}, chatDeleteConfirmDescription()) {
+		@form.FormActions("", "") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-action": "close-delete-session"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonError,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--trash-2",
+				Attrs:   templ.Attributes{"id": "chat-delete-confirm-go", "data-testid": "chat-delete-confirm-go"},
+			}) {
+				Delete
+			}
+		}
+	}
+}
+
+// chatDeleteConfirmDescription is the delete-confirm detail paragraph. The
+// session name span is filled by chat.js (textContent — never innerHTML).
+templ chatDeleteConfirmDescription() {
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+		This permanently deletes <span id="chat-delete-confirm-name" class="font-medium text-base-content">this session</span>, its messages, and any sub-chats spawned from it. It cannot be undone.
+	}
+}
+
+// chatRailList renders the session rail's list portion: the two empty states
+// plus (when there are rows) a ui.List of sessionRailItem + scheduledRailItem.
+// Rendered by both the full chat page and the /partial/chat-rail refresh.
+templ chatRailList(convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, convID string) {
+	{{ hasRows := (convs != nil && len(convs.Conversations) > 0) || len(schedRuns) > 0 || len(shared) > 0 || len(workRuns) > 0 }}
+	@chatRailEmpty(hasRows)
+	if hasRows {
+		@ui.List(ui.ListProps{}) {
+			if convs != nil {
+				for _, grp := range groupConversations(convs.Conversations, convID) {
+					if len(grp.Descendants) > 0 {
+						@sessionRailGroupParent(grp.Root, appearances[grp.Root.AgentDefinitionID], grp.Root.ID == convID, len(grp.Descendants), grp.Expanded)
+					} else {
+						@sessionRailItem(grp.Root, appearances[grp.Root.AgentDefinitionID], grp.Root.ID == convID)
+					}
+					for _, d := range grp.Descendants {
+						@sessionRailSubchat(d.Conversation, appearances[d.AgentDefinitionID], d.ID == convID, grp.Root.ID, d.Depth, !grp.Expanded)
+					}
+				}
+			}
+			for _, r := range schedRuns {
+				@scheduledRailItem(r)
+			}
+			for _, b := range workRuns {
+				@workRailItem(b)
+			}
+			for _, sh := range shared {
+				@sharedRailItem(sh)
+			}
+		}
+	}
+}
+
+// sessionRailItem is one resumable conversation in the session rail.
+// Clicking it asks chat.js to load the transcript and continue it. All
+// conversations are on-demand, so their origin is "manual". The agent's own
+// glyph leads the row (ap carries its declared icon/color, or the neutral bot).
+// The run-state badge sits ABOVE the title inside the grow column, so the
+// title takes the full row width instead of competing with the badge inline.
+// An archived row (shown only when the rail's "Include archived" filter is on)
+// carries data-archived plus an "Archived" marker and is visually muted.
+templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{})
+}
+
+// sessionRailGroupParent renders the root of a conversation group. count is the
+// number of spawned sub-chats beneath it and expanded is the server-rendered
+// initial state (the active branch is open, everything else starts collapsed).
+templ sessionRailGroupParent(c Conversation, ap agentAppearance, active bool, count int, expanded bool) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{SubchatCount: count, SubchatsExpanded: expanded})
+}
+
+// sessionRailSubchat renders one nested chat below its group root. rootID is
+// the row the toggle controls; depth drives indentation. collapsed mirrors the
+// server-rendered group state so the first paint matches chat.js's model.
+templ sessionRailSubchat(c Conversation, ap agentAppearance, active bool, rootID string, depth int, collapsed bool) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{SubchatRootID: rootID, SubchatDepth: depth, Collapsed: collapsed})
+}
+
+// sessionRailRow is the shared row markup for a top-level chat, a group parent
+// and a nested sub-chat.
+templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessionRailRowOptions) {
+	{{
+		attrs := templ.Attributes{
+			"data-action":            "resume-session",
+			"data-id":                c.ID,
+			"data-agent":             c.AgentDefinitionID,
+			"data-origin":            "manual",
+			"data-testid":            "session-row",
+			"data-bucket":            c.Bucket,
+			"data-pending-approvals": strconv.Itoa(c.PendingApprovals),
+			"data-pending-questions": strconv.Itoa(c.PendingQuestions),
+		}
+		if active {
+			attrs["data-active"] = "true"
+		}
+		if c.IsArchived {
+			attrs["data-archived"] = "true"
+		}
+		class := "list-row"
+		style := ""
+		if c.IsArchived {
+			class += " opacity-60"
+		}
+		if opts.SubchatRootID != "" {
+			attrs["data-parent-id"] = opts.SubchatRootID
+			attrs["data-subchat"] = "true"
+			attrs["data-depth"] = strconv.Itoa(opts.SubchatDepth)
+			class += " session-subchat"
+			pad := 8 + 14*opts.SubchatDepth
+			if pad > 40 {
+				pad = 40
+			}
+			style = "padding-left: " + strconv.Itoa(pad) + "px"
+		}
+		if opts.SubchatCount > 0 {
+			attrs["data-subchat-count"] = strconv.Itoa(opts.SubchatCount)
+			// The filter pass reads the group id from the row (not the toggle
+			// button) so a child-only match can keep its collapsed root visible.
+			attrs["data-subchat-group"] = c.ID
+			if opts.SubchatsExpanded {
+				attrs["data-subchats-expanded"] = "true"
+			}
+		}
+		if opts.Collapsed {
+			class += " hidden"
+		}
+		subtitleName := ap.Name
+		if opts.SubchatRootID != "" {
+			subtitleName = "Sub-chat"
+			if c.SpawnSource != "" {
+				subtitleName = c.SpawnSource
+			}
+		}
+	}}
+	<li class={ class } style={ style } { attrs... }>
+		<!-- Selection checkbox (#1385). Always rendered so the markup is
+		     server-owned and stable across rail refreshes; hidden until
+		     chat.js enables selection mode. It carries its own data-action so
+		     the delegated rail handler resolves the checkbox — not the
+		     enclosing resume-session row — and a click never resumes. -->
+		<div class="flex items-center gap-1.5">
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm session-select hidden"
+				data-action="select-session"
+				data-id={ c.ID }
+				data-testid="session-select"
+				aria-label={ "Select session: " + c.Title }
+			/>
+			@agentInlineGlyph(ap.Icon, ap.Color)
+		</div>
+		<div class="list-col-grow">
+			<div class="flex flex-wrap items-center gap-1.5">
+				@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
+				if c.IsArchived {
+					@ui.Badge(ui.BadgeProps{
+						Label:      "Archived",
+						Variant:    ui.BadgeGhost,
+						Size:       ui.BadgeSizeXS,
+						Icon:       "lucide--archive",
+						LabelClass: "font-normal",
+						Attrs:      templ.Attributes{"data-testid": "session-archived-marker"},
+					})
+				}
+			</div>
+			<div class="font-medium text-sm">{ c.Title }</div>
+			<div class="text-xs text-muted">{ railSubtitle(subtitleName, c.UpdatedAt) }</div>
+		</div>
+		<div class="flex items-center gap-1">
+			if opts.SubchatCount > 0 {
+				@ui.Button(ui.ButtonProps{
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonXS,
+					ExtraClass: "gap-1",
+					AriaLabel:  subchatToggleLabel(opts.SubchatCount, opts.SubchatsExpanded),
+					Attrs: templ.Attributes{
+						"data-action":        "toggle-subchats",
+						"data-subchat-group": c.ID,
+						"data-testid":        "session-subchats-toggle",
+						"aria-expanded":      boolString(opts.SubchatsExpanded),
+					},
+				}) {
+					<span class="text-xs tabular-nums">{ strconv.Itoa(opts.SubchatCount) }</span>
+					@ui.IconSpan("lucide--chevron-down", "size-3 subchat-chevron")
+				}
+			}
+			@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")
+			<!-- Row action menu. Uses the shared go-daisy popover (native
+			     popover top-layer, position:fixed) rather than a CSS dropdown:
+			     the rail list scrolls, and an absolutely-positioned dropdown
+			     would be clipped by that overflow for lower rows. role=menu +
+			     menuitem keep the standard menu semantics. -->
+			@ui.Popover(ui.PopoverRootProps{Attrs: templ.Attributes{"data-testid": "session-actions"}}) {
+				@ui.PopoverTrigger(ui.PopoverTriggerProps{
+					Class: "btn btn-ghost btn-xs btn-square",
+					Attrs: templ.Attributes{
+						"data-action":   "session-menu",
+						"aria-haspopup": "menu",
+						"aria-expanded": "false",
+						"aria-label":    "Actions for " + c.Title,
+					},
+				}) {
+					@ui.IconSpan("lucide--ellipsis-vertical", "size-4")
+				}
+				@ui.PopoverContent(ui.PopoverContentProps{
+					Placement: ui.PopoverBottomEnd,
+					Offset:    4,
+					Exclusive: true,
+					Class:     "w-36",
+					Attrs:     templ.Attributes{"role": "menu", "data-testid": "session-actions-menu"},
+				}) {
+					<ul class="menu menu-sm p-1">
+						if c.IsArchived {
+							<li role="none">
+								<button type="button" role="menuitem" data-action="unarchive-session" data-id={ c.ID } data-testid="session-unarchive" class="flex w-full items-center gap-2 text-left">
+									@ui.IconSpan("lucide--archive-restore", "size-4")
+									<span>Unarchive</span>
+								</button>
+							</li>
+						} else {
+							<li role="none">
+								<button type="button" role="menuitem" data-action="archive-session" data-id={ c.ID } data-testid="session-archive" class="flex w-full items-center gap-2 text-left">
+									@ui.IconSpan("lucide--archive", "size-4")
+									<span>Archive</span>
+								</button>
+							</li>
+						}
+						<li role="none">
+							<button type="button" role="menuitem" data-action="delete-session" data-id={ c.ID } data-title={ c.Title } data-testid="session-delete" class="flex w-full items-center gap-2 text-left text-error">
+								@ui.IconSpan("lucide--trash-2", "size-4")
+								<span>Delete</span>
+							</button>
+						</li>
+					</ul>
+				}
+			}
+		</div>
+	</li>
+}
+
+// railStatusBadge wraps lane A's RailStatusBadge in the node chat.js updates in
+// place. RailStatusBadge owns only the bucket data and its label; its frozen
+// signature cannot carry data-rail-badge, so this slot provides it — otherwise
+// applyRailBadges would not find the server-rendered badge and would append a
+// second one on every rail re-render. The slot reuses the badge's own classes
+// so it looks identical before chat.js restyles it.
+templ railStatusBadge(bucket string, pendingApprovals, pendingQuestions int) {
+	{{ show := railBucketLabel(bucket) != "" || pendingApprovals+pendingQuestions > 0 }}
+	<span
+		class={ "memory-rail-badge", templ.KV("hidden", !show) }
+		data-rail-badge
+		data-bucket={ bucket }
+		data-pending-approvals={ strconv.Itoa(pendingApprovals) }
+		data-pending-questions={ strconv.Itoa(pendingQuestions) }
+	>
+		@RailStatusBadge(bucket, pendingApprovals, pendingQuestions)
+	</span>
+}
+
+// scheduledRailItem is one scheduled-agent run in the session rail. Runs are
+// not resumable conversations, but clicking one opens its transcript in the
+// chat workspace (data-action="open-run", handled by chat.js → resumeRun,
+// which renders /api/runs/{id}/history as normal chat bubbles so a paused run
+// can be continued in place). The run agent's own glyph leads the row.
+templ scheduledRailItem(r scheduledRunRow) {
+	{{
+		attrs := templ.Attributes{
+			"data-action": "open-run",
+			"data-id":     r.ID,
+			"data-run-id": r.ID,
+			"data-origin": "scheduled",
+			"data-testid": "session-row",
+		}
+	}}
+	@ui.ListRow(ui.ListRowProps{
+		Title:    r.AgentName,
+		Subtitle: railRunSubtitle(r),
+		Leading:  agentInlineGlyph(r.Icon, r.Color),
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
+		Attrs:    attrs,
+	})
+}
+
+// workRunRow is one non-conversation run rendered in the chat session rail: an
+// object-driven (board/work) run (data-origin="board") or an extraction run
+// (data-origin="extraction"). It is not a resumable conversation, but clicking it
+// opens its run transcript (data-action="open-run") — unless Href is set, which
+// links a run-less legacy extraction job to its extraction history page so the
+// row is never dropped. Title carries the matched work item's key / the source
+// document's filename when known, else the agent name; Icon/Color carry the run
+// agent's definition appearance.
+type workRunRow struct {
+	ID          string
+	RunID       string
+	Origin      string
+	Href        string
+	Title       string
+	AgentName   string
+	Status      string
+	StartedAt   string
+	CompletedAt string
+	Icon        string
+	Color       string
+}
+
+// workRailItem is one board/work or extraction run in the session rail. It
+// mirrors scheduledRailItem (data-action="open-run" → resumeRun →
+// /api/runs/{id}/history) and carries the row's origin so the origin filter
+// isolates it. The run agent's own glyph leads the row. A row with Href set
+// (a recorded-run-less extraction job) renders as a plain link instead.
+templ workRailItem(r workRunRow) {
+	{{
+		title := r.Title
+		if title == "" {
+			title = r.AgentName
+		}
+		origin := r.Origin
+		if origin == "" {
+			origin = "board"
+		}
+	}}
+	if r.Href != "" && r.RunID == "" {
+		// No recorded run (legacy job or a failed link): link to the extraction
+		// history page. Hand-written rather than components.LinkRow so the row
+		// still carries data-origin and the session-row test id — an unfilterable
+		// row would leak into every other origin filter's view.
+		<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL(r.Href) } data-origin={ origin } data-testid="session-row">
+			@ui.IconSpan("lucide--scan-text", "size-4 shrink-0 text-muted-faint")
+			<div class="min-w-0 grow">
+				<p class="truncate text-sm font-medium">{ title }</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+					{ runRailSubtitle(r.Status, r.StartedAt) }
+				}
+			</div>
+			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+		</a>
+	} else {
+		{{
+			attrs := templ.Attributes{
+				"data-action": "open-run",
+				"data-id":     r.RunID,
+				"data-run-id": r.RunID,
+				"data-origin": origin,
+				"data-testid": "session-row",
+			}
+		}}
+		@ui.ListRow(ui.ListRowProps{
+			Title:    title,
+			Subtitle: runRailSubtitle(r.Status, r.StartedAt),
+			Leading:  agentInlineGlyph(r.Icon, r.Color),
+			Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
+			Attrs:    attrs,
+		})
+	}
+}
+
+// runRailSubtitle builds the meta line shared by the scheduled, board and
+// extraction run rows: the run status (when set) and the relative start time.
+// Every rail run row routes through here so the rows cannot drift apart. The
+// status is humanised (via boardStatusLabel, the same humaniser the board uses
+// for work statuses) because this is prose in a human-facing list, not a
+// machine key.
+func runRailSubtitle(status, startedAt string) string {
+	if status == "" {
+		return relTime(startedAt)
+	}
+	return boardStatusLabel(status) + " · " + relTime(startedAt)
+}
+
+// railRunSubtitle builds the meta line for a scheduled run rail item.
+func railRunSubtitle(r scheduledRunRow) string {
+	return runRailSubtitle(r.Status, r.StartedAt)
+}
+
+// sharedRailItem is one owner-shared session in the session rail. It opens a
+// read-only transcript on a separate page (data-action="open-share" →
+// /share-sessions/<id>), so it is not resumable in the chat workspace. The
+// neutral bot glyph leads the row; no end-user PII is rendered.
+templ sharedRailItem(s sharedSessionRow) {
+	{{
+		attrs := templ.Attributes{
+			"data-action":   "open-share",
+			"data-share-id": s.ID,
+			"data-agent":    s.AgentDefinitionID,
+			"data-origin":   "shared",
+			"data-testid":   "session-row",
+		}
+	}}
+	@ui.ListRow(ui.ListRowProps{
+		Title:    s.Title,
+		Subtitle: s.ActivityRelative,
+		Leading:  agentInlineGlyph("", ""),
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
+		Attrs:    attrs,
+	})
+}
+
+// railSubtitle builds the meta line for a session rail item.
+func railSubtitle(agentName, updatedAt string) string {
+	if agentName == "" {
+		return relTime(updatedAt)
+	}
+	return agentName + " · " + relTime(updatedAt)
+}
+
+// railEmptyClass returns the class for the session rail's "no conversations
+// yet" placeholder, hiding it when there are conversations to list.
+func railEmptyClass(hasConvs bool) string {
+	if hasConvs {
+		return "hidden px-3 py-6 text-center"
+	}
+	return "px-3 py-6 text-center"
+}
+
+// chatRailEmpty renders the two session-rail empty states. Both carry stable
+// IDs so chat.js can toggle them in place as the filters change:
+// #chat-rail-empty is the "no sessions at all" state (shown when hasRows is
+// false); #chat-rail-empty-filtered is the "filter matched nothing" state
+// (hidden until the filters have no matches).
+templ chatRailEmpty(hasRows bool) {
+	<div id="chat-rail-empty" class={ railEmptyClass(hasRows) }>
+		@ui.IconSpan("lucide--messages-square", "size-6 text-muted-subtle")
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+			No sessions yet. Chat once or create a schedule and runs land here. 
+		}
+	</div>
+	<div id="chat-rail-empty-filtered" class="hidden px-3 py-6 text-center">
+		@ui.IconSpan("lucide--filter", "size-6 text-muted-subtle")
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+			No sessions match the current filter. 
+		}
+	</div>
+}
+
+// chatModelWarningBanner is the pre-send model-availability banner shown in
+// the chat workspace between the header row and the log. message is the
+// error-level warning for the currently selected agent ("" when its model can
+// be served). It mirrors the agent dashboard's agentModelWarningBox error
+// variant: an alert-error box plus a "Configure a provider" link to
+// /settings/providers. chat.js re-fills #chat-model-warning-text and toggles
+// the hidden class when the #chat-agent picker changes; the text itself always
+// comes from the server-computed map (never duplicated client-side).
+templ chatModelWarningBanner(message string) {
+	@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
+		<div id="chat-model-warning" role="alert" class={ "alert alert-error alert-outline", templ.KV("hidden", message == "") }>
+			@ui.IconSpan("lucide--alert-triangle", "size-5")
+			<div class="flex min-w-0 items-center gap-3">
+				<span class="min-w-0 grow" id="chat-model-warning-text">{ message }</span>
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       "/settings/providers",
+					Variant:    ui.ButtonOutline,
+					Size:       ui.ButtonXS,
+					Icon:       "lucide--server",
+					ExtraClass: "shrink-0 h-auto",
+				}) {
+					Configure a provider
+				}
+			</div>
+		</div>
+	}
+}
+
+// chatSuggestion renders a tappable prompt chip for the welcome state.
+templ chatSuggestion(text string) {
+	<button
+		type="button"
+		class="memory-suggestion border-base-content/15 bg-base-100/50 text-muted-strong hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
+		data-suggestion={ text }
+	>
+		{ text }
+	</button>
+}

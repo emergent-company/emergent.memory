@@ -1,0 +1,356 @@
+package cmd
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/completion"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/invitations"
+	"github.com/spf13/cobra"
+)
+
+var teamCmd = &cobra.Command{
+	Use:   "team",
+	Short: "Manage project team members",
+	Long:  "Commands for listing, inviting, and removing members of a project",
+}
+
+// ─── team list ───────────────────────────────────────────────────────────────
+
+var teamListCmd = &cobra.Command{
+	Use:               "list [project-name-or-id]",
+	Short:             "List project team members",
+	Long:              "List all members of a project with their roles and join dates. Use --stats for last-active info.",
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runTeamList,
+}
+
+var (
+	teamListStats bool
+	teamListJSON  bool
+)
+
+func runTeamList(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	members, err := c.SDK.Projects.ListMembers(context.Background(), projectID)
+	if err != nil {
+		return fmt.Errorf("failed to list members: %w", err)
+	}
+
+	if teamListJSON {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(members)
+	}
+
+	if len(members) == 0 {
+		fmt.Println("No members found.")
+		return nil
+	}
+
+	for i, m := range members {
+		displayName := m.Email
+		if m.DisplayName != nil && *m.DisplayName != "" {
+			displayName = *m.DisplayName
+		}
+		joinedAt := fmtTimeStr(m.JoinedAt)
+		fmt.Printf("%d. %-30s %-30s %-20s joined %s\n",
+			i+1, displayName, m.Email, m.Role, joinedAt)
+	}
+
+	return nil
+}
+
+// ─── team invite ─────────────────────────────────────────────────────────────
+
+var teamInviteCmd = &cobra.Command{
+	Use:   "invite <email> [project-name-or-id]",
+	Short: "Invite someone to the project",
+	Long: `Send an email invitation to join the project.
+
+The invited user will receive an email with CLI install instructions and an
+accept link. Use --role to control the access level (default: project_viewer).
+
+Roles:
+  project_viewer  Read-only access (cannot modify data)
+  project_user    Read-write access
+  project_admin   Full admin access`,
+	Args:              cobra.RangeArgs(1, 2),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runTeamInvite,
+}
+
+var teamInviteRole string
+
+func runTeamInvite(cmd *cobra.Command, args []string) error {
+	email := args[0]
+	if !strings.Contains(email, "@") {
+		return fmt.Errorf("invalid email address: %s", email)
+	}
+
+	projectArgs := args[1:]
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectArgOrPick(cmd, c, projectArgs)
+	if err != nil {
+		return err
+	}
+
+	// Look up project name for the invitation email
+	project, err := c.SDK.Projects.Get(context.Background(), projectID, nil)
+	projectName := projectID
+	if err == nil && project != nil {
+		projectName = project.Name
+	}
+
+	// Look up org ID (required by the invite API)
+	orgID := ""
+	if project != nil {
+		orgID = project.OrgID
+	}
+
+	role := teamInviteRole
+	validRoles := map[string]bool{
+		"project_viewer": true,
+		"project_user":   true,
+		"project_admin":  true,
+	}
+	if !validRoles[role] {
+		return fmt.Errorf("invalid role %q — must be one of: project_viewer, project_user, project_admin", role)
+	}
+
+	_, err = c.SDK.Invitations.Create(context.Background(), &invitations.CreateRequest{
+		OrgID:       orgID,
+		ProjectID:   projectID,
+		Email:       email,
+		Role:        role,
+		ProjectName: projectName,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send invitation: %w", err)
+	}
+
+	roleLabel := roleLabelForCLI(role)
+	fmt.Printf("Invitation sent to %s (%s) for project %q\n", email, roleLabel, projectName)
+	return nil
+}
+
+func roleLabelForCLI(role string) string {
+	switch role {
+	case "project_admin":
+		return "admin"
+	case "project_user":
+		return "member"
+	case "project_viewer":
+		return "viewer (read-only)"
+	default:
+		return role
+	}
+}
+
+// ─── team remove ─────────────────────────────────────────────────────────────
+
+var teamRemoveCmd = &cobra.Command{
+	Use:               "remove <email> [project-name-or-id]",
+	Short:             "Remove a member from the project",
+	Long:              "Remove a user from the project by email. Use --yes to skip confirmation.",
+	Args:              cobra.RangeArgs(1, 2),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runTeamRemove,
+}
+
+var teamRemoveYes bool
+
+func runTeamRemove(cmd *cobra.Command, args []string) error {
+	targetEmail := args[0]
+	projectArgs := args[1:]
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectArgOrPick(cmd, c, projectArgs)
+	if err != nil {
+		return err
+	}
+
+	// Resolve email → user ID via member list
+	members, err := c.SDK.Projects.ListMembers(context.Background(), projectID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch member list: %w", err)
+	}
+
+	targetUserID := ""
+	for _, m := range members {
+		if strings.EqualFold(m.Email, targetEmail) {
+			targetUserID = m.ID
+			break
+		}
+	}
+	if targetUserID == "" {
+		return fmt.Errorf("%s is not a member of this project", targetEmail)
+	}
+
+	// Confirm unless --yes
+	if !teamRemoveYes {
+		fmt.Printf("Remove %s from project? [y/N] ", targetEmail)
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		if answer != "y" && answer != "yes" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
+	}
+
+	if err := c.SDK.Projects.RemoveMember(context.Background(), projectID, targetUserID); err != nil {
+		return fmt.Errorf("failed to remove member: %w", err)
+	}
+
+	fmt.Printf("Removed %s from project.\n", targetEmail)
+	return nil
+}
+
+// ─── init ────────────────────────────────────────────────────────────────────
+
+func initTeamCmd() {
+	// team list flags
+	teamListCmd.Flags().BoolVar(&teamListStats, "stats", false, "Show last-active stats per member")
+	teamListCmd.Flags().BoolVar(&teamListJSON, "json", false, "Output as JSON")
+
+	// team invite flags
+	teamInviteCmd.Flags().StringVar(&teamInviteRole, "role", "project_viewer",
+		"Role to assign (project_viewer, project_user, project_admin)")
+
+	// team invites flags
+	teamInvitesCmd.Flags().BoolVar(&teamInvitesJSON, "json", false,
+		"Output as JSON, including each invite token (a credential)")
+
+	// team remove flags
+	teamRemoveCmd.Flags().BoolVarP(&teamRemoveYes, "yes", "y", false, "Skip confirmation prompt")
+
+	// Assemble subcommand tree
+	teamCmd.AddCommand(teamListCmd)
+	teamCmd.AddCommand(teamInviteCmd)
+	teamCmd.AddCommand(teamInvitesCmd)
+	teamCmd.AddCommand(teamAcceptCmd)
+	teamCmd.AddCommand(teamRemoveCmd)
+}
+
+// ─── team invites ────────────────────────────────────────────────────────────
+
+var teamInvitesCmd = &cobra.Command{
+	Use:   "invites",
+	Short: "List pending invitations",
+	Long: `List all pending invitations sent to your account.
+
+The default listing does not print invitation tokens; use the token from the
+invitation email with 'memory projects team accept <token>'. --json is the one
+place this listing prints it: it renders the API response as the CLI's client
+decodes it, including a credential for each invite, so do not pipe it into logs
+or share it.`,
+	Args: cobra.NoArgs,
+	RunE: runTeamInvites,
+}
+
+var teamInvitesJSON bool
+
+func runTeamInvites(cmd *cobra.Command, args []string) error {
+	c, err := getAccountClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	invites, err := c.SDK.Invitations.ListPending(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list invitations: %w", err)
+	}
+
+	if teamInvitesJSON {
+		// Deliberate, not an oversight: --json is explicit machine output and
+		// renders the API response as the SDK models it, token included. Redacting
+		// it here would make machine output lossy and diverge from the API
+		// contract, and an admin needs the token to re-send an accept link when
+		// the invitation email never arrived. The exposure is documented in the
+		// command help and pinned by TestTeamInvitesJSONIncludesToken (#2134).
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(invites)
+	}
+
+	if len(invites) == 0 {
+		fmt.Println("No pending invitations.")
+		return nil
+	}
+
+	for i, inv := range invites {
+		projectName := "unknown project"
+		if inv.ProjectName != nil && *inv.ProjectName != "" {
+			projectName = *inv.ProjectName
+		}
+
+		orgName := inv.OrganizationID
+		if inv.OrganizationName != nil && *inv.OrganizationName != "" {
+			orgName = *inv.OrganizationName
+		}
+
+		role := roleLabelForCLI(inv.Role)
+
+		expiry := "no expiry"
+		if inv.ExpiresAt != nil {
+			expiry = "expires " + fmtTimePTime(inv.ExpiresAt)
+		}
+
+		// The invitation token is bearer-equivalent and is not printed: a
+		// prefix can neither be completed into a usable token nor be trusted
+		// not to leak one, and anything shorter than the old 12-character cut
+		// was echoed verbatim (#2131). The token is delivered by email, which
+		// is where `team accept` tells the user to look.
+		fmt.Printf("%d. Project %q (org: %s) — %s  %s\n",
+			i+1, projectName, orgName, role, expiry)
+	}
+
+	fmt.Println("\nTokens are not printed. Use the token from the invitation email with 'memory projects team accept <token>'.")
+
+	return nil
+}
+
+// ─── team accept ─────────────────────────────────────────────────────────────
+
+var teamAcceptCmd = &cobra.Command{
+	Use:   "accept <token>",
+	Short: "Accept a pending invitation",
+	Long:  "Accept a pending invitation using the token from the invitation email.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTeamAccept,
+}
+
+func runTeamAccept(cmd *cobra.Command, args []string) error {
+	token := args[0]
+
+	c, err := getAccountClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SDK.Invitations.Accept(context.Background(), token); err != nil {
+		return err
+	}
+
+	fmt.Println("Invitation accepted.")
+	return nil
+}

@@ -1,0 +1,100 @@
+package provider
+
+import (
+	"context"
+
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+)
+
+// ADKCredentialAdapter wraps CredentialService to satisfy the adk.CredentialResolver
+// interface. It converts domain/provider.ResolvedCredential to adk.ResolvedCredential,
+// which avoids an import cycle (pkg/adk cannot import domain/provider).
+type ADKCredentialAdapter struct {
+	svc *CredentialService
+}
+
+// NewADKCredentialAdapter creates a new ADKCredentialAdapter.
+func NewADKCredentialAdapter(svc *CredentialService) *ADKCredentialAdapter {
+	return &ADKCredentialAdapter{svc: svc}
+}
+
+// ResolveAny satisfies adk.CredentialResolver.
+func (a *ADKCredentialAdapter) ResolveAny(ctx context.Context) (*adk.ResolvedCredential, error) {
+	cred, err := a.svc.ResolveAny(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cred == nil {
+		return nil, nil
+	}
+	return toADKCredential(cred), nil
+}
+
+// ResolveFor satisfies adk.CredentialResolver.
+func (a *ADKCredentialAdapter) ResolveFor(ctx context.Context, provider string) (*adk.ResolvedCredential, error) {
+	cred, err := a.svc.ResolveFor(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	if cred == nil {
+		return nil, nil
+	}
+	return toADKCredential(cred), nil
+}
+
+// ResolveBySlug satisfies adk.CredentialResolver. It resolves a specific
+// provider instance rather than a dialect.
+func (a *ADKCredentialAdapter) ResolveBySlug(ctx context.Context, slug string) (*adk.ResolvedCredential, error) {
+	cred, err := a.svc.ResolveBySlug(ctx, ProviderSlug(slug))
+	if err != nil {
+		return nil, err
+	}
+	if cred == nil {
+		return nil, nil
+	}
+	return toADKCredential(cred), nil
+}
+
+// toADKCredential converts a domain ResolvedCredential to the adk-package type.
+func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
+	return &adk.ResolvedCredential{
+		IsGoogleAI:         c.Provider == ProviderGoogleAI,
+		APIKey:             c.APIKey,
+		IsVertexAI:         c.Provider == ProviderVertexAI,
+		GCPProject:         c.GCPProject,
+		Location:           c.Location,
+		ServiceAccountJSON: c.ServiceAccountJSON,
+		GenerativeModel:    c.GenerativeModel,
+		Source:             string(c.Source),
+		BaseURL:            c.BaseURL,
+		Provider:           string(c.Provider),
+		Slug:               string(c.Slug),
+		Protocol:           string(c.Protocol),
+		Auth:               string(c.Auth),
+		Compat:             adk.VendorCompat{MaxTokensField: c.Compat.MaxTokensField, NoToolChoice: !c.Compat.SupportsToolChoice, ThinkingStyle: c.Compat.ThinkingStyle},
+		Extra:              c.Extra,
+		ExtraHeaders:       c.ExtraHeaders,
+	}
+}
+
+// ModelLimitAdapter wraps CredentialService + Repository to satisfy
+// adk.ModelLimitResolver. It resolves the active model for the request context
+// then looks up its max_input_tokens from provider_supported_models.
+type ModelLimitAdapter struct {
+	credSvc *CredentialService
+	repo    *Repository
+}
+
+// NewModelLimitAdapter creates a new ModelLimitAdapter.
+func NewModelLimitAdapter(credSvc *CredentialService, repo *Repository) *ModelLimitAdapter {
+	return &ModelLimitAdapter{credSvc: credSvc, repo: repo}
+}
+
+// GetInputLimit satisfies adk.ModelLimitResolver.
+func (a *ModelLimitAdapter) GetInputLimit(ctx context.Context) (int, error) {
+	cred, err := a.credSvc.ResolveAny(ctx)
+	if err != nil || cred == nil {
+		return 0, err
+	}
+	return a.repo.GetModelInputLimit(ctx, cred.GenerativeModel)
+}

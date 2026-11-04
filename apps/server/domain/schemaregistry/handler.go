@@ -1,0 +1,422 @@
+package schemaregistry
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/domain/schemas"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// Handler handles HTTP requests for the schema registry
+type Handler struct {
+	repo *Repository
+}
+
+// NewHandler creates a new schema registry handler
+func NewHandler(repo *Repository) *Handler {
+	return &Handler{repo: repo}
+}
+
+// validateTypeScopeKey validates the optional scopeKey declaration in a type's
+// json_schema (issue #1148). It resolves reference targets against the project's
+// registered types and fails closed with an actionable message.
+func (h *Handler) validateTypeScopeKey(ctx context.Context, projectID, typeName string, schema json.RawMessage) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	known, err := h.repo.TypePropertyNames(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to resolve scopeKey reference targets", err)
+	}
+	if known == nil {
+		known = map[string]map[string]struct{}{}
+	}
+	// The incoming definition is authoritative for the type's own properties.
+	known[typeName] = schemas.TypeSchemaPropertyNames(schema)
+	if errs := schemas.ValidateTypeScopeKey(typeName, schema, known); len(errs) > 0 {
+		return apperror.NewBadRequest("invalid scopeKey: " + strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// GetProjectTypes handles GET /api/schema-registry/projects/:projectId
+// @Summary      List project types
+// @Description  Returns all object types registered for a project with optional filtering
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        enabled_only query boolean false "Filter enabled types only (default true)" default(true)
+// @Param        source query string false "Filter by source" Enums(template,custom,discovered,all)
+// @Param        search query string false "Search in type names"
+// @Param        namespace query string false "Namespace filter: omit for default (null-namespace only), specific value for that namespace, 'all' for all namespaces"
+// @Success      200 {array} SchemaRegistryEntryDTO "List of types"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetProjectTypes(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	// Parse query parameters
+	query := ListTypesQuery{
+		EnabledOnly: c.QueryParam("enabled_only") == "true",
+		Source:      c.QueryParam("source"),
+		Search:      c.QueryParam("search"),
+		Namespace:   c.QueryParam("namespace"),
+	}
+
+	// Default enabled_only to true if not specified
+	if c.QueryParam("enabled_only") == "" {
+		query.EnabledOnly = true
+	}
+
+	types, err := h.repo.GetProjectTypes(c.Request().Context(), projectID, query)
+	if err != nil {
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		return apperror.NewInternal("failed to get project types", err)
+	}
+
+	return c.JSON(http.StatusOK, types)
+}
+
+// GetObjectType handles GET /api/schema-registry/projects/:projectId/types/:typeName
+// @Summary      Get object type
+// @Description  Returns a specific object type definition including incoming/outgoing relationships
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        typeName path string true "Object type name"
+// @Success      200 {object} SchemaRegistryEntryDTO "Type definition"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Type not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/types/{typeName} [get]
+// @Security     bearerAuth
+func (h *Handler) GetObjectType(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	typeName := c.Param("typeName")
+	if typeName == "" {
+		return apperror.NewBadRequest("typeName is required")
+	}
+
+	typeEntry, err := h.repo.GetTypeByName(c.Request().Context(), projectID, typeName)
+	if err != nil {
+		if strings.Contains(err.Error(), "type not found") {
+			return apperror.NewNotFound("Type", typeName)
+		}
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		return apperror.NewInternal("failed to get type", err)
+	}
+
+	return c.JSON(http.StatusOK, typeEntry)
+}
+
+// GetTypeVersionHistory handles GET /api/schema-registry/projects/:projectId/types/:typeName/versions
+// @Summary      Get object type version history
+// @Description  Returns the persisted version history for a registered object type, newest first
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        typeName path string true "Object type name"
+// @Success      200 {object} ObjectTypeHistoryResponse "Type version history"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Type not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/types/{typeName}/versions [get]
+// @Security     bearerAuth
+func (h *Handler) GetTypeVersionHistory(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	typeName := c.Param("typeName")
+	if typeName == "" {
+		return apperror.NewBadRequest("typeName is required")
+	}
+
+	history, err := h.repo.GetTypeVersionHistory(c.Request().Context(), projectID, typeName)
+	if err != nil {
+		if strings.Contains(err.Error(), "type not found") {
+			return apperror.NewNotFound("Type", typeName)
+		}
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		return apperror.NewInternal("failed to get type version history", err)
+	}
+
+	return c.JSON(http.StatusOK, history)
+}
+
+// GetTypeStats handles GET /api/schema-registry/projects/:projectId/stats
+// @Summary      Get type statistics
+// @Description  Returns statistics about a project's schema registry including counts and object distribution
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {object} SchemaRegistryStats "Type statistics"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/stats [get]
+// @Security     bearerAuth
+func (h *Handler) GetTypeStats(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	stats, err := h.repo.GetTypeStats(c.Request().Context(), projectID)
+	if err != nil {
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		return apperror.NewInternal("failed to get type stats", err)
+	}
+
+	return c.JSON(http.StatusOK, stats)
+}
+
+// CreateType handles POST /api/schema-registry/projects/:projectId/types
+// @Summary      Register custom type
+// @Description  Registers a new custom object type for a project with JSON schema, UI config, and extraction config
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body CreateTypeRequest true "Type definition"
+// @Success      201 {object} ProjectObjectSchemaRegistry "Created type"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      409 {object} apperror.Error "Type already exists"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/types [post]
+// @Security     bearerAuth
+func (h *Handler) CreateType(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	var req CreateTypeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if req.TypeName == "" {
+		return apperror.NewBadRequest("type_name is required")
+	}
+	if len(req.JSONSchema) == 0 {
+		return apperror.NewBadRequest("json_schema is required")
+	}
+	if err := h.validateTypeScopeKey(c.Request().Context(), projectID, req.TypeName, req.JSONSchema); err != nil {
+		return err
+	}
+
+	entry, err := h.repo.CreateType(c.Request().Context(), projectID, user.ID, &req)
+	if err != nil {
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		if strings.Contains(err.Error(), "type already exists") {
+			return apperror.ErrConflict.WithMessage("type already exists: " + req.TypeName)
+		}
+		return apperror.NewInternal("failed to create type", err)
+	}
+
+	return c.JSON(http.StatusCreated, entry)
+}
+
+// UpdateType handles PUT /api/schema-registry/projects/:projectId/types/:typeName
+// @Summary      Update registered type
+// @Description  Updates an existing type in the project schema registry. Bumps schema_version when json_schema changes.
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        typeName path string true "Object type name"
+// @Param        request body UpdateTypeRequest true "Update request"
+// @Success      200 {object} ProjectObjectSchemaRegistry "Updated type"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Type not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/types/{typeName} [put]
+// @Security     bearerAuth
+func (h *Handler) UpdateType(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	typeName := c.Param("typeName")
+	if projectID == "" || typeName == "" {
+		return apperror.NewBadRequest("projectId and typeName are required")
+	}
+
+	var req UpdateTypeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if err := h.validateTypeScopeKey(c.Request().Context(), projectID, typeName, req.JSONSchema); err != nil {
+		return err
+	}
+
+	entry, err := h.repo.UpdateType(c.Request().Context(), projectID, typeName, &req)
+	if err != nil {
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		if strings.Contains(err.Error(), "type not found") {
+			return apperror.NewNotFound("Type", typeName)
+		}
+		if strings.Contains(err.Error(), "no update fields") {
+			return apperror.NewBadRequest("no update fields provided")
+		}
+		return apperror.NewInternal("failed to update type", err)
+	}
+
+	return c.JSON(http.StatusOK, entry)
+}
+
+// DeleteType handles DELETE /api/schema-registry/projects/:projectId/types/:typeName
+// @Summary      Delete registered type
+// @Description  Removes a type from the project schema registry
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        typeName path string true "Object type name"
+// @Success      204 "No content"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Type not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/types/{typeName} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteType(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	typeName := c.Param("typeName")
+	if projectID == "" || typeName == "" {
+		return apperror.NewBadRequest("projectId and typeName are required")
+	}
+
+	err := h.repo.DeleteType(c.Request().Context(), projectID, typeName)
+	if err != nil {
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		if strings.Contains(err.Error(), "type not found") {
+			return apperror.NewNotFound("Type", typeName)
+		}
+		return apperror.NewInternal("failed to delete type", err)
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}
+
+// ListRelationshipTypes handles GET /api/schema-registry/projects/:projectId/relationship-types
+func (h *Handler) ListRelationshipTypes(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	types, err := h.repo.ListRelationshipTypes(c.Request().Context(), projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to list relationship types", err)
+	}
+	return c.JSON(http.StatusOK, types)
+}
+
+// CreateRelationshipType handles POST /api/schema-registry/projects/:projectId/relationship-types
+func (h *Handler) CreateRelationshipType(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	var req CreateRelationshipTypeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if req.Name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	entry, err := h.repo.UpsertRelationshipType(c.Request().Context(), projectID, &req)
+	if err != nil {
+		if strings.Contains(err.Error(), "no active schema") {
+			return apperror.NewBadRequest("no active schema found for project")
+		}
+		return apperror.NewInternal("failed to create relationship type", err)
+	}
+	return c.JSON(http.StatusCreated, entry)
+}
+
+// UpdateRelationshipType handles PUT /api/schema-registry/projects/:projectId/relationship-types/:name
+func (h *Handler) UpdateRelationshipType(c echo.Context) error {
+	projectID := c.Param("projectId")
+	name := c.Param("name")
+	if projectID == "" || name == "" {
+		return apperror.NewBadRequest("projectId and name are required")
+	}
+	var req CreateRelationshipTypeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	req.Name = name // ensure name from path takes precedence
+	entry, err := h.repo.UpsertRelationshipType(c.Request().Context(), projectID, &req)
+	if err != nil {
+		if strings.Contains(err.Error(), "no active schema") {
+			return apperror.NewBadRequest("no active schema found for project")
+		}
+		return apperror.NewInternal("failed to update relationship type", err)
+	}
+	return c.JSON(http.StatusOK, entry)
+}
+
+// DeleteRelationshipType handles DELETE /api/schema-registry/projects/:projectId/relationship-types/:name
+func (h *Handler) DeleteRelationshipType(c echo.Context) error {
+	projectID := c.Param("projectId")
+	name := c.Param("name")
+	if projectID == "" || name == "" {
+		return apperror.NewBadRequest("projectId and name are required")
+	}
+	if err := h.repo.DeleteRelationshipType(c.Request().Context(), projectID, name); err != nil {
+		if strings.Contains(err.Error(), "relationship type not found") {
+			return apperror.NewNotFound("RelationshipType", name)
+		}
+		if strings.Contains(err.Error(), "no active schema") {
+			return apperror.NewBadRequest("no active schema found for project")
+		}
+		return apperror.NewInternal("failed to delete relationship type", err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}

@@ -1,0 +1,764 @@
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/devmode"
+	"github.com/emergent-company/go-daisy/staticfs"
+	"github.com/getsentry/sentry-go"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+)
+
+func main() {
+	cfg := LoadConfig()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
+	// Provider probe egress defaults to public-only; PROVIDER_PROBE_ALLOW
+	// exempts internal gateways (e.g. litellm) from the SSRF guard.
+	providerProbeHTTPClient = newSSRFSafeHTTPClient(10*time.Second, newDialAllowlist(cfg.ProviderProbeAllow))
+	if cfg.AuthMode != "session" {
+		log.Printf("WARNING: AUTH_MODE=%s — authentication is relaxed; development only", cfg.AuthMode)
+		log.Printf("WARNING: AUTH_MODE=%s carries no Memory credential; session-less calls send no bearer. Use only with the local mock backend, not a real Memory instance.", cfg.AuthMode)
+	}
+	// The static MEMORY_TOKEN was removed from the gateway. Operators upgrading
+	// may still export it; name it explicitly so the break is not silent.
+	if os.Getenv("MEMORY_TOKEN") != "" {
+		log.Printf("WARNING: MEMORY_TOKEN is set but no longer read by the gateway; it was replaced by session auth for interactive/voice calls and AGENT_TRIGGER_TOKEN for the GitHub webhook (see issue #818 for per-device credentials).")
+	}
+	if err := initSentry(cfg.SentryDSN, cfg.SentryEnvironment, cfg.SentryTracesSampleRate); err != nil {
+		log.Printf("sentry init: %v", err)
+	}
+	defer sentry.Flush(2 * time.Second)
+	memory := NewMemoryClient(cfg.MemoryURL, cfg.MemoryProjectID)
+	memory.shareRefSecret = cfg.ShareRefSecret
+	workerCreds := newWorkerRegistry()
+	sup := NewSupervisor(cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerIdleTTL, workerCreds, "http://127.0.0.1:"+cfg.Port)
+	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), workerCreds: workerCreds, shutdownCh: make(chan struct{}), setupTokens: newSetupTokenStore()}
+	s.hub = newConversationHub(s)
+	s.live = newLiveStateHub()
+	s.registry = newAccountRegistry()
+	s.shareIPLimiter = newKeyedRateLimiter(cfg.ShareRateIPPerMin, cfg.ShareRateIPBurst)
+	s.shareLinkLimiter = newKeyedRateLimiter(cfg.ShareRateLinkPerMin, cfg.ShareRateLinkBurst)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go sup.Run(ctx)
+
+	e := echo.New()
+	e.HideBanner = true
+	installErrorHandler(e)
+	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
+	// extractor trusts loopback/private/link-local peers, so the gateway — always
+	// reached through traefik on a private network — keys rate limits (and any
+	// future RealIP() use) on the client rather than traefik's socket address.
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	// Annotate every go-daisy component root with data-component="pkg/Component"
+	// so the element-level feedback overlay can name the component instead of a
+	// raw CSS selector. Always on: names only (no data-props); see componentAnnotations.
+	e.Use(componentAnnotations())
+	e.Use(requestLogger())
+	// Compress text/HTML/CSS/JS/JSON responses. The 185KB app CSS and go-daisy's
+	// 473KB CSS compress ~5-10x, and every HTMX partial swap shrinks too.
+	// echo's Gzip compresses by length, not content-type, so it would also gzip
+	// the live SSE streams — skip those to keep token/event delivery unbuffered.
+	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{
+		Skipper: func(c echo.Context) bool {
+			return strings.Contains(c.Request().Header.Get("Accept"), "text/event-stream")
+		},
+	}))
+	// Bound request bodies to a sane size. Document and avatar uploads are
+	// exempt: they legitimately carry large multipart payloads.
+	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
+		Limit:   "4M",
+		Skipper: bodyLimitSkipper,
+	}))
+	e.Use(sentryRecoverMiddleware())
+	e.Use(sentryTracingMiddleware())
+	// Disable HTTP caching so deploys never serve stale pages/JS to browsers.
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Response().Header().Set("Cache-Control", "no-cache")
+			return next(c)
+		}
+	})
+	e.Use(sentryErrorMiddleware())
+	// Normalize the request Host to PUBLIC_BASE_URL before any auth/cookie work,
+	// so host-only cookies (oauth state + session) always match the pinned
+	// redirect_uri (see auth.go canonicalHostRedirect).
+	e.Use(s.canonicalHostRedirect)
+	// Web-auth gate: dev mode keeps the current open UI + key-gated /api;
+	// session mode (AUTH_MODE=session) requires a session for UI and
+	// session-or-key for /api (see auth.go authDispatch).
+	e.Use(s.authDispatch)
+	// Scope resolver: for a /o/{org}[/p/{project}] request, make the path scope
+	// the request's Memory scope (overriding the session cookie). Runs after
+	// authDispatch so the session context is available; fails closed with 404.
+	e.Use(s.applyScope)
+	// Client scope: unscoped /api/* calls (fetch/SSE) carry the shell's scope
+	// in headers/query; validate it against the access tree.
+	e.Use(s.resolveClientScope)
+	// Redirect scoping: rewrite Location/HX-Redirect targets of a scoped
+	// request so PRG redirects stay in the active org/project context.
+	e.Use(s.scopeLocation)
+	// Unscoped OAuth landing: re-scope /data-sources requests (exempt from the
+	// hard cut in strictScopedPath) onto the caller's active project.
+	e.Use(s.dataSourcesScopeRedirect)
+	// Scope rewrite: strip the /o/... prefix before routing so the flat route
+	// table below is reused unchanged (Pre middlewares run before routing).
+	e.Pre(s.scopeRewrite)
+
+	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
+	// gated by a per-worker credential in the X-Worker-Key header instead.
+	e.GET("/internal/voice-binding", s.voiceBindingHandler)
+
+	// GitHub webhook ingress — HMAC-signature authenticated, NOT behind the
+	// session/key gate (see publicAuthPath and webhook_github.go).
+	e.POST("/webhooks/github", s.githubWebhook)
+
+	api := e.Group("/api")
+	api.GET("/health", s.health)
+	api.GET("/workers", s.workers)
+	api.GET("/agents", s.listAgents)
+	api.POST("/agents", s.createAgent)
+	api.GET("/agents/:id", s.getAgent)
+	api.PUT("/agents/:id", s.updateAgent)
+	api.DELETE("/agents/:id", s.deleteAgent)
+	api.POST("/agents/:id/activate", s.activateAgent)
+	api.POST("/agents/:id/deactivate", s.deactivateAgent)
+	// Device-reachable JSON object browser: an agent's created/updated objects,
+	// cursor-paginated (see agent_objects.go). The iOS device credential is
+	// allowed on this path via deviceSurfacePath (auth.go).
+	api.GET("/agents/:id/objects", s.listAgentObjects)
+	api.POST("/chat", s.chat)
+	api.POST("/chat/questions/:questionId/respond", s.respondQuestion)
+	api.POST("/chat/questions/:questionId/cancel", s.cancelQuestion)
+	api.POST("/chat/runs/:runId/cancel", s.cancelAgentRun)
+	api.GET("/conversations", s.listConversations)
+	api.GET("/conversations/:id", s.getConversation)
+	api.GET("/conversations/:id/history", s.getConversationHistory)
+	api.GET("/conversations/:id/dump", s.getConversationDump)
+	api.GET("/conversations/:id/events", s.conversationEvents)
+	// Session lifecycle (chat-conversation-lifecycle): the rail's per-row
+	// Archive / Unarchive / Delete actions. Delete is permanent and is the only
+	// irreversible one; the client confirms before calling it.
+	api.POST("/conversations/:id/archive", s.archiveConversation)
+	api.POST("/conversations/:id/unarchive", s.unarchiveConversation)
+	api.DELETE("/conversations/:id", s.deleteConversation)
+	api.GET("/runs/:runId/history", s.getRunHistory)
+	api.GET("/runs/:runId/events", s.runEvents)
+	api.GET("/mcp-servers", s.listMCPServers)
+	api.POST("/mcp-servers", s.createMCPServer)
+	api.GET("/mcp-servers/:id", s.getMCPServer)
+	api.PATCH("/mcp-servers/:id", s.updateMCPServer)
+	api.DELETE("/mcp-servers/:id", s.deleteMCPServer)
+	// MCP server sync/inspect/tool JSON echo routes (page JS; see mcp_servers_handlers.go).
+	api.POST("/mcp-servers/:id/sync", s.syncMCPServer)
+	api.POST("/mcp-servers/:id/inspect", s.inspectMCPServer)
+	api.POST("/mcp-servers/test", s.testMCPServer)
+	api.GET("/mcp-servers/:id/tools", s.listMCPServerTools)
+	api.PATCH("/mcp-servers/:id/tools/:toolId", s.setMCPServerToolEnabled)
+	// Per-tool invocation (the row "Run" affordance); same method/body as
+	// memory's admin call route.
+	api.POST("/mcp-servers/:id/tools/:toolName/call", s.callMCPServerTool)
+	// MCP share instances (project-scoped MCP exposure; see mcp_shares_handlers.go).
+	api.GET("/mcp-shares", s.listMCPShares)
+	api.POST("/mcp-shares", s.createMCPShare)
+	api.GET("/mcp-shares/tools", s.listMCPShareTools)
+	api.GET("/mcp-shares/:id", s.getMCPShare)
+	api.PATCH("/mcp-shares/:id", s.updateMCPShare)
+	api.DELETE("/mcp-shares/:id", s.deleteMCPShare)
+	api.POST("/mcp-shares/:id/rotate", s.rotateMCPShare)
+	// Agent-owned MCP endpoint + labeled keys + sessions
+	// (agent-scoped-mcp-endpoint; see agent_mcp_endpoint_handlers.go). The raw
+	// key secret is returned by create-key and rotate-key only.
+	api.GET("/agents/:id/mcp-endpoint", s.jsonAgentMCPEndpoint)
+	api.POST("/agents/:id/mcp-endpoint", s.jsonCreateAgentMCPEndpoint)
+	api.DELETE("/agent-mcp-endpoints/:id", s.jsonDeleteAgentMCPEndpoint)
+	api.GET("/agent-mcp-endpoints/:id/keys", s.jsonListAgentMCPKeys)
+	api.POST("/agent-mcp-endpoints/:id/keys", s.jsonCreateAgentMCPKey)
+	api.GET("/agent-mcp-endpoints/:id/sessions", s.jsonListAgentMCPSessions)
+	api.DELETE("/agent-mcp-keys/:id", s.jsonDeleteAgentMCPKey)
+	api.POST("/agent-mcp-keys/:id/rotate", s.jsonRotateAgentMCPKey)
+	api.GET("/models", s.listModels)
+	api.POST("/token", s.mintToken)
+	api.GET("/sessions", s.listSessions)
+	api.GET("/session", s.getSession)
+	api.GET("/project/config", s.projectConfig)
+	api.GET("/schedules", s.listScheduledAgents)
+	api.POST("/schedules", s.createScheduledAgent)
+	api.GET("/schedules/:id", s.getScheduledAgent)
+	api.PATCH("/schedules/:id", s.updateScheduledAgent)
+	api.POST("/schedules/:id/enable", s.enableScheduledAgent)
+	api.DELETE("/schedules/:id", s.deleteScheduledAgent)
+	api.POST("/schedules/:id/trigger", s.triggerScheduledAgent)
+	api.GET("/schedules/:id/runs", s.listScheduledAgentRuns)
+	api.GET("/documents", s.listDocuments)
+	api.POST("/documents", s.uploadDocument)
+	api.GET("/documents/:id", s.getDocument)
+	api.GET("/documents/:id/chunks", s.listDocumentChunks)
+	api.PATCH("/chunks/:id", s.editChunk)
+	api.GET("/chunks/:id/revisions", s.listChunkRevisions)
+	api.GET("/chunks/:id/revisions/diff", s.diffChunkRevisions)
+	api.POST("/chunks/:id/rollback", s.rollbackChunk)
+	api.POST("/documents/:id/extract", s.triggerExtraction)
+	api.GET("/documents/:id/versions", s.listDocumentVersions)
+	// Data-source integrations — the google_drive subset matching
+	// pkg/sdk/datasources (see datasources.go).
+	api.GET("/data-source-integrations/providers", s.listDSProviders)
+	api.GET("/data-source-integrations/providers/:providerType/schema", s.getDSProviderSchema)
+	api.GET("/data-source-integrations/credentials", s.listDSCredentials)
+	api.GET("/data-source-integrations/source-types", s.listDSSourceTypes)
+	api.POST("/data-source-integrations/test-config", s.testDSConfig)
+	api.GET("/data-source-integrations", s.listDSIntegrations)
+	api.POST("/data-source-integrations", s.createDSIntegration)
+	api.GET("/data-source-integrations/:id", s.getDSIntegration)
+	api.PATCH("/data-source-integrations/:id", s.updateDSIntegration)
+	api.DELETE("/data-source-integrations/:id", s.deleteDSIntegration)
+	api.POST("/data-source-integrations/:id/test-connection", s.testDSConnection)
+	api.POST("/data-source-integrations/:id/sync", s.triggerDSSync)
+	api.GET("/data-source-integrations/:id/sync-jobs", s.listDSSyncJobs)
+	api.GET("/data-source-integrations/:id/sync-jobs/latest", s.getDSLatestSyncJob)
+	api.GET("/data-source-integrations/:id/sync-jobs/:jobId", s.getDSSyncJob)
+	api.POST("/data-source-integrations/:id/sync-jobs/:jobId/cancel", s.cancelDSSyncJob)
+	// OAuth connect + org OAuth-client config (see datasources.go; §4.2).
+	api.POST("/data-source-integrations/providers/:providerType/oauth/authorize", s.startDSOAuth)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients", s.listDSOAuthClients)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.getDSOAuthClient)
+	api.PUT("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.upsertDSOAuthClient)
+	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.deleteDSOAuthClient)
+	// Project-scoped OAuth-client config (project_admin only; the handler
+	// enforces it). A project client overrides the org-wide one.
+	api.GET("/projects/:projectId/data-source-integrations/oauth-clients", s.listProjectDSOAuthClients)
+	api.GET("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.getProjectDSOAuthClient)
+	api.PUT("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.upsertProjectDSOAuthClient)
+	api.DELETE("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.deleteProjectDSOAuthClient)
+	api.GET("/blueprints/installed", s.listInstalledBlueprints)
+	api.GET("/blueprints/available", s.listAvailableBlueprints)
+	api.GET("/blueprints/compiled-types", s.getCompiledTypes)
+	api.POST("/blueprints/install", s.installBlueprint)
+	api.POST("/blueprints/:id/install", s.installBlueprintById)
+	api.POST("/blueprints/:id/unapply", s.unapplyBlueprint)
+	// Derive a draft blueprint (or a new version) from the project's current
+	// compiled types (spec blueprint-api; task 2.2).
+	api.POST("/blueprints/derive", s.deriveSchemaBlueprint, s.requireSchemaWrite)
+	api.POST("/blueprints/:id/versions/derive", s.deriveSchemaBlueprintVersion, s.requireSchemaWrite)
+
+	// Org / project tenancy (session-scoped; see project_handlers.go).
+	api.GET("/orgs", s.listOrgs)
+	api.POST("/orgs", s.createOrg)
+	api.GET("/projects", s.listProjects)
+	api.POST("/projects", s.createProject)
+	api.POST("/projects/:id/activate", s.activateProject)
+
+	// Org members / invites / profile (see org_members_handlers.go).
+	api.GET("/members", s.listMembers)
+	api.DELETE("/members/:userId", s.removeMember)
+	api.GET("/invites", s.listInvites)
+	api.POST("/invites", s.createInvite)
+	api.GET("/invites/pending", s.listPendingInvites)
+	api.POST("/invites/accept", s.acceptInvite)
+	api.POST("/invites/:id/decline", s.declineInvite)
+	api.DELETE("/invites/:id", s.cancelInvite)
+	api.GET("/users/search", s.searchUsers)
+	api.GET("/user/profile", s.getProfile)
+	api.PUT("/user/profile", s.updateProfile)
+
+	// Inbox / notifications (inbox subsystem; see notifications_handlers.go).
+	// Session-scoped JSON proxies the inbox page + its JS call; the SSE stream
+	// forwards the signed-in user's notification events.
+	api.GET("/notifications", s.listNotifications)
+	api.GET("/notifications/counts", s.notificationCounts)
+	api.GET("/notifications/preferences", s.listNotificationPreferences)
+	api.PUT("/notifications/preferences", s.setNotificationPreference)
+	api.GET("/notifications/stream", s.notificationStream)
+	api.POST("/notifications/mark-all-read", s.markAllNotificationsRead)
+	api.PATCH("/notifications/:id/read", s.markNotificationRead)
+	api.POST("/notifications/:id/unread", s.markNotificationUnread)
+	api.DELETE("/notifications/:id/dismiss", s.dismissNotification)
+	api.POST("/notifications/:id/snooze", s.snoozeNotification)
+	api.POST("/notifications/:id/unsnooze", s.unsnoozeNotification)
+	api.POST("/notifications/:id/clear", s.clearNotification)
+	api.POST("/notifications/:id/restore", s.restoreNotification)
+	api.POST("/notifications/:id/resolve", s.resolveNotification)
+
+	// Web UI — same binary, same echo server. go-daisy assets under /static/*,
+	// app-specific assets under /assets/*.
+	e.GET("/static/*", echo.WrapHandler(cacheStatic(staticfs.Handler("/static/"))))
+	e.GET("/assets/*", echo.WrapHandler(webui.Handler("/assets/")))
+	// Device setup: NO auth — exchanges a one-time setup token (from the QR on
+	// the settings page) for a per-device API key.
+	e.POST("/api/setup", s.setupClient)
+	// OIDC sign-in (auth.go/oidc.go): /auth/login renders the sign-in page,
+	// /auth/start kicks off the OIDC redirect; /auth/callback and /auth/logout
+	// are public; both auth routes no-op to "/" in dev mode.
+	e.GET("/auth/login", s.authLogin)
+	e.GET("/auth/start", s.authStart)
+	e.GET("/auth/add", s.authAdd)
+	e.GET("/auth/callback", s.authCallback)
+	e.POST("/auth/logout", s.authLogout)
+	e.POST("/auth/switch", s.authSwitch)
+	// OAuth 2.1 authorization-server consent (session-gated by authDispatch).
+	e.GET("/oauth/authorize", s.uiOAuthAuthorize)
+	e.POST("/oauth/authorize", s.uiOAuthAuthorizeDecision)
+	// Public agent-share (anonymous end users; see share.go). The share key
+	// arrives in the URL fragment and is exchanged once for a sealed cookie;
+	// every /share/api/* call rides that cookie. Exempt from the session/key
+	// gate via publicAuthPath. Hardened + rate-limited at route scope only
+	// (shareSecurityHeaders / shareRateLimit never apply to the authed app).
+	share := e.Group("/share")
+	share.Use(shareSecurityHeaders, s.shareRateLimit)
+	share.GET("/agent", s.sharePage)
+	share.GET("/api/config", s.shareConfig)
+	share.POST("/api/exchange", s.shareExchange)
+	share.POST("/api/chat", s.shareChat)
+	share.POST("/api/sessions", s.shareCreateSession)
+	share.GET("/api/sessions/:id", s.shareGetSession)
+	share.POST("/api/sessions/:id/archive", s.shareArchiveSession)
+	share.POST("/api/sessions/:id/unarchive", s.shareUnarchiveSession)
+	share.DELETE("/api/sessions/:id", s.shareDeleteSession)
+	share.POST("/api/sessions/:id/approvals/:questionId", s.shareApprove)
+	share.POST("/api/sessions/:id/approvals/:questionId/cancel", s.shareApproveCancel)
+	share.GET("/api/partial/sessions", s.sharePartialSessions)
+	// Owner agent-share management (session-gated; see share_owner.go). The
+	// list lives at /share; create is a standalone page at /share/new (mirroring
+	// MCP Sharing). Create and rotate render the list with the one-time URL
+	// revealed directly (no redirect).
+	e.GET("/agents/:id/share", s.uiAgentShare)
+	e.GET("/agents/:id/share/new", s.uiAgentShareNewPage)
+	e.POST("/agents/:id/share/new", s.uiAgentShareCreate)
+	e.POST("/agents/:id/share-links/:linkId/rotate", s.uiAgentShareRotate)
+	e.POST("/agents/:id/share-links/:linkId/revoke", s.uiAgentShareRevoke)
+	e.GET("/agents/:id/share-links/:linkId/reveal", s.uiAgentShareReveal)
+	// Project switcher + create (PRG form posts; see project_ui.go).
+	e.POST("/projects", s.uiCreateProject)
+	e.POST("/projects/activate", s.uiActivateProject)
+	e.POST("/projects/delete", s.uiDeleteProjects)
+	e.POST("/projects/restore", s.uiRestoreProject)
+	e.POST("/projects/transfer", s.uiTransferProject)
+	// OAuth callback landing (see oauth_landing.go): global routes that map an
+	// API-server callback back into the caller's org/project scope.
+	e.GET(oauthLandingDataSourcesPath, s.uiOAuthLandingDataSources)
+	e.GET(oauthLandingMCPServersPath, s.uiOAuthLandingMCPServers)
+	e.GET("/", s.uiRoot)
+	e.GET("/agents", s.uiAgents)
+	e.GET("/agents/:id", s.uiAgent)
+	e.GET("/agents/:id/settings", s.uiAgentSettings)
+	e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
+	e.POST("/agents/:id/settings/general", s.uiAgentUpdateGeneral)
+	e.POST("/agents/:id/settings/general/autosave", s.uiAgentAutosaveGeneral)
+	e.POST("/agents/:id/settings/graph", s.uiAgentUpdateGraph)
+	e.POST("/agents/:id/settings/work", s.uiAgentUpdateWork)
+	e.POST("/agents/:id/settings/model", s.uiAgentUpdateModel)
+	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+	e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)
+	e.POST("/agents/:id/settings/delegation", s.uiAgentUpdateDelegation)
+	// Back-compat: the pre-split full-form update URL now targets the General
+	// section handler (name / system prompt / language).
+	e.POST("/agents/:id/update", s.uiAgentUpdateGeneral)
+	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
+	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+	e.GET("/agents/:id/sessions", s.uiAgentSessions)
+	e.GET("/agents/:id/objects", s.uiAgentObjects)
+	// Agent-owned MCP endpoint, its labeled keys, and its external sessions —
+	// all on the agent's own Settings surface (see agent_mcp_endpoint_handlers.go).
+	// Create-key and rotate-key render the one-time secret reveal directly (no
+	// redirect); the sessions route is the in-place HTMX status-filter target.
+	e.POST("/agents/:id/mcp-endpoint", s.uiAgentMCPEndpointCreate)
+	e.POST("/agents/:id/mcp-endpoint/revoke", s.uiAgentMCPEndpointRevoke)
+	e.POST("/agents/:id/mcp-endpoint/keys", s.uiAgentMCPKeyCreate)
+	e.POST("/agents/:id/mcp-endpoint/keys/:keyId/revoke", s.uiAgentMCPKeyRevoke)
+	e.POST("/agents/:id/mcp-endpoint/keys/:keyId/rotate", s.uiAgentMCPKeyRotate)
+	e.GET("/agents/:id/mcp-endpoint/sessions", s.uiAgentMCPSessions)
+	e.GET("/chat", s.uiChat)
+	e.GET("/partial/chat-rail", s.uiChatRail)
+	e.GET("/partial/chat-todos", s.uiChatTodos)
+	e.GET("/documents", s.uiDocuments)
+	e.GET("/documents/partial", s.uiDocumentsPartial)
+	e.GET("/documents/:id", s.uiDocument)
+	e.GET("/documents/:id/chunks", s.uiDocumentChunks)
+	e.GET("/documents/:id/extractions", s.uiDocumentExtractions)
+	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionPage)
+	e.GET("/documents/:id/extractions/:jobId/detail", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/extractions/:jobId/trace", s.uiDocumentExtractionTrace)
+	e.GET("/documents/:id/file", s.uiDocumentFile)
+	e.POST("/documents", s.uiUploadDocument)
+	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
+	e.POST("/documents/retry-extraction-failures", s.uiRetryAllExtractions)
+	e.POST("/documents/retry-conversion-failures", s.uiRetryAllConversions)
+	e.POST("/documents/conversions/:jobId/retry", s.uiRetryConversion)
+	e.POST("/documents/:id/extractions/:jobId/retry", s.uiRetryExtraction)
+	e.POST("/documents/:id/extractions/:jobId/merge", s.uiDocumentMerge)
+	e.GET("/documents/:id/extractions/:jobId/merge-preview", s.uiDocumentMergePreview)
+	e.POST("/documents/:id/delete", s.uiDeleteDocument)
+	e.GET("/documents/:id/versions", s.uiDocumentVersions)
+	// Data Sources UI (see datasources_ui.go): list, connect, detail/edit, and
+	// the test/sync/delete mutations.
+	e.GET("/data-sources", s.uiDataSources)
+	e.GET("/data-sources/new", s.uiDataSourceNew)
+	e.POST("/data-sources/new", s.uiDataSourceCreate)
+	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
+	e.POST("/data-sources/repos", s.uiDataSourceRepos)
+	e.POST("/data-sources/refs", s.uiDataSourceRefs)
+	e.POST("/data-sources/:id/field-options", s.uiDataSourceFieldOptions)
+	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
+	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
+	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/reconnect", s.uiDataSourceReconnect)
+	e.GET("/data-sources/:id/picker-session", s.uiDataSourcePickerSession)
+	e.POST("/data-sources/:id/sync-targets", s.uiDataSourceSyncTargetsSave)
+	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
+	e.GET("/data-sources/:id/resources/list", s.uiDataSourceResourceList)
+	e.POST("/data-sources/:id/resources", s.uiDataSourceResourceSave)
+	e.POST("/data-sources/:id/update", s.uiDataSourceUpdate)
+	e.POST("/data-sources/:id/test-connection", s.uiDataSourceTestConnection)
+	e.POST("/data-sources/:id/sync", s.uiDataSourceTriggerSync)
+	e.GET("/data-sources/:id/sync-jobs/partial", s.uiDataSourceSyncJobsPartial)
+	e.POST("/data-sources/:id/sync-jobs/:jobId/cancel", s.uiDataSourceCancelSync)
+	e.POST("/data-sources/:id/delete", s.uiDataSourceDelete)
+	e.GET("/objects", s.uiObjects)
+	e.GET("/objects/partial", s.uiObjectsPartial)
+	e.GET("/objects/stats", s.uiObjectsStatsPartial)
+	e.GET("/objects/search", s.uiObjectSearch)
+	e.GET("/objects/new", s.uiObjectNew)
+	e.POST("/objects/knowledge", s.uiObjectsKnowledge)
+	// The selection bar's bulk actions (label add/remove, status, delete) share one
+	// endpoint and discriminate on the `action` field. Registered before the
+	// /objects/:id routes so the static segment wins over the id pattern.
+	e.POST("/objects/bulk", s.uiObjectsBulk)
+	e.GET("/objects/:id", s.uiObject)
+	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
+	e.GET("/objects/:id/history", s.uiObjectHistoryPage)
+	e.GET("/objects/:id/history/partial", s.uiObjectHistoryPartial)
+	e.GET("/objects/:id/relationships", s.uiObjectRelationshipsPage)
+	e.GET("/objects/:id/similar", s.uiObjectSimilarPage)
+	e.GET("/objects/:id/similar/partial", s.uiObjectSimilarPartial)
+	e.GET("/objects/:id/similar/count", s.uiObjectSimilarCountPartial)
+	e.GET("/objects/:id/merge", s.uiObjectMerge)
+	e.GET("/objects/:id/chat", s.uiObjectChat)
+	e.POST("/objects", s.uiObjectCreate)
+	e.POST("/objects/:id", s.uiObjectUpdate)
+	e.POST("/objects/:id/status", s.uiObjectStatus)
+	e.POST("/objects/:id/assignee", s.uiObjectAssignee)
+	e.POST("/objects/:id/relationships", s.uiObjectRelationshipCreate)
+	e.GET("/embeddings", s.uiEmbeddings)
+	e.POST("/embeddings/retrigger", s.uiRetriggerEmbeddings)
+	e.GET("/schema", s.uiSchema)
+	e.GET("/schema/add", s.uiSchemaAdd)
+	e.POST("/schema/add", s.uiSchemaInstall, s.requireSchemaWrite)
+	e.GET("/schema/packs", s.uiSchemaPacks)
+	e.GET("/schema/packs/:id", s.uiSchemaPack)
+	e.GET("/schema/object-types/:name", s.uiSchemaObjectType)
+	e.GET("/schema/object-types/:name/edit", s.uiSchemaObjectTypeEdit)
+	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate, s.requireSchemaWrite)
+	// Blueprint derivation from the project's effective types (design D5).
+	e.POST("/schema/blueprints/derive", s.deriveSchemaBlueprint, s.requireSchemaWrite)
+	e.POST("/schema/blueprints/:id/versions/derive", s.deriveSchemaBlueprintVersion, s.requireSchemaWrite)
+	e.GET("/blueprints", s.uiBlueprints)
+	e.GET("/blueprints/migrations", s.uiMigrations)
+	e.GET("/blueprints/:id", s.uiBlueprint)
+	e.POST("/blueprints/install", s.uiInstallBlueprint)
+	e.POST("/blueprints/install/confirm", s.uiInstallBlueprintConfirm)
+	e.POST("/blueprints/import", s.uiImportGitHubBlueprint)
+	e.POST("/blueprints/import/confirm", s.uiImportGitHubBlueprintConfirm)
+	e.POST("/blueprints/:id/install", s.uiInstallBlueprintById)
+	e.POST("/blueprints/:id/remove", s.uiRemoveBlueprint)
+	e.POST("/blueprints/:id/unapply", s.uiUnapplyBlueprint)
+	// Repo-imported blueprint update checks: enqueue an on-demand check and
+	// store the project's encrypted GitHub PAT (private-repo checks).
+	e.POST("/blueprints/github-credentials", s.uiSaveGithubCredential)
+	e.POST("/blueprints/:name/updates/check", s.uiCheckBlueprintUpdates)
+	e.POST("/blueprints/:name/updates/apply", s.uiApplyBlueprintUpdate)
+	e.POST("/blueprints/migrate", s.uiMigrate)
+	e.POST("/blueprints/migrate/rollback", s.uiRollbackMigration)
+	e.GET("/skills", s.uiSkills)
+	e.GET("/skills/new", s.uiNewSkill)
+	e.GET("/skills/:id", s.uiSkill)
+	e.POST("/skills", s.uiCreateSkill)
+	e.POST("/skills/:id/update", s.uiUpdateSkill)
+	e.POST("/skills/:id/delete", s.uiDeleteSkill)
+	e.GET("/backups", s.uiBackups)
+	e.POST("/backups", s.uiBackupCreate)
+	e.GET("/backups/:id", s.uiBackupDetail)
+	e.GET("/backups/:id/download", s.uiBackupDownload)
+	e.POST("/backups/:id/delete", s.uiBackupDelete)
+	e.GET("/schedules", s.uiSchedules)
+	e.GET("/schedules/new", s.uiSchedulesNew)
+	e.GET("/schedules/:id", s.uiSchedule)
+	e.POST("/schedules", s.uiScheduleCreate)
+	e.POST("/schedules/:id/update", s.uiScheduleUpdate)
+	e.POST("/schedules/:id/delete", s.uiScheduleDelete)
+	e.POST("/schedules/:id/trigger", s.uiScheduleTrigger)
+	e.POST("/schedules/:id/toggle", s.uiScheduleToggle)
+	e.GET("/runs/:runId", s.uiRun)
+	e.GET("/settings", s.uiProjectSettings)
+	e.GET("/settings/assistant", s.uiProjectAssistantSettings)
+	e.GET("/settings/overrides", s.uiProjectOverridesSettings)
+	e.GET("/settings/providers", s.uiProjectProvidersSettings)
+	e.GET("/settings/providers/new", s.uiProjectProviderNew)
+	e.GET("/settings/providers/:provider/edit", s.uiProjectProviderEdit)
+	e.GET("/settings/voice", s.uiProjectVoiceSettings)
+	e.GET("/settings/devices", s.uiConnectedDevices)
+	e.GET("/settings/connected-apps", s.uiConnectedApps)
+	e.POST("/settings/connected-apps/:id/revoke", s.uiRevokeConnectedApp)
+	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+	// Project-level OAuth clients for data-source providers (project-admin only;
+	// the handler 404s for anyone else). Context-addressed like the rest of the
+	// project settings hub.
+	e.GET("/settings/credentials", s.uiProjectCredentials)
+	// Saved, reusable data-source credentials: the shared add/edit modal's
+	// fields partial, plus the create/update/delete writes. Registered before
+	// the :providerType routes so the static "saved" segment always wins.
+	e.GET("/settings/credentials/saved/fields", s.uiSavedCredentialFields)
+	e.POST("/settings/credentials/saved", s.uiSavedCredentialCreate)
+	e.POST("/settings/credentials/saved/:id/update", s.uiSavedCredentialUpdate)
+	e.POST("/settings/credentials/saved/:id/delete", s.uiSavedCredentialDelete)
+	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
+	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
+	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
+	// Retired URL: the project OAuth-client page became the Credentials table.
+	e.GET("/settings/oauth-clients", s.uiProjectOAuthClientsRedirect)
+	e.GET("/settings/approvals", s.uiApprovals)
+	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)
+	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)
+	e.POST("/settings/approvals/:questionId/respond", s.uiApproveReject)
+	e.POST("/settings/approvals/:questionId/cancel", s.uiCancelApproval)
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+	e.POST("/settings/overrides", s.uiProjectSettingsOverride)
+	e.POST("/settings/overrides/:agentName/delete", s.uiProjectSettingsOverrideDelete)
+	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
+	e.POST("/settings/assistant", s.uiProjectSettingsAssistant)
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+	e.POST("/settings/voice", s.uiProjectSettingsVoice)
+	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
+	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)
+	e.POST("/settings/providers/:provider/:model", s.uiProjectSettingsProviderOverride)
+	e.POST("/settings/providers/:provider/:model/delete", s.uiProjectSettingsProviderOverrideDelete)
+	e.POST("/settings/providers/config", s.uiProjectProviderConfig)
+	e.POST("/settings/providers/test", s.uiProjectProviderTestConnection)
+	e.POST("/settings/providers/check-url", s.uiProjectProviderCheckBaseURL)
+	e.POST("/settings/providers/model-config", s.uiProjectModelConfig)
+	e.POST("/settings/providers/model-config/test", s.uiProjectDefaultModelTest)
+	e.POST("/settings/providers/:provider/test", s.uiProjectProviderTest)
+	e.POST("/settings/providers/:provider/remove", s.uiProjectProviderRemove)
+	e.POST("/settings/devices/:id/revoke", s.uiRevokeDevice)
+	// Project API tokens (table list + standalone create/edit pages; see api_tokens_handlers.go).
+	e.GET("/settings/tokens", s.uiAPITokens)
+	e.GET("/settings/tokens/new", s.uiAPITokensNewPage)
+	e.POST("/settings/tokens/new", s.uiAPITokensCreate)
+	e.GET("/settings/tokens/:tokenId/edit", s.uiAPITokensEditPage)
+	e.POST("/settings/tokens/:tokenId/revoke", s.uiAPITokensRevoke)
+	e.POST("/settings/tokens/:tokenId/scopes", s.uiAPITokensScopes)
+	e.POST("/settings/tokens/:tokenId/regenerate", s.uiAPITokensRegenerate)
+	// Project members in the Settings hub (/settings/members*) — same UI as the
+	// legacy /members* pages, rendered inside the settings rail.
+	e.GET("/settings/members", s.uiSettingsMembers)
+	e.GET("/settings/members/new", s.uiSettingsMemberInvitePage)
+	e.POST("/settings/members", s.uiSettingsMemberInviteCreate)
+	e.GET("/settings/members/:userId", s.uiSettingsMemberDetails)
+	e.POST("/settings/members/:userId/remove", s.uiSettingsRemoveMember)
+	e.POST("/settings/members/:userId/role", s.uiSettingsChangeMemberRole)
+	// MCP server registry management (crumb-framed list + standalone
+	// create/edit pages under /settings/mcp-servers; see mcp_servers_handlers.go).
+	e.GET("/settings/mcp-servers", s.uiMCPServers)
+	e.GET("/settings/mcp-servers/new", s.uiMCPNewPage)
+	e.POST("/settings/mcp-servers/new", s.uiMCPCreate)
+	// Official MCP registry browse/install (see mcp_registry.go).
+	e.GET("/settings/mcp-registry", s.uiMCPRegistry)
+	e.POST("/settings/mcp-registry/install", s.uiMCPRegistryInstall)
+	e.POST("/settings/mcp-registry/install-to-device", s.uiMCPRegistryInstallToDevice)
+	// MCP Sharing: nested under the MCP Servers area (see mcp_shares_handlers.go).
+	e.GET("/settings/mcp-servers/shares", s.uiMCPShares)
+	e.GET("/settings/mcp-servers/shares/new", s.uiMCPShareNewPage)
+	e.POST("/settings/mcp-servers/shares/new", s.uiMCPShareCreate)
+	e.GET("/settings/mcp-servers/shares/:id/edit", s.uiMCPShareEditPage)
+	e.POST("/settings/mcp-servers/shares/:id/update", s.uiMCPShareUpdate)
+	e.POST("/settings/mcp-servers/shares/:id/revoke", s.uiMCPShareRevoke)
+	e.POST("/settings/mcp-servers/shares/:id/rotate", s.uiMCPShareRotate)
+	e.GET("/settings/mcp-servers/:id/edit", s.uiMCPEditPage)
+	e.POST("/settings/mcp-servers/:id/update", s.uiMCPUpdate)
+	e.POST("/settings/mcp-servers/:id/delete", s.uiMCPDelete)
+	e.POST("/settings/mcp-servers/:id/toggle", s.uiMCPToggle)
+	e.GET("/settings/mcp-servers/:id/oauth/start", s.uiMCPOAuthStart)
+	e.POST("/settings/mcp-servers/:id/oauth/disconnect", s.uiMCPOAuthDisconnect)
+	e.POST("/settings/mcp-servers/:id/oauth/client", s.uiMCPOAuthClient)
+	e.POST("/settings/mcp-servers/:id/oauth/client/clear", s.uiMCPOAuthClientClear)
+	// Org/member/invite/profile management (PRG form handlers; see org_members_ui.go).
+	e.GET("/orgs", s.uiOrgs)
+	e.GET("/orgs/new", s.uiOrgCreatePage)
+	e.POST("/orgs", s.uiCreateOrg)
+	e.GET("/orgs/:id", s.uiOrg)
+	e.GET("/orgs/:id/members", s.uiOrgMembers)
+	e.GET("/orgs/:id/members/add", s.uiOrgMemberAddPage)
+	e.POST("/orgs/:id/members", s.uiOrgAddMember)
+	e.POST("/orgs/:id/members/:userId/role", s.uiOrgChangeMemberRole)
+	e.POST("/orgs/:id/members/:userId/remove", s.uiOrgRemoveMember)
+	e.POST("/orgs/:id/invites/:inviteId/resend", s.uiOrgResendInvite)
+	e.POST("/orgs/:id/invites/:inviteId/revoke", s.uiOrgRevokeInvite)
+	// Org-level invitation: carries the org id + org_admin role and no
+	// projectId, unlike the project-scoped /members/new flow.
+	e.GET("/orgs/:id/invite", s.uiOrgInvitePage)
+	e.POST("/orgs/:id/invite", s.uiOrgInviteCreate)
+	// Org Settings hub: Tools section at /settings, Danger zone at
+	// /settings/danger-zone. The tool-setting toggle/delete forms and the
+	// delete-org form still POST below; only their page URLs moved.
+	e.GET("/orgs/:id/settings", s.uiOrgSettings)
+	e.GET("/orgs/:id/settings/general", s.uiOrgSettingsGeneral)
+	e.GET("/orgs/:id/settings/danger-zone", s.uiOrgSettingsDangerZone)
+	// Org-level OAuth clients for data-source providers (org-admin only; the
+	// handler 404s for anyone else).
+	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
+	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
+	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
+	// Rename is a native PRG form (hx-boost="false"): POST then redirect to the
+	// General section with a flash.
+	e.POST("/orgs/:id/rename", s.uiOrgRename)
+	// Backward-compat: the pre-hub Tool settings page URL moved into the
+	// Settings hub; the old path now redirects permanently.
+	e.GET("/orgs/:id/tool-settings", func(c echo.Context) error {
+		return c.Redirect(http.StatusMovedPermanently, "/orgs/"+url.PathEscape(c.Param("id"))+"/settings")
+	})
+	e.POST("/orgs/:id/tool-settings/:toolName", s.uiOrgToolSettingUpdate)
+	e.POST("/orgs/:id/tool-settings/:toolName/delete", s.uiOrgToolSettingDelete)
+	e.POST("/orgs/:id/delete", s.uiDeleteOrg)
+	e.GET("/members", s.uiMembers)
+	e.GET("/members/new", s.uiMemberInvitePage)
+	e.POST("/members", s.uiMemberInviteCreate)
+	e.GET("/members/:userId", s.uiMemberDetails)
+	e.POST("/members/:userId/remove", s.uiRemoveMember)
+	e.POST("/members/:userId/role", s.uiChangeMemberRole)
+	e.POST("/invites/:id/revoke", s.uiRevokeInvite)
+	e.POST("/invites/:id/resend", s.uiResendInvite)
+	e.POST("/invites/:id/accept", s.uiAcceptInvite)
+	e.POST("/invites/:id/decline", s.uiDeclineInvite)
+	e.GET("/profile", s.uiProfile)
+	e.GET("/profile/invitations", s.uiProfileInvitations)
+	e.POST("/profile", s.uiUpdateProfile)
+	// Profile photo (upload/remove PRG forms; the avatar image itself streams
+	// through /api/user/avatar via avatarProxy — the URL AvatarUrl points at).
+	e.POST("/profile/avatar", s.uiUploadAvatar)
+	e.POST("/profile/avatar/remove", s.uiRemoveAvatar)
+	e.GET("/api/user/avatar", s.avatarProxy)
+	// Account API tokens (table list + standalone create/edit pages under the
+	// profile area; see api_tokens_handlers.go).
+	e.GET("/profile/tokens", s.uiProfileTokens)
+	e.GET("/profile/tokens/new", s.uiProfileTokensNewPage)
+	e.POST("/profile/tokens/new", s.uiProfileAPITokensCreate)
+	e.GET("/profile/tokens/:tokenId/edit", s.uiProfileAPITokensEditPage)
+	e.POST("/profile/tokens/:tokenId/revoke", s.uiProfileAPITokensRevoke)
+	e.POST("/profile/tokens/:tokenId/scopes", s.uiProfileAPITokensScopes)
+	e.POST("/profile/tokens/:tokenId/regenerate", s.uiProfileAPITokensRegenerate)
+	e.GET("/partial/invite-user-search", s.uiInviteUserSearch)
+	// Session trace/log viewer and usage dashboard.
+	e.GET("/sessions", s.uiSessions)
+	e.GET("/sessions/:id", s.uiSession)
+	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
+	e.GET("/usage", s.uiUsage)
+	// Kanban board (object-driven work): columns + card drawer + human actions.
+	e.GET("/board", s.uiBoard)
+	e.GET("/board/partial", s.uiBoardPartial)
+	e.GET("/board/stream", s.boardStream)
+	e.GET("/board/items/:canonicalId", s.uiBoardItem)
+	e.POST("/board/items/:canonicalId/approve", s.uiBoardApprove)
+	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
+	e.POST("/board/items/:canonicalId/comments", s.uiBoardComment)
+	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
+	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
+	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)
+	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
+
+	// Inbox page + project-event notification preferences (inbox subsystem).
+	e.GET("/inbox", s.uiInbox)
+	e.GET("/inbox/preferences", s.uiNotificationPreferences)
+	e.POST("/inbox/preferences", s.uiNotificationPreferencesSave)
+	e.GET("/inbox/merge-preview", s.uiInboxMergePreview)
+	e.POST("/inbox/merge", s.uiInboxMerge)
+
+	// Dev-gated component gallery. Routes are always registered; the handlers
+	// 404 when MEMORY_COMPONENT_GALLERY is off so both states are httptest-able.
+	// The /dev/ prefix is exempted from project scoping and the canonical-host
+	// redirect (see auth.go), but still requires a session in session mode.
+	e.GET("/dev/components", s.uiComponentGallery)
+	e.GET("/dev/components/preview/:slug", s.uiComponentPreview)
+	e.GET("/dev/components/pages/:slug", s.uiComponentPagePreview)
+
+	srv := &http.Server{
+		Addr:              "0.0.0.0:" + cfg.Port,
+		Handler:           e,
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+		// WriteTimeout is intentionally unset: SSE streams (chat, conversation
+		// events) must stay open indefinitely.
+	}
+
+	go func() {
+		log.Printf("memory gateway listening on :%s", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			captureError(err)
+			log.Printf("gateway listen error: %v", err)
+			sentry.Flush(2 * time.Second)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Printf("shutting down…")
+	s.beginShutdown()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+	select {
+	case <-sup.Done():
+	case <-time.After(5 * time.Second):
+		log.Printf("supervisor did not stop within 5s")
+	}
+}
+
+// componentAnnotations marks every render context as go-daisy dev mode so the
+// library's components emit data-component="pkg/Component" on their root
+// elements. The element-level feedback overlay reads that attribute to name the
+// component (and build its hierarchy picker) instead of falling back to a raw
+// CSS selector. Always on: emitted names only, no data-props.
+func componentAnnotations() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := devmode.WithDevMode(c.Request().Context())
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	}
+}
+
+// bodyLimitSkipper exempts the large-upload routes from the global body limit.
+func bodyLimitSkipper(c echo.Context) bool {
+	p := c.Request().URL.Path
+	return strings.HasPrefix(p, "/documents") ||
+		strings.HasPrefix(p, "/api/documents") ||
+		p == "/profile/avatar"
+}
+
+// cacheStatic serves go-daisy's embedded assets with immutable caching,
+// mirroring webui.Handler's /assets/* behavior. Their URLs are content-hashed
+// (?v=<hash> via staticfs.Hash()), so a rebuild with changed assets yields new
+// URLs and busts the cache — but a rebuild that doesn't touch go-daisy's static
+// files keeps serving the cached copy instead of re-downloading 473KB of CSS on
+// every full-page navigation. Overrides the global no-cache middleware.
+func cacheStatic(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		h.ServeHTTP(w, r)
+	})
+}

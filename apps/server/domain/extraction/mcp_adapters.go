@@ -1,0 +1,228 @@
+package extraction
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"log/slog"
+)
+
+// ============================================================================
+// DomainClassifierMCPAdapter
+// Satisfies mcp.DomainClassifierHandler
+// ============================================================================
+
+// DomainClassifierMCPAdapter wraps DocumentClassifier + dependencies to satisfy
+// the mcp.DomainClassifierHandler interface.
+type DomainClassifierMCPAdapter struct {
+	classifier     *DocumentClassifier
+	schemaProvider *MemorySchemaProvider
+	docService     *documents.Service
+	log            *slog.Logger
+}
+
+// NewDomainClassifierMCPAdapter creates a new adapter.
+// embeddingService enables the vector classification stage; may be nil to fall
+// back to LLM-only classification.
+func NewDomainClassifierMCPAdapter(
+	modelFactory *adk.ModelFactory,
+	embeddingService EmbeddingService,
+	schemaProvider *MemorySchemaProvider,
+	docService *documents.Service,
+	log *slog.Logger,
+) *DomainClassifierMCPAdapter {
+	return &DomainClassifierMCPAdapter{
+		classifier:     NewDocumentClassifier(modelFactory, embeddingService, log),
+		schemaProvider: schemaProvider,
+		docService:     docService,
+		log:            log,
+	}
+}
+
+// ClassifyDocument fetches the document content, loads installed schemas, and
+// runs the two-stage classifier, returning an mcp.ClassificationSnapshot.
+func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, projectID, documentID string) (mcp.ClassificationSnapshot, error) {
+	doc, err := a.docService.GetByID(ctx, projectID, documentID)
+	if err != nil {
+		return mcp.ClassificationSnapshot{}, fmt.Errorf("fetch document: %w", err)
+	}
+	content := ""
+	if doc.Content != nil {
+		content = *doc.Content
+	}
+
+	schemas, err := a.schemaProvider.GetInstalledSchemaSummaries(ctx, projectID)
+	if err != nil {
+		return mcp.ClassificationSnapshot{}, fmt.Errorf("load schemas: %w", err)
+	}
+
+	result, err := a.classifier.Classify(ctx, content, schemas)
+	if err != nil {
+		return mcp.ClassificationSnapshot{}, fmt.Errorf("classify: %w", err)
+	}
+
+	// Derive classification stage from result signals.
+	// "new_domain" when no schema matched; "llm" when LLM was used; "vector" otherwise.
+	stage := "vector"
+	if result.DomainName == "" {
+		stage = "new_domain"
+	} else if result.Signals.LLMReason != "" {
+		stage = "llm"
+	}
+
+	snap := mcp.ClassificationSnapshot{
+		SchemaID:   result.MatchedSchemaID,
+		Label:      result.DomainName,
+		Confidence: result.Confidence,
+		Stage:      stage,
+		LLMReason:  result.Signals.LLMReason,
+	}
+	// Provide a short excerpt so the agent can determine document format/type
+	// when naming a new schema pack (without needing to fetch the document separately).
+	if content != "" {
+		excerpt := content
+		if len(excerpt) > 500 {
+			excerpt = excerpt[:500]
+		}
+		snap.DocumentExcerpt = excerpt
+	}
+	// When no schema matched, suggest a pack_name derived from the first line of content.
+	// This gives the agent a concrete starting point and reduces generic "new_domain" responses.
+	if stage == "new_domain" && content != "" {
+		snap.SuggestedPackName = suggestPackName(content)
+	}
+	// Persist signals back to the document (suggestedPackName, matchedSchemaId, stage) so
+	// finalize-discovery can auto-recover when the agent sends a forbidden pack_name.
+	// IMPORTANT: do NOT write domain_name here — finalize-discovery owns that field.
+	// Writing domain_name=NULL from classify-document would race with and overwrite
+	// finalize-discovery's correct value.
+	{
+		conf := result.Confidence
+		signals := map[string]any{
+			"stage": stage,
+		}
+		if result.MatchedSchemaID != nil {
+			signals["matchedSchemaId"] = *result.MatchedSchemaID
+		}
+		if snap.SuggestedPackName != "" {
+			signals["suggestedPackName"] = snap.SuggestedPackName
+		}
+		// Only persist when there is something useful (matched schema or suggested pack name).
+		// Pass nil for domainName so UpdateDomainClassification skips writing domain_name
+		// when the document already has a finalized value.
+		if snap.SuggestedPackName != "" || result.MatchedSchemaID != nil {
+			if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, nil, &conf, signals, false); updateErr != nil {
+				a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
+			}
+		}
+	}
+	return snap, nil
+}
+
+// suggestPackName derives a short descriptive name from the first meaningful line of content.
+func suggestPackName(content string) string {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		// Strip bracketed title like "[AI Assistant Session - 2026-05-10 14:32 UTC]"
+		if strings.HasPrefix(line, "[") {
+			if end := strings.Index(line, "]"); end > 0 {
+				inner := strings.TrimSpace(line[1:end])
+				// Remove trailing date/time like " - 2026-05-10 14:32 UTC"
+				if idx := strings.Index(inner, " - 20"); idx > 0 {
+					inner = strings.TrimSpace(inner[:idx])
+				}
+				if len(inner) >= 3 {
+					return inner
+				}
+			}
+		}
+		// Strip markdown/list prefixes
+		line = strings.TrimLeft(line, "#-*")
+		line = strings.TrimSpace(line)
+		// Strip trailing date suffix like " - May 2026" or " - 2026-05-10"
+		for _, sep := range []string{" - 20", " – 20", " - May ", " - Jan ", " - Feb ", " - Mar ", " - Apr ", " - Jun ", " - Jul ", " - Aug ", " - Sep ", " - Oct ", " - Nov ", " - Dec "} {
+			if idx := strings.Index(line, sep); idx > 0 {
+				line = strings.TrimSpace(line[:idx])
+				break
+			}
+		}
+		if len(line) >= 3 && len(line) <= 60 {
+			return line
+		}
+	}
+	return ""
+}
+
+// ============================================================================
+// SchemaIndexMCPAdapter
+// Satisfies mcp.SchemaIndexHandler
+// ============================================================================
+
+// SchemaIndexMCPAdapter wraps MemorySchemaProvider to satisfy mcp.SchemaIndexHandler.
+type SchemaIndexMCPAdapter struct {
+	provider *MemorySchemaProvider
+}
+
+// NewSchemaIndexMCPAdapter creates a new adapter.
+func NewSchemaIndexMCPAdapter(provider *MemorySchemaProvider) *SchemaIndexMCPAdapter {
+	return &SchemaIndexMCPAdapter{provider: provider}
+}
+
+// ListInstalledSchemas returns lightweight schema summaries for a project.
+func (a *SchemaIndexMCPAdapter) ListInstalledSchemas(ctx context.Context, projectID string) ([]mcp.SchemaIndexEntry, error) {
+	summaries, err := a.provider.GetInstalledSchemaSummaries(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]mcp.SchemaIndexEntry, len(summaries))
+	for i, s := range summaries {
+		entries[i] = mcp.SchemaIndexEntry{
+			ID:          s.ID,
+			Name:        s.Name,
+			Description: s.Description,
+			Keywords:    s.Keywords,
+		}
+	}
+	return entries, nil
+}
+
+// ============================================================================
+// ReextractionQueuerMCPAdapter
+// Satisfies mcp.ReextractionQueuer
+// ============================================================================
+
+// ReextractionQueuerMCPAdapter wraps ObjectExtractionJobsService.
+type ReextractionQueuerMCPAdapter struct {
+	jobsSvc *ObjectExtractionJobsService
+}
+
+// NewReextractionQueuerMCPAdapter creates a new adapter.
+func NewReextractionQueuerMCPAdapter(jobsSvc *ObjectExtractionJobsService) *ReextractionQueuerMCPAdapter {
+	return &ReextractionQueuerMCPAdapter{jobsSvc: jobsSvc}
+}
+
+// QueueReextraction creates a reextraction job for the given document.
+func (a *ReextractionQueuerMCPAdapter) QueueReextraction(ctx context.Context, projectID, documentID, _ string) (string, error) {
+	job, err := a.jobsSvc.CreateJob(ctx, CreateObjectExtractionJobOptions{
+		ProjectID:  projectID,
+		DocumentID: &documentID,
+		JobType:    JobTypeReextraction,
+		SourceType: strPtr("document"),
+		SourceID:   &documentID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create reextraction job: %w", err)
+	}
+	return job.ID, nil
+}
+
+func strPtr(s string) *string { return &s }

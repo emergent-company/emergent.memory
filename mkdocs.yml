@@ -1,0 +1,144 @@
+site_name: Memory SDK Documentation
+site_url: https://emergent-company.github.io/emergent.memory/
+site_description: Official documentation for the Memory platform, its Go and Python SDKs, and the Memory CLI
+site_author: Emergent Company
+repo_url: https://github.com/emergent-company/emergent.memory
+repo_name: emergent-company/emergent.memory
+
+docs_dir: docs/site
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - content.tabs.link
+    - content.code.copy
+    - toc.follow
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra:
+  version:
+    provider: mike
+    default: latest
+
+hooks:
+  - docs/hooks/llms_files.py
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Developer Guide:
+    - Overview: developer-guide/index.md
+    - Provider Setup: developer-guide/provider-setup.md
+    - MCP Servers: developer-guide/mcp-servers.md
+    - Extraction Pipeline: developer-guide/extraction.md
+    - Email Setup: developer-guide/email-setup.md
+    - Health & Ops: developer-guide/health-ops.md
+    - Security Scopes: developer-guide/security-scopes.md
+    - Background Scheduler: developer-guide/scheduler.md
+    - CLI Reference: developer-guide/cli-reference.md
+    - CLI Authentication: developer-guide/cli-auth.md
+    - Service Accounts: developer-guide/service-accounts.md
+    - Sandbox: developer-guide/sandbox.md
+    - MCP Relay: developer-guide/mcp-relay.md
+    - Schema: developer-guide/schema.md
+    - Schema Registry: developer-guide/schema-registry.md
+  - User Guide:
+    - Overview: user-guide/index.md
+    - Getting Started: user-guide/getting-started.md
+    - Knowledge Graph: user-guide/knowledge-graph.md
+    - Documents: user-guide/documents.md
+    - Chat: user-guide/chat.md
+    - Agents: user-guide/agents.md
+    - Blueprints: user-guide/blueprints.md
+    - Branches: user-guide/branches.md
+    - Data Sources: user-guide/datasources.md
+    - API Tokens: user-guide/api-tokens.md
+    - Backups: user-guide/backups.md
+    - Notifications: user-guide/notifications.md
+    - Tasks: user-guide/tasks.md
+    - Integrations: user-guide/integrations.md
+    - Model Setup: user-guide/model-setup.md
+  - Go SDK:
+    - Overview: go-sdk/index.md
+    - Authentication: go-sdk/authentication.md
+    - Multi-Tenancy: go-sdk/multi-tenancy.md
+    - Error Handling: go-sdk/error-handling.md
+    - Streaming: go-sdk/streaming.md
+    - Graph ID Model: go-sdk/graph-id-model.md
+    - Changelog: go-sdk/changelog.md
+    - Reference:
+      - auth: go-sdk/reference/auth.md
+      - errors: go-sdk/reference/errors.md
+      - graph/graphutil: go-sdk/reference/graphutil.md
+      - testutil: go-sdk/reference/testutil.md
+      - graph: go-sdk/reference/graph.md
+      - documents: go-sdk/reference/documents.md
+      - search: go-sdk/reference/search.md
+      - chat: go-sdk/reference/chat.md
+      - chunks: go-sdk/reference/chunks.md
+      - chunking: go-sdk/reference/chunking.md
+      - schemas: go-sdk/reference/schemas.md
+      - schemaregistry: go-sdk/reference/schemaregistry.md
+      - skills: go-sdk/reference/skills.md
+      - agents: go-sdk/reference/agents.md
+      - agentdefinitions: go-sdk/reference/agentdefinitions.md
+      - branches: go-sdk/reference/branches.md
+      - projects: go-sdk/reference/projects.md
+      - orgs: go-sdk/reference/orgs.md
+      - users: go-sdk/reference/users.md
+      - apitokens: go-sdk/reference/apitokens.md
+      - mcp: go-sdk/reference/mcp.md
+      - mcpregistry: go-sdk/reference/mcpregistry.md
+      - datasources: go-sdk/reference/datasources.md
+      - discoveryjobs: go-sdk/reference/discoveryjobs.md
+      - embeddingpolicies: go-sdk/reference/embeddingpolicies.md
+      - integrations: go-sdk/reference/integrations.md
+      - notifications: go-sdk/reference/notifications.md
+      - tasks: go-sdk/reference/tasks.md
+      - monitoring: go-sdk/reference/monitoring.md
+      - useractivity: go-sdk/reference/useractivity.md
+      - health: go-sdk/reference/health.md
+      - superadmin: go-sdk/reference/superadmin.md
+      - apidocs: go-sdk/reference/apidocs.md
+      - provider: go-sdk/reference/provider.md
+  - Python SDK: python-sdk.md
+  - CLI: cli.md
+  - API Reference: api-reference/index.md

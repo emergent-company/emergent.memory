@@ -1,0 +1,910 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
+	"github.com/spf13/cobra"
+)
+
+var mcpServersCmd = &cobra.Command{
+	Use:   "mcp-servers",
+	Short: "Manage MCP servers",
+	Long:  "Commands for managing Model Context Protocol (MCP) servers in the Memory platform",
+}
+
+var listMCPServersCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all MCP servers",
+	Long: `List all MCP servers configured for the current project.
+
+Prints a numbered list with each server's Name (enabled/disabled), Description
+(if set), ID, Type (sse/http/stdio), URL or Command, Tool count, and Created
+timestamp.`,
+	RunE: runListMCPServers,
+}
+
+var getMCPServerCmd = &cobra.Command{
+	Use:   "get [server-id]",
+	Short: "Get MCP server details",
+	Long: `Get full details for a specific MCP server, including its registered tools.
+
+Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
+URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
+Created, and Updated timestamps. Also lists all registered tools with their
+enabled/disabled state and description (truncated to 60 characters).`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runGetMCPServer,
+}
+
+var createMCPServerCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new MCP server",
+	Long: `Register a new MCP server with the specified configuration.
+
+Examples:
+ memory agents mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
+ memory agents mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
+ memory agents mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"`,
+	RunE: runCreateMCPServer,
+}
+
+var deleteMCPServerCmd = &cobra.Command{
+	Use:   "delete [server-id]",
+	Short: "Delete an MCP server",
+	Long:  "Remove an MCP server and all its tools from your project configuration",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runDeleteMCPServer,
+}
+
+var syncMCPServerCmd = &cobra.Command{
+	Use:   "sync [server-id]",
+	Short: "Sync tools from an MCP server",
+	Long:  "Connect to the MCP server and refresh the list of available tools",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runSyncMCPServer,
+}
+
+var inspectMCPServerCmd = &cobra.Command{
+	Use:   "inspect [server-id]",
+	Short: "Inspect an MCP server",
+	Long:  "Test connection to an MCP server and display its capabilities, tools, prompts, and resources",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runInspectMCPServer,
+}
+
+var toolsMCPServerCmd = &cobra.Command{
+	Use:   "tools [server-id]",
+	Short: "List tools for an MCP server",
+	Long: `List all tools registered for a specific MCP server.
+
+Each tool entry shows its enabled/disabled state and tool name. Use
+'memory agents mcp-servers sync <id>' first to discover available tools if the list
+is empty.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runListMCPServerTools,
+}
+
+var (
+	mcpServerName        string
+	mcpServerType        string
+	mcpServerURL         string
+	mcpServerCommand     string
+	mcpServerArgs        string
+	mcpServerDescription string
+	mcpServerEnvVars     []string
+	mcpServerEnabled     string
+)
+
+func parseEnvVars(envVarStrs []string) (map[string]any, error) {
+	if len(envVarStrs) == 0 {
+		return nil, nil
+	}
+	envVars := make(map[string]any)
+	for _, ev := range envVarStrs {
+		parts := strings.SplitN(ev, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid env var format %q (expected KEY=VALUE)", ev)
+		}
+		envVars[parts[0]] = parts[1]
+	}
+	return envVars, nil
+}
+
+// resolveServerArgOrPick resolves an MCP server ID from args[0], or, when
+// args is empty and stdin is a terminal, lists MCP servers and shows an
+// interactive picker. Returns the resolved server ID.
+func resolveServerArgOrPick(cmd *cobra.Command, c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+
+	if isNonInteractive() {
+		return "", fmt.Errorf("MCP server ID is required — pass an ID or run interactively to pick from a list")
+	}
+
+	result, err := c.SDK.MCPRegistry.List(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to list MCP servers: %w", err)
+	}
+	serverList := result.Data
+	if len(serverList) == 0 {
+		return "", fmt.Errorf("no MCP servers found in the current project")
+	}
+
+	items := make([]PickerItem, len(serverList))
+	for i, s := range serverList {
+		label := s.Name + "  [" + string(s.Type) + "]"
+		if !s.Enabled {
+			label += " (disabled)"
+		}
+		items[i] = PickerItem{ID: s.ID, Name: label}
+	}
+
+	id, _, err := promptResourcePicker("Select an MCP server", items)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("MCP server ID is required")
+	}
+	return id, nil
+}
+
+func runListMCPServers(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	result, err := c.SDK.MCPRegistry.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list MCP servers: %w", err)
+	}
+
+	// Filter out the internal "builtin" server — it is an implementation detail,
+	// not a user-configured server. Use 'memory agents builtin-tools list' instead.
+	var servers []mcpregistry.MCPServer
+	for _, s := range result.Data {
+		if s.Type != mcpregistry.ServerTypeBuiltin {
+			servers = append(servers, s)
+		}
+	}
+
+	if len(servers) == 0 {
+		fmt.Println("No MCP servers found.")
+		return nil
+	}
+
+	fmt.Printf("Found %d MCP server(s):\n\n", len(servers))
+	for i, s := range servers {
+		enabledStr := "enabled"
+		if !s.Enabled {
+			enabledStr = "disabled"
+		}
+		fmt.Printf("%d. %s (%s)\n", i+1, s.Name, enabledStr)
+		if s.Description != nil && *s.Description != "" {
+			fmt.Printf("   Description: %s\n", *s.Description)
+		}
+		fmt.Printf("   ID:        %s\n", s.ID)
+		fmt.Printf("   Type:      %s\n", s.Type)
+		if s.URL != nil && *s.URL != "" {
+			fmt.Printf("   URL:       %s\n", *s.URL)
+		}
+		if s.Command != nil && *s.Command != "" {
+			fmt.Printf("   Command:   %s\n", *s.Command)
+		}
+		fmt.Printf("   Tools:     %d\n", s.ToolCount)
+		if len(s.Tools) > 0 {
+			for _, t := range s.Tools {
+				suffix := toolConfigSuffix(t.ConfigKeys, t.Config)
+				fmt.Printf("             • %s%s\n", t.ToolName, suffix)
+			}
+		}
+		fmt.Printf("   Created:   %s\n", fmtTime(s.CreatedAt))
+		fmt.Println()
+	}
+
+	return nil
+}
+
+// toolConfigSuffix builds the setup annotation shown next to a tool name in the list.
+// - No configKeys → ""
+// - Has configKeys, none set → " [setup required: key1, key2]"
+// - Has configKeys, all set → " [key1=has_value, key2=has_value]"
+// - Mixed → present keys marked, missing ones flagged
+//
+// The value itself is never printed. A tool config key is usually the MCP
+// server's API key or token, and the listing only answers "is this tool
+// configured?" — the value is not something an operator needs to read back,
+// and no partial display of it is actionable. The previous cell echoed the
+// last four characters of the value and printed a value of four characters or
+// fewer in full (#2131).
+func toolConfigSuffix(configKeys []string, config map[string]any) string {
+	if len(configKeys) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(configKeys))
+	anyMissing := false
+	for _, k := range configKeys {
+		v, ok := config[k]
+		if !ok || v == nil || v == "" {
+			parts = append(parts, k+"=?")
+			anyMissing = true
+		} else {
+			parts = append(parts, k+"=has_value")
+		}
+	}
+	if anyMissing && len(parts) == len(configKeys) && allMissing(config, configKeys) {
+		return " [setup required: " + strings.Join(configKeys, ", ") + "]"
+	}
+	return " [" + strings.Join(parts, ", ") + "]"
+}
+
+func allMissing(config map[string]any, keys []string) bool {
+	for _, k := range keys {
+		v, ok := config[k]
+		if ok && v != nil && v != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func runGetMCPServer(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.SDK.MCPRegistry.Get(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to get MCP server: %w", err)
+	}
+
+	s := result.Data
+	enabledStr := "enabled"
+	if !s.Enabled {
+		enabledStr = "disabled"
+	}
+
+	fmt.Printf("MCP Server: %s (%s)\n", s.Name, enabledStr)
+	fmt.Printf("  ID:         %s\n", s.ID)
+	fmt.Printf("  Project ID: %s\n", s.ProjectID)
+	if s.Description != nil && *s.Description != "" {
+		fmt.Printf("  Description: %s\n", *s.Description)
+	}
+	fmt.Printf("  Type:       %s\n", s.Type)
+	if s.URL != nil && *s.URL != "" {
+		fmt.Printf("  URL:        %s\n", *s.URL)
+	}
+	if s.Command != nil && *s.Command != "" {
+		fmt.Printf("  Command:    %s\n", *s.Command)
+		if len(s.Args) > 0 {
+			fmt.Printf("  Args:       %s\n", strings.Join(s.Args, " "))
+		}
+	}
+	if len(s.Env) > 0 {
+		fmt.Printf("  Env Vars:   %d configured\n", len(s.Env))
+	}
+	if len(s.Headers) > 0 {
+		fmt.Printf("  Headers:    %d configured\n", len(s.Headers))
+	}
+	fmt.Printf("  Created:    %s\n", fmtTime(s.CreatedAt))
+	fmt.Printf("  Updated:    %s\n", fmtTime(s.UpdatedAt))
+
+	if len(s.Tools) > 0 {
+		fmt.Printf("\n  Tools (%d):\n", len(s.Tools))
+		for i, t := range s.Tools {
+			enabledLabel := "on"
+			if !t.Enabled {
+				enabledLabel = "off"
+			}
+			desc := ""
+			if t.Description != nil {
+				desc = *t.Description
+				if len(desc) > 60 {
+					desc = desc[:57] + "..."
+				}
+				desc = " - " + desc
+			}
+			fmt.Printf("    %d. [%s] %s%s\n", i+1, enabledLabel, t.ToolName, desc)
+		}
+	} else {
+		fmt.Println("\n  No tools synced. Run 'mcp-servers sync' to discover tools.")
+	}
+
+	return nil
+}
+
+func runCreateMCPServer(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverType := mcpregistry.MCPServerType(mcpServerType)
+
+	createReq := &mcpregistry.CreateMCPServerRequest{
+		Name: mcpServerName,
+		Type: serverType,
+	}
+
+	// URL for SSE/HTTP types
+	if mcpServerURL != "" {
+		createReq.URL = &mcpServerURL
+	}
+
+	// Command/args for stdio type
+	if mcpServerCommand != "" {
+		createReq.Command = &mcpServerCommand
+	}
+	if mcpServerArgs != "" {
+		createReq.Args = strings.Split(mcpServerArgs, ",")
+	}
+
+	// Enabled flag
+	if mcpServerEnabled != "" {
+		val := mcpServerEnabled == "true"
+		createReq.Enabled = &val
+	}
+
+	// Environment variables
+	envVars, err := parseEnvVars(mcpServerEnvVars)
+	if err != nil {
+		return err
+	}
+	if envVars != nil {
+		createReq.Env = envVars
+	}
+
+	result, err := c.SDK.MCPRegistry.Create(context.Background(), createReq)
+	if err != nil {
+		return fmt.Errorf("failed to create MCP server: %w", err)
+	}
+
+	s := result.Data
+	fmt.Println("MCP server created successfully!")
+	fmt.Printf("  ID:   %s\n", s.ID)
+	fmt.Printf("  Name: %s\n", s.Name)
+	fmt.Printf("  Type: %s\n", s.Type)
+
+	return nil
+}
+
+func runDeleteMCPServer(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	err = c.SDK.MCPRegistry.Delete(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to delete MCP server: %w", err)
+	}
+
+	fmt.Printf("MCP server %s deleted successfully.\n", serverID)
+	return nil
+}
+
+func runSyncMCPServer(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.SDK.MCPRegistry.SyncTools(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to sync MCP server tools: %w", err)
+	}
+
+	if result.Message != nil {
+		fmt.Println(*result.Message)
+	} else {
+		fmt.Println("Tools synced successfully.")
+	}
+
+	return nil
+}
+
+func runInspectMCPServer(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.SDK.MCPRegistry.Inspect(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to inspect MCP server: %w", err)
+	}
+
+	inspect := result.Data
+
+	fmt.Printf("MCP Server Inspection: %s\n", inspect.ServerName)
+	fmt.Printf("  Server ID:  %s\n", inspect.ServerID)
+	fmt.Printf("  Type:       %s\n", inspect.ServerType)
+	fmt.Printf("  Status:     %s\n", inspect.Status)
+	fmt.Printf("  Latency:    %dms\n", inspect.LatencyMs)
+
+	if inspect.Error != nil {
+		fmt.Printf("  Error:      %s\n", *inspect.Error)
+	}
+
+	if inspect.ServerInfo != nil {
+		fmt.Printf("\n  Server Info:\n")
+		fmt.Printf("    Name:             %s\n", inspect.ServerInfo.Name)
+		fmt.Printf("    Version:          %s\n", inspect.ServerInfo.Version)
+		fmt.Printf("    Protocol Version: %s\n", inspect.ServerInfo.ProtocolVersion)
+		if inspect.ServerInfo.Instructions != "" {
+			fmt.Printf("    Instructions:     %s\n", inspect.ServerInfo.Instructions)
+		}
+	}
+
+	if inspect.Capabilities != nil {
+		fmt.Printf("\n  Capabilities:\n")
+		fmt.Printf("    Tools:       %v\n", inspect.Capabilities.Tools)
+		fmt.Printf("    Prompts:     %v\n", inspect.Capabilities.Prompts)
+		fmt.Printf("    Resources:   %v\n", inspect.Capabilities.Resources)
+		fmt.Printf("    Logging:     %v\n", inspect.Capabilities.Logging)
+		fmt.Printf("    Completions: %v\n", inspect.Capabilities.Completions)
+	}
+
+	if len(inspect.Tools) > 0 {
+		fmt.Printf("\n  Tools (%d):\n", len(inspect.Tools))
+		for i, t := range inspect.Tools {
+			desc := ""
+			if t.Description != "" {
+				desc = t.Description
+				if len(desc) > 60 {
+					desc = desc[:57] + "..."
+				}
+				desc = " - " + desc
+			}
+			fmt.Printf("    %d. %s%s\n", i+1, t.Name, desc)
+		}
+	}
+
+	if len(inspect.Prompts) > 0 {
+		fmt.Printf("\n  Prompts (%d):\n", len(inspect.Prompts))
+		for i, p := range inspect.Prompts {
+			fmt.Printf("    %d. %s\n", i+1, p.Name)
+			if p.Description != "" {
+				fmt.Printf("       %s\n", p.Description)
+			}
+		}
+	}
+
+	if len(inspect.Resources) > 0 {
+		fmt.Printf("\n  Resources (%d):\n", len(inspect.Resources))
+		for i, r := range inspect.Resources {
+			fmt.Printf("    %d. %s (%s)\n", i+1, r.Name, r.URI)
+		}
+	}
+
+	if len(inspect.ResourceTemplates) > 0 {
+		fmt.Printf("\n  Resource Templates (%d):\n", len(inspect.ResourceTemplates))
+		for i, rt := range inspect.ResourceTemplates {
+			fmt.Printf("    %d. %s (%s)\n", i+1, rt.Name, rt.URITemplate)
+		}
+	}
+
+	return nil
+}
+
+func runListMCPServerTools(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.SDK.MCPRegistry.ListTools(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to list MCP server tools: %w", err)
+	}
+
+	tools := result.Data
+	if len(tools) == 0 {
+		fmt.Println("No tools found. Run 'mcp-servers sync' to discover tools.")
+		return nil
+	}
+
+	fmt.Printf("Found %d tool(s):\n\n", len(tools))
+	for i, t := range tools {
+		enabledLabel := "on"
+		if !t.Enabled {
+			enabledLabel = "off"
+		}
+		fmt.Printf("%d. [%s] %s\n", i+1, enabledLabel, t.ToolName)
+		fmt.Printf("   ID:       %s\n", t.ID)
+		if t.Description != nil && *t.Description != "" {
+			fmt.Printf("   Desc:     %s\n", *t.Description)
+		}
+		if len(t.InputSchema) > 0 {
+			schemaJSON, _ := json.MarshalIndent(t.InputSchema, "            ", "  ")
+			fmt.Printf("   Schema:   %s\n", string(schemaJSON))
+		}
+		fmt.Println()
+	}
+
+	return nil
+}
+
+var mcpOAuthCmd = &cobra.Command{
+	Use:   "oauth",
+	Short: "Manage OAuth authorization for an MCP server",
+	Long: `Connect, inspect, or disconnect the current user's OAuth authorization for
+an MCP server that requires OAuth 2.1 authorization.
+
+Commands:
+  connect    Begin an OAuth connect flow, open the authorization URL in a
+             browser, and poll until the server reports Connected.
+  status     Show the stored OAuth state for the current user.
+  disconnect Remove the current user's stored OAuth credential.`,
+}
+
+var mcpOAuthConnectCmd = &cobra.Command{
+	Use:   "connect [server-id]",
+	Short: "Connect OAuth for an MCP server",
+	Long: `Begin an OAuth connect flow for an MCP server and open the authorization
+URL in a browser. The CLI polls the server until the credential is stored and
+the server reports Connected.
+
+The connect flow is bound to the current user; each user connects their own
+credential.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMCPOAuthConnect,
+}
+
+var mcpOAuthStatusCmd = &cobra.Command{
+	Use:   "status [server-id]",
+	Short: "Show MCP server OAuth status",
+	Long: `Show the stored OAuth state for the current user.
+
+Displays whether a client is configured, whether a credential is connected,
+whether that credential is the project-wide shared credential or the current
+user's personal one, and token expiry. Token values are never shown.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMCPOAuthStatus,
+}
+
+var mcpOAuthDisconnectCmd = &cobra.Command{
+	Use:   "disconnect [server-id]",
+	Short: "Disconnect OAuth for an MCP server",
+	Long: `Remove the current user's stored OAuth credential for an MCP server.
+
+Disconnect removes only the current user's personal credential; it cannot
+remove the project-wide shared credential.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMCPOAuthDisconnect,
+}
+
+func runMCPOAuthConnect(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	authz, err := c.SDK.MCPRegistry.Authorize(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to start OAuth connect: %w", err)
+	}
+
+	if authz.Data.AuthorizeURL == "" {
+		return fmt.Errorf("server did not return an authorization URL")
+	}
+
+	fmt.Println("Opening authorization URL in your browser...")
+	fmt.Println(authz.Data.AuthorizeURL)
+	if err := auth.OpenBrowser(authz.Data.AuthorizeURL); err != nil {
+		return err
+	}
+
+	fmt.Println("Waiting for authorization to complete (this can take up to a few minutes)...")
+
+	deadline := time.Now().Add(5 * time.Minute)
+	interval := 2 * time.Second
+	for {
+		st, pollErr := c.SDK.MCPRegistry.Status(context.Background(), serverID)
+		if pollErr == nil && st.Data.Connected {
+			fmt.Printf("Connected! OAuth credential stored for server %s.\n", serverID)
+			if st.Data.Shared {
+				fmt.Println("  Note: this credential is the project-wide shared credential.")
+			} else if st.Data.UserID != nil {
+				fmt.Printf("  Credential owner: %s\n", *st.Data.UserID)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for OAuth authorization; run 'memory agents mcp-servers oauth status %s' to check", serverID)
+		}
+		time.Sleep(interval)
+	}
+}
+
+func runMCPOAuthStatus(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	st, err := c.SDK.MCPRegistry.Status(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to get MCP server OAuth status: %w", err)
+	}
+
+	s := st.Data
+	fmt.Printf("MCP Server OAuth Status: %s\n", s.ServerID)
+	fmt.Printf("  OAuth configured:    %v\n", s.Configured)
+	fmt.Printf("  Client configured:   %v\n", s.ClientConfigured)
+	fmt.Printf("  Connected:           %v\n", s.Connected)
+	if s.Connected {
+		if s.Shared {
+			fmt.Printf("  Credential:          shared (project-wide)\n")
+		} else if s.UserID != nil {
+			fmt.Printf("  Credential:          personal (owner %s)\n", *s.UserID)
+		}
+		if s.ExpiresAt != nil {
+			fmt.Printf("  Expires:             %s\n", fmtTime(*s.ExpiresAt))
+		}
+	}
+	if s.AuthorizationServer != nil {
+		fmt.Printf("  Auth server:         %s\n", *s.AuthorizationServer)
+	}
+	if s.TokenEndpoint != nil {
+		fmt.Printf("  Token endpoint:      %s\n", *s.TokenEndpoint)
+	}
+	if len(s.Scopes) > 0 {
+		fmt.Printf("  Scopes:              %s\n", strings.Join(s.Scopes, ", "))
+	}
+
+	return nil
+}
+
+func runMCPOAuthDisconnect(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SDK.MCPRegistry.Disconnect(context.Background(), serverID); err != nil {
+		return fmt.Errorf("failed to disconnect OAuth: %w", err)
+	}
+
+	fmt.Printf("OAuth disconnected for server %s.\n", serverID)
+	return nil
+}
+
+func init() {
+	// Create command flags
+	createMCPServerCmd.Flags().StringVar(&mcpServerName, "name", "", "Server name (required)")
+	createMCPServerCmd.Flags().StringVar(&mcpServerType, "type", "", "Server type: 'sse', 'stdio', or 'http' (required)")
+	createMCPServerCmd.Flags().StringVar(&mcpServerURL, "url", "", "Server URL (for sse/http types)")
+	createMCPServerCmd.Flags().StringVar(&mcpServerCommand, "command", "", "Command to run (for stdio type)")
+	createMCPServerCmd.Flags().StringVar(&mcpServerArgs, "args", "", "Comma-separated arguments (for stdio type)")
+	createMCPServerCmd.Flags().StringVar(&mcpServerDescription, "description", "", "Server description")
+	createMCPServerCmd.Flags().StringSliceVar(&mcpServerEnvVars, "env", []string{}, "Environment variables (KEY=VALUE format, can be specified multiple times)")
+	createMCPServerCmd.Flags().StringVar(&mcpServerEnabled, "enabled", "", "Enable server (true/false, default: true)")
+
+	_ = createMCPServerCmd.MarkFlagRequired("name")
+	_ = createMCPServerCmd.MarkFlagRequired("type")
+
+	// Add subcommands
+	mcpServersCmd.AddCommand(listMCPServersCmd)
+	mcpServersCmd.AddCommand(getMCPServerCmd)
+	mcpServersCmd.AddCommand(createMCPServerCmd)
+	mcpServersCmd.AddCommand(deleteMCPServerCmd)
+	mcpServersCmd.AddCommand(syncMCPServerCmd)
+	mcpServersCmd.AddCommand(inspectMCPServerCmd)
+	mcpServersCmd.AddCommand(toolsMCPServerCmd)
+	mcpServersCmd.AddCommand(configureMCPServerCmd)
+
+	mcpOAuthCmd.AddCommand(mcpOAuthConnectCmd)
+	mcpOAuthCmd.AddCommand(mcpOAuthStatusCmd)
+	mcpOAuthCmd.AddCommand(mcpOAuthDisconnectCmd)
+	mcpServersCmd.AddCommand(mcpOAuthCmd)
+
+	// Register with agents command
+	agentsCmd.AddCommand(mcpServersCmd)
+}
+
+var configureMCPServerCmd = &cobra.Command{
+	Use:   "configure [tool-name] [key=value ...]",
+	Short: "Configure a tool's runtime settings",
+	Long: `Set runtime configuration key/value pairs for a named MCP tool.
+
+The command searches all MCP servers in the current project to find the tool
+by name, then patches its config with the provided key=value pairs.
+
+Examples:
+  memory agents mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
+  memory agents mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: runConfigureMCPServer,
+}
+
+func runConfigureMCPServer(cmd *cobra.Command, args []string) error {
+	toolName := args[0]
+	kvPairs := args[1:]
+
+	config := make(map[string]any, len(kvPairs))
+	for _, kv := range kvPairs {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid key=value pair %q (expected KEY=VALUE)", kv)
+		}
+		config[parts[0]] = parts[1]
+	}
+
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	// Find the server and tool ID by tool name
+	serversResult, err := c.SDK.MCPRegistry.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list MCP servers: %w", err)
+	}
+
+	var foundServerID, foundToolID string
+	for _, server := range serversResult.Data {
+		// Skip the internal builtin server — use 'memory agents builtin-tools configure' instead.
+		if server.Type == mcpregistry.ServerTypeBuiltin {
+			continue
+		}
+		toolsResult, err := c.SDK.MCPRegistry.ListTools(context.Background(), server.ID)
+		if err != nil {
+			continue
+		}
+		for _, tool := range toolsResult.Data {
+			if tool.ToolName == toolName {
+				foundServerID = server.ID
+				foundToolID = tool.ID
+				break
+			}
+		}
+		if foundToolID != "" {
+			break
+		}
+	}
+
+	if foundToolID == "" {
+		return fmt.Errorf("tool %q not found in any MCP server for this project", toolName)
+	}
+
+	result, err := c.SDK.MCPRegistry.ConfigureTool(context.Background(), foundServerID, foundToolID, config)
+	if err != nil {
+		return fmt.Errorf("failed to configure tool: %w", err)
+	}
+
+	tool := result.Data
+	fmt.Printf("Tool %q configured successfully.\n", tool.ToolName)
+	fmt.Printf("  Server ID: %s\n", tool.ServerID)
+	fmt.Printf("  Tool ID:   %s\n", tool.ID)
+	fmt.Printf("  Keys set:  %s\n", strings.Join(keysOf(config), ", "))
+	if tool.InheritedFrom != "" {
+		fmt.Printf("  Config tier: %s\n", tool.InheritedFrom)
+	}
+
+	return nil
+}
+
+func keysOf(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}

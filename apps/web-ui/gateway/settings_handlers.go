@@ -1,0 +1,1340 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+)
+
+// settingsRememberCategory / settingsRememberKey are the generic-settings
+// coordinates of the remember pipeline config (which agent definition powers
+// POST /remember).
+const (
+	settingsRememberCategory = "remember_config"
+	settingsRememberKey      = "agent_name"
+)
+
+// settingsDedupCategory / settingsDedupKey are the generic-settings
+// coordinates of the entity-create dedup threshold.
+const (
+	settingsDedupCategory = "entity_create"
+	settingsDedupKey      = "similarity_threshold"
+)
+
+// settingsAssistantCategory / settingsAssistantKey are the generic-settings
+// coordinates of the assistant agent selection (which agent definition powers
+// the global assistant side panel).
+const (
+	settingsAssistantCategory = "assistant"
+	settingsAssistantKey      = "agent_id"
+)
+
+// settingsEditorCategory / settingsEditorKey are the generic-settings
+// coordinates of the editor agent selection (which agent definition runs
+// object-content edits).
+const (
+	settingsEditorCategory = "editor"
+	settingsEditorKey      = "agent_id"
+)
+
+// settingsMergeCategory / settingsMergeKey are the generic-settings
+// coordinates of the merge agent selection (which agent definition runs the
+// object-merge flow). Only agents that grant the merge tool set may be stored;
+// see agentToolEligibility.
+const (
+	settingsMergeCategory = "merge"
+	settingsMergeKey      = "agent_id"
+)
+
+// defaultRememberAgent is the canonical agent definition that powers the
+// remember pipeline when no override is set (memory's
+// agents.CanonicalRememberAgentName). An override to this name, or an unset
+// setting, both resolve to this built-in agent.
+const defaultRememberAgent = "domain-remember-agent"
+
+// voiceCategory is the generic-settings category of the per-project voice
+// configuration. Secrets are never stored — they stay env-driven.
+const voiceCategory = "voice"
+
+const (
+	voiceKeyEnabled              = "enabled"
+	voiceKeyTTSProvider          = "tts_provider"
+	voiceKeyTTSModel             = "tts_model"
+	voiceKeyTTSVoice             = "tts_voice"
+	voiceKeySTTProvider          = "stt_provider"
+	voiceKeySTTModel             = "stt_model"
+	voiceKeySTTLanguage          = "stt_language"
+	voiceKeyLiveKitURL           = "livekit_url"
+	voiceKeyLiveKitPublicURL     = "livekit_public_url"
+	voiceKeyExitKeywords         = "exit_keywords"
+	voiceKeyGoodbyeText          = "goodbye_text"
+	voiceKeyAwayTimeout          = "away_timeout"
+	voiceKeyEndpointMinDelay     = "endpoint_min_delay"
+	voiceKeyEndpointMaxDelay     = "endpoint_max_delay"
+	voiceKeyAllowInterruptions   = "allow_interruptions"
+	voiceKeyPreemptiveGeneration = "preemptive_generation"
+)
+
+// defaultSTTProvider is the speech-to-text provider when nothing is stored.
+const defaultSTTProvider = "deepgram"
+
+// voiceStrKeys / voiceNumKeys / voiceBoolKeys are the canonical per-key voice
+// settings accepted by the inline-save endpoint POST /settings/voice/:key.
+// Strings are stored trimmed (empty deletes); numerics must parse as a
+// non-negative float when non-empty but are stored as their trimmed string so
+// resolveVoiceSettings (which reads these keys as strings) round-trips them;
+// booleans are derived from form value "on"/absent.
+var (
+	voiceStrKeys = map[string]bool{
+		voiceKeyTTSProvider:      true,
+		voiceKeyTTSModel:         true,
+		voiceKeyTTSVoice:         true,
+		voiceKeySTTProvider:      true,
+		voiceKeySTTModel:         true,
+		voiceKeySTTLanguage:      true,
+		voiceKeyLiveKitURL:       true,
+		voiceKeyLiveKitPublicURL: true,
+		voiceKeyExitKeywords:     true,
+		voiceKeyGoodbyeText:      true,
+	}
+	voiceNumKeys = map[string]bool{
+		voiceKeyAwayTimeout:      true,
+		voiceKeyEndpointMinDelay: true,
+		voiceKeyEndpointMaxDelay: true,
+	}
+	voiceBoolKeys = map[string]bool{
+		voiceKeyEnabled:              true,
+		voiceKeyAllowInterruptions:   true,
+		voiceKeyPreemptiveGeneration: true,
+	}
+)
+
+// voiceSettings is the effective voice-flow configuration shown and edited on
+// the Project Settings page: env defaults overlaid with the project's stored
+// settings. Secrets are surfaced only as set/unset booleans.
+type voiceSettings struct {
+	Enabled              bool
+	TTSProvider          string
+	TTSModel             string
+	TTSVoice             string
+	STTProvider          string
+	STTModel             string
+	STTLanguage          string
+	LiveKitURL           string
+	LiveKitPublicURL     string
+	ExitKeywords         string
+	GoodbyeText          string
+	AwayTimeout          string
+	EndpointMinDelay     string
+	EndpointMaxDelay     string
+	AllowInterruptions   bool
+	PreemptiveGeneration bool
+	CartesiaKeySet       bool
+	DeepgramKeySet       bool
+	LiveKitSecretSet     bool
+}
+
+// settingsNavCommon is embedded (anonymous) into every settings-page payload so
+// the page can render the settings sub-nav: the provider warning badge (true
+// when the active project has ZERO configured LLM providers) and whether the
+// caller can administer the active project (gates the admin-only "Data source
+// OAuth clients" rail entry).
+type settingsNavCommon struct {
+	ProvidersMissing bool
+	IsProjectAdmin   bool
+}
+
+// settingsNavPayload returns the shared nav payload for settings pages: the
+// providers-missing badge plus the caller's project-admin role. The role is
+// fail-closed — an unresolvable active project yields IsProjectAdmin=false,
+// hiding the admin-only entry rather than surfacing an error (the same degrade
+// as projectAdminForCaller).
+func (s *Server) settingsNavPayload(c echo.Context, ctx context.Context) settingsNavCommon {
+	return settingsNavCommon{
+		ProvidersMissing: s.projectHasNoProviders(ctx),
+		IsProjectAdmin:   s.projectAdminForCaller(c, activeProjectIDFromContext(ctx, s.cfg.MemoryProjectID)),
+	}
+}
+
+// projectSettingsData is the payload for ProjectSettingsPage (General): the
+// project record and the remember/dedup config. A failed project fetch renders
+// the whole-page error state (LoadErr); the settings reads are best-effort —
+// an absent value renders as "not set".
+type projectSettingsData struct {
+	settingsNavCommon
+	Project        *Project
+	Agents         []AgentDefinitionSummary // the agent-dropdown options
+	RememberAgent  string
+	DedupThreshold string
+	EditorAgent    string
+	EditorOptions  []agentOption
+	// EditorAgentWarning is non-empty when the stored editor agent is no longer
+	// listed or no longer editor-capable; the selector shows it inline so the
+	// page never implies an object edit would work.
+	EditorAgentWarning string
+	MergeAgent         string
+	MergeOptions       []agentOption
+	// MergeAgentWarning is non-empty when the stored merge agent is no longer
+	// listed or no longer merge-capable; the selector shows it inline so the
+	// page never implies a merge would work.
+	MergeAgentWarning string
+	// AgentsUnavailable records a failed agent-list fetch so both warnings can
+	// say the selection could not be checked instead of claiming the stored
+	// agent was deleted.
+	AgentsUnavailable bool
+	LoadErr           error
+	FlashMsg          string
+	FlashErr          error
+}
+
+// agentOption is one row of a flow's agent selector: whether the agent
+// definition grants that flow's tool set, the missing requirements to show
+// beside a disabled option, and — for an eligible agent — the recommended tools
+// it lacks (never gating, surfaced as an advisory).
+type agentOption struct {
+	ID       string
+	Name     string
+	Eligible bool
+	Detail   string
+	Advisory string
+}
+
+// assistantSettingsPageData is the payload for AssistantSettingsPage: the
+// assistant agent selection plus PRG flash feedback from the save flow.
+type assistantSettingsPageData struct {
+	settingsNavCommon
+	AssistantAgent string
+	Agents         []AgentDefinitionSummary
+	FlashMsg       string
+	FlashErr       error
+}
+
+// overridesSettingsPageData is the payload for OverridesSettingsPage: the
+// agent-definition overrides plus PRG flash feedback from the save flow.
+type overridesSettingsPageData struct {
+	settingsNavCommon
+	Overrides []AgentOverrideEntry
+	FlashMsg  string
+	FlashErr  error
+}
+
+// providersSettingsPageData is the payload for ProvidersSettingsPage: the
+// provider rate groups plus PRG flash feedback from the save flow.
+type providersSettingsPageData struct {
+	settingsNavCommon
+	Providers providerPanelData
+	FlashMsg  string
+	FlashErr  error
+}
+
+// providerConfigPageData is the payload for the add/edit provider form page.
+// Draft + DraftProvider are set when re-rendering after a failed save so the
+// form repopulates the user's submitted values (designer reads these).
+type providerConfigPageData struct {
+	settingsNavCommon
+	Provider      *ProjectProviderConfig
+	Draft         *ProviderConfigInput
+	DraftProvider string
+	FlashMsg      string
+	FlashErr      error
+	// Vendors is the server's vendor registry, ordered by each definition's
+	// Order field ascending. The add form builds its vendor <select> from it;
+	// it is empty only when the registry fetch failed.
+	Vendors []ProviderDefinition
+	// GenerativeModels/EmbeddingModels are the credential-prefixed model
+	// options ("provider/model") for the fallback dropdowns.
+	GenerativeModels []Model
+	EmbeddingModels  []Model
+}
+
+// voiceSettingsPageData is the payload for VoiceSettingsPage: the effective
+// voice configuration plus PRG flash feedback from the save flow.
+type voiceSettingsPageData struct {
+	settingsNavCommon
+	Voice    voiceSettings
+	FlashMsg string
+	FlashErr error
+}
+
+// connectedDevicesPageData is the payload for ConnectedDevicesPage, which
+// consolidates the former Devices and External MCP nodes settings pages into
+// one: the iOS setup QR (Connect a device), the registered-devices list
+// (Devices), and the reconciled relay node registry (MCP nodes) plus PRG flash
+// feedback. The device list and the relay-node registry stay distinct data
+// models underneath — device credentials live in core.api_tokens, relay nodes
+// are reconciled sessions/registry records — this type only co-locates their
+// rendering.
+type connectedDevicesPageData struct {
+	settingsNavCommon
+	IOSQRImage   string
+	Devices      []device
+	Nodes        []mcpNodeView
+	Selected     *relayNode
+	SelectedLive bool
+	NodeNotFound bool
+	ToolsErr     error
+	LoadErr      error
+	FlashMsg     string
+	FlashErr     error
+}
+
+// budgetSettingsPageData is the payload for BudgetSettingsPage: the project's
+// spend cap and alert threshold plus PRG flash feedback.
+type budgetSettingsPageData struct {
+	settingsNavCommon
+	Project  *Project
+	LoadErr  error
+	FlashMsg string
+	FlashErr error
+}
+
+// uiProjectSettings renders the project settings page. ?updated=1 / ?err=1
+// surface PRG feedback from the save flows, mirroring uiAgentSettings.
+func (s *Server) uiProjectSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := projectSettingsData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Project settings saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Project Settings"), ProjectSettingsPage(data))
+	}
+	if project == nil {
+		// No active project in the session and no static project — the genuine
+		// "pick a project first" case, not an error. Land on the org/project
+		// picker so the user can select the project to configure.
+		return c.Redirect(http.StatusSeeOther, "/orgs")
+	}
+	data.Project = project
+
+	agents, err := s.memory.ListAgentDefinitions(ctx)
+	captureError(err)
+	data.Agents = agents
+	data.AgentsUnavailable = err != nil
+
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsRememberCategory, settingsRememberKey); perr == nil && ps != nil {
+		if name, ok := ps.Value["name"].(string); ok {
+			data.RememberAgent = name
+		}
+	}
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsDedupCategory, settingsDedupKey); perr == nil && ps != nil {
+		if v, ok := ps.Value["value"].(float64); ok {
+			data.DedupThreshold = strconv.FormatFloat(v, 'f', -1, 64)
+		}
+	}
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsEditorCategory, settingsEditorKey); perr == nil && ps != nil {
+		if id, ok := ps.Value["agentId"].(string); ok {
+			data.EditorAgent = id
+		}
+	}
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsMergeCategory, settingsMergeKey); perr == nil && ps != nil {
+		if id, ok := ps.Value["agentId"].(string); ok {
+			data.MergeAgent = id
+		}
+	}
+	// One definition fetch per agent per render: both flow selections annotate
+	// the same list, so a second pass would double the GETs (#2181).
+	defs := newAgentDefinitionCache(s, ctx)
+	data.EditorOptions = agentFlowOptions(agents, editorRequirement, defs)
+	data.EditorAgentWarning = agentSelectionWarning(data.EditorOptions, data.EditorAgent, data.AgentsUnavailable,
+		"editor agent", "edit objects", "Object chats will fall back to another editor-capable agent, and will not start if none exists.")
+	data.MergeOptions = agentFlowOptions(agents, mergeRequirement, defs)
+	data.MergeAgentWarning = agentSelectionWarning(data.MergeOptions, data.MergeAgent, data.AgentsUnavailable,
+		"merge agent", "run a merge", "Merges will fall back to another merge-capable agent, and will not start if none exists.")
+	return s.page(c, pageTitle("Project Settings"), ProjectSettingsPage(data))
+}
+
+// agentSelectionWarning explains a stored flow agent that can no longer run the
+// flow (deleted, unlisted, or edited to drop required tools). Empty when the
+// selection is fine or unset. noun names the setting ("merge agent"), verb the
+// work ("run a merge"), and outcome says what will not happen until it is fixed.
+func agentSelectionWarning(options []agentOption, id string, agentsUnavailable bool, noun, verb, outcome string) string {
+	if id == "" {
+		return ""
+	}
+	if agentsUnavailable {
+		return fmt.Sprintf("Could not check the configured %s: the agent list is unavailable right now.", noun)
+	}
+	opt, ok := agentOptionByID(options, id)
+	if !ok {
+		return fmt.Sprintf("The configured %s is no longer in this project. %s", noun, outcome)
+	}
+	if opt.Eligible {
+		return ""
+	}
+	detail := opt.Detail
+	if detail == "" {
+		detail = "required tools"
+	}
+	return fmt.Sprintf("The configured %s (%s) cannot %s — missing: %s. %s", noun, opt.Name, verb, detail, outcome)
+}
+
+// agentDefinitionCache loads each agent definition at most once per settings
+// render. The editor and merge selections annotate the same agent list, so
+// without the cache every definition was fetched once per flow — 2N GETs for N
+// agents (#2181).
+type agentDefinitionCache struct {
+	srv  *Server
+	ctx  context.Context
+	defs map[string]*AgentDefinition
+	errs map[string]error
+}
+
+func newAgentDefinitionCache(s *Server, ctx context.Context) *agentDefinitionCache {
+	return &agentDefinitionCache{
+		srv:  s,
+		ctx:  ctx,
+		defs: make(map[string]*AgentDefinition),
+		errs: make(map[string]error),
+	}
+}
+
+// get returns the definition for id, fetching it on first use. A failure is
+// cached too (as a nil definition plus its error), so one broken agent does not
+// cost a second request.
+func (c *agentDefinitionCache) get(id string) (*AgentDefinition, error) {
+	if def, ok := c.defs[id]; ok {
+		return def, c.errs[id]
+	}
+	def, err := c.srv.memory.GetAgentDefinition(c.ctx, id)
+	if err != nil {
+		captureError(err)
+	}
+	c.defs[id] = def
+	c.errs[id] = err
+	return def, err
+}
+
+// agentFlowOptions annotates every agent with whether it can run the flow
+// described by req. Eligibility needs the full definition (allowed/banned tools
+// and tool policies), which the list endpoint does not carry, so this costs one
+// GET per agent for the whole render (see agentDefinitionCache) — the project's
+// agent count is small and this runs on the settings page only. A failed fetch
+// is treated as ineligible rather than crashing the page.
+func agentFlowOptions(agents []AgentDefinitionSummary, req toolRequirement, defs *agentDefinitionCache) []agentOption {
+	opts := make([]agentOption, 0, len(agents))
+	for _, a := range agents {
+		opt := agentOption{ID: a.ID, Name: a.Name}
+		def, err := defs.get(a.ID)
+		switch {
+		case err != nil || def == nil:
+			opt.Detail = "agent definition unavailable"
+		default:
+			missing, recommended := agentToolEligibility(def, req)
+			if len(missing) == 0 {
+				opt.Eligible = true
+				opt.Advisory = strings.Join(recommended, ", ")
+			} else {
+				opt.Detail = strings.Join(missing, ", ")
+			}
+		}
+		opts = append(opts, opt)
+	}
+	return opts
+}
+
+// uiProjectAssistantSettings renders the Assistant settings page. ?updated=1 /
+// ?err=1 surface PRG feedback from the assistant save flow.
+func (s *Server) uiProjectAssistantSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := assistantSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Assistant settings saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	agents, err := s.memory.ListAgentDefinitions(ctx)
+	captureError(err)
+	data.Agents = agents
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsAssistantCategory, settingsAssistantKey); perr == nil && ps != nil {
+		if id, ok := ps.Value["agentId"].(string); ok {
+			data.AssistantAgent = id
+		}
+	}
+	return s.page(c, pageTitle("Assistant"), AssistantSettingsPage(data))
+}
+
+// uiProjectOverridesSettings renders the Agent overrides settings page.
+// ?updated=1 / ?err=1 surface PRG feedback from the override save/delete flow.
+func (s *Server) uiProjectOverridesSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := overridesSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Agent overrides saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	overrides, err := s.memory.ListAgentOverrides(ctx)
+	captureError(err)
+	data.Overrides = overrides
+	return s.page(c, pageTitle("Agent overrides"), OverridesSettingsPage(data))
+}
+
+// uiProjectProvidersSettings renders the Providers settings page. ?updated=1 /
+// ?err=1 surface PRG feedback from the provider rate override flow.
+func (s *Server) uiProjectProvidersSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := providersSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Providers saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	data.Providers = s.loadProviderPanel(ctx)
+	return s.page(c, pageTitle("Providers"), ProvidersSettingsPage(data))
+}
+
+// uiProjectProviderNew renders the "add provider" form page.
+func (s *Server) uiProjectProviderNew(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := providerConfigPageData{}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	data.Vendors = s.providerVendorDefinitions(ctx)
+	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
+	return s.page(c, pageTitle("Add provider"), providerConfigPage(data))
+}
+
+// uiProjectProviderEdit renders the "edit provider" form page, prefilled from
+// the project's stored config. Credentials are never returned by the API, so
+// apiKey and serviceAccountJson stay blank (leave blank to keep the stored one).
+func (s *Server) uiProjectProviderEdit(c echo.Context) error {
+	ctx := c.Request().Context()
+	slug := strings.TrimSpace(c.Param("provider"))
+	providers, err := s.memory.ListProjectProviders(ctx)
+	if err != nil {
+		return redirectWithError(c, "/settings/providers", err)
+	}
+	cfg := findProviderInstance(providers, slug)
+	if cfg == nil {
+		return redirectWithError(c, "/settings/providers", fmt.Errorf("provider %q not found", slug))
+	}
+	data := providerConfigPageData{Provider: cfg}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	data.Vendors = s.providerVendorDefinitions(ctx)
+	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
+	return s.page(c, pageTitle("Edit provider"), providerConfigPage(data))
+}
+
+// uiProjectVoiceSettings renders the Voice settings page. ?updated=1 / ?err=1
+// surface PRG feedback from the voice save flow.
+func (s *Server) uiProjectVoiceSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := voiceSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Voice settings saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	data.Voice = resolveVoiceSettings(ctx, s.cfg, s.memory)
+	return s.page(c, pageTitle("Voice"), VoiceSettingsPage(data))
+}
+
+// uiConnectedDevices renders the Connected devices settings page: the iOS
+// setup path (Connect a device), the registered-devices list (Devices), and the
+// reconciled relay node registry (MCP nodes). It combines the former Devices
+// page data with the relay reconciliation that used to live in uiMCPNodes.
+// ?updated=1 / ?err=1 surface PRG feedback from the revoke flow.
+func (s *Server) uiConnectedDevices(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := connectedDevicesPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Devices saved."
+	}
+	if c.QueryParam("mcp_updated") != "" {
+		data.FlashMsg = "MCP node removed."
+	}
+	if c.QueryParam("mcp_installed") != "" {
+		data.FlashMsg = "MCP server installed on the device."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	data.IOSQRImage = s.setupQRImage(c)
+	data.Devices, _ = s.listDeviceTokens(ctx) // list errors degrade to an empty list
+	mcp := s.loadMCPNodesData(ctx, c.QueryParam("node"))
+	data.Nodes = mcp.Nodes
+	data.Selected = mcp.Selected
+	data.SelectedLive = mcp.SelectedLive
+	data.NodeNotFound = mcp.NodeNotFound
+	data.ToolsErr = mcp.ToolsErr
+	data.LoadErr = mcp.LoadErr
+	return s.page(c, pageTitle("Connected devices"), ConnectedDevicesPage(data))
+}
+
+// uiProjectBudgetSettings renders the Budget settings page. ?updated=1 / ?err=1
+// surface PRG feedback from the budget save flow.
+func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := budgetSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Budget settings saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
+	}
+	if project == nil {
+		return c.Redirect(http.StatusSeeOther, "/orgs")
+	}
+	data.Project = project
+	return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
+}
+
+// uiProjectSettingsProjectField handles one inline per-field project-record
+// save (HTMX → POST /settings/project/:field). Each field PATCHes only itself
+// via UpdateProject; the project name is required, and budget must be a
+// non-negative number when present. The outcome surfaces as a toast via the
+// HX-Trigger header.
+func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	if project == nil {
+		// Defensive: the settings page itself redirects to the project picker
+		// when no project is active, so reaching this save without one means
+		// the session changed mid-flight. Message says what to do, not what
+		// memory did.
+		return toastTrigger(c, "error", "Select a project first.")
+	}
+
+	upd := &ProjectUpdate{}
+	switch c.Param("field") {
+	case "name":
+		name := strings.TrimSpace(c.FormValue("name"))
+		if name == "" {
+			return toastTrigger(c, "error", "project name is required")
+		}
+		upd.Name = name
+	case "project_info":
+		pi := c.FormValue("project_info")
+		upd.ProjectInfo = &pi
+	case "chat_prompt_template":
+		cpt := c.FormValue("chat_prompt_template")
+		upd.ChatPromptTemplate = &cpt
+	case "auto_extract_objects":
+		upd.AutoExtractObjects = boolPtr(c.FormValue("auto_extract_objects") == "on")
+	case "auto_merge_extraction_branches":
+		upd.AutoMergeExtractionBranches = boolPtr(c.FormValue("auto_merge_extraction_branches") == "on")
+	case "budget_usd":
+		v := strings.TrimSpace(c.FormValue("budget_usd"))
+		if v == "" {
+			return toastTrigger(c, "success", "Saved") // empty leaves budget unchanged
+		}
+		b, berr := strconv.ParseFloat(v, 64)
+		if berr != nil || b < 0 {
+			return toastTrigger(c, "error", "budget must be a non-negative number")
+		}
+		upd.BudgetUSD = &b
+	case "budget_alert_threshold":
+		v := strings.TrimSpace(c.FormValue("budget_alert_threshold"))
+		if v == "" {
+			return toastTrigger(c, "error", "alert threshold is required (1-100%)")
+		}
+		pct, perr := strconv.ParseFloat(v, 64)
+		if perr != nil || pct <= 0 || pct > 100 {
+			return toastTrigger(c, "error", "alert threshold must be greater than 0 and at most 100")
+		}
+		frac := pct / 100
+		upd.BudgetAlertThreshold = &frac
+	default:
+		return toastTrigger(c, "error", fmt.Sprintf("Unknown project field %q.", c.Param("field")))
+	}
+
+	if _, err := s.memory.UpdateProject(ctx, project.ID, upd); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
+// uiProjectSettingsOverride handles the add/update override form (PRG → POST
+// /settings/overrides). Writing an existing agent name updates its override,
+// a new name creates one. Only the fields the form set are sent.
+func (s *Server) uiProjectSettingsOverride(c echo.Context) error {
+	ctx := c.Request().Context()
+	name := strings.TrimSpace(c.FormValue("agentName"))
+	if name == "" {
+		return redirectWithError(c, "/settings/overrides", fmt.Errorf("agent name is required"))
+	}
+	in := &AgentOverrideInput{}
+	if v := c.FormValue("systemPrompt"); v != "" {
+		in.SystemPrompt = &v
+	}
+	if v := strings.TrimSpace(c.FormValue("model")); v != "" {
+		in.Model = &ModelConfig{Name: v}
+	}
+	if v := strings.TrimSpace(c.FormValue("tools")); v != "" {
+		var tools []string
+		for _, t := range strings.Split(v, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				tools = append(tools, t)
+			}
+		}
+		in.Tools = tools
+	}
+	if v := strings.TrimSpace(c.FormValue("maxSteps")); v != "" {
+		if n, nerr := strconv.Atoi(v); nerr == nil && n > 0 {
+			in.MaxSteps = &n
+		}
+	}
+
+	if err := s.memory.SetAgentOverride(ctx, name, in); err != nil {
+		return redirectWithError(c, "/settings/overrides", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/overrides?updated=1")
+}
+
+// uiProjectSettingsOverrideDelete handles the per-override delete form (PRG →
+// POST /settings/overrides/:agentName/delete).
+func (s *Server) uiProjectSettingsOverrideDelete(c echo.Context) error {
+	name := c.Param("agentName")
+	if name == "" {
+		return redirectWithError(c, "/settings/overrides", fmt.Errorf("agent name is required"))
+	}
+	if err := s.memory.DeleteAgentOverride(c.Request().Context(), name); err != nil {
+		return redirectWithError(c, "/settings/overrides", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/overrides?updated=1")
+}
+
+// uiRevokeDevice handles the per-device revoke form (PRG → POST
+// /settings/devices/:id/revoke). Revoking a device credential cuts that
+// client's access to the /api/* endpoints immediately.
+func (s *Server) uiRevokeDevice(c echo.Context) error {
+	tokenID := c.Param("id")
+	if tokenID == "" {
+		return redirectWithError(c, "/settings/devices", fmt.Errorf("device credential id is required"))
+	}
+	if err := s.revokeDeviceToken(c.Request().Context(), tokenID); err != nil {
+		return redirectWithError(c, "/settings/devices", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/devices?updated=1")
+}
+
+// uiProjectSettingsRememberField handles one inline per-field remember/dedup
+// save (HTMX → POST /settings/remember/:field). "agent" stores the remember
+// agent name (empty deletes); "dedup" validates 0.0–1.0 and stores the
+// threshold (empty leaves it unchanged). The outcome surfaces as a toast via
+// the HX-Trigger header.
+func (s *Server) uiProjectSettingsRememberField(c echo.Context) error {
+	ctx := c.Request().Context()
+	switch c.Param("field") {
+	case "agent":
+		agent := strings.TrimSpace(c.FormValue("remember_agent"))
+		if agent == "" {
+			if err := s.memory.DeleteProjectSetting(ctx, settingsRememberCategory, settingsRememberKey); err != nil {
+				return toastTrigger(c, "error", err.Error())
+			}
+		} else if err := s.memory.SetProjectSetting(ctx, settingsRememberCategory, settingsRememberKey, map[string]any{"name": agent}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	case "dedup":
+		dedup := strings.TrimSpace(c.FormValue("dedup_threshold"))
+		if dedup == "" {
+			return toastTrigger(c, "success", "Saved") // empty leaves it unchanged
+		}
+		th, err := strconv.ParseFloat(dedup, 64)
+		if err != nil || th < 0 || th > 1 {
+			return toastTrigger(c, "error", "dedup threshold must be a number between 0.0 and 1.0")
+		}
+		if err := s.memory.SetProjectSetting(ctx, settingsDedupCategory, settingsDedupKey, map[string]any{"value": th}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	default:
+		return toastTrigger(c, "error", fmt.Sprintf("Unknown remember field %q.", c.Param("field")))
+	}
+}
+
+// uiProjectSettingsAssistant handles the assistant agent inline save (HTMX →
+// POST /settings/assistant). An empty value clears the setting via delete; any
+// other value stores the agent ID so /api/chat can resolve it. The assistant
+// selection is shell chrome — it gates the topbar "Assistant" button and the
+// sidepanel, both rendered outside #main-content — so success forces a full
+// reload (redirectAfterMutation) instead of a toast: a boosted/no-swap
+// save would leave the button hidden until a manual refresh. The PRG target
+// (?updated=1) carries the "Assistant settings saved." flash on the reload.
+func (s *Server) uiProjectSettingsAssistant(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.FormValue("assistant_agent"))
+	if id == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsAssistantCategory, settingsAssistantKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+	} else if err := s.memory.SetProjectSetting(ctx, settingsAssistantCategory, settingsAssistantKey, map[string]any{"agentId": id}); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	redirectAfterMutation(c, "/settings/assistant?updated=1")
+	return nil
+}
+
+// uiProjectSettingsEditor handles the editor agent inline save (HTMX → POST
+// /settings/editor). An empty value clears the setting via delete (object
+// edits fall back to the auto-selected capable agent); any other value must name
+// an agent definition that can run the editor flow, and is stored so object-chat
+// sessions resolve it. The outcome surfaces as a toast via the HX-Trigger header.
+func (s *Server) uiProjectSettingsEditor(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.FormValue("editor_agent"))
+	if id == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsEditorCategory, settingsEditorKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	}
+	// Re-validate here for the same reason as the merge agent: the selector
+	// disables ineligible agents, but a stale page or a crafted request must not
+	// hand the object chat to an agent that cannot apply the edit.
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil || def == nil {
+		return toastTrigger(c, "error", "That agent definition could not be loaded — pick another editor agent.")
+	}
+	if missing, _ := editorAgentEligibility(def); len(missing) > 0 {
+		return toastTrigger(c, "error", fmt.Sprintf("%s cannot edit objects — missing: %s.", def.Name, strings.Join(missing, ", ")))
+	}
+	if err := s.memory.SetProjectSetting(ctx, settingsEditorCategory, settingsEditorKey, map[string]any{"agentId": id}); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
+// uiProjectSettingsMerge handles the merge agent inline save (HTMX → POST
+// /settings/merge). An empty value clears the setting (the merge deep link then
+// auto-selects a merge-capable agent); any other value must name an agent
+// definition that grants the merge tool set. Re-validating here is defence in
+// depth: the selector already disables ineligible agents, but a stale page or a
+// crafted request must not hand a merge to an agent that cannot do it.
+func (s *Server) uiProjectSettingsMerge(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.FormValue("merge_agent"))
+	if id == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsMergeCategory, settingsMergeKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	}
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil || def == nil {
+		return toastTrigger(c, "error", "That agent definition could not be loaded — pick another merge agent.")
+	}
+	if missing, _ := mergeAgentEligibility(def); len(missing) > 0 {
+		return toastTrigger(c, "error", fmt.Sprintf("%s cannot run a merge — missing: %s.", def.Name, strings.Join(missing, ", ")))
+	}
+	if err := s.memory.SetProjectSetting(ctx, settingsMergeCategory, settingsMergeKey, map[string]any{"agentId": id}); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
+// resolveVoiceSettings computes the effective voice configuration: env
+// defaults overlaid with the project's stored settings (category "voice").
+// Stored values win when present; absent keys and read errors degrade to the
+// env default, with Enabled defaulting to false so a fresh project starts with
+// voice off (a stored enabled=true still overrides to on). Secrets are never
+// read from storage.
+func resolveVoiceSettings(ctx context.Context, cfg Config, mem MemoryBackend) voiceSettings {
+	v := voiceSettings{
+		Enabled:              false,
+		TTSProvider:          cfg.TTSProvider,
+		TTSModel:             cfg.CartesiaModel,
+		TTSVoice:             cfg.CartesiaVoice,
+		STTProvider:          defaultSTTProvider,
+		STTModel:             cfg.DeepgramModel,
+		STTLanguage:          cfg.DeepgramLang,
+		LiveKitURL:           cfg.LiveKitURL,
+		LiveKitPublicURL:     cfg.LiveKitPublicURL,
+		ExitKeywords:         cfg.ExitKeywords,
+		GoodbyeText:          cfg.GoodbyeText,
+		AwayTimeout:          cfg.UserAwayTimeout,
+		EndpointMinDelay:     cfg.EndpointMinDelay,
+		EndpointMaxDelay:     cfg.EndpointMaxDelay,
+		AllowInterruptions:   cfg.AllowInterruptions,
+		PreemptiveGeneration: cfg.PreemptiveGeneration,
+		CartesiaKeySet:       cfg.CartesiaAPIKey != "",
+		DeepgramKeySet:       cfg.DeepgramAPIKey != "",
+		LiveKitSecretSet:     cfg.LiveKitAPISecret != "",
+	}
+	strs := []struct {
+		key string
+		set func(string)
+	}{
+		{voiceKeyTTSProvider, func(s string) { v.TTSProvider = s }},
+		{voiceKeyTTSModel, func(s string) { v.TTSModel = s }},
+		{voiceKeyTTSVoice, func(s string) { v.TTSVoice = s }},
+		{voiceKeySTTProvider, func(s string) { v.STTProvider = s }},
+		{voiceKeySTTModel, func(s string) { v.STTModel = s }},
+		{voiceKeySTTLanguage, func(s string) { v.STTLanguage = s }},
+		{voiceKeyLiveKitURL, func(s string) { v.LiveKitURL = s }},
+		{voiceKeyLiveKitPublicURL, func(s string) { v.LiveKitPublicURL = s }},
+		{voiceKeyExitKeywords, func(s string) { v.ExitKeywords = s }},
+		{voiceKeyGoodbyeText, func(s string) { v.GoodbyeText = s }},
+		{voiceKeyAwayTimeout, func(s string) { v.AwayTimeout = s }},
+		{voiceKeyEndpointMinDelay, func(s string) { v.EndpointMinDelay = s }},
+		{voiceKeyEndpointMaxDelay, func(s string) { v.EndpointMaxDelay = s }},
+	}
+	strVals := make([]*ProjectSetting, len(strs))
+	runConcurrently(len(strs), func(i int) {
+		if ps, err := mem.GetProjectSetting(ctx, voiceCategory, strs[i].key); err == nil && ps != nil {
+			strVals[i] = ps
+		}
+	})
+	for i, s := range strs {
+		if ps := strVals[i]; ps != nil {
+			if sv, ok := ps.Value["value"].(string); ok && sv != "" {
+				s.set(sv)
+			}
+		}
+	}
+	bools := []struct {
+		key string
+		set func(bool)
+	}{
+		{voiceKeyEnabled, func(b bool) { v.Enabled = b }},
+		{voiceKeyAllowInterruptions, func(b bool) { v.AllowInterruptions = b }},
+		{voiceKeyPreemptiveGeneration, func(b bool) { v.PreemptiveGeneration = b }},
+	}
+	boolVals := make([]*ProjectSetting, len(bools))
+	runConcurrently(len(bools), func(i int) {
+		if ps, err := mem.GetProjectSetting(ctx, voiceCategory, bools[i].key); err == nil && ps != nil {
+			boolVals[i] = ps
+		}
+	})
+	for i, b := range bools {
+		if ps := boolVals[i]; ps != nil {
+			if bv, ok := ps.Value["value"].(bool); ok {
+				b.set(bv)
+			}
+		}
+	}
+	return v
+}
+
+// persistVoiceSettings writes the effective voice configuration to the
+// project's settings. Booleans are always written explicitly (true/false); a
+// non-empty string is stored, an empty string clears the stored value so the
+// field falls back to its env default. Secrets are never written. The first
+// error is returned.
+func persistVoiceSettings(ctx context.Context, mem MemoryBackend, v voiceSettings) error {
+	writeBool := func(key string, b bool) error {
+		return mem.SetProjectSetting(ctx, voiceCategory, key, map[string]any{"value": b})
+	}
+	writeStr := func(key, s string) error {
+		if s == "" {
+			return mem.DeleteProjectSetting(ctx, voiceCategory, key)
+		}
+		return mem.SetProjectSetting(ctx, voiceCategory, key, map[string]any{"value": s})
+	}
+	if err := writeBool(voiceKeyEnabled, v.Enabled); err != nil {
+		return err
+	}
+	if err := writeBool(voiceKeyAllowInterruptions, v.AllowInterruptions); err != nil {
+		return err
+	}
+	if err := writeBool(voiceKeyPreemptiveGeneration, v.PreemptiveGeneration); err != nil {
+		return err
+	}
+	for _, s := range []struct{ key, val string }{
+		{voiceKeyTTSProvider, v.TTSProvider},
+		{voiceKeyTTSModel, v.TTSModel},
+		{voiceKeyTTSVoice, v.TTSVoice},
+		{voiceKeySTTProvider, v.STTProvider},
+		{voiceKeySTTModel, v.STTModel},
+		{voiceKeySTTLanguage, v.STTLanguage},
+		{voiceKeyLiveKitURL, v.LiveKitURL},
+		{voiceKeyLiveKitPublicURL, v.LiveKitPublicURL},
+		{voiceKeyExitKeywords, v.ExitKeywords},
+		{voiceKeyGoodbyeText, v.GoodbyeText},
+		{voiceKeyAwayTimeout, v.AwayTimeout},
+		{voiceKeyEndpointMinDelay, v.EndpointMinDelay},
+		{voiceKeyEndpointMaxDelay, v.EndpointMaxDelay},
+	} {
+		if err := writeStr(s.key, s.val); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// voiceEnabled reports whether voice is enabled for the current project
+// (stored setting over env default; defaults to off for a fresh project).
+func (s *Server) voiceEnabled(ctx context.Context) bool {
+	return resolveVoiceSettings(ctx, s.cfg, s.memory).Enabled
+}
+
+// uiProjectSettingsVoice handles the Voice section form (PRG → POST
+// /settings/voice). Toggles are always sent as explicit on/off; string fields
+// are trimmed, stored when non-empty, cleared via delete when empty. Away
+// timeout and the endpoint delays must be non-negative numbers when present —
+// validation runs before anything is written so an invalid value never
+// persists a partial write.
+func (s *Server) uiProjectSettingsVoice(c echo.Context) error {
+	ctx := c.Request().Context()
+	v := voiceSettings{
+		Enabled:              c.FormValue("voice_enabled") == "on",
+		AllowInterruptions:   c.FormValue("allow_interruptions") == "on",
+		PreemptiveGeneration: c.FormValue("preemptive_generation") == "on",
+		TTSProvider:          strings.TrimSpace(c.FormValue("tts_provider")),
+		TTSModel:             strings.TrimSpace(c.FormValue("tts_model")),
+		TTSVoice:             strings.TrimSpace(c.FormValue("tts_voice")),
+		STTProvider:          strings.TrimSpace(c.FormValue("stt_provider")),
+		STTModel:             strings.TrimSpace(c.FormValue("stt_model")),
+		STTLanguage:          strings.TrimSpace(c.FormValue("stt_language")),
+		LiveKitURL:           strings.TrimSpace(c.FormValue("livekit_url")),
+		LiveKitPublicURL:     strings.TrimSpace(c.FormValue("livekit_public_url")),
+		ExitKeywords:         strings.TrimSpace(c.FormValue("exit_keywords")),
+		GoodbyeText:          strings.TrimSpace(c.FormValue("goodbye_text")),
+		AwayTimeout:          strings.TrimSpace(c.FormValue("away_timeout")),
+		EndpointMinDelay:     strings.TrimSpace(c.FormValue("endpoint_min_delay")),
+		EndpointMaxDelay:     strings.TrimSpace(c.FormValue("endpoint_max_delay")),
+	}
+	for _, f := range []struct{ name, val string }{
+		{"away timeout", v.AwayTimeout},
+		{"endpoint min delay", v.EndpointMinDelay},
+		{"endpoint max delay", v.EndpointMaxDelay},
+	} {
+		if f.val == "" {
+			continue
+		}
+		if n, err := strconv.ParseFloat(f.val, 64); err != nil || n < 0 {
+			return redirectWithError(c, "/settings/voice", fmt.Errorf("%s must be a non-negative number", f.name))
+		}
+	}
+	if err := persistVoiceSettings(ctx, s.memory, v); err != nil {
+		return redirectWithError(c, "/settings/voice", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/voice?updated=1")
+}
+
+// voiceSettingLabel maps a canonical voice key to its human display name for
+// inline error messages.
+func voiceSettingLabel(key string) string {
+	switch key {
+	case voiceKeyEnabled:
+		return "voice"
+	case voiceKeyTTSProvider:
+		return "tts provider"
+	case voiceKeyTTSModel:
+		return "tts model"
+	case voiceKeyTTSVoice:
+		return "tts voice"
+	case voiceKeySTTProvider:
+		return "stt provider"
+	case voiceKeySTTModel:
+		return "stt model"
+	case voiceKeySTTLanguage:
+		return "stt language"
+	case voiceKeyLiveKitURL:
+		return "LiveKit url"
+	case voiceKeyLiveKitPublicURL:
+		return "LiveKit public url"
+	case voiceKeyExitKeywords:
+		return "exit keywords"
+	case voiceKeyGoodbyeText:
+		return "goodbye text"
+	case voiceKeyAwayTimeout:
+		return "away timeout"
+	case voiceKeyEndpointMinDelay:
+		return "endpoint min delay"
+	case voiceKeyEndpointMaxDelay:
+		return "endpoint max delay"
+	default:
+		return key
+	}
+}
+
+// toastTrigger signals a toast to the client via the HX-Trigger response
+// header. The "memory-toast" event carries {kind, message}; app.js listens for
+// it and pushes the message into the Alpine toast queue. It always returns
+// HTTP 200: the app-wide htmx noSwap config suppresses non-2xx, and the
+// outcome is carried by the trigger detail, not the HTTP status or body.
+func toastTrigger(c echo.Context, kind, msg string) error {
+	detail, err := json.Marshal(map[string]any{"kind": kind, "message": msg})
+	if err != nil {
+		detail = []byte(`{"kind":"info","message":""}`)
+	}
+	c.Response().Header().Set("HX-Trigger", `{"memory-toast": `+string(detail)+`}`)
+	c.Response().WriteHeader(http.StatusOK)
+	return nil
+}
+
+// alertTrigger signals an alert modal to the client via the HX-Trigger response
+// header. The "memory-alert" event carries {kind, title, message}; app.js
+// listens for it and opens the shell's #memory-alert-modal, rendering the
+// message as text (provider replies are untrusted — never innerHTML). Like
+// toastTrigger it always returns HTTP 200: the app-wide htmx noSwap config
+// suppresses non-2xx, and the outcome is carried by the trigger detail.
+func alertTrigger(c echo.Context, kind, title, msg string) error {
+	detail, err := json.Marshal(map[string]any{"kind": kind, "title": title, "message": msg})
+	if err != nil {
+		detail = []byte(`{"kind":"info","title":"","message":""}`)
+	}
+	c.Response().Header().Set("HX-Trigger", `{"memory-alert": `+string(detail)+`}`)
+	c.Response().WriteHeader(http.StatusOK)
+	return nil
+}
+
+// uiProjectVoiceField handles one inline per-field voice save (HTMX → POST
+// /settings/voice/:key). The request carries only the changed input's own
+// value (hx-include="this"; the input's name equals the canonical key).
+// Validation is per key: strings are trimmed and an empty value deletes the
+// stored row (falling back to the env default); numerics must parse as a
+// non-negative float when non-empty; booleans are stored as value == "on".
+// Rejected values persist nothing and return an inline error fragment.
+func (s *Server) uiProjectVoiceField(c echo.Context) error {
+	ctx := c.Request().Context()
+	key := c.Param("key")
+	val := strings.TrimSpace(c.FormValue(key))
+	switch {
+	case voiceStrKeys[key]:
+		if val == "" {
+			if err := s.memory.DeleteProjectSetting(ctx, voiceCategory, key); err != nil {
+				return toastTrigger(c, "error", err.Error())
+			}
+			return toastTrigger(c, "success", "Saved")
+		}
+		if err := s.memory.SetProjectSetting(ctx, voiceCategory, key, map[string]any{"value": val}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	case voiceNumKeys[key]:
+		if val != "" {
+			if n, err := strconv.ParseFloat(val, 64); err != nil || n < 0 {
+				return toastTrigger(c, "error", fmt.Sprintf("%s must be a non-negative number", voiceSettingLabel(key)))
+			}
+		}
+		if val == "" {
+			if err := s.memory.DeleteProjectSetting(ctx, voiceCategory, key); err != nil {
+				return toastTrigger(c, "error", err.Error())
+			}
+			return toastTrigger(c, "success", "Saved")
+		}
+		if err := s.memory.SetProjectSetting(ctx, voiceCategory, key, map[string]any{"value": val}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	case voiceBoolKeys[key]:
+		if err := s.memory.SetProjectSetting(ctx, voiceCategory, key, map[string]any{"value": c.FormValue(key) == "on"}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	default:
+		return toastTrigger(c, "error", fmt.Sprintf("Unknown voice setting %q.", key))
+	}
+}
+
+// uiProjectVoiceGroup handles one inline group save (HTMX → POST
+// /settings/voice/group/:group). Coupled fields commit as a single unit:
+//   - endpoint_delays re-validates min <= max (both non-empty) before writing
+//     either member, so an invalid combination persists nothing;
+//   - tts persists provider/model/voice together and clears model/voice when
+//     the provider does not use them (client/none).
+//
+// Unknown groups and validation failures return an inline error fragment.
+func (s *Server) uiProjectVoiceGroup(c echo.Context) error {
+	ctx := c.Request().Context()
+	group := c.Param("group")
+
+	// setOrDelete persists one group member, returning the first write error.
+	setOrDelete := func(key, val string) error {
+		if val == "" {
+			return s.memory.DeleteProjectSetting(ctx, voiceCategory, key)
+		}
+		return s.memory.SetProjectSetting(ctx, voiceCategory, key, map[string]any{"value": val})
+	}
+	// parseNonNeg validates a delay/timeout group member: empty is valid
+	// (clears), non-empty must parse as a non-negative float.
+	parseNonNeg := func(raw string) (float64, bool) {
+		if raw == "" {
+			return 0, true
+		}
+		n, err := strconv.ParseFloat(raw, 64)
+		return n, err == nil && n >= 0
+	}
+
+	switch group {
+	case "endpoint_delays":
+		minRaw := strings.TrimSpace(c.FormValue(voiceKeyEndpointMinDelay))
+		maxRaw := strings.TrimSpace(c.FormValue(voiceKeyEndpointMaxDelay))
+		if minV, ok := parseNonNeg(minRaw); !ok {
+			return toastTrigger(c, "error", fmt.Sprintf("%s must be a non-negative number", voiceSettingLabel(voiceKeyEndpointMinDelay)))
+		} else if maxV, ok := parseNonNeg(maxRaw); !ok {
+			return toastTrigger(c, "error", fmt.Sprintf("%s must be a non-negative number", voiceSettingLabel(voiceKeyEndpointMaxDelay)))
+		} else if minRaw != "" && maxRaw != "" && minV > maxV {
+			return toastTrigger(c, "error", "endpoint min delay cannot exceed endpoint max delay")
+		}
+		if err := setOrDelete(voiceKeyEndpointMinDelay, minRaw); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		if err := setOrDelete(voiceKeyEndpointMaxDelay, maxRaw); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	case "tts":
+		provider := strings.TrimSpace(c.FormValue(voiceKeyTTSProvider))
+		model := strings.TrimSpace(c.FormValue(voiceKeyTTSModel))
+		voice := strings.TrimSpace(c.FormValue(voiceKeyTTSVoice))
+		// A provider that does not use a model/voice clears them as part of
+		// the same atomic save.
+		if provider == "client" || provider == "none" {
+			model, voice = "", ""
+		}
+		if err := setOrDelete(voiceKeyTTSProvider, provider); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		if err := setOrDelete(voiceKeyTTSModel, model); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		if err := setOrDelete(voiceKeyTTSVoice, voice); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	default:
+		return toastTrigger(c, "error", fmt.Sprintf("Unknown voice setting group %q.", group))
+	}
+}
+
+// --- display helpers (used by ProjectSettingsPage) ---
+
+// overrideSummary renders one line describing which fields an override sets,
+// e.g. "model gpt-4o · 2 tools · max 10 steps".
+func overrideSummary(o AgentOverrideInput) string {
+	parts := []string{}
+	if o.SystemPrompt != nil && *o.SystemPrompt != "" {
+		parts = append(parts, "system prompt")
+	}
+	if o.Model != nil && o.Model.Name != "" {
+		parts = append(parts, "model "+o.Model.Name)
+	}
+	if len(o.Tools) > 0 {
+		parts = append(parts, strconv.Itoa(len(o.Tools))+" tool"+plural(len(o.Tools)))
+	}
+	if o.MaxSteps != nil && *o.MaxSteps > 0 {
+		parts = append(parts, "max "+strconv.Itoa(*o.MaxSteps)+" steps")
+	}
+	if len(o.SandboxConfig) > 0 {
+		parts = append(parts, "sandbox config")
+	}
+	if len(parts) == 0 {
+		return "no overridden fields"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// budgetInputValue renders the budget form value, or "" when unset.
+func budgetInputValue(b *float64) string {
+	if b == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*b, 'f', -1, 64)
+}
+
+// thresholdPercentInputValue renders the budget alert threshold fraction as a
+// percentage string (0.8 -> "80"), defaulting to 80 when unset. The threshold
+// is a whole percentage, but most fractions (e.g. 0.55) have no exact binary
+// representation, so `fraction*100` alone leaks float noise ("55.00000000000001").
+// Round to the nearest integer before formatting so the rendered value is exact
+// and a valid HTML5 step value.
+func thresholdPercentInputValue(t *float64) string {
+	if t == nil {
+		return "80"
+	}
+	return strconv.FormatFloat(math.Round(*t*100), 'f', -1, 64)
+}
+
+// rememberAgentIsDefault reports whether the remember agent resolves to the
+// canonical default (unset, empty, or explicitly set to the canonical name).
+func rememberAgentIsDefault(stored string) bool {
+	return stored == "" || stored == defaultRememberAgent
+}
+
+// agentListed reports whether name is one of the given agent definitions.
+// The remember-agent dropdown uses it to keep a stored value visible (as an
+// "(unlisted)" option) when the agent it refers to no longer exists.
+func agentListed(agents []AgentDefinitionSummary, name string) bool {
+	for _, a := range agents {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// agentListedByID reports whether id is one of the given agent definitions.
+// The assistant dropdown uses it to keep a stored value visible (as an
+// "(unlisted)" option) when the agent it refers to no longer exists.
+func agentListedByID(agents []AgentDefinitionSummary, id string) bool {
+	for _, a := range agents {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// agentOptionByID returns a flow selector's option for an agent id.
+func agentOptionByID(options []agentOption, id string) (agentOption, bool) {
+	for _, o := range options {
+		if o.ID == id {
+			return o, true
+		}
+	}
+	return agentOption{}, false
+}
+
+// agentOptionListed reports whether id appears in a flow selector's options.
+func agentOptionListed(options []agentOption, id string) bool {
+	_, ok := agentOptionByID(options, id)
+	return ok
+}
+
+// agentOptionLabel renders a flow selector option: the agent name, plus the
+// missing requirements when it cannot do the work named by verb.
+func agentOptionLabel(o agentOption, verb string) string {
+	if o.Eligible {
+		if o.Advisory != "" {
+			return o.Name + " — no " + o.Advisory + " (optional)"
+		}
+		return o.Name
+	}
+	if o.Detail == "" {
+		return o.Name + " (cannot " + verb + ")"
+	}
+	return o.Name + " — missing: " + o.Detail
+}
+
+// agentNameByID resolves an agent definition's display name from its ID,
+// returning "" when the ID is not among the given definitions.
+func agentNameByID(agents []AgentDefinitionSummary, id string) string {
+	for _, a := range agents {
+		if a.ID == id {
+			return a.Name
+		}
+	}
+	return ""
+}
+
+// deviceDisplayName returns the human label for a device credential: its
+// stored name, else the masked token prefix.
+func deviceDisplayName(d device) string {
+	if d.Name != "" {
+		return d.Name
+	}
+	return d.Prefix
+}

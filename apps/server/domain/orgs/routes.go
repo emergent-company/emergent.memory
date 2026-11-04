@@ -1,0 +1,42 @@
+package orgs
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers organization routes
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+	// All org endpoints require authentication
+	g := e.Group("/api/orgs")
+	g.Use(authMiddleware.RequireAuth())
+
+	// List organizations (user must be authenticated)
+	g.GET("", h.List)
+
+	// Get organization by ID (authenticated, no specific scope required)
+	g.GET("/:id", h.Get)
+
+	// Update organization (rename; authenticated)
+	g.PATCH("/:id", h.Update)
+
+	// Create organization (authenticated)
+	g.POST("", h.Create)
+
+	// Delete organization (authenticated)
+	g.DELETE("/:id", h.Delete)
+
+	g.GET("/:id/members", h.ListMembers)
+	g.POST("/:id/members", h.AddMember)
+	g.PATCH("/:id/members/:userId", h.UpdateMemberRole)
+	g.DELETE("/:id/members/:userId", h.RemoveMember)
+
+	// Org tool settings — admin routes
+	admin := e.Group("/api/admin/orgs")
+	admin.Use(authMiddleware.RequireAuth())
+
+	admin.GET("/:orgId/tool-settings", h.handleListOrgToolSettings)
+	admin.PUT("/:orgId/tool-settings/:toolName", h.handleUpsertOrgToolSetting)
+	admin.DELETE("/:orgId/tool-settings/:toolName", h.handleDeleteOrgToolSetting)
+}

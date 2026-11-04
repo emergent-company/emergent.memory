@@ -1,0 +1,324 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/search"
+	"github.com/spf13/cobra"
+)
+
+var queryCmd = &cobra.Command{
+	Use:     "query <question>",
+	Short:   "Query a project using natural language",
+	GroupID: "knowledge",
+	Long: `Query a project using natural language.
+
+By default, uses the graph-query-agent — an AI agent that reasons over the knowledge
+graph using search, traversal, and entity tools. The agent is managed server-side;
+no agent ID is needed.
+
+Use --mode=search for direct hybrid search without AI reasoning.
+
+--branch is only supported in --mode=search. It scopes the search to a specific
+branch of the knowledge graph. Without --branch, the main graph is searched.
+To search a branch, first find its ID with "memory graph branches list".
+
+Examples:
+  memory query "what are the main services and how do they relate?"
+  memory query --mode=search "auth service"
+  memory query --mode=search --branch <branch-id> "planned services"
+  memory query --project abc123 "list all requirements"`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runQuery,
+}
+
+var (
+	queryProjectID       string
+	queryBranchID        string
+	queryLimit           int
+	queryResultTypes     string
+	queryFusionStrategy  string
+	queryJSON            bool
+	queryDebug           bool
+	queryMode            string
+	queryShowTools       bool
+	queryShowScores      bool
+	queryShowTime        bool
+	querySessionID       string
+	queryRecencyBoost    float32
+	queryRecencyHalfLife float32
+	queryAccessBoost     float32
+)
+
+func init() {
+	rootCmd.AddCommand(queryCmd)
+
+	queryCmd.Flags().StringVar(&queryProjectID, "project", "", "Project ID to query (uses default project if not specified)")
+	queryCmd.Flags().StringVar(&queryMode, "mode", "agent", "Query mode: agent (default, AI reasoning) or search (direct hybrid search)")
+	queryCmd.Flags().StringVar(&queryBranchID, "branch", "", "Branch ID to search (search mode only; omit to search the main graph)")
+	queryCmd.Flags().BoolVar(&queryShowTools, "show-tools", false, "Show tool calls made by the agent (agent mode only)")
+	queryCmd.Flags().IntVar(&queryLimit, "limit", 10, "Maximum number of results to return (search mode only)")
+	queryCmd.Flags().StringVar(&queryResultTypes, "result-types", "both", "Types of results: graph, text, or both (search mode only)")
+	queryCmd.Flags().StringVar(&queryFusionStrategy, "fusion-strategy", "weighted", "Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only)")
+	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "Output results as JSON")
+	queryCmd.Flags().BoolVar(&queryDebug, "debug", false, "Include debug information in output")
+	queryCmd.Flags().BoolVar(&queryShowScores, "show-scores", false, "Show relevance scores for each result (search mode only)")
+	queryCmd.Flags().BoolVar(&queryShowTime, "show-time", false, "Show elapsed query time")
+	queryCmd.Flags().StringVar(&querySessionID, "session", "", "Continue a previous query session (use the session ID printed after a query)")
+	queryCmd.Flags().Float32Var(&queryRecencyBoost, "recency-boost", 0, "Boost score by recency (0 = disabled; try 0.5-2.0) (search mode only)")
+	queryCmd.Flags().Float32Var(&queryRecencyHalfLife, "recency-half-life", 168, "Half-life in hours for recency decay (default 168 = 7 days) (search mode only)")
+	queryCmd.Flags().Float32Var(&queryAccessBoost, "access-boost", 0, "Boost score by access recency (0 = disabled; try 0.5-2.0) (search mode only)")
+}
+
+func runQuery(cmd *cobra.Command, args []string) error {
+	query := strings.Join(args, " ")
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	projectID, err := resolveProjectContext(cmd, queryProjectID)
+	if err != nil {
+		return err
+	}
+
+	c.SetContext("", projectID)
+
+	if queryMode == "agent" {
+		return runAgentQuery(cmd.Context(), cmd.OutOrStdout(), c, query, projectID)
+	} else if queryMode == "search" {
+		return runSearchQuery(cmd.Context(), cmd.OutOrStdout(), c, query, projectID)
+	}
+	return fmt.Errorf("invalid mode %q (must be 'agent' or 'search')", queryMode)
+}
+
+// runAgentQuery posts to POST /api/projects/:projectId/query.
+// The server manages the graph-query-agent entirely — no agent ID needed client-side.
+func runAgentQuery(ctx context.Context, out io.Writer, c *client.Client, query, projectID string) error {
+	reqBody := map[string]interface{}{
+		"message": query,
+	}
+	if querySessionID != "" {
+		reqBody["conversation_id"] = querySessionID
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	endpoint := c.BaseURL() + "/api/projects/" + url.PathEscape(projectID) + "/query"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.SDK.AuthenticateRequest(httpReq); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	jsonMode := queryJSON || output == "json"
+	result, err := StreamSSE(httpReq, SSEOptions{
+		LivePrint: !jsonMode,
+		ShowTools: queryShowTools,
+		JSONMode:  jsonMode,
+	})
+	if err != nil {
+		return err
+	}
+
+	if jsonMode {
+		jsonOut := map[string]interface{}{
+			"query":     query,
+			"projectId": projectID,
+			"response":  result.Response,
+			"tools":     result.Tools,
+			"elapsedMs": result.Elapsed.Milliseconds(),
+		}
+		if result.StreamErr != "" {
+			jsonOut["error"] = result.StreamErr
+		}
+		if result.SessionID != "" {
+			jsonOut["session_id"] = result.SessionID
+		}
+		encoder := json.NewEncoder(out)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(jsonOut)
+	}
+
+	fmt.Printf("\n\n")
+	if queryShowTools && len(result.Tools) > 0 {
+		fmt.Printf("Tools used: %s\n", strings.Join(result.Tools, ", "))
+	}
+	if queryShowTime {
+		fmt.Printf("Time: %v\n", result.Elapsed.Round(time.Millisecond))
+	}
+	if result.SessionID != "" {
+		fmt.Printf("Session: %s  (use --session %s to continue)\n", result.SessionID, result.SessionID)
+	}
+
+	if result.StreamErr != "" {
+		return fmt.Errorf("%s", result.StreamErr)
+	}
+	return nil
+}
+
+func runSearchQuery(ctx context.Context, out io.Writer, c *client.Client, query, projectID string) error {
+	start := time.Now()
+	searchReq := &search.SearchRequest{
+		Query:          query,
+		Limit:          queryLimit,
+		ResultTypes:    queryResultTypes,
+		FusionStrategy: queryFusionStrategy,
+		IncludeDebug:   queryDebug,
+	}
+	if queryBranchID != "" {
+		searchReq.BranchID = &queryBranchID
+	}
+	if queryRecencyBoost > 0 {
+		searchReq.RecencyBoost = &queryRecencyBoost
+		if queryRecencyHalfLife > 0 {
+			searchReq.RecencyHalfLife = &queryRecencyHalfLife
+		}
+	}
+	if queryAccessBoost > 0 {
+		searchReq.AccessBoost = &queryAccessBoost
+	}
+	response, err := c.SDK.Search.Search(ctx, searchReq)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		return fmt.Errorf("query failed: %w", err)
+	}
+
+	if queryJSON || output == "json" {
+		output := map[string]interface{}{
+			"query":     query,
+			"projectId": projectID,
+			"total":     response.Total,
+			"results":   response.Results,
+			"elapsedMs": elapsed.Milliseconds(),
+		}
+		encoder := json.NewEncoder(out)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(output)
+	}
+
+	fmt.Printf("Query: %s\n", query)
+	if queryShowTime {
+		fmt.Printf("Results: %d  Time: %v\n\n", response.Total, elapsed.Round(time.Millisecond))
+	} else {
+		fmt.Printf("Results: %d\n\n", response.Total)
+	}
+
+	if response.Total == 0 {
+		fmt.Println("No results found.")
+		fmt.Println("\nTips:")
+		fmt.Println("  - Try broader search terms")
+		fmt.Println("  - Check that the project has data indexed")
+		fmt.Println("  - Use --debug flag to see more information")
+		return nil
+	}
+
+	if queryShowScores {
+		fmt.Printf("| # | type | details | id | score | lexical | vector |\n")
+		fmt.Printf("|---|------|---------|-----|-------|---------|--------|\n")
+	} else {
+		fmt.Printf("| # | type | details | id |\n")
+		fmt.Printf("|---|------|---------|----|\n")
+	}
+
+	for i, result := range response.Results {
+		num := fmt.Sprintf("%d", i+1)
+		var resultType, details, id string
+
+		switch result.Type {
+		case "graph":
+			resultType = result.ObjectType
+			label := result.Key
+			if label == "" {
+				if v, ok := result.Fields["name"].(string); ok {
+					label = v
+				}
+			}
+			details = label
+			var extras []string
+			for key, value := range result.Fields {
+				if key == "name" {
+					continue
+				}
+				var vs string
+				switch v := value.(type) {
+				case string:
+					vs = v
+				case []interface{}:
+					vs = fmt.Sprintf("[%d items]", len(v))
+				case map[string]interface{}:
+					vs = fmt.Sprintf("{%d fields}", len(v))
+				default:
+					vs = fmt.Sprintf("%v", v)
+				}
+				extras = append(extras, key+"="+vs)
+			}
+			if len(extras) > 0 {
+				extra := strings.Join(extras, ", ")
+				full := details + " (" + extra + ")"
+				if len(full) > 80 {
+					full = full[:77] + "..."
+				}
+				details = full
+			}
+			id = result.ObjectID
+
+		case "text":
+			resultType = "chunk"
+			details = result.Content
+			if len(details) > 80 {
+				details = details[:77] + "..."
+			}
+			id = result.DocumentID
+
+		case "relationship":
+			resultType = "relationship"
+			if result.TripletText != "" {
+				details = result.TripletText
+			} else {
+				details = fmt.Sprintf("(%s) -[%s]-> (%s)",
+					result.SourceID,
+					result.RelationshipType,
+					result.TargetID)
+			}
+			id = result.SourceID
+		}
+
+		details = strings.ReplaceAll(details, "|", "\\|")
+
+		if queryShowScores {
+			lexical := "-"
+			if result.LexicalScore != nil {
+				lexical = fmt.Sprintf("%.4f", *result.LexicalScore)
+			}
+			vector := "-"
+			if result.VectorScore != nil {
+				vector = fmt.Sprintf("%.4f", *result.VectorScore)
+			}
+			fmt.Printf("| %s | %s | %s | %s | %.4f | %s | %s |\n", num, resultType, details, id, result.Score, lexical, vector)
+		} else {
+			fmt.Printf("| %s | %s | %s | %s |\n", num, resultType, details, id)
+		}
+	}
+	fmt.Println()
+
+	return nil
+}

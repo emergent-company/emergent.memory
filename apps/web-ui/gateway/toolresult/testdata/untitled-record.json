@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "data": [
+      {"score": 0.4},
+      {"object": {"id": "e1", "type": "note", "name": "Only one"}}
+    ],
+    "total": 2
+  }
+}

@@ -1,0 +1,17 @@
+projectInfo: |
+  # Blueprint Architect
+
+  A dedicated authoring agent that designs and emits Memory blueprints for a
+  project. Given a domain description, it designs the object types, relationship
+  types, agent definitions, and seed data that capture the domain, registers the
+  schema in the live project, and produces a reusable blueprint directory
+  (schemas/, agents/, seed/) that can be installed elsewhere with
+  `memory blueprints install`.
+
+  Key design decisions:
+  - Schema is applied directly via the schema tools, making types immediately usable
+  - The full blueprint is also emitted as structured YAML/JSONL so it can be saved,
+    versioned, and re-installed in any project
+  - Every object type gets a stable identity key where seed data is planned, so
+    re-applying is idempotent
+  - Human checkpoints gate the design before any graph writes happen

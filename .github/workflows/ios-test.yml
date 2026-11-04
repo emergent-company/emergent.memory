@@ -1,0 +1,124 @@
+name: iOS Test
+
+# `VoiceAgentTests` compiled as part of lint/release but never actually ran:
+# there was no workflow that executed the simulator unit tests (issue #1554).
+# This supplies that job on the self-hosted macOS runner, mirroring the
+# Xcode-selection step from ios-release.yml. It needs macOS + a bootable
+# simulator, so it cannot run on the ubuntu lint runner.
+#
+# The check is named `ios-test`, NOT `ci`: the repo already emits several
+# distinct checks literally named `ci` (ci.yml, server.yml, cli.yml, web-ui.yml,
+# connector.yml), and another would make check results ambiguous.
+#
+# No `actions/cache` here: this runner is persistent, so `xcodebuild` reuses the
+# default `~/Library/Developer/Xcode/DerivedData` (and the SwiftPM cache in
+# `~/Library/Caches/org.swift.swiftpm`) from the previous run for free. The old
+# DerivedData cache was ~650 MB and cost 5-11 min per run to restore/save, while
+# the build itself is only ~2.5 min — a net loss that also held the single Mac
+# runner hostage during the post-job cache upload while PR jobs queued.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One in-flight run per ref; a new push/PR update supersedes the previous run.
+concurrency:
+  group: ios-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-test:
+    name: ios-test
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    timeout-minutes: 45
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          # Deliberate, reported selection: ACCEPTED_XCODE_PATH pins a known-good
+          # bundle so an App Store auto-update cannot swap the toolchain under a
+          # build. The script already failed the step if nothing is installed, so
+          # there is no empty-value guard to keep here.
+          ACCEPTED_XCODE_PATH: ${{ vars.ACCEPTED_XCODE_PATH }}
+        run: |
+          XCODE=$(.github/scripts/select-xcode.sh)
+          CURRENT="$(xcode-select -p 2>/dev/null || true)"
+          if [ "$CURRENT" != "$XCODE/Contents/Developer" ]; then
+            if ! sudo -n xcode-select -s "$XCODE"; then
+              echo "::error::Cannot switch to selected Xcode '$XCODE': 'sudo -n xcode-select -s' failed (passwordless sudo unavailable on this runner). Point ACCEPTED_XCODE_PATH at the already-active bundle, or grant the runner passwordless sudo."
+              exit 1
+            fi
+          fi
+          BUNDLE_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$XCODE/Contents/Info.plist")"
+          ACTIVE_VERSION="$(xcodebuild -version | awk 'NR==1 {print $2}')"
+          if [ "$ACTIVE_VERSION" != "$BUNDLE_VERSION" ]; then
+            echo "::error::xcode-select -s '$XCODE' did not take effect: xcodebuild reports '$ACTIVE_VERSION', selected bundle is '$BUNDLE_VERSION'."
+            exit 1
+          fi
+          xcodebuild -version
+
+      # The persistent runner keeps DerivedData across runs, so this only guards
+      # against unbounded growth. 7 days is comfortably longer than the spacing
+      # between iOS PRs; a branch untouched for longer just pays one cold build.
+      - name: Prune stale DerivedData
+        run: find ~/Library/Developer/Xcode/DerivedData -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + || true
+
+      - name: Build (iOS Simulator)
+        working-directory: apps/ios
+        run: |
+          set -o pipefail
+          xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Test (iOS Simulator)
+        working-directory: apps/ios
+        run: |
+          set -o pipefail
+          # Use the device NAME, not a UDID: device ids are not stable across runtimes.
+          xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            CODE_SIGNING_ALLOWED=NO test
+
+  ios-test-status:
+    name: ios-test-status
+    # Always-run, hosted aggregate so a fork PR (whose self-hosted macOS job is
+    # skipped by the fork guard) still yields a single satisfiable status check.
+    # 'skipped' is treated as pass — the guarded job is legitimately skipped on
+    # fork PRs — so only 'failure'/'cancelled' fail the gate. ubuntu-latest keeps
+    # this summary off the macOS signing box and it needs no secrets.
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [ios-test]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs['ios-test'].result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "iOS test passed"

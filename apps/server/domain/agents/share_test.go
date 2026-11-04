@@ -1,0 +1,1250 @@
+package agents
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// =============================================================================
+// Fakes
+// =============================================================================
+
+type fakeShareRepo struct {
+	tokenLink map[string]*AgentShareLink
+	linkByID  map[string]*AgentShareLink
+	defByID   map[string]*AgentDefinition
+	orgByProj map[string]string
+	sessions  map[string]*AgentShareSession
+	agents    map[string]*Agent
+
+	sessionByRunAndUser *AgentShareSession
+
+	activeSessions int
+	activeRuns     int
+	approvals      int
+
+	usage *ShareUsageAggregate
+
+	// reserveBudgetErr, when non-nil, is returned by ReserveShareBudget (used to
+	// simulate a tripped budget).
+	reserveBudgetErr error
+
+	// sessionCapErr / runSlotErr / approvalCapErr are returned by the respective
+	// atomic-reservation fakes to simulate a tripped cap.
+	sessionCapErr  error
+	runSlotErr     error
+	approvalCapErr error
+
+	// createdRun records the pre-created run from CreateShareRunIfUnderLimit.
+	createdRun *AgentRun
+
+	// failedRunID / failedRunErr record the most recent FailRunWithSteps call.
+	failedRunID  string
+	failedRunErr string
+
+	// recording
+	createdShareSession *AgentShareSession
+	createdShareLink    *AgentShareLink
+	createdAgent        *Agent
+	replacedTokenID     string
+	incrementedUsage    bool
+	incrementMessages   int
+	incrementTokens     int64
+	incrementCost       float64
+	runUsage            *RunTokenUsage
+	question            *AgentQuestion
+	accessLogs          []accessLogEntry
+
+	// owner-facing project session listing (ListShareSessionsByProject /
+	// GetShareSessionByProject).
+	shareSessionRows []shareSessionProjectRow
+	shareSessionRow  *shareSessionProjectRow
+
+	// transcript history (GetConversationFullHistory).
+	historyCalled bool
+	historyItems  []*ConversationHistoryItem
+
+	// pending tool approvals (ListPendingToolApprovalsForSession).
+	pendingApprovals []*AgentToolApproval
+
+	// answered questions (ListAnsweredQuestionsForSession).
+	answeredQuestions []*AgentQuestion
+
+	// tool calls (FindToolCallsByRunID).
+	toolCalls []*AgentRunToolCall
+
+	// deletedSessionID records the most recent DeleteShareSession call.
+	deletedSessionID string
+}
+
+type accessLogEntry struct {
+	linkID, ref, ip, action string
+}
+
+func newFakeShareRepo() *fakeShareRepo {
+	return &fakeShareRepo{
+		tokenLink: map[string]*AgentShareLink{},
+		linkByID:  map[string]*AgentShareLink{},
+		defByID:   map[string]*AgentDefinition{},
+		orgByProj: map[string]string{},
+		sessions:  map[string]*AgentShareSession{},
+		agents:    map[string]*Agent{},
+	}
+}
+
+// --- link CRUD ---
+func (f *fakeShareRepo) CreateShareLink(_ context.Context, l *AgentShareLink) error {
+	f.createdShareLink = l
+	f.linkByID[l.ID] = l
+	return nil
+}
+func (f *fakeShareRepo) ListShareLinksByProject(_ context.Context, _ string) ([]*AgentShareLink, error) {
+	out := []*AgentShareLink{}
+	for _, l := range f.linkByID {
+		out = append(out, l)
+	}
+	return out, nil
+}
+func (f *fakeShareRepo) GetShareLinkByID(_ context.Context, id string, _ *string) (*AgentShareLink, error) {
+	return f.linkByID[id], nil
+}
+func (f *fakeShareRepo) GetShareLinkByTokenID(_ context.Context, tokenID string) (*AgentShareLink, error) {
+	return f.tokenLink[tokenID], nil
+}
+func (f *fakeShareRepo) UpdateShareLink(_ context.Context, linkID, projectID, label string, config *ShareLinkConfig, expiresAt *time.Time) (bool, error) {
+	l := f.linkByID[linkID]
+	if l == nil || l.RevokedAt != nil {
+		return false, nil
+	}
+	l.Label = label
+	l.Config = config
+	l.ExpiresAt = expiresAt
+	return true, nil
+}
+func (f *fakeShareRepo) RevokeShareLink(_ context.Context, linkID, projectID string) (bool, error) {
+	l := f.linkByID[linkID]
+	if l == nil || l.RevokedAt != nil {
+		return false, nil
+	}
+	now := time.Now()
+	l.RevokedAt = &now
+	return true, nil
+}
+func (f *fakeShareRepo) ReplaceShareLinkToken(_ context.Context, _ bun.Tx, linkID, newTokenID string) error {
+	f.replacedTokenID = newTokenID
+	if l := f.linkByID[linkID]; l != nil {
+		l.APITokenID = newTokenID
+	}
+	return nil
+}
+func (f *fakeShareRepo) TouchShareLink(_ context.Context, _ string) error { return nil }
+
+// --- sessions ---
+func (f *fakeShareRepo) CreateShareSession(_ context.Context, s *AgentShareSession) error {
+	f.createdShareSession = s
+	f.sessions[s.ID] = s
+	return nil
+}
+func (f *fakeShareRepo) CreateShareSessionIfUnderCap(_ context.Context, session *Session, s *AgentShareSession, maxActive int) (bool, error) {
+	if f.sessionCapErr != nil {
+		return false, f.sessionCapErr
+	}
+	if maxActive > 0 && f.activeSessions >= maxActive {
+		return false, nil
+	}
+	s.SessionID = session.ID
+	f.createdShareSession = s
+	f.sessions[s.ID] = s
+	return true, nil
+}
+func (f *fakeShareRepo) GetShareSessionByID(_ context.Context, id, linkID, endUserRef string) (*AgentShareSession, error) {
+	s := f.sessions[id]
+	if s == nil {
+		return nil, nil
+	}
+	if s.ShareLinkID != linkID || s.EndUserRef != endUserRef {
+		return nil, nil
+	}
+	return s, nil
+}
+func (f *fakeShareRepo) ListShareSessionsByEndUser(_ context.Context, linkID, endUserRef string, _ bool) ([]*AgentShareSession, error) {
+	out := []*AgentShareSession{}
+	for _, s := range f.sessions {
+		if s.ShareLinkID == linkID && s.EndUserRef == endUserRef {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+func (f *fakeShareRepo) ListShareSessionsByProject(_ context.Context, _ string) ([]shareSessionProjectRow, error) {
+	return f.shareSessionRows, nil
+}
+func (f *fakeShareRepo) GetShareSessionByProject(_ context.Context, _, _ string) (*shareSessionProjectRow, error) {
+	return f.shareSessionRow, nil
+}
+func (f *fakeShareRepo) CountActiveShareSessions(_ context.Context, _, _ string) (int, error) {
+	return f.activeSessions, nil
+}
+func (f *fakeShareRepo) ArchiveShareSession(_ context.Context, id, _, _ string) (bool, error) {
+	s := f.sessions[id]
+	if s == nil || s.IsArchived {
+		return false, nil
+	}
+	s.IsArchived = true
+	return true, nil
+}
+func (f *fakeShareRepo) UnarchiveShareSession(_ context.Context, id, _, _ string) (bool, error) {
+	s := f.sessions[id]
+	if s == nil || !s.IsArchived {
+		return false, nil
+	}
+	s.IsArchived = false
+	return true, nil
+}
+func (f *fakeShareRepo) DeleteShareSession(_ context.Context, id, _, _ string) (bool, error) {
+	if _, ok := f.sessions[id]; !ok {
+		return false, nil
+	}
+	delete(f.sessions, id)
+	f.deletedSessionID = id
+	return true, nil
+}
+func (f *fakeShareRepo) TouchShareSession(_ context.Context, _ string) error { return nil }
+func (f *fakeShareRepo) FindShareSessionByRunAndEndUser(_ context.Context, _, _, _ string) (*AgentShareSession, error) {
+	return f.sessionByRunAndUser, nil
+}
+func (f *fakeShareRepo) CountActiveShareRuns(_ context.Context, _ string) (int, error) {
+	return f.activeRuns, nil
+}
+func (f *fakeShareRepo) CreateShareRunIfUnderLimit(_ context.Context, _ string, maxConcurrent int, opts CreateRunOptions) (*AgentRun, error) {
+	if f.runSlotErr != nil {
+		return nil, f.runSlotErr
+	}
+	if maxConcurrent > 0 && f.activeRuns >= maxConcurrent {
+		return nil, apperror.New(429, "share_busy", "share link is at its concurrent run limit")
+	}
+	run := newAgentRun(opts)
+	run.ID = "pre-run"
+	f.createdRun = run
+	return run, nil
+}
+func (f *fakeShareRepo) FailRunWithSteps(_ context.Context, runID, errorMessage string, _ int) error {
+	f.failedRunID = runID
+	f.failedRunErr = errorMessage
+	if f.createdRun != nil && f.createdRun.ID == runID {
+		f.createdRun.Status = RunStatusError
+	}
+	return nil
+}
+func (f *fakeShareRepo) CountSessionToolApprovals(_ context.Context, _, _ string) (int, error) {
+	return f.approvals, nil
+}
+func (f *fakeShareRepo) ReserveAndDecideShareApproval(_ context.Context, _, _, _, _, _, _ string, maxApprovals int) (bool, error) {
+	if f.approvalCapErr != nil {
+		return false, f.approvalCapErr
+	}
+	if maxApprovals > 0 && f.approvals >= maxApprovals {
+		return false, nil
+	}
+	f.approvals++
+	return true, nil
+}
+func (f *fakeShareRepo) ListAnsweredQuestionsForSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
+	return f.answeredQuestions, nil
+}
+func (f *fakeShareRepo) ListPendingToolApprovalsForSession(_ context.Context, _ string) ([]*AgentToolApproval, error) {
+	return f.pendingApprovals, nil
+}
+
+// --- end users ---
+func (f *fakeShareRepo) UpsertShareEndUser(_ context.Context, _ *AgentShareEndUser) error { return nil }
+func (f *fakeShareRepo) FindShareEndUser(_ context.Context, _, _ string) (*AgentShareEndUser, error) {
+	return nil, nil
+}
+
+// --- usage ---
+func (f *fakeShareRepo) IncrementShareUsage(_ context.Context, _ string, _ time.Time, messages int, tokens int64, costUSD float64) error {
+	f.incrementedUsage = true
+	f.incrementMessages = messages
+	f.incrementTokens = tokens
+	f.incrementCost = costUSD
+	return nil
+}
+func (f *fakeShareRepo) ReserveShareBudget(_ context.Context, _ string, _ time.Time, _ int, _ int64, _ float64, _ int64, _ float64) error {
+	return f.reserveBudgetErr
+}
+func (f *fakeShareRepo) SumShareUsageSince(_ context.Context, _ string, _ time.Time) (*ShareUsageAggregate, error) {
+	return f.usage, nil
+}
+func (f *fakeShareRepo) ListShareUsage(_ context.Context, _ string, _ int) ([]*AgentShareUsage, error) {
+	return nil, nil
+}
+
+// --- access log + reaper ---
+func (f *fakeShareRepo) CreateShareAccessLog(_ context.Context, linkID, endUserRef, ipHash, action string) error {
+	f.accessLogs = append(f.accessLogs, accessLogEntry{linkID, endUserRef, ipHash, action})
+	return nil
+}
+func (f *fakeShareRepo) ListPausedShareRuns(_ context.Context) ([]shareReapCandidate, error) {
+	return nil, nil
+}
+
+// --- shared agent lookups ---
+func (f *fakeShareRepo) FindDefinitionByID(_ context.Context, id string, _ *string) (*AgentDefinition, error) {
+	return f.defByID[id], nil
+}
+func (f *fakeShareRepo) GetOrgIDByProjectID(_ context.Context, projectID string) (string, error) {
+	return f.orgByProj[projectID], nil
+}
+func (f *fakeShareRepo) FindByName(_ context.Context, _, name string) (*Agent, error) {
+	return f.agents[name], nil
+}
+func (f *fakeShareRepo) Create(_ context.Context, a *Agent) error {
+	f.createdAgent = a
+	f.agents[a.Name] = a
+	return nil
+}
+func (f *fakeShareRepo) FindQuestionByID(_ context.Context, _ string) (*AgentQuestion, error) {
+	return f.question, nil
+}
+func (f *fakeShareRepo) GetRunTokenUsage(_ context.Context, _ string) (*RunTokenUsage, error) {
+	return f.runUsage, nil
+}
+func (f *fakeShareRepo) GetConversationFullHistory(_ context.Context, _ string) ([]*ConversationHistoryItem, error) {
+	f.historyCalled = true
+	return f.historyItems, nil
+}
+func (f *fakeShareRepo) FindToolCallsByRunID(_ context.Context, _ string) ([]*AgentRunToolCall, error) {
+	return f.toolCalls, nil
+}
+
+type shareFakeRunner struct {
+	captured ExecuteRequest
+	result   *ExecuteResult
+	err      error
+	// guardErr is returned by EnsureExecutionEnabled. Nil means the kill switch
+	// is enabled.
+	guardErr error
+}
+
+func (f *shareFakeRunner) Execute(_ context.Context, req ExecuteRequest) (*ExecuteResult, error) {
+	f.captured = req
+	return f.result, f.err
+}
+
+func (f *shareFakeRunner) EnsureExecutionEnabled() error { return f.guardErr }
+
+type shareFakeResponder struct {
+	captured RespondParams
+	dto      *AgentQuestionDTO
+	err      error
+}
+
+func (f *shareFakeResponder) RespondToQuestion(_ context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	f.captured = p
+	return f.dto, f.err
+}
+
+func (f *shareFakeResponder) CancelQuestion(_ context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	f.captured = p
+	return f.dto, f.err
+}
+
+type shareFakeTokenService struct {
+	revokedTokenIDs []string
+	revealedKey     string
+	role            string
+	roleSet         bool
+}
+
+func (f *shareFakeTokenService) CreateAgentChatShareToken(_ context.Context, _, _ string, _ *time.Time) (*apitoken.CreateApiTokenResponseDTO, error) {
+	return &apitoken.CreateApiTokenResponseDTO{ApiTokenDTO: apitoken.ApiTokenDTO{ID: "tok-1", TokenPrefix: "emt_"}, Token: "emt_test"}, nil
+}
+func (f *shareFakeTokenService) RevokeEphemeral(_ context.Context, tokenID string) {
+	f.revokedTokenIDs = append(f.revokedTokenIDs, tokenID)
+}
+func (f *shareFakeTokenService) RegenerateWith(_ context.Context, _, _, _ string, _ func(context.Context, bun.Tx, string) error) (*apitoken.CreateApiTokenResponseDTO, error) {
+	return nil, nil
+}
+func (f *shareFakeTokenService) GetByID(_ context.Context, _, _ string) (*apitoken.GetApiTokenResponseDTO, error) {
+	return &apitoken.GetApiTokenResponseDTO{ApiTokenDTO: apitoken.ApiTokenDTO{ID: "tok-1"}, Token: f.revealedKey}, nil
+}
+func (f *shareFakeTokenService) GetUserProjectRole(_ context.Context, _, _ string) (string, error) {
+	if !f.roleSet {
+		return "project_admin", nil
+	}
+	return f.role, nil
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+func testBinding(link *AgentShareLink, def *AgentDefinition) *ShareLinkBinding {
+	return &ShareLinkBinding{
+		Link:       link,
+		Definition: def,
+		ProjectID:  link.ProjectID,
+		OrgID:      "org-1",
+		Config:     link.EffectiveConfig(),
+	}
+}
+
+func testLink(id, projectID, defID, tokenID string) *AgentShareLink {
+	cfg := DefaultShareLinkConfig()
+	return &AgentShareLink{
+		ID:                id,
+		ProjectID:         projectID,
+		AgentDefinitionID: defID,
+		APITokenID:        tokenID,
+		Label:             "test link",
+		Config:            cfg,
+	}
+}
+
+func testDefinition(id, projectID, name string) *AgentDefinition {
+	return &AgentDefinition{
+		ID:        id,
+		ProjectID: projectID,
+		Name:      name,
+	}
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+// Resolver must derive the link strictly from the token — never from scope alone
+// or any other input — and reject missing/revoked/expired.
+func TestResolveLinkByTokenID_TokenBoundToDifferentLink(t *testing.T) {
+	repo := newFakeShareRepo()
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	linkA := testLink("link-a", "proj-a", "def-a", "token-a")
+	linkB := testLink("link-b", "proj-b", "def-a", "token-b")
+	repo.tokenLink["token-a"] = linkA
+	repo.tokenLink["token-b"] = linkB
+	repo.defByID["def-a"] = def
+	repo.orgByProj["proj-a"] = "org-a"
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+
+	// Token A resolves to link A, not link B.
+	binding, err := svc.ResolveLinkByTokenID(context.Background(), "token-a")
+	require.NoError(t, err)
+	require.NotNil(t, binding)
+	assert.Equal(t, "link-a", binding.Link.ID)
+	assert.Equal(t, "proj-a", binding.ProjectID)
+
+	// A token bound to no link is rejected (scope alone never authorizes).
+	_, err = svc.ResolveLinkByTokenID(context.Background(), "token-nonexistent")
+	require.Error(t, err)
+
+	// A revoked link is rejected (410).
+	now := time.Now()
+	linkB.RevokedAt = &now
+	_, err = svc.ResolveLinkByTokenID(context.Background(), "token-b")
+	require.Error(t, err)
+}
+
+// The share resolver must ignore client-supplied project/org headers.
+func TestRequireShareLink_IgnoresForgedProjectID(t *testing.T) {
+	repo := newFakeShareRepo()
+	def := testDefinition("def-a", "proj-good", "Agent A")
+	link := testLink("link-a", "proj-good", "def-a", "token-a")
+	repo.tokenLink["token-a"] = link
+	repo.defByID["def-a"] = def
+	repo.orgByProj["proj-good"] = "org-good"
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	h := NewShareHandler(svc)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/share/agent", nil)
+	req.Header.Set("X-Project-ID", "evil-project")
+	req.Header.Set("X-Org-ID", "evil-org")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	user := &auth.AuthUser{ID: "u", APITokenID: "token-a", Scopes: []string{shareAgentChatScope}}
+	c.Set(string(auth.UserContextKey), user)
+
+	var gotBinding *ShareLinkBinding
+	next := func(c echo.Context) error {
+		gotBinding = shareBindingFromContext(c.Request().Context())
+		return nil
+	}
+
+	require.NoError(t, h.RequireShareLink()(next)(c))
+	require.NotNil(t, gotBinding)
+	assert.Equal(t, "proj-good", gotBinding.ProjectID, "resolved project must come from the link, not X-Project-ID")
+	assert.Equal(t, "org-good", gotBinding.OrgID, "resolved org must come from the link, not X-Org-ID")
+	assert.Equal(t, "proj-good", user.ProjectID, "echo user project must be overwritten with link project")
+}
+
+// Share runs must never receive the owner's project credentials, and sandbox is
+// forced off when the link config disables it.
+func TestBuildShareExecuteRequest_SandboxOffNoOwnerCreds(t *testing.T) {
+	repo := newFakeShareRepo()
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	def.SandboxConfig = map[string]any{"image": "owner-image"}
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, def)
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "ref-1"}
+
+	req, err := svc.buildShareExecuteRequest(context.Background(), binding, session, "hello", nil)
+	require.NoError(t, err)
+
+	assert.True(t, req.DisableAuthMint, "share runs must disable the ephemeral auth mint")
+	assert.Equal(t, "", req.AuthToken, "share runs must never inject an owner auth token")
+	assert.Equal(t, "", req.EphemeralTokenID, "share runs must never inject an ephemeral token")
+	assert.Nil(t, req.AgentDefinition.SandboxConfig, "sandbox config must be forced empty when sandbox is disabled")
+	assert.Equal(t, "link-a", req.ShareLinkID)
+	assert.Equal(t, "", req.UserID, "anonymous share runs must not target notifications")
+}
+
+// A deny-listed (dangerous, non-allowlisted) tool is hard-blocked by the share
+// allowlist; allowlisting removes it.
+func TestComputeShareToolDeny_DefaultDenyAndAllowlist(t *testing.T) {
+	cfg := DefaultShareLinkConfig()
+	deny := cfg.ComputeShareToolDeny()
+
+	assert.Contains(t, deny, "entity-delete", "dangerous tools are denied by default")
+	assert.Contains(t, deny, "schema-migrate-execute", "dangerous tools are denied by default")
+
+	// Allowlist re-enables a dangerous tool.
+	cfg.ToolAllowlist = []string{"entity-delete"}
+	deny2 := cfg.ComputeShareToolDeny()
+	assert.NotContains(t, deny2, "entity-delete", "allowlisted tools are removed from the deny list")
+	assert.Contains(t, deny2, "schema-migrate-execute", "non-allowlisted dangerous tools remain denied")
+}
+
+// A foreign end_user_ref can never answer another user's question.
+func TestRespondToQuestion_ForeignEndUserRef(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	bob := "22222222-2222-2222-2222-222222222222"
+
+	// The caller's session is "sess-1" but the run maps to a DIFFERENT session
+	// (owned by another end user).
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = &AgentShareSession{ID: "sess-2", ShareLinkID: "link-a", EndUserRef: bob, SessionID: "acp-1"}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.RespondToQuestion(context.Background(), binding, "sess-1", alice, "q-1", "approve", "", "iphash")
+	require.Error(t, err)
+
+	// The responder must have been NOT called.
+	assert.Equal(t, "", responder.captured.QuestionID)
+}
+
+// A resumed share run leg must record its usage, otherwise a visitor can cycle
+// approve/resume to spend above the per-link budget (the initial StreamMessage
+// only reconciles usage up to the first pause).
+func TestResumeSettled_RecordsResumeUsage(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.runUsage = &RunTokenUsage{
+		TotalInputTokens:  100,
+		TotalOutputTokens: 50,
+		EstimatedCostUSD:  0.02,
+	}
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	svc.resumeSettled(binding)(&ExecuteResult{RunID: "run-resumed"})
+
+	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded")
+	assert.Equal(t, 0, repo.incrementMessages, "no message slot reserved for a resume leg")
+	assert.Equal(t, int64(150), repo.incrementTokens, "resume tokens must be recorded in full")
+	assert.InDelta(t, 0.02, repo.incrementCost, 1e-9, "resume cost must be recorded in full")
+}
+
+// RespondToQuestion must wire the OnRunSettled callback so the resumed leg's
+// usage is recorded after it settles.
+func TestRespondToQuestion_SetsOnRunSettled(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = repo.sessions["sess-1"]
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+	repo.runUsage = &RunTokenUsage{TotalInputTokens: 10, TotalOutputTokens: 5, EstimatedCostUSD: 0.01}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.RespondToQuestion(context.Background(), binding, "sess-1", alice, "q-1", "approve", "", "iphash")
+	require.NoError(t, err)
+
+	require.NotNil(t, responder.captured.OnRunSettled, "RespondToQuestion must wire OnRunSettled")
+	responder.captured.OnRunSettled(&ExecuteResult{RunID: "run-resumed"})
+	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded via the wired callback")
+}
+
+// Session cap is enforced.
+func TestCreateSession_SessionCap(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	cfg := DefaultShareLinkConfig()
+	cfg.MaxActiveSessionsPerUser = 5
+	link.Config = cfg
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	repo.activeSessions = 5
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	_, err := svc.CreateSession(context.Background(), binding, "alice", "alice@example.com", "title")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "limit")
+}
+
+// Budget trip: when usage is at/over the cap, the stream is rejected before the
+// runner executes.
+func TestStreamMessage_BudgetTrip(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	cfg := DefaultShareLinkConfig()
+	cfg.BudgetMaxMessages = 500
+	link.Config = cfg
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	repo.reserveBudgetErr = apperror.New(429, "share_budget_exceeded", "share link message budget exceeded")
+
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "budget")
+	assert.Equal(t, "", runner.captured.ProjectID, "runner must not execute when budget is tripped")
+}
+
+// =============================================================================
+// End-user ref signature verification
+// =============================================================================
+
+// signShareRef computes the gateway contract signature:
+// base64url-nopad(HMAC-SHA256(secret, ref)).
+func signShareRef(secret, ref string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ref))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func TestVerifyEndUserRefSig_MissingSig(t *testing.T) {
+	svc := NewShareService(newFakeShareRepo(), nil, nil, nil, "secret", nil)
+	err := svc.VerifyEndUserRefSig("11111111-1111-1111-1111-111111111111", "")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusUnauthorized, apperrStatus(err))
+}
+
+func TestVerifyEndUserRefSig_WrongSig(t *testing.T) {
+	svc := NewShareService(newFakeShareRepo(), nil, nil, nil, "secret", nil)
+	ref := "11111111-1111-1111-1111-111111111111"
+	err := svc.VerifyEndUserRefSig(ref, signShareRef("other-secret", ref))
+	require.Error(t, err)
+	assert.Equal(t, http.StatusUnauthorized, apperrStatus(err))
+}
+
+func TestVerifyEndUserRefSig_ValidSig(t *testing.T) {
+	svc := NewShareService(newFakeShareRepo(), nil, nil, nil, "secret", nil)
+	ref := "11111111-1111-1111-1111-111111111111"
+	require.NoError(t, svc.VerifyEndUserRefSig(ref, signShareRef("secret", ref)))
+}
+
+func TestVerifyEndUserRefSig_SecretUnset(t *testing.T) {
+	svc := NewShareService(newFakeShareRepo(), nil, nil, nil, "", nil)
+	ref := "11111111-1111-1111-1111-111111111111"
+	err := svc.VerifyEndUserRefSig(ref, "anything")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, apperrStatus(err))
+}
+
+// A gateway-minted ref (valid signature) presented against a different link
+// must yield no data — the end-user DB row check scopes it to its link.
+func TestEnsureEndUserExists_ForeignRef(t *testing.T) {
+	repo := newFakeShareRepo()
+	// No end-user row exists for (link-b, ref), so a validly-signed ref for
+	// link-a must not resolve on link-b.
+	svc := NewShareService(repo, nil, nil, nil, "secret", nil)
+	ref := "11111111-1111-1111-1111-111111111111"
+	err := svc.EnsureEndUserExists(context.Background(), "link-b", ref)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+}
+
+// apperrStatus extracts the HTTP status from an *apperror.Error.
+func apperrStatus(err error) int {
+	if e, ok := err.(*apperror.Error); ok {
+		return e.HTTPStatus
+	}
+	return 0
+}
+
+// Revoking a link must also revoke the bound credential (core.api_tokens row)
+// so the share key is immediately unusable.
+func TestRevokeLink_RevokesCredential(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	repo.linkByID["link-a"] = link
+
+	tokens := &shareFakeTokenService{}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	require.NoError(t, svc.RevokeLink(context.Background(), "link-a", "proj-a", "owner-user"))
+
+	assert.NotNil(t, link.RevokedAt, "link must be revoked")
+	require.Len(t, tokens.revokedTokenIDs, 1, "bound credential must be revoked")
+	assert.Equal(t, "token-a", tokens.revokedTokenIDs[0])
+}
+
+// A non-admin caller must be rejected from owner mutations.
+func TestRevokeLink_NonAdminRejected(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	repo.linkByID["link-a"] = link
+
+	tokens := &shareFakeTokenService{role: "project_viewer", roleSet: true}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	err := svc.RevokeLink(context.Background(), "link-a", "proj-a", "viewer-user")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+	assert.Nil(t, link.RevokedAt, "link must NOT be revoked for a non-admin")
+}
+
+// A non-admin caller must be rejected from link creation too.
+func TestCreateLink_NonAdminRejected(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.defByID["def-a"] = testDefinition("def-a", "proj-a", "Agent A")
+
+	tokens := &shareFakeTokenService{role: "project_viewer", roleSet: true}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.CreateLink(context.Background(), "proj-a", "def-a", "label", "viewer-user", nil)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+}
+
+// Updating LinkExpiryDays must recompute expires_at so extend/expire/never-expire
+// controls actually affect authorization.
+func TestUpdateLink_RecomputesExpiry(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	repo.linkByID["link-a"] = link
+
+	tokens := &shareFakeTokenService{}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	one := 1
+	_, err := svc.UpdateLink(context.Background(), "link-a", "proj-a", "admin-user", "", &ShareLinkConfigInput{LinkExpiryDays: &one})
+	require.NoError(t, err)
+	require.NotNil(t, link.ExpiresAt, "expires_at must be set for a finite expiry")
+
+	zero := 0
+	_, err = svc.UpdateLink(context.Background(), "link-a", "proj-a", "admin-user", "", &ShareLinkConfigInput{LinkExpiryDays: &zero})
+	require.NoError(t, err)
+	assert.Nil(t, link.ExpiresAt, "expires_at must be cleared for never-expire")
+}
+
+// The concurrent-run limit must be enforced atomically (busy before Execute).
+func TestStreamMessage_ConcurrentRunLimit(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	cfg := DefaultShareLinkConfig()
+	cfg.MaxConcurrentRuns = 3
+	link.Config = cfg
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	repo.runSlotErr = apperror.New(429, "share_busy", "share link is at its concurrent run limit")
+
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "concurrent")
+	assert.Equal(t, "", runner.captured.ProjectID, "runner must not execute when the concurrent limit is reached")
+}
+
+// =============================================================================
+// Owner session-list + transcript (project-scoped)
+// =============================================================================
+
+// A member fetching a session id that does not belong to the project must get
+// 404, and the transcript history must never be queried (no cross-project leak).
+func TestGetSessionTranscriptByID_ForeignProject404(t *testing.T) {
+	repo := newFakeShareRepo()
+	// shareSessionRow stays nil — the session is not in this project.
+	tokens := &shareFakeTokenService{} // default project_admin member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.GetSessionTranscriptByID(context.Background(), "proj-a", "sess-foreign", "owner-user")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+	assert.False(t, repo.historyCalled, "transcript history must not be queried for a foreign session")
+}
+
+// A non-member OAuth caller must be denied before any project session lookup,
+// closing the RequireProjectTokenScope/RequireAPITokenScopes OAuth bypass.
+func TestGetSessionTranscriptByID_NonMemberForbidden(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.shareSessionRow = &shareSessionProjectRow{SessionID: "acp-1"}
+	tokens := &shareFakeTokenService{roleSet: true} // role == "" → not a member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.GetSessionTranscriptByID(context.Background(), "proj-a", "sess-1", "stranger")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+	assert.False(t, repo.historyCalled, "transcript must not be queried for a non-member")
+}
+
+// ListSessionsByProject must reject a non-member OAuth caller too.
+func TestListSessionsByProject_NonMemberForbidden(t *testing.T) {
+	repo := newFakeShareRepo()
+	tokens := &shareFakeTokenService{roleSet: true} // role == "" → not a member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.ListSessionsByProject(context.Background(), "proj-a", "stranger")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+}
+
+// The owner transcript must include only user/assistant plain-text messages, in
+// order, dropping non-message kinds, tool/tool_result/system roles, and empty
+// text. The executor persists assistant turns under the sanitized agent name
+// (e.g. "coder"), NOT the literal "assistant", so any non-user/non-tool/
+// non-tool_result/non-system author role must map to "assistant" on the wire.
+func TestGetSessionTranscriptByID_FiltersMessages(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.shareSessionRow = &shareSessionProjectRow{SessionID: "acp-1"}
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "message", Role: "user", Content: map[string]any{"text": "hello"}},
+		{Kind: "message", Role: "coder", Content: map[string]any{"text": "hi there"}},                              // agent-name role → assistant
+		{Kind: "message", Role: "system", Content: map[string]any{"text": "system prompt"}},                        // dropped
+		{Kind: "message", Role: "tool", Content: map[string]any{"text": "tool output"}},                            // dropped
+		{Kind: "message", Role: "tool_result", Content: map[string]any{"text": "tool result"}},                     // dropped
+		{Kind: "tool_call", Role: "assistant", Content: map[string]any{"text": "tool output"}, ToolName: "search"}, // non-message kind dropped
+		{Kind: "message", Role: "user", Content: map[string]any{"text": ""}},                                       // empty text dropped
+		{Kind: "message", Role: "assistant", Content: map[string]any{"text": "final answer"}},
+	}
+	tokens := &shareFakeTokenService{} // member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	msgs, err := svc.GetSessionTranscriptByID(context.Background(), "proj-a", "sess-1", "owner-user")
+	require.NoError(t, err)
+
+	require.Len(t, msgs, 3)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "hello", msgs[0].Content)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "hi there", msgs[1].Content)
+	assert.Equal(t, "assistant", msgs[2].Role)
+	assert.Equal(t, "final answer", msgs[2].Content)
+}
+
+// =============================================================================
+// Share-link teardown (Gap 1)
+// =============================================================================
+
+// A served share link must tear its sandbox down on the success path. The
+// service binds cleanup to the handler lifetime, so a runner result carrying a
+// Cleanup func has it invoked exactly once before StreamMessage returns.
+func TestStreamMessage_InvokesCleanupOnSuccess(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	var cleanups int
+	runner := &shareFakeRunner{result: &ExecuteResult{
+		RunID:   "run-1",
+		Cleanup: func() { cleanups++ },
+	}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleanups, "share run cleanup must be invoked on success")
+}
+
+// An aborted / failed stream (runner returns an error) must still tear down.
+func TestStreamMessage_InvokesCleanupOnRunError(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	var cleanups int
+	runner := &shareFakeRunner{
+		result: &ExecuteResult{RunID: "run-1", Cleanup: func() { cleanups++ }},
+		err:    errors.New("stream aborted"),
+	}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.Error(t, err)
+	assert.Equal(t, 1, cleanups, "share run cleanup must be invoked when the run errors")
+}
+
+// A runner that returns no cleanup (no sandbox provisioned) must not panic.
+func TestStreamMessage_NilCleanupIsSafe(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+	require.NoError(t, err)
+}
+
+// =============================================================================
+// Kill switch on the share path (issue #1648)
+// =============================================================================
+
+// With AGENT_EXECUTION_ENABLED off, StreamMessage must refuse BEFORE the share
+// run is created — otherwise the pre-created run is stranded `running` until the
+// 30-minute stale-run reaper reports a misleading idle timeout. The error must
+// be a clean 503 apperror, never the reaper path.
+func TestStreamMessage_ExecutionDisabled_DoesNotCreateRun(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	exec := &AgentExecutor{
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: false},
+		log:        testAgentLogger(),
+	}
+	svc := NewShareService(repo, nil, exec, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr, "the disabled share path must return an apperror")
+	assert.Equal(t, http.StatusServiceUnavailable, appErr.HTTPStatus)
+	assert.Equal(t, "agent_execution_disabled", appErr.Code)
+	assert.Contains(t, err.Error(), ErrExecutionDisabled.Error())
+	assert.Nil(t, repo.createdRun, "no share run may be created when execution is disabled")
+}
+
+// If the kill switch flips between the pre-check and Execute, the executor
+// refuses without touching the pre-created run. The share path must drive it
+// terminal so it is not left `running` with the disabled reason.
+func TestStreamMessage_ExecutionDisabledRace_MarksPreCreatedRunTerminal(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	// EnsureExecutionEnabled passes (guardErr nil) but Execute refuses.
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "pre-run"}, err: ErrExecutionDisabled}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrExecutionDisabled), "the disabled sentinel must reach the caller")
+	require.NotNil(t, repo.createdRun, "the run must have been pre-created under the race")
+	assert.Equal(t, "pre-run", repo.failedRunID, "the refused share run must be marked terminal")
+	assert.Contains(t, repo.failedRunErr, ErrExecutionDisabled.Error(), "the disabled reason must be persisted")
+	assert.NotEqual(t, RunStatusRunning, repo.createdRun.Status, "the share run must not be left running")
+}
+
+// =============================================================================
+// Unify share chat with admin chat (change: unify-share-chat-with-admin-chat)
+// =============================================================================
+
+// 1.1 — GetSession must return the full run timeline (all kinds), not a
+// text-only transcript, plus the pending tool-policy approvals.
+func TestGetSession_FullTimelineAndPendingApprovals(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "run_start", RunID: "run-1", RunStatus: "running"},
+		{Kind: "message", RunID: "run-1", Role: "user", Content: map[string]any{"text": "hello"}},
+		{Kind: "tool_call", RunID: "run-1", ToolName: "search", ToolInput: map[string]any{"q": "x"}},
+		{Kind: "message", RunID: "run-1", Role: "assistant", Content: map[string]any{"text": "hi"}},
+		{Kind: "run_end", RunID: "run-1", RunStatus: "completed"},
+	}
+	repo.pendingApprovals = []*AgentToolApproval{
+		{QuestionID: "q-1", ToolName: "entity-create", ArgsSummary: map[string]any{"name": "X"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.GetSession(context.Background(), binding, "sess-1", alice)
+	require.NoError(t, err)
+
+	require.Len(t, dto.Items, 5, "full timeline must carry every kind, not just user/assistant text")
+	assert.Equal(t, "run_start", dto.Items[0].Kind)
+	assert.Equal(t, "tool_call", dto.Items[2].Kind)
+
+	require.Len(t, dto.PendingApprovals, 1)
+	assert.Equal(t, "q-1", dto.PendingApprovals[0].QuestionID)
+	assert.Equal(t, "entity-create", dto.PendingApprovals[0].Tool)
+	assert.Equal(t, "X", dto.PendingApprovals[0].Input["name"])
+}
+
+// 1.1 — GetSession must annotate an answered ask_user tool call with the end
+// user's response (from kb.agent_questions.response), so the shared transcript
+// renders the question card answered instead of re-offering the options; a
+// pending question (no response) is left unannotated.
+func TestGetSession_AnnotatesAnsweredQuestions(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	answered := "yes"
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "tool_call", RunID: "run-1", ToolName: "ask_user", ToolInput: map[string]any{"question": "Deploy?"}, ToolOutput: map[string]any{"question_id": "q-answered"}},
+		{Kind: "tool_call", RunID: "run-1", ToolName: "ask_user", ToolInput: map[string]any{"question": "Continue?"}, ToolOutput: map[string]any{"question_id": "q-pending"}},
+		{Kind: "tool_call", RunID: "run-1", ToolName: "search", ToolOutput: map[string]any{"question_id": "q-answered"}},
+	}
+	repo.answeredQuestions = []*AgentQuestion{
+		{ID: "q-answered", Response: &answered},
+		{ID: "q-pending", Response: nil},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.GetSession(context.Background(), binding, "sess-1", alice)
+	require.NoError(t, err)
+	require.Len(t, dto.Items, 3)
+
+	assert.Equal(t, "yes", dto.Items[0].ToolOutput["response"], "answered ask_user must carry the response")
+	_, pendingHasResponse := dto.Items[1].ToolOutput["response"]
+	assert.False(t, pendingHasResponse, "a pending question must not be annotated")
+	_, otherHasResponse := dto.Items[2].ToolOutput["response"]
+	assert.False(t, otherHasResponse, "only ask_user tool calls are annotated")
+}
+
+// 1.1 — GetSession must never return the composed system instruction to the
+// anonymous share surface: the owner's SystemPrompt (+ skills appendix) is
+// persisted as a role:"system" message and must be stripped (the authenticated
+// chat renders it, the public page must not).
+func TestGetSession_StripsSystemMessages(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "message", RunID: "run-1", Role: "system", Content: map[string]any{"text": "SECRET owner instruction"}},
+		{Kind: "message", RunID: "run-1", Role: "user", Content: map[string]any{"text": "hello"}},
+		{Kind: "message", RunID: "run-1", Role: "assistant", Content: map[string]any{"text": "hi"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.GetSession(context.Background(), binding, "sess-1", alice)
+	require.NoError(t, err)
+	require.Len(t, dto.Items, 2, "the system message must be dropped")
+	for _, it := range dto.Items {
+		assert.NotEqual(t, "system", it.Role, "no system-role item may reach the share surface")
+	}
+}
+
+// 1.1 — GetSession must be scoped to (link, session, end_user_ref): a foreign
+// session id is a 404 and history is never queried.
+func TestGetSession_ForeignSession404(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	_, err := svc.GetSession(context.Background(), binding, "sess-foreign", alice)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+	assert.False(t, repo.historyCalled, "history must not be queried for a foreign session")
+}
+
+// 1.2 — UnarchiveSession flips an archived session back to active.
+func TestUnarchiveSession(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1", IsArchived: true}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	require.NoError(t, svc.UnarchiveSession(context.Background(), binding, "sess-1", alice))
+	assert.False(t, repo.sessions["sess-1"].IsArchived)
+
+	// Unarchiving an already-active session is a 404.
+	err := svc.UnarchiveSession(context.Background(), binding, "sess-1", alice)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+}
+
+// 1.3 — DeleteSession removes the session, scoped to (link, end user).
+func TestDeleteSession(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	require.NoError(t, svc.DeleteSession(context.Background(), binding, "sess-1", alice))
+	assert.Equal(t, "sess-1", repo.deletedSessionID)
+	_, ok := repo.sessions["sess-1"]
+	assert.False(t, ok, "session must be removed")
+
+	// Deleting again is a 404.
+	err := svc.DeleteSession(context.Background(), binding, "sess-1", alice)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+}
+
+// 1.4 — A foreign end_user_ref can never cancel another user's question.
+func TestCancelQuestion_ForeignEndUserRef(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	bob := "22222222-2222-2222-2222-222222222222"
+
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = &AgentShareSession{ID: "sess-2", ShareLinkID: "link-a", EndUserRef: bob, SessionID: "acp-1"}
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.CancelQuestion(context.Background(), binding, "sess-1", alice, "q-1", "iphash")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+	assert.Equal(t, "", responder.captured.QuestionID, "the responder must not be called for a foreign question")
+}
+
+// 1.4 — CancelQuestion must honour allow_end_user_approvals: when the link
+// disables end-user approvals, a cancel is forbidden (it is a decision that
+// resumes the run) and the responder is never reached.
+func TestCancelQuestion_DisabledApprovalsForbidden(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+	binding.Config.AllowEndUserApprovals = false
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = repo.sessions["sess-1"]
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.CancelQuestion(context.Background(), binding, "sess-1", alice, "q-1", "iphash")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+	assert.Equal(t, "", responder.captured.QuestionID, "the responder must not be called when approvals are disabled")
+}
+
+// 1.4 — CancelQuestion must delegate with share resume params (DisableAuthMint,
+// share deny list, SessionID) and wire OnRunSettled for budget reconciliation.
+func TestCancelQuestion_SetsShareParams(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = repo.sessions["sess-1"]
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+	repo.runUsage = &RunTokenUsage{TotalInputTokens: 10, TotalOutputTokens: 5, EstimatedCostUSD: 0.01}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.CancelQuestion(context.Background(), binding, "sess-1", alice, "q-1", "iphash")
+	require.NoError(t, err)
+
+	require.NotNil(t, responder.captured.OnRunSettled, "CancelQuestion must wire OnRunSettled")
+	assert.True(t, responder.captured.DisableAuthMint, "share cancel must disable auth mint")
+	assert.Equal(t, "acp-1", responder.captured.SessionID)
+	responder.captured.OnRunSettled(&ExecuteResult{RunID: "run-resumed"})
+	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded via the wired callback")
+}
+
+// 1.5 — DeriveCitations returns the grounded citations for a finished turn from
+// the run's tool-call outputs + the answer text (and drops unreferenced ids).
+func TestDeriveCitations(t *testing.T) {
+	repo := newFakeShareRepo()
+	id := "11111111-1111-1111-1111-111111111111"
+	repo.toolCalls = []*AgentRunToolCall{
+		{Output: map[string]any{"id": id, "type": "person", "name": "Alice"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	cits := svc.DeriveCitations(context.Background(), "run-1", "See [Alice](/objects/"+id+") for details.", nil)
+
+	require.Len(t, cits, 1)
+	assert.Equal(t, "object", cits[0].Kind)
+	assert.Equal(t, id, cits[0].ID)
+	assert.Equal(t, "person", cits[0].Type)
+}
+
+// 1.5 — DeriveCitations is non-fatal when tool calls cannot be loaded (nil).
+func TestDeriveCitations_NoRunID(t *testing.T) {
+	repo := newFakeShareRepo()
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	assert.Nil(t, svc.DeriveCitations(context.Background(), "", "text", nil))
+}
