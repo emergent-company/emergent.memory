@@ -15,7 +15,11 @@ tmp_dir = "tmp"
   entrypoint = ["./memory"]
   delay = 500
   exclude_dir = ["node_modules", "tmp", "vendor", "webui/static/css"]
-  exclude_regex = ["_test.go", "_templ.go"]
+  # Generated sources: `go generate` rewrites devgallery_*_gen.go from the templ
+  # call sites on every build. Watching them restarts the build that produced
+  # them (a second, identical cycle); the running `task build` already compiles
+  # the fresh output, so leave them out of the trigger set.
+  exclude_regex = ["_test.go", "_templ.go", "devgallery_.*_gen\\.go"]
   include_ext = ["go", "templ", "css", "js"]
   kill_delay = "2s"
   stop_on_error = false
