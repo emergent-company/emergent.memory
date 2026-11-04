@@ -27,9 +27,24 @@ type Project = memoryapi.Project
 // none is stored for the server.
 var ErrNotSignedIn = errors.New("project: not signed in")
 
-// TokenScopes are the least-privilege scopes requested for connector tokens,
-// matching the macOS app.
-var TokenScopes = []string{"data:read"}
+// TokenScopes are the least-privilege read set requested for connector tokens.
+//
+// The connector used to request the coarse data:read umbrella, which is retired
+// from token creation (the API now rejects it with `invalid scope: data:read`),
+// so the umbrella is spelled out in the fine-grained scopes it covered for an
+// MCP client: documents (document-list/document-get), search
+// (search-hybrid/search-semantic), graph (entity-search), journal and schema.
+// The remaining data:read implications (chunks:read, search:read,
+// graph:search:read, extraction:read, tasks:*, user-activity:*,
+// notifications:*) are not in the mintable catalogue at all, so no token could
+// carry them either way.
+var TokenScopes = []string{
+	"documents:read",
+	"search",
+	"graph:read",
+	"journal:read",
+	"schema:read",
+}
 
 // Sessions supplies the stored account session for a server. *account.Manager
 // implements it.

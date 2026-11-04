@@ -87,10 +87,10 @@ type updateAPITokenScopesBody struct {
 	Scopes []string `json:"scopes"`
 }
 
-// apiTokenScopes lists every scope Memory accepts for API tokens (memory's
-// ValidApiTokenScopes, 23 total). admin:all is server-gated to org
-// admins/superadmins, so the UI omits it from pickers and surfaces the 403 if
-// Memory rejects it.
+// apiTokenScopes lists every scope the web UI offers for API tokens. It is a
+// hand-maintained mirror of memory's UserMintableScopes (no data:* umbrellas, no
+// reserved marker scopes); admin:all is server-gated to superadmins, so the UI
+// surfaces the 403 if memory rejects it.
 var apiTokenScopes = []string{
 	// coarse-grained (data:read/data:write are retired from user-facing minting
 	// and are deliberately absent — see nonMintableScopes in the server)

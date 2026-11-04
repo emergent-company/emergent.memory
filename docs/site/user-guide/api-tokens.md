@@ -19,9 +19,13 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
     ```bash
     memory tokens create \
       --name "CI/CD Pipeline" \
-      --scopes "read,agents:write" \
+      --scopes "documents:read,search,agents:write" \
       --project my-project
     ```
+
+    The CLI also accepts presets: `--scopes read` (the read-only set),
+    `--scopes write` (the write set, which also implies the matching reads) or
+    `--scopes read,write` for both.
 
 === "API"
     ```http
@@ -79,10 +83,18 @@ journal, schema, agents and project metadata, read-only) and `--scopes write`
 
 !!! note "`data:read` and `data:write` are retired"
     The coarse `data:read` / `data:write` umbrellas can no longer be requested
-    when creating or editing a token — the CLI, web UI and API all reject them.
-    Use the fine-grained scopes above instead. Tokens minted before the change
-    keep exactly the access they had; a token that still holds one cannot be
-    re-scoped in the web UI, so create a replacement and revoke it.
+    when creating or editing a token — the CLI, web UI, API and connectors all
+    reject them. Use the fine-grained scopes above instead. Tokens minted before
+    the change keep exactly the access they had; a token that still holds one
+    cannot be re-scoped in the web UI, so create a replacement and revoke it (or
+    update its scopes through the API, which accepts a set that drops the
+    umbrella).
+
+    A new token is also **narrower** than the umbrella it replaces: the reads
+    `data:read` granted for chunks, the unified search endpoint, extraction and
+    tasks are not in the mintable catalogue, so a token created now cannot call
+    those REST endpoints. MCP tools are unaffected. See
+    [Security and Scopes](../developer-guide/security-scopes.md#umbrella-scopes).
 
 ---
 

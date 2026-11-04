@@ -22,19 +22,33 @@ func TestNormalizeTokenScopes(t *testing.T) {
 			expect: []string{"admin:all"},
 		},
 		{
-			name:   "empty defaults to the read preset",
-			input:  nil,
-			expect: presetScopes("read"),
+			// Literal, not presetScopes("read"): the preset is pinned by the
+			// cli-init-wizard spec, so asserting the function against itself
+			// would let a preset edit slip through unremarked.
+			name:  "empty defaults to the read preset",
+			input: nil,
+			expect: []string{
+				"documents:read", "search", "graph:read", "journal:read",
+				"schema:read", "agents:read", "projects:read",
+			},
 		},
 		{
-			name:   "read preset expands and accepts explicit scopes",
-			input:  []string{"read", "branches:read"},
-			expect: append(presetScopes("read"), "branches:read"),
+			name:  "read preset expands and accepts explicit scopes",
+			input: []string{"read", "branches:read"},
+			expect: []string{
+				"documents:read", "search", "graph:read", "journal:read",
+				"schema:read", "agents:read", "projects:read", "branches:read",
+			},
 		},
 		{
-			name:   "read and write presets combine without duplicates",
-			input:  []string{"read", "write"},
-			expect: presetScopes("read", "write"),
+			name:  "read and write presets combine without duplicates",
+			input: []string{"read", "write"},
+			expect: []string{
+				"documents:read", "search", "graph:read", "journal:read",
+				"schema:read", "agents:read", "projects:read",
+				"documents:write", "graph:write", "schema:write",
+				"agents:write", "projects:write",
+			},
 		},
 		{
 			name:   "comma-separated scopes are preserved",

@@ -244,4 +244,24 @@ func TestCreate_ViewerCeilingUsesFineGrainedReads(t *testing.T) {
 	_, err = f.svc.Create(ctx, f.projectA, viewerID, "viewer-legacy", []string{"data:read"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid scope: data:read")
+
+	// A viewer can still provision a device credential: its ceiling is the
+	// hardcoded deviceAPIScopes set (which carries the retired data:read
+	// umbrella), not a set the viewer composed, so the stored read ceiling
+	// admits it.
+	_, err = f.svc.CreateDeviceToken(ctx, f.projectA, viewerID, "viewer-device", nil)
+	require.NoError(t, err, "a project_viewer must still be able to provision a device credential")
+
+	// A viewer's legacy token (minted before the umbrellas were retired) must
+	// still rotate: Regenerate copies the stored set, and the stored read
+	// ceiling admits data:read so the only remaining path is not
+	// create-replacement.
+	legacy, err := f.svc.Create(ctx, f.projectA, viewerID, "viewer-legacy-token",
+		[]string{"documents:read"})
+	require.NoError(t, err)
+	_, err = f.db.ExecContext(ctx,
+		`UPDATE core.api_tokens SET scopes = '{"data:read"}'::text[] WHERE id = ?`, legacy.ID)
+	require.NoError(t, err)
+	_, err = f.svc.Regenerate(ctx, legacy.ID, f.projectA, viewerID)
+	require.NoError(t, err, "a project_viewer must still be able to rotate a read-only legacy token")
 }

@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -65,10 +67,11 @@ func getTokenPrefix(token string) string {
 	return token[:12]
 }
 
-// viewerReadOnlyScopes lists the only scopes a project_viewer may include in a
+// viewerReadOnlyScopes lists the scopes a project_viewer may *request* on a
 // token. data:read is retired from user-facing minting, so the fine-grained
-// read scopes it used to cover are listed explicitly — a viewer can still mint
-// a token that reads documents, search and the graph, but nothing wider.
+// read scopes it covered for a project token are listed explicitly — a viewer
+// can still mint a token that reads documents, search and the graph, but
+// nothing wider.
 var viewerReadOnlyScopes = map[string]bool{
 	"documents:read": true,
 	"search":         true,
@@ -83,9 +86,46 @@ var viewerReadOnlyScopes = map[string]bool{
 	"device:api": true,
 }
 
-// viewerReadOnlyScopeList is viewerReadOnlyScopes without the internal device
-// marker, for the denial message.
-const viewerReadOnlyScopeList = "documents:read, search, graph:read, journal:read, schema:read, agents:read, projects:read"
+// viewerLegacyReadScopes are the read-only *stored* scopes a viewer may still
+// carry through a path they do not freely compose: the internal device
+// credential (deviceAPIScopes hardcodes data:read) and a token minted before
+// the umbrellas were retired, whose scopes Regenerate copies verbatim. Both are
+// read-only, so admitting them here cannot widen a viewer's access, and neither
+// is reachable from a user-facing create or update: those validate against
+// UserMintableScopes first and reject data:read before this ceiling is
+// consulted.
+var viewerLegacyReadScopes = map[string]bool{
+	"data:read": true,
+}
+
+// viewerStoredReadScopes is viewerReadOnlyScopes plus viewerLegacyReadScopes,
+// for the two paths that see a *stored* or *hardcoded* read set (the internal
+// mint in create() and regenerate()).
+var viewerStoredReadScopes = func() map[string]bool {
+	out := make(map[string]bool, len(viewerReadOnlyScopes)+len(viewerLegacyReadScopes))
+	for scope := range viewerReadOnlyScopes {
+		out[scope] = true
+	}
+	for scope := range viewerLegacyReadScopes {
+		out[scope] = true
+	}
+	return out
+}()
+
+// viewerReadOnlyScopeList is the denial message: the sorted keys of
+// viewerReadOnlyScopes minus the internal device marker. Derived rather than
+// hand-listed so the message cannot drift from the ceiling it describes.
+var viewerReadOnlyScopeList = func() string {
+	names := make([]string, 0, len(viewerReadOnlyScopes))
+	for scope := range viewerReadOnlyScopes {
+		if scope == deviceAPIScope {
+			continue
+		}
+		names = append(names, scope)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}()
 
 // validateTokenScopes returns an error naming the first requested scope that is
 // absent from allowed. allowed is ValidApiTokenScopes for internal mint paths
@@ -377,15 +417,23 @@ func (s *Service) create(ctx context.Context, projectID string, userID *string, 
 		return nil, err
 	}
 
-	// Viewers may only create read-only tokens
+	// Viewers may only create read-only tokens. Internal mint paths pass
+	// allowLegacyScopes=true and carry a hardcoded ceiling that may include the
+	// retired data:read umbrella (deviceAPIScopes), so they are checked against
+	// the stored read set; user-facing paths are checked against the mintable
+	// one.
 	if uid != "" && projectID != "" {
 		role, err := s.repo.GetUserProjectRole(ctx, projectID, uid)
 		if err != nil {
 			return nil, err
 		}
 		if role == "project_viewer" {
+			ceiling := viewerReadOnlyScopes
+			if allowLegacyScopes {
+				ceiling = viewerStoredReadScopes
+			}
 			for _, scope := range scopes {
-				if !viewerReadOnlyScopes[scope] {
+				if !ceiling[scope] {
 					return nil, apperror.New(403, "viewer-write-scope-denied",
 						"project_viewer may only request read-only scopes ("+viewerReadOnlyScopeList+")")
 				}
@@ -856,7 +904,12 @@ func (s *Service) regenerate(ctx context.Context, tokenID, projectID, userID str
 		return nil, apperror.New(409, "token_already_revoked", "Token is already revoked")
 	}
 
-	// Viewer scope restriction
+	// Viewer scope restriction. This inspects the token's *stored* scopes, which
+	// may include a retired read umbrella minted before the umbrellas were
+	// retired (or a device credential's hardcoded set), so it admits the stored
+	// read set rather than the mintable one — otherwise rotating a viewer's
+	// read-only legacy token would be impossible and the only remaining path
+	// would be create-replacement.
 	if userID != "" && projectID != "" {
 		role, err := s.repo.GetUserProjectRole(ctx, projectID, userID)
 		if err != nil {
@@ -864,7 +917,7 @@ func (s *Service) regenerate(ctx context.Context, tokenID, projectID, userID str
 		}
 		if role == "project_viewer" {
 			for _, scope := range existing.Scopes {
-				if !viewerReadOnlyScopes[scope] {
+				if !viewerStoredReadScopes[scope] {
 					return nil, apperror.New(403, "viewer-write-scope-denied",
 						"project_viewer may only regenerate tokens with read-only scopes")
 				}
