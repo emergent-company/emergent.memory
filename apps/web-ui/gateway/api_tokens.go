@@ -87,13 +87,14 @@ type updateAPITokenScopesBody struct {
 	Scopes []string `json:"scopes"`
 }
 
-// apiTokenScopes lists every scope Memory accepts for API tokens (memory's
-// ValidApiTokenScopes, 23 total). admin:all is server-gated to org
-// admins/superadmins, so the UI omits it from pickers and surfaces the 403 if
-// Memory rejects it.
+// apiTokenScopes lists every scope the web UI offers for API tokens. It is a
+// hand-maintained mirror of memory's UserMintableScopes (no data:* umbrellas, no
+// reserved marker scopes); admin:all is server-gated to superadmins, so the UI
+// surfaces the 403 if memory rejects it.
 var apiTokenScopes = []string{
-	// coarse-grained
-	"schema:read", "schema:write", "data:read", "data:write",
+	// coarse-grained (data:read/data:write are retired from user-facing minting
+	// and are deliberately absent — see nonMintableScopes in the server)
+	"schema:read", "schema:write",
 	"agents:read", "agents:write", "projects:read", "projects:write", "chat:use",
 	// fine-grained
 	"graph:read", "graph:write", "schema:migrate",
@@ -115,6 +116,21 @@ func validAPITokenScope(scope string) bool {
 		}
 	}
 	return false
+}
+
+// retiredTokenScopes returns the scopes a token holds that the picker no longer
+// offers: the retired data:read/data:write umbrellas and the internal marker
+// scopes (device:api, webhook:trigger, mcp:agent-call, share:agent-chat). A
+// token holding one cannot be re-scoped in place — saving the picker's set
+// would silently drop it — so the edit page blocks the form instead.
+func retiredTokenScopes(scopes []string) []string {
+	var out []string
+	for _, s := range scopes {
+		if !validAPITokenScope(s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // projectAPITokensPath builds the project-scoped tokens base path with the

@@ -30,8 +30,6 @@ var tokenScopeGroups = []struct {
 		Scopes: []tokenScope{
 			{"schema:read", "Read schema definitions"},
 			{"schema:write", "Install, uninstall and modify schemas (also grants schema:migrate)"},
-			{"data:read", "Read documents, chunks, graph objects, search and journal"},
-			{"data:write", "Write documents, chunks, graph objects, ingest and extraction"},
 			{"agents:read", "Read agents and use chat"},
 			{"agents:write", "Manage agents (also grants chat:admin)"},
 			{"projects:read", "Read projects"},
@@ -211,6 +209,11 @@ func runListScopes(cmd *cobra.Command, args []string) error {
 		}
 	}
 	fmt.Println()
+	fmt.Println("Presets")
+	fmt.Printf("  %-16s  %s\n", "read", strings.Join(tokenScopePresets["read"], ", "))
+	fmt.Printf("  %-16s  %s\n", "write", strings.Join(tokenScopePresets["write"], ", "))
+	fmt.Println()
+	fmt.Println("The retired data:read / data:write umbrellas are no longer accepted.")
 	fmt.Println("Full account access: --scopes all  (grants admin:all)")
 	return nil
 }
@@ -494,17 +497,67 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// tokenScopePresets maps friendly preset names to the fine-grained scopes they
+// expand to. The coarse umbrellas data:read/data:write are retired from
+// user-facing minting (the API rejects them), so the presets spell out their
+// fine-grained equivalents.
+var tokenScopePresets = map[string][]string{
+	"read": {
+		"documents:read", "search", "graph:read", "journal:read",
+		"schema:read", "agents:read", "projects:read",
+	},
+	"write": {
+		"documents:write", "graph:write", "schema:write",
+		"agents:write", "projects:write",
+	},
+}
+
+// presetScopes expands the named presets in order, dropping duplicates and
+// unknown names.
+func presetScopes(names ...string) []string {
+	out := make([]string, 0, len(names)*5)
+	seen := map[string]bool{}
+	for _, name := range names {
+		for _, scope := range tokenScopePresets[name] {
+			if !seen[scope] {
+				seen[scope] = true
+				out = append(out, scope)
+			}
+		}
+	}
+	return out
+}
+
 // normalizeTokenScopes resolves the raw --scopes flag values into the scopes
-// sent to the API. Empty input defaults to data:read; the sentinel "all"
+// sent to the API. Preset names ("read", "write") expand to their fine-grained
+// sets, empty input defaults to the read preset, and the sentinel "all"
 // expands to full admin access (admin:all).
 func normalizeTokenScopes(scopes []string) []string {
 	if len(scopes) == 0 {
-		return []string{"data:read"}
+		return presetScopes("read")
 	}
-	if len(scopes) == 1 && scopes[0] == "all" {
-		return []string{"admin:all"}
+	out := make([]string, 0, len(scopes))
+	seen := map[string]bool{}
+	add := func(scope string) {
+		if !seen[scope] {
+			seen[scope] = true
+			out = append(out, scope)
+		}
 	}
-	return scopes
+	for _, raw := range scopes {
+		if preset, ok := tokenScopePresets[raw]; ok {
+			for _, scope := range preset {
+				add(scope)
+			}
+			continue
+		}
+		if raw == "all" {
+			add("admin:all")
+			continue
+		}
+		add(raw)
+	}
+	return out
 }
 
 func runCreateToken(cmd *cobra.Command, args []string) error {
@@ -844,10 +897,10 @@ func init() {
 
 	// Create token flags
 	createTokenCmd.Flags().StringVar(&tokenName, "name", "", "Token name (required)")
-	createTokenCmd.Flags().StringSliceVar(&tokenScopes, "scopes", nil, "Comma-separated scopes (e.g. --scopes data:read,data:write). Use --scopes all for full admin access.")
+	createTokenCmd.Flags().StringSliceVar(&tokenScopes, "scopes", nil, "Comma-separated scopes or presets (read, write; e.g. --scopes read,write). Default: read. Use --scopes all for full admin access.")
 	_ = createTokenCmd.MarkFlagRequired("name")
 
-	updateScopesCmd.Flags().StringSliceVar(&updateTokenScopes, "scopes", nil, "Comma-separated scopes (e.g. --scopes data:read,data:write). Use --scopes all for full admin access.")
+	updateScopesCmd.Flags().StringSliceVar(&updateTokenScopes, "scopes", nil, "Comma-separated scopes or presets (read, write; e.g. --scopes read,write). Use --scopes all for full admin access.")
 
 	// Cleanup flags
 	cleanupTokensCmd.Flags().StringVar(&tokenNamePrefix, "name-prefix", "", "Revoke tokens whose names start with this prefix (required)")

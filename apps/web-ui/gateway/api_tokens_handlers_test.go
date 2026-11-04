@@ -60,7 +60,7 @@ func apiTokenGet(e *echo.Echo, path string) *httptest.ResponseRecorder {
 func apiTokenStore() *fakeMemory {
 	proj := APIToken{
 		ID: "t1", Name: "CI deploy", TokenPrefix: "emt_cideployx",
-		Scopes: []string{"data:read", "data:write"}, CreatedAt: fakeAPITokenCreatedAt,
+		Scopes: []string{"documents:read", "graph:read"}, CreatedAt: fakeAPITokenCreatedAt,
 	}
 	acct := APIToken{
 		ID: "a1", Name: "personal script", TokenPrefix: "emt_personalx",
@@ -81,7 +81,7 @@ func TestUIAPITokensListRoute(t *testing.T) {
 	// add a revoked token to assert the revoked state renders
 	f.apiTokens = append(f.apiTokens, APIToken{
 		ID: "t2", Name: "old token", TokenPrefix: "emt_oldtoken",
-		Scopes: []string{"data:read"}, CreatedAt: fakeAPITokenCreatedAt, IsRevoked: true,
+		Scopes: []string{"documents:read"}, CreatedAt: fakeAPITokenCreatedAt, IsRevoked: true,
 	})
 	s := &Server{cfg: Config{}, memory: f}
 	e := apiTokensTestServer(s)
@@ -93,7 +93,7 @@ func TestUIAPITokensListRoute(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"API Tokens", "CI deploy", "old token", "emt_cideployx", "emt_oldtoken",
-		"data:read", "data:write", "Revoked", "1 token",
+		"documents:read", "graph:read", "Revoked", "1 token",
 		// revoked tokens live in a collapsed disclosure, not the primary table
 		`data-testid="revoked-tokens-toggle"`,
 		// no inline create form; create moved to /new
@@ -176,7 +176,7 @@ func TestUIAPITokensNewPageRoute(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"New token", `action="/settings/tokens/new"`, `name="name"`,
-		`name="scopes"`, `value="data:read"`, "Create token", `href="/settings/tokens"`,
+		`name="scopes"`, `value="documents:read"`, "Create token", `href="/settings/tokens"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /settings/tokens/new missing %q", want)
@@ -192,7 +192,7 @@ func TestUIAPITokensCreateShowsPlaintextOnce(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: f}
 	e := apiTokensTestServer(s)
 
-	rec := apiTokenPost(e, "/settings/tokens/new", "name=ci&scopes=data:read&scopes=data:write")
+	rec := apiTokenPost(e, "/settings/tokens/new", "name=ci&scopes=documents:read&scopes=graph:read")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /settings/tokens/new = %d, want 200 (render once, no redirect)", rec.Code)
 	}
@@ -254,7 +254,7 @@ func TestUIAPITokensCreateDuplicateName(t *testing.T) {
 	e := apiTokensTestServer(s)
 
 	// the store already holds a token named "CI deploy" → 409 token_name_exists
-	rec := apiTokenPost(e, "/settings/tokens/new", "name=CI+deploy&scopes=data:read")
+	rec := apiTokenPost(e, "/settings/tokens/new", "name=CI+deploy&scopes=documents:read")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("duplicate create = %d, want 303", rec.Code)
 	}
@@ -269,7 +269,7 @@ func TestUIAPITokensCreateForbidden(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: f}
 	e := apiTokensTestServer(s)
 
-	rec := apiTokenPost(e, "/settings/tokens/new", "name=ci&scopes=data:write")
+	rec := apiTokenPost(e, "/settings/tokens/new", "name=ci&scopes=graph:write")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("forbidden create = %d, want 303", rec.Code)
 	}
@@ -299,7 +299,7 @@ func TestUIAPITokensEditPageRoute(t *testing.T) {
 		}
 	}
 	// the token's current scopes are pre-checked
-	for _, scope := range []string{"data:read", "data:write"} {
+	for _, scope := range []string{"documents:read", "graph:read"} {
 		if !strings.Contains(body, `value="`+scope+`" class="checkbox checkbox-sm mt-0.5" checked`) {
 			t.Errorf("scope %q should render pre-checked on the edit page", scope)
 		}
@@ -325,14 +325,14 @@ func TestUIAPITokensScopesEditPersists(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: f}
 	e := apiTokensTestServer(s)
 
-	rec := apiTokenPost(e, "/settings/tokens/t1/scopes", "scopes=data:write&scopes=graph:read")
+	rec := apiTokenPost(e, "/settings/tokens/t1/scopes", "scopes=graph:read&scopes=documents:write")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/tokens?updated=1" {
 		t.Fatalf("scopes = %d %q, want 303 /settings/tokens?updated=1", rec.Code, rec.Header().Get("Location"))
 	}
 	if f.lastAPITokenID != "t1" {
 		t.Errorf("updated id = %q, want t1", f.lastAPITokenID)
 	}
-	if len(f.lastAPITokenScopes) != 2 || f.lastAPITokenScopes[0] != "data:write" || f.lastAPITokenScopes[1] != "graph:read" {
+	if len(f.lastAPITokenScopes) != 2 || f.lastAPITokenScopes[0] != "graph:read" || f.lastAPITokenScopes[1] != "documents:write" {
 		t.Errorf("updated scopes = %v", f.lastAPITokenScopes)
 	}
 	// the list re-render reflects the new scopes
@@ -341,8 +341,8 @@ func TestUIAPITokensScopesEditPersists(t *testing.T) {
 	if !strings.Contains(body, "graph:read") {
 		t.Error("edited scopes missing from the relist")
 	}
-	if !strings.Contains(f.apiTokens[0].Scopes[0], "data:write") {
-		t.Errorf("store scopes = %v, want data:write first", f.apiTokens[0].Scopes)
+	if !strings.Contains(f.apiTokens[0].Scopes[0], "graph:read") {
+		t.Errorf("store scopes = %v, want graph:read first", f.apiTokens[0].Scopes)
 	}
 }
 
@@ -359,17 +359,59 @@ func TestUIAPITokensScopesEditEmpty(t *testing.T) {
 
 func TestUIAPITokensScopesEditErrorRedirectsToEditPage(t *testing.T) {
 	f := apiTokenStore()
-	f.apiTokenErr = fmt.Errorf("memory 403 viewer-write-scope-denied")
+	// Only the scope update fails: the handler lists the token first to check
+	// for retired scopes, so the list must stay healthy for this path.
+	f.apiTokenScopesErr = fmt.Errorf("memory 403 viewer-write-scope-denied")
 	s := &Server{cfg: Config{}, memory: f}
 	e := apiTokensTestServer(s)
 
-	rec := apiTokenPost(e, "/settings/tokens/t1/scopes", "scopes=data:write")
+	rec := apiTokenPost(e, "/settings/tokens/t1/scopes", "scopes=graph:write")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("scopes-save failure = %d, want 303", rec.Code)
 	}
 	loc := rec.Header().Get("Location")
 	if !strings.Contains(loc, "/settings/tokens/t1/edit?err=") || !strings.Contains(loc, "viewer-write-scope-denied") {
 		t.Errorf("scopes-save failure Location = %q, want back to the edit page with the error", loc)
+	}
+}
+
+// A token holding a retired scope (data:read) cannot be re-scoped in place: the
+// edit page renders the blocked notice instead of the form, and a POST to the
+// scopes endpoint is refused so the scope cannot be silently dropped.
+func TestUIAPITokensEditPageBlocksRetiredScopes(t *testing.T) {
+	f := apiTokenStore()
+	f.apiTokens = append(f.apiTokens, APIToken{
+		ID: "t9", Name: "legacy", TokenPrefix: "emt_legacyxxx",
+		Scopes: []string{"data:read", "schema:read"}, CreatedAt: fakeAPITokenCreatedAt,
+	})
+	s := &Server{cfg: Config{}, memory: f}
+	e := apiTokensTestServer(s)
+
+	rec := apiTokenGet(e, "/settings/tokens/t9/edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET legacy edit = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="retired-scopes-notice"`, "data:read", `href="/settings/tokens/new"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("blocked edit page missing %q", want)
+		}
+	}
+	if strings.Contains(body, `action="/settings/tokens/t9/scopes"`) || strings.Contains(body, "Save scopes") {
+		t.Error("blocked edit page must not render the scope form")
+	}
+
+	rec = apiTokenPost(e, "/settings/tokens/t9/scopes", "scopes=documents:read")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("legacy scopes POST = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "retired+scopes") {
+		t.Errorf("legacy scopes POST Location = %q, want the retired-scopes refusal", loc)
+	}
+	if f.lastAPITokenScopes != nil {
+		t.Errorf("legacy token scopes must not be updated, got %v", f.lastAPITokenScopes)
 	}
 }
 

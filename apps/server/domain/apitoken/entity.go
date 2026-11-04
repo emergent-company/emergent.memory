@@ -61,25 +61,34 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
 }
 
 // CreateAccountTokenRequest is the request body for creating an account-level token (no project binding)
 type CreateAccountTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
 }
 
 // UpdateApiTokenScopesRequest is the request body for updating token scopes
 type UpdateApiTokenScopesRequest struct {
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
 }
 
-// Available scopes for API tokens
+// ValidApiTokenScopes is every scope a stored token may carry, including the
+// scopes only internal mint paths produce (marker scopes and the legacy
+// data:read/data:write umbrellas). User-facing create/update surfaces validate
+// against UserMintableScopes instead.
 var ValidApiTokenScopes = []string{
 	// Coarse-grained (legacy, kept for backwards compatibility)
 	"schema:read",
 	"schema:write",
+	// data:read/data:write are retired from user-facing minting: they remain
+	// valid stored scopes so previously minted tokens, device/webhook
+	// credentials and agent shares keep their effective access (see
+	// pkg/auth.ScopeImplies), but no create/update surface accepts them. Use
+	// the fine-grained scopes (documents:*, graph:*, search, journal:*)
+	// instead — see UserMintableScopes.
 	"data:read",
 	"data:write",
 	"agents:read",
@@ -138,6 +147,33 @@ var ValidApiTokenScopes = []string{
 	// trigger-route surface guard at validation time.
 	"webhook:trigger",
 }
+
+// nonMintableScopes are the ValidApiTokenScopes members no user-facing
+// create/update surface may request: the retired coarse umbrellas and the
+// reserved marker scopes that only internal mint paths may attach.
+var nonMintableScopes = map[string]bool{
+	"data:read":        true,
+	"data:write":       true,
+	"mcp:agent-call":   true,
+	"share:agent-chat": true,
+	"device:api":       true,
+	"webhook:trigger":  true,
+}
+
+// UserMintableScopes is the subset of ValidApiTokenScopes a user-facing
+// create/update surface accepts (project tokens, account tokens, the superadmin
+// service-token preset, the token picker and the CLI). Internal mint paths
+// (device, webhook, ephemeral, agent shares) validate against
+// ValidApiTokenScopes instead, so their hardcoded ceilings keep minting.
+var UserMintableScopes = func() []string {
+	out := make([]string, 0, len(ValidApiTokenScopes))
+	for _, s := range ValidApiTokenScopes {
+		if !nonMintableScopes[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}()
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO
 func (t *ApiToken) ToDTO() ApiTokenDTO {

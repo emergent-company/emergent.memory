@@ -42,7 +42,7 @@ test('project token: create → edit scopes → regenerate → revoke', async ({
   try {
     // 1. CREATE — the create page re-renders with the one-shot plaintext panel.
     await test.step('create', async () => {
-      secret = await createTokenViaUi(page, 'project', name, ['data:read']);
+      secret = await createTokenViaUi(page, 'project', name, ['documents:read']);
       await expect(page.getByText('API token created')).toBeVisible();
       await expect(page.getByText('This value is shown only once. Store it somewhere safe.').first()).toBeVisible();
       expect(secret).toMatch(/^emt_[0-9a-f]{64}$/);
@@ -54,26 +54,26 @@ test('project token: create → edit scopes → regenerate → revoke', async ({
       const created = liveTokenRowsNamed(page, name);
       await expect(created).toHaveCount(1);
       await expect(created.getByText(`${secret.slice(0, 12)}…`)).toBeVisible();
-      await expectScopeAreaBadge(created, 'Data', ['data:read']);
+      await expectScopeAreaBadge(created, 'Documents', ['documents:read']);
     });
 
     // 2. EDIT SCOPES — POST /settings/tokens/:id/scopes (PRG back to the list).
     await test.step('edit scopes', async () => {
       await openScopesEditor(page, name);
-      await expect(page.locator('input[name="scopes"][value="data:read"]')).toBeChecked();
+      await expect(page.locator('input[name="scopes"][value="documents:read"]')).toBeChecked();
       await expect(page.locator('input[name="scopes"][value="search"]')).not.toBeChecked();
-      await setScopes(page, ['data:read', 'search']);
+      await setScopes(page, ['documents:read', 'search']);
       await saveScopes(page);
 
       const rescoped = liveTokenRowsNamed(page, name);
       await expect(rescoped).toHaveCount(1);
-      // data:read stays in Data; search lands in Graph (one badge per area)
-      await expectScopeAreaBadge(rescoped, 'Data', ['data:read']);
+      // documents:read stays in Documents; search lands in Graph (one badge per area)
+      await expectScopeAreaBadge(rescoped, 'Documents', ['documents:read']);
       await expectScopeAreaBadge(rescoped, 'Graph', ['search']);
 
       // Persistence: the edit page pre-checks the new set on reload.
       await openScopesEditor(page, name);
-      await expect(page.locator('input[name="scopes"][value="data:read"]')).toBeChecked();
+      await expect(page.locator('input[name="scopes"][value="documents:read"]')).toBeChecked();
       await expect(page.locator('input[name="scopes"][value="search"]')).toBeChecked();
       await goto(page, tokenBasePath('project'));
     });

@@ -22,19 +22,43 @@ func TestNormalizeTokenScopes(t *testing.T) {
 			expect: []string{"admin:all"},
 		},
 		{
-			name:   "empty defaults to data:read",
-			input:  nil,
-			expect: []string{"data:read"},
+			// Literal, not presetScopes("read"): the preset is pinned by the
+			// cli-init-wizard spec, so asserting the function against itself
+			// would let a preset edit slip through unremarked.
+			name:  "empty defaults to the read preset",
+			input: nil,
+			expect: []string{
+				"documents:read", "search", "graph:read", "journal:read",
+				"schema:read", "agents:read", "projects:read",
+			},
+		},
+		{
+			name:  "read preset expands and accepts explicit scopes",
+			input: []string{"read", "branches:read"},
+			expect: []string{
+				"documents:read", "search", "graph:read", "journal:read",
+				"schema:read", "agents:read", "projects:read", "branches:read",
+			},
+		},
+		{
+			name:  "read and write presets combine without duplicates",
+			input: []string{"read", "write"},
+			expect: []string{
+				"documents:read", "search", "graph:read", "journal:read",
+				"schema:read", "agents:read", "projects:read",
+				"documents:write", "graph:write", "schema:write",
+				"agents:write", "projects:write",
+			},
 		},
 		{
 			name:   "comma-separated scopes are preserved",
-			input:  []string{"data:read", "data:write"},
-			expect: []string{"data:read", "data:write"},
+			input:  []string{"documents:read", "branches:read"},
+			expect: []string{"documents:read", "branches:read"},
 		},
 		{
-			name:   "all mixed with other scopes is not treated as sentinel",
-			input:  []string{"all", "data:read"},
-			expect: []string{"all", "data:read"},
+			name:   "all expands to admin:all anywhere in the list",
+			input:  []string{"all", "documents:read"},
+			expect: []string{"admin:all", "documents:read"},
 		},
 	}
 
@@ -109,9 +133,9 @@ func TestTokenScopeGroups(t *testing.T) {
 			count++
 		}
 	}
-	// Every scope in ValidApiTokenScopes (server-side) must be documented.
+	// Every user-mintable scope (server-side) must be documented.
 	for _, want := range []string{
-		"schema:read", "schema:write", "data:read", "data:write",
+		"schema:read", "schema:write",
 		"agents:read", "agents:write", "projects:read", "projects:write", "chat:use",
 		"graph:read", "graph:write", "schema:migrate",
 		"branches:read", "branches:write", "search",
@@ -120,5 +144,9 @@ func TestTokenScopeGroups(t *testing.T) {
 	} {
 		assert.True(t, names[want], "scope %q missing from tokenScopeGroups", want)
 	}
-	assert.Equal(t, 24, count)
+	// The retired coarse umbrellas are not mintable and must not be offered.
+	for _, retired := range []string{"data:read", "data:write"} {
+		assert.False(t, names[retired], "retired scope %q must not appear in tokenScopeGroups", retired)
+	}
+	assert.Equal(t, 22, count)
 }
