@@ -2615,6 +2615,7 @@ func (ae *AgentExecutor) runPipeline(
 	// the internal graph-query-agent) could silently widen an inherited caller
 	// boundary.
 	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
+	ctx = mcp.ContextWithAgentWriteRules(ctx, resolveAgentWriteRules(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
 
 	// Augment system instruction with workspace context if available.
@@ -4202,6 +4203,13 @@ func (ae *AgentExecutor) buildCoordinationTools(ctx context.Context, req Execute
 // terminators for an object-driven run. It returns nil when the run has no
 // subject object, the work-object store is unset, or the definition does not
 // list the terminator in its tools whitelist.
+func subjectObjectType(run *AgentRun) string {
+	if run == nil || run.SubjectObjectType == nil {
+		return ""
+	}
+	return *run.SubjectObjectType
+}
+
 func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, terminator *WorkTerminatorState) ([]tool.Tool, error) {
 	if ae.workObjects == nil || run.SubjectObjectID == nil || *run.SubjectObjectID == "" {
 		return nil, nil
@@ -4220,15 +4228,16 @@ func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, termi
 	}
 
 	deps := WorkToolDeps{
-		Store:       ae.workObjects,
-		Repo:        ae.repo,
-		Logger:      ae.log,
-		ProjectID:   req.ProjectID,
-		CanonicalID: *run.SubjectObjectID,
-		ActorName:   ae.resolveAgentName(req),
-		RunID:       run.ID,
-		WorkConfig:  req.AgentDefinition.WorkConfig,
-		Terminator:  terminator,
+		Store:             ae.workObjects,
+		Repo:              ae.repo,
+		Logger:            ae.log,
+		ProjectID:         req.ProjectID,
+		CanonicalID:       *run.SubjectObjectID,
+		SubjectObjectType: subjectObjectType(run),
+		ActorName:         ae.resolveAgentName(req),
+		RunID:             run.ID,
+		WorkConfig:        req.AgentDefinition.WorkConfig,
+		Terminator:        terminator,
 	}
 
 	var tools []tool.Tool
@@ -4242,6 +4251,13 @@ func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, termi
 	if hasTool(ToolNameWorkBlock) {
 		if t, err := BuildWorkBlockTool(deps); err != nil {
 			return nil, fmt.Errorf("failed to build work_block: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	if hasTool(ToolNameWorkTransition) {
+		if t, err := BuildWorkTransitionTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build work_transition: %w", err)
 		} else {
 			tools = append(tools, t)
 		}
@@ -4452,6 +4468,27 @@ func knowledgeBaseContextBlock(projectInfo string) string {
 // scope (issue #1695).
 func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 	return mcp.NewTypeScope(def.ObjectTypes(), def.RelationshipTypes())
+}
+
+// resolveAgentWriteRules derives the per-run object write policy from the
+// definition's per-type work rules. No rules means unrestricted.
+func resolveAgentWriteRules(def *AgentDefinition) *mcp.AgentWriteRules {
+	if def == nil || len(def.WorkConfig.ObjectRules) == 0 {
+		return nil
+	}
+	out := make(map[string]mcp.ObjectWriteRule, len(def.WorkConfig.ObjectRules))
+	for _, r := range def.WorkConfig.ObjectRules {
+		if r.ObjectType == "" {
+			continue
+		}
+		out[r.ObjectType] = mcp.ObjectWriteRule{
+			CanCreate: r.AllowsCreate(),
+			CanUpdate: r.AllowsUpdate(),
+			CanDelete: r.AllowsDelete(),
+			Fields:    r.Fields,
+		}
+	}
+	return mcp.NewAgentWriteRules(out)
 }
 
 // resolveProjectInfo returns the project's project_info for injection into the

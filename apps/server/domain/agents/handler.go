@@ -418,7 +418,7 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 
 	// Work-pickup validation: a work agent (linked definition carries a work
 	// config) must declare a single object type and a single pickup signal.
-	if err := ValidateWorkPickup(h.hasWorkConfigForDefinition(c.Request().Context(), dto.AgentDefinitionID), dto.ReactionConfig); err != nil {
+	if err := ValidateWorkPickupForDefinition(h.definitionForID(c.Request().Context(), dto.AgentDefinitionID), dto.ReactionConfig); err != nil {
 		return apperror.NewBadRequest(err.Error())
 	}
 
@@ -556,7 +556,7 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 
 	// Work-pickup validation: a work agent (linked definition carries a work
 	// config) must declare a single object type and a single pickup signal.
-	if err := ValidateWorkPickup(h.hasWorkConfigForDefinition(c.Request().Context(), agent.AgentDefinitionID), agent.ReactionConfig); err != nil {
+	if err := ValidateWorkPickupForDefinition(h.definitionForID(c.Request().Context(), agent.AgentDefinitionID), agent.ReactionConfig); err != nil {
 		return apperror.NewBadRequest(err.Error())
 	}
 
@@ -1627,6 +1627,88 @@ func normalizeUIConfig(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
+// syncDefinitionWorkTriggers re-derives the bound runtime agents' reaction
+// configuration from a definition's per-type work rules and re-registers their
+// listeners. Without it, trigger edits only take effect after a server restart.
+func (h *Handler) syncDefinitionWorkTriggers(ctx context.Context, def *AgentDefinition) {
+	if def == nil || h.triggers == nil || len(def.WorkConfig.ObjectRules) == 0 {
+		return
+	}
+	seen := map[string]bool{}
+	var types []string
+	for _, r := range def.WorkConfig.ObjectRules {
+		if r.ObjectType == "" || seen[r.ObjectType] {
+			continue
+		}
+		if len(r.Triggers) == 0 {
+			continue
+		}
+		seen[r.ObjectType] = true
+		types = append(types, r.ObjectType)
+	}
+	if len(types) == 0 {
+		return
+	}
+	agents, err := h.repo.FindAgentsByDefinitionID(ctx, def.ID)
+	if err != nil {
+		return
+	}
+	if len(agents) == 0 {
+		// A definition-only agent (created from the UI) has no runtime row yet.
+		// Create the reaction agent so its rules can actually wake a run.
+		rc := &ReactionConfig{
+			ObjectTypes:         types,
+			Events:              []ReactionEventType{EventTypeStatusChanged, EventTypeCreated},
+			ConcurrencyStrategy: ConcurrencySkip,
+		}
+		defID := def.ID
+		a := &Agent{
+			ProjectID:         def.ProjectID,
+			Name:              def.Name,
+			StrategyType:      "agent-def:" + def.ID,
+			CronSchedule:      "0 0 * * *",
+			Enabled:           def.Enabled,
+			TriggerType:       TriggerTypeReaction,
+			ReactionConfig:    rc,
+			AgentDefinitionID: &defID,
+		}
+		if err := h.repo.CreateAgent(ctx, a); err != nil {
+			// A name collision from a concurrent save or a pre-existing runtime
+			// row: adopt that row instead of silently leaving the definition
+			// without a listener.
+			if existing, ferr := h.repo.FindAgentByName(ctx, def.ProjectID, def.Name); ferr == nil && existing != nil {
+				existing.ReactionConfig = a.ReactionConfig
+				existing.TriggerType = TriggerTypeReaction
+				existing.Enabled = def.Enabled
+				existing.AgentDefinitionID = &defID
+				if uerr := h.repo.Update(ctx, existing); uerr == nil {
+					h.triggers.SyncAgentTrigger(existing)
+				}
+			}
+			return
+		}
+		h.triggers.SyncAgentTrigger(a)
+		return
+	}
+	for _, a := range agents {
+		rc := &ReactionConfig{
+			ObjectTypes:         types,
+			Events:              []ReactionEventType{EventTypeStatusChanged, EventTypeCreated},
+			ConcurrencyStrategy: ConcurrencySkip,
+		}
+		if a.ReactionConfig != nil {
+			rc.IgnoreAgentTriggered = a.ReactionConfig.IgnoreAgentTriggered
+			rc.IgnoreSelfTriggered = a.ReactionConfig.IgnoreSelfTriggered
+		}
+		a.ReactionConfig = rc
+		a.TriggerType = TriggerTypeReaction
+		if err := h.repo.Update(ctx, a); err != nil {
+			continue
+		}
+		h.triggers.SyncAgentTrigger(a)
+	}
+}
+
 // CreateDefinition handles POST /api/projects/:projectId/agent-definitions
 func (h *Handler) CreateDefinition(c echo.Context) error {
 	user := auth.MustGetUser(c)
@@ -1754,9 +1836,13 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		return apperror.ErrConflict.WithMessage(fmt.Sprintf("an agent definition named '%s' already exists in this project", dto.Name))
 	}
 
+	if err := ValidateWorkRules(def, nil); err != nil {
+		return apperror.NewBadRequest(err.Error())
+	}
 	if err := h.repo.CreateDefinition(c.Request().Context(), def); err != nil {
 		return apperror.NewInternal("failed to create agent definition", err)
 	}
+	h.syncDefinitionWorkTriggers(c.Request().Context(), def)
 
 	return c.JSON(http.StatusCreated, SuccessResponse(h.toDefinitionDTO(c.Request().Context(), def)))
 }
@@ -1884,9 +1970,13 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		def.UIConfig = normalizeUIConfig(dto.UIConfig)
 	}
 
+	if err := ValidateWorkRules(def, nil); err != nil {
+		return apperror.NewBadRequest(err.Error())
+	}
 	if err := h.repo.UpdateDefinition(c.Request().Context(), def); err != nil {
 		return apperror.NewInternal("failed to update agent definition", err)
 	}
+	h.syncDefinitionWorkTriggers(c.Request().Context(), def)
 
 	return c.JSON(http.StatusOK, SuccessResponse(h.toDefinitionDTO(c.Request().Context(), def)))
 }

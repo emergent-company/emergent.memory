@@ -213,9 +213,9 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 		}
 		reason, _ := result.Summary["reason"].(string)
 		if reason == "user_cancelled" {
-			p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, "cancelled by user", FailureClassHuman)
+			p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, "cancelled by user", FailureClassHuman)
 		} else {
-			p.transitionToReady(ctx, log, canonicalID, projectID, agentDef)
+			p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
 		}
 		return
 	}
@@ -244,7 +244,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	case FailureClassRetryable:
 		p.retryableFailure(ctx, log, agent, agentDef, canonicalID, projectID, subjectType, errMsg)
 	default: // deterministic / poison
-		p.poisonFailure(ctx, log, agentDef, canonicalID, projectID, errMsg)
+		p.poisonFailure(ctx, log, agentDef, canonicalID, projectID, subjectType, errMsg)
 	}
 }
 
@@ -285,17 +285,17 @@ func (p *WorkerPool) timeoutFailure(ctx context.Context, log *slog.Logger, agent
 
 // poisonFailure: deterministic failure → block (no retry); budget +1. It does
 // NOT touch the agent breaker — a poison item blocks the item, not the agent.
-func (p *WorkerPool) poisonFailure(ctx context.Context, log *slog.Logger, agentDef *AgentDefinition, canonicalID, projectID, errMsg string) {
+func (p *WorkerPool) poisonFailure(ctx context.Context, log *slog.Logger, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string) {
 	p.recordFailure(ctx, log, canonicalID, projectID, agentDef, FailureClassDeterministic, nil)
-	p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, errMsg, FailureClassDeterministic)
+	p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, errMsg, FailureClassDeterministic)
 }
 
 // capabilityUnassign clears the assignee and returns the item to ready with a
 // requeue backoff; the item budget is unchanged and attempt history survives.
 func (p *WorkerPool) capabilityUnassign(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string) {
-	wc := workConfigOf(agentDef)
+	st := agentDef.EffectiveWorkStatus(subjectType)
 	backoffAt := time.Now().Add(itemRequeueBackoff())
-	if _, err := p.workObjects.UnassignWorkObject(ctx, projectID, canonicalID, wc.InProgressStatus(), wc.ReadyStatus()); err != nil {
+	if _, err := p.workObjects.UnassignWorkObject(ctx, projectID, canonicalID, st.InProgress, st.Ready); err != nil {
 		log.Warn("capability unassign transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	}
 	// Keep attempt history: record the failure but do not consume the budget.
@@ -310,17 +310,17 @@ func (p *WorkerPool) capabilityUnassign(ctx context.Context, log *slog.Logger, a
 // item budget remains; once exhausted the item is blocked (dead-letter). The
 // budget is resolved with per-type overrides (P4.3): type > agent > default.
 func (p *WorkerPool) retryOrBlock(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string, cls FailureClass) {
-	wc := workConfigOf(agentDef)
+	st := agentDef.EffectiveWorkStatus(subjectType)
 	policy := p.resolveWorkPolicy(ctx, projectID, subjectType, agentDef)
 	backoffAt := time.Now().Add(itemRequeueBackoff())
 	count := p.recordFailure(ctx, log, canonicalID, projectID, agentDef, cls, &backoffAt)
 	if count > policy.failureLimit {
-		p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, errMsg, cls)
+		p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, errMsg, cls)
 		return
 	}
 	if ok, err := p.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: wc.InProgressStatus(),
-		ToStatus:   wc.ReadyStatus(),
+		FromStatus: st.InProgress,
+		ToStatus:   st.Ready,
 	}); err != nil {
 		log.Warn("work item ready transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	} else if !ok {
@@ -341,11 +341,11 @@ func (p *WorkerPool) recordFailure(ctx context.Context, log *slog.Logger, canoni
 
 // transitionToReady returns an in-progress item to ready (used by the cancelled
 // path).
-func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, canonicalID, projectID string, agentDef *AgentDefinition) {
-	wc := workConfigOf(agentDef)
+func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, canonicalID, projectID, subjectType string, agentDef *AgentDefinition) {
+	st := agentDef.EffectiveWorkStatus(subjectType)
 	if ok, err := p.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: wc.InProgressStatus(),
-		ToStatus:   wc.ReadyStatus(),
+		FromStatus: st.InProgress,
+		ToStatus:   st.Ready,
 	}); err != nil {
 		log.Warn("work item ready transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	} else if !ok {
@@ -355,9 +355,9 @@ func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, ca
 
 // blockWorkObject transitions an item to blocked and creates a human-facing
 // dead-letter task.
-func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, canonicalID, projectID string, agentDef *AgentDefinition, errMsg string, cls FailureClass) {
-	wc := workConfigOf(agentDef)
-	if ok, err := p.workObjects.BlockWorkObject(ctx, projectID, canonicalID, wc.InProgressStatus(), wc.BlockedStatus()); err != nil {
+func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, canonicalID, projectID, subjectType string, agentDef *AgentDefinition, errMsg string, cls FailureClass) {
+	st := agentDef.EffectiveWorkStatus(subjectType)
+	if ok, err := p.workObjects.BlockWorkObject(ctx, projectID, canonicalID, st.InProgress, st.Blocked); err != nil {
 		log.Warn("work item block transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	} else if !ok {
 		log.Warn("work item block transition skipped (not in progress)", slog.String("canonical_id", canonicalID))

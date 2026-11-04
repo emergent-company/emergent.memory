@@ -602,14 +602,13 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	// rail items (Dashboard / Settings / Sandbox / Sessions).
 	settingsNavHrefs := []string{
 		`href="/agents/a1"`, `href="/agents/a1/settings"`,
-		`href="/agents/a1/settings/graph"`,
-		`href="/agents/a1/settings/work"`,
+		`href="/agents/a1/work/board"`, `href="/agents/a1/work/settings"`,
 		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
 		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
 		`href="/agents/a1/settings/mcp"`,
 		`href="/agents/a1/sandbox"`, `href="/agents/a1/sessions"`,
 	}
-	for _, section := range []string{"", "general", "graph", "work", "model", "tools", "skills", "delegation", "mcp"} {
+	for _, section := range []string{"", "general", "model", "tools", "skills", "delegation", "mcp"} {
 		h := render(section)
 		for _, want := range settingsNavHrefs {
 			if !strings.Contains(h, want) {
@@ -849,8 +848,6 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 		href    string
 	}{
 		{"general", settingsParent},
-		{"graph", settingsParent + "/graph"},
-		{"work", settingsParent + "/work"},
 		{"model", settingsParent + "/model"},
 		{"tools", settingsParent + "/tools"},
 		{"skills", settingsParent + "/skills"},
@@ -858,7 +855,7 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 		{"mcp", settingsParent + "/mcp"},
 	}
 	// Every agent section must expose the Settings parent plus all eight children.
-	allSettingsHrefs := []string{settingsParent}
+	allSettingsHrefs := []string{settingsParent, "/agents/a1/work/board", "/agents/a1/work/settings"}
 	for _, c := range children {
 		allSettingsHrefs = append(allSettingsHrefs, c.href)
 	}

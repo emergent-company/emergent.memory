@@ -81,12 +81,12 @@ func (s *WorkActionService) resolveWorkContext(ctx context.Context, projectID, c
 // needs_review, and clears the failure ledger. Returns a conflict when the item
 // is not in the review status.
 func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID, reviewerID string) (*WorkActionResult, error) {
-	_, _, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
+	head, _, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	ok, err := s.workObjects.ApproveWorkObject(ctx, projectID, canonicalID, wc.ReviewStatus(), wc.DoneStatus(), reviewerID)
+	st := def.EffectiveWorkStatus(head.Type)
+	ok, err := s.workObjects.ApproveWorkObject(ctx, projectID, canonicalID, st.Review, st.Done, reviewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID,
 		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not in the review status")
 	}
 	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
-	head, err := s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	head, err = s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,12 +120,13 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 		return nil, apperror.New(http.StatusBadRequest, "bad_request", "feedback is required")
 	}
 	wc := workConfigOf(def)
+	st := def.EffectiveWorkStatus(head.Type)
 	var reworkAgentID *uuid.UUID
 	if agent != nil {
 		id := uuid.MustParse(agent.ID)
 		reworkAgentID = &id
 	}
-	ok, err := s.workObjects.RequestChangesWorkObject(ctx, projectID, canonicalID, wc.ReviewStatus(), wc.RevisionStatus(), reworkAgentID)
+	ok, err := s.workObjects.RequestChangesWorkObject(ctx, projectID, canonicalID, st.Review, st.Revision, reworkAgentID)
 	if err != nil {
 		return nil, err
 	}
@@ -196,10 +197,10 @@ func (s *WorkActionService) Retry(ctx context.Context, projectID, canonicalID st
 	if err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
+	st := def.EffectiveWorkStatus(head.Type)
 	ok, err := s.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: wc.BlockedStatus(),
-		ToStatus:   wc.ReadyStatus(),
+		FromStatus: st.Blocked,
+		ToStatus:   st.Ready,
 	})
 	if err != nil {
 		return nil, err
@@ -262,8 +263,8 @@ func (s *WorkActionService) SetStatus(ctx context.Context, projectID, canonicalI
 	if err := graph.ValidateWorkObjectStatus(cfg, status); err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	ok, err := s.workObjects.UpdateWorkObjectStatus(ctx, projectID, canonicalID, status, wc.ReviewStatus())
+	st := def.EffectiveWorkStatus(head.Type)
+	ok, err := s.workObjects.UpdateWorkObjectStatus(ctx, projectID, canonicalID, status, st.Review)
 	if err != nil {
 		return nil, err
 	}
@@ -284,11 +285,11 @@ func (s *WorkActionService) Cancel(ctx context.Context, projectID, canonicalID s
 	if err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	if head.Status == wc.DoneStatus() {
+	st := def.EffectiveWorkStatus(head.Type)
+	if head.Status == st.Done {
 		return nil, apperror.New(http.StatusConflict, "conflict", "work item is already done")
 	}
-	ok, err := s.workObjects.CancelWorkObject(ctx, projectID, canonicalID, wc.BlockedStatus())
+	ok, err := s.workObjects.CancelWorkObject(ctx, projectID, canonicalID, st.Blocked)
 	if err != nil {
 		return nil, err
 	}

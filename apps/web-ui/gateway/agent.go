@@ -191,7 +191,7 @@ const (
 
 // agentSettingsSections is the ordered list of settings subpages, used by the
 // nav group.
-var agentSettingsSections = []string{sectionGeneral, sectionGraph, sectionWork, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
+var agentSettingsSections = []string{sectionGeneral, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
 
 // agentSettingsSectionPath returns the settings subpage URL for one section.
 // "general" maps to the bare /agents/:id/settings landing route.
@@ -212,6 +212,10 @@ func (s *Server) uiAgentSettings(c echo.Context) error {
 // Skills / Delegation / MCP sharing). An unknown section is a 404.
 func (s *Server) uiAgentSettingsSection(c echo.Context) error {
 	section := c.Param("section")
+	// Graph and Work moved to the top-level Work section.
+	if section == sectionGraph || section == sectionWork {
+		return c.Redirect(http.StatusPermanentRedirect, "/agents/"+url.PathEscape(c.Param("id"))+"/work/"+workSectionSettings)
+	}
 	if !containsString(agentSettingsSections, section) {
 		return c.NoContent(http.StatusNotFound)
 	}

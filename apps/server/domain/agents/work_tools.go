@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
@@ -21,6 +22,9 @@ type WorkToolDeps struct {
 	Logger      *slog.Logger
 	ProjectID   string
 	CanonicalID string // the subject work object's canonical_id
+	// SubjectObjectType is the subject work object's type; it selects the
+	// per-type phase map and transition matrix.
+	SubjectObjectType string
 	// ActorName is the display name attributed to an agent-authored comment.
 	ActorName string
 	// RunID is the current run's id, stamped on an agent-authored comment.
@@ -64,9 +68,10 @@ func completeWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (
 	deliverables := parseDeliverables(args["deliverables"])
 
 	wc := deps.WorkConfig
-	doneStatus := wc.DoneStatus()
-	reviewStatus := wc.ReviewStatus()
-	inProgressStatus := wc.InProgressStatus()
+	st := wc.EffectiveStatus(deps.SubjectObjectType)
+	doneStatus := st.Done
+	reviewStatus := st.Review
+	inProgressStatus := st.InProgress
 
 	if deps.Store == nil || deps.CanonicalID == "" {
 		return map[string]any{"error": "work_complete: no subject work object to complete"}, nil
@@ -82,6 +87,14 @@ func completeWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (
 			slog.String("reason", msg),
 		)
 		return map[string]any{"error": msg}, nil
+	}
+
+	targetStatus := doneStatus
+	if wc.RequiresReview {
+		targetStatus = reviewStatus
+	}
+	if !wc.RuleFor(deps.SubjectObjectType).PermitsTransition(inProgressStatus, targetStatus, st) {
+		return map[string]any{"error": fmt.Sprintf("work_complete: transition %q → %q is not allowed by this agent's work rules", inProgressStatus, targetStatus)}, nil
 	}
 
 	transitioned, err := deps.Store.CompleteWorkObject(
@@ -102,11 +115,6 @@ func completeWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (
 			slog.String("canonical_id", deps.CanonicalID),
 		)
 		return map[string]any{"error": "work_complete: object is not in the in-progress status (concurrent cancel/block or already transitioned)"}, nil
-	}
-
-	targetStatus := doneStatus
-	if wc.RequiresReview {
-		targetStatus = reviewStatus
 	}
 
 	result := map[string]any{
@@ -244,11 +252,15 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 			kind, _ := args["kind"].(string)
 
 			wc := deps.WorkConfig
-			inProgressStatus := wc.InProgressStatus()
-			blockedStatus := wc.BlockedStatus()
+			st := wc.EffectiveStatus(deps.SubjectObjectType)
+			inProgressStatus := st.InProgress
+			blockedStatus := st.Blocked
 
 			if deps.Store == nil || deps.CanonicalID == "" {
 				return map[string]any{"error": "work_block: no subject work object to block"}, nil
+			}
+			if !wc.RuleFor(deps.SubjectObjectType).PermitsTransition(inProgressStatus, blockedStatus, st) {
+				return map[string]any{"error": fmt.Sprintf("work_block: transition %q → %q is not allowed by this agent's work rules", inProgressStatus, blockedStatus)}, nil
 			}
 
 			transitioned, err := deps.Store.BlockWorkObject(
@@ -316,6 +328,82 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 			})
 
 			return result, nil
+		},
+	)
+}
+
+// BuildWorkTransitionTool creates the generic rule-gated status transition
+// terminator. It moves the subject object along a from→to edge declared by the
+// agent's per-type rule (an empty matrix allows the standard terminator edges),
+// applies the review/blocked side effects, and ends the run.
+func BuildWorkTransitionTool(deps WorkToolDeps) (tool.Tool, error) {
+	return functiontool.New(
+		functiontool.Config{
+			Name:        ToolNameWorkTransition,
+			Description: "Move the current work item to another status along an edge this agent is allowed to perform, then end the run. Provide the target status as 'to' and an optional summary/reason. The allowed edges come from the agent's per-object-type work rules; an unlisted edge is rejected and the item is unchanged.",
+		},
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+			to, _ := args["to"].(string)
+			if to == "" {
+				return map[string]any{"error": "to is required"}, nil
+			}
+			if deps.Store == nil || deps.CanonicalID == "" {
+				return map[string]any{"error": "work_transition: no subject work object to transition"}, nil
+			}
+			head, err := deps.Store.GetHeadObject(ctx, deps.ProjectID, deps.CanonicalID)
+			if err != nil {
+				return map[string]any{"error": "work_transition: " + err.Error()}, nil
+			}
+			if head == nil {
+				return map[string]any{"error": "work_transition: work object not found"}, nil
+			}
+			st := deps.WorkConfig.EffectiveStatus(deps.SubjectObjectType)
+			if !deps.WorkConfig.RuleFor(deps.SubjectObjectType).PermitsTransition(head.Status, to, st) {
+				return map[string]any{"error": fmt.Sprintf("work_transition: transition %q → %q is not allowed by this agent's work rules", head.Status, to)}, nil
+			}
+			needsReview := to == st.Review
+			transitioned, err := deps.Store.TransitionWorkObject(ctx, deps.ProjectID, deps.CanonicalID, graph.WorkObjectTransition{
+				FromStatus:     head.Status,
+				ToStatus:       to,
+				SetNeedsReview: &needsReview,
+			})
+			if err != nil {
+				return map[string]any{"error": "work_transition: " + err.Error()}, nil
+			}
+			if !transitioned {
+				return map[string]any{"error": "work_transition: object is no longer in the expected status"}, nil
+			}
+			summary, _ := args["summary"].(string)
+			reason, _ := args["reason"].(string)
+			if to == st.Blocked {
+				desc := reason
+				if desc == "" {
+					desc = "agent transitioned the item to blocked"
+				}
+				meta, _ := json.Marshal(map[string]any{"canonical_id": deps.CanonicalID, "reason": reason})
+				if deps.Repo != nil {
+					t := &tasks.Task{
+						ProjectID:   deps.ProjectID,
+						Title:       fmt.Sprintf("Work item blocked: %s", desc),
+						Description: &desc,
+						Type:        "work-escalation",
+						Status:      "pending",
+						SourceType:  strPtr("work_object"),
+						SourceID:    &deps.CanonicalID,
+						Metadata:    meta,
+					}
+					if _, err := deps.Repo.CreateWorkTask(ctx, t); err != nil && deps.Logger != nil {
+						deps.Logger.Warn("work_transition: failed to create human task", slog.String("canonical_id", deps.CanonicalID), slog.String("error", err.Error()))
+					}
+				}
+			}
+			deps.Terminator.Finalize(WorkTerminatorTransition, map[string]any{
+				"work_terminator": WorkTerminatorTransition,
+				"work_status":     to,
+				"summary":         summary,
+				"reason":          reason,
+			})
+			return map[string]any{"status": "transitioned", "work_status": to}, nil
 		},
 	)
 }

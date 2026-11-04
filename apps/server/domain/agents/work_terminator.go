@@ -16,8 +16,9 @@ type WorkTerminatorState struct {
 
 // Work terminator kinds.
 const (
-	WorkTerminatorComplete = "complete"
-	WorkTerminatorBlock    = "block"
+	WorkTerminatorComplete   = "complete"
+	WorkTerminatorBlock      = "block"
+	WorkTerminatorTransition = "transition"
 )
 
 // Finalize records a terminator call. The first call wins (the run ends on the

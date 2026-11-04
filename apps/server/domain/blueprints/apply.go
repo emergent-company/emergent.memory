@@ -994,19 +994,40 @@ func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
 // "reaction" (when a reaction config is present) or "schedule", and an empty
 // cron schedule to the daily "0 0 * * *" default (the column is NOT NULL).
 func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) error {
-	if m.TriggerType == "" && m.ReactionConfig == nil && m.CronSchedule == "" {
+	if m.TriggerType == "" && m.ReactionConfig == nil && m.CronSchedule == "" && len(def.WorkConfig.ObjectRules) == 0 {
 		return nil
 	}
 
-	// Work-pickup validation: a blueprint work agent (definition carries a work
-	// config) must declare a single object type and a single pickup signal.
-	if err := agents.ValidateWorkPickup(!def.WorkConfig.IsZero(), m.ReactionConfig); err != nil {
+	// Work-pickup validation: a legacy work agent must declare a single object
+	// type and a single pickup signal; a rules-based agent may declare multiple
+	// types and derives its reaction config below.
+	if err := agents.ValidateWorkPickupForDefinition(def, m.ReactionConfig); err != nil {
 		return apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
+	}
+
+	reactionConfig := m.ReactionConfig
+	if reactionConfig == nil && len(def.WorkConfig.ObjectRules) > 0 {
+		seen := map[string]bool{}
+		var types []string
+		for _, r := range def.WorkConfig.ObjectRules {
+			if r.ObjectType == "" || seen[r.ObjectType] {
+				continue
+			}
+			seen[r.ObjectType] = true
+			types = append(types, r.ObjectType)
+		}
+		if len(types) > 0 {
+			reactionConfig = &agents.ReactionConfig{
+				ObjectTypes:         types,
+				Events:              []agents.ReactionEventType{agents.EventTypeStatusChanged, agents.EventTypeCreated},
+				ConcurrencyStrategy: agents.ConcurrencySkip,
+			}
+		}
 	}
 
 	triggerType := agents.AgentTriggerType(m.TriggerType)
 	if triggerType == "" {
-		if m.ReactionConfig != nil {
+		if reactionConfig != nil {
 			triggerType = agents.TriggerTypeReaction
 		} else {
 			triggerType = agents.TriggerTypeSchedule
@@ -1034,7 +1055,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		}
 
 		existing.TriggerType = triggerType
-		existing.ReactionConfig = m.ReactionConfig
+		existing.ReactionConfig = reactionConfig
 		existing.CronSchedule = cron
 		existing.Enabled = true
 		existing.StrategyType = "agent-def:" + def.ID
@@ -1053,7 +1074,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		CronSchedule:      cron,
 		Enabled:           true,
 		TriggerType:       triggerType,
-		ReactionConfig:    m.ReactionConfig,
+		ReactionConfig:    reactionConfig,
 		AgentDefinitionID: &defID,
 		Config:            map[string]any{"sourceBlueprintId": blueprintID},
 	}

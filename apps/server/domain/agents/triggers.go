@@ -518,10 +518,12 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		return // not the assigned lane
 	}
 
-	// 4-way signal match: only enqueue when the emitted payload satisfies the
-	// agent's declared pickup signal — created always; updated by changed
-	// property paths; status_changed by status; assigned by assignee == name.
-	if !workPickupMatch(eventType, agent, agentDef, data) {
+	// Pickup match: rules-based agents match an (objectType, status) trigger
+	// row (status_changed and created-in-status); legacy agents keep the 4-way
+	// signal match (created always; updated by changed paths; status_changed by
+	// triggerStatuses; assigned by assignee == name).
+	matchedTrigger, ok := matchWorkPickup(eventType, agent, agentDef, objectType, data)
+	if !ok {
 		return
 	}
 
@@ -583,13 +585,22 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		EventType:     eventType,
 		Status:        ProcessingStatusPending,
 	}
-	run, claimed, err := ts.repo.EnqueueWorkRunDeduped(ctx, logEntry, agent.ID, maxAttempts, CreateRunQueuedOptions{
+	meta := workPickupTriggerMetadata(eventType, data)
+	if matchedTrigger != nil && matchedTrigger.Status != "" {
+		meta["work_claim_status"] = matchedTrigger.Status
+	}
+	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: &objectType,
 		TrustedInternal:   true,
 		MaxPendingJobs:    maxPendingJobs,
-		TriggerMetadata:   workPickupTriggerMetadata(eventType, data),
-	})
+		TriggerMetadata:   meta,
+	}
+	if matchedTrigger != nil && matchedTrigger.Prompt != "" {
+		prompt := matchedTrigger.Prompt
+		opts.TriggerMessage = &prompt
+	}
+	run, claimed, err := ts.repo.EnqueueWorkRunDeduped(ctx, logEntry, agent.ID, maxAttempts, opts)
 	if err != nil {
 		ts.log.Warn("failed to enqueue work run",
 			slog.String("agent_id", agent.ID),
@@ -627,6 +638,46 @@ func intFromInput(v any) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// matchWorkPickup resolves the pickup rule for a dispatch. Rules-based agents
+// match (objectType, status) trigger rows for status_changed and created, and
+// allow assigned routing for any type they declare. Legacy agents fall back to
+// workPickupMatch with no trigger row.
+func matchWorkPickup(eventType ReactionEventType, agent *Agent, agentDef *AgentDefinition, objectType string, data map[string]any) (*AgentWorkTrigger, bool) {
+	if agentDef == nil || len(agentDef.WorkConfig.ObjectRules) == 0 {
+		if !workPickupMatch(eventType, agent, agentDef, data) {
+			return nil, false
+		}
+		return nil, true
+	}
+	switch eventType {
+	case EventTypeCreated, EventTypeStatusChanged:
+		status, _ := data["status"].(string)
+		if tr := agentDef.WorkConfig.MatchWorkTrigger(objectType, status); tr != nil {
+			return tr, true
+		}
+		return nil, false
+	case EventTypeAssigned:
+		return firstTriggerForType(agentDef, objectType), true
+	default:
+		if !workPickupMatch(eventType, agent, agentDef, data) {
+			return nil, false
+		}
+		return firstTriggerForType(agentDef, objectType), true
+	}
+}
+
+// firstTriggerForType returns the first trigger row for an object type, used to
+// carry a prompt on assigned/updated dispatches that have no status payload.
+func firstTriggerForType(agentDef *AgentDefinition, objectType string) *AgentWorkTrigger {
+	if agentDef == nil {
+		return nil
+	}
+	if r := agentDef.WorkConfig.RuleFor(objectType); r != nil && len(r.Triggers) > 0 {
+		return &r.Triggers[0]
+	}
+	return nil
 }
 
 // workPickupMatch evaluates the 4-way pickup signal for an object-driven

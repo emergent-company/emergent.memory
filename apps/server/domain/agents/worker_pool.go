@@ -450,14 +450,19 @@ func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *
 	if p.workObjects == nil {
 		return false, fmt.Errorf("no work object store configured")
 	}
-	readyStatus := "ready"
-	revisionStatus := "revision"
-	inProgressStatus := "in_progress"
-	if agentDef != nil {
-		readyStatus = agentDef.WorkConfig.ReadyStatus()
-		revisionStatus = agentDef.WorkConfig.RevisionStatus()
-		inProgressStatus = agentDef.WorkConfig.InProgressStatus()
+	subjectType := ""
+	if run.SubjectObjectType != nil {
+		subjectType = *run.SubjectObjectType
 	}
+	st := AgentWorkStatusConfig{}
+	if agentDef != nil {
+		st = agentDef.EffectiveWorkStatus(subjectType)
+	} else {
+		st = st.withDefaults()
+	}
+	readyStatus := st.Ready
+	revisionStatus := st.Revision
+	inProgressStatus := st.InProgress
 	// A rework run (request-changes) claims from the revision status, not ready:
 	// RequestChangesWorkObject moved the object to revision, and the claim would
 	// otherwise be skipped, stranding the item in revision forever.
@@ -466,6 +471,18 @@ func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *
 			FromStatus: revisionStatus,
 			ToStatus:   inProgressStatus,
 		})
+	}
+
+	// Rules-based pickup guard: only ready or a status declared as a trigger may
+	// be claimed. This stops the reconciler from dragging a review/blocked item
+	// into in-progress when it sweeps a status the agent does not actually pick
+	// up.
+	ruleBased := agentDef != nil && len(agentDef.WorkConfig.ObjectRules) > 0
+	claimAllowed := func(from string) bool {
+		if !ruleBased {
+			return true
+		}
+		return agentDef.TriggerAllowsStatus(subjectType, from)
 	}
 
 	// Work-pickup claim source recorded at enqueue. status_changed CASes from the
@@ -477,10 +494,25 @@ func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *
 		if claimStatus == "" {
 			claimStatus = readyStatus
 		}
+		if !claimAllowed(claimStatus) {
+			return false, nil
+		}
 		return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
 			FromStatus: claimStatus,
 			ToStatus:   inProgressStatus,
 		})
+	case EventTypeCreated:
+		claimStatus, _ := run.TriggerMetadata["work_claim_status"].(string)
+		if claimStatus != "" {
+			if !claimAllowed(claimStatus) {
+				return false, nil
+			}
+			return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
+				FromStatus: claimStatus,
+				ToStatus:   inProgressStatus,
+			})
+		}
+		return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
 	case EventTypeAssigned:
 		return p.claimFromCurrentStatus(ctx, agent, run, inProgressStatus)
 	default:
