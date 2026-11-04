@@ -474,3 +474,5 @@ sdk/python/
     ├── api_tokens.py            # APITokenClient
     └── tasks.py                 # TasksClient
 ```
+
+<!-- draft-gate probe: CI behaviour on a draft PR; this PR is not merged. -->

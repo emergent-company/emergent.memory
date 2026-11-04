@@ -172,3 +172,5 @@ GOOS=darwin GOARCH=arm64 go build -o memory-darwin-arm64 ./cmd/main.go
 
 - Issues: https://github.com/emergent-company/emergent.memory/issues
 - Docs: https://emergent-company.github.io/emergent.memory/
+
+<!-- draft-gate probe: CI behaviour on a draft PR; this PR is not merged. -->
