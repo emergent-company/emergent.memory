@@ -41,6 +41,24 @@ func switcherMenu(html string) string {
 	return html[start : i+end+len("</ul>")]
 }
 
+// pickerDialogHTML returns the mobile picker <dialog>…</dialog> region so tests
+// can assert on the mobile presentation without matching the desktop menu.
+func pickerDialogHTML(html string) string {
+	i := strings.Index(html, `data-testid="project-picker-modal"`)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndex(html[:i], "<dialog")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(html[i:], "</dialog>")
+	if end < 0 {
+		return ""
+	}
+	return html[start : i+end+len("</dialog>")]
+}
+
 // TestRenderLoginPage asserts the sign-in page renders as a standalone dark
 // document: brand, exact copy, and a "Sign in" action pointing at /auth/start
 // (which performs the real OIDC redirect).
@@ -260,9 +278,11 @@ func TestRenderProjectSwitcherGroups(t *testing.T) {
 		t.Errorf("want 4 project links (one per project), got %d", n)
 	}
 
-	// exactly one active check, on the current project row
-	if got := strings.Count(html, "lucide--check"); got != 1 {
-		t.Errorf("want exactly 1 active check, got %d", got)
+	// exactly one active check per rendered list, on the current project row:
+	// the desktop menu and the mobile picker render the same shared list, so
+	// scope the count to the dropdown.
+	if got := strings.Count(menu, "lucide--check"); got != 1 {
+		t.Errorf("want exactly 1 active check in the dropdown, got %d", got)
 	}
 	// create-modal form fields + org options still present
 	for _, want := range []string{
@@ -364,6 +384,95 @@ func TestRenderProjectSwitcherTriggerOrgUnknown(t *testing.T) {
 	}
 	if !strings.Contains(switcherMenu(html), ">Other<") {
 		t.Error("unknown-org project should render under the Other header")
+	}
+}
+
+// TestRenderProjectSwitcherMobilePicker pins the mobile presentation. On a
+// 390px viewport the focus dropdown (dropdown-end + min-w-80) started at
+// x = -52px, clipping every org header and project name, so below md the
+// switcher opens a full-screen dialog instead: a md:hidden trigger, a card with
+// a close X, and the same rows/footer as the dropdown (shared components, so
+// they cannot drift).
+func TestRenderProjectSwitcherMobilePicker(t *testing.T) {
+	current, currentOrgName, groups, orgs := switcherTestData()
+	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false))
+
+	// desktop keeps the dropdown, but only from md up
+	if !strings.Contains(html, "md:block") {
+		t.Error("desktop dropdown must be desktop-only (hidden md:block)")
+	}
+	if !strings.Contains(html, "md:hidden") {
+		t.Fatal("mobile trigger must render below md (md:hidden)")
+	}
+	// one mobile trigger, wired to the picker rather than the focus dropdown
+	if n := strings.Count(html, `data-testid="project-switcher-mobile"`); n != 1 {
+		t.Fatalf("want exactly 1 mobile switcher trigger, got %d", n)
+	}
+	if !strings.Contains(html, `onclick="openProjectPicker()"`) {
+		t.Error("mobile trigger must call openProjectPicker()")
+	}
+	if !strings.Contains(html, `aria-controls="project-picker-modal"`) {
+		t.Error("mobile trigger must point at the dialog it opens (aria-controls)")
+	}
+
+	dialog := pickerDialogHTML(html)
+	if dialog == "" {
+		t.Fatal("mobile picker dialog missing")
+	}
+	for _, want := range []string{
+		`id="project-picker-modal"`,
+		`aria-label="Close project picker"`, // the X has an accessible name
+		`data-testid="project-picker-close"`,
+		`onclick="closeProjectPicker()"`,  // wired to the helper
+		"h-dvh", "w-screen", "max-w-none", // full-page card, not a floating box
+		`role="menu"`,
+		"Acme", "Globex", "Other", // org headers, Other trailing
+		`href="/o/o1/p/p1/agents"`, // scoped row links, same as the dropdown
+		"Home", "Lab", "Main", "Orphan",
+		"New project", "New org", // shared footer actions
+	} {
+		if !strings.Contains(dialog, want) {
+			t.Errorf("mobile picker missing %q", want)
+		}
+	}
+	// absolute positioning off the trigger is exactly the bug, so the dialog
+	// must never inherit the dropdown-content class
+	if strings.Contains(dialog, "dropdown-content") {
+		t.Error("picker dialog must not use the absolutely-positioned dropdown-content")
+	}
+	// one active check per list, on the current project
+	if got := strings.Count(dialog, "lucide--check"); got != 1 {
+		t.Errorf("want exactly 1 active check in the picker, got %d", got)
+	}
+}
+
+// TestRenderProjectSwitcherEmptyOrgRow pins the per-org empty state: an
+// organization with no projects keeps its header and shows an italic "No
+// projects" line under it, instead of a bare header that reads like a broken
+// section. Same shared list, so the dropdown and the card both get it.
+func TestRenderProjectSwitcherEmptyOrgRow(t *testing.T) {
+	orgs := []Org{{ID: "o1", Name: "Acme"}, {ID: "o2", Name: "Empty Org"}}
+	projects := []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}
+	groups := groupProjectsByOrg(projects, orgs)
+	html := renderHTML(t, projectSwitcher(&projects[0], "Acme", nil, groups, orgs, nil, false))
+
+	dialog := pickerDialogHTML(html)
+	if dialog == "" {
+		t.Fatal("mobile picker dialog missing")
+	}
+	iOrg := strings.Index(dialog, "Empty Org")
+	if iOrg < 0 {
+		t.Fatal("org without projects must still render its header")
+	}
+	rest := dialog[iOrg:]
+	if !strings.Contains(rest, "No projects") {
+		t.Fatal("org without projects must show a No projects line")
+	}
+	if !strings.Contains(rest, "italic") {
+		t.Error("the No projects line must be italic")
+	}
+	if n := strings.Count(dialog, ">No projects<"); n != 1 {
+		t.Errorf("want exactly 1 No projects line in the picker, got %d", n)
 	}
 }
 
