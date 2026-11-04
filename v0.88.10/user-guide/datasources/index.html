@@ -1,0 +1,4330 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Official documentation for the Memory platform, its Go and Python SDKs, and the Memory CLI">
+      
+      
+        <meta name="author" content="Emergent Company">
+      
+      
+        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/v0.88.10/user-guide/datasources/">
+      
+      
+        <link rel="prev" href="../branches/">
+      
+      
+        <link rel="next" href="../api-tokens/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Data Sources - Memory SDK Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#data-sources" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Memory SDK Documentation" class="md-header__button md-logo" aria-label="Memory SDK Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Memory SDK Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Data Sources
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/emergent-company/emergent.memory" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    emergent-company/emergent.memory
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../developer-guide/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../go-sdk/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Go SDK
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../python-sdk/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Python SDK
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../cli/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  CLI
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../api-reference/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Memory SDK Documentation" class="md-nav__button md-logo" aria-label="Memory SDK Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Memory SDK Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/emergent-company/emergent.memory" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    emergent-company/emergent.memory
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../developer-guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/provider-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/mcp-servers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Servers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/extraction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extraction Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/email-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/health-ops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Health & Ops
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/security-scopes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Scopes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Background Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/cli-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/cli-auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/service-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/mcp-relay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Relay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/schema-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../knowledge-graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../documents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../blueprints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Sources
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Sources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported providers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#saved-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Saved credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials-oauth-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials (OAuth apps)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Credentials (OAuth apps)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-credentials-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Credentials table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-the-app-in-the-vendor-console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create the app in the vendor console
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enter-the-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enter the app
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#drive-scope-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drive scope strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-folders-in-the-google-picker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing folders in the Google Picker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gmail-email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gmail (email)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reconnecting-a-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reconnecting a source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-github-with-a-personal-access-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect GitHub with a personal access token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-token-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub token scopes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trale-meeting-intelligence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trale (meeting intelligence)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web-website-crawl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web (website crawl)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setting-up-a-data-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting Up a Data Source
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setting Up a Data Source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-the-connection-before-saving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test the connection before saving
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-source-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data source fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-sync-targets-through-the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing Sync Targets Through the API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#triggering-a-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggering a Sync
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring-sync-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring Sync Jobs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Monitoring Sync Jobs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sync-job-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sync job fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cancelling-a-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelling a Sync
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-discovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema Discovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#listing-data-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing Data Sources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#updating-and-deleting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Updating and Deleting
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-tokens/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Tokens
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../go-sdk/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Go SDK
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Go SDK
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/multi-tenancy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Tenancy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/error-handling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Error Handling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/streaming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Streaming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/graph-id-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Graph ID Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/graphutil/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    graph/graphutil
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/testutil/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    testutil
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/documents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    documents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/search/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chunking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/schemaregistry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    schemaregistry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/agentdefinitions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agentdefinitions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    branches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    projects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/orgs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    orgs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    users
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/apitokens/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    apitokens
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mcp
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/mcpregistry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mcpregistry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/datasources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    datasources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/discoveryjobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    discoveryjobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/embeddingpolicies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    embeddingpolicies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/useractivity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    useractivity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/health/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    health
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/superadmin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    superadmin
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/apidocs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    apidocs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/provider/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    provider
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported providers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#saved-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Saved credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials-oauth-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials (OAuth apps)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Credentials (OAuth apps)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-credentials-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Credentials table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-the-app-in-the-vendor-console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create the app in the vendor console
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enter-the-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enter the app
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#drive-scope-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drive scope strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-folders-in-the-google-picker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing folders in the Google Picker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gmail-email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gmail (email)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reconnecting-a-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reconnecting a source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-github-with-a-personal-access-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect GitHub with a personal access token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-token-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub token scopes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trale-meeting-intelligence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trale (meeting intelligence)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web-website-crawl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web (website crawl)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setting-up-a-data-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting Up a Data Source
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setting Up a Data Source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-the-connection-before-saving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test the connection before saving
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-source-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data source fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-sync-targets-through-the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing Sync Targets Through the API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#triggering-a-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggering a Sync
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring-sync-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring Sync Jobs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Monitoring Sync Jobs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sync-job-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sync job fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cancelling-a-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelling a Sync
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-discovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema Discovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#listing-data-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing Data Sources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#updating-and-deleting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Updating and Deleting
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="data-sources">Data Sources<a class="headerlink" href="#data-sources" title="Permanent link">&para;</a></h1>
+<p>Data sources let you connect external systems to Memory and automatically import their content as documents. The platform periodically syncs new and updated content, keeping your knowledge graph current.</p>
+<h2 id="supported-providers">Supported providers<a class="headerlink" href="#supported-providers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Provider type</th>
+<th>Source type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>google_drive</code></td>
+<td><code>drive</code></td>
+<td>Google Drive files and folders</td>
+</tr>
+<tr>
+<td><code>gmail</code></td>
+<td><code>email</code></td>
+<td>Gmail threads</td>
+</tr>
+<tr>
+<td><code>github</code></td>
+<td><code>repo</code></td>
+<td>GitHub repositories (OAuth or a personal access token)</td>
+</tr>
+<tr>
+<td><code>trale</code></td>
+<td><code>meeting</code></td>
+<td>Trale meeting transcripts and summaries</td>
+</tr>
+<tr>
+<td><code>web</code></td>
+<td><code>web</code></td>
+<td>Web pages crawled from one or more start URLs</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Google Drive and Gmail are OAuth-only</p>
+<p>Both Google providers can only be connected via OAuth. There is no paste-a-refresh-token option.
+Data sources that were connected before this change with a stored refresh token keep syncing and
+do not need to be reconnected.</p>
+</div>
+<hr />
+<h2 id="saved-credentials">Saved credentials<a class="headerlink" href="#saved-credentials" title="Permanent link">&para;</a></h2>
+<p>The <strong>Credentials</strong> page also lists the project's <strong>saved credentials</strong> above the OAuth apps table. A
+saved credential is a token — today, a GitHub personal access token — stored once, encrypted, and
+reused by any number of data sources in the project. The list shows the name, the provider, how many
+sources use it, and when it was last changed; the token itself is never displayed again.</p>
+<ul>
+<li><strong>Add credential</strong> opens a dialog: choose the provider, name the credential, and paste the token.
+  Only the fields that provider requires are asked for.</li>
+<li><strong>Edit</strong> reopens the same dialog with the name filled in. Renaming is safe, and leaving the token
+  field empty keeps the stored token. Editing a credential changes it for every source that uses it,
+  so a rotated token only needs to be updated once.</li>
+<li><strong>Reconnecting a source that uses a saved credential re-authorises the credential.</strong> The new grant
+  replaces the stored token rather than being attached to that one source, so every enabled source
+  using the credential resumes — including any that had parked as <strong>Needs reconnect</strong>, since a parked
+  source is skipped by the scheduler and would otherwise never notice. A source you paused yourself
+  stays paused: reconnecting repairs the credential, it does not override that decision. A credential
+  that carries a token but no OAuth grant — a GitHub personal access token, say — is repaired by
+  <strong>Reconnect</strong> as well, whenever the provider's OAuth client is available: consent replaces the stored
+  token with an OAuth grant for the account that consents, for every source on the credential. To keep
+  using the token instead, replace it by editing the credential, then set <code>enabled: true</code> on any of its
+  sources that parked, because editing a credential does not change a source's status.</li>
+<li><strong>Delete</strong> is refused while a source still uses the credential; switch those sources to another
+  credential first.</li>
+</ul>
+<p>On a credentials connect form you can either select one of these saved credentials or create a new
+one without leaving the page — the new credential is selected for you when you return.</p>
+<h2 id="credentials-oauth-apps">Credentials (OAuth apps)<a class="headerlink" href="#credentials-oauth-apps" title="Permanent link">&para;</a></h2>
+<p>OAuth-based providers (Google Drive, GitHub) need an OAuth 2.0 <strong>app</strong> — a client that Memory uses
+to obtain access. Credentials are keyed by <strong>vendor</strong>, not by data source: one <strong>Google OAuth app</strong>
+can back Google Drive, and one <strong>GitHub OAuth app</strong> backs GitHub. The <strong>Data source</strong> column tells
+you which connection type the app backs.</p>
+<p>The app can be configured at three levels, resolved in this order when a connection starts:</p>
+<ol>
+<li><strong>Project</strong> — a project-level app, managed by a <code>project_admin</code> on the project's
+   <strong>Settings → Credentials</strong> page. It overrides everything else for that project.</li>
+<li><strong>Organization</strong> — an org-level app, managed by an <code>org_admin</code> under
+   <strong>Organization Settings → Data source OAuth clients</strong>.</li>
+<li><strong>Deployment default</strong> — a centrally configured app set via <code>SOURCES_OAUTH_GOOGLE_CLIENT_ID</code> /
+   <code>SOURCES_OAUTH_GOOGLE_CLIENT_SECRET</code> (no setup needed by users).</li>
+</ol>
+<p>If none is configured, connecting fails with an actionable message linking to the credentials page.</p>
+<h3 id="the-credentials-table">The Credentials table<a class="headerlink" href="#the-credentials-table" title="Permanent link">&para;</a></h3>
+<p><strong>Project Settings → Credentials</strong> lists every OAuth-capable vendor as a table. Each provider has one
+row per scope, project first, then organization:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>App</td>
+<td>The vendor-level app label, e.g. <strong>Google OAuth app</strong></td>
+</tr>
+<tr>
+<td>Data source</td>
+<td>The connection type the app backs, e.g. <strong>Google Drive</strong></td>
+</tr>
+<tr>
+<td>Scope</td>
+<td><strong>Project</strong> or <strong>Organization</strong></td>
+</tr>
+<tr>
+<td>Client ID</td>
+<td>The non-secret client id (secrets are never displayed)</td>
+</tr>
+<tr>
+<td>Status</td>
+<td><strong>In use</strong> for the scope that wins resolution, <strong>Configured</strong> when it exists but is overridden, otherwise <strong>Not configured</strong></td>
+</tr>
+<tr>
+<td>Updated</td>
+<td>When the app was last changed</td>
+</tr>
+<tr>
+<td>Actions</td>
+<td><strong>Manage</strong> / <strong>Set up</strong> for admins; a role note for everyone else</td>
+</tr>
+</tbody>
+</table>
+<p>Every project member can view the table and see which app is in use. Only a <code>project_admin</code> can open
+the per-provider editor and change the project app; organization-wide apps are managed by org admins.
+Opening a per-provider editor as a non-admin returns 404.</p>
+<p>When no project or organization app exists and the deployment does not provide one, the page carries
+a note naming the providers that fall back to the deployment default.</p>
+<p>The <strong>Data Sources</strong> page is a plain connections table (name, provider, status, sync mode, last sync)
+with a <strong>New data source</strong> action. It never asks you to configure credentials.</p>
+<h3 id="create-the-app-in-the-vendor-console">Create the app in the vendor console<a class="headerlink" href="#create-the-app-in-the-vendor-console" title="Permanent link">&para;</a></h3>
+<p>For Google Drive:</p>
+<ol>
+<li>Go to <a href="https://console.cloud.google.com/">Google Cloud Console</a> and create or select a project.</li>
+<li>Enable the <strong>Google Drive API</strong>.</li>
+<li>Configure the <strong>OAuth consent screen</strong> (External or Internal; for Workspace-internal apps use
+   Internal).</li>
+<li>Under <strong>Credentials → Create credentials → OAuth client ID</strong>, choose <strong>Web application</strong>.</li>
+<li>Under <strong>Authorized redirect URIs</strong>, add the <strong>Redirect URI</strong> shown on the credentials editor
+   (it points at the Memory API callback, e.g.
+   <code>https://&lt;api-host&gt;/api/data-source-integrations/oauth/google_drive/callback</code>).</li>
+<li>Under <strong>Authorized JavaScript origins</strong>, add the <strong>JavaScript origin</strong> shown on the same page
+   (the Memory UI origin).</li>
+<li>Copy the <strong>Client ID</strong> and <strong>Client secret</strong>.</li>
+<li>Enable the <strong>Google Picker API</strong> for the same project.</li>
+<li>Create an <strong>API key</strong> (Credentials → Create credentials → API key) and restrict it to the
+   Memory UI origin plus <code>https://docs.google.com/*</code>. Copy the key and the <strong>project number</strong> —
+   they become the picker's <strong>Developer key</strong> and <strong>App ID</strong> in the credentials editor.</li>
+</ol>
+<p>For Gmail, use the same Google Cloud project and OAuth client:</p>
+<ol>
+<li>Enable the <strong>Gmail API</strong>.</li>
+<li>Add the <code>https://www.googleapis.com/auth/gmail.readonly</code> scope to the consent screen.</li>
+<li>Add the Gmail callback as an authorized redirect URI on the same web client:
+   <code>https://&lt;api-host&gt;/api/data-source-integrations/oauth/gmail/callback</code>.</li>
+</ol>
+<p>The Gmail scope is a Google <strong>restricted</strong> scope: an Internal (Workspace-only) consent screen can use
+it as-is, while an External app needs Google verification and a CASA assessment before non-test users
+can consent. See <a href="#gmail-email">Gmail</a> for the operational caveats.</p>
+<div class="admonition warning">
+<p class="admonition-title">A consent screen in Testing expires grants after 7 days — for Drive as well as Gmail</p>
+<p>How long a connection lasts is decided by the <strong>publishing status</strong> of the OAuth client, not by the
+scope a source requested, so this applies to <strong>every</strong> Google source. While the app is in
+<strong>Testing</strong>, Google expires the authorization 7 days after consent, refresh token included: each
+source stops with its provider's message — <em>"the Google Drive connection for this source has
+expired or was revoked"</em>, or the Gmail equivalent — parks as <strong>Needs reconnect</strong>, works again
+after reconnecting, and dies again a week later. Reconnecting cannot prevent it — the source is
+behaving correctly and reporting a grant that Google really did expire. Fix the client instead:</p>
+<ul>
+<li><strong>In production</strong> (or <strong>Internal</strong> for a Workspace) removes the 7-day clock, which is the only
+  limit publishing status controls: the grant then lasts until it is revoked, or until another of
+  Google's rules applies (six months unused, a password change on an account that granted Gmail
+  scopes, the cap of 100 live refresh tokens per user per client). Publishing an Internal app
+  needs no Google verification, though a Workspace administrator can still restrict which scopes
+  the app is allowed to use.</li>
+<li>An <strong>External</strong> app in production that uses <code>drive.readonly</code> or <code>gmail.readonly</code> needs Google's
+  restricted-scope verification (and an annual security assessment), because both scopes give
+  server-side access to user data. <code>drive.file</code> is not a restricted scope and takes the shorter
+  review path.</li>
+</ul>
+<p>Check <strong>Google Auth Platform → Audience</strong>: it shows the user type and publishing status of the
+project that owns the client. A client id pasted into a deployment inherits whatever that project
+says.</p>
+</div>
+<p>The picker keys are stored on the OAuth client that authorizes the source, so set them on the same
+<strong>project</strong> or <strong>organization</strong> client that holds the client id. A deployment-default client is
+environment configuration and has no editable config, so a source that resolves to it cannot load
+the picker until a project or organization client is configured.</p>
+<h3 id="enter-the-app">Enter the app<a class="headerlink" href="#enter-the-app" title="Permanent link">&para;</a></h3>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Project-level</label><label for="__tabbed_1_2">Organization-level</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>A <code>project_admin</code> opens <strong>Project Settings → Credentials</strong>, finds the <strong>Google OAuth app</strong> row,
+and chooses <strong>Manage</strong> (or <strong>Set up</strong> when it is not configured). The editor shows the Redirect
+URI and JavaScript origin to register in the vendor console, then takes the Client ID, Client
+secret, scopes, and strategy. This app is used only for that project.</p>
+</div>
+<div class="tabbed-block">
+<p>An <code>org_admin</code> opens <strong>Organization Settings → Data source OAuth clients</strong>, chooses Google Drive,
+and enters the Client ID, Client secret, scopes, and strategy. This app is used for every project
+in the org that has not configured its own.</p>
+</div>
+</div>
+</div>
+<p>The Client secret is stored encrypted and is never shown again after saving — leave the secret field
+blank when updating other settings to keep the stored secret.</p>
+<h3 id="drive-scope-strategy">Drive scope strategy<a class="headerlink" href="#drive-scope-strategy" title="Permanent link">&para;</a></h3>
+<p>Google Drive has two selectable strategies, and they decide what the folder picker can see:</p>
+<ul>
+<li><strong><code>drive.readonly</code></strong> (default) — the app can list and read every file the connecting Google
+  account can see, so the folder picker shows the whole drive. This is a restricted scope: a
+  widely distributed app may need Google verification.</li>
+<li><strong><code>drive.file</code></strong> — the app sees only files it created or that a user picked through the Google
+  Picker. That grant covers the picked <strong>object</strong>, not its children, so a <code>drive.file</code> source
+  cannot browse or sync a folder tree. Folder sync needs <code>drive.readonly</code>; the source's detail page
+  says so and links to <strong>Reconnect</strong>, which re-runs consent for that same source.</li>
+</ul>
+<p>Whichever strategy you choose, the publishing status of the OAuth client decides how long a Drive
+connection lasts: an app left in <strong>Testing</strong> expires the grant 7 days after consent and the source
+parks as <strong>Needs reconnect</strong> until it is reconnected — see
+<a href="#create-the-app-in-the-vendor-console">Create the app in the vendor console</a>.</p>
+<p>The strategy resolves project first, then organization, then the provider default. Leaving the
+project strategy blank inherits the organization's strategy; it does not reset to the default.</p>
+<p>Changing the strategy applies to the next consent, not to sources that are already connected — a
+source keeps the scope its token was granted with. To move an existing source onto
+<code>drive.readonly</code>, switch the strategy and then press <strong>Reconnect</strong> on that source: consent runs
+again with the new scope and the source keeps its folders, cursor and history.</p>
+<h3 id="choosing-folders-in-the-google-picker">Choosing folders in the Google Picker<a class="headerlink" href="#choosing-folders-in-the-google-picker" title="Permanent link">&para;</a></h3>
+<p>A Drive source syncs the folders selected in the Google Picker. Open the source's detail page and
+press <strong>Choose folders</strong> (or follow the prompt on a freshly connected source):</p>
+<ul>
+<li>The modal shows the folders the connected Google account can read. Open a folder to browse its
+  subfolders; use the sidebar to switch between <strong>My Drive</strong> and <strong>Shared drives</strong>.</li>
+<li>If Google asks you to sign in, use the account that connected this source. The Picker runs in
+  your browser and needs a signed-in Google account — the token the server mints for the source is
+  not enough on its own, and folders visible only to a different signed-in account are rejected
+  when you save. Either pick again while signed in as the source's account, or share those folders
+  with it; a folder shared with the source's account saves normally.</li>
+<li>Select more than one folder. Selections accumulate across Picker openings, so you can add a
+  folder, close the picker, browse elsewhere, and add another.</li>
+<li>Remove a folder with the <strong>×</strong> on its chip, then press <strong>Save folders</strong>.</li>
+</ul>
+<p>Each picked folder is stored as <code>{folder_id, name, drive_id}</code>. <code>name</code> and <code>drive_id</code> are resolved
+from Drive when you save, so a renamed or moved folder stays identifiable. One source accepts at
+most <strong>50</strong> folders; <code>mime_types</code> and <code>recursive</code> apply to all of them. A file that appears in two
+selected folders is ingested once per sync.</p>
+<p>Subfolder inclusion still follows the <strong>Recursive</strong> setting: recursive sync walks below each
+selected folder, non-recursive sync ingests the folder's direct children only.</p>
+<p>The source detail page also shows the credentials in use: the OAuth app scope (project,
+organization, or deployment default), the short client id, the connected Google account, and the
+granted scope. <strong>Manage credentials</strong> opens <strong>Settings → Credentials</strong>.</p>
+<p>Free-text folder ids from older clients are still accepted: the first update rewrites
+<code>folder_id</code>/<code>shared_drive_id</code> into the canonical <code>folders</code> list.</p>
+<p>GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
+token entered when connecting the source; a token connection does not need an OAuth app.</p>
+<h3 id="gmail-email">Gmail (email)<a class="headerlink" href="#gmail-email" title="Permanent link">&para;</a></h3>
+<p>Select <strong>Gmail</strong> on <strong>Data Sources → New data source</strong> and authorize with the Google account whose mail
+you want to sync. A Gmail source ingests <strong>one document per thread</strong>: a Markdown document with a header
+(subject, participants, latest message, labels) and one section per message, oldest first. Message
+bodies use the plain-text part, falling back to a conversion of the HTML part; attachments are counted
+(<code>_N attachment(s) omitted._</code>) but never downloaded.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Query</strong> (<code>query</code>)</td>
+<td>Gmail search expression selecting which threads sync. Default <code>in:inbox</code>. Examples: <code>label:work</code>, <code>from:alice@example.com</code>, <code>-label:spam</code>, <code>has:attachment</code>.</td>
+</tr>
+<tr>
+<td><strong>Label ids</strong> (<code>label_ids</code>)</td>
+<td>Optional label ids; a thread must carry every listed label. List them from the source's resources (<code>GET /api/data-source-integrations/{id}/resources</code>) or the provider catalog (<code>POST /api/data-source-integrations/resources</code>). When labels are set and no query is given, the source syncs everything carrying those labels instead of the inbox.</td>
+</tr>
+<tr>
+<td><strong>Since</strong> (<code>since</code>)</td>
+<td>Optional <code>YYYY-MM-DD</code>. Threads dated before it are never synced. The date is absolute, so the window only grows: a source never drops previously synced threads just because time passed. Gmail's <code>after:</code> filter is day-granular in the mailbox's own timezone, so a thread dated on the boundary day may be included or excluded by a few hours.</td>
+</tr>
+<tr>
+<td><strong>Max threads</strong> (<code>max_threads</code>)</td>
+<td>Ceiling for one pass. Default <code>10000</code>, maximum <code>50000</code>. Every sync lists the newest matching threads; when the query matches more than the ceiling, older threads are <strong>backfilled</strong> a calendar window at a time on later syncs (see below), so a large mailbox is eventually covered instead of only ever contributing its newest slice.</td>
+</tr>
+</tbody>
+</table>
+<p>A capped listing is not a dead end. The sync that hits the ceiling starts walking older windows
+(30 days at a time, narrowing when a window is larger than one sync may ingest) and stores a coverage
+watermark in the source's cursor. Each following sync continues from that watermark — head first, so
+new mail still arrives immediately — until the walk reaches the <code>since</code> floor (or, without a <code>since</code>,
+Gmail's earliest possible date). Because every window overlaps the next by a day, re-listing a thread
+costs only a skipped revision, never a gap — the one exception is a day holding more matching threads
+than <code>max_threads</code>, which is capped exactly as a capped listing always was. A sync whose threads fail
+to fetch leaves the watermark where it was, so that window is re-listed and the failures retried. That
+retry is bounded per thread: a thread that fails to fetch or apply on <strong>three consecutive syncs</strong> is
+abandoned so one broken message cannot freeze the backfill forever, and the sync that moves past it
+records the abandoned thread ids in its error detail and leaves the reason on the source's last error.
+Different threads each failing once never exhaust that budget. Because a Gmail source never deletes, a
+window you later tightened keeps what it already ingested.</p>
+<p>Windows are calendar ranges, not listing pages, so a modified old thread is picked up when its window
+is next re-listed rather than on the very next sync.</p>
+<p>Change detection uses Gmail's per-thread history id: an unchanged thread is skipped without downloading
+its body, so re-syncing a large mailbox is cheap. A thread that gains a message or changes labels is
+re-read, and produces a new document version only when its text actually changed. Gmail bills
+<code>threads.list</code> at 10 units and <code>threads.get</code> at 120 units (the connector requests full threads) against
+6,000 units per minute per user, so a rate-limited call is retried with exponential backoff — honouring
+<code>Retry-After</code> — instead of failing the thread until the next scheduled sync.</p>
+<div class="admonition warning">
+<p class="admonition-title">Gmail scope and Google verification</p>
+<p>The connector requests <code>gmail.readonly</code>, a Google <strong>restricted</strong> scope. A Google Cloud project whose
+consent screen is <strong>Internal</strong> (Workspace-only) can use it without review; an <strong>External</strong> app needs
+Google verification and a CASA assessment before non-test users can consent. A consent screen left in
+<strong>Testing</strong> also expires every Google grant after 7 days, Drive included — see
+<a href="#create-the-app-in-the-vendor-console">Create the app in the vendor console</a>. Enable the
+<strong>Gmail API</strong>, add the scope, and register the callback
+<code>https://&lt;api-host&gt;/api/data-source-integrations/oauth/gmail/callback</code> — see
+<a href="#create-the-app-in-the-vendor-console">Create the app in the vendor console</a>.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Deleted mail is not detected in this version</p>
+<p>A Gmail sync is a filtered view of a live mailbox: a thread absent from it may have been archived,
+relabelled, or moved out of the query rather than deleted. Gmail sources therefore never mark
+documents deleted-from-source. Deletion detection via the mailbox history is a follow-up.</p>
+</div>
+<h3 id="reconnecting-a-source">Reconnecting a source<a class="headerlink" href="#reconnecting-a-source" title="Permanent link">&para;</a></h3>
+<p>An OAuth grant can stop working long before you want to delete the source: the user revokes the app
+in their Google or GitHub account, the refresh token expires, or the provider rotates it away. The
+sync then fails with the provider's error, and the source's <strong>Credentials</strong> card offers
+<strong>Reconnect</strong>.</p>
+<p>A failure of this kind <strong>parks</strong> the source: its status becomes <strong>Needs reconnect</strong> and scheduled
+syncs stop until it is reconnected. That is deliberate. Re-sending a grant the provider has already
+rejected cannot succeed, so a parked source is not retried — before this it kept producing a failed
+sync every minute while the connections table still called it active. The error stays on the source
+and in its sync history, and no documents are removed. A transient failure (a 5xx, a timeout, a rate
+limit) never parks a source; it stays active and retries on its normal cadence.</p>
+<p>If you believe the grant is fine — the provider had an outage, or the failure was misclassified —
+you can retry without a new consent by setting <code>enabled: true</code> on the source
+(<code>PATCH /api/data-source-integrations/{id}</code>; there is no on/off control for a data source in the UI
+yet). That returns it to active and clears the recorded failure, so the API stops reporting the old
+message (<code>errorMessage</code>) on a source that is syncing again; the failed run stays in the sync history.
+A scheduled source syncs on its next sweep, and a manual one syncs when you press <strong>Sync now</strong>. A grant
+that really is dead parks the source again.</p>
+<p>Consent runs again for the same source. The stored grant is replaced in place, so the source keeps
+its id, name, sync targets, cursor and sync history — the next sync resumes instead of re-importing
+everything into a second source. The connected account and the granted scope strategy are refreshed
+from the new consent, and the recorded error clears.</p>
+<p>The action follows the provider's advertised auth methods. A <strong>web</strong> source has no OAuth method and
+shows none. A <strong>GitHub</strong> source always shows it, including one connected with a personal access
+token — reconnecting replaces that token with an OAuth grant for the same source, so it needs the
+GitHub OAuth app to be configured.</p>
+<div class="admonition note">
+<p class="admonition-title">Reconnect is not a new source</p>
+<p>Reconnecting never creates a second source. If you see a duplicate after a provider
+authorization, it came from the connect flow, not from <strong>Reconnect</strong>.</p>
+</div>
+<p>Over the API, name the source on the authorize request and the callback updates that source. The
+endpoint takes a JSON body, so send the content type with it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>GET<span class="w"> </span><span class="s2">"</span><span class="nv">$MEMORY_API_URL</span><span class="s2">/api/data-source-integrations/providers/google_drive/oauth/authorize"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"reconnectSourceId": "&lt;source id&gt;"}'</span>
+</code></pre></div>
+<p>The response is the provider's authorize URL; without a readable body the request is treated as a
+plain connect and creates a <strong>new</strong> source.</p>
+<h3 id="connect-github-with-a-personal-access-token">Connect GitHub with a personal access token<a class="headerlink" href="#connect-github-with-a-personal-access-token" title="Permanent link">&para;</a></h3>
+<p>GitHub can be connected either with OAuth or with a personal access token. The token path uses a
+saved credential:</p>
+<ol>
+<li>Open <strong>Project Settings → Credentials</strong> and choose <strong>Add credential</strong>: pick <strong>GitHub</strong>, give the
+   credential a name, and paste the token. (You can also do this inline from the connect form.)</li>
+<li>On <strong>Data Sources → New data source</strong>, pick <strong>GitHub</strong> and choose <strong>Use a personal access token</strong>.</li>
+<li>Select the saved credential. The list shows how many sources already use each one, so reusing an
+   existing token is an informed choice.</li>
+<li>Fill in the repository scope below and press <strong>Connect</strong>.</li>
+</ol>
+<p>The token is stored encrypted and write-only — it is never shown again. One saved credential can
+back several GitHub sources; editing it updates all of them.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>How to fill it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Repository</strong></td>
+<td>Press <strong>Load repositories</strong> to pick from the repositories the token can see (private ones included), or type <code>owner/name</code> directly.</td>
+</tr>
+<tr>
+<td><strong>Ref</strong></td>
+<td>Once a repository is set, press <strong>Load branches and tags</strong> to pick a branch or tag, or type any ref. An empty ref syncs the repository's default branch. Commit SHAs are valid refs but are not listed.</td>
+</tr>
+<tr>
+<td><strong>Paths</strong> / <strong>Extensions</strong></td>
+<td>Optional filters limiting which files sync.</td>
+</tr>
+</tbody>
+</table>
+<p>Press <strong>Test connection</strong> to validate the token and repository before saving.</p>
+<p>The suggestion lists are best-effort. If a list cannot be loaded — an expired token, a rate limit, a
+fine-grained token without repository-list permission — the field shows an inline message and keeps
+the value you typed, so you can still connect. Picking from a list is never required: typing
+<code>owner/name</code> and a ref always works, including for GitHub Enterprise Server (whose API endpoint is
+configured for the whole deployment, not per source).</p>
+<h3 id="github-token-scopes">GitHub token scopes<a class="headerlink" href="#github-token-scopes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Classic token</strong>: the <code>repo</code> scope to read private repositories and their contents
+  (<code>public_repo</code> is enough for public repositories).</li>
+<li><strong>Fine-grained token</strong>: <strong>Repository metadata: Read</strong> to list the repositories the token can see,
+  and <strong>Contents: Read</strong> on the target repository to list branches and tags and sync its files.</li>
+</ul>
+<p>Reading branches and tags needs no permission beyond contents access.</p>
+<h3 id="trale-meeting-intelligence">Trale (meeting intelligence)<a class="headerlink" href="#trale-meeting-intelligence" title="Permanent link">&para;</a></h3>
+<p>Trale imports meeting transcripts and their AI-generated summaries. It connects over OAuth, but unlike
+Google Drive and GitHub it registers its own OAuth client at connect time using dynamic client
+registration (RFC 7591). There is no app to create in a vendor console and no client id/secret to enter,
+so the credentials pages simply do not list Trale — connect it directly from <strong>Data Sources</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tags</strong></td>
+<td><em>Required.</em> The Trale tag slugs to import, for example <code>standup</code>. Pick from the suggestions the provider returns, or type them.</td>
+</tr>
+<tr>
+<td><strong>Name pattern</strong></td>
+<td>Optional regex matched against a meeting's title; only matching meetings are imported.</td>
+</tr>
+<tr>
+<td><strong>Include transcript</strong></td>
+<td>When enabled, the full transcript is imported as part of the document. Off (the default) imports the summary and structured summary only.</td>
+</tr>
+<tr>
+<td><strong>Backfill days</strong></td>
+<td>How far back to look for past meetings (default 90).</td>
+</tr>
+</tbody>
+</table>
+<p>Only completed meetings are imported. The document's identity is derived from the meeting's status,
+participant count, tags, and summary, so a meeting that is later re-summarized updates in place rather
+than duplicating.</p>
+<p>Operational caveats:</p>
+<ul>
+<li><strong>No modification timestamp.</strong> Trale does not expose one, so change detection rests on the composite
+  identity above: a meeting whose status, participant count, tags and summary are unchanged is not fetched
+  again. That keeps repeat syncs cheap, but an edit that only touches the transcript is not picked up
+  until another part of that identity changes.</li>
+<li><strong>Plan or access lapses surface as errors.</strong> If the Trale plan lapses or the connected account loses
+  access, the sync fails with a connection error rather than reporting an empty success.</li>
+<li><strong>Per-user visibility.</strong> Trale returns the meetings the authorizing account can see, so a data
+  source imports exactly that account's meeting scope.</li>
+<li><strong>25 meetings per call.</strong> Enumeration pages through meetings 25 at a time; a large backfill takes
+  several calls and nothing is silently truncated.</li>
+<li><strong>Token rotation is persisted.</strong> The authorization server rotates the refresh token on every use, and
+  the source stores the rotated token, so routine rotation never interrupts syncing. A refresh fails
+  only when the grant itself is revoked or has expired; the source then stops with an actionable error,
+  and the source's detail page offers <strong>Reconnect</strong> to repair the grant in place.</li>
+<li><strong>A park that survives a reconnect is usually a client problem, not a grant problem.</strong> Trale's
+  authorization server reports a dead grant and a misconfigured client registration with the same error
+  code (<code>invalid_credentials</code>), so the message cannot tell them apart. If the source parks again after a
+  successful reconnect, stop reconnecting — the OAuth client registration is wrong or was deleted, and
+  no number of reconnects will fix it, so an administrator has to correct the client configuration.
+  A sync that was already running when you reconnected cannot cause it: it keeps failing against the
+  grant it started with, but it records that failure without parking the source, because the grant you
+  just replaced is not the one the source reads any more.</li>
+</ul>
+<h3 id="web-website-crawl">Web (website crawl)<a class="headerlink" href="#web-website-crawl" title="Permanent link">&para;</a></h3>
+<p>The <code>web</code> provider crawls a website starting from one or more URLs and imports each page as a Markdown
+document. It connects with <strong>config only</strong> — no credentials are collected or stored.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Start URLs</strong> (<code>start_urls</code>)</td>
+<td><em>Required.</em> One or more absolute <code>http(s)</code> URLs to start from (up to 50). The crawl stays on the same origin as each start URL.</td>
+</tr>
+<tr>
+<td><strong>Include globs</strong> (<code>include_globs</code>)</td>
+<td>Optional URL path globs to keep, for example <code>/docs/**</code>. Empty keeps every in-scope page.</td>
+</tr>
+<tr>
+<td><strong>Exclude globs</strong> (<code>exclude_globs</code>)</td>
+<td>Optional URL path globs to skip, for example <code>/admin/**</code>.</td>
+</tr>
+<tr>
+<td><strong>Max pages</strong> (<code>max_pages</code>)</td>
+<td>Maximum pages to crawl. Default and ceiling is 200.</td>
+</tr>
+<tr>
+<td><strong>Max depth</strong> (<code>max_depth</code>)</td>
+<td>Maximum link depth to follow. Default 3; <code>0</code> ingests only the start URLs (no link following).</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Static HTML only.</strong> Each page is fetched and converted to Markdown. The crawler does not execute
+  JavaScript, so sites that render their content client-side will ingest poorly.</li>
+<li><strong><code>robots.txt</code> is honored.</strong> The crawler respects the site's <code>robots.txt</code> and identifies itself with an
+  <code>EmergentMemoryBot/1.0</code> user agent.</li>
+<li><strong>Caps.</strong> A single crawl is capped at 200 pages, 5 MiB per page, and 50 MiB in total.</li>
+<li><strong>Politeness.</strong> The crawler waits at least 1 second between requests to the same host.</li>
+<li><strong>Sync cadence.</strong> Sources sync every 60 minutes by default; the fastest allowed interval is 15 minutes.</li>
+<li><strong>Removals are proof-based.</strong> A page returning <code>404</code>/<code>410</code> is re-checked once before it is marked
+  <code>deleted_from_source</code> (soft-deleted) — a transient failure never deletes a page.</li>
+</ul>
+<hr />
+<h2 id="setting-up-a-data-source">Setting Up a Data Source<a class="headerlink" href="#setting-up-a-data-source" title="Permanent link">&para;</a></h2>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Admin UI</label><label for="__tabbed_2_2">API</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Go to <strong>Data Sources → New data source</strong> and select your provider.</p>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">POST /api/data-source-integrations</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="err">{</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="err">  "name": "Team inbox",</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="err">  "providerType": "gmail",</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="err">  "sourceType": "email",</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="err">  "syncMode": "scheduled",</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="err">  "syncIntervalMinutes": 60,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="err">  "config": { "query": "in:inbox -label:spam" }</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="err">}</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>After creation you will be redirected (or given a URL) to complete the OAuth flow for providers that require it.</p>
+<h3 id="test-the-connection-before-saving">Test the connection before saving<a class="headerlink" href="#test-the-connection-before-saving" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">POST /api/data-source-integrations/test-config</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">{</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="err">  "providerType": "web",</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="err">  "config": {</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="err">    "start_urls": ["https://docs.example.com/"]</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="err">  }</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="err">}</span>
+</code></pre></div>
+<p>A saved source can be tested without resending config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">POST /api/data-source-integrations/{id}/test-connection</span>
+</code></pre></div>
+<hr />
+<h2 id="data-source-fields">Data source fields<a class="headerlink" href="#data-source-fields" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>Display name for this integration</td>
+</tr>
+<tr>
+<td><code>providerType</code></td>
+<td>The provider: <code>google_drive</code>, <code>gmail</code>, <code>github</code>, <code>trale</code>, <code>web</code></td>
+</tr>
+<tr>
+<td><code>sourceType</code></td>
+<td>Category of content: <code>drive</code>, <code>email</code>, <code>repo</code>, <code>meeting</code>, <code>web</code></td>
+</tr>
+<tr>
+<td><code>syncMode</code></td>
+<td><code>manual</code> (sync only when you trigger it) or <code>scheduled</code> (automatic on the interval). <code>recurring</code> is accepted as an alias for <code>scheduled</code>. A <code>manual</code> source never syncs on its own, and switching a source to <code>manual</code> clears its stored interval.</td>
+</tr>
+<tr>
+<td><code>syncIntervalMinutes</code></td>
+<td>Minutes between automatic syncs. Required in spirit for <code>scheduled</code>: omitting it applies the provider's default (60 minutes for the web crawler and Gmail). Ignored for <code>manual</code>.</td>
+</tr>
+<tr>
+<td><code>enabled</code></td>
+<td>Write-only on update: <code>false</code> pauses the source (<code>status: disabled</code>), <code>true</code> resumes it. Applied to a <code>needs_reconnect</code> source, <code>true</code> is an explicit retry — it returns the source to <code>active</code> and the next failure parks it again.</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>active</code> (admitted for scheduled sync) · <code>needs_reconnect</code> (the stored credential was rejected — reconnect it; scheduled syncs stop) · <code>disabled</code> (paused; never admitted). See <a href="#reconnecting-a-source">Reconnecting a source</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>google_drive</code>, <code>config.folders</code> is the sync scope:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">"folders"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nt">"folder_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1AbC…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Reports"</span><span class="p">,</span><span class="w"> </span><span class="nt">"drive_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nt">"folder_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1XyZ…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Shared contracts"</span><span class="p">,</span><span class="w"> </span><span class="nt">"drive_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0AFt…"</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="p">],</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="nt">"mime_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"application/pdf"</span><span class="p">],</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="nt">"recursive"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span>
+</code></pre></div>
+<p>When you write <code>folders</code> directly, <code>name</code> and <code>drive_id</code> are stored as you send them — send both so
+the UI and sync can label the target. Only <code>PUT /sync-targets</code> resolves them from Drive for you (see
+below). The legacy single-target keys <code>folder_id</code> and <code>shared_drive_id</code> are accepted and normalized
+into <code>folders</code>.</p>
+<hr />
+<h2 id="choosing-sync-targets-through-the-api">Choosing Sync Targets Through the API<a class="headerlink" href="#choosing-sync-targets-through-the-api" title="Permanent link">&para;</a></h2>
+<p>The folder-picker modal saves through the same endpoint an API client can call. Submit only folder
+ids; the server resolves each folder's name and shared-drive id from Drive and merges the result
+into the source config while preserving its other keys:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">PUT /api/data-source-integrations/{id}/sync-targets</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="err">{ "folderIds": ["1AbC…", "1XyZ…"] }</span>
+</code></pre></div>
+<p>An empty list, an inaccessible folder, or more than 50 ids is rejected. The response is the updated
+integration. The picker itself mints a short-lived access token from the source's own stored refresh
+token via <code>GET /api/data-source-integrations/{id}/picker-session</code> (UI-only; the token is never
+logged or cached).</p>
+<hr />
+<h2 id="triggering-a-sync">Triggering a Sync<a class="headerlink" href="#triggering-a-sync" title="Permanent link">&para;</a></h2>
+<p>Manually trigger a sync at any time:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">POST /api/data-source-integrations/{id}/sync</span>
+</code></pre></div>
+<hr />
+<h2 id="monitoring-sync-jobs">Monitoring Sync Jobs<a class="headerlink" href="#monitoring-sync-jobs" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">GET /api/data-source-integrations/{id}/sync-jobs?limit=50&amp;offset=0  # one page, newest first</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">GET /api/data-source-integrations/{id}/sync-jobs/latest             # most recent</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="err">GET /api/data-source-integrations/{id}/sync-jobs/{jobId}            # specific job</span>
+</code></pre></div>
+<p>The listing is paged. <code>limit</code> defaults to 50 and is capped at 200; <code>offset</code> skips
+that many jobs so older history can be fetched page by page. The response's
+<code>items</code> is the requested page and <code>total</code> is the source's full job count (not the
+page length). Pass <code>status</code> to filter the listing.</p>
+<h3 id="sync-job-fields">Sync job fields<a class="headerlink" href="#sync-job-fields" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>status</code></td>
+<td><code>pending</code> · <code>running</code> · <code>completed</code> · <code>failed</code> · <code>cancelled</code></td>
+</tr>
+<tr>
+<td><code>totalItems</code></td>
+<td>Total items discovered</td>
+</tr>
+<tr>
+<td><code>processedItems</code></td>
+<td>Items processed so far</td>
+</tr>
+<tr>
+<td><code>successfulItems</code></td>
+<td>Items imported successfully</td>
+</tr>
+<tr>
+<td><code>failedItems</code></td>
+<td>Items that failed to import</td>
+</tr>
+<tr>
+<td><code>skippedItems</code></td>
+<td>Items skipped (already up to date)</td>
+</tr>
+<tr>
+<td><code>currentPhase</code></td>
+<td>Current processing phase label</td>
+</tr>
+<tr>
+<td><code>statusMessage</code></td>
+<td>Human-readable progress description</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="cancelling-a-sync">Cancelling a Sync<a class="headerlink" href="#cancelling-a-sync" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/data-source-integrations/{id}/sync-jobs/{jobId}/cancel</span>
+</code></pre></div>
+<hr />
+<h2 id="schema-discovery">Schema Discovery<a class="headerlink" href="#schema-discovery" title="Permanent link">&para;</a></h2>
+<p>For structured data sources (e.g. databases, APIs), you can run a <strong>discovery job</strong> to infer object types from the source schema:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">POST /api/discovery-jobs/projects/{projectId}/start</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="err">{</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="err">  "integrationId": "&lt;data-source-id&gt;"</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="err">}</span>
+</code></pre></div>
+<p>Monitor the discovery job:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">GET /api/discovery-jobs/{jobId}</span>
+</code></pre></div>
+<p>Finalize (apply discovered types to the type registry):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="err">POST /api/discovery-jobs/{jobId}/finalize</span>
+</code></pre></div>
+<hr />
+<h2 id="listing-data-sources">Listing Data Sources<a class="headerlink" href="#listing-data-sources" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="err">GET /api/data-source-integrations</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="err">GET /api/data-source-integrations/source-types        # available source types</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="err">GET /api/data-source-integrations/providers           # available provider configs</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="err">GET /api/data-source-integrations/providers/{type}/schema  # config schema for a provider</span>
+</code></pre></div>
+<hr />
+<h2 id="updating-and-deleting">Updating and Deleting<a class="headerlink" href="#updating-and-deleting" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="err">PATCH  /api/data-source-integrations/{id}    # update name, syncMode, etc.</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="err">DELETE /api/data-source-integrations/{id}    # remove integration</span>
+</code></pre></div>
+<p><code>enabled</code> is the pause/resume switch, and the only way to retry a parked source without reconnecting:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="err">PATCH /api/data-source-integrations/{id}</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="err">{ "enabled": true }</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Deleting a data source does <strong>not</strong> delete the documents already imported from it. Those remain in the project.</p>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "content.tabs.link", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
