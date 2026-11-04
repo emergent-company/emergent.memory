@@ -229,6 +229,30 @@ test.describe('recorded pipeline transcript in the chat workspace', () => {
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
+  test('sending from a run starts a fresh chat owned by the selected agent', async ({ page }) => {
+    // Reproduces the stale attribution a run transcript left behind: sending a
+    // message abandoned the run scope and cleared the URL and bubbles, but the
+    // pane header still named the run's agent — a brand-new chat titled
+    // "Extraction" with its own description hidden.
+    await page.route('http://memory.test/**', (route) =>
+      route.fulfill({ contentType: 'text/html', body: CHAT_SKELETON }),
+    );
+    await page.goto('http://memory.test/chat');
+    await installStubs(page);
+    await loadChatSurface(page);
+
+    await page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`).click();
+    await expect(page.locator('#chat-header-title')).toHaveText(RUN_AGENT);
+
+    await page.locator('#chat-input').fill('a fresh question');
+    await page.locator('#chat-form').evaluate((f) => (f as HTMLFormElement).requestSubmit());
+
+    await expect(page.locator('#chat-header-title')).toHaveText('Tester');
+    await expect(page.locator('#chat-header-desc')).toBeVisible();
+    await expect(page.locator('#chat-header-desc')).toHaveText('The selected chat agent');
+    await expect.poll(() => page.evaluate(() => window.location.search)).not.toContain('run=');
+  });
+
   test('the pane URL reopens the run transcript', async ({ page }) => {
     await page.route('http://memory.test/**', (route) =>
       route.fulfill({ contentType: 'text/html', body: CHAT_SKELETON }),

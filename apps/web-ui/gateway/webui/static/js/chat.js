@@ -2056,12 +2056,17 @@
     // /api/chat conversation, so abandon the run scope and clear its bubbles.
     if (activeRunId) {
       activeRunId = "";
+      // The header names the run's agent while a run is open; the fresh chat
+      // belongs to the selected agent again (leaving the run's name there was a
+      // stale attribution — a brand-new chat titled "Extraction").
+      activeRunAgentName = "";
       closeLiveStream(); // drop the abandoned run's push channel
       clearActiveRailItem();
       clearThinking();
       replayFrames = [];
       transcriptReady = false;
       updateUrl();
+      updateChatHeader();
       if (messages) messages.innerHTML = "";
       bubble = null; bubbleHTML = ""; bubbleText = "";
     }

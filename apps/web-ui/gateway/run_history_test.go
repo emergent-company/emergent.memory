@@ -286,10 +286,17 @@ func TestRunTimelineCarriesStageProvenance(t *testing.T) {
 	// untouched, and the legacy chain-of-thought heuristic must not steal a
 	// first line as "reasoning" — it used to turn a stage's status line into a
 	// Thinking block that contained nothing but its own label.
+	//
+	// The answer is MULTI-LINE on purpose. splitLeadingReasoning splits on the
+	// first newline, so a single-line fixture passes whether or not the stage
+	// branch exists; this one can only pass when the heuristic is skipped (its
+	// first line, "Processed 55 entities with temp_ids", is exactly what the
+	// heuristic would lift into reasoning).
+	const answer = "Processed 55 entities with temp_ids\n\nEntities: Alice, Bob\nRelationships: Alice → Bob"
 	full := &AgentRunFull{
 		Run: &ScheduledAgentRun{ID: "run-x", AgentID: "a2", AgentName: "Extraction", Status: "completed"},
 		Messages: []*AgentRunMessage{
-			{Role: "assistant", Content: map[string]any{"text": "Processed 55 entities with temp_ids", "stage": "EntityProcessor", "stage_kind": "output"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 2},
+			{Role: "assistant", Content: map[string]any{"text": answer, "stage": "EntityProcessor", "stage_kind": "output"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 2},
 			{Role: "user", Content: map[string]any{"text": "Extract of document doc-1", "stage": "Extraction", "stage_kind": "header"}, CreatedAt: "2026-08-26T08:00:01Z", StepNumber: 1},
 		},
 	}
@@ -319,6 +326,22 @@ func TestRunTimelineCarriesStageProvenance(t *testing.T) {
 		}
 		if reasoning, ok := content["reasoning"]; ok && reasoning != "" {
 			t.Errorf("item %d reasoning = %v, want none (a stage label is not chain-of-thought)", i, reasoning)
+		}
+	}
+
+	// The stage's answer is rendered whole — first line included.
+	var answerItem map[string]any
+	if err := json.Unmarshal(rendered[1], &answerItem); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	ac, _ := answerItem["content"].(map[string]any)
+	if ac["text"] != answer {
+		t.Errorf("stage answer text = %q, want the whole answer", ac["text"])
+	}
+	answerHTML, _ := ac["html"].(string)
+	for _, want := range []string{"Processed 55 entities", "Entities: Alice, Bob", "Alice → Bob"} {
+		if !strings.Contains(answerHTML, want) {
+			t.Errorf("stage answer html missing %q: %s", want, answerHTML)
 		}
 	}
 }

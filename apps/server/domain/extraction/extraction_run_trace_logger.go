@@ -171,10 +171,11 @@ func (l *runTraceLogger) LogEvent(eventType string, author string, content strin
 	if !l.claimResponse(author, text) {
 		return
 	}
-	// Labelled "stage output" rather than "model response": the runner's events
-	// carry both the model's answer and a stage's own synthetic lines (the
-	// processors' "Processed N entities", the quality check's pass/fail), and
-	// only the author distinguishes them. A neutral label is accurate for both.
+	// Recorded as kind "output" rather than something answer-specific: the
+	// runner's events carry both the model's answer and a stage's own synthetic
+	// lines (the processors' "Processed N entities", the quality check's
+	// pass/fail), and only the author distinguishes them. A neutral kind is
+	// accurate for both.
 	l.record("assistant", author, stageKindOutput, content)
 }
 
