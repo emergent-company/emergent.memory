@@ -10,8 +10,11 @@ enum ChatEvent: Equatable {
     case toolCall(ChatToolCallEvent)
     case toolResult(ChatToolResultEvent)
     /// One delta of the current thinking/reasoning block; the store
-    /// accumulates deltas into a single block per turn.
-    case thinking(delta: String)
+    /// accumulates deltas into the active block. `id` identifies a reasoning
+    /// segment when the worker sends one; older workers omit it.
+    case thinking(id: String?, delta: String)
+    /// A live subagent run, surfaced as a composer-track pill.
+    case subagent(ChatSubagentEvent)
     case approval(ChatApprovalEvent)
     case question(ChatQuestionEvent)
     /// A declarative A2UI surface (structured cards) validated by the server.
@@ -35,6 +38,19 @@ struct ChatToolResultEvent: Equatable, Decodable {
     let tool: String
     let result: String
     let isError: Bool
+}
+
+/// A live subagent run (`{"type":"subagent",...}`). Every field is optional so
+/// a worker may omit ids or metadata without dropping the event; the store
+/// derives a stable local id when `id`/`runId` are both missing.
+struct ChatSubagentEvent: Equatable, Decodable {
+    let id: String?
+    let parentRunId: String?
+    let runId: String?
+    let agentName: String?
+    let task: String?
+    let status: String?
+    let error: String?
 }
 
 /// An approval request: the run is paused until the user approves or rejects
@@ -112,6 +128,7 @@ func decodeChatEvent(_ json: String) -> ChatEvent? {
     return decodeChatEvent(data: data)
 }
 
+// swiftlint:disable:next cyclomatic_complexity
 func decodeChatEvent(data: Data) -> ChatEvent? {
     let decoder = JSONDecoder()
     guard
@@ -127,7 +144,10 @@ func decodeChatEvent(data: Data) -> ChatEvent? {
         return .toolResult(event)
     case "thinking":
         guard let event = try? decoder.decode(ChatThinkingEvent.self, from: data) else { return nil }
-        return .thinking(delta: event.delta)
+        return .thinking(id: event.id, delta: event.delta)
+    case "subagent":
+        guard let event = try? decoder.decode(ChatSubagentEvent.self, from: data) else { return nil }
+        return .subagent(event)
     case "approval":
         guard let event = try? decoder.decode(ChatApprovalEvent.self, from: data) else { return nil }
         return .approval(event)
@@ -151,6 +171,7 @@ private struct ChatEventEnvelope: Decodable {
 }
 
 private struct ChatThinkingEvent: Decodable {
+    let id: String?
     let delta: String
 }
 

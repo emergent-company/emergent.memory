@@ -28,9 +28,9 @@ async function attachSources(page: import('@playwright/test').Page, items: Sourc
     }).MemoryChatComponents;
     const wrap = document.createElement('div');
     wrap.id = 'e2e-sources-host';
-    wrap.className = 'chat chat-start memory-rise';
+    wrap.className = 'chat chat-start memory-rise memory-assistant';
     wrap.innerHTML =
-      '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md">answer</div></div>';
+      '<div class="memory-md">answer</div><div class="memory-assistant-actions"></div>';
     document.body.appendChild(wrap);
     // Called twice on purpose: attachSources must be idempotent.
     mc.attachSources(wrap, citations);
@@ -73,10 +73,10 @@ test.describe('Chat sources footer', () => {
       { kind: 'object', id: 'not-a-uuid', type: 'Thing', label: 'Unsafe source', url: 'https://evil.example/x' },
     ]);
 
-    const bubble = page.locator('#e2e-sources-host .chat-bubble');
+    const bubble = page.locator('#e2e-sources-host .memory-assistant');
     const footer = bubble.getByTestId('chat-sources');
 
-    // The footer lives INSIDE the assistant bubble — never a sibling message row.
+    // The footer lives INSIDE the assistant turn — never a sibling message row.
     await expect(footer).toHaveCount(1);
     await expect(page.locator('.chat.chat-start.memory-sources')).toHaveCount(0);
 

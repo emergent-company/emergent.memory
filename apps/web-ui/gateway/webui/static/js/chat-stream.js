@@ -315,12 +315,13 @@
     // site (live stream, history, side panel) omits it → no footer.
     function addUserMessage(text, silent, meta) {
       // A user turn is a new run boundary: the previous turn's run is final.
+      closeLiveGroup();
       closeLiveRun();
+      if (ctx.onActivity) ctx.onActivity("user");
       ctx.hideEmpty();
       var wrap = document.createElement("div");
       wrap.className = "chat chat-end memory-rise";
       wrap.innerHTML =
-        '<div class="chat-header text-xs text-muted">You</div>' +
         '<div class="chat-bubble chat-bubble-primary"><p class="whitespace-pre-wrap break-words"></p></div>' +
         (meta
           ? '<div class="chat-footer mt-1 text-[11px] text-muted-faint font-mono">' + escapeHTML(meta) + "</div>"
@@ -335,11 +336,10 @@
     function addAssistantMessage(html, name, silent, meta) {
       ctx.hideEmpty();
       var wrap = document.createElement("div");
-      wrap.className = "chat chat-start memory-rise";
+      wrap.className = "chat chat-start memory-rise memory-assistant";
       wrap.innerHTML =
-        agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
-        '<div class="chat-header text-xs text-muted">' + escapeHTML(name || "Memory") + '</div>' +
-        '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>' +
+        '<div class="memory-md break-words"></div>' +
+        '<div class="memory-assistant-actions flex items-center gap-2 text-xs text-muted-faint"></div>' +
         (meta
           ? '<div class="chat-footer mt-1 text-[11px] text-muted-faint font-mono">' + escapeHTML(meta) + "</div>"
           : "");
@@ -352,13 +352,15 @@
 
     function openAssistantBubble() {
       hadSurface = false;
+      closeLiveGroup();
+      closeLiveRun();
+      if (ctx.onActivity) ctx.onActivity("assistant");
       ctx.hideEmpty();
       var b = document.createElement("div");
-      b.className = "chat chat-start memory-rise";
+      b.className = "chat chat-start memory-rise memory-assistant";
       b.innerHTML =
-        agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
-        '<div class="chat-header text-xs text-muted">' + escapeHTML(ctx.currentAgentName()) + '</div>' +
-        '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>';
+        '<div class="memory-md break-words"></div>' +
+        '<div class="memory-assistant-actions flex items-center gap-2 text-xs text-muted-faint"></div>';
       ctx.bubble = b;
       ctx.messages.appendChild(b);
       // Single hook every live-turn start funnels through (send / answer /
@@ -413,6 +415,8 @@
     function appendToken(delta) {
       var b = ctx.bubble;
       if (!b) return;
+      closeLiveGroup();
+      if (ctx.onActivity) ctx.onActivity("token");
       if (ctx.bubbleHTML) return; // snapshot owns the bubble; raw path stops
       if (delta == null) return;
       ctx.bubbleText += String(delta);
@@ -429,11 +433,12 @@
       return status === "running" || status === "awaiting_confirmation";
     }
 
-    // A turn's steps fold into one run. The run is created at the turn's first
-    // step and kept for the turn; it is settled when the turn ends. The page's
-    // run id (when it has one) keys the reader's open/closed choice, so the
-    // history render that replaces this DOM at settle keeps it.
-    var liveRun = null;
+    // A turn's tool calls group only while consecutive. The first call stays a
+    // plain chip; a second call promotes both into a group, and any activity
+    // boundary (thinking, assistant text, question, approval, A2UI, run end)
+    // closes the group so the next call starts a fresh one.
+    var liveGroup = null;
+    var livePending = null; // {shell, chip, facts} — the first call of a run
     var liveTurn = 0;
 
     function liveRunID() {
@@ -444,40 +449,102 @@
       }
     }
 
-    function closeLiveRun() {
-      var run = liveRun;
-      liveRun = null;
-      if (!run) return;
-      run.finish({ runId: liveRunID() });
+    function chipFacts(tool, status) {
+      return {
+        tool: tool,
+        startedAt: Date.now(),
+        running: inFlight(status),
+        failed: status === "error",
+      };
     }
 
-    function nextLiveRun() {
-      if (liveRun && liveRun.shell && !liveRun.shell.isConnected) liveRun = null;
-      if (!liveRun) {
-        liveTurn++;
-        // A page can only learn the turn's id once the run is under way, so the
-        // live key is local and the choice is re-keyed at settle.
-        liveRun = MemoryChatComponents.createToolRun(ctx.messages, "live-turn-" + liveTurn, {
-          openDefault: true,
-          runIdOf: liveRunID,
-        });
+    function closeLiveGroup() {
+      if (livePending) {
+        // A lone call keeps exactly the chip it has always been.
+        livePending = null;
       }
-      return liveRun;
+      var group = liveGroup;
+      liveGroup = null;
+      if (group) group.finish({ runId: liveRunID() });
+    }
+
+    // Compatibility alias: older call sites named the turn's tool grouping a
+    // "run"; the lifecycle is the same.
+    function closeLiveRun() {
+      closeLiveGroup();
+    }
+
+    function newLiveGroup() {
+      liveTurn++;
+      // A page can only learn the turn's id once the run is under way, so the
+      // live key is local and the choice is re-keyed at settle.
+      return MemoryChatComponents.createToolRun(ctx.messages, "live-turn-" + liveTurn, {
+        openDefault: false,
+        runIdOf: liveRunID,
+      });
+    }
+
+    function detachToStandalone(chip) {
+      if (!chip) return;
+      var oldShell = chip.parentNode;
+      var row = MemoryChatComponents.auxShell();
+      row.appendChild(chip);
+      ctx.messages.appendChild(row);
+      if (oldShell && oldShell !== row && oldShell.parentNode && oldShell.children.length === 0) {
+        oldShell.parentNode.removeChild(oldShell);
+      }
+      if (liveGroup && liveGroup.removeStep) {
+        var group = liveGroup;
+        liveGroup = null;
+        group.removeStep(chip);
+        group.finish({ runId: liveRunID() });
+      }
+      if (livePending && livePending.chip === chip) livePending = null;
+    }
+
+    // appendLiveChip places a live tool chip: first call standalone, second call
+    // promotes the pair into a group, later calls join that group.
+    function appendLiveChip(tool, status, chip) {
+      var facts = chipFacts(tool, status);
+      if (status === "awaiting_confirmation") {
+        closeLiveGroup();
+        detachToStandalone(chip);
+        return chip;
+      }
+      // The chip was built in a temporary chat-start shell; when it joins a
+      // group it moves out, and that shell must not linger as an empty row.
+      var ownShell = chip.parentNode;
+      if (livePending) {
+        var pending = livePending;
+        livePending = null;
+        liveGroup = newLiveGroup();
+        liveGroup.addStep(pending.chip, pending.facts);
+        if (pending.shell && pending.shell.parentNode) pending.shell.parentNode.removeChild(pending.shell);
+        liveGroup.addStep(chip, facts);
+        if (ownShell && ownShell.parentNode) ownShell.parentNode.removeChild(ownShell);
+        return chip;
+      }
+      if (liveGroup) {
+        liveGroup.addStep(chip, facts);
+        if (ownShell && ownShell.parentNode) ownShell.parentNode.removeChild(ownShell);
+        return chip;
+      }
+      // The chip is already in the fresh chat-start row created by toolChip;
+      // keep that row as the pending shell so promotion can remove it.
+      livePending = { shell: ownShell, chip: chip, facts: facts };
+      return chip;
     }
 
     function toolChip(tool, status, detail, payload) {
       var p = payload || { tool: tool, status: status };
 
-      // History passes the run body it is being painted into (so the recorded
-      // transcript groups the same way the live one did); a live step lands in
-      // the turn's run, which owns the chat-start shell. Same chat-start shell as
-      // thinking/assistant bubbles so the row aligns with (and is constrained to)
-      // the chat content column.
-      var run = null;
+      // History passes the run body it is being painted into; a live call starts
+      // in its own row and is grouped once a second consecutive call arrives.
       var host = p.host || null;
       if (!host) {
-        run = nextLiveRun();
-        host = run.body;
+        var shell = MemoryChatComponents.auxShell();
+        host = shell;
+        p._liveShell = shell;
       }
 
       // The step names itself in the console's vocabulary (category verb + the
@@ -524,14 +591,12 @@
       p.tool = tool;
       p.status = status;
       setToolStatus(chip.root, status, detail);
-      // A live step joins the turn's run, which states the count, the span and
-      // any failure in one summary line.
-      if (run) {
-        run.addStep(chip.root, {
-          startedAt: Date.now(),
-          running: inFlight(status),
-          failed: status === "error",
-        });
+      if (!p.host) {
+        // A live call starts in its own shell; appendLiveChip may move it into
+        // the turn's group when a second consecutive call arrives.
+        ctx.messages.appendChild(p._liveShell);
+        delete p._liveShell;
+        appendLiveChip(tool, status, chip.root);
       }
       // Optional run-transcript annotation ("step N · 5m ago"): a quiet footer
       // under the chip, only when the caller set payload.meta (dedicated run
@@ -636,6 +701,7 @@
     }
 
     function handleToolEvent(evt) {
+      if (ctx.onActivity) ctx.onActivity("tool");
       var tool = evt.tool || "tool";
       var callId = evt.id != null && evt.id !== "" ? String(evt.id) : "";
       var chips = Array.prototype.slice.call(ctx.messages.querySelectorAll(".memory-tool-chip"));
@@ -682,6 +748,7 @@
       // running spinner. It updates the running chip in place when one exists.
       if (status === "awaiting_confirmation") {
         if (target) {
+          detachToStandalone(target);
           setToolStatus(target, "awaiting_confirmation", "Waiting for confirmation");
           target.setAttribute("data-status", "awaiting_confirmation");
           target._payload = target._payload || { tool: tool };
@@ -719,7 +786,12 @@
         target.setAttribute("data-status", cls.status);
         // An open step is re-rendered: the reader opened it to see the result.
         refreshOpenDetail(target);
-        if (liveRun) liveRun.settleStep(target, { failed: cls.status === "error" });
+        if (liveGroup) {
+          liveGroup.settleStep(target, { failed: cls.status === "error" });
+        } else if (livePending && livePending.chip === target) {
+          livePending.facts.running = inFlight(cls.status);
+          livePending.facts.failed = cls.status === "error";
+        }
       } else {
         toolChip(tool, cls.status, detail, {
           tool: tool, status: cls.status, summary: cls.summary, error: cls.error,
@@ -739,6 +811,8 @@
     // fresh bubble.
     function renderQuestion(evt) {
       if (!ctx.messages) return;
+      closeLiveGroup();
+      if (ctx.onActivity) ctx.onActivity("question");
       var q = evt.question || "Question";
       var questionId = evt.questionId;
       var type = evt.interactionType || "buttons";
@@ -1020,6 +1094,8 @@
     // go through ctx.postDecision() (page-local) with a completion note.
     function renderApproval(evt) {
       if (!ctx.messages) return;
+      closeLiveGroup();
+      if (ctx.onActivity) ctx.onActivity("approval");
       var questionId = evt.questionId;
       var tool = evt.tool || "a tool";
       var input = evt.input || {};
@@ -1198,7 +1274,8 @@
       ctx.streaming = false;
       // Settle the turn's run before the host re-renders the transcript, so the
       // DOM the reader sees is final even on a host that keeps its live DOM.
-      closeLiveRun();
+      if (ctx.onActivity) ctx.onActivity("run-end");
+      closeLiveGroup();
       ctx.onStreamFinish(reason); // chat: finalize + refresh (+ queue release); sidepanel: recordHistory
       updateBubbleText();
       ctx.setStreaming(false);
@@ -1218,7 +1295,8 @@
     function failStream(message) {
       streamFailed = true;
       ctx.streaming = false;
-      closeLiveRun();
+      if (ctx.onActivity) ctx.onActivity("error");
+      closeLiveGroup();
       ctx.onStreamFail(); // page hook: each host finalizes its thinking state
       updateBubbleText();
       ctx.setStreaming(false);
@@ -1253,6 +1331,7 @@
       finishStream: finishStream,
       failStream: failStream,
       noteUISurface: function () { hadSurface = true; },
+      breakToolGroup: closeLiveGroup,
       autoGrow: autoGrow,
     };
   }

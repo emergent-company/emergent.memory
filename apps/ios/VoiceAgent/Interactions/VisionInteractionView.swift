@@ -35,6 +35,7 @@ import SwiftUI
                         messageText = prompt
                         keyboardFocus = true
                     })
+                    SubagentTrackView()
                     ChatInputView(keyboardFocus: _keyboardFocus, text: $messageText)
                 }
             }

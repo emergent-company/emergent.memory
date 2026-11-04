@@ -114,11 +114,11 @@ class MemoryLLMStream(LLMStream):
                     raise RuntimeError(event.get("error") or "memory chat error")
                 elif kind == "done":
                     break
-                elif kind in ("mcp_tool", "thinking", "approval", "ui"):
+                elif kind in ("mcp_tool", "thinking", "approval", "ui", "subagent"):
                     # Rich events memory streams for tool chips / thinking
-                    # blocks / approval + question cards / A2UI surfaces.
-                    # Forwarded verbatim in stream order; a publish failure
-                    # must not kill the turn.
+                    # blocks / approval + question cards / A2UI surfaces /
+                    # subagent runs. Forwarded verbatim in stream order; a
+                    # publish failure must not kill the turn.
                     for payload in mapper.handle(event):
                         await self._emit_chat_event(payload)
                 else:

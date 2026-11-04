@@ -236,11 +236,17 @@ struct ChatTurnActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
-            if !turn.thinkingText.isEmpty {
-                ThinkingBlockView(text: turn.thinkingText, isLive: !turn.didReplyStart)
+            ForEach(turn.thinkingBlocks) { block in
+                ThinkingBlockView(text: block.text, isLive: block.isLive)
             }
-            ForEach(turn.tools) { tool in
-                LiveToolChip(tool: tool)
+            ForEach(turn.toolGroups) { group in
+                if ToolActivityGrouping.isGrouped(group.tools) {
+                    ToolCallGroupView(group: group)
+                } else {
+                    ForEach(group.tools) { tool in
+                        LiveToolChip(tool: tool)
+                    }
+                }
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in

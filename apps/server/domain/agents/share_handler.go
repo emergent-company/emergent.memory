@@ -312,6 +312,8 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 		case StreamEventA2UI:
 			surfaces = append(surfaces, event.A2UI...)
 			_ = writer.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
+		case StreamEventSubagent:
+			_ = writer.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
 		}
 	}
 

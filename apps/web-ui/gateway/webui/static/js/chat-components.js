@@ -579,40 +579,46 @@
     return wrap;
   }
 
-  // createToolRun builds the run for turnKey inside container. Steps arrive
-  // through addStep (the chip root) and settleStep (a terminal frame); finish()
-  // states the settled summary and applies the default, and a run that ends with
-  // a single step dissolves back into that step.
+  // createToolRun builds the grouped row for a turn's consecutive tool calls.
+  // A group renders only when it holds 2+ calls; the live path dissolves a lone
+  // call back into today's plain chip. The summary states the call count and a
+  // breakdown of the tool names, a spinner when any call is running and a word
+  // when any failed. The body lists the child chips and scrolls after ~24rem.
   function createToolRun(container, turnKey, opts) {
     opts = opts || {};
     ensureBadgeStyle();
     var steps = [];
-    var defaultOpen = opts.openDefault !== false;
+    var defaultOpen = opts.openDefault === true;
 
     var shell = auxShell();
     var el = document.createElement("details");
-    el.className = "memory-tool-run col-start-2 row-start-2 w-full";
+    el.className = "memory-tool-run memory-tool-group col-start-2 row-start-2 w-full";
+    el.setAttribute("data-tool-group", "1");
+    el.setAttribute("data-tool-count", "0");
     if (turnKey) el.setAttribute("data-turn", String(turnKey));
     el.innerHTML =
       '<summary class="memory-tool-run-summary text-xs text-muted">' +
       '<span class="flex size-[22px] shrink-0 items-center justify-center">' +
-      '<span class="iconify lucide--list-checks size-4 text-muted-faint" aria-hidden="true"></span></span>' +
+      '<span class="iconify lucide--wrench size-4 text-muted-faint" aria-hidden="true"></span></span>' +
       '<span class="memory-tool-run-count"></span>' +
-      '<span class="memory-tool-run-span hidden text-muted-faint"></span>' +
+      '<span class="memory-tool-run-breakdown hidden min-w-0 max-w-[48%] shrink truncate text-xs text-muted-faint"></span>' +
+      '<span class="memory-tool-run-running hidden items-center gap-1 text-muted-strong">' +
+      '<span class="iconify lucide--loader-circle size-3.5 animate-spin" aria-hidden="true"></span></span>' +
       '<span class="memory-tool-run-failed hidden items-center gap-1 text-error">' +
       '<span class="iconify lucide--alert-triangle size-3.5" aria-hidden="true"></span>' +
       '<span class="memory-tool-run-failed-text"></span></span>' +
       '<span class="memory-tool-run-chevron ml-auto flex shrink-0 items-center">' +
       '<span class="iconify lucide--chevron-right size-3.5 text-muted-faint" aria-hidden="true"></span></span>' +
       "</summary>" +
-      '<div class="memory-tool-run-body flex flex-col gap-0.5 pb-1"></div>';
+      '<div class="memory-tool-group-body memory-tool-run-body flex flex-col gap-0.5 overflow-y-auto pb-1"></div>';
     if (defaultOpen) el.setAttribute("open", "");
     shell.appendChild(el);
     container.appendChild(shell);
 
     var body = el.querySelector(".memory-tool-run-body");
     var countEl = el.querySelector(".memory-tool-run-count");
-    var spanEl = el.querySelector(".memory-tool-run-span");
+    var breakdownEl = el.querySelector(".memory-tool-run-breakdown");
+    var runningEl = el.querySelector(".memory-tool-run-running");
     var failEl = el.querySelector(".memory-tool-run-failed");
     var failText = el.querySelector(".memory-tool-run-failed-text");
 
@@ -622,28 +628,48 @@
       return n;
     }
 
-    function spanMs() {
-      // Wall clock, not the sum of durations: the first step's start to the last
-      // step's settle.
-      var first = steps.length ? steps[0].startedAt : 0;
-      var last = 0;
+    function anyRunning() {
+      for (var i = 0; i < steps.length; i++) if (steps[i].running) return true;
+      return false;
+    }
+
+    // breakdown names the calls a reader would recognise: up to three distinct
+    // tools with a ×N multiplier, then "+N more" for the tail.
+    function breakdownText() {
+      var counts = {};
+      var order = [];
       for (var i = 0; i < steps.length; i++) {
-        if (steps[i].settledAt > last) last = steps[i].settledAt;
+        var name = steps[i].tool || "";
+        if (!name) continue;
+        if (!Object.prototype.hasOwnProperty.call(counts, name)) {
+          counts[name] = 0;
+          order.push(name);
+        }
+        counts[name]++;
       }
-      if (!first || !last || last < first) return 0;
-      return last - first;
+      if (!order.length) return "";
+      var parts = [];
+      var limit = Math.min(3, order.length);
+      for (var j = 0; j < limit; j++) {
+        var n = order[j];
+        var label = humanizeToolName(n);
+        parts.push(counts[n] > 1 ? label + " ×" + counts[n] : label);
+      }
+      if (order.length > limit) parts.push("+" + (order.length - limit) + " more");
+      return parts.join(", ");
     }
 
     function paint() {
-      countEl.textContent = steps.length + " step" + (steps.length === 1 ? "" : "s");
-      var ms = spanMs();
-      var duration = ms >= 1000 ? formatDurationMs(ms) : "";
-      // The summary reads as one sentence to a screen reader: "3 steps · 1.6s,
-      // 1 failed". The spaces live in the text, not only in the flex gap.
-      spanEl.textContent = duration ? " · " + duration : "";
-      spanEl.classList.toggle("hidden", !duration);
+      el.setAttribute("data-tool-count", String(steps.length));
+      countEl.textContent = steps.length + (steps.length === 1 ? " tool call" : " tool calls");
+      var breakdown = breakdownText();
+      breakdownEl.textContent = breakdown ? " · " + breakdown : "";
+      breakdownEl.classList.toggle("hidden", !breakdown);
       // State never rests on colour alone: the failure indicator is a word, and
-      // the icon only repeats it.
+      // the running spinner is an icon plus a hidden label for screen readers.
+      var running = anyRunning();
+      runningEl.classList.toggle("hidden", !running);
+      runningEl.classList.toggle("flex", running);
       var failed = foundFailed();
       failEl.classList.toggle("hidden", failed === 0);
       failEl.classList.toggle("flex", failed > 0);
@@ -663,11 +689,7 @@
     }
 
     // The reader's click is the choice: the summary's default action flips the
-    // run after the event, so the state it is going to is `!el.open`. Recording
-    // it here — rather than from the `toggle` event, which is queued — is what
-    // lets a settle moments later still read the reader's choice. A page that
-    // knows the turn's run id (opts.runIdOf) gets the choice under both keys, so
-    // it holds whether the click lands before or after the recorded re-render.
+    // group after the event, so the state it is going to is `!el.open`.
     function rememberChoice(open) {
       rememberToolRunChoice(turnKey, open);
       if (!opts.runIdOf) return;
@@ -690,10 +712,12 @@
       shell: shell,
       body: body,
       key: turnKey,
+      steps: steps,
       addStep: function (chip, facts) {
         facts = facts || {};
         steps.push({
           chip: chip || null,
+          tool: facts.tool || "",
           startedAt: facts.startedAt || Date.now(),
           settledAt: facts.settledAt || 0,
           failed: !!facts.failed,
@@ -715,34 +739,37 @@
           }
         }
       },
+      removeStep: function (chip) {
+        // Caller owns the chip's new home; only forget its group membership.
+        for (var i = 0; i < steps.length; i++) {
+          if (steps[i].chip !== chip) continue;
+          steps.splice(i, 1);
+          paint();
+          return;
+        }
+      },
       finish: function (finishOpts) {
         finishOpts = finishOpts || {};
         var now = Date.now();
-        var pending = false;
         for (var i = 0; i < steps.length; i++) {
           if (!steps[i].settledAt) steps[i].settledAt = now;
-          if (steps[i].running) pending = true;
+          if (steps[i].running) steps[i].running = false;
         }
         paint();
         // A page can only learn the turn's id once the run is under way. Keep
-        // the reader's choice under the id the history render will use, so
-        // replacing live DOM with the recorded transcript cannot re-close a run
-        // they opened.
+        // the reader's choice under the id the history render will use.
         if (finishOpts.runId && finishOpts.runId !== turnKey) {
           var choice = toolRunChoice(turnKey);
           if (choice !== null) rememberToolRunChoice(finishOpts.runId, choice);
         }
-        if (steps.length <= 1 && !pending) {
+        if (steps.length <= 1) {
           api.dissolve();
           return;
         }
-        // A settled run closes unless the reader said otherwise; a run still
-        // holding a step (a pause, a reattach mid-turn) stays open.
-        defaultOpen = pending;
         applyOpen(desiredOpen());
       },
-      // dissolve replaces the run with the single step it holds: a one-step turn
-      // reads as a step, not as a run of one.
+      // dissolve replaces the group with the single step it holds (or removes
+      // an empty shell): a one-call turn reads as a chip, not as a group of one.
       dissolve: function () {
         var parent = shell.parentNode;
         if (!parent) return;
@@ -864,13 +891,6 @@
     var messages = ctx.messages;
     if (!messages) return null;
     var live = !!(opts && opts.live);
-    var roleTag = "";
-    if (role && role !== "operator") {
-      roleTag =
-        '<span class="memory-thinking-role badge badge-ghost badge-xs font-normal">' +
-        escapeHTML(role) +
-        "</span>";
-    }
 
     // Same chat-start shell as assistant bubbles so the badge aligns with (and
     // is constrained to) the chat content column.
@@ -885,7 +905,6 @@
       className: "memory-thinking col-start-2 row-start-2 w-full",
       icon: "lucide--brain",
       label: "Thinking",
-      afterLabel: roleTag,
       live: live,
       container: wrap,
     }, ctx);
@@ -916,55 +935,51 @@
   // in one object, so the pages that render thinking (/chat, the global
   // assistant drawer, public share pages) share one implementation instead of a
   // copy each.
+  //
+  // Live thinking merges while contiguous: every `thinking` frame appends to the
+  // current block until an activity boundary (`break`) closes it. A later frame
+  // after that boundary starts a fresh row.
   //   opts.badgeCtx          passed to createThinkingBlock
   //   opts.scrollToBottom()  called after a live delta lands
   // Returns:
-  //   handle(evt)            live frame: a new id starts a badge in stream
-  //                          position, `text` appends, `done` stops the shimmer
+  //   handle(evt)            live frame: appends to the open block, or starts one
+  //   break()                an activity boundary ended the current block
   //   render(text, html,role) history: one static, collapsed badge
-  //   clear()                forget the live segments (a turn started)
-  //   finalize()             stop the shimmer on segments the stream left open,
-  //                          then clear
+  //   clear()                forget live state (a new turn started)
+  //   finalize()             stop the shimmer on the open block, then clear
   function createThinkingHost(opts) {
     opts = opts || {};
-    var map = {};     // live segment id -> {body, setLive, done}
-    var order = [];   // segment ids in insertion order
+    var current = null; // { body, setLive, done }
     var scroll = opts.scrollToBottom || function () {};
 
+    function breakBlock() {
+      if (!current) return;
+      if (current.setLive) current.setLive(false);
+      current = null;
+    }
+
     function handle(evt) {
-      var id = evt && evt.id;
-      if (!id) return;
+      evt = evt || {};
       var text = evt.text == null ? "" : String(evt.text);
-      var role = evt.role || "operator";
-
-      var rec = map[id];
-      if (!rec) {
-        rec = createThinkingBlock(role, { live: true }, opts.badgeCtx);
-        if (!rec) return;
-        map[id] = rec;
-        order.push(id);
-        // createThinkingBlock already appended it to the end of the stream, so
-        // the badge keeps arrival order (below the in-progress bubble) like a
-        // tool chip — chronological, not hoisted above the reply.
+      var role = evt.role ? evt.role : "operator";
+      if (!current) {
+        current = createThinkingBlock(role, { live: true }, opts.badgeCtx);
+        if (!current) return;
       }
-
+      if (current.setLive) current.setLive(!(evt && evt.done));
       if (text) {
-        rec.body.appendChild(document.createTextNode(text));
+        current.body.appendChild(document.createTextNode(text));
         scroll();
       }
-
-      if (evt.done && !rec.done) {
-        rec.done = true;
-        if (rec.setLive) rec.setLive(false);
-      }
+      if (evt && evt.done) current.done = true;
     }
 
     function render(text, html, role) {
       var rec = createThinkingBlock(role, { live: false }, opts.badgeCtx);
       if (!rec) return null;
       if (html) {
-        // Server rendered the markdown already (content.html) — drop the mono
-        // raw-text classes and render it like assistant markdown, but dimmed.
+        // Server rendered the markdown already (content.html) — render it like
+        // assistant markdown, but dimmed.
         rec.body.className = "memory-thinking-body memory-md break-words opacity-70";
         rec.body.innerHTML = html;
       } else if (text) {
@@ -974,19 +989,20 @@
     }
 
     function clear() {
-      map = {};
-      order = [];
+      current = null;
     }
 
     function finalize() {
-      for (var i = 0; i < order.length; i++) {
-        var rec = map[order[i]];
-        if (rec && rec.setLive) rec.setLive(false);
-      }
-      clear();
+      breakBlock();
     }
 
-    return { handle: handle, render: render, clear: clear, finalize: finalize };
+    return {
+      handle: handle,
+      break: breakBlock,
+      render: render,
+      clear: clear,
+      finalize: finalize,
+    };
   }
 
   // Shared renderer for a conversation's composed agent instruction — the
@@ -1084,18 +1100,19 @@
   }
 
   // enhanceMessage adds copy affordances to an already-rendered message block:
-  // a whole-message copy button in the header row (never inside the bubble, so
-  // reading flow and bubble layout are untouched) and a copy button on every
-  // fenced code block. Idempotent: guarded per element, safe to re-run.
+  // a whole-message copy button in the assistant action row (never in the
+  // reading column) and a copy button on every fenced code block. Idempotent:
+  // guarded per element, safe to re-run.
   function enhanceMessage(wrap) {
     if (!wrap) return;
-    // Whole-message copy — assistant turns only (neutral bubble).
-    var header = wrap.querySelector(".chat-header");
-    var bubble = wrap.querySelector(".chat-bubble.chat-bubble-neutral");
-    var body = bubble ? bubble.querySelector(".memory-md") : null;
-    if (header && body && !header._memoryCopyWired) {
-      header._memoryCopyWired = true;
-      header.appendChild(makeCopyButton({
+    // Whole-message copy — assistant turns only (plain markdown wrapper).
+    var actions = wrap.classList && wrap.classList.contains("memory-assistant")
+      ? wrap.querySelector(".memory-assistant-actions")
+      : null;
+    var body = actions ? wrap.querySelector(".memory-md") : null;
+    if (actions && body && !actions._memoryCopyWired) {
+      actions._memoryCopyWired = true;
+      actions.appendChild(makeCopyButton({
         className: "memory-copy-msg",
         label: "Copy message",
         getText: function () { return body.innerText || body.textContent || ""; },
@@ -1408,21 +1425,22 @@
     return details;
   }
 
-  // attachSources mounts the Sources footer INSIDE the assistant bubble, after
-  // the rendered markdown, so it reads as agent-side content and never occupies
-  // a separate message row. Accepts the assistant wrapper (from
-  // addAssistantMessage/openAssistantBubble) or the bubble itself; idempotent —
-  // one footer per bubble.
+  // attachSources mounts the Sources footer inside the assistant turn, directly
+  // after the rendered markdown, so it reads as agent-side content and never
+  // occupies a separate message row. Accepts the assistant wrapper (from
+  // addAssistantMessage/openAssistantBubble) or a legacy bubble; idempotent —
+  // one footer per turn.
   function attachSources(wrap, citations) {
     if (!wrap) return null;
-    var bubble = wrap.querySelector ? (wrap.querySelector(".chat-bubble") || wrap) : wrap;
-    if (bubble._memorySources) return bubble._memorySources;
+    var container = wrap;
+    var md = wrap.querySelector ? wrap.querySelector(".memory-md") : null;
+    if (md && md.parentNode) container = md.parentNode;
+    if (container._memorySources) return container._memorySources;
     var footer = sourcesFooter(citations);
     if (!footer) return null;
-    var md = bubble.querySelector ? bubble.querySelector(".memory-md") : null;
-    if (md && md.parentNode === bubble) bubble.insertBefore(footer, md.nextSibling);
-    else bubble.appendChild(footer);
-    bubble._memorySources = footer;
+    if (md && md.parentNode === container) container.insertBefore(footer, md.nextSibling);
+    else container.appendChild(footer);
+    container._memorySources = footer;
     return footer;
   }
 
@@ -2051,36 +2069,61 @@
     return null;
   }
 
-  // planToolRuns maps a timeline index to the run a step belongs to. A run is
-  // the consecutive tool steps of one turn: same run id, with nothing that
-  // renders in between, so folding them cannot reorder the transcript. Items
-  // that never paint (system/tool messages, the invisible run boundaries) do not
-  // break a run; a question card or an assistant bubble does.
+  // planToolRuns maps a timeline index to the consecutive group it belongs to.
+  // A group is 2+ renderable tool calls with nothing that renders in between and
+  // no boundary: thinking, assistant text, a question/approval, ask_user, an
+  // awaiting-confirmation call or a run boundary splits it. A hidden item that
+  // paints nothing (system/tool result, empty placeholder) does not split it.
   function planToolRuns(items, showRunMarkers) {
     var CS = window.MemoryChatStream || {};
+    function isThinking(item) {
+      if (!item || item.kind !== "message") return false;
+      var content = item.content || {};
+      if (item.role === "user" || item.role === "tool" || item.role === "system") return false;
+      if (content.reasoning) return true;
+      return !!(CS.isThinkingMessage && CS.isThinkingMessage(content));
+    }
     function paints(item) {
       if (!item || typeof item !== "object") return false;
       if (item.kind === "tool_call") return true;
       if (item.kind === "run_start") return !!showRunMarkers;
-      // A failed run_end is a durable transcript row even without debug (#2451).
       if (item.kind === "run_end") return !!showRunMarkers || isFailedRun(item.run_status);
       if (item.kind !== "message") return false;
       var content = item.content || {};
       var text = content.text || "";
       var html = content.html || "";
       if (item.role === "user") return !!(text && !(CS.isResumePrompt && CS.isResumePrompt(text)));
-      // tool results are shown by the preceding step; the system instruction is
-      // rendered once, as the prompt card — neither paints a row.
       if (item.role === "tool" || item.role === "system") return false;
       if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
       return !!(text || html || content.reasoning);
+    }
+    // splits reports a boundary between tool calls even when the item itself
+    // does not paint (a thinking item with no prose still ends a group).
+    function splits(item) {
+      if (!item || typeof item !== "object") return false;
+      if (item.kind === "run_start" || item.kind === "run_end") return true;
+      // A2UI surfaces and approval/question rows are activity boundaries even
+      // though they are not part of the tool-call vocabulary here.
+      if (item.kind === "ui" || item.kind === "a2ui" || item.kind === "surface") return true;
+      if (item.kind === "tool_call") {
+        return item.tool_name === "ask_user" || item.tool_status === "awaiting_confirmation";
+      }
+      if (item.kind !== "message") return false;
+      if (item.role === "system" || item.role === "tool") return false;
+      if (item.role === "user") return true;
+      if (isThinking(item)) return true;
+      var content = item.content || {};
+      var text = content.text || "";
+      if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
+      return !!(text || content.html || content.reasoning);
     }
 
     var plan = {};
     var i = 0;
     while (i < items.length) {
       var item = items[i];
-      if (!paints(item) || item.kind !== "tool_call" || item.tool_name === "ask_user") {
+      if (!paints(item) || item.kind !== "tool_call" || item.tool_name === "ask_user" ||
+          item.tool_status === "awaiting_confirmation") {
         i++;
         continue;
       }
@@ -2089,11 +2132,13 @@
       var j = i + 1;
       while (j < items.length) {
         var next = items[j];
+        if (splits(next)) break;
         if (!paints(next)) {
           j++;
           continue;
         }
-        if (next.kind === "tool_call" && next.tool_name !== "ask_user" && (next.run_id || "") === key) {
+        if (next.kind === "tool_call" && next.tool_name !== "ask_user" &&
+            next.tool_status !== "awaiting_confirmation" && (next.run_id || "") === key) {
           members.push(j);
           j++;
           continue;
@@ -2212,9 +2257,46 @@
     var openRun = null;
     var newestRunStatus = "";
     var newestRunEnded = false;
+    // Contiguous reasoning merges into one collapsed Thinking row. The previous
+    // timeline item must itself be thinking (and on the same run) for the merge.
+    var thinkingRec = null;
+    var thinkingRun = "";
+    var prevWasThinking = false;
+    // The thinking-item branch renders planning monologues (function_calls).
+    // A message can also carry reasoning plus an answer; that answer still
+    // renders below its Thinking block, so reasoning is handled separately in
+    // the assistant branch rather than swallowed here.
+    function itemIsThinking(it) {
+      if (!it || it.kind !== "message") return false;
+      var c = it.content || {};
+      if (it.role === "system" || it.role === "tool" || it.role === "user") return false;
+      return ctx.isThinkingItem ? ctx.isThinkingItem(it, c) : CS.isThinkingMessage(c);
+    }
+    function itemProducesThinking(it) {
+      if (!it || it.kind !== "message") return false;
+      var c = it.content || {};
+      if (it.role === "system" || it.role === "tool" || it.role === "user") return false;
+      if (itemIsThinking(it)) return true;
+      // Reasoning that comes with an answer renders the answer after it, so a
+      // following reasoning item must not merge back above that answer.
+      return !!c.reasoning && !c.html && !c.text;
+    }
+    function appendThinkingContent(rec, text, html) {
+      if (!rec || !rec.body) return;
+      if (html) {
+        rec.body.insertAdjacentHTML("beforeend", html);
+      }
+      if (text) {
+        if ((rec.body.textContent || "").trim()) {
+          rec.body.appendChild(document.createTextNode("\n\n"));
+        }
+        rec.body.appendChild(document.createTextNode(text));
+      }
+    }
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (!item || typeof item !== "object") continue;
+      var currentThinking = itemProducesThinking(item);
       // Run-transcript annotation: step number + relative time under each
       // message/tool item. Only on a dedicated run page (flags.showMeta);
       // conversation transcripts and the live stream render no meta at all.
@@ -2346,6 +2428,7 @@
           });
           if (openRun) {
             openRun.addStep(chipEl, {
+              tool: item.tool_name || "tool",
               startedAt: startedAt,
               settledAt: settledAt,
               failed: cls.status === "error",
@@ -2374,13 +2457,19 @@
           } else if (item.role === "tool") {
             // Tool result — already shown by the preceding tool_call chip.
             break;
-          } else if (ctx.isThinkingItem ? ctx.isThinkingItem(item, content) : CS.isThinkingMessage(content)) {
+          } else if (itemIsThinking(item)) {
             // Planning/thinking monologue (carries function_calls): a collapsed
-            // Thinking block on every surface, exactly like the live stream. A
-            // tool-calling step with no text has nothing to show, so it is
-            // skipped rather than rendered as an empty badge.
+            // Thinking block on every surface, exactly like the live stream.
+            // Adjacent reasoning items in the same run merge into that one row;
+            // any other timeline item ends the block (prevWasThinking).
             if ((text || html) && ctx.renderThinkingBlock) {
-              ctx.renderThinkingBlock(text, html, "reasoning");
+              var sameRun = !thinkingRun || !item.run_id || item.run_id === thinkingRun;
+              if (prevWasThinking && thinkingRec && sameRun) {
+                appendThinkingContent(thinkingRec, text, html);
+              } else {
+                thinkingRec = ctx.renderThinkingBlock(text, html, "reasoning");
+              }
+              if (item.run_id) thinkingRun = item.run_id;
             }
           } else if (CS.isPauseNotice(text)) {
             // Synthetic "Execution paused…" message the executor injects when a
@@ -2392,7 +2481,13 @@
             // (rendered as a Thinking block above) and renders the reply
             // markdown into content.html.
             if (content.reasoning && ctx.renderThinkingBlock) {
-              ctx.renderThinkingBlock(content.reasoning, null, "reasoning");
+              var rRun = !thinkingRun || !item.run_id || item.run_id === thinkingRun;
+              if (prevWasThinking && thinkingRec && rRun) {
+                appendThinkingContent(thinkingRec, content.reasoning, null);
+              } else {
+                thinkingRec = ctx.renderThinkingBlock(content.reasoning, null, "reasoning");
+              }
+              if (item.run_id) thinkingRun = item.run_id;
             }
             var turnEl = ctx.addAssistantMessage(html || escapeHTML(text), name, silent, meta);
             if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
@@ -2402,6 +2497,7 @@
           }
           break;
       }
+      prevWasThinking = currentThinking;
     }
 
     // A run with no run_end item (partial/older history) still has to surface
@@ -2430,6 +2526,310 @@
     }
 
     if (ctx.afterRender) ctx.afterRender(newestRunStatus, newestRunEnded);
+  }
+
+  /* ---------- subagent composer track ---------- */
+
+  // normalizeSubagentStatus folds the server's run lifecycle into the statuses
+  // the track understands. Unknown values pass through so a newer server field
+  // is not silently dropped.
+  function normalizeSubagentStatus(raw) {
+    var t = String(raw == null ? "" : raw).trim().toLowerCase();
+    if (t === "submitted" || t === "in_progress" || t === "in-progress") return "running";
+    if (t === "input-required" || t === "input_required") return "paused";
+    if (t === "error") return "failed";
+    if (t === "cancelled") return "canceled";
+    return t;
+  }
+
+  function subagentBucket(status) {
+    if (status === "queued" || status === "running") return "working";
+    if (status === "paused") return "paused";
+    if (status === "failed") return "failed";
+    return "idle";
+  }
+
+  // createSubagentTrack renders the composer pill + popover for live subagent
+  // frames and rebuilt history. It is intentionally mount-optional: the public
+  // share page and the side panel can feed it frames and lose nothing when
+  // there is no composer to hang the pill on.
+  function createSubagentTrack(opts) {
+    opts = opts || {};
+    var getMount = typeof opts.mount === "function" ? opts.mount : function () { return opts.mount; };
+    var openRunHref = typeof opts.openRun === "function"
+      ? opts.openRun
+      : function (runId) { return scopedPath("/runs/" + encodeURIComponent(runId)); };
+
+    var state = {};
+    var order = [];
+    var currentParent = "";
+    var open = false;
+
+    function mountEl() {
+      var m = getMount && getMount();
+      return m && m.nodeType === 1 ? m : null;
+    }
+
+    function findKey(evt) {
+      var runId = evt.runId ? String(evt.runId) : "";
+      var id = evt.id ? String(evt.id) : "";
+      if (runId && state[runId]) return runId;
+      for (var i = 0; i < order.length; i++) {
+        var row = state[order[i]];
+        if (!row) continue;
+        if (id && row.id === id) return order[i];
+        if (runId && row.runId === runId) return order[i];
+      }
+      return runId || id;
+    }
+
+    function insert(row) {
+      if (!row) return;
+      var key = row.runId || row.id;
+      if (!key) return;
+      var existing = state[key] ? key : findKey(row);
+      if (existing && state[existing]) {
+        var cur = state[existing];
+        if (row.id) cur.id = row.id;
+        if (row.runId) cur.runId = row.runId;
+        if (row.agentName) cur.agentName = row.agentName;
+        if (row.task) cur.task = row.task;
+        if (row.status) cur.status = row.status;
+        if (row.error != null) cur.error = row.error;
+        return;
+      }
+      state[key] = {
+        id: row.id || "",
+        runId: row.runId || "",
+        agentName: row.agentName || "",
+        task: row.task || "",
+        status: row.status || "running",
+        error: row.error || "",
+      };
+      order.push(key);
+    }
+
+    function upsert(evt) {
+      if (!evt) return;
+      var parent = evt.parentRunId ? String(evt.parentRunId) : "";
+      if (parent && currentParent && parent !== currentParent) {
+        state = {};
+        order = [];
+      }
+      if (parent) currentParent = parent;
+      insert({
+        id: evt.id ? String(evt.id) : "",
+        runId: evt.runId ? String(evt.runId) : "",
+        agentName: evt.agentName ? String(evt.agentName) : "",
+        task: evt.task ? String(evt.task) : "",
+        status: normalizeSubagentStatus(evt.status),
+        error: evt.error == null ? "" : String(evt.error),
+      });
+      render();
+    }
+
+    function unwrapOutput(raw) {
+      if (!raw || typeof raw !== "object") return {};
+      if (raw.data && typeof raw.data === "object") return raw.data;
+      if (raw.result && typeof raw.result === "object" && !raw.results) return raw.result;
+      return raw;
+    }
+
+    function statusFromRun(raw, hasOutput) {
+      if (!hasOutput) return "running";
+      var s = normalizeSubagentStatus(raw);
+      return s || "completed";
+    }
+
+    function rebuild(items) {
+      state = {};
+      order = [];
+      currentParent = "";
+      var list = Array.isArray(items) ? items : [];
+      var newestRun = "";
+      for (var r = 0; r < list.length; r++) {
+        var it = list[r];
+        if (it && (it.kind === "run_start" || it.kind === "run_end") && it.run_id) newestRun = it.run_id;
+      }
+      var calls = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i];
+        if (!item || item.kind !== "tool_call") continue;
+        var name = String(item.tool_name || "").replace(/[-_]/g, "_");
+        if (name !== "spawn_agents" && name !== "trigger_agent") continue;
+        if (newestRun && item.run_id && item.run_id !== newestRun) continue;
+        calls.push(item);
+      }
+      for (var c = 0; c < calls.length; c++) {
+        var call = calls[c];
+        var tool = String(call.tool_name || "").replace(/[-_]/g, "_");
+        var input = call.tool_input && typeof call.tool_input === "object" ? call.tool_input : {};
+        var rawOut = call.tool_output;
+        var out = unwrapOutput(rawOut);
+        var hasOutput = rawOut !== undefined && rawOut !== null;
+        // A spawn/trigger call with no terminal output has no authoritative
+        // child status. Live `subagent` frames (and live_replay) own the
+        // in-flight rows; synthesizing them here would duplicate those rows
+        // with a non-correlatable id on every mid-run transcript refresh.
+        if (!hasOutput) continue;
+        if (tool === "spawn_agents") {
+          var reqs = Array.isArray(input.agents) ? input.agents : [];
+          var results = Array.isArray(out.results) ? out.results : [];
+          var total = Math.max(reqs.length, results.length);
+          for (var q = 0; q < total; q++) {
+            var req = reqs[q] || {};
+            var res = results[q] || {};
+            var runId = res.run_id || "";
+            var spawnStatus = statusFromRun(res.status, hasOutput && results.length > 0);
+            // A queued child is dispatched to another worker and has no parent
+            // stream handle for its terminal state. Showing it would leave a
+            // permanent "working" row after reload.
+            if (spawnStatus === "queued") continue;
+            insert({
+              id: runId || (call.id ? call.id + ":" + q : "spawn:" + c + ":" + q),
+              runId: runId,
+              agentName: res.agent_name || req.agent_name || "",
+              task: req.task || res.task || "",
+              status: spawnStatus,
+              error: res.error || "",
+            });
+          }
+        } else {
+          var msg = input.message;
+          var task = "";
+          if (typeof msg === "string") task = msg;
+          else if (msg && typeof msg === "object" && typeof msg.instructions === "string") task = msg.instructions;
+          if (!task && typeof out.message === "string") task = out.message;
+          var tRun = out.run_id || (out.data && out.data.run_id) || "";
+          var triggerStatus = statusFromRun(out.status, hasOutput);
+          // Same queued caveat as spawn_agents: no terminal projection for a
+          // child running in another worker.
+          if (triggerStatus === "queued") continue;
+          insert({
+            id: tRun || (call.id ? String(call.id) : ""),
+            runId: tRun,
+            agentName: input.agent_name || out.agent_name || "",
+            task: task,
+            status: triggerStatus,
+            error: out.error || "",
+          });
+        }
+      }
+      render();
+    }
+
+    function segHTML(kind, count) {
+      if (kind === "working") {
+        return '<span class="memory-subagent-seg" data-status="working">' +
+          '<span class="iconify lucide--loader-circle size-3 animate-spin" aria-hidden="true"></span>' +
+          '<span>' + count + " working</span></span>";
+      }
+      if (kind === "paused") {
+        return '<span class="memory-subagent-seg" data-status="paused">' +
+          '<span class="iconify lucide--pause size-3" aria-hidden="true"></span>' +
+          '<span>' + count + " needs input</span></span>";
+      }
+      return '<span class="memory-subagent-seg" data-status="failed">' +
+        '<span class="iconify lucide--alert-triangle size-3" aria-hidden="true"></span>' +
+        '<span>' + count + " failed</span></span>";
+    }
+
+    function rowHTML(key) {
+      var r = state[key];
+      if (!r) return "";
+      var href = r.runId ? openRunHref(r.runId) : "";
+      var tag = href ? "a" : "div";
+      var attrs = href
+        ? ' href="' + escapeHTML(href) + '" target="_blank" rel="noopener"'
+        : "";
+      return "<" + tag + ' class="memory-subagent-row" data-testid="chat-subagent-row" data-status="' +
+        escapeHTML(r.status) + '"' + (r.runId ? ' data-run-id="' + escapeHTML(r.runId) + '"' : "") + attrs + ">" +
+        '<span class="memory-subagent-dot" data-status="' + escapeHTML(subagentBucket(r.status)) + '" aria-hidden="true"></span>' +
+        '<span class="memory-subagent-copy">' +
+        '<span class="memory-subagent-name">' + escapeHTML(r.agentName || "Subagent") + "</span>" +
+        (r.task ? '<span class="memory-subagent-task">' + escapeHTML(r.task) + "</span>" : "") +
+        (r.error ? '<span class="memory-subagent-error">' + escapeHTML(r.error) + "</span>" : "") +
+        "</span>" +
+        (href ? '<span class="iconify lucide--external-link size-3.5 text-muted-faint" aria-hidden="true"></span>' : "") +
+        "</" + tag + ">";
+    }
+
+    function render() {
+      var mount = mountEl();
+      if (!mount) return;
+      if (!order.length) {
+        mount.classList.add("hidden");
+        mount.innerHTML = "";
+        return;
+      }
+      mount.classList.remove("hidden");
+      var working = 0, paused = 0, failed = 0;
+      for (var i = 0; i < order.length; i++) {
+        var b = subagentBucket(state[order[i]].status);
+        if (b === "working") working++;
+        else if (b === "paused") paused++;
+        else if (b === "failed") failed++;
+      }
+      var segs = [];
+      if (working) segs.push(segHTML("working", working));
+      if (paused) segs.push(segHTML("paused", paused));
+      if (failed) segs.push(segHTML("failed", failed));
+      if (!segs.length) {
+        segs.push('<span class="memory-subagent-fallback">' + order.length +
+          (order.length === 1 ? " subagent" : " subagents") + "</span>");
+      }
+      var rows = "";
+      for (var j = 0; j < order.length; j++) rows += rowHTML(order[j]);
+      mount.innerHTML =
+        '<div class="memory-subagent-track" data-testid="chat-subagent-track">' +
+        '<button type="button" class="memory-subagent-pill" data-testid="chat-subagent-pill" aria-expanded="' +
+        (open ? "true" : "false") + '">' +
+        '<span class="iconify lucide--users size-3.5 text-muted-faint" aria-hidden="true"></span>' +
+        segs.join('<span class="memory-subagent-sep" aria-hidden="true">·</span>') +
+        '<span class="memory-subagent-chevron iconify lucide--chevron-up size-3.5 text-muted-faint" aria-hidden="true"></span>' +
+        "</button>" +
+        '<div class="memory-subagent-popover' + (open ? "" : " hidden") +
+        '" data-testid="chat-subagent-popover" role="dialog" aria-label="Subagents">' +
+        rows + "</div></div>";
+      var pill = mount.querySelector(".memory-subagent-pill");
+      if (pill) {
+        pill.addEventListener("click", function () {
+          open = !open;
+          render();
+        });
+      }
+    }
+
+    // Outside click / Escape close the popover. Registered once per track.
+    document.addEventListener("click", function (ev) {
+      if (!open) return;
+      var mount = mountEl();
+      if (!mount) return;
+      if (mount.contains(ev.target)) return;
+      open = false;
+      render();
+    });
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Escape" || !open) return;
+      open = false;
+      render();
+    });
+
+    function reset() {
+      state = {};
+      order = [];
+      currentParent = "";
+      open = false;
+      render();
+    }
+
+    return {
+      upsert: upsert,
+      rebuild: rebuild,
+      reset: reset,
+      render: render,
+      _state: function () { return state; },
+    };
   }
 
   window.MemoryChatComponents = {
@@ -2465,5 +2865,7 @@
     humanizeTypeName: humanizeTypeName,
     sourcesFooter: sourcesFooter,
     attachSources: attachSources,
+    createSubagentTrack: createSubagentTrack,
+    normalizeSubagentStatus: normalizeSubagentStatus,
   };
 })();

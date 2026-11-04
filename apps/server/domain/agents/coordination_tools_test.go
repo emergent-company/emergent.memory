@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -118,7 +119,7 @@ func TestSpawnTargetBlocked_UntrustedAllowsNonInternal(t *testing.T) {
 func TestBuildCoordinationTools_TrustedInternalSurvivesNilDefinition(t *testing.T) {
 	ae := &AgentExecutor{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	_, deps, err := ae.buildCoordinationTools(ExecuteRequest{
+	_, deps, err := ae.buildCoordinationTools(context.Background(), ExecuteRequest{
 		ProjectID:       "p",
 		AgentDefinition: nil,
 		TrustedInternal: true,
@@ -129,7 +130,7 @@ func TestBuildCoordinationTools_TrustedInternalSurvivesNilDefinition(t *testing.
 		"a trusted transport with a nil definition must stay trusted")
 
 	// Untrusted surface defaults false (no inference from a missing definition).
-	_, deps2, err := ae.buildCoordinationTools(ExecuteRequest{
+	_, deps2, err := ae.buildCoordinationTools(context.Background(), ExecuteRequest{
 		ProjectID:       "p",
 		AgentDefinition: nil,
 		TrustedInternal: false,
@@ -138,4 +139,26 @@ func TestBuildCoordinationTools_TrustedInternalSurvivesNilDefinition(t *testing.
 	require.NotNil(t, deps2)
 	require.False(t, deps2.TrustedInternal,
 		"an untrusted transport with a nil definition must stay untrusted (fail closed)")
+}
+
+// TestSubagentStatusForRunStatus pins the mapping from executor run status to
+// the subagent SSE status contract (queued|running|completed|failed|paused|canceled).
+func TestSubagentStatusForRunStatus(t *testing.T) {
+	tests := []struct {
+		in   AgentRunStatus
+		want string
+	}{
+		{RunStatusQueued, "queued"},
+		{RunStatusRunning, "running"},
+		{RunStatusCancelling, "canceled"},
+		{RunStatusSuccess, "completed"},
+		{RunStatusSkipped, "completed"},
+		{RunStatusError, "failed"},
+		{RunStatusPaused, "paused"},
+		{RunStatusCancelled, "canceled"},
+		{AgentRunStatus("unexpected"), "failed"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, subagentStatusForRunStatus(tt.in), "status %q", tt.in)
+	}
 }

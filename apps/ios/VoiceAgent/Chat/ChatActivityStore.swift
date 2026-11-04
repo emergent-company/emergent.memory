@@ -1,67 +1,11 @@
 import Foundation
 import Observation
 
-// MARK: - Interactive card models (shared with the card views)
-
-/// An approval request waiting on the user, plus its submitted outcome
-/// (`nil` until the user acts). Once a decision is recorded the card renders
-/// in a non-interactive answered state.
-struct ApprovalRequest: Identifiable, Equatable {
-    let questionId: String
-    let tool: String
-    let arguments: String
-    var decision: ApprovalDecision?
-
-    var id: String {
-        questionId
-    }
-
-    var isAnswered: Bool {
-        decision != nil
-    }
-}
-
-enum ApprovalDecision: Equatable {
-    case approve
-    case reject(reason: String?)
-}
-
-/// An `ask_user` question card, plus its submitted answer.
-struct QuestionRequest: Identifiable, Equatable {
-    let questionId: String
-    let question: String
-    let interactionType: QuestionInteractionType
-    let options: [ChatQuestionOption]
-    let placeholder: String?
-    let maxLength: Int?
-    var submittedAnswer: String?
-
-    init(questionId: String, question: String, interactionType: QuestionInteractionType,
-         options: [ChatQuestionOption], placeholder: String?, maxLength: Int?, submittedAnswer: String? = nil)
-    {
-        self.questionId = questionId
-        self.question = question
-        self.interactionType = interactionType
-        self.options = options
-        self.placeholder = placeholder
-        self.maxLength = maxLength
-        self.submittedAnswer = submittedAnswer
-    }
-
-    var id: String {
-        questionId
-    }
-
-    var isAnswered: Bool {
-        submittedAnswer != nil
-    }
-}
-
 // MARK: - Activity store
 
 /// Accumulates the live rich-chat activity for the current conversation:
-/// tool-call chips (correlated `tool_call`/`tool_result` pairs), one
-/// accumulated thinking block per turn, and pending approval/question cards.
+/// tool-call groups (correlated `tool_call`/`tool_result` pairs), contiguous
+/// thinking blocks, pending approval/question cards, and live subagent runs.
 ///
 /// Turns are anchored to the user `ReceivedMessage` that started them; the
 /// chat renders a turn's activity right after that message, so live thinking /
@@ -70,57 +14,16 @@ struct QuestionRequest: Identifiable, Equatable {
 @MainActor
 @Observable
 final class ChatActivityStore {
+    /// The turn model lives in its own file; expose the historical name so
+    /// existing `ChatActivityStore.Turn` references keep working.
+    typealias Turn = ChatTurn
+
     /// Supplies "now" for step timing. Injectable so a test can assert an
     /// exact duration instead of one measured against the wall clock.
     @ObservationIgnored private let now: () -> Date
 
     init(now: @escaping () -> Date = Date.init) {
         self.now = now
-    }
-
-    /// One user-initiated turn: everything the worker emitted for it.
-    struct Turn: Identifiable, Equatable {
-        let id: UUID
-        /// The `ReceivedMessage.id` of the user message that started this turn.
-        var anchorMessageID: String?
-        /// Accumulated `thinking` deltas of this turn (one block).
-        var thinkingText: String = ""
-        /// Live/complete tool calls in arrival order.
-        var tools: [ToolCallInfo] = []
-        /// Pending (or answered) approval request.
-        var approval: ApprovalRequest?
-        /// Pending (or answered) question.
-        var question: QuestionRequest?
-        /// True once the first agent transcript of this turn has streamed in.
-        var didReplyStart = false
-        /// True once the reply is considered complete (quiet after the last
-        /// agent token), hiding the stop affordance.
-        var didReplyFinish = false
-        /// When the user's message opened this turn. Nil for a turn assembled
-        /// without a clock; the working line then shows no timer.
-        var startedAt: Date?
-
-        init(id: UUID = UUID(), anchorMessageID: String?, startedAt: Date? = nil) {
-            self.id = id
-            self.anchorMessageID = anchorMessageID
-            self.startedAt = startedAt
-        }
-
-        /// Any content worth rendering (skips empty placeholder turns).
-        var hasContent: Bool {
-            !thinkingText.isEmpty || !tools.isEmpty || approval != nil || question != nil
-        }
-
-        /// The worker is paused waiting on the user (card shown).
-        var isWaitingOnUser: Bool {
-            if let approval, approval.decision == nil {
-                return true
-            }
-            if let question, question.submittedAnswer == nil {
-                return true
-            }
-            return false
-        }
     }
 
     /// How long after the last agent token/activity the current reply is
@@ -134,6 +37,24 @@ final class ChatActivityStore {
     /// Live A2UI surfaces (structured cards), in arrival order. Store-level
     /// rather than turn-bound: the server may update a surface across turns.
     private(set) var surfaces: [ChatUISurface] = []
+
+    /// Replaces the surface list. The A2UI merge/action code lives in
+    /// `ChatActivitySurfaces.swift`, which cannot write the `private(set)`
+    /// property from another file.
+    func replaceSurfaces(_ list: [ChatUISurface]) {
+        surfaces = list
+    }
+
+    /// Live subagent runs, in first-seen order. Store-level: a run can outlive
+    /// the turn that launched it.
+    private(set) var subagents: [SubagentInfo] = []
+
+    /// Mutation seam for the subagent upsert logic in
+    /// `ChatActivitySubagents.swift` (a cross-file extension cannot write the
+    /// `private(set)` storage directly).
+    func mutateSubagents(_ body: (inout [SubagentInfo]) -> Void) {
+        body(&subagents)
+    }
 
     /// Quiet-timer driving `didReplyFinish` (only armed once a reply started).
     @ObservationIgnored private var quietTask: Task<Void, Never>?
@@ -174,74 +95,62 @@ final class ChatActivityStore {
         quietTask = nil
         turns = []
         surfaces = []
-    }
-
-    // MARK: - Message-driven transitions
-
-    /// A new user message started a turn; anchor it to that message.
-    func userTurnStarted(anchorMessageID: String) {
-        // Idempotent: the same message must not open two turns.
-        guard turn(anchoredTo: anchorMessageID) == nil else { return }
-        quietTask?.cancel()
-        quietTask = nil
-        turns.append(Turn(anchorMessageID: anchorMessageID, startedAt: now()))
-    }
-
-    /// The first agent reply token of the current turn arrived: dismiss the
-    /// working line and arm the quiet-finish timer.
-    func agentReplyStarted() {
-        guard var turn = liveTurn, !turn.didReplyStart else { return }
-        turn.didReplyStart = true
-        turns[turns.count - 1] = turn
-        armQuietFinishTimer()
-    }
-
-    /// Marks the current reply finished (called by the quiet timer; exposed so
-    /// tests can drive the state machine deterministically).
-    func markReplyFinished() {
-        guard var turn = liveTurn, turn.didReplyStart, !turn.didReplyFinish else { return }
-        turn.didReplyFinish = true
-        turns[turns.count - 1] = turn
-    }
-
-    /// The user hit stop/interrupt: end the current generation window and hide
-    /// both the working line and the stop button. The interrupt itself is
-    /// sent by the controller (`lk.chat.interrupt`); this only flips state.
-    func stopGenerating() {
-        quietTask?.cancel()
-        quietTask = nil
-        guard var turn = liveTurn, !turn.didReplyFinish else { return }
-        turn.didReplyStart = true
-        turn.didReplyFinish = true
-        turns[turns.count - 1] = turn
+        subagents = []
     }
 
     // MARK: - Events
 
     /// Routes one decoded worker event into the live turn (or, for A2UI
-    /// surfaces, into the store-level surface list).
+    /// surfaces and subagents, into the store-level lists).
     func apply(_ event: ChatEvent) {
-        if case let .ui(surface) = event {
-            applySurface(surface)
+        if applyStoreLevelEvent(event) {
             return
         }
         guard var turn = liveTurn else { return }
+        applyTurnEvent(event, to: &turn)
+        turns[turns.count - 1] = turn
+        armQuietFinishTimer()
+    }
+
+    /// Handles events that do not belong to one turn. Returns true when the
+    /// event was consumed.
+    private func applyStoreLevelEvent(_ event: ChatEvent) -> Bool {
+        switch event {
+        case let .ui(surface):
+            closeLiveTurnInPlace()
+            applySurface(surface)
+            return true
+        case let .subagent(subagent):
+            upsertSubagent(subagent)
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func applyTurnEvent(_ event: ChatEvent, to turn: inout Turn) {
         switch event {
         case let .toolCall(call):
+            closeThinking(in: &turn)
             recordToolCall(call, in: &turn)
         case let .toolResult(result):
+            closeThinking(in: &turn)
             settleToolResult(result, in: &turn)
-        case let .thinking(delta):
+        case let .thinking(id, delta):
             if !delta.isEmpty {
-                turn.thinkingText += (turn.thinkingText.isEmpty ? "" : "\n") + delta
+                appendThinking(id: id, delta: delta, in: &turn)
             }
         case let .approval(approval):
+            closeThinking(in: &turn)
+            turn.isToolGroupOpen = false
             turn.approval = ApprovalRequest(
                 questionId: approval.questionId,
                 tool: approval.tool,
                 arguments: approval.arguments
             )
         case let .question(question):
+            closeThinking(in: &turn)
+            turn.isToolGroupOpen = false
             turn.question = QuestionRequest(
                 questionId: question.questionId,
                 question: question.question,
@@ -250,19 +159,16 @@ final class ChatActivityStore {
                 placeholder: question.placeholder,
                 maxLength: question.maxLength
             )
-        case .ui:
-            break // handled above, before turn routing
-        case .conversation:
-            break // controller-level metadata, not live activity
+        case .ui, .subagent, .conversation:
+            break // store-level or controller-level, not live turn activity
         }
-        turns[turns.count - 1] = turn
-        armQuietFinishTimer()
     }
 
-    /// Opens a live step. The start stamp is what lets the row report how long
-    /// the work took — the worker's events carry no timing of their own.
+    /// Opens a live step, joining the open run when it is still consecutive.
+    /// The start stamp is what lets the row report how long the work took — the
+    /// worker's events carry no timing of their own.
     private func recordToolCall(_ call: ChatToolCallEvent, in turn: inout Turn) {
-        turn.tools.append(ToolCallInfo(
+        let info = ToolCallInfo(
             id: call.id,
             name: call.tool,
             arguments: call.arguments,
@@ -270,19 +176,30 @@ final class ChatActivityStore {
             isError: false,
             isRunning: true,
             startedAt: now()
-        ))
+        )
+        if turn.isToolGroupOpen, let last = turn.toolGroups.indices.last {
+            turn.toolGroups[last].tools.append(info)
+        } else {
+            turn.toolGroups.append(ToolCallGroup(id: call.id, tools: [info]))
+        }
+        turn.isToolGroupOpen = true
     }
 
     /// Settles a live step: keeps its start stamp, records the result, and
     /// measures the duration. A result with no matching call is ignored, and a
     /// call with no start stamp stays untimed rather than timed from now.
     private func settleToolResult(_ result: ChatToolResultEvent, in turn: inout Turn) {
-        guard let index = turn.tools.firstIndex(where: { $0.id == result.id }) else { return }
-        let start = turn.tools[index].startedAt
-        turn.tools[index] = ToolCallInfo(
+        guard
+            let groupIndex = turn.toolGroups.firstIndex(where: { group in
+                group.tools.contains { $0.id == result.id }
+            }),
+            let toolIndex = turn.toolGroups[groupIndex].tools.firstIndex(where: { $0.id == result.id })
+        else { return }
+        let start = turn.toolGroups[groupIndex].tools[toolIndex].startedAt
+        turn.toolGroups[groupIndex].tools[toolIndex] = ToolCallInfo(
             id: result.id,
-            name: turn.tools[index].name,
-            arguments: turn.tools[index].arguments,
+            name: turn.toolGroups[groupIndex].tools[toolIndex].name,
+            arguments: turn.toolGroups[groupIndex].tools[toolIndex].arguments,
             result: result.result,
             isError: result.isError,
             isRunning: false,
@@ -291,59 +208,43 @@ final class ChatActivityStore {
         )
     }
 
-    // MARK: - A2UI surfaces
+    // MARK: - Thinking blocks
 
-    /// Merges one `ui` event's A2UI messages into the surface list:
-    /// `createSurface` opens (or updates) a surface, `updateComponents` merges
-    /// components by id, `deleteSurface` removes it. `updateDataModel` is
-    /// tolerated and ignored (flat component props are rendered directly).
-    private func applySurface(_ event: ChatUISurfaceEvent) {
-        let id = event.surfaceId
-        var list = surfaces
+    /// Appends a delta to the active block, or opens one. A delta carrying a
+    /// different worker id starts a new block; an id-less legacy delta always
+    /// joins the active block. Thinking is a non-tool activity, so it closes
+    /// the current tool group.
+    private func appendThinking(id: String?, delta: String, in turn: inout Turn) {
+        turn.isToolGroupOpen = false
+        let blockID = id?.isEmpty == false ? id : nil
 
-        for message in event.messages {
-            if message.deleteSurface != nil {
-                list.removeAll { $0.id == id }
-                continue
-            }
-            if let create = message.createSurface {
-                if let index = list.firstIndex(where: { $0.id == id }) {
-                    if let catalogId = create.catalogId {
-                        list[index].catalogId = catalogId
-                    }
-                } else {
-                    list.append(ChatUISurface(id: id, catalogId: create.catalogId))
-                }
-            }
-            if let update = message.updateComponents {
-                // A `ui` event may carry `updateComponents` without a preceding
-                // `createSurface` (the server's `deriveSurfaceID` falls back to a
-                // stable default id, and the web renderer draws components
-                // directly). Open the surface lazily so the payload is not
-                // silently dropped.
-                if !list.contains(where: { $0.id == id }) {
-                    list.append(ChatUISurface(id: id, catalogId: nil))
-                }
-                guard let index = list.firstIndex(where: { $0.id == id }) else { continue }
-                for component in update.components {
-                    if let existing = list[index].components.firstIndex(where: { $0.id == component.id }) {
-                        list[index].components[existing] = component
-                    } else {
-                        list[index].components.append(component)
-                    }
-                }
-            }
+        if let last = turn.thinkingBlocks.indices.last, turn.thinkingBlocks[last].isLive {
+            // Contiguity, not the worker segment id, defines a block: adjacent
+            // reasoning segments merge even when they carry different ids.
+            let active = turn.thinkingBlocks[last]
+            turn.thinkingBlocks[last].text += (active.text.isEmpty ? "" : "\n") + delta
+            return
         }
-
-        surfaces = list
+        turn.thinkingBlocks.append(ThinkingBlock(
+            id: blockID ?? UUID().uuidString,
+            text: delta,
+            isLive: true
+        ))
     }
 
-    /// Records a submitted surface action so its card renders answered.
-    func submitSurfaceAction(surfaceId: String, componentId: String, response: ChatUIPropValue) {
-        guard let index = surfaces.firstIndex(where: { $0.id == surfaceId }) else { return }
-        var list = surfaces
-        list[index].submittedActions[componentId] = response
-        surfaces = list
+    /// Closes the active thinking block, if one is still streaming.
+    private func closeThinking(in turn: inout Turn) {
+        guard let last = turn.thinkingBlocks.indices.last, turn.thinkingBlocks[last].isLive else { return }
+        turn.thinkingBlocks[last].isLive = false
+    }
+
+    /// Closes the live turn's active thinking block and tool run. Used when a
+    /// non-turn event (A2UI, new user message) ends the current activity.
+    private func closeLiveTurnInPlace() {
+        guard var turn = liveTurn else { return }
+        closeThinking(in: &turn)
+        turn.isToolGroupOpen = false
+        turns[turns.count - 1] = turn
     }
 
     // MARK: - Decisions (mark the card answered)
@@ -376,5 +277,59 @@ final class ChatActivityStore {
             guard !Task.isCancelled else { return }
             self?.markReplyFinished()
         }
+    }
+}
+
+// MARK: - Message-driven transitions
+
+extension ChatActivityStore {
+    /// A new user message started a turn; anchor it to that message.
+    func userTurnStarted(anchorMessageID: String) {
+        // Idempotent: the same message must not open two turns.
+        guard turn(anchoredTo: anchorMessageID) == nil else { return }
+        quietTask?.cancel()
+        quietTask = nil
+        closeLiveTurnInPlace()
+        turns.append(Turn(anchorMessageID: anchorMessageID, startedAt: now()))
+    }
+
+    /// The first agent reply token of the current turn arrived: dismiss the
+    /// working line and arm the quiet-finish timer.
+    func agentReplyStarted() {
+        guard var turn = liveTurn else { return }
+        // Every agent token is a non-thinking activity boundary, even after
+        // the first one; a reasoning block that arrived mid-reply must close
+        // when the answer resumes.
+        closeThinking(in: &turn)
+        turn.isToolGroupOpen = false
+        if !turn.didReplyStart {
+            turn.didReplyStart = true
+            armQuietFinishTimer()
+        }
+        turns[turns.count - 1] = turn
+    }
+
+    /// Marks the current reply finished (called by the quiet timer; exposed so
+    /// tests can drive the state machine deterministically).
+    func markReplyFinished() {
+        guard var turn = liveTurn, turn.didReplyStart, !turn.didReplyFinish else { return }
+        closeThinking(in: &turn)
+        turn.isToolGroupOpen = false
+        turn.didReplyFinish = true
+        turns[turns.count - 1] = turn
+    }
+
+    /// The user hit stop/interrupt: end the current generation window and hide
+    /// both the working line and the stop button. The interrupt itself is
+    /// sent by the controller (`lk.chat.interrupt`); this only flips state.
+    func stopGenerating() {
+        quietTask?.cancel()
+        quietTask = nil
+        guard var turn = liveTurn, !turn.didReplyFinish else { return }
+        closeThinking(in: &turn)
+        turn.isToolGroupOpen = false
+        turn.didReplyStart = true
+        turn.didReplyFinish = true
+        turns[turns.count - 1] = turn
     }
 }

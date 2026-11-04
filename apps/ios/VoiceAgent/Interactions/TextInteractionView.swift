@@ -37,6 +37,7 @@ struct TextInteractionView: View {
                 keyboardFocus = false
             }
             #endif
+            SubagentTrackView()
             ChatInputView(keyboardFocus: _keyboardFocus, text: $messageText)
         }
     }

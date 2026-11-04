@@ -151,6 +151,42 @@ def test_ui_event_malformed_dropped():
     assert mapper.handle({"type": "ui", "surfaceId": "s1", "messages": {}}) == []
 
 
+def test_subagent_forwarded_verbatim():
+    mapper = ChatEventMapper()
+    event = {
+        "type": "subagent",
+        "id": "s-1",
+        "parentRunId": "p-1",
+        "runId": "r-1",
+        "agentName": "Researcher",
+        "task": "Find sources",
+        "status": "running",
+        "error": "",
+    }
+    assert mapper.handle(event) == [{
+        "type": "subagent",
+        "id": "s-1",
+        "parentRunId": "p-1",
+        "runId": "r-1",
+        "agentName": "Researcher",
+        "task": "Find sources",
+        "status": "running",
+    }]
+
+
+def test_subagent_optional_fields_preserved():
+    mapper = ChatEventMapper()
+    # A terminal update may carry only the run id + status.
+    out = mapper.handle({"type": "subagent", "runId": "r-1", "status": "completed"})
+    assert out == [{"type": "subagent", "runId": "r-1", "status": "completed"}]
+    # Missing/None fields are dropped, not rendered as null.
+    out = mapper.handle({"type": "subagent", "id": "s-1", "agentName": None, "error": ""})
+    assert out == [{"type": "subagent", "id": "s-1"}]
+    # Nothing identifying or stateful -> drop.
+    assert mapper.handle({"type": "subagent"}) == []
+    assert mapper.handle({"type": "subagent", "agentName": ""}) == []
+
+
 def test_forwarding_through_llm_stream_sink():
     """2.1 end-to-end: a MemoryLLMStream with an event sink publishes the rich
     events in memory's original order alongside the token stream."""
@@ -228,6 +264,37 @@ def test_ui_forwarded_through_llm_stream_sink():
                 pass
 
         assert sink_payloads == [{"type": "ui", "surfaceId": "s-7", "messages": messages}]
+
+    asyncio.run(run())
+
+
+def test_subagent_forwarded_through_llm_stream_sink():
+    """A memory `subagent` lifecycle event reaches the sink unchanged."""
+    events = [
+        {"type": "token", "token": "Working"},
+        {"type": "subagent", "id": "s-1", "runId": "r-1",
+         "agentName": "Researcher", "status": "running"},
+        {"type": "subagent", "id": "s-1", "runId": "r-1", "status": "completed"},
+    ]
+
+    async def run():
+        fake = _FakeChatClient(events)
+        llm = MemoryLLM(chat_client=fake, agent_definition_id="agent-1")
+        sink_payloads = []
+
+        async def sink(payload):
+            sink_payloads.append(payload)
+
+        llm.chat_event_sink = sink
+        async with llm.chat(chat_ctx=_ctx(("user", "delegate"))) as stream:
+            async for _ in stream:
+                pass
+
+        assert sink_payloads == [
+            {"type": "subagent", "id": "s-1", "runId": "r-1",
+             "agentName": "Researcher", "status": "running"},
+            {"type": "subagent", "id": "s-1", "runId": "r-1", "status": "completed"},
+        ]
 
     asyncio.run(run())
 
@@ -384,8 +451,11 @@ if __name__ == "__main__":
     test_unknown_and_meta_events_ignored()
     test_ui_surface_forwarded_verbatim()
     test_ui_event_malformed_dropped()
+    test_subagent_forwarded_verbatim()
+    test_subagent_optional_fields_preserved()
     test_forwarding_through_llm_stream_sink()
     test_ui_forwarded_through_llm_stream_sink()
+    test_subagent_forwarded_through_llm_stream_sink()
     test_ask_user_synthesizes_question()
     test_ask_user_interaction_type_normalization()
     test_ask_user_message_alias_and_free_text_fields()
