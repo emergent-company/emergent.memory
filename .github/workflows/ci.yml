@@ -24,10 +24,13 @@ name: Meta CI
 #
 # Fork PRs run a green no-op `ci`: every step is gated on
 # `github.event_name != 'pull_request' || head.repo.full_name == repository`, so
-# a fork PR cannot execute checked-out (untrusted) code on the persistent
-# self-hosted runner. The job still reports a real result (success with all steps
-# skipped), satisfying the required context; a maintainer must re-run from a
-# trusted ref to actually validate a fork.
+# a fork PR cannot execute checked-out (untrusted) code. (That gate was written
+# for the persistent self-hosted runner this job used to run on; it is kept
+# unchanged now the job is hosted — a fork PR still must not run PR code against
+# repo secrets, and the guard is the behaviour under test.) The job still reports
+# a real result (success with all steps skipped), satisfying the required
+# context; a maintainer must re-run from a trusted ref to actually validate a
+# fork.
 #
 # DRAFT PRS (2026-11-04). Every path-filtered suite (`server.yml`,
 # `web-ui.yml`, `e2e.yml`, `cli.yml`, `connector.yml`, `server-sdk.yml`,
@@ -70,7 +73,34 @@ permissions:
 jobs:
   ci:
     name: ci
-    runs-on: [self-hosted, linux, x64, memory]
+    # HOSTED ON PURPOSE. The queue measurement and the decision live in the
+    # control repository (issue #819 there), which the tree-hygiene gate forbids
+    # naming from this repo.
+    #
+    # `ci` is one of the two branch-protection-required contexts on `main` and it
+    # is ~40 s of cheap guards, yet on the 7-slot self-hosted pool
+    # (`[self-hosted, linux, x64, memory]`) it queued 171-489 s behind advisory
+    # Playwright/E2E work that cannot gate a merge (measured 2026-11-04: PR #54's
+    # `ci` job queued 171 s, job 41838166310; the worst queue on the same PR
+    # update was 489 s and 15 of 36 checks were waiting). Only `ci`'s queue time
+    # is added directly to time-to-merge: every other suite is advisory, and
+    # `merge-guard` already runs on `ubuntu-latest`. The repo is public, so
+    # standard hosted runners are free and unmetered; the required check stops
+    # competing with work that cannot block a merge.
+    #
+    # Nothing depends on the move except this line. The toolchain is either
+    # fetched by a pinned step (`actions/setup-go@v5` at 1.26 for `go`/`gofmt`,
+    # and `.github/scripts/install-gitleaks.sh`, which verifies a sha256 of the
+    # release tarball) or provided by the image and ASSERTED by the "Verify
+    # preflight toolchain" step below — so a hosted image that lacks a binary
+    # turns this required check red instead of letting a guard silently no-op.
+    #
+    # ROLLBACK: revert this one line to
+    #   runs-on: [self-hosted, linux, x64, memory]
+    # The toolchain assertion passes unchanged on the pool (it only asserts
+    # tools both images must have); nothing else in this workflow, the repo, or
+    # the runner config refers to where this job runs.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -106,6 +136,49 @@ jobs:
         with:
           go-version: '1.26'
           cache: false
+      # Assert the toolchain every step below assumes, before any guard runs
+      # (control-repo issue #819). Two tools are fetched by pinned steps —
+      # `go`/`gofmt` by actions/setup-go at 1.26, `gitleaks` by
+      # .github/scripts/install-gitleaks.sh (sha256-verified) — and the rest come
+      # from the runner image. Asserting them explicitly is what makes the move to
+      # a hosted image safe: this job's worst failure mode is a guard that goes
+      # green because the binary it needs was absent and the script swallowed
+      # `command not found` (exactly how the required check merged around gitleaks
+      # before #1917). A missing tool now reds this step, at the top, naming it.
+      - name: Verify preflight toolchain
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          # Inventory: the binaries the steps in this job actually invoke.
+          #   git            checkout, every preflight/migration diff, tree-hygiene
+          #   bash           every scripts/preflight/*.sh and .github/scripts/*.test.sh
+          #   python3        .github/scripts/check-injection.py (stdlib only)
+          #   jq             scripts/preflight/version-drift.sh, release-versions.test.sh
+          #   go, gofmt      actions/setup-go; go run ./cmd/*-guard, swag generation,
+          #                  `go mod tidy -diff`, and the gofmt step
+          #   gitleaks       secret scan + scripts/preflight/gitleaks-env-files.sh
+          #   coreutils/gawk/sed/grep/find/tar/curl/install
+          #                  preflight scripts, install-gitleaks.sh
+          # Nothing here needs `task`, `yq`, `goose`, `swag`, `docker` or node/npm:
+          # swag is `go run github.com/swaggo/swag/cmd/swag@<go.mod version>`, and
+          # goose is only embedded in the server binary.
+          missing=()
+          for cmd in git bash python3 jq go gofmt gitleaks \
+                     awk sed grep find sort uniq diff xargs mktemp \
+                     tar curl sha256sum install; do
+            command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing tool(s) the required \`ci\` job needs: ${missing[*]}" >&2
+            exit 1
+          fi
+          git --version
+          bash --version | head -n 1
+          python3 --version
+          jq --version
+          go version
+          echo "gofmt: $(command -v gofmt)"
+          gitleaks version
       # Guard against silently-committed unformatted Go. `task lint` from
       # apps/web-ui is scoped to the gateway, so the whole repo is only checked
       # here — over *tracked* files, so generated/untracked artifacts don't
