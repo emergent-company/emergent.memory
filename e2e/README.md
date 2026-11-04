@@ -148,9 +148,9 @@ stacks**, runs afterwards regardless of the outcome and stops the compose projec
 
 | Job | Description |
 |---|---|
-| **CLI Install Tests** | Full Docker Compose stack. Builds the `memory` CLI from the checked-out source inside the image and installs it in the container, then runs the **allowlisted** CLI tests (below): five of the 149 `TestCLIInstalled_*` tests plus the `TestOpencode` matches. Everything else runs on demand through `runlog test` (see [Local usage](#local-usage)). |
-| **API Tests** | Full Docker Compose stack with a server built from the checked-out source, then `go test ./tests/api/...` — the whole package, with no `-run` allowlist, so a new API test runs automatically. |
-| **Mailgun Transport Test** | The same stack with the email transport switched from SMTP/Mailpit to a local Mailgun stub, so the Mailgun path runs without real credentials or egress. |
+| **CLI Install Tests** | Full Docker Compose stack. Builds the `memory` CLI from the checked-out source inside the image and installs it in the container, then runs the **allowlisted** CLI tests (below): five of the 149 `TestCLIInstalled_*` tests plus the two `TestOpencode*` tests — seven tests in total. The rest of the CLI suite runs on demand through `runlog test` (see [Local usage](#local-usage)). |
+| **API Tests** | Full Docker Compose stack with a server built from the checked-out source, then `go test -v ./tests/api/...` — the whole package, with no `-run` allowlist, so a new API test runs automatically. |
+| **Mailgun Transport Test** | The same stack with the email transport switched from SMTP/Mailpit to a local Mailgun stub, so the Mailgun path runs without real credentials or egress. It runs exactly one test — `TestInvite_EmailDeliveredViaMailgunTransport`, selected with `-run` — so the rest of `tests/api/...` runs only in **API Tests**. |
 
 The CLI allowlist is the default value of `TEST_RUN` in `entrypoint.sh`:
 
@@ -160,6 +160,14 @@ TestCLIInstalled_(Version|Help|SetToken|StatusAuthenticated|ConfigShowAndSet)|Te
 
 `TestOpencode` is an unanchored pattern, so it also selects
 `TestOpencodeInstalled` and `TestOpencodeSeesInstalledSkills`.
+
+The two suites select tests differently. **API Tests** passes no `-run` filter,
+so it runs every test in `tests/api/...`. **CLI Install Tests** runs only the
+allowlist above, because `entrypoint.sh` supplies that default when `TEST_RUN`
+is unset. `runlog test` runs the whole module on demand — `tests/api`,
+`tests/cli`, `tests/integration`, `tests/blueprints`, `tests/docs`, `tests/tools`
+and `tests/acp`, per `testCommand` in `.runlog.yaml` — which is how a CLI test
+outside the allowlist gets verified locally.
 
 The consequence is worth stating plainly: **a green CLI Install Tests check does
 not mean an arbitrary `TestCLIInstalled_*` test ran.** When a change adds one,
