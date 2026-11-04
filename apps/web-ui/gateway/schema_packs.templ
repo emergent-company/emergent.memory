@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strconv"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
@@ -87,8 +88,9 @@ templ schemaPackRow(p schemaPackSummary) {
 // SchemaPackPage renders one active pack's read-only detail: a metadata header
 // and two type tables (object types / relationship types). pack == nil with a
 // nil loadErr is the not-found state (unknown or absent pack id); a non-nil
-// loadErr is the whole-page error state. Neither panics.
-templ SchemaPackPage(pack *schemaPackSummary, loadErr error) {
+// loadErr is the whole-page error state. notice is the install confirmation, so
+// installing a pending pack lands somewhere that says it worked. Neither panics.
+templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if pack == nil {
 			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", "Schema pack")), "", "Schema pack", "")
@@ -109,6 +111,16 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error) {
 					ActionIcon:  "lucide--arrow-left",
 				})
 			} else {
+				if notice != "" {
+					<div class="mb-4">
+						@ui.Alert(ui.AlertProps{
+							Type:    ui.AlertSuccess,
+							Style:   ui.AlertStyleSoft,
+							Icon:    "lucide--check-circle",
+							Message: notice,
+						})
+					</div>
+				}
 				@schemaPackMeta(pack)
 				{{
 					prov := map[string]*ProvenanceInfo{}
@@ -134,6 +146,88 @@ templ schemaPackHeader(pack *schemaPackSummary) {
 			@ownerBadge(*pack, ui.BadgeSizeSM)
 			@ui.Badge(ui.BadgeProps{Label: "Active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeSM, Dot: true})
 		</div>
+	}
+}
+
+// SchemaPackPendingPage renders a pack that exists in the project's catalog but
+// is not installed — the state a discovery run leaves its result in. It shows
+// what the run proposed and the one action that turns it into compiled types,
+// so the Schema page's "Review pack" link never dead-ends on a not-found page.
+templ SchemaPackPendingPage(pack *pendingPack, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
+			<div class="flex flex-wrap items-center gap-2">
+				@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
+				if pack.PendingReview {
+					@ui.Badge(ui.BadgeProps{Label: "Pending review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeSM, Dot: true})
+				} else {
+					@ui.Badge(ui.BadgeProps{Label: "Not installed", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM})
+				}
+			</div>
+		}
+		@layout.Rail(schemaSubNav("packs"), nil) {
+			if flashErr != nil {
+				<div class="mb-4">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertError,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: "Could not install the pack: " + flashErr.Error(),
+					})
+				</div>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+				if pack.PendingReview {
+					This pack was proposed by a discovery run and is not installed. Its types are not used for extraction until you install it, and installing is the only step that takes them live.
+				} else {
+					This pack is listed for this project but is not installed. Its types are not used for extraction until you install it.
+				}
+			}
+			@ui.Section("Pack details", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
+				@components.MetaGrid() {
+					@schemaPackMetaRow("Pack id", pack.ID, true)
+					if pack.Author != "" {
+						@schemaPackMetaRow("Author", pack.Author, false)
+					}
+					if pack.Source != "" {
+						@schemaPackMetaRow("Source", pack.Source, false)
+					}
+					@schemaPackMetaRow("Types", strconv.Itoa(len(pack.ObjectTypes)+len(pack.RelationTypes)), false)
+				}
+			}
+			<form method="post" action={ templ.URL("/schema/packs/" + url.PathEscape(pack.ID) + "/install") } class="mb-6">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--check",
+					Attrs:   templ.Attributes{"data-testid": "schema-pack-install"},
+				}) {
+					Install pack
+				}
+			</form>
+			@pendingPackTypeList("Object types", pack.ObjectTypes)
+			@pendingPackTypeList("Relationship types", pack.RelationTypes)
+		}
+	}
+}
+
+// pendingPackTypeList is a plain name list: a pending pack's types are not in
+// the compiled registry, so the compiled-types table (which links to type
+// detail pages) would produce dead links.
+templ pendingPackTypeList(title string, names []string) {
+	@ui.Section(title, ui.SectionProps{Margin: "mb-6"}) {
+		if len(names) == 0 {
+			@ui.EmptyNote() {
+				None proposed.
+			}
+		} else {
+			<ul class="list-disc space-y-1 pl-5 text-sm">
+				for _, name := range names {
+					<li>{ name }</li>
+				}
+			</ul>
+		}
 	}
 }
 

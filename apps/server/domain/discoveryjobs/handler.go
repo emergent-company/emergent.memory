@@ -1,6 +1,8 @@
 package discoveryjobs
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -46,11 +48,50 @@ func (h *Handler) StartDiscovery(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	if len(req.DocumentIDs) == 0 {
-		return apperror.ErrBadRequest.WithMessage("document_ids array is required and cannot be empty")
+	// Scope decides whether document_ids is required; the service validates it
+	// (scope=project resolves the ids server-side).
+	result, err := h.svc.StartDiscovery(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
 	}
 
-	result, err := h.svc.StartDiscovery(c.Request().Context(), projectID, &req)
+	return c.JSON(http.StatusOK, result)
+}
+
+// RetryDiscovery handles POST /discovery-jobs/:jobId/retry
+// @Summary      Retry a discovery job
+// @Description  Re-runs a finished (completed, failed or cancelled) discovery job over the same documents. The new job records trigger=manual.
+// @Tags         discovery-jobs
+// @Accept       json
+// @Produce      json
+// @Param        jobId path string true "Job ID (UUID)"
+// @Param        request body RetryDiscoveryRequest false "Optional overrides (batch_size)"
+// @Success      200 {object} StartDiscoveryResponse "Retry started"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      409 {object} apperror.Error "Job is still running"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /discovery-jobs/{jobId}/retry [post]
+// @Security     bearerAuth
+func (h *Handler) RetryDiscovery(c echo.Context) error {
+	jobIDStr := c.Param("jobId")
+	jobID, err := uuid.Parse(jobIDStr)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid job ID")
+	}
+
+	var req RetryDiscoveryRequest
+	// An absent body is valid: the stored job config supplies everything. A
+	// chunked request reports ContentLength -1, so EOF is tolerated as "no
+	// body" instead of being reported as malformed.
+	if c.Request().Body != nil && c.Request().ContentLength != 0 {
+		if err := c.Bind(&req); err != nil && !errors.Is(err, io.EOF) {
+			return apperror.ErrBadRequest.WithMessage("invalid request body")
+		}
+	}
+
+	result, err := h.svc.RetryDiscovery(c.Request().Context(), jobID, &req)
 	if err != nil {
 		return err
 	}

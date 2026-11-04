@@ -2847,6 +2847,12 @@ definitions:
     type: object
   domain_discoveryjobs.JobListItem:
     properties:
+      cancellable:
+        description: |-
+          Cancellable is the server's answer to "may this job be cancelled now?".
+          A client renders the cancel action from it instead of re-deriving the
+          status set, so the card and the API cannot drift apart.
+        type: boolean
       completed_at:
         type: string
       created_at:
@@ -2857,6 +2863,10 @@ definitions:
       discovered_types:
         items: {}
         type: array
+      document_count:
+        type: integer
+      error_message:
+        type: string
       id:
         type: string
       progress:
@@ -2864,6 +2874,14 @@ definitions:
       schema_id:
         type: string
       status:
+        type: string
+      total_documents:
+        type: integer
+      trigger:
+        description: |-
+          Trigger/scope/document counts describe what the run covered, so a caller
+          can distinguish an automatic sync run from an explicit one and tell the
+          user when the per-run cap limited a project-wide run.
         type: string
     type: object
   domain_discoveryjobs.JobStatusResponse:
@@ -2891,6 +2909,13 @@ definitions:
       status:
         type: string
     type: object
+  domain_discoveryjobs.RetryDiscoveryRequest:
+    properties:
+      batch_size:
+        maximum: 50
+        minimum: 1
+        type: integer
+    type: object
   domain_discoveryjobs.StartDiscoveryRequest:
     properties:
       batch_size:
@@ -2898,12 +2923,20 @@ definitions:
         minimum: 1
         type: integer
       document_ids:
+        description: |-
+          DocumentIDs names the documents to analyse. Required when Scope is empty
+          or DiscoveryScopeDocuments; ignored when Scope is DiscoveryScopeProject.
         items:
           type: string
-        minItems: 1
         type: array
       include_relationships:
         type: boolean
+      limit:
+        description: |-
+          Limit caps a DiscoveryScopeProject run. Zero means the server default;
+          a value above the server cap is clamped to it.
+        minimum: 1
+        type: integer
       max_iterations:
         maximum: 10
         minimum: 1
@@ -2912,13 +2945,28 @@ definitions:
         maximum: 1
         minimum: 0
         type: number
-    required:
-    - document_ids
+      scope:
+        description: |-
+          Scope selects what to analyse: DiscoveryScopeDocuments (default) or
+          DiscoveryScopeProject.
+        enum:
+        - documents
+        - project
+        type: string
     type: object
   domain_discoveryjobs.StartDiscoveryResponse:
     properties:
+      document_count:
+        description: DocumentCount is how many documents this job will analyse.
+        type: integer
       job_id:
         type: string
+      total_documents:
+        description: |-
+          TotalDocuments is how many head documents the project had when the run
+          started. It is larger than DocumentCount when the per-run cap applied, so
+          a caller can tell the user the run covered a subset.
+        type: integer
     type: object
   domain_documents.BulkDeleteRequest:
     properties:
@@ -6826,6 +6874,13 @@ definitions:
     type: object
   domain_projects.Project:
     properties:
+      auto_discovery_enabled:
+        description: |-
+          AutoDiscoveryEnabled starts a schema-discovery job after a source sync
+          creates documents (added in migration 00260). It defaults to true so a
+          project keeps the behaviour it had before the flag existed; when false,
+          discovery only runs through the explicit start/retry endpoints.
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -6879,6 +6934,12 @@ definitions:
     type: object
   domain_projects.ProjectDTO:
     properties:
+      auto_discovery_enabled:
+        description: |-
+          AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
+          column defaults to true, so an absent field would read as "off" in a UI
+          that renders a toggle and silently disable discovery for every project.
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -6987,6 +7048,8 @@ definitions:
     type: object
   domain_projects.UpdateProjectRequest:
     properties:
+      auto_discovery_enabled:
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -8565,6 +8628,12 @@ definitions:
         items:
           type: integer
         type: array
+      pendingReview:
+        description: |-
+          PendingReview marks discovery output that is awaiting an explicit
+          install. It is false for a pack created or imported any other way, so a
+          client can tell "proposed by a run" from "unassigned".
+        type: boolean
       projectId:
         type: string
       publishedAt:
@@ -27942,6 +28011,55 @@ paths:
       security:
       - bearerAuth: []
       summary: Finalize discovery job
+      tags:
+      - discovery-jobs
+  /discovery-jobs/{jobId}/retry:
+    post:
+      consumes:
+      - application/json
+      description: Re-runs a finished (completed, failed or cancelled) discovery job
+        over the same documents. The new job records trigger=manual.
+      parameters:
+      - description: Job ID (UUID)
+        in: path
+        name: jobId
+        required: true
+        type: string
+      - description: Optional overrides (batch_size)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_discoveryjobs.RetryDiscoveryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Retry started
+          schema:
+            $ref: '#/definitions/domain_discoveryjobs.StartDiscoveryResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Job not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Job is still running
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Retry a discovery job
       tags:
       - discovery-jobs
   /discovery-jobs/projects/{projectId}:

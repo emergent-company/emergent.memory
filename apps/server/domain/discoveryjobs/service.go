@@ -21,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/llmjson"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
@@ -30,10 +31,45 @@ import (
 // 8k matches the extraction default; a batch that still overflows is split.
 const discoveryMaxOutputTokens int32 = 8192
 
+// Per-call type budgets. The budget is part of the prompt ("discover up to N
+// types") and therefore bounds the response size: a single document that
+// overflows the output limit is retried once at the reduced budget instead of
+// failing outright (a 1-document batch cannot be split any further).
+const (
+	discoveryDefaultMaxTypes = 20
+	discoveryReducedMaxTypes = 5
+)
+
+// DefaultDiscoveryMaxDocuments bounds a project-wide discovery run. Each
+// document costs model calls, so an unbounded "all documents" action would let
+// one click spend arbitrarily; past the cap the caller narrows the scope, or
+// starts another run for the rest. DISCOVERY_MAX_DOCUMENTS overrides it.
+const DefaultDiscoveryMaxDocuments = 500
+
+// DefaultStaleJobAfter is how long a non-terminal discovery job may report no
+// progress before a new start supersedes it. A run is a goroutine, so a
+// restart, deploy or crash leaves its row non-terminal forever; without a
+// takeover the one-run-per-project guard would refuse every later start and the
+// project could never discover again. Thirty minutes is far longer than a
+// healthy run takes to report its next progress update.
+const DefaultStaleJobAfter = 30 * time.Minute
+
 // ErrOutputTruncated reports that the model stopped at the output-token limit.
 // Callers can retry with a smaller document batch instead of treating it as a
 // malformed response.
 var ErrOutputTruncated = errors.New("model output truncated at the output token limit")
+
+// ErrJobNoLongerActive reports that a running job reached a terminal status
+// while it was still executing — cancelled by a member, or cancelled and
+// superseded by the stale-job takeover. The worker stops at the next boundary
+// and every write it makes is conditional on the job still being non-terminal,
+// so a superseded run can neither advance its job nor create a second pack.
+var ErrJobNoLongerActive = errors.New("discovery job is no longer active")
+
+// errJobNotFinalisable refuses the manual finalize of a job that a cancel (or a
+// failure) already ended. Completing it would install the pack it just built and
+// present it as the run's result, which the run never reached.
+var errJobNotFinalisable = apperror.ErrConflict.WithMessage("job cannot be finalised (it was cancelled or already failed)")
 
 // modelFactory is the interface for creating LLM models.
 // Implemented by *adk.ModelFactory in production; mocked in tests.
@@ -48,6 +84,21 @@ type Service struct {
 	cfg          *config.Config
 	modelFactory modelFactory
 	log          *slog.Logger
+	// maxDocuments caps a project-wide run. Zero falls back to
+	// DefaultDiscoveryMaxDocuments (tests build a Service literal).
+	maxDocuments int
+	// staleAfter is how long a non-terminal job may report no progress before a
+	// new start supersedes it. Zero disables takeover (every active job holds
+	// its claim); the module wires DefaultStaleJobAfter.
+	staleAfter time.Duration
+}
+
+// documentCap is the effective per-run document cap.
+func (s *Service) documentCap() int {
+	if s.maxDocuments > 0 {
+		return s.maxDocuments
+	}
+	return DefaultDiscoveryMaxDocuments
 }
 
 // completeWithLLM sends a text prompt and returns the text response.
@@ -121,7 +172,14 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 	return result, nil
 }
 
-// StartDiscovery starts a new discovery job
+// StartDiscovery starts a new discovery job.
+//
+// Scope decides what is analysed. "documents" (the default) uses the ids in
+// the request; "project" resolves the project's own newest documents
+// server-side, so the "all documents" action cannot be turned into an
+// arbitrary-id request. Project runs are capped by documentCap() and the
+// response reports the project total, so a caller can tell the user the run
+// covered a subset rather than silently skipping documents.
 func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *StartDiscoveryRequest) (*StartDiscoveryResponse, error) {
 	// Set defaults
 	if req.BatchSize <= 0 {
@@ -132,6 +190,78 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 	}
 	if req.MaxIterations <= 0 {
 		req.MaxIterations = 3
+	}
+
+	scope := req.Scope
+	if scope == "" {
+		scope = DiscoveryScopeDocuments
+	}
+	trigger := req.Trigger
+	if trigger == "" {
+		trigger = DiscoveryTriggerManual
+	}
+
+	totalDocuments := 0
+	switch scope {
+	case DiscoveryScopeDocuments:
+		if len(req.DocumentIDs) == 0 {
+			return nil, apperror.New(400, "validation-failed", "document_ids is required when scope is \"documents\"").WithDetails(map[string]any{
+				"document_ids": []string{"must contain at least one document id"},
+			})
+		}
+		totalDocuments = len(req.DocumentIDs)
+	case DiscoveryScopeProject:
+		cap := s.documentCap()
+		limit := req.Limit
+		if limit <= 0 || limit > cap {
+			limit = cap
+		}
+		ids, err := s.repo.ProjectDocumentIDs(ctx, projectID, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, apperror.New(400, "no-documents", "this project has no documents with content to analyse; sync a source or add a document first")
+		}
+		total, err := s.repo.CountProjectDocuments(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		req.DocumentIDs = ids
+		totalDocuments = total
+	default:
+		return nil, apperror.New(400, "validation-failed", "scope must be \"documents\" or \"project\"").WithDetails(map[string]any{
+			"scope": []string{"must be one of: documents, project"},
+		})
+	}
+
+	// One run per project at a time: a second job would double the model spend
+	// and race this one to finalise a pack over the same documents.
+	//
+	// A run is a goroutine, so a restart, deploy or crash mid-run leaves a
+	// non-terminal row that nothing will ever advance. Refusing forever on that
+	// row would dead-end the project (the exact class of bug this feature
+	// removes), so a run that has reported no progress inside the stale window
+	// is cancelled here and superseded. Progress updates touch updated_at, so a
+	// live run keeps its claim.
+	active, err := s.repo.ActiveJobForProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if active != nil {
+		if s.staleAfter <= 0 || time.Since(active.UpdatedAt) <= s.staleAfter {
+			return nil, apperror.New(409, "discovery-in-progress", fmt.Sprintf("discovery job %s is already running for this project", active.ID)).WithDetails(map[string]any{
+				"job_id": active.ID.String(),
+			})
+		}
+		s.log.Warn("superseding a stalled discovery job",
+			slog.String("stalled_job_id", active.ID.String()),
+			slog.String("project_id", projectID.String()),
+			slog.Time("last_progress", active.UpdatedAt),
+			slog.Duration("stale_after", s.staleAfter))
+		if err := s.repo.CancelStalledJob(ctx, active.ID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve org from project.
@@ -173,6 +303,10 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 			"min_confidence":        req.MinConfidence,
 			"include_relationships": req.IncludeRelationships,
 			"max_iterations":        req.MaxIterations,
+			"scope":                 scope,
+			"trigger":               trigger,
+			"document_count":        len(req.DocumentIDs),
+			"total_documents":       totalDocuments,
 		},
 		KBPurpose:               projectInfo,
 		DiscoveredTypes:         JSONArray{},
@@ -182,13 +316,78 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	if err := s.repo.Create(ctx, job); err != nil {
+		// The pre-check above cannot stop two concurrent starts (an HTTP start
+		// racing a sync delegation, or a double-submitted form): the database
+		// enforces one non-terminal job per project with
+		// uq_discovery_jobs_one_active, so a lost race surfaces here as a
+		// unique violation and is reported exactly like the pre-check.
+		if pgutils.IsUniqueViolation(err) {
+			details := map[string]any{}
+			if winner, activeErr := s.repo.ActiveJobForProject(ctx, projectID); activeErr == nil && winner != nil {
+				details["job_id"] = winner.ID.String()
+			}
+			return nil, apperror.New(409, "discovery-in-progress", "another discovery job started for this project at the same time").WithDetails(details)
+		}
 		return nil, err
 	}
 
 	// Start processing asynchronously
 	go s.processDiscoveryJob(auth.ContextWithProjectID(context.Background(), projectID.String()), job.ID, projectID)
 
-	return &StartDiscoveryResponse{JobID: job.ID}, nil
+	return &StartDiscoveryResponse{
+		JobID:          job.ID,
+		DocumentCount:  len(req.DocumentIDs),
+		TotalDocuments: totalDocuments,
+	}, nil
+}
+
+// RetryDiscovery re-runs a terminal job over the same documents. The stored
+// config is the source of truth for the document set, so a retry can never
+// silently widen the original run's scope; only the batch size may be
+// overridden. The new job is recorded as trigger=manual.
+func (s *Service) RetryDiscovery(ctx context.Context, jobID uuid.UUID, req *RetryDiscoveryRequest) (*StartDiscoveryResponse, error) {
+	job, err := s.requireJobAccess(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if !IsTerminalStatus(job.Status) {
+		return nil, apperror.New(409, "discovery-in-progress", fmt.Sprintf("discovery job %s is still %s; wait for it to finish or cancel it first", job.ID, job.Status)).
+			WithDetails(map[string]any{"job_id": job.ID.String(), "status": job.Status})
+	}
+
+	cfg := jobConfigOf(job)
+	docIDs := make([]uuid.UUID, 0, len(cfg.DocumentIDs))
+	for _, raw := range cfg.DocumentIDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("retry discovery: stored document id %q is not a uuid: %w", raw, err)
+		}
+		docIDs = append(docIDs, id)
+	}
+	if len(docIDs) == 0 {
+		return nil, apperror.New(400, "invalid-job", "discovery job has no stored document list; start a new run instead").
+			WithDetails(map[string]any{"job_id": job.ID.String()})
+	}
+
+	startReq := &StartDiscoveryRequest{
+		DocumentIDs:          docIDs,
+		Scope:                DiscoveryScopeDocuments,
+		BatchSize:            cfg.BatchSize,
+		MinConfidence:        cfg.MinConfidence,
+		IncludeRelationships: cfg.IncludeRelationships,
+		MaxIterations:        cfg.MaxIterations,
+		Trigger:              DiscoveryTriggerManual,
+	}
+	if req != nil && req.BatchSize > 0 {
+		startReq.BatchSize = req.BatchSize
+	}
+	return s.StartDiscovery(ctx, job.ProjectID, startReq)
+}
+
+// AutoDiscoveryEnabled reports whether a source sync should start discovery for
+// this project. It implements sources.DiscoveryStarter's optional gate.
+func (s *Service) AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error) {
+	return s.repo.AutoDiscoveryEnabled(ctx, projectID)
 }
 
 // GetJobStatus retrieves the status of a discovery job
@@ -221,18 +420,41 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 
 	result := make([]*JobListItem, len(jobs))
 	for i, job := range jobs {
+		cfg := jobConfigOf(job)
 		result[i] = &JobListItem{
 			ID:                      job.ID,
 			Status:                  job.Status,
 			Progress:                job.Progress,
 			CreatedAt:               job.CreatedAt,
 			CompletedAt:             job.CompletedAt,
+			ErrorMessage:            job.ErrorMessage,
 			DiscoveredTypes:         job.DiscoveredTypes,
 			DiscoveredRelationships: job.DiscoveredRelationships,
 			SchemaID:                job.SchemaID,
+			Trigger:                 cfg.Trigger,
+			DocumentCount:           cfg.DocumentCount,
+			TotalDocuments:          cfg.TotalDocuments,
+			Cancellable:             IsCancellableStatus(job.Status),
 		}
 	}
 	return result, nil
+}
+
+// jobConfigOf decodes a job's stored config, tolerating a legacy job whose
+// config predates the scope/trigger fields (decoding yields zero values).
+func jobConfigOf(job *DiscoveryJob) JobConfig {
+	cfg := JobConfig{}
+	if len(job.Config) == 0 {
+		return cfg
+	}
+	raw, err := json.Marshal(job.Config)
+	if err != nil {
+		return cfg
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return cfg
+	}
+	return cfg
 }
 
 // CancelJob cancels a discovery job
@@ -272,6 +494,11 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 	job, err := s.requireJobAccess(ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("finalize: fetch job: %w", err)
+	}
+	// A cancelled or failed run has nothing to finalize: a pack built here would
+	// be installed as the run's result, and the job would flip back to completed.
+	if IsTerminalStatus(job.Status) && job.Status != StatusCompleted {
+		return nil, errJobNotFinalisable
 	}
 	if len(job.DiscoveredTypes) > 0 {
 		candidateNames := make(map[string]bool)
@@ -767,8 +994,12 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 		return nil, apperror.ErrBadRequest.WithMessage("mode must be one of: create, extend, enrich, create_rich, create_rich_combined, create_rich_sequential")
 	}
 
-	// Update discovery job
+	// Update discovery job. The write is fenced, so a job cancelled while this
+	// call was building its pack keeps its cancelled status.
 	if err := s.repo.SetJobMemorySchema(ctx, jobID, schemaID); err != nil {
+		if errors.Is(err, ErrJobNoLongerActive) {
+			return nil, errJobNotFinalisable
+		}
 		return nil, err
 	}
 
@@ -782,12 +1013,18 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid.UUID) {
 	s.log.Info("starting discovery job", slog.String("job_id", jobID.String()), slog.String("project_id", projectID.String()))
 
-	// Update status to analyzing
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusAnalyzingDocuments, nil); err != nil {
-		s.log.Error("failed to update job status", logger.Error(err))
+	// Update status to analyzing. A job cancelled between the start request and
+	// this goroutine running is already terminal, so the transition refuses and
+	// the run stops without spending a model call.
+	if !s.transitionStatus(ctx, jobID, StatusAnalyzingDocuments) {
 		return
 	}
 	if err := s.repo.MarkStarted(ctx, jobID); err != nil {
+		if errors.Is(err, ErrJobNoLongerActive) {
+			s.log.Info("discovery job was cancelled before it started; nothing to do",
+				slog.String("job_id", jobID.String()))
+			return
+		}
 		s.log.Error("failed to mark job started", logger.Error(err))
 		return
 	}
@@ -823,8 +1060,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	s.log.Info("processing batches", slog.Int("batch_count", len(batches)))
 
 	// Step 2: Extract types from each batch
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusExtractingTypes, nil); err != nil {
-		s.handleJobError(ctx, jobID, err)
+	if !s.transitionStatus(ctx, jobID, StatusExtractingTypes) {
 		return
 	}
 
@@ -833,10 +1069,16 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	var batchErrors []string
 
 	for i, batch := range batches {
+		// A cancel (or a takeover after the process stalled) is only visible
+		// between batches; stopping here is what makes the card's Cancel action
+		// end the run instead of just freeing the slot.
+		if !s.runIsActive(ctx, jobID) {
+			return
+		}
 		batchNum := i + 1
 		s.updateProgress(ctx, jobID, batchNum, len(batches)+2, fmt.Sprintf("Analyzing batch %d/%d...", batchNum, len(batches)))
 
-		if err := s.extractTypesFromBatch(ctx, jobID, batch, batchNum, job.KBPurpose); err != nil {
+		if err := s.extractTypesFromBatch(ctx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes); err != nil {
 			failedBatches++
 			batchErrors = append(batchErrors, fmt.Sprintf("Batch %d: %v", batchNum, err))
 			s.log.Error("batch extraction failed", slog.Int("batch", batchNum), logger.Error(err))
@@ -854,8 +1096,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	}
 
 	// Step 3: Refine and merge types
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusRefiningSchemas, nil); err != nil {
-		s.handleJobError(ctx, jobID, err)
+	if !s.transitionStatus(ctx, jobID, StatusRefiningSchemas) {
 		return
 	}
 	s.updateProgress(ctx, jobID, len(batches)+1, len(batches)+2, "Refining discovered types and merging duplicates...")
@@ -882,8 +1123,10 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		return
 	}
 
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusCreatingPack, nil); err != nil {
-		s.handleJobError(ctx, jobID, err)
+	// Entering creating_pack is the pack-creation gate: the transition is fenced
+	// by the job's status, so a run that was cancelled or superseded can no
+	// longer create a pack another run would then duplicate.
+	if !s.transitionStatus(ctx, jobID, StatusCreatingPack) {
 		return
 	}
 	s.updateProgress(ctx, jobID, len(batches)+2, len(batches)+2, "Creating memory schema from discovered types...")
@@ -947,8 +1190,16 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		}
 	}
 
-	// Step 6: Complete
+	// Step 6: Complete. This write is fenced too: if the job was cancelled while
+	// the pack was being created, it stays cancelled and the pack stays in
+	// pending review (inert — it grants no compiled types until installed).
 	if err := s.repo.MarkCompleted(ctx, jobID, &schemaID, typesArray, relsArray); err != nil {
+		if errors.Is(err, ErrJobNoLongerActive) {
+			s.log.Warn("discovery job was cancelled while creating its pack; leaving the pack pending review",
+				slog.String("job_id", jobID.String()),
+				slog.String("pack_id", schemaID.String()))
+			return
+		}
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
@@ -981,24 +1232,42 @@ func discoveryRetrySmaller(callErr error, docCount, typeCount int) bool {
 }
 
 // discoveryBatchOutcome is the decision for one batch: store these types, retry
-// the same documents split in half, or fail.
+// the same documents split in half, retry a single document with a smaller type
+// budget, or fail.
 type discoveryBatchOutcome struct {
 	Types        []DiscoveredType
 	RetrySmaller bool
-	Err          error
+	// RetryReducedTypes asks for a retry of the same batch at the reduced type
+	// budget. Splitting cannot help a one-document batch, but asking for fewer
+	// types produces a shorter answer that can fit inside the output limit.
+	RetryReducedTypes bool
+	Err               error
 }
 
 // decideDiscoveryBatch distinguishes a complete answer that legitimately found
 // no types from a response that was cut off before it could produce any. Only
-// the latter should fail or trigger a smaller-batch retry; a complete empty
-// answer is a valid batch (the job-level no-types check reports the outcome).
+// the latter should fail or trigger a retry; a complete empty answer is a valid
+// batch (the job-level no-types check reports the outcome).
+//
+// When a batch is cut off at the output limit it is retried: a multi-document
+// batch is split, and a single-document batch (which cannot be split) asks for
+// fewer types instead. Any other parse failure is reported as-is.
 func (s *Service) decideDiscoveryBatch(response string, callErr error, docCount int) discoveryBatchOutcome {
 	types, truncated, parseErr := s.parseTypeDiscoveryResponse(response)
+
+	truncationRetry := func(err error) discoveryBatchOutcome {
+		if docCount > 1 {
+			return discoveryBatchOutcome{RetrySmaller: true, Err: err}
+		}
+		return discoveryBatchOutcome{RetryReducedTypes: true, Err: err}
+	}
 
 	if parseErr != nil {
 		if strings.TrimSpace(response) == "" && callErr == nil {
 			// The model returned nothing at all. Try a smaller batch before
-			// giving up; an empty body is not a usable answer.
+			// giving up; an empty body is not a usable answer. A single-document
+			// batch has nothing to split, and an empty body is not an output
+			// limit, so a reduced-budget retry would only repeat the failure.
 			err := fmt.Errorf("model returned an empty response")
 			if docCount > 1 {
 				return discoveryBatchOutcome{RetrySmaller: true, Err: err}
@@ -1009,28 +1278,25 @@ func (s *Service) decideDiscoveryBatch(response string, callErr error, docCount 
 			return discoveryBatchOutcome{RetrySmaller: true, Err: parseErr}
 		}
 		if errors.Is(callErr, ErrOutputTruncated) || truncated {
-			return discoveryBatchOutcome{Err: fmt.Errorf("schema discovery output was truncated at the model output limit; reduce the document size or switch model: %w", parseErr)}
+			return truncationRetry(fmt.Errorf("schema discovery output was truncated at the model output limit; reduce the document size or switch model: %w", parseErr))
 		}
 		return discoveryBatchOutcome{Err: fmt.Errorf("failed to parse LLM response: %w", parseErr)}
 	}
 
 	if truncated && len(types) == 0 {
-		err := fmt.Errorf("schema discovery output was truncated at the model output limit and contained no types; reduce the document size or switch model: %w", ErrOutputTruncated)
-		if docCount > 1 {
-			return discoveryBatchOutcome{RetrySmaller: true, Err: err}
-		}
-		return discoveryBatchOutcome{Err: err}
+		return truncationRetry(fmt.Errorf("schema discovery output was truncated at the model output limit and contained no types; reduce the document size or switch model: %w", ErrOutputTruncated))
 	}
 
 	return discoveryBatchOutcome{Types: types}
 }
 
-// extractTypesFromBatch extracts types from a batch of documents using LLM
-func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string) error {
-	s.log.Info("extracting types from batch",
-		slog.Int("batch", batchNum),
-		slog.Int("doc_count", len(documentIDs)))
-
+// extractTypesFromBatch extracts types from a batch of documents using LLM and
+// stores them as candidates.
+//
+// typeBudget is the number of types the prompt asks for (zero means the
+// default). It is carried through the split so a batch that had to be split
+// keeps the budget its caller chose, and the caller may lower it on a retry.
+func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string, typeBudget int) error {
 	// Get document contents
 	docs, err := s.repo.GetDocumentContents(ctx, documentIDs)
 	if err != nil {
@@ -1042,32 +1308,113 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 		return nil
 	}
 
-	// Build prompt
-	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose)
+	groups, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget)
+	if err != nil {
+		return err
+	}
 
-	// Call LLM
+	// Store candidates, attributed to the documents the answer actually covered:
+	// a batch split on truncation is answered twice, and each half's types come
+	// from its own documents.
+	for _, group := range groups {
+		for _, t := range group.Types {
+			candidate := &DiscoveryTypeCandidate{
+				ID:                uuid.New(),
+				JobID:             jobID,
+				BatchNumber:       batchNum,
+				TypeName:          t.TypeName,
+				Description:       &t.Description,
+				Confidence:        t.Confidence,
+				InferredSchema:    t.Properties,
+				ExampleInstances:  toJSONArray(t.ExampleInstances),
+				Frequency:         len(t.ExampleInstances),
+				SourceDocumentIDs: group.DocumentIDs,
+				ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(group.DocumentIDs))),
+				Status:            CandidateStatusCandidate,
+				CreatedAt:         time.Now(),
+				UpdatedAt:         time.Now(),
+			}
+			if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
+				s.log.Error("failed to store type candidate", logger.Error(err))
+				// Continue with other candidates
+			}
+		}
+	}
+
+	return nil
+}
+
+// discoveredGroup is the types one model answer produced, together with the
+// documents that answer covered. A batch split on truncation yields one group
+// per half, so a stored candidate's provenance names the documents it came
+// from rather than the whole original batch.
+type discoveredGroup struct {
+	Types       []DiscoveredType
+	DocumentIDs []uuid.UUID
+}
+
+// documentIDs returns the ids of the documents a group covers.
+func documentIDs(docs []DocumentContent) []uuid.UUID {
+	ids := make([]uuid.UUID, len(docs))
+	for i, doc := range docs {
+		ids[i] = doc.ID
+	}
+	return ids
+}
+
+// discoverBatchTypes asks the model which types the already-loaded documents
+// describe and returns them for storage.
+//
+// A response cut off at the model's output limit is retried in a smaller shape
+// rather than failed: a multi-document batch is split in half, and a
+// single-document batch — which cannot be split — is retried once asking for
+// the reduced number of types, then fails with the output-limit message. A
+// complete answer that legitimately found no types is a valid batch, not a
+// failure. Taking loaded documents (rather than ids) keeps the retry
+// decision-testable without a database.
+func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int) ([]discoveredGroup, error) {
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget)
+
 	response, callErr := s.completeWithLLM(ctx, prompt)
 	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
-		return fmt.Errorf("LLM call failed: %w", callErr)
+		return nil, fmt.Errorf("LLM call failed: %w", callErr)
 	}
 
-	// Decide what to do with the batch: store, split, or fail. A complete
-	// response that found no types is not a failure; a truncated one is.
-	outcome := s.decideDiscoveryBatch(response, callErr, len(documentIDs))
+	// Decide what to do with the batch: store, split, retry with fewer types, or
+	// fail. A complete response that found no types is not a failure; a
+	// truncated one is.
+	outcome := s.decideDiscoveryBatch(response, callErr, len(docs))
+	if outcome.RetryReducedTypes {
+		budget := s.effectiveTypeBudget(typeBudget)
+		if budget <= discoveryReducedMaxTypes {
+			return nil, outcome.Err
+		}
+		s.log.Warn("discovery response truncated on a single document; retrying with a smaller type budget",
+			slog.Int("batch", batchNum),
+			slog.Int("type_budget", budget),
+			slog.Int("reduced_budget", discoveryReducedMaxTypes))
+		return s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, discoveryReducedMaxTypes)
+	}
 	if outcome.RetrySmaller {
-		mid := len(documentIDs) / 2
+		mid := len(docs) / 2
 		s.log.Warn("discovery response truncated; retrying with smaller document batches",
 			slog.Int("batch", batchNum),
-			slog.Int("documents", len(documentIDs)),
+			slog.Int("documents", len(docs)),
 			slog.Int("half", mid))
-		if err := s.extractTypesFromBatch(ctx, jobID, documentIDs[:mid], batchNum, kbPurpose); err != nil {
-			return err
+		left, err := s.discoverBatchTypes(ctx, docs[:mid], batchNum, kbPurpose, typeBudget)
+		if err != nil {
+			return nil, err
 		}
-		return s.extractTypesFromBatch(ctx, jobID, documentIDs[mid:], batchNum, kbPurpose)
+		right, err := s.discoverBatchTypes(ctx, docs[mid:], batchNum, kbPurpose, typeBudget)
+		if err != nil {
+			return nil, err
+		}
+		return append(left, right...), nil
 	}
 	if outcome.Err != nil {
-		return outcome.Err
+		return nil, outcome.Err
 	}
+
 	types := outcome.Types
 	if errors.Is(callErr, ErrOutputTruncated) {
 		s.log.Warn("discovery response was truncated but recovered after JSON repair",
@@ -1079,35 +1426,22 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 		slog.Int("batch", batchNum),
 		slog.Int("type_count", len(types)))
 
-	// Store candidates
-	for _, t := range types {
-		candidate := &DiscoveryTypeCandidate{
-			ID:                uuid.New(),
-			JobID:             jobID,
-			BatchNumber:       batchNum,
-			TypeName:          t.TypeName,
-			Description:       &t.Description,
-			Confidence:        t.Confidence,
-			InferredSchema:    t.Properties,
-			ExampleInstances:  toJSONArray(t.ExampleInstances),
-			Frequency:         len(t.ExampleInstances),
-			SourceDocumentIDs: documentIDs,
-			ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(docs))),
-			Status:            CandidateStatusCandidate,
-			CreatedAt:         time.Now(),
-			UpdatedAt:         time.Now(),
-		}
-		if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
-			s.log.Error("failed to store type candidate", logger.Error(err))
-			// Continue with other candidates
-		}
-	}
-
-	return nil
+	return []discoveredGroup{{Types: types, DocumentIDs: documentIDs(docs)}}, nil
 }
 
-// buildTypeDiscoveryPrompt builds the LLM prompt for type discovery
-func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string) string {
+// effectiveTypeBudget resolves a prompt type budget (0 = default).
+func (s *Service) effectiveTypeBudget(typeBudget int) int {
+	if typeBudget > 0 {
+		return typeBudget
+	}
+	return discoveryDefaultMaxTypes
+}
+
+// buildTypeDiscoveryPrompt builds the LLM prompt for type discovery. typeBudget
+// bounds how many types the model is asked for; the reduced budget is used to
+// retry a single document whose answer overflowed the output limit.
+func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string, typeBudget int) string {
+	budget := s.effectiveTypeBudget(typeBudget)
 	var combinedContent strings.Builder
 	for _, doc := range docs {
 		combinedContent.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", doc.Filename, doc.Content))
@@ -1117,7 +1451,7 @@ func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose str
 
 %s
 
-Based on the documents provided, discover up to 20 important entity types that should be tracked in this knowledge base.
+Based on the documents provided, discover up to %d important entity types that should be tracked in this knowledge base.
 
 Rules for type discovery:
 - Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
@@ -1147,7 +1481,7 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
       "occurrences": 5
     }
   ]
-}`, kbPurpose, combinedContent.String())
+}`, kbPurpose, budget, combinedContent.String())
 }
 
 // extractJSON strips prose and markdown fences, returning the JSON object found.
@@ -1607,6 +1941,45 @@ func (s *Service) parseRelationshipDiscoveryResponse(response string) ([]Discove
 }
 
 // Helper functions
+
+// transitionStatus applies a pipeline status change and reports whether the run
+// may continue. A job that reached a terminal status while the run was working
+// (cancelled by a member, or superseded by the stale-job takeover) is no longer
+// ours to advance: the run stops instead of finishing into a second pack.
+func (s *Service) transitionStatus(ctx context.Context, jobID uuid.UUID, status string) bool {
+	err := s.repo.UpdateStatus(ctx, jobID, status, nil)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, ErrJobNoLongerActive):
+		s.log.Info("discovery job is no longer active; stopping the run",
+			slog.String("job_id", jobID.String()),
+			slog.String("next_status", status))
+		return false
+	default:
+		s.handleJobError(ctx, jobID, err)
+		return false
+	}
+}
+
+// runIsActive reports whether the job can still be advanced. The worker calls
+// it between batches so a cancel does not pay for the rest of the run. A read
+// failure is not treated as a cancel — the next write is fenced by the same
+// status predicate, so a stale read cannot resurrect a finished job.
+func (s *Service) runIsActive(ctx context.Context, jobID uuid.UUID) bool {
+	status, err := s.repo.JobStatus(ctx, jobID)
+	if err != nil {
+		s.log.Warn("could not read discovery job status; continuing to the next fenced write",
+			slog.String("job_id", jobID.String()), logger.Error(err))
+		return true
+	}
+	if IsTerminalStatus(status) {
+		s.log.Info("discovery job is no longer active; stopping the run",
+			slog.String("job_id", jobID.String()), slog.String("status", status))
+		return false
+	}
+	return true
+}
 
 func (s *Service) handleJobError(ctx context.Context, jobID uuid.UUID, err error) {
 	errMsg := err.Error()

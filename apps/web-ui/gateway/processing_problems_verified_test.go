@@ -100,14 +100,16 @@ func TestPanelSaysWhenTheCauseWasNotVerified(t *testing.T) {
 	if strings.Contains(html, "Test model") {
 		t.Errorf("unverified copy offered a model test with no resolved model:\n%s", html)
 	}
-	// Discovery has no per-unit retry in this change (the controls live in the
-	// schema page's own work), so the row must not promise one it cannot run.
-	// Absence of the confirm prompt is not enough: a retryable row has no prompt
-	// by design, so assert the retry control itself is absent.
-	for _, forbidden := range []string{"/schema/discovery", "Retry discovery"} {
-		if strings.Contains(html, forbidden) {
-			t.Errorf("discovery row offered a retry this change cannot run (%q):\n%s", forbidden, html)
-		}
+	// Discovery has a per-unit retry now: the schema-discovery controls add the
+	// retry endpoint the Schema card posts to, and the panel posts to the same
+	// one, so the row no longer withholds an action it cannot run. The cause is
+	// unverified here, so the retry must still carry the "retry anyway" confirm
+	// rather than re-running silently.
+	if !strings.Contains(html, "/schema/discovery/retry/job-9") {
+		t.Errorf("discovery row did not offer its retry endpoint:\n%s", html)
+	}
+	if !strings.Contains(html, "Retry anyway?") {
+		t.Errorf("non-retryable discovery row retried without a confirm:\n%s", html)
 	}
 }
 

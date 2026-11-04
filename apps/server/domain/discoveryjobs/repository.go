@@ -75,33 +75,77 @@ func (r *Repository) ListByProject(ctx context.Context, projectID uuid.UUID, lim
 	return jobs, nil
 }
 
-// UpdateStatus updates the status and optional error message
+// nonTerminalStatuses are the statuses a run can be advanced from. Every write
+// the worker makes carries this predicate, so a job that was cancelled while a
+// batch was running (a member's cancel, or the stale-job takeover) cannot be
+// moved on or "completed" afterwards by a run that is still in flight. It is
+// derived from the status vocabulary rather than re-listed, so the predicate and
+// IsTerminalStatus cannot drift apart.
+var nonTerminalStatuses = statusesMatching(func(status string) bool { return !IsTerminalStatus(status) })
+
+// cancellableStatuses are the statuses a member may cancel from, derived from
+// the same predicate the job entity uses (IsCancellableStatus).
+var cancellableStatuses = statusesMatching(IsCancellableStatus)
+
+// finalisableStatuses are the statuses the manual finalize path may complete a
+// job from: everything except the two that mean the run ended without reaching a
+// pack. `completed` is included on purpose — finalizing an already-completed job
+// is how the MCP finalize path links a pack it built from a `document_id` (it
+// creates a pre-completed stub job), and re-finalizing a completed run is not a
+// state conflict.
+var finalisableStatuses = statusesMatching(func(status string) bool {
+	return !IsTerminalStatus(status) || status == StatusCompleted
+})
+
+// statusesMatching filters the canonical status list with keep, preserving
+// lifecycle order.
+func statusesMatching(keep func(string) bool) []string {
+	all := AllStatuses()
+	out := make([]string, 0, len(all))
+	for _, status := range all {
+		if keep(status) {
+			out = append(out, status)
+		}
+	}
+	return out
+}
+
+// UpdateStatus updates the status and optional error message. It reports
+// ErrJobNoLongerActive instead of writing when the job already reached a
+// terminal status, which is how a cancelled run is stopped from overwriting it.
 func (r *Repository) UpdateStatus(ctx context.Context, jobID uuid.UUID, status string, errorMessage *string) error {
 	q := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", status).
 		Set("updated_at = now()").
-		Where("id = ?", jobID)
+		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses))
 
 	if errorMessage != nil {
 		q = q.Set("error_message = ?", *errorMessage)
 	}
 
-	_, err := q.Exec(ctx)
+	result, err := q.Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to update job status", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
+	}
 	return nil
 }
 
-// UpdateProgress updates the job progress
+// UpdateProgress updates the job progress. A terminal job is left untouched:
+// progress from a cancelled run is noise, and the job's own status is the
+// record of what happened.
 func (r *Repository) UpdateProgress(ctx context.Context, jobID uuid.UUID, progress JSONMap) error {
 	_, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("progress = ?", progress).
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to update job progress", logger.Error(err))
@@ -110,24 +154,45 @@ func (r *Repository) UpdateProgress(ctx context.Context, jobID uuid.UUID, progre
 	return nil
 }
 
-// MarkStarted marks the job as started
+// JobStatus reads just the status column. The worker calls it between batches
+// so a run that was cancelled mid-flight stops instead of spending more model
+// calls on documents nobody is waiting for. It reuses GetByID so the "not
+// found" mapping stays in one place.
+func (r *Repository) JobStatus(ctx context.Context, jobID uuid.UUID) (string, error) {
+	job, err := r.GetByID(ctx, jobID)
+	if err != nil {
+		return "", err
+	}
+	return job.Status, nil
+}
+
+// MarkStarted records that the run began. It carries the same non-terminal
+// predicate as every other worker write, so a job cancelled between the start
+// request and this goroutine cannot have its start time written by a run that is
+// stopping.
 func (r *Repository) MarkStarted(ctx context.Context, jobID uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("started_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to mark job started", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
+	}
 	return nil
 }
 
-// MarkCompleted marks the job as completed with results
+// MarkCompleted marks the job as completed with results. It reports
+// ErrJobNoLongerActive instead of writing when the job was cancelled while the
+// pack was being created, so a cancelled run cannot present itself as finished.
 func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, schemaID *uuid.UUID, discoveredTypes, discoveredRelationships JSONArray) error {
-	_, err := r.db.NewUpdate().
+	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", StatusCompleted).
 		Set("schema_id = ?", schemaID).
@@ -136,22 +201,28 @@ func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, schemaI
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to mark job completed", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
+	}
 	return nil
 }
 
-// CancelJob cancels a job if it's in a cancellable state
+// CancelJob cancels a job if it's in a cancellable state. The cancelled job's
+// run is fenced (see ErrJobNoLongerActive), so it stops instead of finishing.
 func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", StatusCancelled).
+		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
-		Where("status IN (?)", bun.In([]string{StatusPending, StatusAnalyzingDocuments, StatusExtractingTypes, StatusRefiningSchemas})).
+		Where("status IN (?)", bun.In(cancellableStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to cancel job", logger.Error(err))
@@ -160,11 +231,40 @@ func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		// The job is not in a cancellable state (it is terminal — completed,
-		// failed, or already cancelled — or does not exist). Return 409 Conflict
-		// per the cancellation contract (issue #1003): cancelling an already-terminal
-		// job is a state conflict, not a malformed request.
-		return apperror.ErrConflict.WithMessage("job cannot be cancelled (already completed, failed, or cancelled)")
+		// Not cancellable: the job is already terminal (completed, failed or
+		// cancelled), is creating its pack, or does not exist. 409 per the
+		// cancellation contract (issue #1003) — cancelling a job that can no
+		// longer be cancelled is a state conflict, not a malformed request.
+		return apperror.ErrConflict.WithMessage("job cannot be cancelled (it already finished, was cancelled, or is creating its pack)")
+	}
+	return nil
+}
+
+// CancelStalledJob cancels a job that has stopped reporting progress because
+// the process running it went away (restart, deploy, crash). It covers every
+// non-terminal status — including creating_pack, which a user-initiated cancel
+// treats as too late — and records why, so the run is diagnosable and no longer
+// holds the project's one-run slot.
+func (r *Repository) CancelStalledJob(ctx context.Context, jobID uuid.UUID) error {
+	reason := "cancelled as stalled: no progress reported inside the stale window (the process running it stopped, e.g. a restart or deploy)"
+	result, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("status = ?", StatusCancelled).
+		Set("error_message = ?", reason).
+		Set("completed_at = now()").
+		Set("updated_at = now()").
+		Where("id = ?", jobID).
+		Where("status NOT IN (?)", bun.In([]string{StatusCompleted, StatusFailed, StatusCancelled})).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to cancel stalled job", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		// Someone else finished or cancelled it between the read and this
+		// update: the slot is already free, so the caller can proceed.
+		r.log.Info("stalled job was already terminal", slog.String("job_id", jobID.String()))
 	}
 	return nil
 }
@@ -205,6 +305,91 @@ func (r *Repository) GetProjectInfo(ctx context.Context, projectID uuid.UUID) (s
 		projectInfo = "General purpose knowledge base for project documentation and knowledge management."
 	}
 	return projectInfo, nil
+}
+
+// ActiveJobForProject returns the project's non-terminal discovery job, if any.
+// Allowing one run per project at a time keeps a second start from doubling the
+// model spend and from finalising two packs over the same documents.
+func (r *Repository) ActiveJobForProject(ctx context.Context, projectID uuid.UUID) (*DiscoveryJob, error) {
+	job := &DiscoveryJob{}
+	err := r.db.NewSelect().
+		Model(job).
+		Where("project_id = ?", projectID).
+		Where("status NOT IN (?)", bun.In([]string{StatusCompleted, StatusFailed, StatusCancelled})).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to find active discovery job", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return job, nil
+}
+
+// ProjectDocumentIDs returns the ids of a project's analysable documents,
+// newest first, capped at limit. It mirrors the document listing's canonical
+// filters: HEAD rows only (superseded versions are history) and no documents
+// deleted at the source. Documents with no content are skipped — there is
+// nothing for the model to read and they would only pad the prompt.
+func (r *Repository) ProjectDocumentIDs(ctx context.Context, projectID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	ids := []uuid.UUID{}
+	query := r.db.NewSelect().
+		Table("kb.documents").
+		Column("id").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("source_status IS DISTINCT FROM ?", "deleted_from_source").
+		Where("COALESCE(content, '') <> ''").
+		Order("created_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Scan(ctx, &ids); err != nil {
+		r.log.Error("failed to list project documents", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return ids, nil
+}
+
+// CountProjectDocuments counts the documents ProjectDocumentIDs would return
+// without a limit, so a caller can tell the user a run covered a subset.
+func (r *Repository) CountProjectDocuments(ctx context.Context, projectID uuid.UUID) (int, error) {
+	count, err := r.db.NewSelect().
+		Table("kb.documents").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("source_status IS DISTINCT FROM ?", "deleted_from_source").
+		Where("COALESCE(content, '') <> ''").
+		Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count project documents", logger.Error(err))
+		return 0, apperror.ErrInternal.WithInternal(err)
+	}
+	return count, nil
+}
+
+// AutoDiscoveryEnabled reports the project's auto-discovery setting. It is read
+// through the discovery repository because the sync worker only has this
+// domain wired, and a project lookup here avoids a cross-domain dependency for
+// one boolean.
+func (r *Repository) AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error) {
+	var enabled bool
+	err := r.db.NewSelect().
+		Table("kb.projects").
+		Column("auto_discovery_enabled").
+		Where("id = ?", projectID).
+		Scan(ctx, &enabled)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, apperror.ErrNotFound.WithMessage("project not found")
+		}
+		r.log.Error("failed to read auto_discovery_enabled", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	return enabled, nil
 }
 
 // CreateTypeCandidate creates a new type candidate
@@ -406,19 +591,27 @@ func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, o
 	return nil
 }
 
-// SetJobMemorySchema sets the memory schema ID on a job and marks it completed
+// SetJobMemorySchema completes a job from the manual finalize path. It is the
+// second writer of `status = completed`, so it is fenced too: a job a cancel or
+// a failure already ended cannot be flipped back to completed with its pack
+// presented as the run's result. It accepts `completed` as a source status
+// because that is what re-finalizing (and the MCP stub) do.
 func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("schema_id = ?", schemaID).
 		Set("status = ?", StatusCompleted).
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(finalisableStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to set job memory schema", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
 	}
 	return nil
 }

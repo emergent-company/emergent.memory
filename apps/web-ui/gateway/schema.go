@@ -21,8 +21,11 @@ import (
 type SchemaListView struct {
 	Compiled   *CompiledSchemaTypes
 	Provenance map[string]*ProvenanceInfo
-	FlashMsg   string
-	FlashErr   error
+	// Discovery is the schema-discovery card's state (newest job + document
+	// count). Nil renders a card that can still start a run.
+	Discovery *SchemaDiscoveryView
+	FlashMsg  string
+	FlashErr  error
 }
 
 // SchemaObjectTypeView is the object-type detail view model: the type, its
@@ -88,10 +91,13 @@ func (s *Server) uiSchema(c echo.Context) error {
 	}
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "installed", msg: "Schema installed."},
+		{key: "discovered", msg: "Schema discovery started."},
+		{key: "cancelled", msg: "Discovery run cancelled. Its results were discarded."},
 	})
 	return s.page(c, pageTitle("Schema"), SchemaPage(&SchemaListView{
 		Compiled:   visible,
 		Provenance: prov,
+		Discovery:  s.loadSchemaDiscovery(ctx),
 		FlashMsg:   flashMsg,
 		FlashErr:   flashError(c),
 	}, nil))
