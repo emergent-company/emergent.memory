@@ -2234,6 +2234,17 @@ func (h *Handler) GetProjectRunFull(c echo.Context) error {
 	}
 
 	dto := run.ToDTO()
+	// The history view attributes a run to the agent that produced it, and the
+	// run's own DTO only carries that name when the agent relation happened to
+	// be loaded. FindRunByIDForProject joins kb.agents for its project scoping
+	// but does not read the row, so the name has to be resolved here — without
+	// it a run transcript is attributed to whichever agent the reader's UI
+	// happens to have selected.
+	if dto.AgentName == "" && run.AgentID != "" {
+		if agent, aerr := h.repo.FindByID(ctx, run.AgentID, &projectID); aerr == nil && agent != nil {
+			dto.AgentName = agent.Name
+		}
+	}
 	h.enrichRunTrace(ctx, dto, runID, run.TraceID)
 	dto.Workspace = h.getWorkspaceInfo(ctx, runID)
 

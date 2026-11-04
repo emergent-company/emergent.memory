@@ -147,27 +147,31 @@ func TestParseActorProvenance(t *testing.T) {
 		require.Contains(t, err.Error(), "invalid actor_type")
 	})
 
-	t.Run("narrowing provenance without actor_type rejected", func(t *testing.T) {
+	t.Run("narrowing provenance with nothing to narrow rejected", func(t *testing.T) {
 		c, p := newCtx("/?provenance=created")
 		err := parseActorProvenance(c, p)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "provenance requires actor_type")
+		// The selector also serves the write-stamp filters, so the message names
+		// both routes out of the error.
+		require.Contains(t, err.Error(), "provenance requires actor_type or a write-stamp filter")
 	})
 
-	t.Run("no-op any provenance without actor_type accepted", func(t *testing.T) {
+	t.Run("any provenance without actor_type accepted", func(t *testing.T) {
 		c, p := newCtx("/?provenance=any")
 		require.NoError(t, parseActorProvenance(c, p))
 		require.Nil(t, p.ActorType)
 		require.Nil(t, p.ActorID)
-		// "any" narrows nothing, so it must not populate the filter.
-		require.Empty(t, p.Provenance)
+		// The mode is recorded (the stamp filters read it) but it narrows the
+		// actor filter to the same creator-or-head union the default already
+		// applies, so it changes nothing there.
+		require.Equal(t, ProvenanceAny, p.Provenance)
 	})
 
-	t.Run("no-op any provenance with actor_type leaves filter unset", func(t *testing.T) {
+	t.Run("any provenance with actor_type keeps the default behaviour", func(t *testing.T) {
 		c, p := newCtx("/?actor_type=agent&provenance=any")
 		require.NoError(t, parseActorProvenance(c, p))
 		require.NotNil(t, p.ActorType)
-		require.Empty(t, p.Provenance)
+		require.Equal(t, ProvenanceAny, p.Provenance)
 	})
 
 	t.Run("invalid provenance rejected", func(t *testing.T) {

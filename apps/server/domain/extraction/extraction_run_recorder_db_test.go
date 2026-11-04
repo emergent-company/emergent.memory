@@ -1,6 +1,7 @@
 package extraction
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,21 +53,34 @@ func TestRunRecorderPersistsTranscriptAndLinksJob(t *testing.T) {
 	require.False(t, enabled, "the extraction agent must never be schedulable")
 
 	// Transcript writes land where the run timeline reads from, with the content
-	// shape runMessageText extracts ("text").
-	require.NoError(t, rec.RecordMessage(ctx, runID, "user", 1, "extract entities"))
-	require.NoError(t, rec.RecordMessage(ctx, runID, "assistant", 2, `{"entities":[]}`))
+	// shape runMessageText extracts ("text") plus the stage provenance the chat
+	// transcript labels the message with.
+	require.NoError(t, rec.RecordMessage(ctx, runID, RunMessage{Role: "user", Step: 1, Text: "extract entities", Stage: "EntityExtractor", StageKind: "prompt"}))
+	require.NoError(t, rec.RecordMessage(ctx, runID, RunMessage{Role: "assistant", Step: 2, Text: `{"entities":[]}`, Stage: "EntityExtractor", StageKind: "output"}))
+	// A stage answer longer than the old 12k readability cut must be stored
+	// whole: the extracted JSON is the reason the transcript exists.
+	longAnswer := strings.Repeat(`{"name":"x"},`, 3000)
+	require.NoError(t, rec.RecordMessage(ctx, runID, RunMessage{Role: "assistant", Step: 3, Text: longAnswer}))
 
 	var msgs []struct {
-		Role string `bun:"role"`
-		Text string `bun:"text"`
+		Role      string `bun:"role"`
+		Text      string `bun:"text"`
+		Stage     string `bun:"stage"`
+		StageKind string `bun:"stage_kind"`
 	}
-	require.NoError(t, db.NewRaw(`SELECT role, content->>'text' AS text FROM kb.agent_run_messages
-		WHERE run_id = ? ORDER BY step_number ASC`, runID).Scan(ctx, &msgs))
-	require.Len(t, msgs, 2)
+	require.NoError(t, db.NewRaw(`SELECT role, content->>'text' AS text,
+		coalesce(content->>'stage','') AS stage, coalesce(content->>'stage_kind','') AS stage_kind
+		FROM kb.agent_run_messages WHERE run_id = ? ORDER BY step_number ASC`, runID).Scan(ctx, &msgs))
+	require.Len(t, msgs, 3)
 	require.Equal(t, "user", msgs[0].Role)
 	require.Equal(t, "extract entities", msgs[0].Text)
+	require.Equal(t, "EntityExtractor", msgs[0].Stage)
+	require.Equal(t, "prompt", msgs[0].StageKind)
 	require.Equal(t, "assistant", msgs[1].Role)
 	require.Equal(t, `{"entities":[]}`, msgs[1].Text)
+	require.Equal(t, "output", msgs[1].StageKind)
+	require.Equal(t, longAnswer, msgs[2].Text, "a long stage answer must be stored whole, not truncated")
+	require.Empty(t, msgs[2].Stage, "a run-level message carries no stage label")
 
 	// last_step_at is the liveness heartbeat the run listing uses.
 	var lastStepSet bool

@@ -88,11 +88,13 @@ type NotificationStats struct {
 
 // NotificationCounts represents counts by tab.
 type NotificationCounts struct {
-	All       int64 `json:"all"`
-	Important int64 `json:"important"`
-	Other     int64 `json:"other"`
-	Snoozed   int64 `json:"snoozed"`
-	Cleared   int64 `json:"cleared"`
+	All            int64 `json:"all"`
+	Unread         int64 `json:"unread"`
+	Important      int64 `json:"important"`
+	Other          int64 `json:"other"`
+	Snoozed        int64 `json:"snoozed"`
+	Cleared        int64 `json:"cleared"`
+	RequiresAction int64 `json:"requiresAction"`
 }
 
 // NotificationCountsResponse wraps the counts response.

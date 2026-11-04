@@ -214,3 +214,147 @@ func TestWriteStampFiltersQueryRows(t *testing.T) {
 		require.Equal(t, 1, count)
 	})
 }
+
+// TestWriteStampFilterVersionScope proves the `provenance` selector on the
+// write-stamp filters: the default answers for the current version, `created`
+// for the writer of the object's first version, and `any` for either.
+//
+// The fixture creates an object as credential/run A, then patches it as
+// credential/run B, so the HEAD row and the root row carry different stamps. That
+// is exactly the case a head-only filter cannot see: "what did run A write" would
+// answer "nothing" for an object run A created.
+func TestWriteStampFilterVersionScope(t *testing.T) {
+	ctx, _, _, svc, projectID := setupProvenanceTest(t)
+
+	credA, credB := uuid.New(), uuid.New()
+	runA, runB := uuid.New(), uuid.New()
+
+	stampCtx := func(cred, run uuid.UUID) context.Context {
+		sctx := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &cred)
+		return auth.ContextWithRunIDs(sctx, &run, &run)
+	}
+	create := func(key string, cred, run uuid.UUID) *graph.GraphObjectResponse {
+		resp, err := svc.Create(stampCtx(cred, run), projectID, &graph.CreateGraphObjectRequest{
+			Type:       "StampScopeObj",
+			Key:        strPtr(key),
+			Properties: map[string]any{"title": key},
+		}, nil)
+		require.NoError(t, err)
+		return resp
+	}
+
+	createdByA := create("stampscope/created-by-a", credA, runA)
+	_, err := svc.Patch(stampCtx(credB, runB), projectID, createdByA.CanonicalID, &graph.PatchGraphObjectRequest{
+		Properties: map[string]any{"title": "edited by B"},
+	}, nil)
+	require.NoError(t, err)
+
+	keys := func(stamp graph.WriteStampFilters, provenance string) []string {
+		resp, err := svc.List(ctx, graph.ListParams{
+			ProjectID:  projectID,
+			Stamp:      stamp,
+			Provenance: provenance,
+			Limit:      100,
+		})
+		require.NoError(t, err)
+		out := make([]string, 0, len(resp.Items))
+		for _, item := range resp.Items {
+			if item.Key != nil {
+				out = append(out, *item.Key)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	t.Run("the default scope answers for the current writer only", func(t *testing.T) {
+		require.Empty(t, keys(graph.WriteStampFilters{RunID: &runA}, ""))
+		require.Empty(t, keys(graph.WriteStampFilters{CredentialID: &credA}, ""))
+		require.Equal(t, []string{"stampscope/created-by-a"}, keys(graph.WriteStampFilters{RunID: &runB}, ""))
+		require.Equal(t, []string{"stampscope/created-by-a"}, keys(graph.WriteStampFilters{CredentialID: &credB}, ""))
+	})
+
+	t.Run("created scope finds the writer of the first version", func(t *testing.T) {
+		require.Equal(t, []string{"stampscope/created-by-a"}, keys(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceCreated))
+		require.Equal(t, []string{"stampscope/created-by-a"}, keys(graph.WriteStampFilters{CredentialID: &credA}, graph.ProvenanceCreated))
+		require.Empty(t, keys(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceCreated))
+		require.Empty(t, keys(graph.WriteStampFilters{CredentialID: &credB}, graph.ProvenanceCreated))
+	})
+
+	t.Run("any scope unions both writers", func(t *testing.T) {
+		require.Equal(t, []string{"stampscope/created-by-a"}, keys(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceAny))
+		require.Equal(t, []string{"stampscope/created-by-a"}, keys(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceAny))
+	})
+
+	t.Run("count agrees with the page in every scope", func(t *testing.T) {
+		cases := []struct {
+			stamp      graph.WriteStampFilters
+			provenance string
+			want       int
+		}{
+			{graph.WriteStampFilters{RunID: &runA}, "", 0},
+			{graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceUpdated, 0},
+			{graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceCreated, 1},
+			{graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceAny, 1},
+			{graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceCreated, 0},
+		}
+		for _, tc := range cases {
+			count, err := svc.CountObjects(ctx, graph.ListParams{
+				ProjectID:  projectID,
+				Stamp:      tc.stamp,
+				Provenance: tc.provenance,
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, count, "provenance %q", tc.provenance)
+		}
+	})
+
+	t.Run("relationships honour the scope too", func(t *testing.T) {
+		src := create("stampscope/rel-src", credA, runA)
+		dst := create("stampscope/rel-dst", credB, runB)
+		rel, err := svc.CreateRelationship(stampCtx(credA, runA), projectID, &graph.CreateGraphRelationshipRequest{
+			Type:  "StampScopeRel",
+			SrcID: src.CanonicalID,
+			DstID: dst.CanonicalID,
+		}, nil)
+		require.NoError(t, err)
+
+		// A second writer edits the relationship, so the HEAD row's stamp differs
+		// from the one that created it — the same split as the object case.
+		_, err = svc.PatchRelationship(stampCtx(credB, runB), projectID, rel.CanonicalID, &graph.PatchGraphRelationshipRequest{
+			Properties: map[string]any{"note": "edited by B"},
+		}, nil)
+		require.NoError(t, err)
+
+		list := func(stamp graph.WriteStampFilters, provenance string) int {
+			resp, err := svc.ListRelationships(ctx, graph.RelationshipListParams{
+				ProjectID:  projectID,
+				Stamp:      stamp,
+				Provenance: provenance,
+				Limit:      100,
+			})
+			require.NoError(t, err)
+			return len(resp.Items)
+		}
+
+		// The default answers for the current writer only.
+		require.Equal(t, 0, list(graph.WriteStampFilters{RunID: &runA}, ""))
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runB}, ""))
+
+		// created answers for the creator only.
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceCreated))
+		require.Equal(t, 0, list(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceCreated))
+
+		// any unions them.
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceAny))
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceAny))
+
+		count, err := svc.CountRelationships(ctx, graph.RelationshipListParams{
+			ProjectID:  projectID,
+			Stamp:      graph.WriteStampFilters{RunID: &runA},
+			Provenance: graph.ProvenanceCreated,
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+	})
+}

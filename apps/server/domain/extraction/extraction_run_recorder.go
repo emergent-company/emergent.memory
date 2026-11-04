@@ -28,11 +28,18 @@ const (
 	// agent_definition_id at that definition, which is also the hook the chat
 	// transcript then shows (the run's agent).
 	extractionRunStrategyType = "extraction"
-	// runMessageMaxChars bounds one stored message. Extraction prompts carry
-	// document batches (~4000 tokens) and the full fidelity lives in the job's
-	// trace log + OTel spans, so the transcript keeps a readable prefix instead
-	// of duplicating the document into kb.agent_run_messages.
-	runMessageMaxChars = 12000
+	// runMessageHardLimitChars is a runaway-output guard, not a readability
+	// bound. The transcript exists to answer "what did it see and what did it
+	// answer", so a stage prompt (which embeds the document) and a stage answer
+	// (the extracted entities/relationships JSON) are stored whole; only a
+	// pathologically large message is cut, and the cut is marked with where the
+	// full text lives. It counts runes, not bytes: a byte slice can split a
+	// multi-byte character and leave invalid UTF-8 in the transcript.
+	runMessageHardLimitChars = 1 << 20
+	// runErrorMaxChars bounds the run-level error_message. That is a status
+	// banner field rather than transcript content, so a huge stack trace must
+	// not bloat the runs table.
+	runErrorMaxChars = 2000
 	// failureMessageStep numbers the failure message written when a job fails, so
 	// it sorts after every stage message even if the timestamps tie.
 	failureMessageStep = 1 << 30
@@ -59,23 +66,50 @@ func NewRunRecorder(db bun.IDB, log *slog.Logger) *RunRecorder {
 	return &RunRecorder{db: db, log: log.With(logger.Scope("extraction.run-recorder"))}
 }
 
+// RunMessage is one transcript message to persist. Text is what the reader
+// sees; Stage and StageKind are the pipeline provenance the chat transcript
+// renders as the message's label (the stage that produced it, and whether the
+// text is that stage's prompt, output or error). A run-level message still
+// names a stage — the run's own agent — so it is never attributed to the
+// operator: the opening header is stage_kind=header and a job-level failure is
+// stage_kind=error.
+type RunMessage struct {
+	Role      string
+	Step      int
+	Text      string
+	Stage     string
+	StageKind string
+}
+
 // RecordMessage persists one transcript message for a run. It satisfies the
 // runMessageRecorder seam the trace-logger bridge uses, which keeps that bridge
 // testable without a database.
-func (r *RunRecorder) RecordMessage(ctx context.Context, runID, role string, step int, text string) error {
-	if r == nil || runID == "" || strings.TrimSpace(text) == "" {
+//
+// The text is stored whole: an extraction transcript is a debugging aid whose
+// value is the full prompt and the full answer, and truncating it at the write
+// side destroyed exactly that (the extracted JSON never reached the UI) while
+// the "full text" it pointed at lived in a server-local file no page can open.
+func (r *RunRecorder) RecordMessage(ctx context.Context, runID string, msg RunMessage) error {
+	if r == nil || runID == "" || strings.TrimSpace(msg.Text) == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runWriteTimeout)
 	defer cancel()
 
-	content, err := json.Marshal(map[string]any{"text": truncateForRun(text, runMessageMaxChars)})
+	content := map[string]any{"text": truncateForRun(msg.Text, runMessageHardLimitChars)}
+	if msg.Stage != "" {
+		content["stage"] = msg.Stage
+	}
+	if msg.StageKind != "" {
+		content["stage_kind"] = msg.StageKind
+	}
+	payload, err := json.Marshal(content)
 	if err != nil {
 		return fmt.Errorf("marshal run message: %w", err)
 	}
 	if _, err := r.db.NewRaw(`
 		INSERT INTO kb.agent_run_messages (run_id, role, content, step_number, created_at)
-		VALUES (?, ?, ?::jsonb, ?, now())`, runID, role, string(content), step).Exec(ctx); err != nil {
+		VALUES (?, ?, ?::jsonb, ?, now())`, runID, msg.Role, string(payload), msg.Step).Exec(ctx); err != nil {
 		return fmt.Errorf("insert run message: %w", err)
 	}
 	// last_step_at is how the run listing (and the chat workspace) tells an
@@ -136,7 +170,7 @@ func (r *RunRecorder) FinishRun(ctx context.Context, runID, status, errMessage s
 	defer cancel()
 	var errMsg *string
 	if strings.TrimSpace(errMessage) != "" {
-		trimmed := truncateForRun(errMessage, 2000)
+		trimmed := truncateForRun(errMessage, runErrorMaxChars)
 		errMsg = &trimmed
 	}
 	if _, err := r.db.NewRaw(`
@@ -188,10 +222,13 @@ func (r *RunRecorder) failOrphanRun(ctx context.Context, runID, reason string) {
 	}
 }
 
-// truncateForRun bounds stored text, marking the cut so a reader knows the full
-// text lives in the job's trace log. The bound counts runes, not bytes: a byte
-// slice can split a multi-byte character (documents are full of them) and leave
-// invalid UTF-8 in the transcript.
+// truncateForRun applies a hard bound to stored text, marking the cut so a
+// reader knows the full text lives in the job's trace log. It is a runaway-output
+// safety valve, not a readability policy — the bound is megabytes away from a
+// normal message. The marker names the bound that was applied, so a reader can
+// tell a 1 MiB guard from a small error-message bound. It counts runes, not
+// bytes: a byte slice can split a multi-byte character (documents are full of
+// them) and leave invalid UTF-8 in the transcript.
 func truncateForRun(text string, max int) string {
 	if max <= 0 {
 		return text
@@ -200,7 +237,7 @@ func truncateForRun(text string, max int) string {
 	if len(runes) <= max {
 		return text
 	}
-	const marker = "\n\n…[truncated — the full text is in the extraction trace log]"
+	marker := fmt.Sprintf("\n\n…[truncated at %d characters — the full text is in the extraction trace log]", max)
 	budget := max - len([]rune(marker))
 	if budget <= 0 {
 		return string(runes[:max])

@@ -296,6 +296,11 @@ type CountObjectsOptions struct {
 	CredentialID   string
 	CredentialKind string
 	DataClass      string
+
+	// Provenance selects which version row the write-stamp filters match:
+	// created|updated|any. Empty sends nothing and the server uses "updated"
+	// (the current version).
+	Provenance string
 }
 
 // PropertyFilter defines a filter condition on the JSONB properties column.
@@ -518,6 +523,10 @@ type ListRelationshipsOptions struct {
 	RunID          string
 	CredentialID   string
 	CredentialKind string
+
+	// Provenance selects which version row the write-stamp filters match:
+	// created|updated|any. Empty sends nothing and the server uses "updated".
+	Provenance string
 }
 
 // =============================================================================
@@ -1271,6 +1280,15 @@ func setWriteStampQuery(q url.Values, runID, credentialID, credentialKind, dataC
 	}
 }
 
+// setProvenanceQuery writes the version-scope selector used by the provenance
+// filters (actor and write stamp): created|updated|any. An empty value sends
+// nothing, which leaves each filter on its own default.
+func setProvenanceQuery(q url.Values, provenance string) {
+	if provenance != "" {
+		q.Set("provenance", provenance)
+	}
+}
+
 func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*SearchObjectsResponse, error) {
 	u, err := url.Parse(c.base + "/api/graph/objects/search")
 	if err != nil {
@@ -1333,9 +1351,7 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		if opts.ActorID != "" {
 			q.Set("actor_id", opts.ActorID)
 		}
-		if opts.Provenance != "" {
-			q.Set("provenance", opts.Provenance)
-		}
+		setProvenanceQuery(q, opts.Provenance)
 		setWriteStampQuery(q, opts.RunID, opts.CredentialID, opts.CredentialKind, opts.DataClass)
 		if len(opts.PropertyFilters) > 0 {
 			pfJSON, err := json.Marshal(opts.PropertyFilters)
@@ -1404,6 +1420,7 @@ func (c *Client) CountObjects(ctx context.Context, opts *CountObjectsOptions) (i
 			q.Set("property_filters", string(pfJSON))
 		}
 		setWriteStampQuery(q, opts.RunID, opts.CredentialID, opts.CredentialKind, opts.DataClass)
+		setProvenanceQuery(q, opts.Provenance)
 	}
 	u.RawQuery = q.Encode()
 
@@ -1881,6 +1898,7 @@ func (c *Client) ListRelationships(ctx context.Context, opts *ListRelationshipsO
 			q.Set("cursor", opts.Cursor)
 		}
 		setWriteStampQuery(q, opts.RunID, opts.CredentialID, opts.CredentialKind, "")
+		setProvenanceQuery(q, opts.Provenance)
 	}
 	u.RawQuery = q.Encode()
 

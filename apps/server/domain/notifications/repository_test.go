@@ -58,9 +58,9 @@ func TestListUnscoped(t *testing.T) {
 func TestGetCountsAppliesScopeFilter(t *testing.T) {
 	repo, mock := newRepoMock(t)
 
-	// GetCounts issues six count queries: all, unread, important, other,
-	// snoozed, cleared.
-	for i := 0; i < 6; i++ {
+	// GetCounts issues seven count queries: all, unread, action required,
+	// important, other, snoozed, cleared.
+	for i := 0; i < 7; i++ {
 		mock.ExpectQuery(`SELECT[\s\S]*scope = 'project'[\s\S]*project_id = 'prj'[\s\S]*`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 	}
@@ -80,11 +80,14 @@ func TestGetCountsAppliesScopeFilter(t *testing.T) {
 func TestGetCountsUnread(t *testing.T) {
 	repo, mock := newRepoMock(t)
 
-	// Six count queries in order: all, unread, important, other, snoozed, cleared.
+	// Seven count queries in order: all, unread, action required, important,
+	// other, snoozed, cleared.
 	mock.ExpectQuery(`SELECT[\s\S]*cleared_at IS NULL[\s\S]*snoozed_until IS NULL[\s\S]*`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(9)) // all
 	mock.ExpectQuery(`SELECT[\s\S]*read = false[\s\S]*`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4)) // unread
+	mock.ExpectQuery(`SELECT[\s\S]*requires_action = true[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2)) // action required
 	mock.ExpectQuery(`SELECT[\s\S]*importance = 'important'[\s\S]*`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT[\s\S]*importance = 'other'[\s\S]*`).
@@ -98,6 +101,7 @@ func TestGetCountsUnread(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(9), counts.All)
 	require.Equal(t, int64(4), counts.Unread)
+	require.Equal(t, int64(2), counts.RequiresAction)
 	require.Equal(t, int64(1), counts.Important)
 	require.Equal(t, int64(8), counts.Other)
 	require.Equal(t, int64(2), counts.Snoozed)

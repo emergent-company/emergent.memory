@@ -6224,6 +6224,11 @@ definitions:
         type: integer
       other:
         type: integer
+      requiresAction:
+        description: |-
+          RequiresAction counts the action-required notifications in the current
+          scope: not cleared, not snoozed, requires_action = true.
+        type: integer
       snoozed:
         type: integer
       unread:
@@ -15592,7 +15597,8 @@ paths:
         in: query
         name: actor_id
         type: string
-      - description: 'Provenance filter mode: created|updated|any (default: any)'
+      - description: 'Which version row must carry the provenance filter: created|updated|any
+          (default: any for actor filters, updated for write-stamp filters)'
         in: query
         name: provenance
         type: string
@@ -15793,7 +15799,8 @@ paths:
         in: query
         name: actor_id
         type: string
-      - description: 'Provenance filter mode: created|updated|any (default: any)'
+      - description: 'Which version row must carry the provenance filter: created|updated|any
+          (default: any for actor filters, updated for write-stamp filters)'
         in: query
         name: provenance
         type: string
@@ -16390,6 +16397,11 @@ paths:
         in: query
         name: credential_kind
         type: string
+      - description: 'Which version row must carry the write-stamp filter: created|updated|any
+          (default: updated)'
+        in: query
+        name: provenance
+        type: string
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -16465,6 +16477,11 @@ paths:
       - description: Filter by credential kind (api_key|mcp_link|session|none)
         in: query
         name: credential_kind
+        type: string
+      - description: 'Which version row must carry the write-stamp filter: created|updated|any
+          (default: updated)'
+        in: query
+        name: provenance
         type: string
       - description: Project ID
         in: header
