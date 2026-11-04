@@ -147,6 +147,15 @@ final class HTTPChatTransport {
     /// persist it in ``ActiveSessionStore``.
     var onConversationLearned: ((String) -> Void)?
 
+    /// Incremented when a turn's stream dies after the gateway accepted it.
+    ///
+    /// A closed stream does not cancel the run — Memory executes it on a
+    /// detached context — so the rest of the reply can still be recorded even
+    /// though this client never saw it. The view watches this to reload what was
+    /// persisted. A request the gateway refused up front does not bump it: no run
+    /// started, so nothing is missing.
+    private(set) var droppedStreamCount = 0
+
     private let config: MemoryConfig
     private let stream: any ChatStreaming
     private let urlSession: URLSession
@@ -279,7 +288,10 @@ final class HTTPChatTransport {
             // Stop pressed: keep whatever streamed in.
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = Self.message(for: error)
+            errorMessage = ChatTurnFailure.message(for: error)
+            if ChatTurnFailure.droppedMidTurn(error) {
+                droppedStreamCount += 1
+            }
             activity.markReplyFinished()
         }
         isStreaming = false
@@ -350,28 +362,5 @@ final class HTTPChatTransport {
             agentDefinitionID = nil
         }
         return agentDefinitionID
-    }
-
-    // MARK: - Failure messages
-
-    /// Message for a failed turn. A misconfigured deployment is reported as
-    /// configuration, never as an unreachable server.
-    private static func message(for error: Error) -> String {
-        guard let gateway = error as? GatewayError else {
-            return error.localizedDescription
-        }
-        switch gateway {
-        case let .httpStatus(code, message):
-            switch code {
-            case 401, 403:
-                return "This device's credential was rejected. Re-scan the setup code from the web app."
-            case 502, 503:
-                return "The Memory service is not reachable right now. Your message was not sent."
-            default:
-                return message ?? "Chat failed with HTTP \(code)."
-            }
-        case .invalidConfiguration, .transport, .decode:
-            return gateway.localizedDescription
-        }
     }
 }

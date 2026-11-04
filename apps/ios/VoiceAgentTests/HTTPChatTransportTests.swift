@@ -286,6 +286,59 @@ private final class RequestRecorder: @unchecked Sendable {
         #expect(transport.errorMessage?.contains("credential was rejected") == true)
     }
 
+    /// A stream that dies mid-turn leaves a run still going server-side, so the
+    /// view has to reload what Memory recorded — signalled by the counter.
+    @Test func aStreamThatDiesMidTurnIsSignalledForReloading() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(
+            payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA],
+            error: URLError(.networkConnectionLost)
+        )
+        stubAgentLookup(RequestRecorder())
+        defer { HTTPChatStubProtocol.handler = nil }
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        #expect(transport.droppedStreamCount == 1)
+        #expect(transport.errorMessage != nil)
+        #expect(transport.isStreaming == false)
+        // What did arrive is kept: the user's turn and the partial reply.
+        #expect(transcript.liveMessages.map(\.role) == [.user, .assistant])
+    }
+
+    /// A turn the gateway refused never ran, so there is nothing to reload and
+    /// the counter must stay put — otherwise every 401 would re-fetch history.
+    @Test func aRefusedTurnIsNotSignalledAsADrop() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(
+            payloads: [],
+            error: GatewayError.httpStatus(401, "Chat returned HTTP 401: session_required")
+        )
+        stubAgentLookup(RequestRecorder())
+        defer { HTTPChatStubProtocol.handler = nil }
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        #expect(transport.droppedStreamCount == 0)
+        #expect(transport.errorMessage != nil)
+    }
+
     @Test func resetDropsTheTurnAndTheConversation() async throws {
         let transcript = ChatSessionTranscriptStore()
         let activity = ChatActivityStore()
