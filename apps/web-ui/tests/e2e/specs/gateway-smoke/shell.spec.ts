@@ -28,7 +28,7 @@ test.describe('Mobile shell', () => {
 
   test('pages do not overflow horizontally at 390px', async ({ page }) => {
     await page.setViewportSize(PHONE);
-    for (const path of ['/agents', '/objects', '/documents', '/inbox', '/board', '/data-sources']) {
+    for (const path of ['/agents', '/objects', '/documents', '/inbox', '/board', '/data-sources', '/search']) {
       await page.goto(path);
       await noHorizontalOverflow(page);
     }
