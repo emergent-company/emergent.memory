@@ -69,16 +69,14 @@ COPY apps/server/ ./
 # (go-version): tidy output is version-sensitive, so a mismatch can pass the
 # CI guard and fail here, or pass here and mask drift the guard would catch.
 # Mounts the module cache so `-diff` reads the graph the download step fetched
-# instead of re-fetching it into a shadowed layer.
+# instead of re-fetching it into a shadowed layer. tidy is still a network step:
+# `go mod download` fetches the build graph, while `-diff` also resolves the
+# test-only dependencies of dependencies (38 modules on a cold cache), so it
+# gets the same three attempts as the download. Only the final failure prints
+# what was wrong, so a transient retry does not bury the reason.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go mod tidy -diff || { \
-      echo "" >&2; \
-      echo "ERROR: apps/server/go.mod or go.sum is not tidy in this tree." >&2; \
-      echo "       Run 'go mod tidy' in apps/server, commit go.mod+go.sum, cut a new tag." >&2; \
-      echo "       No diff above means the module graph or an import failed to load." >&2; \
-      exit 1; \
-    }
+    sh -c 'attempt=1; while :; do if out=$(go mod tidy -diff 2>&1); then exit 0; fi; if [ "$attempt" = 3 ]; then printf "%s\n\nERROR: apps/server/go.mod or go.sum is not tidy in this tree.\n       Run go mod tidy in apps/server, commit go.mod+go.sum, cut a new tag.\n       No diff above means the module graph or an import failed to load.\n" "$out" >&2; exit 1; fi; echo "go mod tidy -diff failed (attempt $attempt/3); retrying in 10s" >&2; attempt=$((attempt+1)); sleep 10; done'
 
 # Generate swagger docs (runs on build platform, not target)
 # Note: apps/server/docs may be a symlink on the host — remove it entirely first
@@ -149,16 +147,12 @@ COPY apps/cli/ ./
 
 # Same rule as the server stage: the committed module files are tidy (apps/cli
 # included in scripts/preflight/go-mod-tidy.sh), so `-diff` fails the build on
-# drift instead of repairing a tag whose go.mod/go.sum are out of sync.
+# drift instead of repairing a tag whose go.mod/go.sum are out of sync. Same
+# three attempts as the server stage, for the same reason: tidy resolves test
+# dependencies the download step does not fetch.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go mod tidy -diff || { \
-      echo "" >&2; \
-      echo "ERROR: apps/cli/go.mod or go.sum is not tidy in this tree." >&2; \
-      echo "       Run 'go mod tidy' in apps/cli, commit go.mod+go.sum, cut a new tag." >&2; \
-      echo "       No diff above means the module graph or an import failed to load." >&2; \
-      exit 1; \
-    }
+    sh -c 'attempt=1; while :; do if out=$(go mod tidy -diff 2>&1); then exit 0; fi; if [ "$attempt" = 3 ]; then printf "%s\n\nERROR: apps/cli/go.mod or go.sum is not tidy in this tree.\n       Run go mod tidy in apps/cli, commit go.mod+go.sum, cut a new tag.\n       No diff above means the module graph or an import failed to load.\n" "$out" >&2; exit 1; fi; echo "go mod tidy -diff failed (attempt $attempt/3); retrying in 10s" >&2; attempt=$((attempt+1)); sleep 10; done'
 
 # Cross-compile CLI binary
 # Re-declare version args to bust cache when version changes.
