@@ -69,9 +69,10 @@ func NewRunRecorder(db bun.IDB, log *slog.Logger) *RunRecorder {
 // RunMessage is one transcript message to persist. Text is what the reader
 // sees; Stage and StageKind are the pipeline provenance the chat transcript
 // renders as the message's label (the stage that produced it, and whether the
-// text is that stage's prompt, output or error). Both are empty for a
-// run-level message — the opening header and a stack-level failure — which the
-// transcript renders without a stage chip.
+// text is that stage's prompt, output or error). A run-level message still
+// names a stage — the run's own agent — so it is never attributed to the
+// operator: the opening header is stage_kind=header and a job-level failure is
+// stage_kind=error.
 type RunMessage struct {
 	Role      string
 	Step      int

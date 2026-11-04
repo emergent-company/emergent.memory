@@ -179,6 +179,13 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 				content["text"] = rest
 				content["stage"] = stage
 				content["stage_kind"] = kind
+			} else if legacyRunHeaderText(text) {
+				// The run's opening line was recorded as a plain user message
+				// before provenance existed. It is the run's header, not
+				// something the operator typed, so give it the header
+				// provenance the recorder writes today.
+				content["stage"] = runAgentName(full.Run)
+				content["stage_kind"] = "header"
 			}
 		}
 		entries = append(entries, timelineEntry{

@@ -328,24 +328,43 @@ func TestRunTimelineLiftsLegacyStageLabel(t *testing.T) {
 	// inside the text. Those rows are immutable, but the label must still be
 	// lifted out: it rendered as literal "**…** · stage output", and the history
 	// renderer's first-line heuristic turned it into a Thinking block containing
-	// nothing but the label.
+	// nothing but the label. The run's opening header predates the provenance
+	// too, and was recorded as a plain USER message — without lifting it the
+	// transcript shows a "You" bubble the operator never typed.
 	full := &AgentRunFull{
 		Run: &ScheduledAgentRun{ID: "run-l", AgentName: "Extraction", Status: "completed"},
 		Messages: []*AgentRunMessage{
+			{Role: "user", Content: map[string]any{"text": "Extraction of document doc-1 · job `job-1`"}, CreatedAt: "2026-08-26T08:00:01Z", StepNumber: 0},
 			{Role: "assistant", Content: map[string]any{"text": "**EntityProcessor** · stage output\n\nProcessed 55 entities"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
 			// A genuine reply that opens with a bold run is not a label.
 			{Role: "assistant", Content: map[string]any{"text": "**Bold claim** · a normal reply\n\nbody"}, CreatedAt: "2026-08-26T08:00:03Z", StepNumber: 2},
 		},
 	}
 	rendered := renderHistoryHTML(runTimelineItems(full, nil))
-	if len(rendered) != 2 {
-		t.Fatalf("items = %d, want 2", len(rendered))
+	if len(rendered) != 3 {
+		t.Fatalf("items = %d, want 3", len(rendered))
 	}
-	var legacy map[string]any
-	if err := json.Unmarshal(rendered[0], &legacy); err != nil {
-		t.Fatalf("decode legacy item: %v", err)
+
+	decode := func(i int) map[string]any {
+		t.Helper()
+		var m map[string]any
+		if err := json.Unmarshal(rendered[i], &m); err != nil {
+			t.Fatalf("decode item %d: %v", i, err)
+		}
+		content, _ := m["content"].(map[string]any)
+		return content
 	}
-	lc, _ := legacy["content"].(map[string]any)
+
+	// The header belongs to the run, not to the operator who never typed it.
+	hc := decode(0)
+	if hc["stage"] != "Extraction" || hc["stage_kind"] != "header" {
+		t.Errorf("legacy header = %v/%v, want Extraction/header", hc["stage"], hc["stage_kind"])
+	}
+	if hc["text"] != "Extraction of document doc-1 · job `job-1`" {
+		t.Errorf("legacy header text = %v, want it unchanged", hc["text"])
+	}
+
+	lc := decode(1)
 	if lc["stage"] != "EntityProcessor" || lc["stage_kind"] != "output" {
 		t.Errorf("legacy label = %v/%v, want EntityProcessor/output", lc["stage"], lc["stage_kind"])
 	}
@@ -356,11 +375,7 @@ func TestRunTimelineLiftsLegacyStageLabel(t *testing.T) {
 		t.Errorf("legacy reasoning = %v, want none (the label is not chain-of-thought)", r)
 	}
 
-	var plain map[string]any
-	if err := json.Unmarshal(rendered[1], &plain); err != nil {
-		t.Fatalf("decode plain item: %v", err)
-	}
-	pc, _ := plain["content"].(map[string]any)
+	pc := decode(2)
 	if _, has := pc["stage"]; has {
 		t.Errorf("a genuine bold opener was read as a stage label: %v", pc["stage"])
 	}

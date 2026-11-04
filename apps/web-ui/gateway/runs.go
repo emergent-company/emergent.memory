@@ -179,6 +179,27 @@ func legacyStageLabel(text string) (stage, kind, rest string, ok bool) {
 	return strings.TrimSpace(body[:end]), kind, remainder, true
 }
 
+// runAgentName is the agent a run transcript attributes itself to. The run's
+// own name is preferred; "Run" is the last-resort label for a payload that did
+// not carry one, so a message is never labelled with the operator's identity.
+func runAgentName(run *ScheduledAgentRun) string {
+	if run != nil && strings.TrimSpace(run.AgentName) != "" {
+		return run.AgentName
+	}
+	return "Run"
+}
+
+// legacyRunHeaderText reports whether text opens with the run header the
+// extraction recorder wrote before provenance was structured:
+// "Extraction of document <id> · job `<id>`". That message was recorded as a
+// user turn, so without lifting it the transcript shows a "You" bubble the
+// operator never typed. Deliberately narrow: it needs the "Extraction of "
+// prefix and the "· job `" marker on the first line.
+func legacyRunHeaderText(text string) bool {
+	line, _, _ := strings.Cut(text, "\n")
+	return strings.HasPrefix(line, "Extraction of ") && strings.Contains(line, " · job `")
+}
+
 // runDescription builds the header subtitle: which agent ran and when.
 func runDescription(run *ScheduledAgentRun) string {
 	name := run.AgentName
