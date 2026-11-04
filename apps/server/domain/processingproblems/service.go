@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/emergent-company/emergent.memory/domain/modelstate"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -27,13 +28,16 @@ var areaOrder = []Area{
 
 // Service assembles the project's processing-problem report.
 type Service struct {
-	repo *Repository
-	log  *slog.Logger
+	repo  *Repository
+	model modelstate.Reader
+	log   *slog.Logger
 }
 
-// NewService creates the read-model service.
-func NewService(repo *Repository, log *slog.Logger) *Service {
-	return &Service{repo: repo, log: log.With(logger.Scope("processingproblems"))}
+// NewService creates the read-model service. model resolves the project's
+// effective model configuration so a configuration failure can name the element
+// that is missing; it may be nil in tests, which leaves the copy unverified.
+func NewService(repo *Repository, model modelstate.Reader, log *slog.Logger) *Service {
+	return &Service{repo: repo, model: model, log: log.With(logger.Scope("processingproblems"))}
 }
 
 // DB exposes the database handle for handler-level membership checks.
@@ -103,6 +107,18 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 		}
 	}
 
+	// A configuration failure's copy depends on what the project actually has
+	// configured, not on the error text: the same message means "connect a
+	// provider", "select a default model" or "your model is fine, the run failed
+	// anyway". Resolve the model state once per report and rewrite those
+	// failures. When the state cannot be read the fallback copy stays, and it
+	// does not assert a cause it has not checked.
+	if needsModelState(byArea) {
+		if state, ok := s.modelState(ctx, projectID); ok {
+			applyModelState(byArea, state)
+		}
+	}
+
 	report := &Report{
 		ProjectID:   projectID,
 		Areas:       make([]AreaSummary, 0, len(areaOrder)),
@@ -147,6 +163,40 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 	}
 
 	return report, nil
+}
+
+// needsModelState reports whether any row depends on the project's model state:
+// a configuration failure's copy, or a permission failure on a queue that needs
+// a model (so the row can name it and offer a live test).
+func needsModelState(byArea map[Area][]Problem) bool {
+	for _, problems := range byArea {
+		for _, p := range problems {
+			if p.Failure.Class == ClassConfiguration {
+				return true
+			}
+			if p.Failure.Class == ClassPermission && isModelQueue(p.Queue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// modelState resolves the project's effective model configuration. A failure is
+// logged and reported as unresolved so the report still renders: a metadata
+// read error must not turn into a false claim about the user's configuration.
+func (s *Service) modelState(ctx context.Context, projectID string) (modelstate.State, bool) {
+	if s.model == nil {
+		return modelstate.State{}, false
+	}
+	state, err := s.model.State(ctx, projectID)
+	if err != nil {
+		s.log.Warn("failed to resolve model state for configuration failure copy",
+			slog.String("project_id", projectID),
+			logger.Error(err))
+		return modelstate.State{}, false
+	}
+	return state, true
 }
 
 // queueResult is one queue's rows plus the exact number of matching units the

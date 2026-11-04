@@ -36894,8 +36894,28 @@
         "domain_processingproblems.Failure": {
             "type": "object",
             "properties": {
+                "cause": {
+                    "description": "Cause narrows a class to the element that failed, when the classifier can\ntell. It is empty for classes the copy already describes exactly.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_processingproblems.FailureCause"
+                        }
+                    ]
+                },
                 "class": {
                     "$ref": "#/definitions/domain_processingproblems.FailureClass"
+                },
+                "fix": {
+                    "description": "Fix is the page where the recorded cause is fixed, when the product knows\none. It is nil for causes with no single destination.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_processingproblems.FixTarget"
+                        }
+                    ]
+                },
+                "model": {
+                    "description": "Model is the model this project resolves to for the failure's family\n(routed \"instance/model\"): the generative model, or the embedding model\nfor an embedding queue. Empty when nothing resolves or the class is\nunrelated.",
+                    "type": "string"
                 },
                 "remediation": {
                     "type": "string"
@@ -36906,8 +36926,29 @@
                 },
                 "summary": {
                     "type": "string"
+                },
+                "verified": {
+                    "description": "Verified reports whether the copy was checked against the project's\neffective model configuration before being written. A configuration\nfailure with Verified=false is a guess and must read as one.",
+                    "type": "boolean"
                 }
             }
+        },
+        "domain_processingproblems.FailureCause": {
+            "type": "string",
+            "enum": [
+                "no_provider",
+                "no_default_model",
+                "model_unusable",
+                "model_unavailable",
+                "base_url"
+            ],
+            "x-enum-varnames": [
+                "CauseNoProvider",
+                "CauseNoDefaultModel",
+                "CauseModelUnusable",
+                "CauseModelUnavailable",
+                "CauseBaseURL"
+            ]
         },
         "domain_processingproblems.FailureClass": {
             "type": "string",
@@ -36933,6 +36974,17 @@
                 "ClassInternal",
                 "ClassUnknown"
             ]
+        },
+        "domain_processingproblems.FixTarget": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                }
+            }
         },
         "domain_processingproblems.Problem": {
             "type": "object",
