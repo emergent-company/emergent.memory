@@ -15,7 +15,7 @@ func configurationProblem() ProcessingProblem {
 		JobID:        "job-9",
 		Label:        "Schema discovery",
 		ErrorMessage: "All 2 batches failed. Errors: Batch 1: LLM call failed: model \"qwen3:8b\" not found",
-		Drilldown:    "/schema",
+		Drilldown:    "/schema#discovery",
 		Failure: ProcessingProblemFailure{
 			Class:       "configuration",
 			Cause:       "model_unusable",
@@ -184,5 +184,22 @@ func TestPanelNamesTheModelOnARejectedKey(t *testing.T) {
 	}
 	if strings.Contains(html, "<details class=\"mt-1\" open") {
 		t.Errorf("permission row forced its technical detail open:\n%s", html)
+	}
+}
+
+// TestPanelViewLinksADiscoveryRowToTheCard pins the row's "View" link against
+// the server's own drilldown target. The panel renders ProcessingProblem.Drilldown
+// verbatim, and for a discovery run the server answers /schema#discovery — the
+// anchor the schema card carries. Linking /schema without it dropped the reader
+// at the top of the compiled type browser, hunting for the run the row is about
+// (#88). The fixture used to claim the plain /schema, so nothing caught it.
+func TestPanelViewLinksADiscoveryRowToTheCard(t *testing.T) {
+	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(configurationProblem()), CanManage: true})
+
+	if !strings.Contains(html, `href="/schema#discovery"`) {
+		t.Fatalf("discovery row has no deep link to the card:\n%s", html)
+	}
+	if strings.Contains(html, `href="/schema">View`) {
+		t.Errorf("discovery row still links the bare schema page:\n%s", html)
 	}
 }
