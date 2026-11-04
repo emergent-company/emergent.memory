@@ -1,0 +1,28 @@
+import Foundation
+@testable import Memory
+import SwiftUI
+import Testing
+
+// MARK: - Paseo-style styling + grouping views
+
+struct ChatActivityViewTests {
+    @MainActor
+    @Test func stylingAndGroupingViewsConstruct() {
+        // Message styling, thinking blocks, and both tool presentations must
+        // stay constructible from the store's data shape.
+        _ = ChatView()
+        _ = ChatView(onSuggestion: { _ in })
+        _ = ThinkingBlockView(text: "reasoning", isLive: true)
+        _ = ThinkingBlockView(text: "reasoning", isLive: false)
+
+        let first = ToolCallInfo(id: "t1", name: "web_search", arguments: "{}", result: "ok", isError: false)
+        let second = ToolCallInfo(id: "t2", name: "read_file", arguments: "{}", result: nil, isError: false, isRunning: true)
+        _ = LiveToolChip(tool: first)
+        _ = ToolCallGroupView(group: ToolCallGroup(id: "g1", tools: [first, second]))
+    }
+
+    @MainActor
+    @Test func subagentTrackConstructs() {
+        _ = SubagentTrackView()
+    }
+}

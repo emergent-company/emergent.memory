@@ -37,6 +37,10 @@ const (
 	// `done`, carrying the turn's grounded object/relationship citations.
 	EventCitations ChatEventType = "citations"
 
+	// EventSubagent is emitted when a child/sub-agent run starts, transitions,
+	// or finishes, so the parent chat stream can render live subagent activity.
+	EventSubagent ChatEventType = "subagent"
+
 	// EventDone is the final event, signaling end of stream.
 	EventDone ChatEventType = "done"
 )
@@ -187,6 +191,38 @@ func NewCitationsEvent(cits []citations.Citation) CitationsEvent {
 	return CitationsEvent{
 		Type:      string(EventCitations),
 		Citations: cits,
+	}
+}
+
+// SubagentEvent projects a child/sub-agent run's live lifecycle onto the
+// parent chat stream. `id` is stable for one subagent across its updates (the
+// child run id once known, otherwise a synthetic spawn id). Empty optional
+// fields are omitted so clients can render partial rows (e.g. a spawn that
+// failed before a child run existed, which has no runId).
+type SubagentEvent struct {
+	Type        string `json:"type"`
+	ID          string `json:"id"`
+	ParentRunID string `json:"parentRunId,omitempty"`
+	RunID       string `json:"runId,omitempty"`
+	AgentName   string `json:"agentName,omitempty"`
+	Task        string `json:"task,omitempty"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+}
+
+// NewSubagentEvent creates a subagent lifecycle event. status is one of
+// queued|running|completed|failed|paused|canceled; errorMsg is only carried on
+// a failed/terminal event.
+func NewSubagentEvent(id, parentRunID, runID, agentName, task, status, errorMsg string) SubagentEvent {
+	return SubagentEvent{
+		Type:        string(EventSubagent),
+		ID:          id,
+		ParentRunID: parentRunID,
+		RunID:       runID,
+		AgentName:   agentName,
+		Task:        task,
+		Status:      status,
+		Error:       errorMsg,
 	}
 }
 

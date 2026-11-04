@@ -52,8 +52,7 @@ const PAGE_HTML = `<!doctype html><html><head><style>
 </style></head><body>
   <main id="main-content">
     <div id="chat-messages" data-testid="chat-messages">
-      <div class="chat chat-start">
-        <div class="chat-bubble">
+      <div class="chat chat-start memory-assistant">
           <div class="memory-md">
             <p>See <a id="chat-ref" href="/objects/${OBJECT_ID}">the scenario</a> for details.</p>
             <p><a id="chat-multi" href="/objects/my-scenario/notes">nested</a></p>
@@ -77,7 +76,6 @@ const PAGE_HTML = `<!doctype html><html><head><style>
               </ul>
             </div>
           </details>
-        </div>
       </div>
     </div>
     <div id="sidepanel-messages">

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/google/uuid"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
@@ -49,6 +50,44 @@ type CoordinationToolDeps struct {
 	// SuspendSignal is set by executeSingleSpawn when a spawned child run suspends.
 	// The parent executor's afterToolCb reads this and propagates the suspend upward.
 	SuspendSignal *SuspendSignal
+
+	// EmitSubagent projects spawned child-run lifecycle updates onto the parent
+	// run's stream. It is nil when the parent has no stream listener. The
+	// implementation is safe for concurrent use because parallel spawns emit
+	// concurrently (see newStreamSubagentEmitter).
+	EmitSubagent SubagentEmitter
+}
+
+// emitSubagent is a nil-safe helper for projecting a child-run update.
+func (d *CoordinationToolDeps) emitSubagent(u SubagentUpdate) {
+	if d == nil || d.EmitSubagent == nil {
+		return
+	}
+	d.EmitSubagent(u)
+}
+
+// subagentStatusForRunStatus maps an executor run status onto the subagent SSE
+// contract (queued|running|completed|failed|paused|canceled). Skipped runs are
+// terminal-success from the parent's perspective.
+func subagentStatusForRunStatus(status AgentRunStatus) string {
+	switch status {
+	case RunStatusQueued:
+		return "queued"
+	case RunStatusRunning:
+		return "running"
+	case RunStatusCancelling:
+		return "canceled"
+	case RunStatusSuccess, RunStatusSkipped:
+		return "completed"
+	case RunStatusError:
+		return "failed"
+	case RunStatusPaused:
+		return "paused"
+	case RunStatusCancelled:
+		return "canceled"
+	default:
+		return "failed"
+	}
 }
 
 // extractSpawnPolicy reads the spawnPolicy.allow list from an AgentDefinition's Config.
@@ -366,36 +405,57 @@ func spawnTargetBlocked(trustedInternal bool, def *AgentDefinition) (string, boo
 
 // executeSingleSpawn handles a single sub-agent spawn request.
 func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req SpawnRequest) SpawnResult {
+	// syntheticID identifies a spawn that fails before a child run exists. It is
+	// stable for this spawn and distinct from real run ids.
+	syntheticID := "spawn-" + uuid.NewString()
+	emitFailed := func(msg string) {
+		deps.emitSubagent(SubagentUpdate{
+			ID:          syntheticID,
+			ParentRunID: deps.ParentRunID,
+			AgentName:   req.AgentName,
+			Task:        req.Task,
+			Status:      "failed",
+			Error:       msg,
+		})
+	}
+
 	// Enforce spawn policy — reject if the target is not in the allowlist
 	if !spawnAllowed(deps.SpawnPolicy, req.AgentName) {
+		msg := fmt.Sprintf("agent %q is not in the spawn policy for this agent", req.AgentName)
+		emitFailed(msg)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
-			Error:     fmt.Sprintf("agent %q is not in the spawn policy for this agent", req.AgentName),
+			Error:     msg,
 		}
 	}
 
 	// Look up the agent definition by name
 	def, err := deps.Repo.FindDefinitionByName(ctx, deps.ProjectID, req.AgentName)
 	if err != nil {
+		msg := fmt.Sprintf("failed to look up agent: %s", err.Error())
+		emitFailed(msg)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
-			Error:     fmt.Sprintf("failed to look up agent: %s", err.Error()),
+			Error:     msg,
 		}
 	}
 	if def == nil {
 		// Invalid agent name — fail this spawn, not others
+		msg := fmt.Sprintf("agent %q not found in project catalog", req.AgentName)
+		emitFailed(msg)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
-			Error:     fmt.Sprintf("agent %q not found in project catalog", req.AgentName),
+			Error:     msg,
 		}
 	}
 
 	// Internal agents are "never via A2A" — an external-facing caller must not
 	// spawn one, even when the target is inside the spawn-policy allowlist.
 	if reason, blocked := spawnTargetBlocked(deps.TrustedInternal, def); blocked {
+		emitFailed(reason)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
@@ -406,20 +466,24 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 	// Type-scope delegation guard: a scoped caller must not spawn an agent whose
 	// declared allowlist would let the child reach excluded types (#1695).
 	if delegationDeniedByTypeScope(ctx, def) {
+		msg := delegationScopeError()
+		emitFailed(msg)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
-			Error:     delegationScopeError(),
+			Error:     msg,
 		}
 	}
 
 	// Find the corresponding runtime Agent entity by name
 	agent, err := deps.Repo.FindByName(ctx, deps.ProjectID, req.AgentName)
 	if err != nil {
+		msg := fmt.Sprintf("failed to find agent runtime entity: %s", err.Error())
+		emitFailed(msg)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
-			Error:     fmt.Sprintf("failed to find agent runtime entity: %s", err.Error()),
+			Error:     msg,
 		}
 	}
 	if agent == nil {
@@ -436,10 +500,12 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			AgentDefinitionID: &def.ID,
 		}
 		if createErr := deps.Repo.Create(ctx, agent); createErr != nil {
+			msg := fmt.Sprintf("failed to create runtime agent for definition %q: %s", req.AgentName, createErr.Error())
+			emitFailed(msg)
 			return SpawnResult{
 				AgentName: req.AgentName,
 				Status:    RunStatusError,
-				Error:     fmt.Sprintf("failed to create runtime agent for definition %q: %s", req.AgentName, createErr.Error()),
+				Error:     msg,
 			}
 		}
 	}
@@ -474,21 +540,77 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		TrustedInternal: deps.TrustedInternal,
 	}
 
+	// childRunID is captured when the child run row is created. It keeps the
+	// terminal update correlated even when execution returns no result.
+	childRunID := ""
+	execReq.OnRunCreated = func(runID string) {
+		childRunID = runID
+		deps.emitSubagent(SubagentUpdate{
+			ID:          runID,
+			ParentRunID: deps.ParentRunID,
+			RunID:       runID,
+			AgentName:   req.AgentName,
+			Task:        req.Task,
+			Status:      "running",
+		})
+	}
+
+	// emitTerminal projects the child's terminal lifecycle update, reusing the
+	// child run id as the stable id whenever it is known.
+	emitTerminal := func(result *ExecuteResult, execErr error) {
+		id := childRunID
+		if id == "" {
+			id = syntheticID
+		}
+		runID := ""
+		status := "failed"
+		errMsg := ""
+		if result != nil {
+			if result.RunID != "" {
+				id = result.RunID
+				runID = result.RunID
+			} else if childRunID != "" {
+				runID = childRunID
+			}
+			status = subagentStatusForRunStatus(result.Status)
+			if e, ok := result.Summary["error"].(string); ok {
+				errMsg = e
+			}
+		}
+		if execErr != nil {
+			status = "failed"
+			errMsg = execErr.Error()
+		}
+		deps.emitSubagent(SubagentUpdate{
+			ID:          id,
+			ParentRunID: deps.ParentRunID,
+			RunID:       runID,
+			AgentName:   req.AgentName,
+			Task:        req.Task,
+			Status:      status,
+			Error:       errMsg,
+		})
+	}
+
 	// Handle resume_run_id: resume a paused prior run instead of starting fresh
 	if req.ResumeRunID != nil && *req.ResumeRunID != "" {
 		priorRun, err := deps.Repo.FindRunByID(ctx, *req.ResumeRunID)
 		if err != nil {
+			msg := fmt.Sprintf("failed to load prior run %s: %s", *req.ResumeRunID, err.Error())
+			emitFailed(msg)
 			return SpawnResult{
 				AgentName: req.AgentName,
 				Status:    RunStatusError,
-				Error:     fmt.Sprintf("failed to load prior run %s: %s", *req.ResumeRunID, err.Error()),
+				Error:     msg,
 			}
 		}
 		if priorRun == nil {
+			msg := fmt.Sprintf("prior run %s not found", *req.ResumeRunID)
+			emitFailed(msg)
 			return SpawnResult{
 				AgentName: req.AgentName,
 				Status:    RunStatusError,
-				Error:     fmt.Sprintf("prior run %s not found", *req.ResumeRunID),
+				Error:     msg,
 			}
 		}
 
@@ -503,12 +625,14 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			defer result.Cleanup()
 		}
 		if err != nil {
+			emitTerminal(result, err)
 			return SpawnResult{
 				AgentName: req.AgentName,
 				Status:    RunStatusError,
 				Error:     fmt.Sprintf("resume failed: %s", err.Error()),
 			}
 		}
+		emitTerminal(result, nil)
 
 		// Propagate spawn cascade: if the child suspended, signal the parent to pause too.
 		if result.Status == RunStatusPaused && result.RunID != "" {
@@ -539,12 +663,14 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		defer result.Cleanup()
 	}
 	if err != nil {
+		emitTerminal(result, err)
 		return SpawnResult{
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
 			Error:     fmt.Sprintf("execution failed: %s", err.Error()),
 		}
 	}
+	emitTerminal(result, nil)
 
 	// Propagate spawn cascade: if the child suspended, signal the parent to pause too.
 	if result.Status == RunStatusPaused && result.RunID != "" {

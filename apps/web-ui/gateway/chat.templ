@@ -281,6 +281,11 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				<noscript>
 					@DockPanel(convID, runControl.Approvals, runControl.Questions)
 				</noscript>
+				<!-- Live subagent composer track (chat.js + shared
+				     chat-components.js). Hidden until a subagent frame or a
+				     rebuilt history row exists; the pill opens a popover above
+				     the composer. -->
+				<div id="chat-subagents" data-testid="chat-subagents" class="hidden" aria-live="polite"></div>
 				<!-- Composer queue lane; chat.js renders queued rows here and
 				     toggles the hidden class. -->
 				<div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>

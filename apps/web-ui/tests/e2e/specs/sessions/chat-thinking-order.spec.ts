@@ -39,7 +39,7 @@ test.describe('Chat live badge ordering', () => {
       return Array.from(messages.children).map((el) => {
         if (el.querySelector('.memory-thinking')) return 'thinking';
         if (el.querySelector('.memory-tool-chip')) return 'tool';
-        if (el.querySelector('.chat-bubble')) return 'bubble';
+        if (el.querySelector('.memory-assistant')) return 'bubble';
         return 'other';
       });
     });

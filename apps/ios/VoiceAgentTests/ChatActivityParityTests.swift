@@ -48,15 +48,136 @@ struct ChatActivityStoreTests {
     @Test func accumulatesThinkingDeltasIntoOneBlock() {
         let store = ChatActivityStore()
         store.userTurnStarted(anchorMessageID: "m1")
-        store.apply(.thinking(delta: "first"))
-        store.apply(.thinking(delta: "second"))
-        store.apply(.thinking(delta: "third"))
+        store.apply(.thinking(id: nil, delta: "first"))
+        store.apply(.thinking(id: nil, delta: "second"))
+        store.apply(.thinking(id: nil, delta: "third"))
 
         guard let turn = store.liveTurn else {
             Issue.record("expected a live turn")
             return
         }
-        #expect(turn.thinkingText == "first\nsecond\nthird")
+        #expect(turn.thinkingBlocks.count == 1)
+        #expect(turn.thinkingBlocks[0].text == "first\nsecond\nthird")
+        #expect(turn.thinkingBlocks[0].isLive)
+    }
+
+    @MainActor
+    @Test func nonThinkingActivityClosesTheActiveThinkingBlock() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.apply(.thinking(id: nil, delta: "first"))
+        store.apply(.toolCall(ChatToolCallEvent(id: "t1", tool: "web_search", arguments: "{}")))
+
+        guard let turn = store.liveTurn, turn.thinkingBlocks.count == 1 else {
+            Issue.record("expected one thinking block")
+            return
+        }
+        #expect(turn.thinkingBlocks[0].isLive == false)
+
+        // The next reasoning segment is a new block, even without an id.
+        store.apply(.thinking(id: nil, delta: "second"))
+        #expect(store.liveTurn?.thinkingBlocks.count == 2)
+        #expect(store.liveTurn?.thinkingBlocks[1].text == "second")
+        #expect(store.liveTurn?.thinkingBlocks[1].isLive == true)
+    }
+
+    @MainActor
+    @Test func distinctThinkingIdsMergeWhileContiguous() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.apply(.thinking(id: "r1", delta: "one"))
+        store.apply(.thinking(id: "r1", delta: "two"))
+        store.apply(.thinking(id: "r2", delta: "three"))
+
+        guard let turn = store.liveTurn else {
+            Issue.record("expected a live turn")
+            return
+        }
+        // Contiguity, not the worker segment id, defines a thinking block.
+        #expect(turn.thinkingBlocks.count == 1)
+        #expect(turn.thinkingBlocks[0].text == "one\ntwo\nthree")
+        #expect(turn.thinkingBlocks[0].isLive)
+    }
+
+    @MainActor
+    @Test func consecutiveToolCallsShareOneGroup() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.apply(.toolCall(ChatToolCallEvent(id: "t1", tool: "web_search", arguments: "{}")))
+        store.apply(.toolCall(ChatToolCallEvent(id: "t2", tool: "read_file", arguments: "{}")))
+
+        guard let turn = store.liveTurn else {
+            Issue.record("expected a live turn")
+            return
+        }
+        #expect(turn.toolGroups.count == 1)
+        #expect(turn.toolGroups[0].tools.map(\.id) == ["t1", "t2"])
+        // The flattened view stays available to older consumers.
+        #expect(turn.tools.map(\.id) == ["t1", "t2"])
+    }
+
+    @MainActor
+    @Test func nonToolActivitySplitsToolGroups() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.apply(.toolCall(ChatToolCallEvent(id: "t1", tool: "web_search", arguments: "{}")))
+        store.apply(.toolCall(ChatToolCallEvent(id: "t2", tool: "read_file", arguments: "{}")))
+        // A reasoning delta is non-tool activity: it closes the run.
+        store.apply(.thinking(id: nil, delta: "between"))
+        store.apply(.toolCall(ChatToolCallEvent(id: "t3", tool: "entity-search", arguments: "{}")))
+
+        guard let turn = store.liveTurn else {
+            Issue.record("expected a live turn")
+            return
+        }
+        #expect(turn.toolGroups.count == 2)
+        #expect(turn.toolGroups[0].tools.map(\.id) == ["t1", "t2"])
+        #expect(turn.toolGroups[1].tools.map(\.id) == ["t3"])
+    }
+
+    @MainActor
+    @Test func singleToolCallIsUnchanged() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.apply(.toolCall(ChatToolCallEvent(id: "t1", tool: "web_search", arguments: "{}")))
+
+        guard let turn = store.liveTurn else {
+            Issue.record("expected a live turn")
+            return
+        }
+        #expect(turn.toolGroups.count == 1)
+        #expect(turn.toolGroups[0].tools.count == 1)
+        // A one-call group still renders with the existing chip, not the group.
+        #expect(ToolActivityGrouping.isGrouped(turn.toolGroups[0].tools) == false)
+    }
+
+    @MainActor
+    @Test func subagentUpsertAndTerminalTransition() {
+        let store = ChatActivityStore()
+        store.apply(.subagent(ChatSubagentEvent(
+            id: "s1", parentRunId: "p1", runId: "r1", agentName: "Researcher",
+            task: "Find sources", status: "running", error: nil
+        )))
+        guard let running = store.subagents.first else {
+            Issue.record("expected a subagent")
+            return
+        }
+        #expect(store.subagents.count == 1)
+        #expect(running.status == .running)
+        #expect(running.agentName == "Researcher")
+        #expect(running.task == "Find sources")
+
+        // Partial terminal update by run id keeps the known metadata.
+        store.apply(.subagent(ChatSubagentEvent(
+            id: nil, parentRunId: nil, runId: "r1", agentName: nil,
+            task: nil, status: "completed", error: nil
+        )))
+        #expect(store.subagents.count == 1)
+        #expect(store.subagents[0].status == .completed)
+        #expect(store.subagents[0].agentName == "Researcher")
+
+        store.reset()
+        #expect(store.subagents.isEmpty)
     }
 
     @MainActor
@@ -87,12 +208,13 @@ struct ChatActivityStoreTests {
     @Test func newUserMessageArchivesPreviousTurn() {
         let store = ChatActivityStore()
         store.userTurnStarted(anchorMessageID: "m1")
-        store.apply(.thinking(delta: "reasoning"))
+        store.apply(.thinking(id: nil, delta: "reasoning"))
         store.userTurnStarted(anchorMessageID: "m2")
 
         #expect(store.turns.count == 2)
         #expect(store.liveTurn?.anchorMessageID == "m2")
-        #expect(store.turn(anchoredTo: "m1")?.thinkingText == "reasoning")
+        #expect(store.turn(anchoredTo: "m1")?.thinkingBlocks.first?.text == "reasoning")
+        #expect(store.turn(anchoredTo: "m1")?.thinkingBlocks.first?.isLive == false)
         #expect(store.turn(anchoredTo: "m2")?.hasContent == false)
     }
 
@@ -108,7 +230,7 @@ struct ChatActivityStoreTests {
     @Test func resetClearsEverything() {
         let store = ChatActivityStore()
         store.userTurnStarted(anchorMessageID: "m1")
-        store.apply(.thinking(delta: "x"))
+        store.apply(.thinking(id: nil, delta: "x"))
         store.reset()
         #expect(store.turns.isEmpty)
         #expect(store.isAwaitingFirstReply == false)

@@ -1,6 +1,8 @@
 package sse
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -304,6 +306,7 @@ func TestChatEventTypeConstants(t *testing.T) {
 		{"EventToken", EventToken, "token"},
 		{"EventThinking", EventThinking, "thinking"},
 		{"EventMCPTool", EventMCPTool, "mcp_tool"},
+		{"EventSubagent", EventSubagent, "subagent"},
 		{"EventError", EventError, "error"},
 		{"EventDone", EventDone, "done"},
 	}
@@ -314,6 +317,53 @@ func TestChatEventTypeConstants(t *testing.T) {
 				t.Errorf("%s = %q, want %q", tt.name, string(tt.constant), tt.expected)
 			}
 		})
+	}
+}
+
+// TestNewSubagentEvent pins the subagent SSE contract: the stable id plus the
+// lifecycle fields are emitted, and empty optional fields are omitted (a spawn
+// that failed before a child run existed carries no runId).
+func TestNewSubagentEvent(t *testing.T) {
+	ev := NewSubagentEvent("run-child", "run-parent", "run-child", "research-agent", "find facts", "running", "")
+	if ev.Type != string(EventSubagent) {
+		t.Errorf("Type = %q, want %q", ev.Type, string(EventSubagent))
+	}
+	if ev.ID != "run-child" || ev.ParentRunID != "run-parent" || ev.RunID != "run-child" {
+		t.Errorf("ids = %q/%q/%q, want run-child/run-parent/run-child", ev.ID, ev.ParentRunID, ev.RunID)
+	}
+	if ev.AgentName != "research-agent" || ev.Task != "find facts" || ev.Status != "running" {
+		t.Errorf("lifecycle fields = %+v", ev)
+	}
+
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"type", "id", "parentRunId", "runId", "agentName", "task", "status"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("marshalled subagent event missing %q: %s", k, b)
+		}
+	}
+	if _, ok := m["error"]; ok {
+		t.Errorf("empty error must be omitted: %s", b)
+	}
+
+	// A pre-run failure has no child run id; runId must be omitted while the
+	// synthetic stable id and failure error are carried.
+	failed := NewSubagentEvent("spawn-123", "run-parent", "", "unknown-agent", "do work", "failed", "agent not found")
+	fb, err := json.Marshal(failed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(fb), `"runId"`) {
+		t.Errorf("pre-run failure must omit runId: %s", fb)
+	}
+	if !strings.Contains(string(fb), `"error":"agent not found"`) {
+		t.Errorf("pre-run failure must carry the error: %s", fb)
 	}
 }
 
