@@ -357,11 +357,14 @@ type fakeMemory struct {
 	lastUnifiedTypes   string               // last types passed to SearchObjectsUnified
 	lastUnifiedBrnch   string               // last branchID passed to SearchObjectsUnified
 	lastUnifiedLimit   int                  // last limit passed to SearchObjectsUnified
-	knowledgeAnswer    string               // returned by QueryKnowledge
-	knowledgeSession   string               // returned by QueryKnowledge
-	knowledgeErr       error                // QueryKnowledge failure
-	lastKnowledgeQ     string               // last question passed to QueryKnowledge
-	lastKnowledgeBr    string               // last branch passed to QueryKnowledge
+	searchUnifiedResp  *UnifiedSearchResponse
+	searchUnifiedErr   error
+	lastSearchUnified  UnifiedSearchParams // last params passed to SearchUnified
+	knowledgeAnswer    string              // returned by QueryKnowledge
+	knowledgeSession   string              // returned by QueryKnowledge
+	knowledgeErr       error               // QueryKnowledge failure
+	lastKnowledgeQ     string              // last question passed to QueryKnowledge
+	lastKnowledgeBr    string              // last branch passed to QueryKnowledge
 
 	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
 	embeddingProgErr  error              // GetEmbeddingProgress failure
@@ -371,8 +374,9 @@ type fakeMemory struct {
 	embeddingCoverage    *EmbeddingCoverageResponse // returned by GetEmbeddingCoverage
 	embeddingCoverageErr error                      // GetEmbeddingCoverage failure
 
-	effectiveModel    *EffectiveModelConfig // returned by GetEffectiveModelConfig
-	effectiveModelErr error                 // GetEffectiveModelConfig failure
+	effectiveModel      *EffectiveModelConfig // returned by GetEffectiveModelConfig
+	effectiveModelErr   error                 // GetEffectiveModelConfig failure
+	effectiveModelCalls int                   // number of GetEffectiveModelConfig calls
 
 	compiled     *CompiledSchemaTypes
 	blueprintErr error // failure for any blueprint method
@@ -1711,6 +1715,17 @@ func (f *fakeMemory) SearchObjectsUnified(ctx context.Context, query, types, bra
 	return f.unifiedResults, nil
 }
 
+func (f *fakeMemory) SearchUnified(ctx context.Context, params UnifiedSearchParams) (*UnifiedSearchResponse, error) {
+	f.lastSearchUnified = params
+	if f.searchUnifiedErr != nil {
+		return nil, f.searchUnifiedErr
+	}
+	if f.searchUnifiedResp != nil {
+		return f.searchUnifiedResp, nil
+	}
+	return &UnifiedSearchResponse{}, nil
+}
+
 func (f *fakeMemory) QueryKnowledge(ctx context.Context, question, branch string) (string, string, error) {
 	if f.knowledgeErr != nil {
 		return "", "", f.knowledgeErr
@@ -1742,6 +1757,7 @@ func (f *fakeMemory) GetEmbeddingCoverage(ctx context.Context) (*EmbeddingCovera
 }
 
 func (f *fakeMemory) GetEffectiveModelConfig(ctx context.Context) (*EffectiveModelConfig, error) {
+	f.effectiveModelCalls++
 	if f.effectiveModelErr != nil {
 		return nil, f.effectiveModelErr
 	}

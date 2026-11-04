@@ -453,6 +453,10 @@ func main() {
 	e.POST("/objects/:id/status", s.uiObjectStatus)
 	e.POST("/objects/:id/assignee", s.uiObjectAssignee)
 	e.POST("/objects/:id/relationships", s.uiObjectRelationshipCreate)
+	// Project-wide search: document chunks + graph objects in one query. Distinct
+	// from /objects/search (the connect dialog's JSON autocomplete) and from
+	// /objects?mode=… (graph objects only).
+	e.GET("/search", s.uiSearch)
 	e.GET("/embeddings", s.uiEmbeddings)
 	e.POST("/embeddings/retrigger", s.uiRetriggerEmbeddings)
 	e.GET("/schema", s.uiSchema)
