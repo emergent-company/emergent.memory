@@ -17,7 +17,10 @@ extension ChatActivityStore {
         if let index = subagents.firstIndex(where: {
             matchesSubagent($0, eventID: eventID, runID: runID)
         }) {
-            mergeSubagent(event, into: &subagents[index], parentRunID: parentRunID, runID: runID)
+            mutateSubagents { list in
+                guard index < list.count else { return }
+                mergeSubagent(event, into: &list[index], parentRunID: parentRunID, runID: runID)
+            }
             return
         }
 
