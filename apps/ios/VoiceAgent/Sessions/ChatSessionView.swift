@@ -7,20 +7,18 @@ import SwiftUI
 /// One chat: the recorded conversation and the live turn stitched into a single
 /// transcript, with a Text | Voice switch.
 ///
-/// Text is served over the gateway's HTTP chat stream (`POST /api/chat`, SSE) —
-/// no room, no token, no worker — so it works on a deployment with no LiveKit
-/// stack and on a project with voice disabled. Voice mints a token and joins the
-/// LiveKit room for the same conversation; switching back leaves the room and
-/// keeps the transcript.
+/// Text is the gateway's HTTP chat stream (`POST /api/chat`, SSE) — no room, no
+/// token, no worker — so it works on a deployment with no LiveKit stack and on a
+/// project with voice disabled. Voice mints a token and joins the room for the
+/// same conversation; switching back leaves the room and keeps the transcript.
 ///
 /// History comes from `GET /api/session` (``ChatSessionTranscriptStore``), live
-/// text turns from ``HTTPChatTransport``, and live voice turns from the room
-/// (`session.messages` plus the rich ``ChatActivityStore``). All of them share
-/// the same bubbles, tool cards and approval cards.
+/// text turns from ``HTTPChatTransport``, live voice turns from the room
+/// (`session.messages` plus ``ChatActivityStore``). All share the same bubbles.
 ///
-/// Interrupting is a room feature: text mode has no stop control because a
-/// device credential cannot cancel a run yet (`emergent.memory#81`) and closing
-/// the stream would leave the server-side run going.
+/// Interrupting is a room feature: text has no stop control because a device
+/// credential cannot cancel a run yet (`emergent.memory#81`), and a closed
+/// stream leaves the server-side run going.
 struct ChatSessionView: View {
     let route: ChatRoute
 
@@ -61,6 +59,10 @@ struct ChatSessionView: View {
                 if !enabled, activeSession.mode == .voice {
                     setMode(.text)
                 }
+            }
+            .onChange(of: transport.interruptedTurn) { _, turn in
+                guard turn != nil else { return }
+                Task { await recoverInterruptedTurn() }
             }
             .onReceive(session.objectWillChange) { _ in
                 // Only the voice room feeds the transcript from LiveKit; a text
@@ -153,13 +155,11 @@ extension ChatSessionView {
     /// Connects the voice session for the open conversation if it is not
     /// already running.
     ///
-    /// A text-first chat created its conversation over HTTP, and the
-    /// controller's token request was built before that id existed. Point the
-    /// session at it and let the app root rebuild the controller (`install()`
-    /// reacts to `launchKey`), so voice joins the conversation the user was
-    /// already chatting in instead of minting a second, empty one. The view's
-    /// `.task` re-runs for the new controller and takes the adopted-conversation
-    /// branch in ``adoptRoute()``, which starts the room.
+    /// A text-first chat created its conversation over HTTP, but the controller's
+    /// token request predates that id. Point the session at it and let the app
+    /// root rebuild the controller (`install()` reacts to `launchKey`), so voice
+    /// joins the conversation the user was chatting in; this view's `.task`
+    /// re-runs and ``adoptRoute()`` starts the room.
     private func connectVoiceIfNeeded() async {
         guard controller.phase == .idle else { return }
         if let learned = transport.conversationID, learned != activeSession.launchConversationID {

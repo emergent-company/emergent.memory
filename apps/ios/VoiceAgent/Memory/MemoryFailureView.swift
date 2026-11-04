@@ -31,13 +31,17 @@ struct MemoryFailureView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Button(action: onRetry) {
-                Text("memory.failure.retry")
-                    .padding(.horizontal, 6 * .grid)
-                    .padding(.vertical, 2 * .grid)
+            // A permanent condition gets no retry: the same tap would fail the
+            // same way (`MemoryFailure.isRetryable`).
+            if failure.isRetryable {
+                Button(action: onRetry) {
+                    Text("memory.failure.retry")
+                        .padding(.horizontal, 6 * .grid)
+                        .padding(.vertical, 2 * .grid)
+                }
+                .buttonStyle(ProminentButtonStyle())
+                .padding(.top, 1 * .grid)
             }
-            .buttonStyle(ProminentButtonStyle())
-            .padding(.top, 1 * .grid)
         }
         .padding(6 * .grid)
         .frame(maxWidth: 84 * .grid)
@@ -53,6 +57,8 @@ struct MemoryFailureView: View {
     /// Keyed headline for the failure kind (see `memory.failure.*`).
     private var title: LocalizedStringKey {
         switch failure {
+        case .voiceNotConfigured:
+            "memory.failure.voiceNotConfigured"
         case .tokenFetch:
             "memory.failure.tokenFetch"
         case .serverUnreachable:

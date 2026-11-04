@@ -56,6 +56,17 @@
         }
       }
     },
+    "memory.failure.voiceNotConfigured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice not configured"
+          }
+        }
+      }
+    },
     "memory.failure.description": {
       "extractionState": "manual",
       "localizations": {

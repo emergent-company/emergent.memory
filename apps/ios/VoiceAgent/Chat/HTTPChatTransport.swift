@@ -147,6 +147,28 @@ final class HTTPChatTransport {
     /// persist it in ``ActiveSessionStore``.
     var onConversationLearned: ((String) -> Void)?
 
+    /// A reply the client saw cut off mid-stream, and the live copy holding it.
+    struct InterruptedTurn: Equatable, Sendable {
+        /// Live message carrying the truncated text, dropped once the record
+        /// holds the finished reply.
+        let liveMessageID: String
+        /// What the user already saw, used to recognise the finished reply.
+        let partialText: String
+    }
+
+    /// The turn whose reply was cut off mid-stream, set only once text is on
+    /// screen.
+    ///
+    /// A closed stream does not cancel the run — Memory executes the agent on a
+    /// detached context — but it records the assistant reply only when the run
+    /// ends, which is after the last frame this client saw. The view waits for
+    /// that record and swaps it in (``ChatSessionView/recoverInterruptedTurn()``);
+    /// reloading at the drop would return the same truncated record.
+    ///
+    /// Empty text leaves this `nil`: a refused request or a connection that
+    /// never opened has nothing to recover, so it must not trigger a reload.
+    private(set) var interruptedTurn: InterruptedTurn?
+
     private let config: MemoryConfig
     private let stream: any ChatStreaming
     private let urlSession: URLSession
@@ -225,6 +247,7 @@ final class HTTPChatTransport {
         turnTask = nil
         isStreaming = false
         errorMessage = nil
+        interruptedTurn = nil
         liveMessages.removeAll()
         conversationID = nil
     }
@@ -232,6 +255,16 @@ final class HTTPChatTransport {
     /// Reloads the live transcript into the view (used after the view resets).
     func refreshLiveTranscript(_ transcript: ChatSessionTranscriptStore) {
         transcript.syncLive(liveMessages)
+    }
+
+    /// Trades the truncated live copy for the finished reply the record now
+    /// holds: the record renders on its own, so keeping the partial would stack
+    /// a shorter duplicate underneath it.
+    func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
+        guard let interrupted = interruptedTurn else { return }
+        liveMessages.removeAll { $0.id == interrupted.liveMessageID }
+        transcript.syncLive(liveMessages)
+        interruptedTurn = nil
     }
 
     // MARK: - Streaming
@@ -279,7 +312,15 @@ final class HTTPChatTransport {
             // Stop pressed: keep whatever streamed in.
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = Self.message(for: error)
+            errorMessage = ChatTurnFailure.message(for: error)
+            // Text on screen means the run got going: it is still going
+            // server-side and will be recorded when it ends, so the view can
+            // wait for the finished reply. Without text there is nothing to
+            // recover and nothing to reload.
+            interruptedTurn = state.text.isEmpty ? nil : InterruptedTurn(
+                liveMessageID: state.assistantMessageID,
+                partialText: state.text
+            )
             activity.markReplyFinished()
         }
         isStreaming = false
@@ -350,28 +391,5 @@ final class HTTPChatTransport {
             agentDefinitionID = nil
         }
         return agentDefinitionID
-    }
-
-    // MARK: - Failure messages
-
-    /// Message for a failed turn. A misconfigured deployment is reported as
-    /// configuration, never as an unreachable server.
-    private static func message(for error: Error) -> String {
-        guard let gateway = error as? GatewayError else {
-            return error.localizedDescription
-        }
-        switch gateway {
-        case let .httpStatus(code, message):
-            switch code {
-            case 401, 403:
-                return "This device's credential was rejected. Re-scan the setup code from the web app."
-            case 502, 503:
-                return "The Memory service is not reachable right now. Your message was not sent."
-            default:
-                return message ?? "Chat failed with HTTP \(code)."
-            }
-        case .invalidConfiguration, .transport, .decode:
-            return gateway.localizedDescription
-        }
     }
 }
