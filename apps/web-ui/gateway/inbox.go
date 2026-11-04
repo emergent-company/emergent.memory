@@ -227,6 +227,81 @@ func (s *Server) inboxViewFor(c echo.Context) inboxView {
 	return view
 }
 
+// uiOrgInbox lands an org-scoped inbox entry point on the org's project inbox.
+//
+// The inbox is a project-scoped page: its rows deep-link into project routes
+// (/chat, /settings/approvals, /documents/…), which the render-time scope
+// rewriter prefixes with the page base. An org-only scope carries no project
+// ref and the org route tree has no inbox, so /o/{org}/inbox — the topbar
+// bell's target while an org page is showing — used to resolve to
+// /orgs/{org}/inbox and 404. Resolve the org's default project and redirect
+// into its inbox instead, so the bell works from every page; an org with no
+// projects returns to the org landing, where one can be created.
+func (s *Server) uiOrgInbox(c echo.Context) error {
+	orgID, projectID, ok := s.orgInboxTarget(c)
+	if !ok {
+		return s.scopeNotFound(c)
+	}
+	if projectID == "" {
+		return c.Redirect(http.StatusSeeOther, orgScopeURL(orgID))
+	}
+	target := projectScopeURL(orgID, projectID) + "/inbox"
+	if q := c.Request().URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	return c.Redirect(http.StatusSeeOther, target)
+}
+
+// orgInboxTarget resolves the org an org-scoped inbox request names and the
+// project it should land on. The org ref is validated against the caller's
+// access tree (a legacy, unscoped /orgs/{id}/inbox request never passed
+// through applyScope); ok=false is the same fail-closed 404 an unknown scope
+// gets. A project id of "" means the org exposes no projects to the caller.
+func (s *Server) orgInboxTarget(c echo.Context) (orgID, projectID string, ok bool) {
+	tree, err := s.orgAccessTree(c)
+	if err != nil {
+		captureError(err)
+		return "", "", false
+	}
+	orgID, _, ok = resolveScopeRefs(tree, c.Param("id"), "")
+	if !ok {
+		return "", "", false
+	}
+	var recent []string
+	if claims, has := s.readRecentProjects(c); has {
+		if sc, hasSession := sessionContextFrom(c.Request().Context()); hasSession {
+			recent = claims.Recent[sc.Sub]
+		}
+	}
+	return orgID, orgInboxProject(tree, recent, orgID), true
+}
+
+// orgInboxProject picks the project an org-scoped inbox lands on: the caller's
+// most recently used project that belongs to orgID (skipping recents from other
+// orgs and stale ids), else the org's first project in access-tree order. ""
+// when the org exposes no projects. Kept pure so the ordering rule is testable
+// without an HTTP round trip.
+func orgInboxProject(tree []OrgWithProjectsDto, recent []string, orgID string) string {
+	var projects []ProjectAccessDto
+	for _, o := range tree {
+		if o.ID == orgID {
+			projects = o.Projects
+			break
+		}
+	}
+	if len(projects) == 0 {
+		return ""
+	}
+	for _, id := range recent {
+		for _, p := range projects {
+			if p.ID == id {
+				return p.ID
+			}
+		}
+	}
+	return projects[0].ID
+}
+
 // inboxBellScope resolves the inbox scope a request is displaying, so the bell
 // can count exactly the inbox it links to. Only the inbox route carries a
 // scope; every other page defaults to the Everything inbox — the one the bell
