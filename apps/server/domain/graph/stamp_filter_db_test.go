@@ -312,10 +312,17 @@ func TestWriteStampFilterVersionScope(t *testing.T) {
 	t.Run("relationships honour the scope too", func(t *testing.T) {
 		src := create("stampscope/rel-src", credA, runA)
 		dst := create("stampscope/rel-dst", credB, runB)
-		_, err := svc.CreateRelationship(stampCtx(credB, runB), projectID, &graph.CreateGraphRelationshipRequest{
+		rel, err := svc.CreateRelationship(stampCtx(credA, runA), projectID, &graph.CreateGraphRelationshipRequest{
 			Type:  "StampScopeRel",
 			SrcID: src.CanonicalID,
 			DstID: dst.CanonicalID,
+		}, nil)
+		require.NoError(t, err)
+
+		// A second writer edits the relationship, so the HEAD row's stamp differs
+		// from the one that created it — the same split as the object case.
+		_, err = svc.PatchRelationship(stampCtx(credB, runB), projectID, rel.CanonicalID, &graph.PatchGraphRelationshipRequest{
+			Properties: map[string]any{"note": "edited by B"},
 		}, nil)
 		require.NoError(t, err)
 
@@ -330,13 +337,21 @@ func TestWriteStampFilterVersionScope(t *testing.T) {
 			return len(resp.Items)
 		}
 
+		// The default answers for the current writer only.
+		require.Equal(t, 0, list(graph.WriteStampFilters{RunID: &runA}, ""))
 		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runB}, ""))
-		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceCreated))
-		require.Equal(t, 0, list(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceCreated))
+
+		// created answers for the creator only.
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceCreated))
+		require.Equal(t, 0, list(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceCreated))
+
+		// any unions them.
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runA}, graph.ProvenanceAny))
+		require.Equal(t, 1, list(graph.WriteStampFilters{RunID: &runB}, graph.ProvenanceAny))
 
 		count, err := svc.CountRelationships(ctx, graph.RelationshipListParams{
 			ProjectID:  projectID,
-			Stamp:      graph.WriteStampFilters{RunID: &runB},
+			Stamp:      graph.WriteStampFilters{RunID: &runA},
 			Provenance: graph.ProvenanceCreated,
 		})
 		require.NoError(t, err)

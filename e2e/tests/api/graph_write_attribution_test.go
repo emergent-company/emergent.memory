@@ -46,8 +46,9 @@ func TestGraphWriteAttribution_HTTP(t *testing.T) {
 	var tokenObj map[string]any
 	parseBodyJSON(t, tokenBody, &tokenObj)
 	tokenObjectID, _ := tokenObj["id"].(string)
-	if tokenObjectID == "" {
-		t.Fatalf("created object has no id: %s", tokenBody)
+	tokenObjectCanonicalID, _ := tokenObj["canonical_id"].(string)
+	if tokenObjectID == "" || tokenObjectCanonicalID == "" {
+		t.Fatalf("created object has no id/canonical_id: %s", tokenBody)
 	}
 	t.Cleanup(func() { deleteGraphObject(t, projectID, tokenObjectID) })
 
@@ -271,8 +272,10 @@ func TestGraphWriteAttribution_HTTP(t *testing.T) {
 	if len(scopedItems) != 1 {
 		t.Fatalf("expected exactly 1 object for the creator under provenance=created, got %d: %s", len(scopedItems), scopedBody)
 	}
-	if got, _ := scopedItems[0].(map[string]any)["id"]; got != tokenObjectID {
-		t.Errorf("expected the scoped page to return %s, got %v", tokenObjectID, got)
+	// `id` is the version row's physical id, and the PATCH above superseded the
+	// first version — so the stable identity to compare is canonical_id, not id.
+	if got, _ := scopedItems[0].(map[string]any)["canonical_id"]; got != tokenObjectCanonicalID {
+		t.Errorf("expected the scoped page to return canonical_id %s, got %v", tokenObjectCanonicalID, got)
 	}
 	if total, ok := scoped["total"].(float64); !ok || int(total) != len(scopedItems) {
 		t.Errorf("expected total=%d to match the scoped page, got %v", len(scopedItems), scoped["total"])

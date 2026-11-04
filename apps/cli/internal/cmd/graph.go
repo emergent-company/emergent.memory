@@ -214,8 +214,10 @@ func getGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
 // An empty flag sends nothing: the server then treats the actor filter as "any"
 // and the write-stamp filters as "updated" (the current version). The narrowing
 // modes are rejected eagerly when there is nothing to narrow, so a typo fails
-// locally instead of round-tripping to the server's 400.
-func parseProvenanceFlag(hasActor, hasStamp bool) (string, error) {
+// locally instead of round-tripping to the server's 400. `requirement` names
+// what the invocation would need, because the relationship list has no actor
+// flags to point at.
+func parseProvenanceFlag(hasPredicate bool, requirement string) (string, error) {
 	provenance := graphProvenanceFlag
 	switch provenance {
 	case "", "any", "created", "updated":
@@ -223,8 +225,8 @@ func parseProvenanceFlag(hasActor, hasStamp bool) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid --provenance %q: must be one of created, updated, any", provenance)
 	}
-	if (provenance == "created" || provenance == "updated") && !hasActor && !hasStamp {
-		return "", fmt.Errorf("--provenance %s requires --actor-type or a write-stamp filter", provenance)
+	if (provenance == "created" || provenance == "updated") && !hasPredicate {
+		return "", fmt.Errorf("--provenance %s requires %s", provenance, requirement)
 	}
 	return provenance, nil
 }
@@ -242,7 +244,8 @@ func parseProvenanceFilter(hasStamp bool) (actorType, actorID, provenance string
 		return "", "", "", fmt.Errorf("--actor-id requires --actor-type")
 	}
 
-	provenance, err = parseProvenanceFlag(actorType != "" || actorID != "", hasStamp)
+	provenance, err = parseProvenanceFlag(actorType != "" || actorID != "" || hasStamp,
+		"--actor-type or a write-stamp filter")
 	if err != nil {
 		return "", "", "", err
 	}
@@ -1400,7 +1403,7 @@ the relationship, and any matches either.`,
 		}
 
 		hasStamp := runID != "" || credentialID != "" || credentialKind != ""
-		provenance, err := parseProvenanceFlag(false, hasStamp)
+		provenance, err := parseProvenanceFlag(hasStamp, "a write-stamp filter")
 		if err != nil {
 			return err
 		}

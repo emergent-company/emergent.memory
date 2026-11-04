@@ -342,3 +342,15 @@ func TestParseProvenanceFilter_NarrowingNeedsPredicate(t *testing.T) {
 		assert.Contains(t, err.Error(), "requires --actor-type or a write-stamp filter")
 	}
 }
+
+// TestParseProvenanceFlag_RelationshipWording verifies the relationship list
+// (which has no actor flags) does not point the user at a flag it does not have.
+func TestParseProvenanceFlag_RelationshipWording(t *testing.T) {
+	graphProvenanceFlag = "created"
+	t.Cleanup(func() { graphProvenanceFlag = "" })
+
+	_, err := parseProvenanceFlag(false, "a write-stamp filter")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--provenance created requires a write-stamp filter")
+	assert.NotContains(t, err.Error(), "--actor-type")
+}
