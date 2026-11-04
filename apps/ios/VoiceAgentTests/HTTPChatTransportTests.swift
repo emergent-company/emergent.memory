@@ -162,7 +162,7 @@ private final class RequestRecorder: @unchecked Sendable {
         // settled tool call.
         let turn = try #require(activity.liveTurn)
         #expect(turn.anchorMessageID == transcript.liveMessages.first?.id)
-        #expect(turn.thinkingText == "Checking the graph.")
+        #expect(turn.thinkingBlocks.map(\.text) == ["Checking the graph."])
         #expect(turn.tools.count == 1)
         #expect(turn.tools.first?.isRunning == false)
         #expect(turn.didReplyStart)
