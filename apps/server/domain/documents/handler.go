@@ -171,7 +171,7 @@ func (h *Handler) List(c echo.Context) error {
 			params.SourceUnassigned = true
 		} else {
 			if _, err := uuid.Parse(sourceID); err != nil {
-				return apperror.ErrBadRequest.WithMessage("sourceId must be a source UUID or \"none\"")
+				return apperror.NewBadRequest("sourceId must be a source UUID or \"none\"")
 			}
 			params.SourceID = &sourceID
 		}
@@ -470,7 +470,7 @@ func (h *Handler) GetSourceCounts(c echo.Context) error {
 	user := auth.MustGetUser(c)
 
 	if user.ProjectID == "" {
-		return apperror.ErrBadRequest.WithMessage("project ID is required")
+		return apperror.NewBadRequest("project ID is required")
 	}
 
 	sources, err := h.svc.GetSourceCounts(c.Request().Context(), user.ProjectID)

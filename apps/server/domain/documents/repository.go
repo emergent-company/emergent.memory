@@ -408,7 +408,7 @@ func (r *Repository) GetDistinctSourceIDs(ctx context.Context, projectID string)
 		OrderExpr("count DESC")
 	if err := query.Scan(ctx, &results); err != nil {
 		r.log.Error("failed to get source counts", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("failed to get source counts", err)
 	}
 	if results == nil {
 		results = []SourceCount{}
