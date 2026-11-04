@@ -134,7 +134,7 @@ test.describe('public share page', () => {
     await welcome.click();
     const chatLog = page.getByTestId('share-chat-log');
     await expect(chatLog.locator('.chat-bubble-primary')).toContainText('What can you do?');
-    await expect(chatLog.locator('.chat-bubble-neutral')).toContainText('I can help with tasks.');
+    await expect(chatLog.locator('.memory-assistant')).toContainText('I can help with tasks.');
     await expect(chatLog.locator('[data-tool="web_search"]')).toBeVisible();
     await expect(chatLog.locator('.memory-thinking')).toBeVisible();
     await expect(chatLog.locator('.memory-thinking-body')).toContainText('The visitor asked what I can do.');
@@ -171,12 +171,12 @@ test.describe('public share page', () => {
 
     // Live SSE streaming is fully expressible in the mock: the gateway proxies
     // the upstream token frames and the assistant bubble accumulates them.
-    await expect(page.locator('.chat-bubble-neutral')).toContainText('Hello from share!');
+    await expect(page.locator('.memory-assistant')).toContainText('Hello from share!');
 
     // Markdown in the reply is rendered server-side: the gateway buffers the
     // token deltas and emits an `html` frame at completion, so **Hello** becomes
     // <strong>Hello</strong> in the assistant bubble.
-    await expect(page.locator('.chat-bubble-neutral strong')).toContainText('Hello');
+    await expect(page.locator('.memory-assistant strong')).toContainText('Hello');
 
     // The live stream emits the full shared-engine frame set: a web_search tool
     // chip, a thinking block, and grounded Sources.
@@ -297,7 +297,7 @@ test.describe('public share page', () => {
       await openShare(pageA, 'valid-key-123');
       await pageA.getByTestId('share-input').fill('alpha-unique-123');
       await pageA.getByTestId('share-send').click();
-      await expect(pageA.locator('.chat-bubble-neutral')).toContainText('Hello from share!');
+      await expect(pageA.locator('.memory-assistant')).toContainText('Hello from share!');
       // The first visitor's new chat is titled from its first message.
       await expect(
         pageA.getByTestId('share-session-row').filter({ hasText: 'alpha-unique-123' }),
@@ -582,7 +582,7 @@ test.describe('public share page (owner-created links)', () => {
 
     await page.getByTestId('share-input').fill('hi');
     await page.getByTestId('share-send').click();
-    await expect(page.locator('.chat-bubble-neutral')).toContainText('Hello from share!');
+    await expect(page.locator('.memory-assistant')).toContainText('Hello from share!');
   });
 
   test('showSessionList off hides the session rail', async ({ page }) => {

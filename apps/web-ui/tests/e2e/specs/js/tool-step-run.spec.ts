@@ -200,7 +200,7 @@ test.describe('tool runs — recorded turn', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a settled turn folds into one closed run stating its count and span', async ({ page }) => {
+  test('a settled turn folds into one collapsed group stating its count and tools', async ({ page }) => {
     const errors = await loadCoreScripts(page);
     await renderHistory(page, [
       step({ id: 'c1', created_at: '2026-09-30T10:00:00.000Z', duration_ms: 400 }),
@@ -212,25 +212,26 @@ test.describe('tool runs — recorded turn', () => {
     expect(rest).toHaveLength(0);
     expect(run.steps).toBe(3);
     expect(run.open).toBe(false);
-    // Wall clock from the first start to the last settle: 1.6s, not the 1.1s the
-    // three durations add up to.
-    expect(run.text).toBe('3 steps · 1.6s');
+    expect(run.text).toBe('3 tool calls · Search memory ×3');
     expect(run.failed).toBeNull();
     expect(errors).toEqual([]);
   });
 
-  test('a run shorter than a second states its count without a span', async ({ page }) => {
+  test('a group names up to three tools and summarises the rest', async ({ page }) => {
     await loadCoreScripts(page);
     await renderHistory(page, [
-      step({ id: 'c1', created_at: '2026-09-30T10:00:00.000Z', duration_ms: 300 }),
-      step({ id: 'c2', created_at: '2026-09-30T10:00:00.300Z', duration_ms: 200 }),
+      step({ id: 'c1', tool_name: 'web_search' }),
+      step({ id: 'c2', tool_name: 'web_search' }),
+      step({ id: 'c3', tool_name: 'read_file' }),
+      step({ id: 'c4', tool_name: 'entity-query' }),
+      step({ id: 'c5', tool_name: 'memory_search' }),
     ]);
 
     const [run] = await runs(page);
-    expect(run.text).toBe('2 steps');
+    expect(run.text).toBe('5 tool calls · Web search ×2, Read file, Entity query, +1 more');
   });
 
-  test('a run with a failure says so in words, beside its count', async ({ page }) => {
+  test('a group with a failure says so in words, beside its count', async ({ page }) => {
     await loadCoreScripts(page);
     await renderHistory(page, [
       step({ id: 'c1' }),
@@ -242,13 +243,13 @@ test.describe('tool runs — recorded turn', () => {
     ]);
 
     const [run] = await runs(page);
-    expect(run.text).toContain('2 steps');
+    expect(run.text).toContain('2 tool calls');
     expect(run.failed).toBe('1 failed');
     // The indicator is a word plus a decorative glyph, never colour alone.
     expect(await page.locator('.memory-tool-run-failed .iconify.lucide--alert-triangle').count()).toBe(1);
   });
 
-  test('a run still holding a step stays open', async ({ page }) => {
+  test('an awaiting-confirmation call renders standalone and splits the group', async ({ page }) => {
     await loadCoreScripts(page);
     await renderHistory(page, [
       step({ id: 'c1' }),
@@ -260,9 +261,28 @@ test.describe('tool runs — recorded turn', () => {
       }),
     ]);
 
-    const [run] = await runs(page);
-    expect(run.open).toBe(true);
-    expect(run.text).toContain('2 steps');
+    expect(await runs(page)).toHaveLength(0);
+    expect(await page.locator('.memory-tool-chip').count()).toBe(2);
+    expect(await page.locator('.memory-tool-chip[data-status="awaiting_confirmation"]').count()).toBe(1);
+  });
+
+  test('thinking and assistant text split a group into separate groups', async ({ page }) => {
+    await loadCoreScripts(page);
+    const items = [
+      step({ id: 'c1' }),
+      step({ id: 'c2' }),
+      { kind: 'message', role: 'operator', content: { text: 'thinking', function_calls: [{ name: 'x' }] }, created_at: T0 },
+      step({ id: 'c3' }),
+      step({ id: 'c4' }),
+      { kind: 'message', role: 'agent', content: { html: '<p>answer</p>' }, created_at: T0 },
+      step({ id: 'c5' }),
+      step({ id: 'c6' }),
+    ];
+    await renderHistory(page, items as never);
+
+    const groups = await runs(page);
+    expect(groups).toHaveLength(3);
+    expect(groups.every((g) => g.steps === 2)).toBe(true);
   });
 
   test('the reader opening a run outranks the settled default and survives a re-render', async ({
@@ -290,7 +310,7 @@ test.describe('tool runs — recorded turn', () => {
 });
 
 test.describe('tool runs — live turn', () => {
-  test('a single step is a run while it runs, and a step once it settles', async ({ page }) => {
+  test('a single tool call stays today\'s plain chip throughout', async ({ page }) => {
     await loadCoreScripts(page);
     await liveEngine(page);
 
@@ -302,9 +322,8 @@ test.describe('tool runs — live turn', () => {
       toolCategory: SEARCH,
       toolSubject: 'retrieval notes',
     });
-    let [run] = await runs(page);
-    expect(run.steps).toBe(1);
-    expect(run.open).toBe(true);
+    expect(await runs(page)).toHaveLength(0);
+    expect(await page.locator('.memory-tool-chip').count()).toBe(1);
 
     await toolEvent(page, {
       tool: 'search_memory',
@@ -315,7 +334,6 @@ test.describe('tool runs — live turn', () => {
     });
     await finishTurn(page);
 
-    // A one-step turn reads as a step, not as a run of one.
     expect(await runs(page)).toHaveLength(0);
     expect(await page.locator('.memory-tool-chip').count()).toBe(1);
     expect(await page.locator('.chat.memory-aux .memory-tool-chip').count()).toBe(1);
@@ -337,7 +355,7 @@ test.describe('tool runs — live turn', () => {
     }
     let [run] = await runs(page);
     expect(run.steps).toBe(3);
-    expect(run.open).toBe(true); // a run in progress is open
+    expect(run.open).toBe(false); // groups are collapsed by default
 
     for (const id of ['call-1', 'call-2', 'call-3']) {
       await toolEvent(page, {
@@ -353,10 +371,10 @@ test.describe('tool runs — live turn', () => {
     [run] = await runs(page);
     expect(run.steps).toBe(3);
     expect(run.open).toBe(false);
-    expect(run.text).toMatch(/^3 steps/);
+    expect(run.text).toMatch(/^3 tool calls/);
   });
 
-  test('a reader who closes a running run keeps it closed when it settles', async ({ page }) => {
+  test('a reader who opens a running group keeps it open when it settles', async ({ page }) => {
     await loadCoreScripts(page);
     await liveEngine(page);
 
@@ -369,10 +387,10 @@ test.describe('tool runs — live turn', () => {
         toolCategory: SEARCH,
       });
     }
-    expect((await runs(page))[0].open).toBe(true);
+    expect((await runs(page))[0].open).toBe(false);
 
     await page.locator('details.memory-tool-run summary').click();
-    expect((await runs(page))[0].open).toBe(false);
+    expect((await runs(page))[0].open).toBe(true);
 
     for (const id of ['call-1', 'call-2']) {
       await toolEvent(page, {
@@ -385,10 +403,10 @@ test.describe('tool runs — live turn', () => {
     }
     await finishTurn(page);
 
-    expect((await runs(page))[0].open).toBe(false);
+    expect((await runs(page))[0].open).toBe(true);
   });
 
-  test('a reader who reopens a running run keeps it open when a step settles', async ({ page }) => {
+  test('a reader who closes a running group keeps it closed when a step settles', async ({ page }) => {
     await loadCoreScripts(page);
     await liveEngine(page);
 
@@ -401,9 +419,9 @@ test.describe('tool runs — live turn', () => {
         toolCategory: SEARCH,
       });
     }
-    await page.locator('details.memory-tool-run summary').click(); // closed
-    await page.locator('details.memory-tool-run summary').click(); // reopened
-    expect((await runs(page))[0].open).toBe(true);
+    await page.locator('details.memory-tool-run summary').click(); // opened
+    await page.locator('details.memory-tool-run summary').click(); // closed again
+    expect((await runs(page))[0].open).toBe(false);
 
     for (const id of ['call-1', 'call-2']) {
       await toolEvent(page, {
@@ -416,10 +434,10 @@ test.describe('tool runs — live turn', () => {
     }
     await finishTurn(page);
 
-    expect((await runs(page))[0].open).toBe(true);
+    expect((await runs(page))[0].open).toBe(false);
   });
 
-  test("the reader's closed choice survives the recorded re-render of the same turn", async ({
+  test("the reader's open choice survives the recorded re-render of the same turn", async ({
     page,
   }) => {
     await loadCoreScripts(page);
@@ -436,7 +454,7 @@ test.describe('tool runs — live turn', () => {
         toolCategory: MEMORY,
       });
     }
-    await page.locator('details.memory-tool-run summary').click(); // the reader closes it
+    await page.locator('details.memory-tool-run summary').click(); // the reader opens it
     for (const id of ['call-1', 'call-2']) {
       await toolEvent(page, {
         tool: 'memory_search',
@@ -447,7 +465,7 @@ test.describe('tool runs — live turn', () => {
       });
     }
     await finishTurn(page);
-    expect((await runs(page))[0].open).toBe(false);
+    expect((await runs(page))[0].open).toBe(true);
 
     // The turn's recorded transcript is the same turn under its run id.
     await renderHistory(page, [
@@ -456,10 +474,10 @@ test.describe('tool runs — live turn', () => {
     ]);
     const [recorded] = await runs(page);
     expect(recorded.steps).toBe(2);
-    expect(recorded.open).toBe(false);
+    expect(recorded.open).toBe(true);
   });
 
-  test('a choice made before the page learns the run id still survives the recorded re-render', async ({
+  test('a closed choice made before the page learns the run id still survives the recorded re-render', async ({
     page,
   }) => {
     await loadCoreScripts(page);
@@ -477,9 +495,9 @@ test.describe('tool runs — live turn', () => {
         toolCategory: MEMORY,
       });
     }
+    await page.locator('details.memory-tool-run summary').click(); // opened
     await page.locator('details.memory-tool-run summary').click(); // closed
-    await page.locator('details.memory-tool-run summary').click(); // opened again
-    expect((await runs(page))[0].open).toBe(true);
+    expect((await runs(page))[0].open).toBe(false);
 
     // The turn's id becomes known only now, before the settle.
     await page.evaluate(() => {
@@ -500,8 +518,143 @@ test.describe('tool runs — live turn', () => {
       step({ id: 'c1', run_id: 'run-late', tool_name: 'memory_search', tool_category: MEMORY }),
       step({ id: 'c2', run_id: 'run-late', tool_name: 'memory_search', tool_category: MEMORY }),
     ]);
-    // Open, not the settled default: this only holds if the choice was re-keyed.
-    expect((await runs(page))[0].open).toBe(true);
+    // Closed, not the group default: this only holds if the choice was re-keyed.
+    expect((await runs(page))[0].open).toBe(false);
+  });
+
+  test('a live group keeps call-id correlation and expands to its child chips', async ({ page }) => {
+    await loadCoreScripts(page);
+    await liveEngine(page);
+
+    await toolEvent(page, {
+      tool: 'search_memory',
+      status: 'running',
+      id: 'call-1',
+      result: { query: 'one' },
+      toolCategory: SEARCH,
+    });
+    await toolEvent(page, {
+      tool: 'memory_search',
+      status: 'running',
+      id: 'call-2',
+      result: { query: 'two' },
+      toolCategory: MEMORY,
+    });
+
+    const group = page.locator('details.memory-tool-run');
+    await expect(group).toHaveAttribute('data-tool-group', '1');
+    await expect(group).toHaveAttribute('data-tool-count', '2');
+    // Promotion removes the temporary single-call rows: one group row remains.
+    expect(await page.locator('#d > .chat.memory-aux').count()).toBe(1);
+
+    await group.locator('summary').click();
+    const children = group.locator('.memory-tool-run-body .memory-tool-chip');
+    await expect(children).toHaveCount(2);
+    await expect(group.locator('[data-call-id="call-1"]')).toHaveCount(1);
+    await expect(group.locator('[data-call-id="call-2"]')).toHaveCount(1);
+
+    // A terminal frame updates only the call it names, inside the group.
+    await toolEvent(page, {
+      tool: 'memory_search',
+      status: 'failed',
+      id: 'call-2',
+      error: 'index unavailable',
+      toolCategory: MEMORY,
+    });
+    await expect(group.locator('[data-call-id="call-2"]')).toHaveAttribute('data-status', 'error');
+    await expect(group.locator('[data-call-id="call-1"]')).toHaveAttribute('data-status', 'running');
+    await expect(group).toContainText('1 failed');
+  });
+
+
+  test('a dispatched mcp_tool frame does not break the live group', async ({ page }) => {
+    await loadCoreScripts(page);
+    const groups = await page.evaluate(() => {
+      const messages = document.getElementById('d') as HTMLElement;
+      messages.innerHTML = '';
+      const badgeCtx = { messages, hideEmpty() {}, scrollToBottom() {} };
+      const stream = (
+        window as unknown as {
+          MemoryChatStream: { createEngine: (ctx: unknown) => { handleToolEvent: (e: unknown) => void; breakToolGroup: () => void } };
+        }
+      ).MemoryChatStream.createEngine({
+        messages,
+        badgeCtx,
+        hideEmpty() {},
+        scrollToBottom() {},
+        setStreaming() {},
+        onStreamFinish() {},
+        onStreamFail() {},
+        currentAgentName: () => 'Memory',
+        currentAgentUI: () => null,
+      });
+      const dispatch = (
+        window as unknown as {
+          MemoryChatHost: { makeHandleEvent: (h: unknown) => (raw: string) => void };
+        }
+      ).MemoryChatHost.makeHandleEvent({
+        getStreaming: () => true,
+        setBubbleHTML() {},
+        updateBubbleText() {},
+        scrollToBottom() {},
+        handleToolEvent: (evt: unknown) => stream.handleToolEvent(evt),
+        renderQuestion() {},
+        renderApproval() {},
+        failStream() {},
+        onMeta() {},
+        // Mirrors chat.js activityBoundary after the mcp_tool fix.
+        onActivity: (type: string) => {
+          if (type !== 'tool' && type !== 'mcp_tool' && type !== 'thinking') stream.breakToolGroup();
+        },
+      });
+      for (const id of ['call-1', 'call-2']) {
+        dispatch(JSON.stringify({
+          type: 'mcp_tool',
+          tool: 'search_memory',
+          status: 'running',
+          id,
+          result: { query: id },
+        }));
+      }
+      return messages.querySelectorAll('details.memory-tool-run[data-tool-group="1"]').length;
+    });
+    expect(groups).toBe(1);
+  });
+
+  test('a live awaiting-confirmation call leaves its group and renders standalone', async ({ page }) => {
+    await loadCoreScripts(page);
+    await liveEngine(page);
+
+    await toolEvent(page, {
+      tool: 'search_memory',
+      status: 'running',
+      id: 'call-1',
+      result: { query: 'one' },
+      toolCategory: SEARCH,
+    });
+    await toolEvent(page, {
+      tool: 'memory_search',
+      status: 'running',
+      id: 'call-2',
+      result: { query: 'two' },
+      toolCategory: MEMORY,
+    });
+    expect(await runs(page)).toHaveLength(1);
+
+    await toolEvent(page, {
+      tool: 'memory_search',
+      status: 'awaiting_confirmation',
+      id: 'call-2',
+      toolCategory: MEMORY,
+    });
+
+    // The paused call is standalone; the split leaves no group behind.
+    expect(await runs(page)).toHaveLength(0);
+    expect(await page.locator('.memory-tool-chip').count()).toBe(2);
+    await expect(page.locator('[data-call-id="call-2"]')).toHaveAttribute(
+      'data-status',
+      'awaiting_confirmation',
+    );
   });
 
   test('the reader opening a settled run keeps it open across the recorded re-render', async ({
@@ -555,7 +708,8 @@ test.describe('tool run summary — accessibility', () => {
     expect(await summary.evaluate((el) => getComputedStyle(el).minHeight)).toBe('44px');
     // Closed runs say what they hold, including the failure, as words.
     const text = (await summary.textContent())?.replace(/\s+/g, ' ').trim();
-    expect(text).toContain('2 steps');
+    expect(text).toContain('2 tool calls');
+    expect(text).toContain('Search memory ×2');
     expect(text).toContain('1 failed');
     // The chevron is decorative; the count and the failure are the state.
     expect(await page.locator('.memory-tool-run-chevron [aria-hidden="true"]').count()).toBe(1);

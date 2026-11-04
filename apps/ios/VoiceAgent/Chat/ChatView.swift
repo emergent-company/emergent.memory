@@ -111,59 +111,40 @@ struct ChatView: View {
         case let .userTranscript(text), let .userInput(text):
             userBubble(text)
         case let .agentTranscript(text):
-            agentBubble(text)
+            agentMessage(text)
         }
     }
 
-    /// A subtle role label above a bubble, so speaker attribution is
-    /// unambiguous on both the accent-tinted user bubble and the raised agent
-    /// bubble. Shared copy with the session timeline.
-    private func roleLabel(_ role: ConversationRole) -> some View {
-        Text(role.labelKey)
-            .font(MemoryFont.meta)
-            .foregroundStyle(.fg3)
-            .padding(.horizontal, 1 * .grid)
-    }
-
+    /// The user's message stays a right-aligned accent bubble. The visible role
+    /// label is gone; the bubble's accessibility label keeps the speaker clear.
     @ViewBuilder
     private func userBubble(_ text: String) -> some View {
-        let role = ConversationRole.user
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             HStack {
                 Spacer(minLength: 4 * .grid)
-                VStack(alignment: role.horizontalAlignment, spacing: 1 * .grid) {
-                    roleLabel(role)
-                    Text(trimmed)
-                        .font(MemoryFont.conversationBody)
-                        .foregroundStyle(.fg1)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 3 * .grid)
-                        .padding(.vertical, 2 * .grid)
-                        .bubbleBackground(role, cornerRadius: .cornerRadiusMedium)
-                }
-                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: role.frameAlignment)
+                Text(trimmed)
+                    .font(MemoryFont.conversationBody)
+                    .foregroundStyle(.fg1)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 3 * .grid)
+                    .padding(.vertical, 2 * .grid)
+                    .bubbleBackground(.user, cornerRadius: .cornerRadiusMedium)
+                    .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .trailing)
+                    .accessibilityLabel(Text(ConversationRole.user.labelKey) + Text(": ") + Text(trimmed))
             }
         }
     }
 
+    /// Assistant replies render as plain leading-aligned Markdown: no bubble,
+    /// no role label. The rendered markdown keeps its own VoiceOver structure.
     @ViewBuilder
-    private func agentBubble(_ text: String) -> some View {
-        let role = ConversationRole.assistant
+    private func agentMessage(_ text: String) -> some View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            HStack {
-                VStack(alignment: role.horizontalAlignment, spacing: 1 * .grid) {
-                    roleLabel(role)
-                    MarkdownRenderer(text: trimmed)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 3 * .grid)
-                        .padding(.vertical, 2 * .grid)
-                        .bubbleBackground(role, cornerRadius: .cornerRadiusMedium)
-                }
-                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: role.frameAlignment)
-                Spacer(minLength: 4 * .grid)
-            }
+            MarkdownRenderer(text: trimmed)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -193,17 +174,21 @@ struct ChatView: View {
         )
     }
 
-    /// Renders one turn's accumulated activity: thinking block, tool chips,
-    /// then the interactive card.
+    /// Renders one turn's accumulated activity: thinking blocks, contiguous
+    /// tool-call runs, then the interactive card.
     private func turnActivity(_ turn: ChatActivityStore.Turn) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
-            if !turn.thinkingText.isEmpty {
-                ThinkingBlockView(text: turn.thinkingText, isLive: !turn.didReplyStart)
+            ForEach(turn.thinkingBlocks) { block in
+                ThinkingBlockView(text: block.text, isLive: block.isLive)
             }
-            if !turn.tools.isEmpty {
-                // One run per turn: a summary line with the steps behind it,
-                // open while they run and closed once they settle.
-                ToolActivityGroup(tools: turn.tools, turnID: turn.id)
+            ForEach(turn.toolGroups) { group in
+                if ToolActivityGrouping.isGrouped(group.tools) {
+                    ToolCallGroupView(group: group)
+                } else {
+                    ForEach(group.tools) { tool in
+                        LiveToolChip(tool: tool)
+                    }
+                }
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in

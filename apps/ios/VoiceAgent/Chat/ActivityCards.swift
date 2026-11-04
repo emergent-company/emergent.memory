@@ -2,14 +2,16 @@ import SwiftUI
 
 // MARK: - Thinking block
 
-/// A collapsible thinking/reasoning block. Live deltas accumulate into the
-/// single `text` (store-side); the block renders above the reply.
+/// A collapsible thinking/reasoning block. Each contiguous reasoning segment
+/// is its own block; deltas accumulate into the block's `text` store-side. The
+/// block starts collapsed so a long reasoning trace does not push the reply off
+/// the screen.
 struct ThinkingBlockView: View {
     let text: String
     var isLive: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expanded = true
+    @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
@@ -21,23 +23,24 @@ struct ThinkingBlockView: View {
                         .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(reduceMotion ? 0 : (expanded ? 90 : 0)))
                         .foregroundStyle(.fg3)
-                    if isLive {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "brain")
-                            .font(.caption)
-                            .foregroundStyle(.fg3)
-                    }
+                    Image(systemName: "brain")
+                        .font(.caption)
+                        .foregroundStyle(.fg3)
                     Text("chat.thinking")
                         .font(MemoryFont.metaEmphasis)
                         .foregroundStyle(.fg2)
+                    if isLive {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .accessibilityHidden(true)
+                    }
                     Spacer()
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
+            .accessibilityLabel("chat.thinking")
+            .accessibilityValue(disclosureKey)
             if expanded {
                 Text(text)
                     .font(MemoryFont.metaMono)
@@ -51,6 +54,10 @@ struct ThinkingBlockView: View {
         }
         .padding(2 * .grid)
         .bubbleBackground(.assistant, cornerRadius: .cornerRadiusSmall)
+    }
+
+    private var disclosureKey: LocalizedStringKey {
+        expanded ? "chat.tool.group.a11y.expanded" : "chat.tool.group.a11y.collapsed"
     }
 }
 

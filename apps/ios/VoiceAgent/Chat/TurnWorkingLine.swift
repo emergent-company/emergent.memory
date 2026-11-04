@@ -20,7 +20,7 @@ enum TurnWorkingState: Equatable {
         // the reader closed the run, that run's own line still reports it.)
         guard !turn.tools.contains(where: \.isRunning) else { return .hidden }
         // The thinking block's live header says "Thinking" while it streams.
-        guard turn.thinkingText.isEmpty else { return .hidden }
+        guard turn.thinkingBlocks.isEmpty else { return .hidden }
         return .thinking
     }
 }

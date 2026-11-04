@@ -485,6 +485,19 @@
   // the badge doesn't look stuck, then stop tracking the segments.
   var finalizeThinking = thinking.finalize;
 
+  // Activity boundary: contiguous thinking ends; a non-tool activity also
+  // closes the live tool group. The share page has no composer mount, so the
+  // subagent track is created mount-less and safely no-ops.
+  function activityBoundary(type) {
+    if (type !== "thinking" && thinking && thinking.break) thinking.break();
+    if (type !== "tool" && type !== "mcp_tool" && stream && stream.breakToolGroup) stream.breakToolGroup();
+  }
+
+  var subagentTrack = MemoryChatComponents.createSubagentTrack({
+    mount: function () { return document.getElementById("chat-subagents"); },
+    openRun: function (runId) { return "/runs/" + encodeURIComponent(runId); },
+  });
+
   /* ---------- SSE dispatcher ---------- */
 
   // Shared dispatcher from MemoryChatHost. The meta frame is page-local
@@ -510,6 +523,8 @@
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,
+    onSubagent: function (evt) { subagentTrack.upsert(evt); },
+    onActivity: function (type) { activityBoundary(type); },
     onMeta: function (evt) {
       // The share wire keeps the leading `meta` frame carrying sessionId (not
       // conversationId — see the unify-share-chat design D2).
@@ -589,7 +604,7 @@
     // Raised by the engine from openAssistantBubble on EVERY live turn start:
     // this page now owns the turn's DOM, so history re-renders stand down.
     onLiveTurnStart: function () { state.liveTurn = true; },
-    onStreamStart: function () { clearThinking(); },
+    onStreamStart: function () { clearThinking(); subagentTrack.reset(); },
     onStreamFinish: function (reason) {
       finalizeThinking();
       state.liveTurn = false;
@@ -666,6 +681,7 @@
       showMeta: false,
       silent: true,
     });
+    subagentTrack.rebuild(list);
   }
 
   // reloadTranscript re-fetches the current session's full timeline (items +

@@ -99,6 +99,8 @@ enum ChatStreamFrameDecoder {
             return interactionEvent(envelope, fallbackToolID: fallbackToolID)
         case "ui", "citations", "error", "done":
             return surfaceEvent(envelope)
+        case "subagent":
+            return subagentEvent(envelope)
         case "live_replay":
             return replay(data: data, fallbackToolID: fallbackToolID)
         default:
@@ -129,8 +131,23 @@ enum ChatStreamFrameDecoder {
                 // A segment-closing `done: true` carries no new text.
                 return nil
             }
-            return .activity(.thinking(delta: text))
+            return .activity(.thinking(id: envelope.id?.nonEmpty, delta: text))
         }
+    }
+
+    /// A live child/subagent run projected onto the parent chat stream.
+    private static func subagentEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        let id = envelope.id?.nonEmpty ?? envelope.runId?.nonEmpty
+        guard let id else { return nil }
+        return .activity(.subagent(ChatSubagentEvent(
+            id: id,
+            parentRunId: envelope.parentRunId?.nonEmpty,
+            runId: envelope.runId?.nonEmpty,
+            agentName: envelope.agentName?.nonEmpty,
+            task: envelope.task?.nonEmpty,
+            status: envelope.status?.nonEmpty,
+            error: envelope.error?.nonEmpty
+        )))
     }
 
     /// The cards a turn can pause on: tool activity, approvals and questions.
@@ -265,6 +282,9 @@ private struct ChatStreamEnvelope: Decodable {
     let type: String
     let conversationId: String?
     let runId: String?
+    let parentRunId: String?
+    let agentName: String?
+    let task: String?
     let token: String?
     let text: String?
     let done: Bool?

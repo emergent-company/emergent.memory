@@ -12,7 +12,9 @@ struct TurnWorkingStateTests {
         tools: [ToolCallInfo] = []
     ) -> ChatActivityStore.Turn {
         var turn = ChatActivityStore.Turn(anchorMessageID: "m1")
-        turn.thinkingText = thinking
+        turn.thinkingBlocks = thinking.isEmpty
+            ? []
+            : [ThinkingBlock(id: "r1", text: thinking, isLive: true)]
         turn.tools = tools
         return turn
     }
