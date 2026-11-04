@@ -82,7 +82,7 @@ func main() {
 	if path == "" {
 		path = "devgallery_graph_gen.go"
 	}
-	if err := os.WriteFile(path, src, 0o644); err != nil {
+	if err := writeIfChanged(path, src); err != nil {
 		fmt.Fprintln(os.Stderr, "componentgraph:", err)
 		os.Exit(1)
 	}
@@ -96,10 +96,23 @@ func main() {
 	if adoptPath == "" {
 		adoptPath = "devgallery_adoption_gen.go"
 	}
-	if err := os.WriteFile(adoptPath, adoptSrc, 0o644); err != nil {
+	if err := writeIfChanged(adoptPath, adoptSrc); err != nil {
 		fmt.Fprintln(os.Stderr, "componentgraph:", err)
 		os.Exit(1)
 	}
+}
+
+// writeIfChanged writes src to path only when the contents already on disk
+// differ. An unconditional os.WriteFile still bumps the file's mtime, and both
+// generated files are inputs to `air` (the `task dev` watcher): every build runs
+// `go generate`, which would rewrite them, which would look like a source change
+// and restart the build — an endless rebuild loop that never settles. Keeping
+// the write conditional makes `go generate` idempotent for watchers.
+func writeIfChanged(path string, src []byte) error {
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, src) {
+		return nil
+	}
+	return os.WriteFile(path, src, 0o644)
 }
 
 // generateGraph scans the gateway source rooted at dir (the package-main files
