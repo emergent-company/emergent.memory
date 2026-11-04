@@ -2006,6 +2006,65 @@ const server = http.createServer((req, res) => {
     return json(res, doc);
   }
 
+  // --- project search (gateway /search) ---------------------------------------
+  //
+  // The gateway posts one unified query and names the result types it wants;
+  // memory runs the legs and fuses them. The mock answers per leg so the page's
+  // two sections each have exactly one row, and a `nomatch` query returns an
+  // empty result set so the empty state is reachable without a live backend.
+  if (path === "/api/search/unified" && req.method === "POST") {
+    return readBody(req, (payload) => {
+      const query = String(payload.query || "");
+      const resultTypes = String(payload.resultTypes || "both");
+      const limit = Number(payload.limit) || 32;
+      const wantsText = resultTypes === "text" || resultTypes === "both";
+      const wantsGraph = resultTypes === "graph" || resultTypes === "both";
+      const empty = /nomatch/i.test(query);
+
+      const results = [];
+      let textResultCount = 0;
+      let graphResultCount = 0;
+      if (!empty && wantsText) {
+        textResultCount = 1;
+        results.push({
+          type: "text",
+          id: "chunk-report-1",
+          score: 0.91,
+          mode: "hybrid",
+          // The whole chunk: the page is responsible for trimming it, so this
+          // also covers the trimmed-snippet rendering.
+          snippet: `Revenue grew 12% in Q3. This passage from report.md matches "${query}". `.repeat(6),
+          document_id: "doc-report",
+          source: "doc-report",
+        });
+      }
+      if (!empty && wantsGraph) {
+        graphResultCount = 1;
+        results.push({
+          type: "graph",
+          id: "obj-search-1",
+          object_id: "obj-search-1",
+          canonical_id: "11223344-5566-4778-8999-000000000001",
+          object_type: "Note",
+          key: `${query}-note`,
+          score: 0.72,
+          fields: { title: `Note matching ${query}` },
+        });
+      }
+
+      return json(res, {
+        results: results.slice(0, limit),
+        metadata: {
+          totalResults: results.length,
+          graphResultCount,
+          textResultCount,
+          fusionStrategy: "weighted",
+          executionTime: { fusionMs: 1, totalMs: 12 },
+        },
+      });
+    });
+  }
+
   // --- MCP servers (settings page, specs/mcp/) --------------------------------
   //
   // The MCP servers settings page needs one outbound http server whose inspect

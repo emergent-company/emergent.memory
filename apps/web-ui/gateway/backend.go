@@ -210,6 +210,7 @@ type MemoryBackend interface {
 	CountObjects(ctx context.Context, branchID string) (int, error)
 	SearchObjects(ctx context.Context, mode, query, types, branchID string, limit, offset int) ([]ObjectSearchResult, bool, error)
 	SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error)
+	SearchUnified(ctx context.Context, params UnifiedSearchParams) (*UnifiedSearchResponse, error)
 	GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error)
 	GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error)
 	GetEmbeddingCoverage(ctx context.Context) (*EmbeddingCoverageResponse, error)
