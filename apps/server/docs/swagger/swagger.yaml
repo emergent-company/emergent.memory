@@ -6667,8 +6667,27 @@ definitions:
     type: object
   domain_processingproblems.Failure:
     properties:
+      cause:
+        allOf:
+        - $ref: '#/definitions/domain_processingproblems.FailureCause'
+        description: |-
+          Cause narrows a class to the element that failed, when the classifier can
+          tell. It is empty for classes the copy already describes exactly.
       class:
         $ref: '#/definitions/domain_processingproblems.FailureClass'
+      fix:
+        allOf:
+        - $ref: '#/definitions/domain_processingproblems.FixTarget'
+        description: |-
+          Fix is the page where the recorded cause is fixed, when the product knows
+          one. It is nil for causes with no single destination.
+      model:
+        description: |-
+          Model is the model this project resolves to for the failure's family
+          (routed "instance/model"): the generative model, or the embedding model
+          for an embedding queue. Empty when nothing resolves or the class is
+          unrelated.
+        type: string
       remediation:
         type: string
       retryable:
@@ -6679,7 +6698,27 @@ definitions:
         type: boolean
       summary:
         type: string
+      verified:
+        description: |-
+          Verified reports whether the copy was checked against the project's
+          effective model configuration before being written. A configuration
+          failure with Verified=false is a guess and must read as one.
+        type: boolean
     type: object
+  domain_processingproblems.FailureCause:
+    enum:
+    - no_provider
+    - no_default_model
+    - model_unusable
+    - model_unavailable
+    - base_url
+    type: string
+    x-enum-varnames:
+    - CauseNoProvider
+    - CauseNoDefaultModel
+    - CauseModelUnusable
+    - CauseModelUnavailable
+    - CauseBaseURL
   domain_processingproblems.FailureClass:
     enum:
     - configuration
@@ -6702,6 +6741,13 @@ definitions:
     - ClassLimit
     - ClassInternal
     - ClassUnknown
+  domain_processingproblems.FixTarget:
+    properties:
+      href:
+        type: string
+      label:
+        type: string
+    type: object
   domain_processingproblems.Problem:
     properties:
       action:
