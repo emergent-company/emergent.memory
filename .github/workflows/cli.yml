@@ -103,7 +103,14 @@ jobs:
             echo "::error::base '${BASE}' does not resolve, so the new-issues ratchet cannot run"
             exit 1
           fi
-          golangci-lint run --new-from-rev="$BASE" ./...
+          # `--allow-parallel-runners` drops golangci-lint's lock file. It is
+          # `os.TempDir()/golangci-lint.lock` — /tmp, which every runner install on
+          # a self-hosted host shares, and GOLANGCI_LINT_CACHE does not move it. So
+          # two lint jobs landing on different runners of the same host collide
+          # with "parallel golangci-lint is running" even though each job has its
+          # own cache dir. Safe here because those caches are per-job: the lock
+          # protects a cache nothing else writes.
+          golangci-lint run --allow-parallel-runners --new-from-rev="$BASE" ./...
 
       # pin_matches <pin> <file> succeeds only when <file> has an `image:` entry
       # whose value is byte-for-byte <pin>. Comparing the whole value (instead of
