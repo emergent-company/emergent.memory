@@ -114,3 +114,58 @@ test('MCP share lifecycle: create, reveal once, edit, rotate, revoke', async ({ 
     }
   }
 });
+
+test('MCP share presets: read-only is preselected and a preset replaces the selection', async ({ page }) => {
+  await goto(page, SHARES_NEW);
+  const toolBoxes = page.locator('[data-mcp-tool-option] input[name="tools"]');
+  if ((await toolBoxes.count()) === 0) {
+    test.skip(true, 'memory tool catalog is empty — no presets to exercise');
+  }
+
+  const presets = page.locator('[data-share-template]');
+  if ((await presets.count()) === 0) {
+    test.skip(true, 'backend has no share presets (pre-template build)');
+  }
+
+  const checked = page.locator('[data-mcp-tool-option] input[name="tools"]:checked');
+  const counter = page.locator('[data-mcp-tool-count]');
+
+  // Tool names a preset advertises, in order.
+  const presetTools = async (id: string): Promise<string[]> => {
+    const raw = await page.locator(`[data-share-template="${id}"]`).getAttribute('data-share-template-tools');
+    return JSON.parse(raw ?? '[]') as string[];
+  };
+
+  // The create form starts on the read-only preset: that many boxes are checked
+  // before the user touches anything.
+  const readOnly = await presetTools('read-only');
+  expect(readOnly.length).toBeGreaterThan(0);
+  await expect(checked).toHaveCount(readOnly.length);
+  await expect(counter).toHaveText(`${readOnly.length} selected`);
+
+  // Clear empties the selection and the counter follows.
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(checked).toHaveCount(0);
+  await expect(counter).toHaveText('0 selected');
+
+  // Another preset replaces the selection wholesale (not additive).
+  const writer = await presetTools('knowledge-writer');
+  expect(writer.length).toBeGreaterThan(readOnly.length);
+  await page.locator('[data-share-template="knowledge-writer"]').click();
+  await expect(checked).toHaveCount(writer.length);
+  await expect(counter).toHaveText(`${writer.length} selected`);
+
+  // Full access is the ceiling: no preset may exceed the catalog it is drawn from.
+  const full = await presetTools('full-access');
+  await page.locator('[data-share-template="full-access"]').click();
+  await expect(checked).toHaveCount(full.length);
+  await expect(checked).toHaveCount(await toolBoxes.count());
+
+  // The chosen preset is announced as pressed; a manual change detaches it
+  // without altering the checks.
+  await expect(page.locator('[data-share-template="full-access"][aria-pressed="true"]')).toHaveCount(1);
+  await toolBoxes.first().uncheck();
+  await expect(page.locator('[data-share-template][aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.locator('[data-share-template].btn-active')).toHaveCount(0);
+  await expect(checked).toHaveCount(full.length - 1);
+});

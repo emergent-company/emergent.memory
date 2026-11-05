@@ -92,6 +92,26 @@ type MCPShareTool struct {
 	Category      string `json:"category,omitempty"`
 }
 
+// MCPShareTemplate is one named preset resolved against the catalog: the tools
+// a share should get when the user picks it. Default marks the preset the
+// create form preselects.
+type MCPShareTemplate struct {
+	ID          string   `json:"id"`
+	Label       string   `json:"label"`
+	Description string   `json:"description,omitempty"`
+	Default     bool     `json:"default,omitempty"`
+	Tools       []string `json:"tools"`
+	ToolCount   int      `json:"toolCount"`
+}
+
+// MCPShareCatalog is the tool catalog plus the presets resolved against it.
+// Templates is empty for a backend that predates share templates, which renders
+// the picker without the preset row.
+type MCPShareCatalog struct {
+	Tools     []MCPShareTool     `json:"tools"`
+	Templates []MCPShareTemplate `json:"templates,omitempty"`
+}
+
 // mcpSharePath builds /api/projects/<project>/mcp[/<part>...].
 func (m *MemoryClient) mcpSharePath(ctx context.Context, parts ...string) string {
 	p := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/mcp"
@@ -187,19 +207,98 @@ func decodeMCPShareItem(raw json.RawMessage) (MCPShareInstance, error) {
 	return inst, nil
 }
 
-// decodeMCPShareTools accepts a bare array or a {"tools":[...]} wrapper.
-func decodeMCPShareTools(raw json.RawMessage) ([]MCPShareTool, error) {
+// decodeMCPShareCatalog accepts the catalog endpoint's {"tools":[…],
+// "templates":[…]} shape, or a bare tools array from a backend that predates
+// templates (templates then stay empty and the picker renders without presets).
+func decodeMCPShareCatalog(raw json.RawMessage) (*MCPShareCatalog, error) {
 	var list []MCPShareTool
 	if err := json.Unmarshal(raw, &list); err == nil {
-		return list, nil
+		return &MCPShareCatalog{Tools: list}, nil
 	}
 	var wrap struct {
-		Tools []MCPShareTool `json:"tools"`
+		Tools     []MCPShareTool     `json:"tools"`
+		Templates []MCPShareTemplate `json:"templates"`
 	}
 	if err := json.Unmarshal(raw, &wrap); err != nil {
 		return nil, err
 	}
-	return wrap.Tools, nil
+	return &MCPShareCatalog{Tools: wrap.Tools, Templates: wrap.Templates}, nil
+}
+
+// mcpShareApplyDefaultTemplate returns the tools of the preset flagged Default
+// when the draft has no selection yet. Used only by the create-page GET: a
+// submitted draft must reach validation exactly as the user left it, and an
+// edit must never rewrite an existing grant.
+func mcpShareApplyDefaultTemplate(catalog *MCPShareCatalog, current []string) []string {
+	if catalog == nil || len(current) > 0 {
+		return current
+	}
+	for _, tmpl := range catalog.Templates {
+		if tmpl.Default && len(tmpl.Tools) > 0 {
+			return append([]string(nil), tmpl.Tools...)
+		}
+	}
+	return current
+}
+
+// mcpShareToolSet turns a tool list into a set.
+func mcpShareToolSet(tools []string) map[string]bool {
+	set := make(map[string]bool, len(tools))
+	for _, name := range tools {
+		set[name] = true
+	}
+	return set
+}
+
+// mcpShareSameToolSet reports whether two tool lists describe the same set.
+// Order and duplicates are irrelevant, and two empty lists are not "equal" (an
+// empty selection matches no preset).
+func mcpShareSameToolSet(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	as, bs := mcpShareToolSet(a), mcpShareToolSet(b)
+	if len(as) != len(bs) {
+		return false
+	}
+	for name := range as {
+		if !bs[name] {
+			return false
+		}
+	}
+	return true
+}
+
+// mcpShareSelectedLabel seeds the picker's live counter server-side, so a
+// preselected preset never renders "0 selected" until the first interaction.
+// It counts selected tools the catalog actually offers, matching the checkboxes
+// the browser can see.
+func mcpShareSelectedLabel(catalog []MCPShareTool, tools []string) string {
+	set := mcpShareToolSet(tools)
+	count := 0
+	for _, tool := range catalog {
+		if set[tool.Name] {
+			count++
+		}
+	}
+	return fmt.Sprintf("%d selected", count)
+}
+
+// mcpShareTemplateActiveClass marks the preset whose tools exactly match the
+// current selection, so a server-preselected default renders as chosen.
+func mcpShareTemplateActiveClass(active bool) string {
+	if active {
+		return "gap-1.5 btn-active"
+	}
+	return "gap-1.5"
+}
+
+// mcpShareAriaPressed is the pressed state of a preset toggle button.
+func mcpShareAriaPressed(active bool) string {
+	if active {
+		return "true"
+	}
+	return "false"
 }
 
 // decodeMCPShareCreated accepts the instance fields and the secret fields
@@ -309,13 +408,14 @@ func (m *MemoryClient) InviteMCPShareInstance(ctx context.Context, id string, em
 	return &out, nil
 }
 
-// ListMCPShareTools fetches the memory tool catalog a share may expose.
-func (m *MemoryClient) ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error) {
+// ListMCPShareCatalog fetches the memory tool catalog a share may expose plus
+// the presets resolved against it.
+func (m *MemoryClient) ListMCPShareCatalog(ctx context.Context) (*MCPShareCatalog, error) {
 	raw, err := m.shareRaw(ctx, http.MethodGet, m.mcpSharePath(ctx, "tools"), nil)
 	if err != nil {
 		return nil, err
 	}
-	return decodeMCPShareTools(raw)
+	return decodeMCPShareCatalog(raw)
 }
 
 // --- display helpers (shared by the share templates) ---
@@ -405,6 +505,20 @@ func mcpShareContains(list []string, value string) bool {
 // filters a tool option against.
 func mcpShareToolSearchHay(t MCPShareTool) string {
 	return strings.ToLower(strings.Join([]string{t.Name, t.Description, t.Category, t.RequiredScope}, " "))
+}
+
+// mcpShareTemplateToolsAttr renders a preset's tool names as the JSON array the
+// picker reads from data-share-template-tools. The browser decodes the escaped
+// attribute value back into this exact string.
+func mcpShareTemplateToolsAttr(t MCPShareTemplate) string {
+	if len(t.Tools) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(t.Tools)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
 }
 
 // --- one-time key reveal snippets ---

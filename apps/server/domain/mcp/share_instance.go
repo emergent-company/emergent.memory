@@ -285,10 +285,13 @@ type CatalogToolDTO struct {
 	Category      string `json:"category"`
 }
 
-// CatalogResponse is the response for GET .../mcp/tools.
+// CatalogResponse is the response for GET .../mcp/tools. Templates carries the
+// named presets resolved against Tools (see share_templates.go); it is additive
+// so a client that only reads tools/total is unaffected.
 type CatalogResponse struct {
-	Tools []CatalogToolDTO `json:"tools"`
-	Total int              `json:"total"`
+	Tools     []CatalogToolDTO   `json:"tools"`
+	Total     int                `json:"total"`
+	Templates []ShareTemplateDTO `json:"templates,omitempty"`
 }
 
 // ============================================================================
@@ -380,8 +383,37 @@ func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, e
 	return dedupeStrings(out), nil
 }
 
+// shareToolAdditionalScopes lists scopes a tool needs at runtime but does not
+// declare as its transport-level RequiredScope. search-knowledge, remember and
+// forget call the /query, /remember and /forget loopbacks with the caller's own
+// token, and those routes require chat:use; without this a share that includes
+// one of them would 403 on every call. The legacy read-only share token carried
+// chat:use for the same reason.
+//
+// This map is maintained by hand: a new tool that forwards the caller token to a
+// chat route must be added here (TestShareLoopbackToolsDeriveChatUse guards the
+// tools known today).
+var shareToolAdditionalScopes = map[string][]string{
+	"search-knowledge": {"chat:use"},
+	"remember":         {"chat:use"},
+	"forget":           {"chat:use"},
+}
+
+// addShareToolScopes merges a tool's runtime-only scopes into seen, refusing any
+// scope a share must never carry.
+func addShareToolScopes(seen map[string]bool, name string, scopes []string) error {
+	for _, scope := range scopes {
+		if isNonShareableScope(scope) {
+			return apperror.NewValidation("tool requires an administrative or project-management scope: " + name)
+		}
+		seen[scope] = true
+	}
+	return nil
+}
+
 // deriveScopesForToolNames returns the union of the required scopes of the
-// selected tools plus the baseline projects:read scope.
+// selected tools, plus any runtime-only scope a tool needs, plus the baseline
+// projects:read scope.
 func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, error) {
 	seen := map[string]bool{instanceScopeBaseline: true}
 	for _, name := range tools {
@@ -397,6 +429,9 @@ func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, 
 		}
 		if def.RequiredScope != "" {
 			seen[def.RequiredScope] = true
+		}
+		if err := addShareToolScopes(seen, name, shareToolAdditionalScopes[name]); err != nil {
+			return nil, err
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -1079,8 +1114,11 @@ func (s *Service) RevokeShareInstance(ctx context.Context, projectID, userID, id
 	return store.Update(ctx, inst)
 }
 
-// RotateShareInstance issues a replacement token with the current scopes,
-// invalidates the old one, and keeps the allowlist intact.
+// RotateShareInstance issues a replacement token, invalidates the old one, and
+// keeps the allowlist intact. The replacement's scopes are re-derived from the
+// allowlist on a best-effort basis (see the refresh block below): names that no
+// longer resolve, or a legacy non-shareable entry, fall back to the old scopes
+// rather than blocking rotation.
 func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id, baseURL string) (*CreateShareInstanceResponse, error) {
 	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
 		return nil, err
@@ -1099,6 +1137,38 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 	}
 	if inst.RevokedAt != nil {
 		return nil, apperror.New(409, "share_instance_revoked", "Share instance is revoked and cannot be rotated")
+	}
+
+	// Scopes are a function of the allowlist, and that derivation can widen as a
+	// tool gains a runtime-only scope (shareToolAdditionalScopes). Refresh the
+	// bound token before the replacement copies its scopes, so a share created by
+	// an older build heals on rotate. A zero-length allowlist is unrestricted and
+	// keeps whatever scopes it has.
+	if len(inst.AllowedTools) > 0 {
+		s.GetToolDefinitionsForProject(ctx, projectID)
+		// Derive from the names that still exist. A tool renamed or removed since
+		// the share was minted must not brick the only key the recipient can be
+		// given, and the surviving names can still heal (so a mixed allowlist of
+		// stale and current entries heals as far as it can).
+		resolvable := make([]string, 0, len(inst.AllowedTools))
+		for _, name := range inst.AllowedTools {
+			if s.GetToolByName(name) != nil {
+				resolvable = append(resolvable, name)
+			}
+		}
+		if len(resolvable) > 0 {
+			scopes, serr := s.scopesForAllowlist(resolvable)
+			// A policy refusal (a legacy non-shareable or operator-only tool) is
+			// also not allowed to brick rotation: the replacement keeps the old
+			// scopes, and the allowlist guard still refuses those calls.
+			if serr == nil {
+				if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
+					return nil, uerr
+				}
+			}
+		}
+		// Fail before this point and the old token is untouched; a failure after
+		// it leaves a valid, correctly-scoped old token.
 	}
 
 	// Rotate atomically: the token service revokes the old token, inserts the
@@ -1191,7 +1261,7 @@ func (s *Service) ListToolCatalog(ctx context.Context, projectID, userID string)
 		return nil, err
 	}
 	tools := BuildToolCatalog(ctx, s, projectID)
-	return &CatalogResponse{Tools: tools, Total: len(tools)}, nil
+	return &CatalogResponse{Tools: tools, Total: len(tools), Templates: ResolveShareTemplates(tools)}, nil
 }
 
 // BuildToolCatalog returns includable tools (AgentOnly excluded) ordered by

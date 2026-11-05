@@ -86,7 +86,7 @@ type MemoryBackend interface {
 	// InviteMCPShareInstance emails an existing share's CURRENT key (recovered
 	// from encrypted storage) to the listed recipients; it never rotates.
 	InviteMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareInvite, error)
-	ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error)
+	ListMCPShareCatalog(ctx context.Context) (*MCPShareCatalog, error)
 	// Agent-owned MCP endpoint + labeled keys (agent-scoped-mcp-endpoint; see
 	// agent_mcp_endpoint.go). The raw key secret is only ever present on
 	// Create/Rotate results; Get/List carry metadata only.

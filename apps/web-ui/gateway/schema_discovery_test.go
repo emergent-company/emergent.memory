@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -196,14 +197,106 @@ func TestSchemaDiscoveryStartFailureSurfacesTheServerMessage(t *testing.T) {
 		t.Fatalf("start status = %d, want 303", rec.Code)
 	}
 	loc := rec.Header().Get("Location")
-	if !strings.Contains(loc, "?err=") {
-		t.Fatalf("start location = %q, want ?err=", loc)
+	if !strings.HasPrefix(loc, "/schema?err=") {
+		t.Fatalf("start location = %q, want /schema?err=", loc)
 	}
-	if !strings.Contains(loc, "already+running") && !strings.Contains(loc, "already%20running") {
-		t.Errorf("start location = %q, want the server's message", loc)
+	if !strings.HasSuffix(loc, "#discovery") {
+		t.Errorf("start location = %q, want the card's fragment", loc)
+	}
+	if u, err := url.Parse(loc); err != nil {
+		t.Fatalf("parse start location %q: %v", loc, err)
+	} else if got := u.Query().Get("err"); !strings.Contains(got, "already running") {
+		t.Errorf("err flash = %q, want the server's message", got)
 	}
 	if f.discoveryStarted != 0 {
 		t.Fatalf("project runs started = %d, want 0", f.discoveryStarted)
+	}
+}
+
+// TestSchemaDiscoveryStartFailureRedirectsBoostedFormsToTheCard is the htmx
+// half of the error PRG. A boosted submit is an XHR, so a plain 303 would be
+// followed inside the request, htmx would push the followed URL, and the
+// fragment would be stripped — putting the toast above the card it describes.
+// HX-Redirect makes the browser navigate to the full target, fragment intact.
+func TestSchemaDiscoveryStartFailureRedirectsBoostedFormsToTheCard(t *testing.T) {
+	f := &fakeMemory{discoveryStartErr: errors.New("discovery job 7 is already running for this project")}
+	_, e := newSchemaDiscoveryServer(f)
+
+	req := httptest.NewRequest(http.MethodPost, "/schema/discovery/start", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("boosted start status = %d, want 200", rec.Code)
+	}
+	got := rec.Header().Get("HX-Redirect")
+	if !strings.HasPrefix(got, "/schema?err=") || !strings.HasSuffix(got, "#discovery") {
+		t.Fatalf("HX-Redirect = %q, want /schema?err=…#discovery", got)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("boosted start sent Location %q as well", loc)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse HX-Redirect %q: %v", got, err)
+	}
+	if msg := u.Query().Get("err"); !strings.Contains(msg, "already running") {
+		t.Errorf("err flash = %q, want the server's message", msg)
+	}
+	if u.Fragment != "discovery" {
+		t.Errorf("fragment = %q, want discovery", u.Fragment)
+	}
+	if f.discoveryStarted != 0 {
+		t.Fatalf("project runs started = %d, want 0", f.discoveryStarted)
+	}
+}
+
+// TestSchemaDiscoveryErrorRedirectsKeepTheFragmentScoped pins that
+// scopeLocation rewrites both redirect shapes. A scoped mutation's HX-Redirect
+// and its 303 Location must both gain /o/{org}/p/{project} and keep the card
+// fragment — a rewrite that only handled Location, or ran after the response
+// committed, would send the boosted form to an unscoped 404 or drop the anchor.
+func TestSchemaDiscoveryErrorRedirectsKeepTheFragmentScoped(t *testing.T) {
+	const want = "/o/o1/p/p1/schema?err=boom#discovery"
+	for _, tc := range []struct {
+		name     string
+		boosted  bool
+		wantCode int
+		header   string
+	}{
+		{name: "boosted", boosted: true, wantCode: http.StatusOK, header: "HX-Redirect"},
+		{name: "plain", boosted: false, wantCode: http.StatusSeeOther, header: "Location"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{discoveryStartErr: errors.New("boom")}
+			s, _ := newSchemaDiscoveryServer(f)
+			e := echo.New()
+			e.Pre(s.scopeRewrite)
+			e.Use(s.scopeLocation)
+			e.POST("/schema/discovery/start", s.uiSchemaDiscoveryStart)
+
+			req := httptest.NewRequest(http.MethodPost, "/o/o1/p/p1/schema/discovery/start", nil)
+			if tc.boosted {
+				req.Header.Set("HX-Request", "true")
+			}
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if got := rec.Header().Get(tc.header); got != want {
+				t.Errorf("%s = %q, want %q", tc.header, got, want)
+			}
+			other := "Location"
+			if tc.header == "Location" {
+				other = "HX-Redirect"
+			}
+			if got := rec.Header().Get(other); got != "" {
+				t.Errorf("%s = %q, want none", other, got)
+			}
+		})
 	}
 }
 
@@ -272,8 +365,8 @@ func TestSchemaDiscoveryRetryEmptyJobIDRedirectsWithError(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") {
-		t.Errorf("location = %q, want the card with ?err=", loc)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") || !strings.HasSuffix(loc, "#discovery") {
+		t.Errorf("location = %q, want the card with ?err= and its fragment", loc)
 	}
 	if len(f.discoveryRetries) != 0 {
 		t.Fatalf("retried job ids = %v, want none", f.discoveryRetries)
@@ -296,8 +389,8 @@ func TestSchemaDiscoveryCancelEmptyJobIDRedirectsWithError(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") {
-		t.Errorf("location = %q, want the card with ?err=", loc)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") || !strings.HasSuffix(loc, "#discovery") {
+		t.Errorf("location = %q, want the card with ?err= and its fragment", loc)
 	}
 	if len(f.discoveryCancels) != 0 {
 		t.Fatalf("cancelled jobs = %v, want none", f.discoveryCancels)

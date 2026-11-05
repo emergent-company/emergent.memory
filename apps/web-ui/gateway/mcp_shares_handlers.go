@@ -61,6 +61,7 @@ type mcpShareFormData struct {
 	Tools       []string
 	Emails      string
 	Catalog     []MCPShareTool
+	Templates   []MCPShareTemplate
 
 	Legacy     bool
 	NotFound   bool
@@ -129,12 +130,16 @@ func (s *Server) renderMCPShareListWithReveal(c echo.Context, reveal *mcpShareRe
 
 // --- create page + create flow ---
 
-// uiMCPShareNewPage renders the create form (GET .../shares/new).
+// uiMCPShareNewPage renders the create form (GET .../shares/new). Only this
+// path applies the default preset: a submitted draft must reach validation
+// exactly as the user left it.
 func (s *Server) uiMCPShareNewPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	data := mcpShareFormData{FlashErr: flashError(c)}
 	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
 		data.LoadErr = userFacingError(err)
+	} else {
+		data.Tools = mcpShareApplyDefaultTemplate(&MCPShareCatalog{Tools: data.Catalog, Templates: data.Templates}, data.Tools)
 	}
 	return s.page(c, pageTitle("New MCP share"), MCPShareNewPage(data))
 }
@@ -465,26 +470,34 @@ func (s *Server) inviteMCPShare(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-// listMCPShareTools handles GET /api/mcp-shares/tools (the tool catalog).
+// listMCPShareTools handles GET /api/mcp-shares/tools (the tool catalog). The
+// presets are served alongside it as `templates`; this endpoint keeps returning
+// the catalog object so both arrive in one call.
 func (s *Server) listMCPShareTools(c echo.Context) error {
-	tools, err := s.memory.ListMCPShareTools(c.Request().Context())
+	catalog, err := s.memory.ListMCPShareCatalog(c.Request().Context())
 	if err != nil {
 		return mcpShareJSONErr(c, err)
 	}
-	return c.JSON(http.StatusOK, tools)
+	return c.JSON(http.StatusOK, catalog)
 }
 
 // --- shared helpers ---
 
-// loadMCPShareFormData fills the tool catalog on a form payload, preserving any
-// draft/instance fields already set. A catalog failure is returned so the page
-// renders its error state.
+// loadMCPShareFormData fills the tool catalog and presets on a form payload,
+// preserving any draft/instance fields already set. A catalog failure is
+// returned so the page renders its error state. It never touches Tools: the
+// create-page default is applied by the GET handler, so a submitted (possibly
+// emptied) selection reaches validation unchanged.
 func (s *Server) loadMCPShareFormData(ctx context.Context, data *mcpShareFormData) error {
-	catalog, err := s.memory.ListMCPShareTools(ctx)
+	catalog, err := s.memory.ListMCPShareCatalog(ctx)
 	if err != nil {
 		return err
 	}
-	data.Catalog = catalog
+	if catalog == nil {
+		return nil
+	}
+	data.Catalog = catalog.Tools
+	data.Templates = catalog.Templates
 	return nil
 }
 

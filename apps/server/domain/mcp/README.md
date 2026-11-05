@@ -1086,6 +1086,56 @@ POST /api/projects/:projectId/mcp/share
 - `mcpUrl` is derived from the incoming request's `Host` + `X-Forwarded-Proto` headers
 - Token name defaults to `"MCP Read-Only Share — YYYY-MM-DD HH:MM:SS"` to avoid duplicate-name conflicts
 
+## Share Instances and Presets
+
+The legacy read-only flow above is superseded by **share instances**: a named
+key whose token scopes are derived from an explicit tool allowlist
+(`share_instance.go`). Instances are managed at
+`/api/projects/:projectId/mcp/shares` and in the gateway at
+`/settings/mcp-servers/shares`.
+
+A null allowlist means *unrestricted*; the UI requires a selection, and the
+catalog endpoint is what it draws from:
+
+```
+GET /api/projects/:projectId/mcp/tools
+→ { "tools": [ … ], "total": N, "templates": [ … ] }
+```
+
+`templates` is the named preset list resolved against that project's catalog
+(`share_templates.go`). Each entry carries `id`, `label`, `description`,
+`tools`, `toolCount`, and `default` on the create-form preselection. Presets are
+declared as required-scope sets plus explicit tool names, so a tool added under
+an included scope joins every preset that includes it without a code change, and
+a renamed tool drops out of a preset instead of breaking a create. A preset that
+resolves to no tools is omitted.
+
+Ids are frozen — the gateway renders them as `data-share-template` values:
+
+| id | Scope sets |
+|---|---|
+| `read-only` (default) | `search`, `graph:read`, `documents:read`, `journal:read`, `schema:read`, `skills:read`, `agents:read`, `projects:read` |
+| `knowledge-writer` | read-only plus `graph:write`, `documents:write`, `journal:write` |
+| `schema-admin` | `graph:read`, `schema:read`, `schema:write`, `schema:migrate`, `skills:read` |
+| `agent-observer` | `agents:read`, `search`, `graph:read` |
+| `documents-only` | `documents:read`, `documents:write` plus `classify-document`, `search-hybrid`, `search-semantic` |
+| `full-access` | every tool in the shareable catalog |
+
+Tool scopes are derived from the selected tool names, not from the preset's
+declaration. A tool may also need a runtime-only scope: `search-knowledge`, `remember` and
+`forget` call chat-route loopbacks (`/query`, `/remember`, `/forget`) with the
+caller's token, and those routes require `chat:use`, so a share that includes
+one derives `chat:use` too
+(`shareToolAdditionalScopes` in `share_instance.go`) — the same scope the legacy
+read-only share token carried.
+
+Presets cannot exceed what a share may grant: `admin`, `admin:all`,
+`projects:write`, and the agent execution/mutation tools are refused by the
+allowlist itself (`isNonShareableScope`, `agentExecutionTools`,
+`agentMutationTools`), so `full-access` is the ceiling — not "admin". The
+create/update payload still carries an explicit `tools` list; a template is a
+form convenience, not a request field.
+
 
 ---
 

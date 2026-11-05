@@ -15200,7 +15200,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns the memory tools that can be granted to an MCP share instance (name, description, required scope, category), excluding agent-only tools. Admin only.",
+                "description": "Returns the memory tools that can be granted to an MCP share instance (name, description, required scope, category), excluding agent-only tools, plus the named share templates resolved against that catalog. Admin only.",
                 "produces": [
                     "application/json"
                 ],
@@ -35603,6 +35603,12 @@ const docTemplate = `{
         "domain_mcp.CatalogResponse": {
             "type": "object",
             "properties": {
+                "templates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcp.ShareTemplateDTO"
+                    }
+                },
                 "tools": {
                     "type": "array",
                     "items": {
@@ -35913,6 +35919,32 @@ const docTemplate = `{
                 "token": {
                     "description": "Token is the raw API token value — returned only once.",
                     "type": "string"
+                }
+            }
+        },
+        "domain_mcp.ShareTemplateDTO": {
+            "type": "object",
+            "properties": {
+                "default": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "toolCount": {
+                    "type": "integer"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
