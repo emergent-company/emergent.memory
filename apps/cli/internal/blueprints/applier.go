@@ -800,14 +800,84 @@ func (b *Blueprinter) fetchExistingSkills(ctx context.Context) (map[string]*sdks
 // Conversion helpers
 // ──────────────────────────────────────────────
 
+// maxExpandedRelationshipTypesPerPack bounds how many singular relationship
+// definitions one pack may expand into via plural sourceTypes/targetTypes
+// cross-products. The expansion allocates one entry per (source, target) pair,
+// so an unbounded cross-product is a memory-exhaustion vector. This mirrors
+// apps/server/domain/blueprints/apply.go and is enforced before allocation.
+const maxExpandedRelationshipTypesPerPack = 10_000
+
 // relTypeAPI is the JSON shape sent to the server for relationship type schemas.
 // The server requires singular sourceType/targetType string fields.
 type relTypeAPI struct {
-	Name        string `json:"name"`
-	Label       string `json:"label,omitempty"`
-	Description string `json:"description,omitempty"`
-	SourceType  string `json:"sourceType"`
-	TargetType  string `json:"targetType"`
+	Name        string         `json:"name"`
+	Label       string         `json:"label,omitempty"`
+	Description string         `json:"description,omitempty"`
+	SourceType  string         `json:"sourceType"`
+	TargetType  string         `json:"targetType"`
+	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// expandRelationshipTypes expands plural sourceTypes/targetTypes declarations
+// into singular sourceType/targetType entries, mirroring the server's
+// expandRelationshipTypes. A definition with plural endpoints yields the
+// source×target cross-product; one with a missing side passes through
+// unchanged so the server can report the missing field precisely. The total
+// expansion is budget-checked before any allocation.
+func expandRelationshipTypes(defs []RelationshipTypeDef) ([]relTypeAPI, error) {
+	total := int64(0)
+	for i, d := range defs {
+		count := int64(expandedRelationshipTypeCount(d))
+		total += count
+		if total > maxExpandedRelationshipTypesPerPack {
+			ident := d.Name
+			if ident == "" {
+				ident = fmt.Sprintf("#%d", i)
+			}
+			return nil, fmt.Errorf(
+				"relationship types expand to %d definitions, exceeding the limit of %d per pack (definition %q expands to %d); reduce the sourceTypes/targetTypes cross-product",
+				total, maxExpandedRelationshipTypesPerPack, ident, count)
+		}
+	}
+
+	out := make([]relTypeAPI, 0, int(total))
+	for _, d := range defs {
+		srcs := d.GetSourceTypes()
+		tgts := d.GetTargetTypes()
+		if len(srcs) == 0 || len(tgts) == 0 {
+			out = append(out, relTypeAPI{
+				Name:        d.Name,
+				Label:       d.Label,
+				Description: d.Description,
+				SourceType:  d.SourceType,
+				TargetType:  d.TargetType,
+				Properties:  d.Properties,
+			})
+			continue
+		}
+		for _, src := range srcs {
+			for _, tgt := range tgts {
+				out = append(out, relTypeAPI{
+					Name:        d.Name,
+					Label:       d.Label,
+					Description: d.Description,
+					SourceType:  src,
+					TargetType:  tgt,
+					Properties:  d.Properties,
+				})
+			}
+		}
+	}
+	return out, nil
+}
+
+func expandedRelationshipTypeCount(d RelationshipTypeDef) int64 {
+	srcs := d.GetSourceTypes()
+	tgts := d.GetTargetTypes()
+	if len(srcs) == 0 || len(tgts) == 0 {
+		return 1
+	}
+	return int64(len(srcs)) * int64(len(tgts))
 }
 
 // marshalPackSchemas converts the typed ObjectTypes / RelationshipTypes slices
@@ -820,35 +890,20 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 		}
 	}
 	if len(p.RelationshipTypes) > 0 {
-		apiRels := make([]relTypeAPI, len(p.RelationshipTypes))
-		for i, r := range p.RelationshipTypes {
-			src := r.SourceType
-			tgt := r.TargetType
-			// Fall back to plural arrays for backward compat with old YAML format.
-			if src == "" && len(r.SourceTypes) > 0 {
-				src = r.SourceTypes[0]
-			}
-			if tgt == "" && len(r.TargetTypes) > 0 {
-				tgt = r.TargetTypes[0]
-			}
-			apiRels[i] = relTypeAPI{
-				Name:        r.Name,
-				Label:       r.Label,
-				Description: r.Description,
-				SourceType:  src,
-				TargetType:  tgt,
-			}
+		apiRels, expandErr := expandRelationshipTypes(p.RelationshipTypes)
+		if expandErr != nil {
+			return nil, nil, nil, nil, expandErr
 		}
 		relSchemas, err = json.Marshal(apiRels)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("marshal relationshipTypes: %w", err)
 		}
 	}
-	if len(p.UIConfigs) > 0 {
-		uiCfgs = p.UIConfigs
+	if raw := p.UIConfigs.Raw(); len(raw) > 0 {
+		uiCfgs = raw
 	}
-	if len(p.ExtractionPrompts) > 0 {
-		exPrompts = p.ExtractionPrompts
+	if raw := p.ExtractionPrompts.Raw(); len(raw) > 0 {
+		exPrompts = raw
 	}
 	return objSchemas, relSchemas, uiCfgs, exPrompts, nil
 }

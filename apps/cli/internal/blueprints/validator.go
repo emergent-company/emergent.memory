@@ -1,10 +1,13 @@
 package blueprints
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	sdkmodelref "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelref"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaicon"
 )
 
 // ──────────────────────────────────────────────
@@ -204,8 +207,17 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 			r.add(ValidationError, "pack", p.Name, p.SourceFile, "objectTypes", "must define at least one objectType")
 		}
 
+		// Decode the pack-level uiConfigs once. Malformed uiConfigs is a
+		// warning: the server tolerates it and falls back to empty UI metadata,
+		// while --strict opts in to enforcing a well-formed block.
+		packUIConfigs, uiErr := decodePackUIConfigs(p)
+		if uiErr != nil {
+			r.add(ValidationWarning, "pack", p.Name, p.SourceFile, "uiConfigs", uiErr.Error())
+		}
+
 		// Validate each object type.
 		dupObjNames := make(map[string]bool)
+		declaredObjTypes := make(map[string]bool, len(p.ObjectTypes))
 		for i, ot := range p.ObjectTypes {
 			field := fmt.Sprintf("objectTypes[%d]", i)
 			if ot.Name == "" {
@@ -216,10 +228,57 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 						fmt.Sprintf("duplicate objectType name %q", ot.Name))
 				}
 				dupObjNames[ot.Name] = true
+				declaredObjTypes[ot.Name] = true
 			}
 			if ot.Label == "" {
 				r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".label",
 					fmt.Sprintf("objectType %q has no label — UI will fall back to name", ot.Name))
+			}
+			if len(ot.Labels) == 0 {
+				r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".labels",
+					fmt.Sprintf("objectType %q has no labels — search/list grouping may be less useful", ot.Name))
+			}
+
+			ui, uiField := effectiveObjectUI(ot, packUIConfigs, field)
+			if len(ui) == 0 {
+				r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".ui",
+					fmt.Sprintf("objectType %q has no ui metadata — set ui.icon and ui.color (or a pack uiConfigs entry)", ot.Name))
+			} else if len(ot.UI) > 0 {
+				// A pack uiConfigs fallback is validated once in the pack-level
+				// loop below, so it is not reported twice.
+				r.validateUIConfig(p.Name, p.SourceFile, uiField, ot.Name, ui)
+			}
+
+			r.validateProperties(p.Name, p.SourceFile, field+".properties", fmt.Sprintf("objectType %q", ot.Name), ot.Properties)
+
+			if len(ot.Required) > 0 {
+				for j, req := range ot.Required {
+					if _, ok := ot.Properties[req]; !ok {
+						r.add(ValidationWarning, "pack", p.Name, p.SourceFile,
+							fmt.Sprintf("%s.required[%d]", field, j),
+							fmt.Sprintf("objectType %q: required property %q is not declared in properties", ot.Name, req))
+					}
+				}
+			}
+
+			r.validateBehaviorBlock(p.Name, p.SourceFile, field+".embedding", ot.Name, "embedding", ot.Embedding)
+			r.validateBehaviorBlock(p.Name, p.SourceFile, field+".extraction", ot.Name, "extraction", ot.Extraction)
+		}
+
+		// Validate pack-level uiConfigs entries: each is validated like an
+		// inline ui block, and a key naming no declared object type is a
+		// warning (the server otherwise stores it unused).
+		if uiErr == nil {
+			for _, typeName := range sortedMapKeys(packUIConfigs) {
+				cfg := packUIConfigs[typeName]
+				if len(cfg) == 0 {
+					continue
+				}
+				if !declaredObjTypes[typeName] {
+					r.add(ValidationWarning, "pack", p.Name, p.SourceFile, "uiConfigs."+typeName,
+						fmt.Sprintf("uiConfigs entry names %q, which is not an objectType declared by this pack", typeName))
+				}
+				r.validateUIConfig(p.Name, p.SourceFile, "uiConfigs."+typeName, typeName, cfg)
 			}
 		}
 
@@ -267,8 +326,336 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 					}
 				}
 			}
+
+			if rt.Label == "" {
+				r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".label",
+					fmt.Sprintf("relationshipType %q has no label — UI will fall back to name", rt.Name))
+			}
+
+			r.validateProperties(p.Name, p.SourceFile, field+".properties", fmt.Sprintf("relationshipType %q", rt.Name), rt.Properties)
 		}
 	}
+}
+
+// ──────────────────────────────────────────────
+// Object/relationship metadata validation
+// ──────────────────────────────────────────────
+
+// validPropertyTypes is the canonical set of property types the schemas
+// registry and UI understand. Unknown types are a warning rather than an error:
+// the server's coercion is deliberately lenient, and install must not regress
+// for packs that were accepted before this check existed. --strict opts in to
+// enforcing the canonical vocabulary.
+var validPropertyTypes = map[string]bool{
+	"string": true, "number": true, "integer": true, "boolean": true,
+	"date": true, "array": true, "object": true,
+	"url": true, "md5": true, "sha1": true, "sha256": true, "sha512": true,
+}
+
+// stringPropertyTypes are the string-backed property types. They accept string
+// enum values and are the types where a string-shaped declaration makes sense.
+var stringPropertyTypes = map[string]bool{
+	"string": true, "date": true, "url": true,
+	"md5": true, "sha1": true, "sha256": true, "sha512": true,
+}
+
+// decodePackUIConfigs decodes a pack's uiConfigs blob (a map of type name to
+// ui block). A JSON null is treated as absent, matching the server's handling.
+func decodePackUIConfigs(p PackFile) (map[string]map[string]any, error) {
+	raw := p.UIConfigs.Raw()
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("uiConfigs must be an object keyed by object type: %w", err)
+	}
+	out := make(map[string]map[string]any, len(entries))
+	for name, entry := range entries {
+		trimmedEntry := strings.TrimSpace(string(entry))
+		if trimmedEntry == "" || trimmedEntry == "null" {
+			continue
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(entry, &cfg); err != nil {
+			return nil, fmt.Errorf("uiConfigs[%q] must be an object with optional icon/color: %w", name, err)
+		}
+		out[name] = cfg
+	}
+	return out, nil
+}
+
+// effectiveObjectUI returns the ui block the UI will use for a type: the inline
+// objectTypes[].ui block when present, otherwise the pack uiConfigs entry named
+// after the type. The field label points at whichever source won so findings
+// stay actionable.
+func effectiveObjectUI(ot ObjectTypeDef, packUIConfigs map[string]map[string]any, field string) (map[string]any, string) {
+	if len(ot.UI) > 0 {
+		return ot.UI, field + ".ui"
+	}
+	if cfg, ok := packUIConfigs[ot.Name]; ok && len(cfg) > 0 {
+		return cfg, "uiConfigs." + ot.Name
+	}
+	return nil, field + ".ui"
+}
+
+// validateUIConfig checks an inline or pack-level ui block. Missing or
+// non-renderable style metadata is a warning, never an error: the server and UI
+// both fall back to defaults.
+func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeName string, ui map[string]any) {
+	iconRaw, hasIcon := ui["icon"]
+	icon, iconIsString := iconRaw.(string)
+	switch {
+	case !hasIcon:
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".icon",
+			fmt.Sprintf("type %q has no ui.icon — UI will use the default box", typeName))
+	case !iconIsString:
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".icon",
+			fmt.Sprintf("type %q ui.icon must be a string", typeName))
+	case strings.TrimSpace(icon) == "":
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".icon",
+			fmt.Sprintf("type %q has no ui.icon — UI will use the default box", typeName))
+	case !schemaicon.IsRenderable(icon):
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".icon",
+			fmt.Sprintf("type %q ui.icon %q is not in the supported icon catalog — it will render as a generic box", typeName, icon))
+	}
+
+	colorRaw, hasColor := ui["color"]
+	color, colorIsString := colorRaw.(string)
+	switch {
+	case !hasColor:
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".color",
+			fmt.Sprintf("type %q has no ui.color — UI will use the default accent", typeName))
+	case !colorIsString:
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".color",
+			fmt.Sprintf("type %q ui.color must be a string", typeName))
+	case strings.TrimSpace(color) == "":
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".color",
+			fmt.Sprintf("type %q has no ui.color — UI will use the default accent", typeName))
+	case !isHexColor(color):
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".color",
+			fmt.Sprintf("type %q ui.color %q is not a hex color (#RGB, #RRGGBB, or #RRGGBBAA)", typeName, color))
+	}
+}
+
+// isHexColor accepts #RGB, #RRGGBB, and #RRGGBBAA (case-insensitive).
+func isHexColor(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) != 4 && len(s) != 7 && len(s) != 9 {
+		return false
+	}
+	if s[0] != '#' {
+		return false
+	}
+	for _, r := range s[1:] {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validateProperties checks every property definition on an object or
+// relationship type. All findings are warnings: the server's coercion is
+// deliberately lenient and install must not regress, while --strict opts in to
+// enforcing the canonical shape. An array without items is likewise a warning
+// because the element type need not be pinned.
+func (r *ValidationReport) validateProperties(packName, sourceFile, field, owner string, props map[string]any) {
+	for _, propName := range sortedMapKeys(props) {
+		pf := field + "." + propName
+		raw := props[propName]
+		def, ok := toStringAnyMap(raw)
+		if !ok {
+			r.add(ValidationWarning, "pack", packName, sourceFile, pf,
+				fmt.Sprintf("%s property %q must be a mapping (got %T)", owner, propName, raw))
+			continue
+		}
+
+		typ, _ := def["type"].(string)
+		typ = strings.TrimSpace(typ)
+		validType := false
+		switch {
+		case typ == "":
+			r.add(ValidationWarning, "pack", packName, sourceFile, pf+".type",
+				fmt.Sprintf("%s property %q: type is not declared — the server accepts untyped properties, but --strict requires one", owner, propName))
+		case !validPropertyTypes[typ]:
+			r.add(ValidationWarning, "pack", packName, sourceFile, pf+".type",
+				fmt.Sprintf("%s property %q: unknown type %q (canonical: string, number, integer, boolean, date, array, object, url, md5, sha1, sha256, sha512) — the server accepts it leniently, but --strict rejects it", owner, propName, typ))
+			validType = true
+		default:
+			validType = true
+		}
+
+		if enumRaw, ok := def["enum"]; ok {
+			r.validateEnum(packName, sourceFile, pf, owner, propName, typ, validType, enumRaw)
+		}
+
+		if typ == "array" {
+			if items, ok := def["items"]; !ok || items == nil {
+				r.add(ValidationWarning, "pack", packName, sourceFile, pf+".items",
+					fmt.Sprintf("%s property %q is an array without items — element type is unspecified", owner, propName))
+			}
+		}
+
+		for _, bound := range []string{"minimum", "maximum"} {
+			v, ok := def[bound]
+			if !ok {
+				continue
+			}
+			if typ != "number" && typ != "integer" {
+				r.add(ValidationWarning, "pack", packName, sourceFile, pf+"."+bound,
+					fmt.Sprintf("%s property %q: %s is only valid on number/integer properties (type is %q)", owner, propName, bound, typ))
+				continue
+			}
+			if !isNumericValue(v) {
+				r.add(ValidationWarning, "pack", packName, sourceFile, pf+"."+bound,
+					fmt.Sprintf("%s property %q: %s must be numeric", owner, propName, bound))
+			}
+		}
+
+		if embRaw, ok := def["x-embedding-target"]; ok {
+			enabled, isBool := embRaw.(bool)
+			if !isBool || !enabled {
+				r.add(ValidationWarning, "pack", packName, sourceFile, pf+".x-embedding-target",
+					fmt.Sprintf("%s property %q: x-embedding-target must be boolean true when set", owner, propName))
+			} else if typ != "string" {
+				r.add(ValidationWarning, "pack", packName, sourceFile, pf+".x-embedding-target",
+					fmt.Sprintf("%s property %q: x-embedding-target is only meaningful on string properties (type is %q)", owner, propName, typ))
+			}
+		}
+	}
+}
+
+func (r *ValidationReport) validateEnum(packName, sourceFile, field, owner, propName, typ string, validType bool, enumRaw any) {
+	if !validType {
+		return
+	}
+	if typ != "number" && typ != "integer" && typ != "boolean" && !stringPropertyTypes[typ] {
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".enum",
+			fmt.Sprintf("%s property %q: enum is only supported on primitive property types (type is %q)", owner, propName, typ))
+		return
+	}
+	values, ok := enumRaw.([]any)
+	if !ok {
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".enum",
+			fmt.Sprintf("%s property %q: enum must be a non-empty list", owner, propName))
+		return
+	}
+	if len(values) == 0 {
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".enum",
+			fmt.Sprintf("%s property %q: enum must be a non-empty list", owner, propName))
+		return
+	}
+	for i, v := range values {
+		if !enumValueMatches(typ, v) {
+			r.add(ValidationWarning, "pack", packName, sourceFile, fmt.Sprintf("%s.enum[%d]", field, i),
+				fmt.Sprintf("%s property %q: enum value %v does not match property type %q", owner, propName, v, typ))
+		}
+	}
+}
+
+func enumValueMatches(typ string, v any) bool {
+	if stringPropertyTypes[typ] {
+		_, ok := v.(string)
+		return ok
+	}
+	switch typ {
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "number":
+		return isNumericValue(v)
+	case "integer":
+		return isIntegerValue(v)
+	}
+	return false
+}
+
+func isNumericValue(v any) bool {
+	switch n := v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return true
+	case json.Number:
+		_, err := n.Float64()
+		return err == nil
+	}
+	return false
+}
+
+func isIntegerValue(v any) bool {
+	switch n := v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	case float32:
+		return n == float32(int64(n))
+	case float64:
+		return n == float64(int64(n))
+	case json.Number:
+		if _, err := n.Int64(); err == nil {
+			return true
+		}
+		f, err := n.Float64()
+		return err == nil && f == float64(int64(f))
+	}
+	return false
+}
+
+// validateBehaviorBlock checks a type-level embedding/extraction block. Known
+// keys have fixed kinds; an unknown key is left to the server (free-form).
+func (r *ValidationReport) validateBehaviorBlock(packName, sourceFile, field, typeName, blockName string, block map[string]any) {
+	if len(block) == 0 {
+		return
+	}
+	for _, key := range sortedMapKeys(block) {
+		v := block[key]
+		switch key {
+		case "mode", "field":
+			if _, ok := v.(string); !ok {
+				r.add(ValidationWarning, "pack", packName, sourceFile, field+"."+key,
+					fmt.Sprintf("type %q %s.%s must be a string", typeName, blockName, key))
+			}
+		case "enabled":
+			if _, ok := v.(bool); !ok {
+				r.add(ValidationWarning, "pack", packName, sourceFile, field+"."+key,
+					fmt.Sprintf("type %q %s.enabled must be a boolean", typeName, blockName))
+			}
+		}
+	}
+}
+
+// toStringAnyMap normalizes decoded JSON/YAML mappings to map[string]any. YAML
+// may decode into map[any]any in older shapes, so accept both.
+func toStringAnyMap(v any) (map[string]any, bool) {
+	switch m := v.(type) {
+	case map[string]any:
+		return m, true
+	case map[any]any:
+		out := make(map[string]any, len(m))
+		for k, val := range m {
+			ks, ok := k.(string)
+			if !ok {
+				return nil, false
+			}
+			out[ks] = val
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func sortedMapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ──────────────────────────────────────────────
