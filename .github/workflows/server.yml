@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.6'
   # Every Go step in this workflow resolves through apps/server/go.mod alone,
   # never the repo-root go.work. Both images that ship this binary
   # (apps/server/Dockerfile and deploy/self-hosted/Dockerfile.server) copy only

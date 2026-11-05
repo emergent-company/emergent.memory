@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.6'
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only
 # behind the fork guard; keep the checkout token read-only as defense-in-depth.
@@ -67,6 +67,8 @@ jobs:
           # concurrent jobs, which makes the default golangci-lint lock
           # collide ("parallel golangci-lint is running").
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+        # No --allow-parallel-runners flag here: this directory inherits
+        # apps/server/.golangci.yml, which sets run.allow-parallel-runners.
         run: golangci-lint run ./...
 
   test:

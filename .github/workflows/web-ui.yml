@@ -50,7 +50,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.6'
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only
 # behind the fork guard; keep the checkout token read-only as defense-in-depth.
@@ -190,7 +190,7 @@ jobs:
           # Per-job cache dir: the self-hosted runner shares HOME across
           # concurrent jobs, which makes the default golangci-lint lock collide.
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
-        run: golangci-lint run ./...
+        run: golangci-lint run --allow-parallel-runners ./...
 
       # ── Browser install: once, for all four Playwright suites ──────────────
       # This restore cost 51–101 s per job and was paid four times in parallel

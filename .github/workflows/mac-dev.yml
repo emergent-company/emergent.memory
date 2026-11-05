@@ -84,7 +84,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
           # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
           # disk between jobs, so the built-in Actions cache only adds multi-GB
           # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).

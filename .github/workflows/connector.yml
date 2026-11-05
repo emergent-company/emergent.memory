@@ -54,7 +54,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.6'
   SWIFTLINT_VERSION: '0.65.1'
   SWIFTFORMAT_VERSION: '0.63.0'
 
