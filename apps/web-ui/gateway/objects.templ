@@ -117,7 +117,38 @@ func objectsTargetURL(data objectsPageData) string {
 // closed trigger wears it too (see objectsActorFilter), so the picker is the
 // menu variant of the same control rather than an input that happens to sit next
 // to two selects — same height, border, horizontal padding and chevron.
-const objectsFilterSelectClass = "select select-sm"
+//
+// The width is fixed rather than content-derived: three controls that each size
+// to their own longest option make the row jump as filters change, and a long
+// branch name ("extraction/1413e4cf/20fa1f14") would otherwise push everything
+// after it around. The fixed box truncates instead, and the actor picker's menu
+// panel — not the trigger — is what grows to fit its content.
+const objectsFilterSelectClass = "select w-56"
+
+// objectsFilterSelect renders one of the filter row's <select>s: the native
+// control stays in charge (keyboard, long option lists, the OS popup) but sits
+// transparent over a rendered copy of the same chrome, because a <select>'s own
+// painting is the one thing CSS cannot ellipsize — Chrome hard-clips the chosen
+// value even with text-overflow set, so a long branch name ran straight into the
+// chevron. The visible layer truncates with a real ellipsis; the transparent
+// select on top keeps every native behaviour and still submits its own value.
+//
+// The overlay is a child of the visible box, so daisyUI's `.select:focus-within`
+// outline lands on the control the user is keyboard-tabbing through.
+templ objectsFilterSelect(id string, name string, ariaLabel string, label string, preview bool) {
+	<div class={ objectsFilterSelectClass + " relative flex items-center" }>
+		<span class="min-w-0 truncate" aria-hidden="true">{ label }</span>
+		<select
+			id={ id }
+			name={ name }
+			aria-label={ ariaLabel }
+			class="absolute inset-0 size-full cursor-pointer opacity-0"
+			{ objectsFilterAutoApply(preview)... }
+		>
+			{ children... }
+		</select>
+	</div>
+}
 
 // objectsFilterControls holds the filter form's controls: the branch and type
 // dropdowns, the provenance toggle, and the actor picker. Every control applies
@@ -146,22 +177,22 @@ templ objectsFilterControls(data objectsPageData) {
 	}
 	if len(data.Branches) > 0 {
 		@fm.FormControl("objects-filter-branch", "Branch", fm.LabelAbove, "", "", nil) {
-			<select id="objects-filter-branch" name="branch" class={ objectsFilterSelectClass } aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
+			@objectsFilterSelect("objects-filter-branch", "branch", "Branch", objectBranchOptionLabel(data.Branches, data.BranchID), data.Preview) {
 				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
 				for _, b := range data.Branches {
 					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
 				}
-			</select>
+			}
 		}
 	}
 	if len(data.Types) > 0 {
 		@fm.FormControl("objects-filter-type", "Type", fm.LabelAbove, "", "", nil) {
-			<select id="objects-filter-type" name="type" class={ objectsFilterSelectClass } aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
+			@objectsFilterSelect("objects-filter-type", "type", "Object type", objectTypeOptionLabel(data.TypeFilter), data.Preview) {
 				<option value="">All types</option>
 				for _, t := range data.Types {
 					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
 				}
-			</select>
+			}
 		}
 	}
 	if data.Query == "" {
@@ -207,7 +238,6 @@ templ objectsProvenanceFilter(data objectsPageData) {
 			}}
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLabel,
-				Size:       ui.ButtonSM,
 				ExtraClass: extra,
 			}) {
 				<input
@@ -258,7 +288,7 @@ templ objectsActorFilter(data objectsPageData) {
 			role="button"
 			aria-haspopup="menu"
 			aria-label={ "Actor: " + actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }
-			class={ objectsFilterSelectClass + " flex w-64 cursor-pointer items-center gap-2 text-left" }
+			class={ objectsFilterSelectClass + " flex cursor-pointer items-center gap-2 text-left" }
 		>
 			if selected != "" && known {
 				@objectsActorAvatar(current)
@@ -269,7 +299,7 @@ templ objectsActorFilter(data objectsPageData) {
 			}
 			<span class="min-w-0 truncate">{ actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }</span>
 		</div>
-		@ui.DropdownMenu(templ.Attributes{"aria-label": "Actor", "class": "w-72"}) {
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Actor", "class": "w-max min-w-56 max-w-[28rem]"}) {
 			<li role="none">
 				<button
 					type="submit"
