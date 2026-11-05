@@ -230,10 +230,31 @@ type ShareInstanceListResponse struct {
 
 // CreateShareInstanceResponse is returned by create/rotate and includes the raw
 // token value exactly once.
+//
+// EmailsSent lists the invite recipients the new key was queued to, and
+// EmailError describes a delivery problem (email unavailable, queue failure) so
+// a client can tell the share was created but the invite did not go out. Both
+// are empty when no invite was requested.
 type CreateShareInstanceResponse struct {
 	ShareInstanceDTO
-	Token  string `json:"token"`
-	MCPURL string `json:"mcpUrl"`
+	Token      string   `json:"token"`
+	MCPURL     string   `json:"mcpUrl"`
+	EmailsSent []string `json:"emailsSent,omitempty"`
+	EmailError string   `json:"emailError,omitempty"`
+}
+
+// CreateShareInstanceHTTPRequest is the HTTP body for POST .../shares: the
+// instance definition plus the optional invite recipients that receive the
+// one-time key, endpoint, and client snippets by email.
+type CreateShareInstanceHTTPRequest struct {
+	CreateShareInstanceRequest
+	Emails []string `json:"emails,omitempty"`
+}
+
+// RotateShareInstanceHTTPRequest is the optional HTTP body for
+// POST .../shares/:id/rotate. An empty body rotates without sending email.
+type RotateShareInstanceHTTPRequest struct {
+	Emails []string `json:"emails,omitempty"`
 }
 
 // CatalogToolDTO is one includable tool in the catalog endpoint.

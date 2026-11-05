@@ -203,6 +203,11 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 			</div>
 		</div>
 		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/rotate") }>
+			<div class="mb-4">
+				@form.FormControl("mcp-share-rotate-emails-"+inst.ID, "Email the new key to (optional)", form.LabelAbove, "Separate several addresses with commas.", "", nil) {
+					<input id={ "mcp-share-rotate-emails-" + inst.ID } name="emails" type="text" placeholder="alice@example.com" class="input input-sm w-full"/>
+				}
+			</div>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
@@ -289,6 +294,11 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 					}
 					@form.FormControl("mcp-share-description", "Description", form.LabelAbove, "Optional note about who or what this share is for.", "", nil) {
 						<textarea id="mcp-share-description" name="description" rows="2" placeholder="e.g. Read-only access for the analyst bot" class="textarea w-full resize-none">{ data.Description }</textarea>
+					}
+					if !editing {
+						@form.FormControl("mcp-share-emails", "Email the key (optional)", form.LabelAbove, "The key, endpoint, and client setup go to these addresses. Separate several with commas.", data.FieldErrs.Emails, nil) {
+							<input id="mcp-share-emails" name="emails" type="text" value={ data.Emails } placeholder="alice@example.com, bob@example.com" class="input w-full"/>
+						}
 					}
 					@mcpShareToolPicker(data)
 					if data.GeneralErr != nil {
@@ -400,9 +410,11 @@ templ mcpShareRevealModal(r mcpShareReveal) {
 		BundleURL:    r.BundleURL,
 		BundleTestID: "mcp-share-bundle-link",
 		DialogID:     "mcp-share-reveal-modal",
-		Attrs:      templ.Attributes{"data-mcp-share-reveal": "true"},
-		Snippets:   mcpShareSnippetBlocks(r.Snippets),
-		AutoOpen:   true,
+		Attrs:        templ.Attributes{"data-mcp-share-reveal": "true"},
+		Snippets:     mcpShareSnippetBlocks(r.Snippets),
+		AutoOpen:     true,
+		DeliveryNote: mcpShareDeliveryNote(r.EmailsSent),
+		DeliveryWarn: mcpShareDeliveryWarn(r.EmailWarn),
 	})
 }
 
