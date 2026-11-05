@@ -1140,17 +1140,19 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 	// tool gains a runtime-only scope (shareToolAdditionalScopes). Refresh the
 	// bound token before the replacement copies its scopes, so a share created by
 	// an older build heals on rotate. Fail here and the old token is untouched; a
-	// failure after this point leaves a valid, correctly-scoped old token. A nil
-	// allowlist is unrestricted and keeps whatever scopes it already has.
-	if inst.AllowedTools != nil {
+	// failure after this point leaves a valid, correctly-scoped old token. A
+	// zero-length allowlist is unrestricted and keeps whatever scopes it has.
+	if len(inst.AllowedTools) > 0 {
 		s.GetToolDefinitionsForProject(ctx, projectID)
 		scopes, serr := s.scopesForAllowlist(inst.AllowedTools)
-		if serr != nil {
-			return nil, serr
+		if serr == nil {
+			if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
+				return nil, uerr
+			}
 		}
-		if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
-			return nil, uerr
-		}
+		// A stale allowlist (a tool renamed or removed since the share was minted)
+		// must not brick rotation: keeping the existing scopes is worse for that
+		// one tool but keeps the only key the recipient can be given working.
 	}
 
 	// Rotate atomically: the token service revokes the old token, inserts the

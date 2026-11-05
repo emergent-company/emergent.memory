@@ -792,8 +792,44 @@ func TestRotateShareInstanceRefreshesDerivedScopes(t *testing.T) {
 
 	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
 	require.NoError(t, err)
-	assert.Contains(t, tok.updateScopes, "chat:use", "rotation must restore the runtime loopback scope")
-	assert.Contains(t, tok.updateScopes, "search")
+	assert.ElementsMatch(t, []string{"chat:use", "projects:read", "search"}, tok.updateScopes,
+		"rotation must refresh exactly the scopes the allowlist derives")
+	assert.True(t, tok.regenerateCalled)
+}
+
+// TestRotateShareInstanceAbortsWhenScopeRefreshFails: the scope write happens
+// before the regeneration, so a failure leaves the old token untouched rather
+// than revoking it without a usable replacement.
+func TestRotateShareInstanceAbortsWhenScopeRefreshFails(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"search-knowledge"},
+	}
+	tok := &fakeTokenSvc{updateErr: errors.New("boom"), regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.Error(t, err)
+	assert.False(t, tok.regenerateCalled, "the old token must not be revoked when the refresh failed")
+	assert.Equal(t, "old", store.byID["i1"].TokenID)
+}
+
+// TestRotateShareInstanceToleratesStaleAllowlist: a tool renamed or removed
+// since the share was minted must not make the key impossible to rotate.
+func TestRotateShareInstanceToleratesStaleAllowlist(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"entity-search", "tool-renamed-away"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "a stale allowlist keeps the existing scopes")
+	assert.True(t, tok.regenerateCalled)
 }
 
 // TestRotateShareInstanceLeavesUnrestrictedScopesAlone: a nil allowlist means
@@ -808,6 +844,7 @@ func TestRotateShareInstanceLeavesUnrestrictedScopesAlone(t *testing.T) {
 	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
 	require.NoError(t, err)
 	assert.Nil(t, tok.updateScopes, "an unrestricted share keeps its existing scopes")
+	assert.True(t, tok.regenerateCalled)
 }
 
 func TestListShareInstancesIncludesLegacy(t *testing.T) {
