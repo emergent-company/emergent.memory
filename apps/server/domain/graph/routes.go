@@ -50,6 +50,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, g
 	objects.POST("/validate", h.ValidateObject)
 	objects.PUT("/upsert", h.UpsertObject)
 	objects.GET("/:id", h.GetObject)
+	objects.GET("/:id/contributions", h.GetObjectContributions)
 	objects.GET("/:id/similar", h.GetSimilarObjects) // New: similar objects
 	objects.POST("", h.CreateObject)
 	objects.PATCH("/:id", h.PatchObject)
@@ -71,6 +72,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, g
 
 	// Atomic subgraph creation
 	g.POST("/subgraph", h.CreateSubgraph)
+
+	// Source changeset apply: a batch of upserts and withdrawals addressed by the
+	// pushing source's own external ids and revisions (#2376, PR B).
+	g.POST("/changesets", bulkAdmit(gov, h.ApplyChangeset))
 
 	// Reindex missing embeddings (recovery for ingest-without-schema scenarios)
 	g.POST("/reindex-embeddings", bulkAdmit(gov, h.ReindexEmbeddings))

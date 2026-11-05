@@ -8,6 +8,8 @@ on:
       - '.github/workflows/python-sdk.yml'
   pull_request:
     branches: [master, main]
+    # `ready_for_review` is not a default type; the heavy jobs skip drafts.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'sdk/python/**'
       - '.github/workflows/python-sdk.yml'
@@ -30,7 +32,7 @@ jobs:
     # wheels; no C toolchain needed), so this does not depend on the missing
     # host compiler. The fork guard keeps PR-authored code off the
     # persistent runner for forks, matching every other self-hosted job here.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     steps:
       - name: Checkout
@@ -63,7 +65,7 @@ jobs:
 
   typecheck:
     name: Type Check
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     steps:
       - name: Checkout
@@ -93,7 +95,7 @@ jobs:
 
   test:
     name: Test (Python ${{ matrix.python-version }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     strategy:
       fail-fast: false

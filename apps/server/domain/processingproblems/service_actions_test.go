@@ -39,3 +39,36 @@ func TestActionForDocumentParsingIsARetry(t *testing.T) {
 		t.Fatalf("href = %q, want %q", action.Href, want)
 	}
 }
+
+// TestActionForDiscoveryStaysAnOpenUntilItsControlsLand pins the row's shape for
+// a failing discovery run: the panel navigates to the schema area instead of
+// re-running the run itself, because the run's progress, the pack it produced
+// and the retry control all live there (add-schema-discovery-controls, #52/#53).
+//
+// The retry the row offers is the panel's per-row action (the gateway renders it
+// from processingProblemRetry against the same endpoint the card posts to), so
+// this action case has to stay an open link rather than become a second retry.
+// It is pinned because dropping the case would be silent — the row renders
+// Drilldown, so a fall-through to {open, "Open", ""} only shows up as an empty
+// action payload.
+//
+// add-schema-discovery-controls deep-links the anchor: the schema page as a
+// whole is the compiled type browser, so landing at the top left the user
+// hunting for the run the row is about.
+func TestActionForDiscoveryStaysAnOpenUntilItsControlsLand(t *testing.T) {
+	row := problemRow{Queue: QueueDiscovery, JobID: "job-1"}
+
+	action := actionFor(QueueDiscovery, row)
+	if action.Kind != ActionOpen {
+		t.Fatalf("kind = %q, want %q", action.Kind, ActionOpen)
+	}
+	if want := "/schema#discovery"; action.Href != want {
+		t.Fatalf("href = %q, want %q", action.Href, want)
+	}
+	if want := "Open discovery"; action.Label != want {
+		t.Fatalf("label = %q, want %q", action.Label, want)
+	}
+	if want := "/schema#discovery"; drilldownFor(QueueDiscovery, row) != want {
+		t.Fatalf("drilldown = %q, want %s", drilldownFor(QueueDiscovery, row), want)
+	}
+}

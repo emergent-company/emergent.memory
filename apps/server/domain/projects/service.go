@@ -378,6 +378,11 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 		hasUpdates = true
 	}
 
+	if req.AutoDiscoveryEnabled != nil {
+		project.AutoDiscoveryEnabled = *req.AutoDiscoveryEnabled
+		hasUpdates = true
+	}
+
 	if req.AutoExtractConfig != nil {
 		project.AutoExtractConfig = req.AutoExtractConfig
 		hasUpdates = true

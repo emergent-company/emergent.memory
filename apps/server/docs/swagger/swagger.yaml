@@ -735,6 +735,49 @@ definitions:
     - ExecutionModeSuggest
     - ExecutionModeExecute
     - ExecutionModeHybrid
+  domain_agents.AgentObjectRule:
+    properties:
+      canCreate:
+        description: |-
+          CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an
+          explicit false denies the action for this type.
+        type: boolean
+      canDelete:
+        type: boolean
+      canUpdate:
+        type: boolean
+      clearAssigneeOnComplete:
+        description: ClearAssigneeOnComplete nulls the assignee when the item completes.
+        type: boolean
+      fields:
+        description: |-
+          Fields is the writable-property allowlist for this type. Empty means all
+          declared properties are writable.
+        items:
+          type: string
+        type: array
+      objectType:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentWorkStatusConfig'
+        description: |-
+          Status overrides the agent-level phase map for this type. Nil inherits
+          the agent-level map.
+      transitions:
+        description: |-
+          Transitions are the status edges this agent may perform for this type.
+          Empty means the standard terminal edges (any pickup status → done/review/
+          blocked) are allowed.
+        items:
+          $ref: '#/definitions/domain_agents.AgentTransition'
+        type: array
+      triggers:
+        description: Triggers are the (status, prompt) pickup rows for this type.
+        items:
+          $ref: '#/definitions/domain_agents.AgentWorkTrigger'
+        type: array
+    type: object
   domain_agents.AgentQuestionDTO:
     properties:
       agentId:
@@ -993,6 +1036,13 @@ definitions:
       toolName:
         type: string
     type: object
+  domain_agents.AgentTransition:
+    properties:
+      from:
+        type: string
+      to:
+        type: string
+    type: object
   domain_agents.AgentTriggerType:
     enum:
     - schedule
@@ -1029,6 +1079,13 @@ definitions:
     properties:
       failureLimit:
         type: integer
+      objectRules:
+        description: |-
+          ObjectRules carries the per-object-type rules: phase map, write actions,
+          writable fields, pickup triggers with prompts, and the transition matrix.
+        items:
+          $ref: '#/definitions/domain_agents.AgentObjectRule'
+        type: array
       requiresReview:
         type: boolean
       retryPolicy:
@@ -1046,7 +1103,8 @@ definitions:
         description: |-
           TriggerStatuses lists the status values that, when an object transitions
           into one of them, wake this agent (the `status_changed` signal). Defaults
-          to the built-in "ready" status when unset.
+          to the built-in "ready" status when unset. Legacy: used only when
+          ObjectRules declares no trigger rows.
         items:
           type: string
         type: array
@@ -1089,6 +1147,15 @@ definitions:
       review:
         type: string
       revision:
+        type: string
+    type: object
+  domain_agents.AgentWorkTrigger:
+    properties:
+      objectType:
+        type: string
+      prompt:
+        type: string
+      status:
         type: string
     type: object
   domain_agents.BatchTriggerDTO:
@@ -1536,9 +1603,19 @@ definitions:
     properties:
       assignee:
         type: string
+      blockReason:
+        type: string
+      blocked:
+        type: boolean
+      blockedAt:
+        type: string
       canonicalId:
         type: string
+      isWorking:
+        type: boolean
       key:
+        type: string
+      latestRunAgentName:
         type: string
       latestRunFailureClass:
         type: string
@@ -1548,6 +1625,8 @@ definitions:
         type: string
       needsReview:
         type: boolean
+      nextRunAt:
+        type: string
       projectId:
         type: string
       runCount:
@@ -2847,6 +2926,12 @@ definitions:
     type: object
   domain_discoveryjobs.JobListItem:
     properties:
+      cancellable:
+        description: |-
+          Cancellable is the server's answer to "may this job be cancelled now?".
+          A client renders the cancel action from it instead of re-deriving the
+          status set, so the card and the API cannot drift apart.
+        type: boolean
       completed_at:
         type: string
       created_at:
@@ -2857,6 +2942,10 @@ definitions:
       discovered_types:
         items: {}
         type: array
+      document_count:
+        type: integer
+      error_message:
+        type: string
       id:
         type: string
       progress:
@@ -2864,6 +2953,14 @@ definitions:
       schema_id:
         type: string
       status:
+        type: string
+      total_documents:
+        type: integer
+      trigger:
+        description: |-
+          Trigger/scope/document counts describe what the run covered, so a caller
+          can distinguish an automatic sync run from an explicit one and tell the
+          user when the per-run cap limited a project-wide run.
         type: string
     type: object
   domain_discoveryjobs.JobStatusResponse:
@@ -2891,6 +2988,13 @@ definitions:
       status:
         type: string
     type: object
+  domain_discoveryjobs.RetryDiscoveryRequest:
+    properties:
+      batch_size:
+        maximum: 50
+        minimum: 1
+        type: integer
+    type: object
   domain_discoveryjobs.StartDiscoveryRequest:
     properties:
       batch_size:
@@ -2898,12 +3002,20 @@ definitions:
         minimum: 1
         type: integer
       document_ids:
+        description: |-
+          DocumentIDs names the documents to analyse. Required when Scope is empty
+          or DiscoveryScopeDocuments; ignored when Scope is DiscoveryScopeProject.
         items:
           type: string
-        minItems: 1
         type: array
       include_relationships:
         type: boolean
+      limit:
+        description: |-
+          Limit caps a DiscoveryScopeProject run. Zero means the server default;
+          a value above the server cap is clamped to it.
+        minimum: 1
+        type: integer
       max_iterations:
         maximum: 10
         minimum: 1
@@ -2912,13 +3024,28 @@ definitions:
         maximum: 1
         minimum: 0
         type: number
-    required:
-    - document_ids
+      scope:
+        description: |-
+          Scope selects what to analyse: DiscoveryScopeDocuments (default) or
+          DiscoveryScopeProject.
+        enum:
+        - documents
+        - project
+        type: string
     type: object
   domain_discoveryjobs.StartDiscoveryResponse:
     properties:
+      document_count:
+        description: DocumentCount is how many documents this job will analyse.
+        type: integer
       job_id:
         type: string
+      total_documents:
+        description: |-
+          TotalDocuments is how many head documents the project had when the run
+          started. It is larger than DocumentCount when the per-run cap applied, so
+          a caller can tell the user the run covered a subset.
+        type: integer
     type: object
   domain_documents.BulkDeleteRequest:
     properties:
@@ -3218,6 +3345,15 @@ definitions:
           status filter.
         type: integer
     type: object
+  domain_documents.SourceCount:
+    properties:
+      count:
+        type: integer
+      sourceId:
+        type: string
+      sourceType:
+        type: string
+    type: object
   domain_documents.SourceTypeWithCount:
     properties:
       count:
@@ -3438,6 +3574,51 @@ definitions:
         type: object
       type:
         type: string
+    type: object
+  domain_graph.ApplyChangesetRequest:
+    properties:
+      branch_id:
+        description: |-
+          BranchID is the branch every item lands on; absent means the main line.
+          One branch for the whole changeset keeps addressing unambiguous: the same
+          external id legitimately exists once per branch.
+        type: string
+      generation:
+        description: |-
+          Generation is optional. When absent the server allocates the next one for
+          the source; when present it must be greater than the last applied
+          generation, which makes a retried push idempotent at the changeset level.
+        type: integer
+      objects:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetObjectItem'
+        maxItems: 500
+        type: array
+      relationships:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetRelationshipItem'
+        maxItems: 500
+        type: array
+      source_id:
+        type: string
+      withdrawals:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetWithdrawalItem'
+        maxItems: 500
+        type: array
+    required:
+    - source_id
+    type: object
+  domain_graph.ApplyChangesetResponse:
+    properties:
+      generation:
+        type: integer
+      generation_id:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetItemResult'
+        type: array
     type: object
   domain_graph.BranchMergeObjectSummary:
     properties:
@@ -3905,6 +4086,104 @@ definitions:
         type: array
       success:
         type: integer
+    type: object
+  domain_graph.ChangesetItemResult:
+    properties:
+      canonical_id:
+        type: string
+      external_id:
+        type: string
+      kind:
+        type: string
+      outcome:
+        type: string
+      reason:
+        type: string
+      subject_id:
+        type: string
+      version:
+        type: integer
+    type: object
+  domain_graph.ChangesetObjectItem:
+    properties:
+      _ref:
+        maxLength: 128
+        type: string
+      external_id:
+        maxLength: 512
+        type: string
+      external_revision:
+        maxLength: 512
+        type: string
+      external_revision_seq:
+        minimum: 0
+        type: integer
+      key:
+        maxLength: 128
+        type: string
+      labels:
+        items:
+          type: string
+        maxItems: 32
+        type: array
+      properties:
+        additionalProperties: {}
+        type: object
+      status:
+        maxLength: 64
+        type: string
+      type:
+        maxLength: 64
+        type: string
+    required:
+    - external_id
+    - type
+    type: object
+  domain_graph.ChangesetRelationshipItem:
+    properties:
+      dst_id:
+        type: string
+      dst_ref:
+        maxLength: 128
+        type: string
+      external_id:
+        maxLength: 512
+        type: string
+      external_revision:
+        maxLength: 512
+        type: string
+      external_revision_seq:
+        minimum: 0
+        type: integer
+      properties:
+        additionalProperties: {}
+        type: object
+      src_id:
+        type: string
+      src_ref:
+        maxLength: 128
+        type: string
+      type:
+        maxLength: 64
+        type: string
+      weight:
+        type: number
+    required:
+    - external_id
+    - type
+    type: object
+  domain_graph.ChangesetWithdrawalItem:
+    properties:
+      external_id:
+        maxLength: 512
+        type: string
+      subject_kind:
+        enum:
+        - object
+        - relationship
+        type: string
+    required:
+    - external_id
     type: object
   domain_graph.CreateGraphObjectRequest:
     properties:
@@ -4569,6 +4848,19 @@ definitions:
       target_branch_id:
         type: string
     type: object
+  domain_graph.ObjectContributionsResponse:
+    properties:
+      canonical_id:
+        type: string
+      contributions:
+        items:
+          $ref: '#/definitions/domain_graph.ProvenanceContribution'
+        type: array
+      object_id:
+        type: string
+      version:
+        type: integer
+    type: object
   domain_graph.PatchGraphObjectRequest:
     properties:
       assignee:
@@ -4635,6 +4927,37 @@ definitions:
         type: string
       value:
         description: Filter value (omitted for "exists" operator)
+    type: object
+  domain_graph.ProvenanceContribution:
+    properties:
+      branch_id:
+        type: string
+      external_id:
+        type: string
+      external_revision:
+        type: string
+      external_revision_seq:
+        type: integer
+      first_seen_at:
+        type: string
+      id:
+        type: string
+      last_seen_at:
+        type: string
+      merged_from_version_id:
+        type: string
+      project_id:
+        type: string
+      source_id:
+        type: string
+      state:
+        type: string
+      subject_kind:
+        type: string
+      subject_version_id:
+        type: string
+      withdrawn_at:
+        type: string
     type: object
   domain_graph.ReindexEmbeddingsResponse:
     properties:
@@ -5301,7 +5624,7 @@ definitions:
       updatedAt:
         type: string
     type: object
-  domain_mcp.CreateShareInstanceRequest:
+  domain_mcp.CreateShareInstanceHTTPRequest:
     properties:
       agents:
         items:
@@ -5309,6 +5632,10 @@ definitions:
         type: array
       description:
         type: string
+      emails:
+        items:
+          type: string
+        type: array
       name:
         type: string
       tools:
@@ -5322,6 +5649,12 @@ definitions:
         type: string
       description:
         type: string
+      emailError:
+        type: string
+      emailsSent:
+        items:
+          type: string
+        type: array
       id:
         type: string
       isLegacy:
@@ -5393,6 +5726,13 @@ definitions:
       jsonrpc:
         type: string
       result: {}
+    type: object
+  domain_mcp.RotateShareInstanceHTTPRequest:
+    properties:
+      emails:
+        items:
+          type: string
+        type: array
     type: object
   domain_mcp.ShareMCPAccessRequest:
     properties:
@@ -6658,8 +6998,27 @@ definitions:
     type: object
   domain_processingproblems.Failure:
     properties:
+      cause:
+        allOf:
+        - $ref: '#/definitions/domain_processingproblems.FailureCause'
+        description: |-
+          Cause narrows a class to the element that failed, when the classifier can
+          tell. It is empty for classes the copy already describes exactly.
       class:
         $ref: '#/definitions/domain_processingproblems.FailureClass'
+      fix:
+        allOf:
+        - $ref: '#/definitions/domain_processingproblems.FixTarget'
+        description: |-
+          Fix is the page where the recorded cause is fixed, when the product knows
+          one. It is nil for causes with no single destination.
+      model:
+        description: |-
+          Model is the model this project resolves to for the failure's family
+          (routed "instance/model"): the generative model, or the embedding model
+          for an embedding queue. Empty when nothing resolves or the class is
+          unrelated.
+        type: string
       remediation:
         type: string
       retryable:
@@ -6670,7 +7029,27 @@ definitions:
         type: boolean
       summary:
         type: string
+      verified:
+        description: |-
+          Verified reports whether the copy was checked against the project's
+          effective model configuration before being written. A configuration
+          failure with Verified=false is a guess and must read as one.
+        type: boolean
     type: object
+  domain_processingproblems.FailureCause:
+    enum:
+    - no_provider
+    - no_default_model
+    - model_unusable
+    - model_unavailable
+    - base_url
+    type: string
+    x-enum-varnames:
+    - CauseNoProvider
+    - CauseNoDefaultModel
+    - CauseModelUnusable
+    - CauseModelUnavailable
+    - CauseBaseURL
   domain_processingproblems.FailureClass:
     enum:
     - configuration
@@ -6693,6 +7072,13 @@ definitions:
     - ClassLimit
     - ClassInternal
     - ClassUnknown
+  domain_processingproblems.FixTarget:
+    properties:
+      href:
+        type: string
+      label:
+        type: string
+    type: object
   domain_processingproblems.Problem:
     properties:
       action:
@@ -6771,6 +7157,13 @@ definitions:
     type: object
   domain_projects.Project:
     properties:
+      auto_discovery_enabled:
+        description: |-
+          AutoDiscoveryEnabled starts a schema-discovery job after a source sync
+          creates documents (added in migration 00260). It defaults to true so a
+          project keeps the behaviour it had before the flag existed; when false,
+          discovery only runs through the explicit start/retry endpoints.
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -6824,6 +7217,12 @@ definitions:
     type: object
   domain_projects.ProjectDTO:
     properties:
+      auto_discovery_enabled:
+        description: |-
+          AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
+          column defaults to true, so an absent field would read as "off" in a UI
+          that renders a toggle and silently disable discovery for every project.
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -6932,6 +7331,8 @@ definitions:
     type: object
   domain_projects.UpdateProjectRequest:
     properties:
+      auto_discovery_enabled:
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -8510,6 +8911,12 @@ definitions:
         items:
           type: integer
         type: array
+      pendingReview:
+        description: |-
+          PendingReview marks discovery output that is awaiting an explicit
+          install. It is false for a pack created or imported any other way, so a
+          client can tell "proposed by a run" from "unassigned".
+        type: boolean
       projectId:
         type: string
       publishedAt:
@@ -10876,7 +11283,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.89.0
+  version: 0.90.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -13485,6 +13892,11 @@ paths:
         in: query
         name: sourceType
         type: string
+      - description: Filter by connected data source UUID, or 'none' for documents
+          with no source
+        in: query
+        name: sourceId
+        type: string
       - description: Filter by derived status bucket
         enum:
         - processing
@@ -13995,6 +14407,32 @@ paths:
       security:
       - bearerAuth: []
       summary: Get bulk deletion impact
+      tags:
+      - documents
+  /api/documents/source-counts:
+    get:
+      consumes:
+      - application/json
+      description: Returns document counts grouped by connected data source (empty
+        sourceId for direct uploads), for the documents source filter.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/domain_documents.SourceCount'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get document counts by data source
       tags:
       - documents
   /api/documents/source-types:
@@ -14596,6 +15034,53 @@ paths:
       summary: Merge graph branches
       tags:
       - graph
+  /api/graph/changesets:
+    post:
+      consumes:
+      - application/json
+      description: Apply a batch of upserts and withdrawals for one source in a single
+        transaction. Items are addressed by the source's external_id and external_revision_seq;
+        a stale revision is skipped, never applied.
+      parameters:
+      - description: Changeset to apply (max 500 objects, 500 relationships, 500 withdrawals)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.ApplyChangesetRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Applied changeset with one outcome per item
+          schema:
+            $ref: '#/definitions/domain_graph.ApplyChangesetResponse'
+        "400":
+          description: Invalid request, over the per-call cap, or an unresolved reference
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source or branch not found in this project
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Replayed generation or an ownership conflict
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Apply a source changeset
+      tags:
+      - graph
   /api/graph/embedding-policies:
     get:
       consumes:
@@ -15084,6 +15569,50 @@ paths:
       security:
       - bearerAuth: []
       summary: Update graph object
+      tags:
+      - graph
+  /api/graph/objects/{id}/contributions:
+    get:
+      description: Returns the contributions of the object's HEAD version in one call,
+        or of a specific historical version with resolveHead=false. Withdrawn contributions
+        are reported as no longer present.
+      parameters:
+      - description: Object ID or canonical ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Resolve to the current HEAD (default true)
+        in: query
+        name: resolveHead
+        type: string
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Contributions of the requested version
+          schema:
+            $ref: '#/definitions/domain_graph.ObjectContributionsResponse'
+        "400":
+          description: Invalid object id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Object not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List an object's contributions
       tags:
       - graph
   /api/graph/objects/{id}/edges:
@@ -20631,7 +21160,9 @@ paths:
       consumes:
       - application/json
       description: Creates a named MCP share instance bound to a new project API token
-        with the selected tool/agent allowlists. Returns the raw token exactly once.
+        with the selected tool allowlist, and optionally emails the one-time key and
+        client setup snippets to the listed recipients. Returns the raw token exactly
+        once.
       parameters:
       - description: Project ID (UUID)
         in: path
@@ -20643,7 +21174,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/domain_mcp.CreateShareInstanceRequest'
+          $ref: '#/definitions/domain_mcp.CreateShareInstanceHTTPRequest'
       produces:
       - application/json
       responses:
@@ -20660,12 +21191,59 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "422":
-          description: Invalid allowlist
+          description: Invalid allowlist or email address
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
       summary: Create an MCP share instance
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/shares/{id}/rotate:
+    post:
+      consumes:
+      - application/json
+      description: Issues a new key for a share instance, invalidating the previous
+        one, and optionally emails the new key and client setup snippets to the listed
+        recipients. The body may be omitted.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Share instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Optional invite recipients
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_mcp.RotateShareInstanceHTTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcp.CreateShareInstanceResponse'
+        "404":
+          description: Unknown share
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Share is revoked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid email address
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Rotate an MCP share key
       tags:
       - mcp
   /api/projects/{projectId}/mcp/tools:
@@ -21520,6 +22098,39 @@ paths:
       security:
       - bearerAuth: []
       summary: Set a work item status
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/unblock:
+    post:
+      consumes:
+      - application/json
+      description: Clears the durable block, resets the failure budget, and re-enqueues
+        from the current status with an optional note
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unblocked
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "409":
+          description: Not blocked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Unblock a work item
       tags:
       - agents
   /api/projects/{projectId}/work-items/runs:
@@ -27858,6 +28469,55 @@ paths:
       summary: Finalize discovery job
       tags:
       - discovery-jobs
+  /discovery-jobs/{jobId}/retry:
+    post:
+      consumes:
+      - application/json
+      description: Re-runs a finished (completed, failed or cancelled) discovery job
+        over the same documents. The new job records trigger=manual.
+      parameters:
+      - description: Job ID (UUID)
+        in: path
+        name: jobId
+        required: true
+        type: string
+      - description: Optional overrides (batch_size)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_discoveryjobs.RetryDiscoveryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Retry started
+          schema:
+            $ref: '#/definitions/domain_discoveryjobs.StartDiscoveryResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Job not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Job is still running
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Retry a discovery job
+      tags:
+      - discovery-jobs
   /discovery-jobs/projects/{projectId}:
     get:
       consumes:
@@ -28009,8 +28669,9 @@ paths:
       - health
   /invites/accept:
     get:
-      description: Accepts a pending invitation using a token passed as a query parameter.
-        Designed for email invite links. Redirects to login if not authenticated.
+      description: 'Redirects an invitation link to the web UI accept page, which
+        authenticates and presents the accept/decline actions. The link never accepts
+        on its own: a GET triggered by a link prefetcher must not mutate state.'
       parameters:
       - description: Invitation token
         in: query
@@ -28020,23 +28681,17 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
-          description: Acceptance confirmation
-          schema:
-            additionalProperties:
-              type: string
-            type: object
         "302":
-          description: Redirect to login
+          description: Redirect to the web UI accept page
         "400":
           description: Missing token
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Invitation not found or expired
+        "503":
+          description: No web UI host configured
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      summary: Accept invitation via link
+      summary: Invitation link target
       tags:
       - invites
   /openapi.json:

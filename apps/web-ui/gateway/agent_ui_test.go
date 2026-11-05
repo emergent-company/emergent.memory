@@ -210,7 +210,7 @@ func (errTestType) Error() string { return "backend unreachable" }
 // and the create flow's submit hook.
 func TestAgentFormDialogOmitsToolsAndSkills(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil, ""))
 
 	for _, gone := range []string{
 		`id="agent-tools"`, `name="tools"`,
@@ -280,7 +280,7 @@ func TestAgentModelDisplay(t *testing.T) {
 		{ID: "a2", Name: "milo"},
 		{ID: "a3", Name: "reggie"},
 	}
-	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil, ""))
 
 	// both breakpoint wrappers present: table desktop-only, cards mobile-only.
 	for _, want := range []string{`class="hidden md:block"`, `class="md:hidden"`} {
@@ -602,14 +602,12 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	// rail items (Dashboard / Settings / Sandbox / Sessions).
 	settingsNavHrefs := []string{
 		`href="/agents/a1"`, `href="/agents/a1/settings"`,
-		`href="/agents/a1/settings/graph"`,
-		`href="/agents/a1/settings/work"`,
 		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
 		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
 		`href="/agents/a1/settings/mcp"`,
 		`href="/agents/a1/sandbox"`, `href="/agents/a1/sessions"`,
 	}
-	for _, section := range []string{"", "general", "graph", "work", "model", "tools", "skills", "delegation", "mcp"} {
+	for _, section := range []string{"", "general", "model", "tools", "skills", "delegation", "mcp"} {
 		h := render(section)
 		for _, want := range settingsNavHrefs {
 			if !strings.Contains(h, want) {
@@ -849,8 +847,6 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 		href    string
 	}{
 		{"general", settingsParent},
-		{"graph", settingsParent + "/graph"},
-		{"work", settingsParent + "/work"},
 		{"model", settingsParent + "/model"},
 		{"tools", settingsParent + "/tools"},
 		{"skills", settingsParent + "/skills"},

@@ -133,6 +133,7 @@ memory projects get <id>
 
 # Blueprints — declarative project configuration
 memory blueprints validate ./my-config                         # validate before applying
+memory blueprints validate ./my-config --strict                # warnings are fatal
 memory blueprints install ./my-config                          # from local folder
 memory blueprints install https://github.com/org/repo          # from GitHub
 memory blueprints install ./my-config --dry-run                # preview only
@@ -140,6 +141,12 @@ memory blueprints install ./my-config --upgrade                # update existing
 memory blueprints dump ./exported                              # export project graph as seed files
 
 ```
+
+`memory blueprints validate` checks the full schema contract offline: object
+`label`/`labels`, `required` lists, property definitions and types, enums,
+`ui`/`uiConfigs` icon and color metadata, `embedding`/`extraction` blocks, and
+relationship properties. `install` (and `--upgrade`) preserves those same
+fields when applying packs.
 
 A blueprint directory layout:
 

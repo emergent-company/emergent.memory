@@ -527,9 +527,12 @@ func (s *Server) requireSession(next echo.HandlerFunc) echo.HandlerFunc {
 				s.clearSessionCookie(c) // drop tampered/expired/unrecoverable cookies
 			}
 			target := "/auth/login"
-			// Preserve a safe local GET target for the OAuth consent flow across
-			// the sign-in round trip. Other routes keep the historical redirect.
-			if c.Request().Method == http.MethodGet && strings.HasPrefix(c.Request().URL.Path, "/oauth/authorize") && safeLocalPath(c.Request().URL.RequestURI()) != "" {
+			// Preserve a safe local GET target where losing the query string
+			// strands the user: the OAuth consent flow, and an email invite link
+			// (/invites/accept?token=…) whose token cannot be recovered after a
+			// bare sign-in. Other routes keep the historical redirect.
+			if c.Request().Method == http.MethodGet && safeLocalPath(c.Request().URL.RequestURI()) != "" &&
+				(strings.HasPrefix(c.Request().URL.Path, "/oauth/authorize") || c.Request().URL.Path == "/invites/accept") {
 				target += "?return_to=" + url.QueryEscape(c.Request().URL.RequestURI())
 			}
 			return c.Redirect(http.StatusFound, target)

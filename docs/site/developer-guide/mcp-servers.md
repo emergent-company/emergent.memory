@@ -108,6 +108,32 @@ The built-in server exposes tools including:
 
 > See `apps/server/domain/mcp/README.md` for the complete tools, resources, and prompts reference.
 
+### Sharing a scoped key with someone else
+
+To hand an outside client — a teammate's agent, a partner, a demo — access to
+one project without giving it your own token, create a **share**: a named key
+bound to the exact tools you choose.
+
+**In the web UI:** Settings → MCP Servers → **Sharing** →
+**New share**. Name the share, tick the tools it may call, and optionally enter
+one or more email addresses under **Email the key**. Each recipient receives the
+endpoint, the key, and ready-to-paste client configs; the sender is named in the
+email.
+
+The key is shown to *you* exactly once, on the creation screen. If you also
+entered recipients, they have their own copy; otherwise copy it before closing
+the dialog. Later, **Rotate** issues a new key (the old one stops working
+immediately) and its dialog offers the same optional email field, which is the
+recovery path when a recipient loses theirs.
+
+**From the CLI:** `memory projects share-mcp --project my-project
+--email alice@example.com` does the same through the legacy share endpoint and
+mints one key per recipient.
+
+Sharing only ever narrows access: a share token carries just the scopes its
+selected tools require, so it cannot reach project administration or other
+projects.
+
 ### Brave Search integration
 
 The built-in server includes a `brave_web_search` tool backed by the Brave Search API. The API key can be set globally (via environment variable) or overridden per-org or per-project — see [Built-in tool configuration](#built-in-tool-configuration) below.

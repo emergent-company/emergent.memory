@@ -59,8 +59,6 @@ templ agentSettingsNavGroup(agentID string, section string) {
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
 		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
-			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/graph", section == "graph", "lucide--git-branch", "Graph")
-			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/work", section == "work", "lucide--list-checks", "Work")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")

@@ -169,29 +169,38 @@ type fakeMemory struct {
 	documentStatusCounts   DocumentStatusCounts
 	documentsNextCursor    string
 	lastDocumentListParams DocumentListParams // params of the last ListDocuments call
-	docSourceTypes         []DocumentSourceType
-	docSourceTypesErr      error
-	extractErr             error               // CreateExtractionJob failure
-	uploaded               []string            // filenames received via UploadDocument
-	uploadResult           *UploadResult       // non-nil overrides the UploadDocument result
-	extracted              []string            // document ids passed to CreateExtractionJob
-	deletedDocuments       []string            // document ids passed to DeleteDocument, in order
-	deleteDocErr           error               // DeleteDocument failure
-	summary                *ExtractionSummary  // returned by GetExtractionSummary
-	docContent             *string             // returned by GetDocumentContent (nil → "")
-	objects                []GraphObject       // returned by ListExtractionObjects
-	lookupObjects          []GraphObject       // returned by LookupGraphObjectByKey
-	lookupErr              error               // LookupGraphObjectByKey failure
-	lastLookupType         string              // last typeFilter passed to LookupGraphObjectByKey
-	lastLookupKey          string              // last key passed to LookupGraphObjectByKey
-	relns                  []GraphRelationship // returned by ListRelationships
-	branches               []Branch            // returned by ListBranches
-	extractionJobs         []ExtractionJob     // returned by ListExtractionJobs
-	extractionJobsErr      error               // ListProjectExtractionJobs failure
-	extractionJob          *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
-	downloadDocBody        []byte              // raw bytes returned by DownloadDocument
-	downloadDocCT          string              // Content-Type returned by DownloadDocument
-	downloadDocErr         error               // DownloadDocument failure
+	docSourceCounts        []DocumentSourceCount
+	docSourceCountsErr     error
+
+	// schema discovery (Schema page card + per-document trigger)
+	discoveryJobs      []discoveryJob
+	discoveryErr       error
+	discoveryStarted   int      // project-wide starts
+	discoveryDocStarts []string // document ids passed to StartDocumentDiscovery
+	discoveryRetries   []string // job ids passed to RetryDiscoveryJob
+	discoveryCancels   []string // job ids passed to CancelDiscoveryJob
+	discoveryStartErr  error
+	extractErr         error               // CreateExtractionJob failure
+	uploaded           []string            // filenames received via UploadDocument
+	uploadResult       *UploadResult       // non-nil overrides the UploadDocument result
+	extracted          []string            // document ids passed to CreateExtractionJob
+	deletedDocuments   []string            // document ids passed to DeleteDocument, in order
+	deleteDocErr       error               // DeleteDocument failure
+	summary            *ExtractionSummary  // returned by GetExtractionSummary
+	docContent         *string             // returned by GetDocumentContent (nil → "")
+	objects            []GraphObject       // returned by ListExtractionObjects
+	lookupObjects      []GraphObject       // returned by LookupGraphObjectByKey
+	lookupErr          error               // LookupGraphObjectByKey failure
+	lastLookupType     string              // last typeFilter passed to LookupGraphObjectByKey
+	lastLookupKey      string              // last key passed to LookupGraphObjectByKey
+	relns              []GraphRelationship // returned by ListRelationships
+	branches           []Branch            // returned by ListBranches
+	extractionJobs     []ExtractionJob     // returned by ListExtractionJobs
+	extractionJobsErr  error               // ListProjectExtractionJobs failure
+	extractionJob      *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
+	downloadDocBody    []byte              // raw bytes returned by DownloadDocument
+	downloadDocCT      string              // Content-Type returned by DownloadDocument
+	downloadDocErr     error               // DownloadDocument failure
 	// Document version history (GET /api/documents/:id/versions).
 	documentVersions    []DocumentVersion
 	documentVersionsErr error
@@ -405,6 +414,10 @@ type fakeMemory struct {
 
 	schemas []SchemaInfo
 	schema  *BlueprintSchema
+	// schemasByID, when non-nil, is the schema catalog: a lookup for an id it
+	// does not hold fails, which is how the in-memory API answers for a pack the
+	// project does not have.
+	schemasByID map[string]*BlueprintSchema
 
 	// schema pack mutations (design D1).
 	createdSchemaPack     *SchemaPackWriteRequest // last CreateSchemaPack req
@@ -586,6 +599,7 @@ type fakeMemory struct {
 	createInviteID    int                   // id counter for created invites
 	createInviteErr   error                 // failure for CreateInvite
 	acceptedTokens    []string              // tokens passed to AcceptInvite
+	acceptInviteErr   error                 // AcceptInvite failure (e.g. 403 for another account)
 	pendingInvites    []PendingInviteDto    // returned by ListPendingInvites
 	declinedInvite    string                // last invite id passed to DeclineInvite
 	declineInviteErr  error                 // failure for DeclineInvite
@@ -609,6 +623,7 @@ type fakeMemory struct {
 	apiTokens               []APIToken        // project-scoped store
 	apiTokenSecrets         map[string]string // plaintext per token id
 	apiTokenErr             error             // failure for any project api-token method
+	apiTokenScopesErr       error             // failure for UpdateAPITokenScopes only
 	apiTokenRevealPlaintext bool              // GetAPIToken returns plaintext when true (encryption configured)
 	lastAPITokenID          string            // last project token id passed to any api-token op
 	lastAPITokenScopes      []string          // scopes of the last create/update/regenerate
@@ -1100,7 +1115,7 @@ func (f *fakeMemory) UpdateMCPShareInstance(ctx context.Context, id string, in *
 
 func (f *fakeMemory) RevokeMCPShareInstance(ctx context.Context, id string) error { return nil }
 
-func (f *fakeMemory) RotateMCPShareInstance(ctx context.Context, id string) (*MCPShareCreated, error) {
+func (f *fakeMemory) RotateMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareCreated, error) {
 	return &MCPShareCreated{}, nil
 }
 
@@ -1253,12 +1268,55 @@ func (f *fakeMemory) ListDocuments(ctx context.Context, params DocumentListParam
 	}, nil
 }
 
-func (f *fakeMemory) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
-	f.recordCatalog("ListDocumentSourceTypes")
-	if f.docSourceTypesErr != nil {
-		return nil, f.docSourceTypesErr
+func (f *fakeMemory) ListDiscoveryJobs(ctx context.Context) ([]discoveryJob, error) {
+	if f.discoveryErr != nil {
+		return nil, f.discoveryErr
 	}
-	return f.docSourceTypes, nil
+	return f.discoveryJobs, nil
+}
+
+func (f *fakeMemory) StartProjectDiscovery(ctx context.Context) (*DiscoveryStartResult, error) {
+	if f.discoveryStartErr != nil {
+		return nil, f.discoveryStartErr
+	}
+	f.discoveryStarted++
+	return &DiscoveryStartResult{
+		JobID:          "job-project",
+		DocumentCount:  len(f.documents),
+		TotalDocuments: f.documentsTotal,
+	}, nil
+}
+
+func (f *fakeMemory) StartDocumentDiscovery(ctx context.Context, documentID string) (*DiscoveryStartResult, error) {
+	if f.discoveryStartErr != nil {
+		return nil, f.discoveryStartErr
+	}
+	f.discoveryDocStarts = append(f.discoveryDocStarts, documentID)
+	return &DiscoveryStartResult{JobID: "job-document", DocumentCount: 1, TotalDocuments: 1}, nil
+}
+
+func (f *fakeMemory) RetryDiscoveryJob(ctx context.Context, jobID string) (*DiscoveryStartResult, error) {
+	if f.discoveryStartErr != nil {
+		return nil, f.discoveryStartErr
+	}
+	f.discoveryRetries = append(f.discoveryRetries, jobID)
+	return &DiscoveryStartResult{JobID: "job-retry"}, nil
+}
+
+func (f *fakeMemory) CancelDiscoveryJob(ctx context.Context, jobID string) error {
+	if f.discoveryStartErr != nil {
+		return f.discoveryStartErr
+	}
+	f.discoveryCancels = append(f.discoveryCancels, jobID)
+	return nil
+}
+
+func (f *fakeMemory) ListDocumentSourceCounts(ctx context.Context) ([]DocumentSourceCount, error) {
+	f.recordCatalog("ListDocumentSourceCounts")
+	if f.docSourceCountsErr != nil {
+		return nil, f.docSourceCountsErr
+	}
+	return f.docSourceCounts, nil
 }
 
 func (f *fakeMemory) GetDocument(ctx context.Context, id string) (*Document, error) {
@@ -1951,6 +2009,12 @@ func (f *fakeMemory) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error) {
 func (f *fakeMemory) GetSchema(ctx context.Context, packID string) (*BlueprintSchema, error) {
 	if f.blueprintErr != nil {
 		return nil, f.blueprintErr
+	}
+	if f.schemasByID != nil {
+		if s, ok := f.schemasByID[packID]; ok {
+			return s, nil
+		}
+		return nil, fmt.Errorf("schema %s not found", packID)
 	}
 	if f.schema != nil {
 		return f.schema, nil
@@ -3838,7 +3902,7 @@ func (f *fakeMemory) CreateInvite(ctx context.Context, in CreateInviteDto) (*Inv
 
 func (f *fakeMemory) AcceptInvite(ctx context.Context, token string) error {
 	f.acceptedTokens = append(f.acceptedTokens, token)
-	return nil
+	return f.acceptInviteErr
 }
 
 func (f *fakeMemory) ListPendingInvites(ctx context.Context) ([]PendingInviteDto, error) {
@@ -4089,6 +4153,9 @@ func (f *fakeMemory) GetAPIToken(ctx context.Context, tokenID string) (*APIToken
 func (f *fakeMemory) UpdateAPITokenScopes(ctx context.Context, tokenID string, scopes []string) (*APIToken, error) {
 	if f.apiTokenErr != nil {
 		return nil, f.apiTokenErr
+	}
+	if f.apiTokenScopesErr != nil {
+		return nil, f.apiTokenScopesErr
 	}
 	i := fakeAPITokenFind(f.apiTokens, tokenID)
 	if i < 0 {

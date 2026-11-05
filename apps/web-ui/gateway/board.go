@@ -195,12 +195,10 @@ func (s *Server) boardStatusMap(ctx context.Context) boardStatusMap {
 	return boardStatusMapFromDefinitions(defs)
 }
 
-// boardStatusesFromCompiled derives the board lane order from the compiled
-// schema's board-enabled object types, in declaration order, de-duplicated
-// first-seen. Shadowed (losing) duplicates are skipped — same as every other
-// compiled-type consumer (visibleCompiledTypes) — so an overridden board type
-// cannot leak stale lane statuses. Non-board types and empty entries are
-// skipped. Returns nil when no board-enabled type declares any statuses.
+// boardStatusesFromCompiled derives the canonical global board lane order from
+// the compiled schema's board-enabled object types (union, declaration order,
+// de-duplicated first-seen). The agent-scoped Work board uses per-type lanes via
+// boardLanesForType instead.
 func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
 	if compiled == nil {
 		return nil
@@ -223,6 +221,91 @@ func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
 		}
 	}
 	return out
+}
+
+// boardTypesFromCompiled returns the visible board-enabled object types in
+// deterministic (alphabetical) order.
+func boardTypesFromCompiled(compiled *CompiledSchemaTypes) []CompiledType {
+	if compiled == nil {
+		return nil
+	}
+	var out []CompiledType
+	for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
+		if t.BoardEnabled {
+			out = append(out, t)
+		}
+	}
+	sortCompiledTypesByName(out)
+	return out
+}
+
+// boardLanesForType returns one type's lane order: its declared allowedStatuses
+// (declaration order, de-duplicated), falling back to the canonical order.
+func boardLanesForType(t CompiledType) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, s := range t.AllowedStatuses {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return append([]string(nil), boardStatusOrder...)
+	}
+	return out
+}
+
+// boardSwimlane is one object type's stacked row: its lanes plus the item count.
+type boardSwimlane struct {
+	Type  string
+	Lanes []boardLane
+	Count int
+}
+
+// buildBoardSwimlanes groups items into one stacked swimlane per object type.
+// Types are alphabetical; a type with no items is omitted. Item-only statuses
+// stay as extra lanes within their own type.
+func buildBoardSwimlanes(items []WorkItem, compiled *CompiledSchemaTypes) []boardSwimlane {
+	byType := make(map[string][]WorkItem)
+	for _, it := range items {
+		byType[it.Type] = append(byType[it.Type], it)
+	}
+	var out []boardSwimlane
+	seen := make(map[string]bool)
+	for _, t := range boardTypesFromCompiled(compiled) {
+		seen[t.Name] = true
+		its := byType[t.Name]
+		if len(its) == 0 {
+			continue
+		}
+		out = append(out, boardSwimlane{Type: t.Name, Lanes: buildBoardColumns(its, boardLanesForType(t)), Count: len(its)})
+	}
+	var extra []string
+	for typ := range byType {
+		if !seen[typ] {
+			extra = append(extra, typ)
+		}
+	}
+	sort.Strings(extra)
+	for _, typ := range extra {
+		out = append(out, boardSwimlane{Type: typ, Lanes: buildBoardColumns(byType[typ], nil), Count: len(byType[typ])})
+	}
+	return out
+}
+
+// RuleFor returns the definition's rule for an object type, or nil.
+func (w *AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
+	if w == nil {
+		return nil
+	}
+	for i := range w.ObjectRules {
+		if w.ObjectRules[i].ObjectType == objectType {
+			return &w.ObjectRules[i]
+		}
+	}
+	return nil
 }
 
 // buildBoardColumns groups items into columns by status in the schema-declared
@@ -375,6 +458,11 @@ func (s *Server) boardSchema(ctx context.Context) ([]string, boardAllowances) {
 		return nil, nil
 	}
 	return boardStatusesFromCompiled(compiled), boardAllowancesFromCompiled(compiled)
+}
+
+// uiBoardRedirect sends the legacy /board route to the global Work board.
+func (s *Server) uiBoardRedirect(c echo.Context) error {
+	return c.Redirect(308, "/work/board")
 }
 
 // uiBoard renders the Kanban board page. A failed fetch renders the whole-page

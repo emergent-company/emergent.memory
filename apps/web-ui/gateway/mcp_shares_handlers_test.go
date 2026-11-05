@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -32,11 +33,12 @@ type mcpShareTestBackend struct {
 	revokeErr error
 	rotateErr error
 
-	lastCreate   *MCPShareInput
-	lastUpdateID string
-	lastUpdate   *MCPShareInput
-	lastRevokeID string
-	lastRotateID string
+	lastCreate       *MCPShareInput
+	lastUpdateID     string
+	lastUpdate       *MCPShareInput
+	lastRevokeID     string
+	lastRotateID     string
+	lastRotateEmails []string
 }
 
 func newMCPShareTestBackend(shares []MCPShareInstance, catalog []MCPShareTool) *mcpShareTestBackend {
@@ -96,10 +98,14 @@ func (b *mcpShareTestBackend) CreateMCPShareInstance(ctx context.Context, in *MC
 		CreatedAt: "2026-02-01T00:00:00Z", ToolCount: len(in.Tools),
 	}
 	b.shares = append(b.shares, inst)
-	return &MCPShareCreated{
+	created := &MCPShareCreated{
 		MCPShareInstance: inst,
 		MCPShareSecret:   MCPShareSecret{Token: "emt_new_secret", MCPURL: b.shareURL()},
-	}, nil
+	}
+	if len(in.Emails) > 0 {
+		created.EmailsSent = append([]string(nil), in.Emails...)
+	}
+	return created, nil
 }
 
 func (b *mcpShareTestBackend) GetMCPShareInstance(ctx context.Context, id string) (*MCPShareInstance, error) {
@@ -155,11 +161,12 @@ func (b *mcpShareTestBackend) RevokeMCPShareInstance(ctx context.Context, id str
 	return nil
 }
 
-func (b *mcpShareTestBackend) RotateMCPShareInstance(ctx context.Context, id string) (*MCPShareCreated, error) {
+func (b *mcpShareTestBackend) RotateMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareCreated, error) {
 	if b.rotateErr != nil {
 		return nil, b.rotateErr
 	}
 	b.lastRotateID = id
+	b.lastRotateEmails = emails
 	inst := b.find(id)
 	if inst == nil {
 		return nil, fmt.Errorf("memory 404 not found")
@@ -167,6 +174,7 @@ func (b *mcpShareTestBackend) RotateMCPShareInstance(ctx context.Context, id str
 	return &MCPShareCreated{
 		MCPShareInstance: *inst,
 		MCPShareSecret:   MCPShareSecret{Token: "emt_rot_secret", MCPURL: b.shareURL()},
+		EmailsSent:       emails,
 	}, nil
 }
 
@@ -327,6 +335,7 @@ func TestMCPShareNewPageRendersToolPicker(t *testing.T) {
 	for _, want := range []string{
 		"New MCP share", `action="/settings/mcp-servers/shares/new"`,
 		`name="name"`, `name="description"`,
+		`name="emails"`, "Email the key (optional)",
 		`data-mcp-tool-search`, `data-mcp-tool-select-all`, `data-mcp-tool-clear`,
 		`data-mcp-tool-group`, `name="tools" value="search_memory"`, `name="tools" value="create_agent"`,
 		"Memory", "Agents",
@@ -451,6 +460,98 @@ func TestMCPShareCreateValidationInline(t *testing.T) {
 	}
 }
 
+// --- invite email ---
+
+func TestMCPShareParseEmails(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		{"", nil},
+		{"  ", nil},
+		{"alice@example.com", []string{"alice@example.com"}},
+		{" alice@example.com , bob@example.com\n", []string{"alice@example.com", "bob@example.com"}},
+		{"alice@example.com;ALICE@example.com  carol@example.com", []string{"alice@example.com", "carol@example.com"}},
+	}
+	for _, tc := range cases {
+		got := mcpShareParseEmails(tc.raw)
+		if len(got) != len(tc.want) {
+			t.Fatalf("mcpShareParseEmails(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("mcpShareParseEmails(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		}
+	}
+}
+
+func TestMCPShareCreateInvitesRecipients(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new",
+		"name=research3&tools=search_memory&emails="+url.QueryEscape("alice@example.com, bob@example.com"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d, want 200 reveal render", rec.Code)
+	}
+	if len(f.lastCreate.Emails) != 2 || f.lastCreate.Emails[0] != "alice@example.com" || f.lastCreate.Emails[1] != "bob@example.com" {
+		t.Fatalf("create input emails = %v", f.lastCreate.Emails)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Key emailed to 2 recipients: alice@example.com, bob@example.com.") {
+		t.Error("reveal does not confirm the invite recipients")
+	}
+}
+
+func TestMCPShareCreateRejectsInvalidEmailInline(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new",
+		"name=research4&tools=search_memory&emails=not-an-email")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Not a valid email address: not-an-email") {
+		t.Fatalf("invalid-email create = %d, want inline email error", rec.Code)
+	}
+	if len(f.shares) != 0 {
+		t.Fatalf("invalid email must not create a share, store = %+v", f.shares)
+	}
+}
+
+func TestMCPShareRotateInvitesRecipients(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/rotate",
+		"emails="+url.QueryEscape("carol@example.com"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate = %d, want 200 reveal render", rec.Code)
+	}
+	if len(f.lastRotateEmails) != 1 || f.lastRotateEmails[0] != "carol@example.com" {
+		t.Fatalf("rotate emails = %v", f.lastRotateEmails)
+	}
+	if !strings.Contains(rec.Body.String(), "Key emailed to carol@example.com.") {
+		t.Error("rotate reveal does not confirm the invite recipient")
+	}
+}
+
+func TestMCPShareRotateRejectsInvalidEmail(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/rotate", "emails=nope")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("rotate with invalid email = %d, want redirect back to the list", rec.Code)
+	}
+	if f.lastRotateID != "" {
+		t.Error("rotate must not run with an invalid invite list")
+	}
+}
+
 func TestMCPShareCreateTestIdMarkers(t *testing.T) {
 	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
 	s := &Server{cfg: Config{}, memory: f}
@@ -486,6 +587,10 @@ func TestMCPShareEditPagePrefills(t *testing.T) {
 	}
 	if strings.Contains(body, `name="agents"`) {
 		t.Error("edit page must not render the agent picker")
+	}
+	// The invite field only exists where a key is minted.
+	if strings.Contains(body, `name="emails"`) {
+		t.Error("edit page must not render the invite-recipient field")
 	}
 }
 
@@ -637,6 +742,29 @@ func TestMCPShareJSONCreateReturnsTokenOnce(t *testing.T) {
 	// the snippet map embeds the key + endpoint
 	if !strings.Contains(body, "Bearer emt_new_secret") {
 		t.Error("create response snippets must include the key")
+	}
+	// no invite list ⇒ no delivery fields, so a client cannot mistake "email
+	// unavailable" for "asked and failed"
+	for _, absent := range []string{`"emailsSent"`, `"emailError"`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("create without recipients must omit %s: %s", absent, body)
+		}
+	}
+}
+
+func TestMCPShareJSONCreateReportsInviteDelivery(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares",
+		`{"name":"api share","tools":["search_memory"],"emails":["alice@example.com"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/mcp-shares = %d, want 201", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"emailsSent":["alice@example.com"]`) {
+		t.Errorf("create response must report the invite recipients: %s", body)
 	}
 }
 

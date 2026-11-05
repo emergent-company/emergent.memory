@@ -63,6 +63,9 @@ const (
 	// StreamEventA2UI is emitted when the agent produces declarative A2UI
 	// surface messages (structured cards) in a ```a2ui fenced block.
 	StreamEventA2UI
+	// StreamEventSubagent is emitted when a child/sub-agent run starts or
+	// finishes, projecting its lifecycle onto the parent run's stream.
+	StreamEventSubagent
 )
 
 // StreamEvent is a single event emitted during agent execution via StreamCallback.
@@ -90,12 +93,83 @@ type StreamEvent struct {
 	// "completed", "error", or "awaiting_confirmation". It is carried explicitly
 	// (rather than inferred from Error) so a paused/blocked tool is reported
 	// faithfully instead of as success.
+	//
+	// For StreamEventSubagent it is one of
+	// "queued", "running", "completed", "failed", "paused", "canceled".
 	Status string
+	// For StreamEventSubagent: SubagentID is stable for one subagent across its
+	// updates (the child run id once known, else a synthetic spawn id);
+	// ParentRunID is the parent run that spawned it; RunID is the child run id
+	// when known; AgentName and Task describe the spawned subagent.
+	SubagentID  string
+	ParentRunID string
+	RunID       string
+	AgentName   string
+	Task        string
 }
 
 // StreamCallback is an optional function invoked for each streaming event during execution.
 // When set on ExecuteRequest, it enables real-time streaming of text tokens and tool calls.
 type StreamCallback func(event StreamEvent)
+
+// SubagentUpdate is one projected child-run lifecycle update. ID is stable for
+// one subagent across updates (the child run id once known, otherwise a
+// synthetic spawn id). Status is queued|running|completed|failed|paused|canceled.
+type SubagentUpdate struct {
+	ID          string
+	ParentRunID string
+	RunID       string
+	AgentName   string
+	Task        string
+	Status      string
+	Error       string
+}
+
+// SubagentEmitter projects a child-run lifecycle update onto the parent
+// stream. Implementations must be safe for concurrent use: parallel spawns emit
+// concurrently.
+type SubagentEmitter func(SubagentUpdate)
+
+// newStreamSubagentEmitter adapts a parent StreamCallback into a serialized
+// SubagentEmitter. The mutex is required because parallel spawns emit
+// concurrently while a chat SSE writer is not concurrency-safe.
+func newStreamSubagentEmitter(cb StreamCallback) SubagentEmitter {
+	if cb == nil {
+		return nil
+	}
+	var mu sync.Mutex
+	return func(u SubagentUpdate) {
+		mu.Lock()
+		defer mu.Unlock()
+		cb(StreamEvent{
+			Type:        StreamEventSubagent,
+			Status:      u.Status,
+			Error:       u.Error,
+			SubagentID:  u.ID,
+			ParentRunID: u.ParentRunID,
+			RunID:       u.RunID,
+			AgentName:   u.AgentName,
+			Task:        u.Task,
+		})
+	}
+}
+
+// subagentEmitterKey is the context key carrying a run's subagent emitter so
+// tools that dispatch child runs (e.g. trigger_agent) can project their
+// lifecycle without holding a direct reference to the parent StreamCallback.
+type subagentEmitterKey struct{}
+
+// ContextWithSubagentEmitter stores a subagent emitter in the context.
+func ContextWithSubagentEmitter(ctx context.Context, emit SubagentEmitter) context.Context {
+	return context.WithValue(ctx, subagentEmitterKey{}, emit)
+}
+
+// SubagentEmitterFromContext returns the context's subagent emitter, or nil
+// when the run has no parent stream.
+func SubagentEmitterFromContext(ctx context.Context) SubagentEmitter {
+	emit, _ := ctx.Value(subagentEmitterKey{}).(SubagentEmitter)
+	return emit
+}
 
 // redactToolArgs returns a copy of the tool arguments for audit storage. Values
 // are preserved so a human reviewer sees exactly what the agent proposed, except
@@ -493,6 +567,12 @@ type ExecuteRequest struct {
 	TriggerMetadata map[string]any
 	StreamCallback  StreamCallback // Optional: enables streaming of text deltas and tool call events
 	Model           string         // Optional per-run model override; takes precedence over AgentDefinition.Model
+
+	// OnRunCreated, when set, is invoked synchronously with the run ID
+	// immediately after the run row is created (or reused via PreCreatedRun).
+	// Coordination uses it to project a child subagent's "running" lifecycle
+	// event to the parent stream before execution proceeds.
+	OnRunCreated func(runID string)
 
 	// SubjectObjectID/SubjectObjectType identify the reaction target for this
 	// execution. The reaction dispatcher sets them from the trusted event target;
@@ -1001,6 +1081,12 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
+	// Notify the caller as soon as the run row exists so a parent run can
+	// project the child's "running" lifecycle to its stream.
+	if req.OnRunCreated != nil {
+		req.OnRunCreated(run.ID)
+	}
+
 	// Link to session if provided via request (e.g. trigger_agent sync path).
 	if req.SessionID != "" {
 		run.SessionID = &req.SessionID
@@ -1450,6 +1536,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resumed run: %w", err)
 		}
+	}
+
+	// Notify the caller as soon as the resumed run row exists so a parent run
+	// can project the child's "running" lifecycle to its stream.
+	if req.OnRunCreated != nil {
+		req.OnRunCreated(newRun.ID)
 	}
 
 	// Transition the prior paused run to running so it no longer appears stuck.
@@ -2183,6 +2275,13 @@ func (ae *AgentExecutor) runPipeline(
 	// happened to carry — a resume or re-wake must never upgrade trust.
 	req.TrustedInternal = run.TrustedInternal
 
+	// Expose the parent stream's subagent emitter to tools that dispatch child
+	// runs (trigger_agent), so their lifecycle can be projected onto the same
+	// chat stream as spawned children.
+	if req.StreamCallback != nil {
+		ctx = ContextWithSubagentEmitter(ctx, newStreamSubagentEmitter(req.StreamCallback))
+	}
+
 	// Propagate the trust marker into the context so the in-process tool dispatch
 	// (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary consistently
 	// with the HTTP transports. The marker is fail-closed: it is true only for
@@ -2401,7 +2500,7 @@ func (ae *AgentExecutor) runPipeline(
 	}
 
 	// Add coordination tools (spawn_agents, list_available_agents) for top-level or opted-in agents
-	coordTools, coordDeps, err := ae.buildCoordinationTools(req, run.ID)
+	coordTools, coordDeps, err := ae.buildCoordinationTools(ctx, req, run.ID)
 	if err != nil {
 		ae.log.Warn("failed to build coordination tools, continuing without them",
 			slog.String("error", err.Error()),
@@ -2516,6 +2615,7 @@ func (ae *AgentExecutor) runPipeline(
 	// the internal graph-query-agent) could silently widen an inherited caller
 	// boundary.
 	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
+	ctx = mcp.ContextWithAgentWriteRules(ctx, resolveAgentWriteRules(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
 
 	// Augment system instruction with workspace context if available.
@@ -4032,7 +4132,7 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 
 // buildCoordinationTools creates spawn_agents and list_available_agents tools
 // if the agent is at a depth that allows coordination.
-func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string) ([]tool.Tool, *CoordinationToolDeps, error) {
+func (ae *AgentExecutor) buildCoordinationTools(ctx context.Context, req ExecuteRequest, runID string) ([]tool.Tool, *CoordinationToolDeps, error) {
 	maxDepth := req.MaxDepth
 	if maxDepth <= 0 {
 		maxDepth = DefaultMaxDepth
@@ -4076,6 +4176,11 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 		TrustedInternal: req.TrustedInternal,
 		ParentMetadata:  req.TriggerMetadata,
 	}
+	// Project spawned children's lifecycle onto the parent run's stream. The
+	// emitter is the run's shared, serialized one (install by runPipeline and
+	// also used by trigger_agent), so concurrent spawns cannot interleave SSE
+	// writes.
+	deps.EmitSubagent = SubagentEmitterFromContext(ctx)
 
 	var tools []tool.Tool
 
@@ -4098,6 +4203,13 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 // terminators for an object-driven run. It returns nil when the run has no
 // subject object, the work-object store is unset, or the definition does not
 // list the terminator in its tools whitelist.
+func subjectObjectType(run *AgentRun) string {
+	if run == nil || run.SubjectObjectType == nil {
+		return ""
+	}
+	return *run.SubjectObjectType
+}
+
 func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, terminator *WorkTerminatorState) ([]tool.Tool, error) {
 	if ae.workObjects == nil || run.SubjectObjectID == nil || *run.SubjectObjectID == "" {
 		return nil, nil
@@ -4116,15 +4228,16 @@ func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, termi
 	}
 
 	deps := WorkToolDeps{
-		Store:       ae.workObjects,
-		Repo:        ae.repo,
-		Logger:      ae.log,
-		ProjectID:   req.ProjectID,
-		CanonicalID: *run.SubjectObjectID,
-		ActorName:   ae.resolveAgentName(req),
-		RunID:       run.ID,
-		WorkConfig:  req.AgentDefinition.WorkConfig,
-		Terminator:  terminator,
+		Store:             ae.workObjects,
+		Repo:              ae.repo,
+		Logger:            ae.log,
+		ProjectID:         req.ProjectID,
+		CanonicalID:       *run.SubjectObjectID,
+		SubjectObjectType: subjectObjectType(run),
+		ActorName:         ae.resolveAgentName(req),
+		RunID:             run.ID,
+		WorkConfig:        req.AgentDefinition.WorkConfig,
+		Terminator:        terminator,
 	}
 
 	var tools []tool.Tool
@@ -4138,6 +4251,13 @@ func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, termi
 	if hasTool(ToolNameWorkBlock) {
 		if t, err := BuildWorkBlockTool(deps); err != nil {
 			return nil, fmt.Errorf("failed to build work_block: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	if hasTool(ToolNameWorkTransition) {
+		if t, err := BuildWorkTransitionTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build work_transition: %w", err)
 		} else {
 			tools = append(tools, t)
 		}
@@ -4348,6 +4468,27 @@ func knowledgeBaseContextBlock(projectInfo string) string {
 // scope (issue #1695).
 func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 	return mcp.NewTypeScope(def.ObjectTypes(), def.RelationshipTypes())
+}
+
+// resolveAgentWriteRules derives the per-run object write policy from the
+// definition's per-type work rules. No rules means unrestricted.
+func resolveAgentWriteRules(def *AgentDefinition) *mcp.AgentWriteRules {
+	if def == nil || len(def.WorkConfig.ObjectRules) == 0 {
+		return nil
+	}
+	out := make(map[string]mcp.ObjectWriteRule, len(def.WorkConfig.ObjectRules))
+	for _, r := range def.WorkConfig.ObjectRules {
+		if r.ObjectType == "" {
+			continue
+		}
+		out[r.ObjectType] = mcp.ObjectWriteRule{
+			CanCreate: r.AllowsCreate(),
+			CanUpdate: r.AllowsUpdate(),
+			CanDelete: r.AllowsDelete(),
+			Fields:    r.Fields,
+		}
+	}
+	return mcp.NewAgentWriteRules(out)
 }
 
 // resolveProjectInfo returns the project's project_info for injection into the

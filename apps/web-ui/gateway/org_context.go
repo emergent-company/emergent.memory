@@ -165,6 +165,11 @@ func (s *Server) uiOrg(c echo.Context) error {
 	data.TransferOrgs, data.CanTransfer = transferState(tree, org.ID)
 	data.IsOrgAdmin = isOrgAdmin(tree, org.ID)
 	data.FlashErr = flashError(c)
+	// An organization-only invitation accepts to /orgs/{org}?accepted=1 (see
+	// inviteAcceptPath): this landing is the only confirmation the invitee gets.
+	if c.QueryParam("accepted") != "" {
+		data.FlashMsg = "Invitation accepted."
+	}
 	if q := c.QueryParam("deleted"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil {
 			// Memory's project delete is async (202) — the project is

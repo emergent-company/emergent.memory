@@ -148,8 +148,8 @@ templ documentsToolbar(data documentPageData) {
 					if data.Status != "" {
 						<input type="hidden" name="status" value={ data.Status }/>
 					}
-					if data.SourceType != "" {
-						<input type="hidden" name="sourceType" value={ data.SourceType }/>
+					if data.SourceID != "" {
+						<input type="hidden" name="sourceId" value={ data.SourceID }/>
 					}
 					if data.Attention != "" {
 						<input type="hidden" name="attention" value={ data.Attention }/>
@@ -190,9 +190,9 @@ templ documentsToolbar(data documentPageData) {
 						</select>
 					}
 					@fm.FormControl("documents-filter-source", "Source", fm.LabelAbove, "", "", nil) {
-						<select id="documents-filter-source" name="sourceType" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
+						<select id="documents-filter-source" name="sourceId" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
 							for _, opt := range documentSourceSelectOptions(data) {
-								<option value={ opt.Value } selected?={ opt.Value == data.SourceType }>{ opt.Label }</option>
+								<option value={ opt.Value } selected?={ opt.Value == data.SourceID }>{ opt.Label }</option>
 							}
 						</select>
 					}
@@ -557,6 +557,7 @@ templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, 
 			@documentDetailHeader(doc, "overview")
 			@layout.Rail(documentSubNav(doc.ID, "overview"), nil) {
 				@extractionCard(doc, flashMsg, flashErr, extractionBlocked)
+				@documentDiscoveryCard(doc)
 				@documentPreviewCard(doc, preview)
 			}
 		}
@@ -750,6 +751,41 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error, blocked boo
 		}
 		@flashToasts(flashMsg, flashErr)
 	}
+}
+
+// documentDiscoveryCard offers a per-document schema-discovery run. Project-wide
+// discovery lives on /schema#discovery; one document is often the one worth
+// analysing (a new spec, or a document that failed in a batch run).
+templ documentDiscoveryCard(doc *Document) {
+	<div class="mt-6" data-testid="document-discovery-card">
+		@components.PanelCard("", nil) {
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="flex items-center gap-3">
+					@ui.IconTile("lucide--scan-search", ui.IconTileProps{Tone: "accent"})
+					<div>
+						<h2 class="text-base font-semibold">Schema discovery</h2>
+						@ui.EmptyNote() {
+							Propose entity types from this document only. The proposed types land in a schema pack for review.
+						}
+					</div>
+				</div>
+				<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/discover") }>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonSecondary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--scan-search",
+						Attrs:   templ.Attributes{"data-testid": "document-discovery-start"},
+					}) {
+						Discover from this document
+					}
+				</form>
+			</div>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+				<a class="link" href="/schema#discovery">Schema → Schema discovery</a> covers the whole project.
+			}
+		}
+	</div>
 }
 
 // --- document sub-pages ---

@@ -130,18 +130,21 @@ type SchemaInfo struct {
 // BlueprintSchema is the full schema definition returned by GET /api/schemas/:packId.
 // ObjectTypeSchemas/RelationshipTypeSchemas are kept raw (array-or-map form).
 type BlueprintSchema struct {
-	ID                      string                `json:"id"`
-	Name                    string                `json:"name"`
-	Version                 string                `json:"version"`
-	Description             string                `json:"description"`
-	Author                  string                `json:"author"`
-	Source                  string                `json:"source"`
-	License                 string                `json:"license"`
-	RepositoryURL           string                `json:"repositoryUrl"`
-	DocumentationURL        string                `json:"documentationUrl"`
-	ObjectTypeSchemas       json.RawMessage       `json:"objectTypeSchemas"`
-	RelationshipTypeSchemas json.RawMessage       `json:"relationshipTypeSchemas"`
-	Migrations              *SchemaMigrationHints `json:"migrations,omitempty"`
+	ID                      string          `json:"id"`
+	Name                    string          `json:"name"`
+	Version                 string          `json:"version"`
+	Description             string          `json:"description"`
+	Author                  string          `json:"author"`
+	Source                  string          `json:"source"`
+	License                 string          `json:"license"`
+	RepositoryURL           string          `json:"repositoryUrl"`
+	DocumentationURL        string          `json:"documentationUrl"`
+	ObjectTypeSchemas       json.RawMessage `json:"objectTypeSchemas"`
+	RelationshipTypeSchemas json.RawMessage `json:"relationshipTypeSchemas"`
+	// PendingReview is true for a pack a discovery run proposed and nobody has
+	// installed yet.
+	PendingReview bool                  `json:"pendingReview"`
+	Migrations    *SchemaMigrationHints `json:"migrations,omitempty"`
 }
 
 // ListAllSchemas lists the project-owned schema catalog via the REST

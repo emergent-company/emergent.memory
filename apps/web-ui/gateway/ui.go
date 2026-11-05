@@ -106,8 +106,14 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
 				{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
-				{Label: "Board", Href: base + "/board", Icon: "lucide--kanban-square"},
 				{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
+			},
+		},
+		{
+			Label: "Work",
+			Items: []layout.SidebarItem{
+				{Label: "Board", Href: base + "/work/board", Icon: "lucide--kanban-square"},
+				{Label: "Settings", Href: base + "/work/settings", Icon: "lucide--list-checks"},
 			},
 		},
 		{
@@ -445,11 +451,25 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		bellScope, bellProject := s.inboxBellScope(c)
 		unreadNotifications = s.notificationUnread(c.Request().Context(), bellScope, bellProject)
 	}
+	// Invitations addressed to the signed-in account, surfaced in the project
+	// switcher (and counted on its trigger) so an invitee who is already signed
+	// in discovers the invitation without digging the email out — the failure
+	// mode that stranded an invited user on the org list. Session-only and
+	// best-effort: no session means no invites to discover, and a fetch failure
+	// degrades to an empty section rather than an error page.
+	var pendingInvites []PendingInviteDto
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
+		if invites, err := s.memory.ListPendingInvites(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			pendingInvites = invites
+		}
+	}
 	// Route the full page through renderScoped too: internal content links
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
 	return nil
 }
 
@@ -552,6 +572,12 @@ func (s *Server) uiAgents(c echo.Context) error {
 		defaultModel    string
 		defaultModelErr error
 	)
+	// ?accepted=1 is where accepting an invitation lands (inviteAcceptPath):
+	// confirm it on the page the invitee arrives at, not only in the switcher.
+	var flashMsg string
+	if c.QueryParam("accepted") != "" {
+		flashMsg = "Invitation accepted."
+	}
 	var g errgroup.Group
 	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
 	g.Go(func() error { providers, providersErr = s.memory.ListProjectProviders(ctx); return nil })
@@ -568,7 +594,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	})
 	_ = g.Wait()
 	if agentsErr != nil {
-		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", userFacingError(agentsErr)))
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", userFacingError(agentsErr), flashMsg))
 	}
 	captureError(providersErr)
 	captureError(defaultModelErr)
@@ -583,7 +609,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	// Per-agent model info rides on the list response now (memory reports
 	// effectiveModel per summary), so there is no per-agent GET round-trip
 	// here — the agents page renders the card grid straight from the list.
-	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil))
+	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil, flashMsg))
 }
 
 // chatRailData loads the session-rail data (agents, agent appearance map, past
@@ -1387,6 +1413,7 @@ func (s *Server) uiDocument(c echo.Context) error {
 	blocked := s.extractionModelMissing(ctx)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "extracted", msg: "Extraction triggered."},
+		{key: "discovering", msg: "Schema discovery started for this document."},
 	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, preview, nil, flashMsg, flashErr, blocked))

@@ -218,8 +218,8 @@ func TestInvite_EmailDeliveredWithAcceptLink(t *testing.T) {
 	if !strings.Contains(full.Text, want) {
 		t.Errorf("accept URL %q not found in email text", want)
 	}
-	if !strings.Contains(full.Text, "install.sh") {
-		t.Errorf("email text is missing the CLI install instructions")
+	if strings.Contains(full.Text, "install.sh") || strings.Contains(full.Text, "memory login") {
+		t.Errorf("email text must not carry CLI instructions:\n%s", full.Text)
 	}
 
 	rl.Printf("invite email delivered to %s with accept link for token %s", email, token)

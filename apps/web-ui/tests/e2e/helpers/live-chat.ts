@@ -169,7 +169,7 @@ export async function readConversationHistory(
 }
 
 /** The assistant markdown node the transcript renders replies into. */
-export const ASSISTANT_MD = '#chat-messages .chat.chat-start .chat-bubble .memory-md';
+export const ASSISTANT_MD = '#chat-messages .memory-assistant > .memory-md';
 
 /**
  * Wait until the transcript's text content contains every marker. Used after

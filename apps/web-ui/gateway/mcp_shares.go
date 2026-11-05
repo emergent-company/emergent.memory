@@ -43,11 +43,13 @@ type MCPShareInstance struct {
 }
 
 // MCPShareInput is the create/update request body. Tools must hold at least one
-// name.
+// name. Emails is only meaningful on create and rotate: the listed recipients
+// receive the one-time key, the endpoint, and client setup snippets.
 type MCPShareInput struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Tools       []string `json:"tools"`
+	Emails      []string `json:"emails,omitempty"`
 }
 
 // MCPShareSecret is the create/rotate payload. Token is the raw API key and is
@@ -61,10 +63,14 @@ type MCPShareSecret struct {
 }
 
 // MCPShareCreated is the instance plus its one-time secret (create/rotate
-// responses only).
+// responses only). EmailsSent lists the recipients the key was queued to and
+// EmailError reports a delivery problem; both are empty when no invite was
+// requested.
 type MCPShareCreated struct {
 	MCPShareInstance
 	MCPShareSecret
+	EmailsSent []string `json:"emailsSent,omitempty"`
+	EmailError string   `json:"emailError,omitempty"`
 }
 
 // MCPShareTool is one entry in the memory tool catalog: the tools a share may
@@ -193,12 +199,18 @@ func decodeMCPShareCreated(raw json.RawMessage) (*MCPShareCreated, error) {
 	var wire struct {
 		MCPShareInstance
 		MCPShareSecret
-		Instance *MCPShareInstance `json:"instance"`
+		Instance   *MCPShareInstance `json:"instance"`
+		EmailsSent []string          `json:"emailsSent,omitempty"`
+		EmailError string            `json:"emailError,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, err
 	}
-	out := &MCPShareCreated{MCPShareSecret: wire.MCPShareSecret}
+	out := &MCPShareCreated{
+		MCPShareSecret: wire.MCPShareSecret,
+		EmailsSent:     wire.EmailsSent,
+		EmailError:     wire.EmailError,
+	}
 	if wire.Instance != nil {
 		out.MCPShareInstance = *wire.Instance
 	} else {
@@ -258,9 +270,14 @@ func (m *MemoryClient) RevokeMCPShareInstance(ctx context.Context, id string) er
 }
 
 // RotateMCPShareInstance issues a new key for a share and returns the new
-// one-time secret (the previous key stops working).
-func (m *MemoryClient) RotateMCPShareInstance(ctx context.Context, id string) (*MCPShareCreated, error) {
-	raw, err := m.shareRaw(ctx, http.MethodPost, m.mcpSharePath(ctx, "shares", id, "rotate"), nil)
+// one-time secret (the previous key stops working). Recipients in emails get
+// the new key by email.
+func (m *MemoryClient) RotateMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareCreated, error) {
+	var body any
+	if len(emails) > 0 {
+		body = map[string][]string{"emails": emails}
+	}
+	raw, err := m.shareRaw(ctx, http.MethodPost, m.mcpSharePath(ctx, "shares", id, "rotate"), body)
 	if err != nil {
 		return nil, err
 	}

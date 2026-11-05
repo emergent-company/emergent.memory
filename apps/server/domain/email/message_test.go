@@ -26,7 +26,7 @@ func TestBuildMessageParsesIntoTextAndHTMLParts(t *testing.T) {
 		To:      "invitee@example.com",
 		ToName:  "Invitee",
 		Subject: "You've been invited",
-		Text:    "Accept invitation: " + acceptURL + "\n\ncurl -fsSL https://get.emergent.memory/install.sh | sh",
+		Text:    "Accept invitation: " + acceptURL + "\n\nThis invitation expires in 7 days.",
 		HTML:    "<a href=\"" + acceptURL + "\">Accept invitation</a>",
 	}
 
@@ -94,20 +94,21 @@ func TestBuildMessageParsesIntoTextAndHTMLParts(t *testing.T) {
 	if !strings.Contains(htmlBody, acceptURL) {
 		t.Errorf("text/html part missing accept URL %q: %q", acceptURL, htmlBody)
 	}
-	if !strings.Contains(plainBody, "install.sh") {
-		t.Errorf("text/plain part missing install.sh instructions: %q", plainBody)
+	if strings.Contains(plainBody, "install.sh") || strings.Contains(plainBody, "memory login") {
+		t.Errorf("text/plain part must not carry CLI instructions: %q", plainBody)
 	}
 }
 
 // TestProjectInvitationPlainText verifies the plain-text alternative body for a
-// project invitation carries the accept link and the CLI install instructions.
+// project invitation carries the accept link and the expiry, and carries no CLI
+// instructions (the invitation is accepted in the browser).
 func TestProjectInvitationPlainText(t *testing.T) {
 	acceptURL := "https://app.example.com/invites/accept?token=abc123"
 	got := ProjectInvitationPlainText("Alice", "the project", "Admin", acceptURL)
 
 	for _, want := range []string{
 		acceptURL,
-		"install.sh",
+		"expires in 7 days",
 		"Alice",
 		"the project",
 		"Admin",
@@ -116,17 +117,24 @@ func TestProjectInvitationPlainText(t *testing.T) {
 			t.Errorf("ProjectInvitationPlainText missing %q:\n%s", want, got)
 		}
 	}
+
+	for _, unwanted := range []string{"install.sh", "memory login", "memory projects set"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("ProjectInvitationPlainText must not carry CLI instructions (%q):\n%s", unwanted, got)
+		}
+	}
 }
 
 // TestInviteEmailMessageContainsAcceptLinkInBothParts exercises the full email
 // path — plain-text body generation, message build, and MIME parse — to prove
-// the accept link and install instructions reach the text/plain part that the
-// e2e test reads. Before the fix the invites service passed no plain text, so
-// generatePlainText produced only the subject and this assertion would fail.
+// the accept link reaches the text/plain part that the e2e test reads, and that
+// no CLI instructions leak into the message. Before the fix the invites service
+// passed no plain text, so generatePlainText produced only the subject and this
+// assertion would fail.
 func TestInviteEmailMessageContainsAcceptLinkInBothParts(t *testing.T) {
 	acceptURL := "https://app.example.com/invites/accept?token=abc123"
 	plainText := ProjectInvitationPlainText("A team member", "the project", "Admin", acceptURL)
-	html := fmt.Sprintf("<a href=\"%s\">Accept invitation</a><code>curl -fsSL https://get.emergent.memory/install.sh | sh</code>", acceptURL)
+	html := fmt.Sprintf("<a href=\"%s\">Accept invitation</a>", acceptURL)
 
 	cfg := &Config{FromName: "Memory", FromEmail: "noreply@example.com"}
 	msg, _, err := buildMessage(cfg, SendOptions{
@@ -171,8 +179,8 @@ func TestInviteEmailMessageContainsAcceptLinkInBothParts(t *testing.T) {
 	if !strings.Contains(plainBody, acceptURL) {
 		t.Errorf("text/plain part missing accept URL %q:\n%s", acceptURL, plainBody)
 	}
-	if !strings.Contains(plainBody, "install.sh") {
-		t.Errorf("text/plain part missing install.sh:\n%s", plainBody)
+	if strings.Contains(plainBody, "install.sh") || strings.Contains(plainBody, "memory login") {
+		t.Errorf("text/plain part must not carry CLI instructions:\n%s", plainBody)
 	}
 	if !strings.Contains(htmlBody, acceptURL) {
 		t.Errorf("text/html part missing accept URL %q:\n%s", acceptURL, htmlBody)

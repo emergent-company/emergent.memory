@@ -276,6 +276,8 @@
     //   onCitations(list), // optional (grounded citations for the turn)
     //   onMeta(evt),     // page-local meta handling (required)
     //   onThinking(evt), // optional (chat only)
+    //   onSubagent(evt), // optional (live subagent track)
+    //   onActivity(type),// optional (ends a contiguous thinking block)
     //   onToken(evt),    // optional (raw delta append; hosts without it skip)
     //   isAborted(),     // optional (sidepanel drops frames from aborted streams)
     // }
@@ -288,6 +290,24 @@
     // optional hook (onThinking/renderUI) simply skips those frames.
     function dispatchFrame(evt) {
       if (!evt || typeof evt !== "object") return;
+      // Activity that visibly changes the transcript ends any contiguous
+      // thinking block (and, on pages that group tool calls, a tool group).
+      if (h.onActivity) {
+        switch (evt.type) {
+          case "token":
+          case "html":
+          case "thinking":
+          case "question":
+          case "approval":
+          case "ui":
+          case "error":
+            // Tool frames break thinking from handleToolEvent (which knows the
+            // difference between opening/updating a call); they must not break
+            // the live tool group by reaching activityBoundary as "mcp_tool".
+            h.onActivity(evt.type);
+            break;
+        }
+      }
       switch (evt.type) {
         case "meta":
           h.onMeta(evt);
@@ -301,10 +321,17 @@
           h.scrollToBottom();
           break;
         case "mcp_tool":
+          // A tool call visibly ends a contiguous Thinking block, but it does
+          // not end a live tool group: this is the boundary the old pre-switch
+          // dispatch used to mislabel as "mcp_tool".
+          if (h.onActivity) h.onActivity("tool");
           h.handleToolEvent(evt);
           break;
         case "thinking":
           if (h.onThinking) h.onThinking(evt);
+          break;
+        case "subagent":
+          if (h.onSubagent) h.onSubagent(evt);
           break;
         case "question":
           if (evt.questionId) h.renderQuestion(evt);

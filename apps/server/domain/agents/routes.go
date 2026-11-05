@@ -99,6 +99,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	workItemsWrite.POST("/:canonicalId/approve", h.ApproveWorkItem)
 	workItemsWrite.POST("/:canonicalId/request-changes", h.RequestChangesWorkItem)
 	workItemsWrite.POST("/:canonicalId/retry", h.RetryWorkItem)
+	workItemsWrite.POST("/:canonicalId/unblock", h.UnblockWorkItem)
 	workItemsWrite.POST("/:canonicalId/reassign", h.ReassignWorkItem)
 	workItemsWrite.POST("/:canonicalId/status", h.UpdateWorkItemStatus)
 	workItemsWrite.POST("/:canonicalId/cancel", h.CancelWorkItem)

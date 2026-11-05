@@ -3946,6 +3946,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Filter by connected data source UUID, or 'none' for documents with no source",
+                        "name": "sourceId",
+                        "in": "query"
+                    },
+                    {
                         "enum": [
                             "processing",
                             "ready",
@@ -4185,6 +4191,46 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/documents/source-counts": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns document counts grouped by connected data source (empty sourceId for direct uploads), for the documents source filter.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Get document counts by data source",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/domain_documents.SourceCount"
+                                }
+                            }
                         }
                     },
                     "401": {
@@ -5670,6 +5716,76 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/changesets": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Apply a source changeset",
+                "parameters": [
+                    {
+                        "description": "Changeset to apply (max 500 objects, 500 relationships, 500 withdrawals)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ApplyChangesetRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Applied changeset with one outcome per item",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ApplyChangesetResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request, over the per-call cap, or an unresolved reference",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source or branch not found in this project",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Replayed generation or an ownership conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -7412,6 +7528,71 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Object not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/objects/{id}/contributions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the contributions of the object's HEAD version in one call, or of a specific historical version with resolveHead=false. Withdrawn contributions are reported as no longer present.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "List an object's contributions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Object ID or canonical ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Resolve to the current HEAD (default true)",
+                        "name": "resolveHead",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Contributions of the requested version",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ObjectContributionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid object id",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -14806,7 +14987,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool/agent allowlists. Returns the raw token exactly once.",
+                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool allowlist, and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14831,7 +15012,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceRequest"
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceHTTPRequest"
                         }
                     }
                 ],
@@ -14855,7 +15036,77 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "Invalid allowlist",
+                        "description": "Invalid allowlist or email address",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/shares/{id}/rotate": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Issues a new key for a share instance, invalidating the previous one, and optionally emails the new key and client setup snippets to the listed recipients. The body may be omitted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Rotate an MCP share key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Share instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional invite recipients",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.RotateShareInstanceHTTPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown share",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Share is revoked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid email address",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -16197,6 +16448,56 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/unblock": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Clears the durable block, resets the failure budget, and re-enqueues from the current status with an optional note",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Unblock a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Unblocked",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Not blocked",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -25915,6 +26216,81 @@ const docTemplate = `{
                 }
             }
         },
+        "/discovery-jobs/{jobId}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Re-runs a finished (completed, failed or cancelled) discovery job over the same documents. The new job records trigger=manual.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "discovery-jobs"
+                ],
+                "summary": "Retry a discovery job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job ID (UUID)",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional overrides (batch_size)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_discoveryjobs.RetryDiscoveryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Retry started",
+                        "schema": {
+                            "$ref": "#/definitions/domain_discoveryjobs.StartDiscoveryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Job not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Job is still running",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/docs": {
             "get": {
                 "description": "Returns the Swagger UI HTML page for browsing API documentation",
@@ -26021,14 +26397,14 @@ const docTemplate = `{
         },
         "/invites/accept": {
             "get": {
-                "description": "Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Redirects to login if not authenticated.",
+                "description": "Redirects an invitation link to the web UI accept page, which authenticates and presents the accept/decline actions. The link never accepts on its own: a GET triggered by a link prefetcher must not mutate state.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "invites"
                 ],
-                "summary": "Accept invitation via link",
+                "summary": "Invitation link target",
                 "parameters": [
                     {
                         "type": "string",
@@ -26039,17 +26415,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Acceptance confirmation",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
                     "302": {
-                        "description": "Redirect to login"
+                        "description": "Redirect to the web UI accept page"
                     },
                     "400": {
                         "description": "Missing token",
@@ -26057,8 +26424,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
-                    "404": {
-                        "description": "Invitation not found or expired",
+                    "503": {
+                        "description": "No web UI host configured",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -28320,6 +28687,57 @@ const docTemplate = `{
                 "ExecutionModeHybrid"
             ]
         },
+        "domain_agents.AgentObjectRule": {
+            "type": "object",
+            "properties": {
+                "canCreate": {
+                    "description": "CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an\nexplicit false denies the action for this type.",
+                    "type": "boolean"
+                },
+                "canDelete": {
+                    "type": "boolean"
+                },
+                "canUpdate": {
+                    "type": "boolean"
+                },
+                "clearAssigneeOnComplete": {
+                    "description": "ClearAssigneeOnComplete nulls the assignee when the item completes.",
+                    "type": "boolean"
+                },
+                "fields": {
+                    "description": "Fields is the writable-property allowlist for this type. Empty means all\ndeclared properties are writable.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "objectType": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status overrides the agent-level phase map for this type. Nil inherits\nthe agent-level map.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
+                        }
+                    ]
+                },
+                "transitions": {
+                    "description": "Transitions are the status edges this agent may perform for this type.\nEmpty means the standard terminal edges (any pickup status → done/review/\nblocked) are allowed.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentTransition"
+                    }
+                },
+                "triggers": {
+                    "description": "Triggers are the (status, prompt) pickup rows for this type.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentWorkTrigger"
+                    }
+                }
+            }
+        },
         "domain_agents.AgentQuestionDTO": {
             "type": "object",
             "properties": {
@@ -28669,6 +29087,17 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.AgentTransition": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.AgentTriggerType": {
             "type": "string",
             "enum": [
@@ -28713,6 +29142,13 @@ const docTemplate = `{
                 "failureLimit": {
                     "type": "integer"
                 },
+                "objectRules": {
+                    "description": "ObjectRules carries the per-object-type rules: phase map, write actions,\nwritable fields, pickup triggers with prompts, and the transition matrix.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentObjectRule"
+                    }
+                },
                 "requiresReview": {
                     "type": "boolean"
                 },
@@ -28732,7 +29168,7 @@ const docTemplate = `{
                     "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
                 },
                 "triggerStatuses": {
-                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the ` + "`" + `status_changed` + "`" + ` signal). Defaults\nto the built-in \"ready\" status when unset.",
+                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the ` + "`" + `status_changed` + "`" + ` signal). Defaults\nto the built-in \"ready\" status when unset. Legacy: used only when\nObjectRules declares no trigger rows.",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -28783,6 +29219,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "revision": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.AgentWorkTrigger": {
+            "type": "object",
+            "properties": {
+                "objectType": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }
@@ -29388,10 +29838,25 @@ const docTemplate = `{
                 "assignee": {
                     "type": "string"
                 },
+                "blockReason": {
+                    "type": "string"
+                },
+                "blocked": {
+                    "type": "boolean"
+                },
+                "blockedAt": {
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
+                "isWorking": {
+                    "type": "boolean"
+                },
                 "key": {
+                    "type": "string"
+                },
+                "latestRunAgentName": {
                     "type": "string"
                 },
                 "latestRunFailureClass": {
@@ -29405,6 +29870,9 @@ const docTemplate = `{
                 },
                 "needsReview": {
                     "type": "boolean"
+                },
+                "nextRunAt": {
+                    "type": "string"
                 },
                 "projectId": {
                     "type": "string"
@@ -31285,6 +31753,10 @@ const docTemplate = `{
         "domain_discoveryjobs.JobListItem": {
             "type": "object",
             "properties": {
+                "cancellable": {
+                    "description": "Cancellable is the server's answer to \"may this job be cancelled now?\".\nA client renders the cancel action from it instead of re-deriving the\nstatus set, so the card and the API cannot drift apart.",
+                    "type": "boolean"
+                },
                 "completed_at": {
                     "type": "string"
                 },
@@ -31299,6 +31771,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {}
                 },
+                "document_count": {
+                    "type": "integer"
+                },
+                "error_message": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -31309,6 +31787,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "total_documents": {
+                    "type": "integer"
+                },
+                "trigger": {
+                    "description": "Trigger/scope/document counts describe what the run covered, so a caller\ncan distinguish an automatic sync run from an explicit one and tell the\nuser when the per-run cap limited a project-wide run.",
                     "type": "string"
                 }
             }
@@ -31350,11 +31835,18 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_discoveryjobs.RetryDiscoveryRequest": {
+            "type": "object",
+            "properties": {
+                "batch_size": {
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                }
+            }
+        },
         "domain_discoveryjobs.StartDiscoveryRequest": {
             "type": "object",
-            "required": [
-                "document_ids"
-            ],
             "properties": {
                 "batch_size": {
                     "type": "integer",
@@ -31362,14 +31854,19 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "document_ids": {
+                    "description": "DocumentIDs names the documents to analyse. Required when Scope is empty\nor DiscoveryScopeDocuments; ignored when Scope is DiscoveryScopeProject.",
                     "type": "array",
-                    "minItems": 1,
                     "items": {
                         "type": "string"
                     }
                 },
                 "include_relationships": {
                     "type": "boolean"
+                },
+                "limit": {
+                    "description": "Limit caps a DiscoveryScopeProject run. Zero means the server default;\na value above the server cap is clamped to it.",
+                    "type": "integer",
+                    "minimum": 1
                 },
                 "max_iterations": {
                     "type": "integer",
@@ -31380,14 +31877,30 @@ const docTemplate = `{
                     "type": "number",
                     "maximum": 1,
                     "minimum": 0
+                },
+                "scope": {
+                    "description": "Scope selects what to analyse: DiscoveryScopeDocuments (default) or\nDiscoveryScopeProject.",
+                    "type": "string",
+                    "enum": [
+                        "documents",
+                        "project"
+                    ]
                 }
             }
         },
         "domain_discoveryjobs.StartDiscoveryResponse": {
             "type": "object",
             "properties": {
+                "document_count": {
+                    "description": "DocumentCount is how many documents this job will analyse.",
+                    "type": "integer"
+                },
                 "job_id": {
                     "type": "string"
+                },
+                "total_documents": {
+                    "description": "TotalDocuments is how many head documents the project had when the run\nstarted. It is larger than DocumentCount when the per-run cap applied, so\na caller can tell the user the run covered a subset.",
+                    "type": "integer"
                 }
             }
         },
@@ -31806,6 +32319,20 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_documents.SourceCount": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "sourceId": {
+                    "type": "string"
+                },
+                "sourceType": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_documents.SourceTypeWithCount": {
             "type": "object",
             "properties": {
@@ -32140,6 +32667,63 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_graph.ApplyChangesetRequest": {
+            "type": "object",
+            "required": [
+                "source_id"
+            ],
+            "properties": {
+                "branch_id": {
+                    "description": "BranchID is the branch every item lands on; absent means the main line.\nOne branch for the whole changeset keeps addressing unambiguous: the same\nexternal id legitimately exists once per branch.",
+                    "type": "string"
+                },
+                "generation": {
+                    "description": "Generation is optional. When absent the server allocates the next one for\nthe source; when present it must be greater than the last applied\ngeneration, which makes a retried push idempotent at the changeset level.",
+                    "type": "integer"
+                },
+                "objects": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetObjectItem"
+                    }
+                },
+                "relationships": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetRelationshipItem"
+                    }
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "withdrawals": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetWithdrawalItem"
+                    }
+                }
+            }
+        },
+        "domain_graph.ApplyChangesetResponse": {
+            "type": "object",
+            "properties": {
+                "generation": {
+                    "type": "integer"
+                },
+                "generation_id": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetItemResult"
+                    }
                 }
             }
         },
@@ -32805,6 +33389,145 @@ const docTemplate = `{
                 },
                 "success": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_graph.ChangesetItemResult": {
+            "type": "object",
+            "properties": {
+                "canonical_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "subject_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_graph.ChangesetObjectItem": {
+            "type": "object",
+            "required": [
+                "external_id",
+                "type"
+            ],
+            "properties": {
+                "_ref": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "external_id": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision_seq": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "key": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "labels": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "status": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "type": {
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "domain_graph.ChangesetRelationshipItem": {
+            "type": "object",
+            "required": [
+                "external_id",
+                "type"
+            ],
+            "properties": {
+                "dst_id": {
+                    "type": "string"
+                },
+                "dst_ref": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "external_id": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision_seq": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "src_id": {
+                    "type": "string"
+                },
+                "src_ref": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "type": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "weight": {
+                    "type": "number"
+                }
+            }
+        },
+        "domain_graph.ChangesetWithdrawalItem": {
+            "type": "object",
+            "required": [
+                "external_id"
+            ],
+            "properties": {
+                "external_id": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "subject_kind": {
+                    "type": "string",
+                    "enum": [
+                        "object",
+                        "relationship"
+                    ]
                 }
             }
         },
@@ -33704,6 +34427,26 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ObjectContributionsResponse": {
+            "type": "object",
+            "properties": {
+                "canonical_id": {
+                    "type": "string"
+                },
+                "contributions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ProvenanceContribution"
+                    }
+                },
+                "object_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
@@ -33794,6 +34537,53 @@ const docTemplate = `{
                 },
                 "value": {
                     "description": "Filter value (omitted for \"exists\" operator)"
+                }
+            }
+        },
+        "domain_graph.ProvenanceContribution": {
+            "type": "object",
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "external_revision": {
+                    "type": "string"
+                },
+                "external_revision_seq": {
+                    "type": "integer"
+                },
+                "first_seen_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "merged_from_version_id": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "subject_kind": {
+                    "type": "string"
+                },
+                "subject_version_id": {
+                    "type": "string"
+                },
+                "withdrawn_at": {
+                    "type": "string"
                 }
             }
         },
@@ -34768,7 +35558,7 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_mcp.CreateShareInstanceRequest": {
+        "domain_mcp.CreateShareInstanceHTTPRequest": {
             "type": "object",
             "properties": {
                 "agents": {
@@ -34779,6 +35569,12 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -34799,6 +35595,15 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "emailError": {
+                    "type": "string"
+                },
+                "emailsSent": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "id": {
                     "type": "string"
@@ -34907,6 +35712,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "result": {}
+            }
+        },
+        "domain_mcp.RotateShareInstanceHTTPRequest": {
+            "type": "object",
+            "properties": {
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
             }
         },
         "domain_mcp.ShareMCPAccessRequest": {
@@ -36717,8 +37533,28 @@ const docTemplate = `{
         "domain_processingproblems.Failure": {
             "type": "object",
             "properties": {
+                "cause": {
+                    "description": "Cause narrows a class to the element that failed, when the classifier can\ntell. It is empty for classes the copy already describes exactly.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_processingproblems.FailureCause"
+                        }
+                    ]
+                },
                 "class": {
                     "$ref": "#/definitions/domain_processingproblems.FailureClass"
+                },
+                "fix": {
+                    "description": "Fix is the page where the recorded cause is fixed, when the product knows\none. It is nil for causes with no single destination.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_processingproblems.FixTarget"
+                        }
+                    ]
+                },
+                "model": {
+                    "description": "Model is the model this project resolves to for the failure's family\n(routed \"instance/model\"): the generative model, or the embedding model\nfor an embedding queue. Empty when nothing resolves or the class is\nunrelated.",
+                    "type": "string"
                 },
                 "remediation": {
                     "type": "string"
@@ -36729,8 +37565,29 @@ const docTemplate = `{
                 },
                 "summary": {
                     "type": "string"
+                },
+                "verified": {
+                    "description": "Verified reports whether the copy was checked against the project's\neffective model configuration before being written. A configuration\nfailure with Verified=false is a guess and must read as one.",
+                    "type": "boolean"
                 }
             }
+        },
+        "domain_processingproblems.FailureCause": {
+            "type": "string",
+            "enum": [
+                "no_provider",
+                "no_default_model",
+                "model_unusable",
+                "model_unavailable",
+                "base_url"
+            ],
+            "x-enum-varnames": [
+                "CauseNoProvider",
+                "CauseNoDefaultModel",
+                "CauseModelUnusable",
+                "CauseModelUnavailable",
+                "CauseBaseURL"
+            ]
         },
         "domain_processingproblems.FailureClass": {
             "type": "string",
@@ -36756,6 +37613,17 @@ const docTemplate = `{
                 "ClassInternal",
                 "ClassUnknown"
             ]
+        },
+        "domain_processingproblems.FixTarget": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                }
+            }
         },
         "domain_processingproblems.Problem": {
             "type": "object",
@@ -36871,6 +37739,10 @@ const docTemplate = `{
         "domain_projects.Project": {
             "type": "object",
             "properties": {
+                "auto_discovery_enabled": {
+                    "description": "AutoDiscoveryEnabled starts a schema-discovery job after a source sync\ncreates documents (added in migration 00260). It defaults to true so a\nproject keeps the behaviour it had before the flag existed; when false,\ndiscovery only runs through the explicit start/retry endpoints.",
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -36942,6 +37814,10 @@ const docTemplate = `{
         "domain_projects.ProjectDTO": {
             "type": "object",
             "properties": {
+                "auto_discovery_enabled": {
+                    "description": "AutoDiscoveryEnabled is always emitted (unlike the other booleans): the\ncolumn defaults to true, so an absent field would read as \"off\" in a UI\nthat renders a toggle and silently disable discovery for every project.",
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -37090,6 +37966,9 @@ const docTemplate = `{
         "domain_projects.UpdateProjectRequest": {
             "type": "object",
             "properties": {
+                "auto_discovery_enabled": {
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -39333,6 +40212,10 @@ const docTemplate = `{
                     "items": {
                         "type": "integer"
                     }
+                },
+                "pendingReview": {
+                    "description": "PendingReview marks discovery output that is awaiting an explicit\ninstall. It is false for a pack created or imported any other way, so a\nclient can tell \"proposed by a run\" from \"unassigned\".",
+                    "type": "boolean"
                 },
                 "projectId": {
                     "type": "string"
@@ -42776,7 +43659,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.89.0",
+	Version:          "0.90.0",
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

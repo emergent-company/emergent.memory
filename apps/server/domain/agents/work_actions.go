@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -81,12 +82,12 @@ func (s *WorkActionService) resolveWorkContext(ctx context.Context, projectID, c
 // needs_review, and clears the failure ledger. Returns a conflict when the item
 // is not in the review status.
 func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID, reviewerID string) (*WorkActionResult, error) {
-	_, _, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
+	head, _, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	ok, err := s.workObjects.ApproveWorkObject(ctx, projectID, canonicalID, wc.ReviewStatus(), wc.DoneStatus(), reviewerID)
+	st := def.EffectiveWorkStatus(head.Type)
+	ok, err := s.workObjects.ApproveWorkObject(ctx, projectID, canonicalID, st.Review, st.Done, reviewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID,
 		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not in the review status")
 	}
 	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
-	head, err := s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	head, err = s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,12 +121,13 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 		return nil, apperror.New(http.StatusBadRequest, "bad_request", "feedback is required")
 	}
 	wc := workConfigOf(def)
+	st := def.EffectiveWorkStatus(head.Type)
 	var reworkAgentID *uuid.UUID
 	if agent != nil {
 		id := uuid.MustParse(agent.ID)
 		reworkAgentID = &id
 	}
-	ok, err := s.workObjects.RequestChangesWorkObject(ctx, projectID, canonicalID, wc.ReviewStatus(), wc.RevisionStatus(), reworkAgentID)
+	ok, err := s.workObjects.RequestChangesWorkObject(ctx, projectID, canonicalID, st.Review, st.Revision, reworkAgentID)
 	if err != nil {
 		return nil, err
 	}
@@ -189,26 +191,87 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 	return res, nil
 }
 
+// Unblock clears a durable block and re-enqueues the item from its current
+// workflow status. The optional note becomes the run's user message so the
+// agent gets the human context. The failure budget is reset.
+func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID, note string) (*WorkActionResult, error) {
+	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	cleared, err := s.repo.ClearWorkBlock(ctx, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if !cleared {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+	}
+	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+	res := &WorkActionResult{}
+	if agent != nil {
+		opts := CreateRunQueuedOptions{
+			SubjectObjectID:   &head.CanonicalID,
+			SubjectObjectType: &head.Type,
+			TrustedInternal:   true,
+			TriggerMetadata: map[string]any{
+				"work_trigger_event": string(EventTypeStatusChanged),
+				"work_claim_status":  head.Status,
+			},
+		}
+		if note != "" {
+			opts.TriggerMessage = &note
+			opts.TriggerMetadata["work_unblock_note"] = note
+		}
+		maxAttempts := 1
+		if def != nil && def.WorkConfig.RetryPolicy.MaxAttempts > 0 {
+			maxAttempts = def.WorkConfig.RetryPolicy.MaxAttempts
+		}
+		if run, err := s.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts); err != nil {
+			if !errors.Is(err, ErrWorkItemBusy) {
+				s.log.Warn("unblock: enqueue failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
+			}
+		} else {
+			res.RunID = run.ID
+		}
+	}
+	res.Head, err = s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
 // Retry returns a blocked work item to ready and enqueues it, clearing the
 // failure ledger. Returns a conflict when the item is not blocked.
+
 func (s *WorkActionService) Retry(ctx context.Context, projectID, canonicalID string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	ok, err := s.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: wc.BlockedStatus(),
-		ToStatus:   wc.ReadyStatus(),
-	})
+	blocked, err := s.repo.IsWorkBlocked(ctx, canonicalID)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not in the blocked status")
+	st := def.EffectiveWorkStatus(head.Type)
+	if !blocked && head.Status != st.Blocked {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+	}
+	if _, err := s.repo.ClearWorkBlock(ctx, canonicalID); err != nil {
+		return nil, err
+	}
+	// Legacy rows may still be in the blocked status; return them to ready.
+	if head.Status == st.Blocked {
+		if ok, err := s.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
+			FromStatus: st.Blocked,
+			ToStatus:   st.Ready,
+		}); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+		}
 	}
 	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
-
 	res := &WorkActionResult{}
 	if agent != nil {
 		if runID, err := s.enqueueWorkRun(ctx, head, agent, def, nil); err != nil {
@@ -262,8 +325,8 @@ func (s *WorkActionService) SetStatus(ctx context.Context, projectID, canonicalI
 	if err := graph.ValidateWorkObjectStatus(cfg, status); err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	ok, err := s.workObjects.UpdateWorkObjectStatus(ctx, projectID, canonicalID, status, wc.ReviewStatus())
+	st := def.EffectiveWorkStatus(head.Type)
+	ok, err := s.workObjects.UpdateWorkObjectStatus(ctx, projectID, canonicalID, status, st.Review)
 	if err != nil {
 		return nil, err
 	}
@@ -284,11 +347,11 @@ func (s *WorkActionService) Cancel(ctx context.Context, projectID, canonicalID s
 	if err != nil {
 		return nil, err
 	}
-	wc := workConfigOf(def)
-	if head.Status == wc.DoneStatus() {
+	st := def.EffectiveWorkStatus(head.Type)
+	if head.Status == st.Done {
 		return nil, apperror.New(http.StatusConflict, "conflict", "work item is already done")
 	}
-	ok, err := s.workObjects.CancelWorkObject(ctx, projectID, canonicalID, wc.BlockedStatus())
+	ok, err := s.workObjects.CancelWorkObject(ctx, projectID, canonicalID, st.Blocked)
 	if err != nil {
 		return nil, err
 	}
@@ -427,12 +490,22 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 		SubjectObjectID:   &head.CanonicalID,
 		SubjectObjectType: &head.Type,
 		TrustedInternal:   true,
+		TriggerMetadata: map[string]any{
+			"work_trigger_event": string(EventTypeStatusChanged),
+			"work_claim_status":  head.Status,
+		},
 	}
 	if len(feedback) > 0 {
-		opts.TriggerMetadata = map[string]any{"work_feedback": feedback}
+		if opts.TriggerMetadata == nil {
+			opts.TriggerMetadata = map[string]any{}
+		}
+		opts.TriggerMetadata["work_feedback"] = feedback
 	}
 	run, err := s.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts)
 	if err != nil {
+		if errors.Is(err, ErrWorkItemBusy) {
+			return "", nil // a live run already covers the item
+		}
 		return "", err
 	}
 	return run.ID, nil

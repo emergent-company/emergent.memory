@@ -102,6 +102,8 @@ var models = []any{
 	(*graph.GraphRelationship)(nil),
 	(*graph.Branch)(nil),
 	(*graph.BranchLineage)(nil),
+	(*graph.ProvenanceContribution)(nil),
+	(*graph.SourceGeneration)(nil),
 
 	// domain/apitoken
 	(*apitoken.ApiToken)(nil),
@@ -249,6 +251,7 @@ var models = []any{
 	(*agents.WorkItemState)(nil),
 	(*agents.WorkItemFeedback)(nil),
 	(*agents.WorkItemComment)(nil),
+	(*agents.WorkBlock)(nil),
 
 	// domain/branches
 	(*branches.Branch)(nil),

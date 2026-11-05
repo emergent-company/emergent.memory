@@ -234,6 +234,60 @@ struct ChatSessionTranscriptStoreTests {
         #expect(store.liveMessages.isEmpty)
         #expect(store.pendingApprovals.isEmpty)
     }
+
+    /// A text turn is persisted server-side, so a reload must not leave its live
+    /// copy stacked on the recorded one — the text→voice→text case.
+    @Test func reloadingHistoryDropsTheLiveCopiesItRecords() {
+        let store = ChatSessionTranscriptStore()
+        store.syncLive([
+            LiveTranscriptMessage(id: "u1", role: .user, text: "hello"),
+            LiveTranscriptMessage(id: "u2", role: .user, text: "again"),
+            LiveTranscriptMessage(id: "a1", role: .assistant, text: "hi there"),
+            LiveTranscriptMessage(id: "a2", role: .assistant, text: "not saved yet"),
+        ])
+
+        store.loadHistory(from: detail())
+
+        // "hello" and "again" are the two lines of the recorded merged turn.
+        #expect(store.liveMessages.map(\.id) == ["a2"])
+    }
+
+    /// The match is line-bounded, not "contains": a short new reply must not be
+    /// hidden by a longer recorded message that happens to include it.
+    @Test func aShortLiveReplyIsNotHiddenByALongerRecordedOne() {
+        let store = ChatSessionTranscriptStore()
+        store.loadHistory(from: detail())
+
+        store.syncLive([LiveTranscriptMessage(id: "a9", role: .assistant, text: "hi")])
+
+        #expect(store.liveMessages.map(\.id) == ["a9"])
+    }
+
+    /// A dropped run counts as recorded only when three things hold at once,
+    /// because each one alone is satisfied by the wrong thing: the record grew,
+    /// its newest turn is the assistant's, and that turn carries more of the
+    /// reply than the client saw.
+    @Test func aDroppedReplyIsRecognisedOnlyWhenTheRecordHoldsIt() {
+        let partial = "hi the"
+        let records = [
+            SessionRecord.fixture(kind: "turn", role: "user", text: "hello"),
+            SessionRecord.fixture(kind: "turn", role: "assistant", text: "hi there"),
+        ]
+        let detail = SessionDetail(room: "conv-1", records: records)
+
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: partial, in: detail, since: 1))
+        // A baseline that already counted this record means it is the same
+        // fetch again — an older reply must not pass for the new one.
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: partial, in: detail, since: records.count) == false)
+        // Everything the client saw, and no more: nothing was lost.
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: "hi there", in: detail, since: 1) == false)
+        // A newest *user* turn means the run has not written its reply yet.
+        let unanswered = SessionDetail(room: "conv-1", records: [
+            SessionRecord.fixture(kind: "turn", role: "assistant", text: "hi there"),
+            SessionRecord.fixture(kind: "turn", role: "user", text: "again"),
+        ])
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: partial, in: unanswered, since: 1) == false)
+    }
 }
 
 // MARK: - Session date formatting

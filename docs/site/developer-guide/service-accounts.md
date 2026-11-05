@@ -13,7 +13,7 @@ The system has two tiers of superadmin access stored in `core.superadmins`:
 | `superadmin_full` | All `/api/superadmin/*` endpoints including destructive operations |
 | `superadmin_readonly` | Read-only `/api/superadmin/*` endpoints (list orgs, projects, users, jobs) |
 
-Service accounts are granted `superadmin_readonly`. Their `emt_` API token is an **account-level** token carrying read-only data scopes (`data:read`, `schema:read`, `agents:read`, `projects:read`).
+Service accounts are granted `superadmin_readonly`. Their `emt_` API token is an **account-level** token carrying the fine-grained read-only scopes `documents:read`, `search`, `graph:read`, `journal:read`, `schema:read`, `agents:read` and `projects:read` (the coarse `data:read` umbrella is retired from token creation).
 
 Two different checks apply, and they are not interchangeable:
 
@@ -119,7 +119,10 @@ X-Project-ID: <project-uuid>
 
 | Scope | Access |
 |---|---|
-| `data:read` | Documents, chunks, search, graph, extraction, schema, tasks |
+| `documents:read` | Documents and their content |
+| `search` | Hybrid and semantic search |
+| `graph:read` | Graph objects |
+| `journal:read` | Project journal entries |
 | `schema:read` | Graph schemas |
 | `agents:read` | Chat sessions |
 | `projects:read` | Project metadata |

@@ -12,7 +12,10 @@ set -euo pipefail
 GITLEAKS_VERSION="8.30.1"
 GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
-# The required `ci` job runs on the self-hosted [linux, x64, memory] runner.
+# The required `ci` job runs on a hosted `ubuntu-latest` runner (queue
+# measurement in control-repo issue #819). The script installs into
+# $HOME/.local/bin and exports it through GITHUB_PATH, so the same script also
+# works on the self-hosted `[linux, x64, memory]` pool the job moved off.
 GITLEAKS_ASSET="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
 GITLEAKS_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${GITLEAKS_ASSET}"
 

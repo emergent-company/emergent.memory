@@ -18,6 +18,7 @@ import (
 type contractStore struct {
 	fakeWorkObjectStore
 	heads     map[string]*graph.WorkObjectHead // key: objType+"|"+key
+	head      *graph.WorkObjectHead
 	completed bool
 }
 
@@ -28,7 +29,14 @@ func (f *contractStore) FindHeadByTypeAndKey(ctx context.Context, projectID, obj
 	return f.heads[objType+"|"+key], nil
 }
 
-func (f *contractStore) CompleteWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, doneStatus, reviewStatus string, requiresReview bool) (bool, error) {
+func (f *contractStore) GetHeadObject(ctx context.Context, projectID, canonicalID string) (*graph.WorkObjectHead, error) {
+	if f.head != nil {
+		return f.head, nil
+	}
+	return &graph.WorkObjectHead{CanonicalID: canonicalID, Type: "Task", Status: "draft"}, nil
+}
+
+func (f *contractStore) TransitionWorkObject(ctx context.Context, projectID, canonicalID string, t graph.WorkObjectTransition) (bool, error) {
 	f.completed = true
 	return true, nil
 }

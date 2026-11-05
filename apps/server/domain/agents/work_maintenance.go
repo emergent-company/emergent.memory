@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -268,6 +269,16 @@ func (r *Repository) listWorkAgentStatuses(ctx context.Context) (ready, inProgre
 		WHERE a.enabled = true
 		  AND a.trigger_type = 'reaction'
 		  AND (ad.dispatch_mode = 'queued' OR (ad.work_config IS NOT NULL AND ad.work_config <> '{}'::jsonb))
+		UNION
+		SELECT DISTINCT
+			COALESCE(NULLIF(r->'status'->>'ready',''), 'ready')        AS ready,
+			COALESCE(NULLIF(r->'status'->>'inProgress',''), 'in_progress') AS in_progress
+		FROM kb.agents a
+		JOIN kb.agent_definitions ad ON ad.id = a.agent_definition_id
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ad.work_config->'objectRules', '[]'::jsonb)) r
+		WHERE a.enabled = true
+		  AND a.trigger_type = 'reaction'
+		  AND r ? 'status'
 	`).Scan(ctx, &rows)
 	if err != nil {
 		return nil, nil, err
@@ -298,6 +309,15 @@ func (r *Repository) listWorkAgentStatuses(ctx context.Context) (ready, inProgre
 		WHERE a.enabled = true
 		  AND a.trigger_type = 'reaction'
 		  AND (ad.dispatch_mode = 'queued' OR (ad.work_config IS NOT NULL AND ad.work_config <> '{}'::jsonb))
+		UNION
+		SELECT DISTINCT t->>'status' AS status
+		FROM kb.agents a
+		JOIN kb.agent_definitions ad ON ad.id = a.agent_definition_id
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ad.work_config->'objectRules', '[]'::jsonb)) r
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(r->'triggers', '[]'::jsonb)) t
+		WHERE a.enabled = true
+		  AND a.trigger_type = 'reaction'
+		  AND COALESCE(t->>'status','') <> ''
 	`).Scan(ctx, &triggerRows)
 	if err != nil {
 		return nil, nil, err
@@ -546,6 +566,9 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 
 // enqueue wakes the listening agent(s) for a ready object.
 func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) {
+	if blocked, err := rc.repo.IsWorkBlocked(ctx, h.CanonicalID); err == nil && blocked {
+		return
+	}
 	agents, err := rc.repo.FindReactionAgentsForType(ctx, h.ProjectID, h.Type, h.Assignee)
 	if err != nil {
 		rc.log.Warn("failed to resolve listening agents", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
@@ -557,6 +580,13 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		return
 	}
 	for _, agent := range agents {
+		// Skip a listener whose rules do not pick up this status: the claim guard
+		// would reject it anyway, but enqueuing a doomed run is noise.
+		if def, derr := rc.repo.ResolveDefinitionForAgent(ctx, agent); derr == nil && def != nil {
+			if !def.TriggerAllowsStatus(h.Type, h.Status) {
+				continue
+			}
+		}
 		canonicalID := h.CanonicalID
 		objectType := h.Type
 		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, CreateRunQueuedOptions{
@@ -571,6 +601,9 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 				"work_claim_status":  h.Status,
 			},
 		}); err != nil {
+			if errors.Is(err, ErrWorkItemBusy) {
+				continue
+			}
 			rc.log.Warn("failed to enqueue reconciled work run", slog.String("canonical_id", h.CanonicalID), slog.String("agent_id", agent.ID), slog.String("error", err.Error()))
 			continue
 		}
@@ -611,10 +644,16 @@ type workObjectPolicy struct {
 // (type > agent > default).
 func resolveWorkObjectPolicy(ctx context.Context, workObjects WorkObjectStore, agentDef *AgentDefinition, projectID, subjectType string) workObjectPolicy {
 	wc := workConfigOf(agentDef)
+	st := AgentWorkStatusConfig{}
+	if agentDef != nil {
+		st = agentDef.EffectiveWorkStatus(subjectType)
+	} else {
+		st = st.withDefaults()
+	}
 	pol := workObjectPolicy{
-		ready:        wc.ReadyStatus(),
-		inProgress:   wc.InProgressStatus(),
-		blocked:      wc.BlockedStatus(),
+		ready:        st.Ready,
+		inProgress:   st.InProgress,
+		blocked:      st.Blocked,
 		failureLimit: wc.FailureLimitValue(),
 	}
 	if workObjects != nil && subjectType != "" {

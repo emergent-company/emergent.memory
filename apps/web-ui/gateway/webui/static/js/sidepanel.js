@@ -112,6 +112,13 @@
   var clearThinking = thinking.clear;
   var finalizeThinking = thinking.finalize;
 
+  // Any non-thinking activity ends a contiguous Thinking block; anything but a
+  // tool call also closes the live tool group.
+  function activityBoundary(type) {
+    if (type !== "thinking" && thinking && thinking.break) thinking.break();
+    if (type !== "tool" && stream && stream.breakToolGroup) stream.breakToolGroup();
+  }
+
   // SSE dispatcher from the shared MemoryChatHost module. The meta frame is
   // page-local (persist + session picker refresh); frames from an aborted
   // stream are dropped via isAborted (newSession()/loadSession() abort the
@@ -138,6 +145,7 @@
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,
+    onActivity: function (type) { activityBoundary(type); },
     isAborted: function () { return !!(aborter && aborter.signal.aborted); },
     onMeta: function (evt) {
       if (evt.conversationId) {
@@ -166,8 +174,6 @@
     get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
-    currentAgentName: currentAgentName,
-    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
@@ -637,13 +643,6 @@
 
   function currentAgentName() {
     return "Assistant";
-  }
-
-  // The side panel's assistant is the project assistant, not a listed agent
-  // definition, so it declares no appearance — the shared bubbles always fall
-  // back to the default bot avatar here.
-  function currentAgentUI() {
-    return { icon: "", color: "" };
   }
 
   /* ---------- localStorage persistence ---------- */

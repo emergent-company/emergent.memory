@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -604,6 +606,25 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		userMessage = fmt.Sprintf("[task_id: %s] %s", taskID, userMessage)
 	}
 
+	// A parent chat run exposes its stream emitter through context. When present,
+	// project this triggered child's lifecycle onto the same stream as spawn_agents.
+	subagentEmit := SubagentEmitterFromContext(ctx)
+	parentRunID := callerRunIDFromContext(ctx)
+	emitTriggered := func(id, runID, status, errMsg string) {
+		if subagentEmit == nil {
+			return
+		}
+		subagentEmit(SubagentUpdate{
+			ID:          id,
+			ParentRunID: parentRunID,
+			RunID:       runID,
+			AgentName:   agent.Name,
+			Task:        userMessage,
+			Status:      status,
+			Error:       errMsg,
+		})
+	}
+
 	// Resolve the caller's orchestration root once. A delegated child must inherit
 	// the delegator's root unchanged in either dispatch mode; the sync branch
 	// below would otherwise self-root the child and split the tree.
@@ -628,8 +649,13 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		}
 		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1, queuedOpts)
 		if err != nil {
+			emitTriggered("spawn-"+uuid.NewString(), "", "failed", err.Error())
 			return errResult("failed to enqueue agent run: " + err.Error())
 		}
+		// A queued child outlives this tool call and runs in another worker
+		// process; there is no parent stream handle to project its terminal
+		// state. Do not emit a queued row that would spin forever in the
+		// parent's track. Sync dispatch still projects start/terminal.
 		return wrapResult(map[string]any{
 			"success": true,
 			"run_id":  run.ID,
@@ -666,12 +692,35 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 	if rootOverride != nil {
 		execReq.RootRunID = rootOverride
 	}
+	childRunID := ""
+	if subagentEmit != nil {
+		execReq.OnRunCreated = func(runID string) {
+			childRunID = runID
+			emitTriggered(runID, runID, "running", "")
+		}
+	}
 	result, err := h.executor.Execute(ctx, execReq)
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
 	if err != nil {
+		id := childRunID
+		if id == "" {
+			id = "spawn-" + uuid.NewString()
+		}
+		emitTriggered(id, childRunID, "failed", err.Error())
 		return errResult("failed to execute agent: " + err.Error())
+	}
+	if result != nil {
+		id := result.RunID
+		if id == "" {
+			id = childRunID
+		}
+		errMsg := ""
+		if e, ok := result.Summary["error"].(string); ok {
+			errMsg = e
+		}
+		emitTriggered(id, result.RunID, subagentStatusForRunStatus(result.Status), errMsg)
 	}
 
 	return wrapResult(map[string]any{

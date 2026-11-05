@@ -309,6 +309,28 @@ main#main-content {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* Mobile project picker (auth_ui.templ projectPickerDialog) is a full-screen
+   sheet, so daisyUI's entry transition buys nothing — and it actively breaks
+   the dialog. `.modal` transitions `visibility` with allow-discrete, so the
+   computed value is still `hidden` at the moment showModal() runs its focusing
+   step: focus stays on <body> and a screen reader never announces the picker.
+   With no transition here showModal() focuses the dialog synchronously (it
+   carries aria-labelledby, so the title is announced). */
+#project-picker-modal {
+  transition: none;
+}
+
+/* The sheet has its own footer, which owns the gap under the action row
+   (pt-2 / pb-[max(0.5rem,env(safe-area-inset-bottom))]). The generic
+   .modal-box rule above adds padding-bottom: calc(1.5rem + env(...)) for
+   dialogs whose last child is content, and it is unlayered, so it beats the
+   box's `p-0` utility and left a 22.5px dead band under "New project / New
+   org" — the exact asymmetry the footer was meant to remove. Zero it here
+   (same unlayered-override pattern as #object-preview-modal-box). */
+#project-picker-modal .modal-box {
+  padding: 0;
+}
+
 /* Left drawer (#_layout-sidebar, sidebar_user.templ): fixed full-height on
    <lg, in-flow sibling on lg+. It spans the screen's top and left edges, so
    its header must clear the status bar/notch and (in notched landscape) the
@@ -1922,4 +1944,189 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
   .stacked-table tbody > tr > td:nth-child(6)::before { content: var(--h6, ""); }
   .stacked-table tbody > tr > td:nth-child(7)::before { content: var(--h7, ""); }
   .stacked-table tbody > tr > td:nth-child(8)::before { content: var(--h8, ""); }
+}
+
+/* ---------- left-side transcript rows ---------- */
+/* Every left-side row — an assistant reply, a voice transcription line, a tool
+   step, a thinking badge, an agent-prompt/stage card, a question or approval
+   card, an A2UI card — starts at the same content edge. The wrapper keeps its
+   `chat-start` marker class, but the row is a plain block: no avatar gutter,
+   no bubble.
+
+   daisyUI's `.chat-start` is a two-column grid (`auto 1fr` = avatar | content)
+   with a 12px column gap, so any row built on it sits ~52px right of the
+   assistant's markdown, which is a plain block. These rules are unlayered, so
+   they beat the layered component rules the way `width: fit-content` on
+   `.chat-bubble` does above.
+
+   Only the horizontal gutter is touched. A row keeps whatever vertical padding
+   daisyUI's `.chat` gives it (assistant rows already had none), so the
+   transcript's vertical rhythm is exactly what it was. */
+.chat.memory-assistant,
+.chat.memory-voice,
+.chat.memory-aux,
+.chat.memory-card {
+  display: block;
+  width: 100%;
+}
+.chat.memory-assistant {
+  padding-block: 0;
+}
+/* Defensive: a row that still carries an avatar (an older cached transcript
+   fragment, or a host building its own row) must not re-open the gutter. */
+.chat.memory-aux > .chat-image,
+.chat.memory-card > .chat-image {
+  display: none;
+}
+.chat.memory-assistant > .memory-md {
+  width: 100%;
+  max-width: none;
+}
+.memory-assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.25rem;
+  margin-top: 0.15rem;
+}
+.memory-assistant-actions:empty {
+  min-height: 0;
+  margin-top: 0;
+}
+.memory-assistant-actions .memory-copy-msg {
+  margin-left: 0;
+}
+
+/* ---------- grouped tool calls ---------- */
+/* A group only exists for 2+ consecutive calls; the body scrolls once it gets
+   long, keeping the transcript's rhythm intact. */
+.memory-tool-group .memory-tool-run-body {
+  max-height: 24rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.memory-tool-group .memory-tool-chip {
+  width: 100%;
+}
+
+/* ---------- subagent composer track ---------- */
+#chat-subagents {
+  padding: 0.5rem 1rem 0;
+}
+#chat-subagents > .memory-subagent-track {
+  position: relative;
+  max-width: 100rem;
+  margin: 0 auto;
+}
+.memory-subagent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  background: color-mix(in oklab, var(--color-base-200) 55%, transparent);
+  color: var(--color-muted-strong);
+  font-size: 0.75rem;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.memory-subagent-pill:hover {
+  background: color-mix(in oklab, var(--color-base-200) 80%, transparent);
+  border-color: color-mix(in oklab, var(--color-base-content) 20%, transparent);
+}
+.memory-subagent-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+.memory-subagent-seg[data-status="working"] { color: var(--color-primary); }
+.memory-subagent-seg[data-status="paused"] { color: var(--color-warning); }
+.memory-subagent-seg[data-status="failed"] { color: var(--color-error); }
+.memory-subagent-sep { color: var(--color-muted-faint); }
+.memory-subagent-fallback { white-space: nowrap; }
+.memory-subagent-chevron { transition: transform 0.15s ease; }
+.memory-subagent-pill[aria-expanded="true"] .memory-subagent-chevron { transform: rotate(180deg); }
+.memory-subagent-popover {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 40;
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: min(22rem, 60vh);
+  overflow-y: auto;
+  padding: 0.3rem;
+  border-radius: var(--radius-box);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  background: var(--color-base-100);
+  box-shadow: 0 10px 30px oklch(0 0 0 / 0.25);
+}
+.memory-subagent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-field);
+  color: inherit;
+  text-decoration: none;
+}
+.memory-subagent-row:hover {
+  background: color-mix(in oklab, var(--color-base-200) 60%, transparent);
+}
+.memory-subagent-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.3rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: var(--color-muted-faint);
+}
+.memory-subagent-dot[data-status="working"] {
+  background: var(--color-primary);
+  animation: memory-subagent-pulse 1.8s ease-in-out infinite;
+}
+.memory-subagent-dot[data-status="paused"] { background: var(--color-warning); }
+.memory-subagent-dot[data-status="failed"] { background: var(--color-error); }
+@keyframes memory-subagent-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.memory-subagent-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+.memory-subagent-name {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-base-content);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-subagent-task,
+.memory-subagent-error {
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-subagent-error { color: var(--color-error); }
+@media (max-width: 767.98px) {
+  .memory-subagent-popover {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .memory-subagent-dot[data-status="working"] { animation: none; }
+  .memory-subagent-chevron { transition: none; }
 }

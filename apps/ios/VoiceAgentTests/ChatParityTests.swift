@@ -216,7 +216,46 @@ struct ChatEventDecodingTests {
             Issue.record("expected a thinking event")
             return
         }
-        #expect(event == .thinking(delta: "step one"))
+        #expect(event == .thinking(id: nil, delta: "step one"))
+    }
+
+    @Test func decodesThinkingIdWhenPresent() {
+        let json = #"{"type":"thinking","id":"r1","delta":"step one"}"#
+        guard let event = decodeChatEvent(json) else {
+            Issue.record("expected a thinking event")
+            return
+        }
+        #expect(event == .thinking(id: "r1", delta: "step one"))
+    }
+
+    @Test func decodesSubagent() {
+        let json = #"{"type":"subagent","id":"s1","parentRunId":"p1","runId":"r1","agentName":"Researcher","task":"Find sources","status":"running","error":null}"#
+        guard let event = decodeChatEvent(json) else {
+            Issue.record("expected a subagent event")
+            return
+        }
+        #expect(event == .subagent(ChatSubagentEvent(
+            id: "s1",
+            parentRunId: "p1",
+            runId: "r1",
+            agentName: "Researcher",
+            task: "Find sources",
+            status: "running",
+            error: nil
+        )))
+    }
+
+    @Test func decodesPartialSubagentWithOptionalFieldsMissing() {
+        let json = #"{"type":"subagent","runId":"r1","status":"completed"}"#
+        guard case let .subagent(event)? = decodeChatEvent(json) else {
+            Issue.record("expected a subagent event")
+            return
+        }
+        #expect(event.id == nil)
+        #expect(event.runId == "r1")
+        #expect(event.status == "completed")
+        #expect(event.agentName == nil)
+        #expect(event.error == nil)
     }
 
     @Test func decodesApproval() {

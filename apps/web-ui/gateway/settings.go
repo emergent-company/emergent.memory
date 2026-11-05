@@ -25,7 +25,11 @@ type Project struct {
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	Stats                       map[string]any `json:"stats,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
-	MainBranchID                string         `json:"main_branch_id,omitempty"`
+	// AutoDiscoveryEnabled is emitted by memory for every project (the column
+	// defaults to true); a nil here means an older server, which is treated as
+	// on to match the server-side default.
+	AutoDiscoveryEnabled *bool  `json:"auto_discovery_enabled,omitempty"`
+	MainBranchID         string `json:"main_branch_id,omitempty"`
 }
 
 // ProjectUpdate is the PATCH /api/projects/:id body. Every field is a pointer
@@ -40,6 +44,7 @@ type ProjectUpdate struct {
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
+	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 }
 
 // AgentOverrideEntry is one entry of GET

@@ -10,7 +10,7 @@
  * sealed-cookie transport against /share/api/*, the email gate, terminal states
  * (invalid/revoked/expired/rate-limited/budget-exceeded via an injected error
  * `code`), the session rail, answerQuestion/postDecision against the share
- * approval route, and currentAgentName/currentAgentUI from the sanitized config.
+ * approval route, and currentAgentName from the sanitized config.
  *
  * Key handling
  * ------------
@@ -66,10 +66,10 @@
     bubble: null,
     bubbleHTML: "",
     bubbleText: "",
-    // agentName / agentUI label the assistant bubbles + avatar from the
-    // sanitized config (mirrors the app chat's per-agent identity).
+    // agentName labels the shared page header and the run-transcript turn
+    // headers. The avatar is applied to the page header by applyAvatar, not
+    // carried on the transcript rows.
     agentName: "",
-    agentUI: { icon: "", color: "" },
     // email holds the visitor-supplied address for this page session only.
     // It is never persisted or written to the URL/DOM.
     email: "",
@@ -357,7 +357,6 @@
     var desc = config.agentDescription || "";
     var welcome = config.welcomeMessage || "";
 
-    state.agentUI = { icon: config.icon || "", color: config.color || "" };
     applyAvatar(config.icon, config.color);
 
     var nameEl = document.getElementById("share-agent-name");
@@ -463,10 +462,6 @@
     return state.agentName || "Memory";
   }
 
-  function currentAgentUI() {
-    return state.agentUI || { icon: "", color: "" };
-  }
-
   /* ---------- thinking blocks (shared with chat.js + sidepanel.js) ---------- */
 
   // The live thinking tracker and the history renderer both live in
@@ -484,6 +479,19 @@
   // The stream ended before a segment sent done:true — stop its shimmer so
   // the badge doesn't look stuck, then stop tracking the segments.
   var finalizeThinking = thinking.finalize;
+
+  // Activity boundary: contiguous thinking ends; a non-tool activity also
+  // closes the live tool group. The share page has no composer mount, so the
+  // subagent track is created mount-less and safely no-ops.
+  function activityBoundary(type) {
+    if (type !== "thinking" && thinking && thinking.break) thinking.break();
+    if (type !== "tool" && type !== "mcp_tool" && stream && stream.breakToolGroup) stream.breakToolGroup();
+  }
+
+  var subagentTrack = MemoryChatComponents.createSubagentTrack({
+    mount: function () { return document.getElementById("chat-subagents"); },
+    openRun: function (runId) { return "/runs/" + encodeURIComponent(runId); },
+  });
 
   /* ---------- SSE dispatcher ---------- */
 
@@ -510,6 +518,8 @@
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,
+    onSubagent: function (evt) { subagentTrack.upsert(evt); },
+    onActivity: function (type) { activityBoundary(type); },
     onMeta: function (evt) {
       // The share wire keeps the leading `meta` frame carrying sessionId (not
       // conversationId — see the unify-share-chat design D2).
@@ -581,15 +591,13 @@
     get bubbleHTML() { return state.bubbleHTML; }, set bubbleHTML(v) { state.bubbleHTML = v; },
     get bubbleText() { return state.bubbleText; }, set bubbleText(v) { state.bubbleText = v; },
     get conversationId() { return state.sessionId; },
-    currentAgentName: currentAgentName,
-    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
     // Raised by the engine from openAssistantBubble on EVERY live turn start:
     // this page now owns the turn's DOM, so history re-renders stand down.
     onLiveTurnStart: function () { state.liveTurn = true; },
-    onStreamStart: function () { clearThinking(); },
+    onStreamStart: function () { clearThinking(); subagentTrack.reset(); },
     onStreamFinish: function (reason) {
       finalizeThinking();
       state.liveTurn = false;
@@ -666,6 +674,7 @@
       showMeta: false,
       silent: true,
     });
+    subagentTrack.rebuild(list);
   }
 
   // reloadTranscript re-fetches the current session's full timeline (items +

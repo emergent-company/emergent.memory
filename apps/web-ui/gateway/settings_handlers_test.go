@@ -1345,3 +1345,39 @@ func TestUIVoiceGroupUnknown(t *testing.T) {
 func strPtr(s string) *string     { return &s }
 func intPtr(n int) *int           { return &n }
 func floatPtr(f float64) *float64 { return &f }
+
+// TestUIProjectSettingsProjectFieldAutoDiscovery pins both directions of the
+// discovery toggle: an "on" form value saves true (the default), and an
+// unchecked box (absent value) saves false so the user can turn automatic
+// discovery off.
+func TestUIProjectSettingsProjectFieldAutoDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		form string
+		want bool
+	}{
+		{name: "on", form: "auto_discovery_enabled=on", want: true},
+		{name: "off", form: "auto_discovery_enabled=off", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+			s := &Server{cfg: Config{}, memory: f}
+			e := echo.New()
+			e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+			rec := voicePost(e, "/settings/project/auto_discovery_enabled", tc.form)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d, want 200", rec.Code)
+			}
+			if f.updatedProject == nil || f.updatedProject.AutoDiscoveryEnabled == nil {
+				t.Fatal("auto_discovery_enabled not sent")
+			}
+			if got := *f.updatedProject.AutoDiscoveryEnabled; got != tc.want {
+				t.Errorf("auto_discovery_enabled = %v, want %v", got, tc.want)
+			}
+			if f.updatedProject.Name != "" {
+				t.Errorf("name should not be touched by a toggle save, got %q", f.updatedProject.Name)
+			}
+		})
+	}
+}

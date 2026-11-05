@@ -63,6 +63,7 @@
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
   var streaming = false;    // turn-busy flag: composer stop, queue-on-send, rail "Running"
   var liveTurn = false;     // THIS page is DOM-owning a live /api/chat stream (raised in openAssistantBubble, cleared at turn teardown)
+  var subagentTrack = null; // composer-track pill for live + rebuilt subagents
   var bubble = null;        // current streaming assistant bubble
   var bubbleHTML = "";      // accumulated assistant rendered HTML (snapshot)
   var bubbleText = "";      // accumulated raw token deltas (pre-snapshot)
@@ -147,6 +148,17 @@
     scrollToBottom: scrollToBottom,
   };
 
+  // activityBoundary ends the current Thinking block on any non-thinking
+  // activity, and closes a tool group for everything except a tool call (which
+  // belongs in the group it is joining).
+  function activityBoundary(type) {
+    // A thinking frame opens/appends its own block; it only ends the tool group.
+    if (type !== "thinking" && typeof thinking !== "undefined" && thinking && thinking.break) {
+      thinking.break();
+    }
+    if (type !== "tool" && type !== "mcp_tool" && stream && stream.breakToolGroup) stream.breakToolGroup();
+  }
+
   // SSE dispatcher from the shared MemoryChatHost module. The meta frame is
   // page-local (rail refresh + URL), and the thinking frame is chat-only
   // (onThinking). railHas / updateUrl / refreshSessionRail are hoisted function
@@ -180,6 +192,8 @@
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: function (evt) { handleThinkingEvent(evt); },
+    onSubagent: function (evt) { if (subagentTrack) subagentTrack.upsert(evt); },
+    onActivity: function (type) { activityBoundary(type); },
     onMeta: function (evt) {
       if (evt.conversationId) {
         // A brand-new conversation (id not yet in the rail) should appear
@@ -225,8 +239,6 @@
     get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
-    currentAgentName: currentAgentName,
-    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
@@ -237,6 +249,7 @@
     onLiveTurnStart: function () { liveTurn = true; },
     onStreamStart: function () {
       clearThinking();
+      if (subagentTrack) subagentTrack.reset();
       // Repaint immediately so the active row shows "Running" on every turn —
       // not just turn 1 of a brand-new conversation (whose only repaint came
       // from the meta→isNew rail refresh). Idempotent; the end/failure paths
@@ -316,6 +329,11 @@
     agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
+
+    subagentTrack = MemoryChatComponents.createSubagentTrack({
+      mount: function () { return document.getElementById("chat-subagents"); },
+      openRun: function (runId) { return scopedPath("/runs/" + encodeURIComponent(runId)); },
+    });
 
     // Seed the sub-chat group model before any filter pass; the server-rendered
     // rail already has the initial collapsed/expanded classes.
@@ -562,19 +580,6 @@
     return currentAgentName();
   }
 
-  // currentAgentUI is the selected agent's declared appearance, read from the
-  // #chat-agent option's data-icon/data-color attributes (emitted by chat.templ
-  // from the agent's uiConfig). Empty strings mean "no appearance" so the
-  // shared bubbles fall back to the default bot avatar.
-  function currentAgentUI() {
-    var opt = agentSelect && agentSelect.selectedOptions.length ? agentSelect.selectedOptions[0] : null;
-    if (!opt) return { icon: "", color: "" };
-    return {
-      icon: opt.getAttribute("data-icon") || "",
-      color: opt.getAttribute("data-color") || "",
-    };
-  }
-
   // Pre-send model-availability warning: mirror the selected #chat-agent
   // option's data-warn (server-computed "model can't be served" message) into
   // the #chat-model-warning banner, showing it only when a warning applies.
@@ -705,6 +710,7 @@
     closeLiveStream();
     if (aborter) aborter.abort();
     clearThinking();
+    if (subagentTrack) subagentTrack.reset();
     replayFrames = [];
     transcriptReady = false;
     conversationId = "";
@@ -1338,6 +1344,7 @@
     liveTurn = false;
     setStreaming(false);
     clearThinking();
+    if (subagentTrack) subagentTrack.reset();
     replayFrames = [];
     transcriptReady = false;
     // Release any working state left by the scope being left: the fresh history
@@ -1408,6 +1415,7 @@
     liveTurn = false;
     setStreaming(false);
     clearThinking();
+    if (subagentTrack) subagentTrack.reset();
     replayFrames = [];
     transcriptReady = false;
     // Release any working state left by the scope being left (see
@@ -1540,6 +1548,7 @@
       showMeta: currentScopeIsRun(),
       silent: false,
     });
+    if (subagentTrack) subagentTrack.rebuild(items || []);
   }
 
   // timelineCtx builds the page-local hooks/state for one chat render (see
@@ -1814,6 +1823,11 @@
   // Test hook: inject a synthetic live_replay frame through the shared
   // dispatcher so replayed in-flight state (thinking badge / running tool chip)
   // can be verified in the browser without a live reconnect.
+  // Test hook: inject a subagent frame through the live track.
+  function debugSubagent(payload) {
+    if (subagentTrack) subagentTrack.upsert(payload || {});
+  }
+
   function debugReplay(payload) {
     var p = payload || {};
     handleEvent(JSON.stringify({
@@ -2451,8 +2465,8 @@
     if (!messages) return null;
     var existing = workingPlaceholder();
     if (existing) return existing;
-    // Same shell as a real assistant bubble (avatar + agent header + neutral
-    // bubble) so the placeholder aligns and tints identically.
+    // Same shell as a real assistant turn (plain full-width markdown row) so
+    // the placeholder aligns and tints identically.
     var wrap = addAssistantMessage("", name || currentAgentName(), true);
     if (!wrap) return null;
     wrap.setAttribute("data-memory-working", "");
@@ -2868,6 +2882,7 @@
     _debugTool: debugTool,
     _debugOpenBubble: debugOpenBubble,
     _debugReplay: debugReplay,
+    _debugSubagent: debugSubagent,
     refreshSessionRail: refreshSessionRail,
     applyRailBadges: applyRailBadges,
     refreshTodos: refreshTodos,

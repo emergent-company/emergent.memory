@@ -74,6 +74,25 @@ type ProcessingProblemFailure struct {
 	Summary     string `json:"summary"`
 	Remediation string `json:"remediation"`
 	Retryable   bool   `json:"retryable"`
+	// Cause narrows a configuration failure to the element that is missing
+	// (no_provider, no_default_model, model_unusable, model_unavailable,
+	// base_url). Empty for classes the copy already describes exactly.
+	Cause string `json:"cause,omitempty"`
+	// Model is the generative model the project resolves to, when the failure is
+	// a model-provider problem. The row names it so "the model" is not anonymous.
+	Model string `json:"model,omitempty"`
+	// Verified is true when the summary was checked against the project's model
+	// configuration. A configuration failure with Verified=false is a guess.
+	Verified bool `json:"verified"`
+	// Fix is where the server says the recorded cause is fixed, when it knows a
+	// page. The gateway prefers it over its own class mapping.
+	Fix *ProcessingProblemFix `json:"fix,omitempty"`
+}
+
+// ProcessingProblemFix is the page that fixes one recorded cause.
+type ProcessingProblemFix struct {
+	Href  string `json:"href"`
+	Label string `json:"label"`
 }
 
 // ProcessingProblemAction is the next step the server recommends.
@@ -350,8 +369,8 @@ type processingRetryAction struct {
 // for queues with a per-unit retry, independent of the failure's Retryable
 // flag: a configuration failure is a deliberate "never retry automatically"
 // decision, not a reason to leave the user without a button after they fixed
-// Providers. Queues with no safe retry (schema, blueprints, email, sessions)
-// return false and keep navigation only.
+// Providers. Queues with no safe retry (schema migrations, blueprints, email,
+// sessions) return false and keep navigation only.
 func processingProblemRetry(p ProcessingProblem) (processingRetryAction, bool) {
 	// An internal failure is a bug in the pipeline: re-running the same input
 	// reproducibly stops in the same place, so the row keeps the remediation
@@ -393,14 +412,29 @@ func processingProblemRetry(p ProcessingProblem) (processingRetryAction, bool) {
 				Confirm: confirm,
 			}, true
 		}
+	case "discovery":
+		// Re-runs the failed job over exactly the documents it covered; the
+		// gateway reports the outcome on the Schema page, where the run's
+		// progress and its resulting pack live.
+		if p.JobID != "" {
+			return processingRetryAction{
+				Href:    "/schema/discovery/retry/" + url.PathEscape(p.JobID),
+				Label:   "Retry",
+				Confirm: confirm,
+			}, true
+		}
 	}
 	return processingRetryAction{}, false
 }
 
 // processingProblemFixHref is the page where the recorded cause is fixed, when
-// the product knows one. It is the link the panel was missing: the remediation
-// says "configure a model then retry" but nothing pointed at Providers.
+// the product knows one. The server's own target wins: it knows whether the fix
+// is "connect a provider", "select a default model" or "review the model
+// settings", which the class alone cannot distinguish.
 func processingProblemFixHref(p ProcessingProblem) string {
+	if p.Failure.Fix != nil && p.Failure.Fix.Href != "" {
+		return p.Failure.Fix.Href
+	}
 	switch p.Failure.Class {
 	case "configuration":
 		return "/settings/providers"
@@ -414,10 +448,52 @@ func processingProblemFixHref(p ProcessingProblem) string {
 
 // processingProblemFixLabel is the link text for processingProblemFixHref.
 func processingProblemFixLabel(p ProcessingProblem) string {
+	if p.Failure.Fix != nil && p.Failure.Fix.Label != "" {
+		return p.Failure.Fix.Label
+	}
 	if p.Failure.Class == "configuration" {
 		return "Configure model"
 	}
 	return "Reconnect source"
+}
+
+// processingProblemCanTestModel reports whether the row can offer a live model
+// test. It needs a model the server actually resolved, a class a test can
+// settle (configuration and permission), and a caller allowed to exercise the
+// project's provider credentials.
+func processingProblemCanTestModel(p ProcessingProblem, canManage bool) bool {
+	if !canManage || p.Failure.Model == "" {
+		return false
+	}
+	switch p.Failure.Class {
+	case "configuration", "permission":
+		return true
+	}
+	return false
+}
+
+// processingProblemModelLabel is the model chip's text. The server only sets
+// Model when it resolved one from the project's configuration.
+func processingProblemModelLabel(p ProcessingProblem) string {
+	return p.Failure.Model
+}
+
+// processingProblemTestModelType is the model family a row's live test must
+// exercise. The embedding queues resolve their own model, so testing one through
+// the generative field would test something the failure is not about.
+func processingProblemTestModelType(p ProcessingProblem) string {
+	switch p.Queue {
+	case "chunk_embedding", "graph_embedding", "graph_relationship_embedding":
+		return "embedding"
+	default:
+		return "generative"
+	}
+}
+
+// processingProblemTestModelField is the form field the providers test endpoint
+// reads for that type, so the row posts the value the endpoint expects.
+func processingProblemTestModelField(p ProcessingProblem) string {
+	return defaultModelTestFields[processingProblemTestModelType(p)]
 }
 
 // processingAreaHasFixableFailures reports whether an area holds a terminal

@@ -556,6 +556,33 @@ type AgentWorkContract struct {
 	RequiredDeliverableTypes []string `json:"requiredDeliverableTypes,omitempty"`
 }
 
+// AgentWorkTrigger is one pickup rule row (object type + status + prompt).
+type AgentWorkTrigger struct {
+	ObjectType string `json:"objectType"`
+	Status     string `json:"status"`
+	Prompt     string `json:"prompt,omitempty"`
+}
+
+// AgentTransition is one agent-permitted status edge.
+type AgentTransition struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// AgentObjectRule is the per-object-type work rule.
+type AgentObjectRule struct {
+	ObjectType  string                 `json:"objectType"`
+	Status      *AgentWorkStatusConfig `json:"status,omitempty"`
+	CanCreate   *bool                  `json:"canCreate,omitempty"`
+	CanUpdate   *bool                  `json:"canUpdate,omitempty"`
+	CanDelete   *bool                  `json:"canDelete,omitempty"`
+	Fields      []string               `json:"fields,omitempty"`
+	Triggers    []AgentWorkTrigger     `json:"triggers,omitempty"`
+	Transitions []AgentTransition      `json:"transitions,omitempty"`
+	// ClearAssigneeOnComplete nulls the assignee when the item completes.
+	ClearAssigneeOnComplete bool `json:"clearAssigneeOnComplete,omitempty"`
+}
+
 // AgentWorkConfig mirrors the server's full agent workConfig. The board consumes
 // only the status phase map (boardStatusMapFromDefinitions); the Work settings
 // form reads and writes the whole shape.
@@ -567,8 +594,12 @@ type AgentWorkConfig struct {
 	RetryPolicy    AgentRetryPolicy      `json:"retryPolicy"`
 	WorkContract   AgentWorkContract     `json:"workContract"`
 	// TriggerStatuses lists the status values that, when an object transitions
-	// into one of them, wake this agent. Defaults to "ready" when unset.
+	// into one of them, wake this agent. Defaults to "ready" when unset. Legacy:
+	// used only when ObjectRules declares no triggers.
 	TriggerStatuses []string `json:"triggerStatuses,omitempty"`
+	// ObjectRules carries the per-type rules (phase map, write actions, fields,
+	// triggers, transitions).
+	ObjectRules []AgentObjectRule `json:"objectRules,omitempty"`
 }
 
 type AgentDefinitionSummary struct {

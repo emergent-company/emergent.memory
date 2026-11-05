@@ -13,6 +13,13 @@ extension MemorySessionController {
 
     func classify(_ error: any Error) -> MemoryFailure {
         if let tokenError = error as? GatewayError {
+            // `503` from the token endpoint is the gateway saying it has no
+            // LiveKit credentials to mint with (`web-ui/gateway/token.go`), not
+            // a transient outage: text chat is unaffected and retrying the call
+            // answers the same. Anything else is a real token-fetch failure.
+            if case let .httpStatus(code, _) = tokenError, code == 503 {
+                return .voiceNotConfigured
+            }
             return .tokenFetch(message: tokenError.localizedDescription)
         }
         if let liveKitError = error as? LiveKitError {

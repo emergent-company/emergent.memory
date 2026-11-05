@@ -10,7 +10,7 @@ import (
 )
 
 // liveStateHub retains, per conversation, the in-flight tail of the active run:
-// open thinking segments and running tool calls. The rewritten frames that pass
+// open thinking segments, running tool calls, and open subagent rows. The rewritten frames that pass
 // through the /api/chat proxy are teed into it (see liveTee), and it is read by
 // /api/conversations/:id/events to synthesize the additive `live_replay` frame
 // that reconstructs "what is happening now" after a mid-run reload.
@@ -44,6 +44,7 @@ type liveFrameKind int
 const (
 	liveKindThinking liveFrameKind = iota
 	liveKindTool
+	liveKindSubagent
 )
 
 // liveFrame is one retained in-flight frame: the correlation key (a thinking
@@ -203,6 +204,44 @@ func isTerminalToolStatus(status string) bool {
 	}
 }
 
+// observeSubagent updates the hub from a rewritten `subagent` frame's data
+// payload. A non-terminal status (queued/running) retains/updates the row; a
+// terminal status (completed/failed/paused/canceled) drops it. Rows are
+// correlated by `runId` when present, else by the stable `id` (which is a
+// synthetic spawn id for a spawn that failed before a child run existed).
+func (h *liveStateHub) observeSubagent(conversationID, data string) {
+	var ev struct {
+		ID     string `json:"id"`
+		RunID  string `json:"runId"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		return
+	}
+	key := cmp.Or(ev.RunID, ev.ID)
+	if key == "" {
+		return // cannot correlate without an id
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.stateLocked(conversationID)
+	if isTerminalSubagentStatus(ev.Status) {
+		st.dropFrame(liveKindSubagent, key)
+		return
+	}
+	st.upsertFrame(liveKindSubagent, key, json.RawMessage(data))
+}
+
+// isTerminalSubagentStatus reports whether a subagent status closes the row.
+func isTerminalSubagentStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "paused", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
 // upsertFrame replaces the frame with the same key (if present) or appends it.
 // Used for thinking segments and id'd tool calls, where successive deltas of one
 // segment/call share a stable key and should collapse to a single frame.
@@ -340,6 +379,10 @@ func (t *liveTee) handle(raw []byte) {
 	case "mcp_tool":
 		if t.convID != "" {
 			t.hub.observeTool(t.convID, data)
+		}
+	case "subagent":
+		if t.convID != "" {
+			t.hub.observeSubagent(t.convID, data)
 		}
 	case "done":
 		if t.convID != "" {

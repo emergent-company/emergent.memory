@@ -30,6 +30,9 @@ ARG BUILD_TIME
 
 # Install build dependencies (git needed for swag)
 RUN apk add --no-cache git ca-certificates tzdata
+# One bounded-retry helper for the steps whose failure mode is the network; its
+# header explains why a fetch and a compile are not treated alike.
+COPY deploy/self-hosted/scripts/retry.sh /usr/local/bin/retry
 
 WORKDIR /build/server
 
@@ -37,12 +40,27 @@ WORKDIR /build/server
 # Also copy pkg/sdk go.mod/go.sum needed by the replace directive in apps/server/go.mod
 COPY apps/server/go.mod apps/server/go.sum ./
 COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
-RUN go mod download
+# Download into the SAME module cache every later module-consuming step mounts.
+# A plain layer is shadowed by `--mount=type=cache,target=/go/pkg/mod`, so on a
+# cold builder the graph was fetched here and then fetched again by the tidy
+# guard and `go build` — which is how one transient proxy.golang.org stream
+# error failed a whole image build. Bounded retry: a module fetch is the step
+# that can fail for reasons unrelated to this tree.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    sh /usr/local/bin/retry 3 10 "go mod download (server)" -- go mod download
 
 # Install swag at the version go.mod requires, so the generator can never
 # disagree with the compiled github.com/swaggo/swag library. The layer caches on
-# go.mod/go.sum (the COPY above), not on source.
-RUN go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+# go.mod/go.sum (the COPY above), not on source. It mounts the module and build
+# caches too: `go install x@version` resolves outside this module, so without them
+# it re-downloads and re-compiles its own graph on every cold builder. That also
+# means `go mod download` does not cover it -- on a cold builder it is a fetch
+# like the others (18 modules measured, #68), so it is retried like the others.
+# The version comes from go.mod in the outer shell, evaluated once, so a retry
+# cannot install a different one than the one that was resolved.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    sh /usr/local/bin/retry 3 10 "go install swag" -- go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
 
 # Copy source code (cache invalidation point for source changes)
 COPY apps/server/ ./
@@ -57,7 +75,15 @@ COPY apps/server/ ./
 # Keep this image's Go minor in step with `.github/workflows/ci.yml`
 # (go-version): tidy output is version-sensitive, so a mismatch can pass the
 # CI guard and fail here, or pass here and mask drift the guard would catch.
-RUN go mod tidy -diff || { \
+# Mounts the module cache so `-diff` reads the graph the download step fetched
+# instead of re-fetching it into a shadowed layer. tidy is still a network step:
+# `go mod download` fetches the build graph, while `-diff` also resolves the
+# test-only dependencies of dependencies (38 modules on a cold cache), so it
+# gets the same three attempts as the download. Only the final failure prints
+# what was wrong, so a transient retry does not bury the reason.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    sh /usr/local/bin/retry 3 10 "go mod tidy -diff (server)" -- go mod tidy -diff || { \
       echo "" >&2; \
       echo "ERROR: apps/server/go.mod or go.sum is not tidy in this tree." >&2; \
       echo "       Run 'go mod tidy' in apps/server, commit go.mod+go.sum, cut a new tag." >&2; \
@@ -118,20 +144,31 @@ ARG BUILD_TIME
 
 WORKDIR /build/cli
 
+# Separate stage, so the retry helper is copied again (a COPY is stage-scoped).
+COPY deploy/self-hosted/scripts/retry.sh /usr/local/bin/retry
+
 # Copy SDK first (needed for go.mod replace directive)
 COPY apps/server/pkg/sdk/ /apps/server/pkg/sdk/
 
 # Copy go.mod/go.sum for dependency caching
 COPY apps/cli/go.mod apps/cli/go.sum ./
-RUN go mod download
+# Same reason as the server stage: the build steps mount /go/pkg/mod, so a plain
+# download layer would be thrown away and re-fetched during `go build`.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    sh /usr/local/bin/retry 3 10 "go mod download (cli)" -- go mod download
 
 # Copy CLI source
 COPY apps/cli/ ./
 
 # Same rule as the server stage: the committed module files are tidy (apps/cli
 # included in scripts/preflight/go-mod-tidy.sh), so `-diff` fails the build on
-# drift instead of repairing a tag whose go.mod/go.sum are out of sync.
-RUN go mod tidy -diff || { \
+# drift instead of repairing a tag whose go.mod/go.sum are out of sync. Same
+# three attempts as the server stage, for the same reason: tidy resolves test
+# dependencies the download step does not fetch.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    sh /usr/local/bin/retry 3 10 "go mod tidy -diff (cli)" -- go mod tidy -diff || { \
       echo "" >&2; \
       echo "ERROR: apps/cli/go.mod or go.sum is not tidy in this tree." >&2; \
       echo "       Run 'go mod tidy' in apps/cli, commit go.mod+go.sum, cut a new tag." >&2; \

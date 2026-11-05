@@ -38,7 +38,7 @@ Table "core"."agent_mcp_endpoints" {
   "revoked_at" timestamptz
 
   Indexes {
-    (agent_id) [name: "uq_agent_mcp_endpoints_agent", unique]
+    (agent_id) [name: "uq_agent_mcp_endpoints_agent", unique, note: '(revoked_at IS NULL)']
   }
 }
 
@@ -54,7 +54,7 @@ Table "core"."agent_mcp_keys" {
 
   Indexes {
     (endpoint_id) [name: "idx_agent_mcp_keys_endpoint"]
-    (endpoint_id, `lower(label)`) [name: "uq_agent_mcp_keys_endpoint_label", unique]
+    (endpoint_id, `lower(label)`) [name: "uq_agent_mcp_keys_endpoint_label", unique, note: '(revoked_at IS NULL)']
   }
 }
 
@@ -92,8 +92,8 @@ Table "core"."api_tokens" {
   "expires_at" timestamptz
 
   Indexes {
-    (user_id, name) [name: "api_tokens_user_name_unique", unique]
-    (expires_at) [name: "idx_api_tokens_expires_at"]
+    (user_id, name) [name: "api_tokens_user_name_unique", unique, note: '(revoked_at IS NULL)']
+    (expires_at) [name: "idx_api_tokens_expires_at", note: '(expires_at IS NOT NULL)']
     (project_id) [name: "idx_api_tokens_project_id"]
     (token_hash) [name: "idx_api_tokens_token_hash"]
     (user_id) [name: "idx_api_tokens_user_id"]
@@ -116,7 +116,7 @@ Table "core"."mcp_share_instances" {
   Indexes {
     (project_id) [name: "idx_mcp_share_instances_project"]
     (token_id) [name: "idx_mcp_share_instances_token"]
-    (project_id, `lower(name)`) [name: "uq_mcp_share_instances_project_name", unique]
+    (project_id, `lower(name)`) [name: "uq_mcp_share_instances_project_name", unique, note: '(revoked_at IS NULL)']
   }
 }
 // core.mcp_share_instances: Named MCP access grants binding an API token to tool/agent allowlists
@@ -180,7 +180,7 @@ Table "core"."superadmins" {
   "role" varchar(50) [not null, default: 'superadmin_full']
 
   Indexes {
-    (user_id) [name: "idx_superadmins_active"]
+    (user_id) [name: "idx_superadmins_active", note: '(revoked_at IS NULL)']
   }
 }
 
@@ -230,9 +230,9 @@ Table "core"."user_profiles" {
 
   Indexes {
     (zitadel_user_id) [name: "IDX_3ef997e65ad4f83f35356a1a6e", unique]
-    (deleted_at) [name: "idx_user_profiles_deleted_at"]
-    (last_activity_at) [name: "idx_user_profiles_last_activity_at"]
-    (last_synced_at) [name: "idx_user_profiles_last_synced_at"]
+    (deleted_at) [name: "idx_user_profiles_deleted_at", note: '(deleted_at IS NULL)']
+    (last_activity_at) [name: "idx_user_profiles_last_activity_at", note: '(deleted_at IS NULL)']
+    (last_synced_at) [name: "idx_user_profiles_last_synced_at", note: '(deleted_at IS NULL)']
   }
 }
 
@@ -319,8 +319,8 @@ Table "kb"."agent_definitions" {
   "work_config" jsonb [not null, default: '{}', note: 'Object-driven work config: {status:{ready,inProgress,review,revision,blocked,done}, requiresReview, failureLimit, retryPolicy}.']
 
   Indexes {
-    (product_id) [name: "idx_agent_definitions_product_id"]
-    (project_id, is_default) [name: "idx_agent_definitions_project_default"]
+    (product_id) [name: "idx_agent_definitions_product_id", note: '(product_id IS NOT NULL)']
+    (project_id, is_default) [name: "idx_agent_definitions_project_default", note: '(is_default = true)']
     (project_id, name) [name: "idx_agent_definitions_project_name", unique]
     (project_id, source_blueprint_id) [name: "idx_agent_definitions_source_blueprint"]
   }
@@ -344,7 +344,7 @@ Table "kb"."agent_processing_log" {
     (agent_id, created_at) [name: "idx_agent_processing_log_agent"]
     (agent_id, graph_object_id, object_version, event_type) [name: "idx_agent_processing_log_lookup"]
     (graph_object_id, created_at) [name: "idx_agent_processing_log_object"]
-    (status, started_at) [name: "idx_agent_processing_log_stuck"]
+    (status, started_at) [name: "idx_agent_processing_log_stuck", note: '(status = \'processing\'::text)']
   }
 }
 
@@ -402,8 +402,8 @@ Table "kb"."agent_run_jobs" {
   "project_id" uuid
 
   Indexes {
-    (status, next_run_at) [name: "idx_agent_run_jobs_poll"]
-    (project_id, queue, status, priority, next_run_at) [name: "idx_agent_run_jobs_queue_poll"]
+    (status, next_run_at) [name: "idx_agent_run_jobs_poll", note: '(status = \'pending\'::text)']
+    (project_id, queue, status, priority, next_run_at) [name: "idx_agent_run_jobs_queue_poll", note: '(status = \'pending\'::text)']
     (run_id) [name: "idx_agent_run_jobs_run_id"]
   }
 }
@@ -476,14 +476,15 @@ Table "kb"."agent_runs" {
 
   Indexes {
     (agent_id) [name: "idx_agent_runs_agent_id"]
-    (parent_run_id) [name: "idx_agent_runs_parent_run_id"]
-    (resumed_from) [name: "idx_agent_runs_resumed_from"]
-    (root_run_id) [name: "idx_agent_runs_root_run_id"]
+    (subject_object_id) [name: "idx_agent_runs_live_subject", unique, note: '((subject_object_id IS NOT NULL) AND (status = ANY (ARRAY[\'queued\'::text, \'running\'::text, \'paused\'::text])))']
+    (parent_run_id) [name: "idx_agent_runs_parent_run_id", note: '(parent_run_id IS NOT NULL)']
+    (resumed_from) [name: "idx_agent_runs_resumed_from", note: '(resumed_from IS NOT NULL)']
+    (root_run_id) [name: "idx_agent_runs_root_run_id", note: '(root_run_id IS NOT NULL)']
     (session_id) [name: "idx_agent_runs_session_id"]
     (started_at) [name: "idx_agent_runs_started_at"]
     (status) [name: "idx_agent_runs_status"]
-    (subject_object_id) [name: "idx_agent_runs_subject_object"]
-    (trace_id) [name: "idx_agent_runs_trace_id"]
+    (subject_object_id) [name: "idx_agent_runs_subject_object", note: '(subject_object_id IS NOT NULL)']
+    (trace_id) [name: "idx_agent_runs_trace_id", note: '(trace_id IS NOT NULL)']
   }
 }
 
@@ -509,9 +510,9 @@ Table "kb"."agent_sandboxes" {
   "image_digest" text
 
   Indexes {
-    (expires_at) [name: "idx_agent_sandboxes_expires"]
-    (container_type, lifecycle, status) [name: "idx_agent_sandboxes_persistent_mcp"]
-    (agent_session_id) [name: "idx_agent_sandboxes_session"]
+    (expires_at) [name: "idx_agent_sandboxes_expires", note: '(expires_at IS NOT NULL)']
+    (container_type, lifecycle, status) [name: "idx_agent_sandboxes_persistent_mcp", note: '((container_type = \'mcp_server\'::text) AND (lifecycle = \'persistent\'::text))']
+    (agent_session_id) [name: "idx_agent_sandboxes_session", note: '(agent_session_id IS NOT NULL)']
     (status) [name: "idx_agent_sandboxes_status"]
   }
 }
@@ -562,8 +563,8 @@ Table "kb"."agent_share_links" {
   "expires_at" timestamptz
 
   Indexes {
-    (agent_definition_id, `lower(label::text)`) [name: "idx_agent_share_links_def_label_active", unique]
-    (project_id) [name: "idx_agent_share_links_project_active"]
+    (agent_definition_id, `lower(label::text)`) [name: "idx_agent_share_links_def_label_active", unique, note: '(revoked_at IS NULL)']
+    (project_id) [name: "idx_agent_share_links_project_active", note: '(revoked_at IS NULL)']
   }
 }
 
@@ -657,7 +658,7 @@ Table "kb"."agents" {
 
   Indexes {
     (strategy_type) [name: "IDX_agents_strategy_type"]
-    (consecutive_failures) [name: "idx_agents_consecutive_failures"]
+    (consecutive_failures) [name: "idx_agents_consecutive_failures", note: '(consecutive_failures > 0)']
     (enabled) [name: "idx_agents_enabled"]
     (project_id) [name: "idx_agents_project_id"]
     (strategy_type) [name: "idx_agents_role"]
@@ -722,12 +723,12 @@ Table "kb"."backups" {
   "imported" boolean [not null, default: false, note: 'True when the backup was imported from another deployment; project_id is the foreign source project (no local kb.projects row) and such backups are clone-restore only']
 
   Indexes {
-    (baseline_backup_id) [name: "idx_backups_baseline"]
-    (created_at) [name: "idx_backups_created"]
-    (expires_at) [name: "idx_backups_expires"]
-    (organization_id, project_id) [name: "idx_backups_org_project"]
-    (parent_backup_id) [name: "idx_backups_parent"]
-    (status) [name: "idx_backups_status"]
+    (baseline_backup_id) [name: "idx_backups_baseline", note: '(baseline_backup_id IS NOT NULL)']
+    (created_at) [name: "idx_backups_created", note: '(deleted_at IS NULL)']
+    (expires_at) [name: "idx_backups_expires", note: '((deleted_at IS NULL) AND (expires_at IS NOT NULL))']
+    (organization_id, project_id) [name: "idx_backups_org_project", note: '(deleted_at IS NULL)']
+    (parent_backup_id) [name: "idx_backups_parent", note: '(parent_backup_id IS NOT NULL)']
+    (status) [name: "idx_backups_status", note: '(deleted_at IS NULL)']
   }
 }
 // kb.backups: Stores metadata for project backups stored in MinIO
@@ -835,8 +836,8 @@ Table "kb"."blueprints" {
   "origin" text [not null, default: 'user']
 
   Indexes {
-    (name, version) [name: "blueprints_name_version_global_key", unique]
-    (name, version, project_id) [name: "blueprints_name_version_project_key", unique]
+    (name, version) [name: "blueprints_name_version_global_key", unique, note: '(project_id IS NULL)']
+    (name, version, project_id) [name: "blueprints_name_version_project_key", unique, note: '(project_id IS NOT NULL)']
     (origin) [name: "blueprints_origin_idx"]
     (project_id) [name: "blueprints_project_id_idx"]
     (name) [name: "idx_blueprints_name"]
@@ -880,10 +881,10 @@ Table "kb"."chat_conversations" {
   "spawn_source" text
 
   Indexes {
-    (canonical_id) [name: "IDX_chat_conversations_canonical_id", unique]
-    (object_id) [name: "IDX_chat_conversations_object_id_unique", unique]
-    (parent_conversation_id) [name: "idx_chat_conversations_parent"]
-    (project_id, updated_at) [name: "idx_chat_conversations_project_active_updated"]
+    (canonical_id) [name: "IDX_chat_conversations_canonical_id", unique, note: '(canonical_id IS NOT NULL)']
+    (object_id) [name: "IDX_chat_conversations_object_id_unique", unique, note: '(object_id IS NOT NULL)']
+    (parent_conversation_id) [name: "idx_chat_conversations_parent", note: '(parent_conversation_id IS NOT NULL)']
+    (project_id, updated_at) [name: "idx_chat_conversations_project_active_updated", note: '(is_archived = false)']
     (session_id) [name: "idx_chat_conversations_session_id_unique", unique]
   }
 }
@@ -918,9 +919,9 @@ Table "kb"."chunk_embedding_jobs" {
 
   Indexes {
     (chunk_id) [name: "idx_chunk_embedding_jobs_chunk_id"]
-    (status, scheduled_at, priority) [name: "idx_chunk_embedding_jobs_dequeue"]
+    (status, scheduled_at, priority) [name: "idx_chunk_embedding_jobs_dequeue", note: '(status = \'pending\'::text)']
     (status) [name: "idx_chunk_embedding_jobs_status"]
-    (chunk_id) [name: "uidx_chunk_embedding_jobs_active", unique]
+    (chunk_id) [name: "uidx_chunk_embedding_jobs_active", unique, note: '(status = ANY (ARRAY[\'pending\'::text, \'processing\'::text]))']
   }
 }
 
@@ -956,7 +957,7 @@ Table "kb"."chunks" {
     (document_id, chunk_index) [name: "IDX_6f5a7e4467cdc44037f209122e", unique]
     (document_id) [name: "IDX_d841de45a719fe1f35213d7920"]
     (embedding) [name: "idx_chunks_embedding_hnsw"]
-    (parent_chunk_id) [name: "idx_chunks_parent_chunk_id"]
+    (parent_chunk_id) [name: "idx_chunks_parent_chunk_id", note: '(parent_chunk_id IS NOT NULL)']
     (tsv) [name: "idx_chunks_tsv"]
   }
 }
@@ -998,6 +999,7 @@ Table "kb"."discovery_jobs" {
   Indexes {
     (project_id) [name: "idx_discovery_jobs_project_id"]
     (status) [name: "idx_discovery_jobs_status"]
+    (project_id) [name: "uq_discovery_jobs_one_active", unique, note: '(status <> ALL (ARRAY[\'completed\'::text, \'failed\'::text, \'cancelled\'::text]))']
   }
 }
 
@@ -1066,11 +1068,11 @@ Table "kb"."document_parsing_jobs" {
   "updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
-    (document_id) [name: "idx_document_parsing_jobs_document"]
-    (status, updated_at) [name: "idx_document_parsing_jobs_orphaned"]
-    (status, created_at) [name: "idx_document_parsing_jobs_pending"]
+    (document_id) [name: "idx_document_parsing_jobs_document", note: '(document_id IS NOT NULL)']
+    (status, updated_at) [name: "idx_document_parsing_jobs_orphaned", note: '(status = \'processing\'::text)']
+    (status, created_at) [name: "idx_document_parsing_jobs_pending", note: '(status = \'pending\'::text)']
     (project_id) [name: "idx_document_parsing_jobs_project"]
-    (status, next_retry_at) [name: "idx_document_parsing_jobs_retry"]
+    (status, next_retry_at) [name: "idx_document_parsing_jobs_retry", note: '((status = \'retry_pending\'::text) AND (next_retry_at IS NOT NULL))']
   }
 }
 
@@ -1110,20 +1112,20 @@ Table "kb"."documents" {
   "created_by_user_id" uuid [note: 'Authenticated user who uploaded the document; NULL for source-synced documents and for rows predating #2260.']
 
   Indexes {
-    (project_id, content_hash) [name: "IDX_3bbf4ea30357bf556110f034d4", unique]
+    (project_id, content_hash) [name: "IDX_3bbf4ea30357bf556110f034d4", unique, note: '(content_hash IS NOT NULL)']
     (project_id) [name: "IDX_e156b298c20873e14c362e789b"]
     (canonical_id, version) [name: "idx_documents_canonical_version", unique]
-    (conversion_status) [name: "idx_documents_conversion_status"]
-    (project_id, `(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id", unique]
-    (`(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id_lookup"]
-    (metadata) [name: "idx_documents_metadata"]
+    (conversion_status) [name: "idx_documents_conversion_status", note: '(conversion_status = ANY (ARRAY[\'pending\'::text, \'failed\'::text]))']
+    (project_id, `(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id", unique, note: '((source_type = \'email\'::text) AND ((metadata ->> \'messageId\'::text) IS NOT NULL))']
+    (`(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id_lookup", note: '((source_type = \'email\'::text) AND ((metadata ->> \'messageId\'::text) IS NOT NULL))']
+    (metadata) [name: "idx_documents_metadata", note: '((metadata IS NOT NULL) AND (metadata <> \'{}\'::jsonb))']
     (parent_document_id) [name: "idx_documents_parent_document_id"]
     (project_id, created_at, id) [name: "idx_documents_project_created_id"]
     (project_id, source_id, source_status) [name: "idx_documents_project_source_status"]
     (project_id, updated_at, id) [name: "idx_documents_project_updated_id"]
-    (source_id, source_external_id) [name: "idx_documents_source_external_head", unique]
+    (source_id, source_external_id) [name: "idx_documents_source_external_head", unique, note: '((source_external_id IS NOT NULL) AND (supersedes_id IS NULL))']
     (source_type) [name: "idx_documents_source_type"]
-    (storage_key) [name: "idx_documents_storage_key"]
+    (storage_key) [name: "idx_documents_storage_key", note: '(storage_key IS NOT NULL)']
   }
 }
 
@@ -1151,12 +1153,12 @@ Table "kb"."email_jobs" {
   "project_id" uuid
 
   Indexes {
-    (mailgun_message_id) [name: "idx_email_jobs_mailgun_id"]
+    (mailgun_message_id) [name: "idx_email_jobs_mailgun_id", note: '(mailgun_message_id IS NOT NULL)']
     (`btrim(mailgun_message_id::text, '<>'::text)`) [name: "idx_email_jobs_mailgun_message_id_btrim"]
-    (processed_at) [name: "idx_email_jobs_needs_status_sync"]
-    (project_id, status) [name: "idx_email_jobs_project_status"]
+    (processed_at) [name: "idx_email_jobs_needs_status_sync", note: '(((status)::text = \'sent\'::text) AND (mailgun_message_id IS NOT NULL) AND (delivery_status IS NULL))']
+    (project_id, status) [name: "idx_email_jobs_project_status", note: '(project_id IS NOT NULL)']
     (source_type, source_id) [name: "idx_email_jobs_source"]
-    (status, next_retry_at) [name: "idx_email_jobs_status_next_retry"]
+    (status, next_retry_at) [name: "idx_email_jobs_status_next_retry", note: '((status)::text = ANY (ARRAY[(\'pending\'::character varying)::text, (\'processing\'::character varying)::text]))']
   }
 }
 
@@ -1171,7 +1173,7 @@ Table "kb"."email_logs" {
   Indexes {
     (event_type) [name: "idx_email_logs_event_type"]
     (email_job_id) [name: "idx_email_logs_job"]
-    (mailgun_event_id) [name: "ux_email_logs_mailgun_event_id", unique]
+    (mailgun_event_id) [name: "ux_email_logs_mailgun_event_id", unique, note: '(mailgun_event_id IS NOT NULL)']
   }
 }
 
@@ -1236,7 +1238,7 @@ Table "kb"."embedding_policies" {
 
   Indexes {
     (project_id, object_type) [name: "IDX_26573c7e713682c72216747770", unique]
-    (project_id, is_system) [name: "idx_embedding_policies_is_system"]
+    (project_id, is_system) [name: "idx_embedding_policies_is_system", note: '(is_system = true)']
   }
 }
 
@@ -1265,7 +1267,7 @@ Table "kb"."external_sources" {
   Indexes {
     (project_id, normalized_url) [name: "idx_external_sources_normalized_url"]
     (project_id, provider_type, external_id) [name: "idx_external_sources_project_provider_external_id", unique]
-    (status, sync_policy, last_checked_at) [name: "idx_external_sources_sync_status"]
+    (status, sync_policy, last_checked_at) [name: "idx_external_sources_sync_status", note: '(status = \'active\'::text)']
   }
 }
 
@@ -1293,7 +1295,7 @@ Table "kb"."graph_embedding_jobs" {
   Indexes {
     (object_id) [name: "IDX_df895a2e1799c53ef660d0aae6"]
     (status) [name: "IDX_f0021c2230e47af51928f35975"]
-    (object_id) [name: "uidx_graph_embedding_jobs_active", unique]
+    (object_id) [name: "uidx_graph_embedding_jobs_active", unique, note: '(status = ANY (ARRAY[\'pending\'::text, \'processing\'::text]))']
   }
 }
 
@@ -1343,31 +1345,31 @@ Table "kb"."graph_objects" {
     (type) [name: "IDX_b8c7752534a444c2f16ebf3d91"]
     (canonical_id) [name: "IDX_c04db004625a1c8be8abb6c046"]
     (embedding_v2) [name: "IDX_graph_objects_embedding_v2_hnsw"]
-    (project_id, branch_id, type, key) [name: "IDX_graph_objects_upsert_branch", unique]
-    (project_id, type, key) [name: "IDX_graph_objects_upsert_main", unique]
-    (actor_type, actor_id) [name: "idx_graph_objects_actor"]
-    (project_id) [name: "idx_graph_objects_embedding_coverage"]
+    (project_id, branch_id, type, key) [name: "IDX_graph_objects_upsert_branch", unique, note: '((key IS NOT NULL) AND (supersedes_id IS NULL) AND (deleted_at IS NULL) AND (branch_id IS NOT NULL))']
+    (project_id, type, key) [name: "IDX_graph_objects_upsert_main", unique, note: '((key IS NOT NULL) AND (supersedes_id IS NULL) AND (deleted_at IS NULL) AND (branch_id IS NULL))']
+    (actor_type, actor_id) [name: "idx_graph_objects_actor", note: '(actor_type IS NOT NULL)']
+    (project_id) [name: "idx_graph_objects_embedding_coverage", note: '((embedding_v2 IS NOT NULL) AND (deleted_at IS NULL))']
     (fts) [name: "idx_graph_objects_fts"]
-    (`(migration_archive <> '[]'::jsonb)`) [name: "idx_graph_objects_has_archive"]
-    (project_id, created_at, id) [name: "idx_graph_objects_head_main"]
-    (project_id, status, created_at, id) [name: "idx_graph_objects_head_status"]
-    (project_id, type, id) [name: "idx_graph_objects_head_type_count"]
-    (project_id) [name: "idx_graph_objects_labels_head"]
-    (last_accessed_at) [name: "idx_graph_objects_last_accessed"]
-    (created_at) [name: "idx_graph_objects_missing_embedding"]
-    (project_id, namespace) [name: "idx_graph_objects_namespace"]
-    (project_id, assignee) [name: "idx_graph_objects_project_assignee"]
-    (project_id, branch_id, type, key) [name: "idx_graph_objects_project_branch_type_key_c"]
-    (project_id, credential_id) [name: "idx_graph_objects_project_credential"]
+    (`(migration_archive <> '[]'::jsonb)`) [name: "idx_graph_objects_has_archive", note: '(migration_archive <> \'[]\'::jsonb)']
+    (project_id, created_at, id) [name: "idx_graph_objects_head_main", note: '((supersedes_id IS NULL) AND (branch_id IS NULL) AND (deleted_at IS NULL))']
+    (project_id, status, created_at, id) [name: "idx_graph_objects_head_status", note: '((supersedes_id IS NULL) AND (branch_id IS NULL) AND (deleted_at IS NULL))']
+    (project_id, type, id) [name: "idx_graph_objects_head_type_count", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
+    (project_id) [name: "idx_graph_objects_labels_head", note: '((supersedes_id IS NULL) AND (deleted_at IS NULL) AND (cardinality(labels) > 0))']
+    (last_accessed_at) [name: "idx_graph_objects_last_accessed", note: '(last_accessed_at IS NOT NULL)']
+    (created_at) [name: "idx_graph_objects_missing_embedding", note: '((embedding_v2 IS NULL) AND (deleted_at IS NULL))']
+    (project_id, namespace) [name: "idx_graph_objects_namespace", note: '(namespace IS NOT NULL)']
+    (project_id, assignee) [name: "idx_graph_objects_project_assignee", note: '(assignee IS NOT NULL)']
+    (project_id, branch_id, type, key) [name: "idx_graph_objects_project_branch_type_key_c", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NOT NULL))']
+    (project_id, credential_id) [name: "idx_graph_objects_project_credential", note: '(credential_id IS NOT NULL)']
     (project_id, extraction_job_id) [name: "idx_graph_objects_project_extraction_job"]
-    (project_id, run_id) [name: "idx_graph_objects_project_run"]
+    (project_id, run_id) [name: "idx_graph_objects_project_run", note: '(run_id IS NOT NULL)']
     (project_id, type, created_at, id) [name: "idx_graph_objects_project_type_created_id"]
-    (project_id, type, key) [name: "idx_graph_objects_project_type_key_c"]
-    (project_id, type, `"left"(properties ->> 'name'::text, 256)`, key) [name: "idx_graph_objects_project_type_name"]
-    (project_id, type, properties) [name: "idx_graph_objects_project_type_props_gin"]
+    (project_id, type, key) [name: "idx_graph_objects_project_type_key_c", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
+    (project_id, type, `"left"(properties ->> 'name'::text, 256)`, key) [name: "idx_graph_objects_project_type_name", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
+    (project_id, type, properties) [name: "idx_graph_objects_project_type_props_gin", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
     (schema_version) [name: "idx_graph_objects_schema_version"]
-    (project_id, last_accessed_at, id) [name: "idx_graph_objects_unused_main"]
-    (project_id, namespace, type, key) [name: "idx_graph_objects_upsert_namespace", unique]
+    (project_id, last_accessed_at, id) [name: "idx_graph_objects_unused_main", note: '((supersedes_id IS NULL) AND (deleted_at IS NULL))']
+    (project_id, namespace, type, key) [name: "idx_graph_objects_upsert_namespace", unique, note: '((key IS NOT NULL) AND (namespace IS NOT NULL) AND (supersedes_id IS NULL) AND (deleted_at IS NULL) AND (branch_id IS NULL))']
   }
 }
 
@@ -1386,9 +1388,9 @@ Table "kb"."graph_relationship_embedding_jobs" {
 
   Indexes {
     (relationship_id, status) [name: "idx_graph_rel_emb_jobs_relationship_status"]
-    (scheduled_at) [name: "idx_graph_rel_emb_jobs_scheduled"]
+    (scheduled_at) [name: "idx_graph_rel_emb_jobs_scheduled", note: '(status = \'pending\'::text)']
     (status) [name: "idx_graph_rel_emb_jobs_status"]
-    (relationship_id) [name: "uidx_graph_rel_embedding_jobs_active", unique]
+    (relationship_id) [name: "uidx_graph_rel_embedding_jobs_active", unique, note: '(status = ANY (ARRAY[\'pending\'::text, \'processing\'::text]))']
   }
 }
 
@@ -1427,16 +1429,16 @@ Table "kb"."graph_relationships" {
     (src_id) [name: "IDX_a970f04cced6336cb2b1ad1f4e"]
     (type) [name: "IDX_f35de415032037ea629b1772e4"]
     (dst_id) [name: "IDX_f8d6b0b40d75cdabb27cf81084"]
-    (actor_type, actor_id) [name: "idx_graph_relationships_actor"]
-    (project_id) [name: "idx_graph_relationships_embedding_coverage"]
+    (actor_type, actor_id) [name: "idx_graph_relationships_actor", note: '(actor_type IS NOT NULL)']
+    (project_id) [name: "idx_graph_relationships_embedding_coverage", note: '((embedding IS NOT NULL) AND (deleted_at IS NULL))']
     (embedding) [name: "idx_graph_relationships_embedding_hnsw"]
-    (project_id, created_at, id) [name: "idx_graph_relationships_head_main"]
-    (created_at) [name: "idx_graph_relationships_missing_embedding"]
-    (project_id, namespace) [name: "idx_graph_relationships_namespace"]
+    (project_id, created_at, id) [name: "idx_graph_relationships_head_main", note: '((supersedes_id IS NULL) AND (branch_id IS NULL) AND (deleted_at IS NULL))']
+    (created_at) [name: "idx_graph_relationships_missing_embedding", note: '((embedding IS NULL) AND (deleted_at IS NULL))']
+    (project_id, namespace) [name: "idx_graph_relationships_namespace", note: '(namespace IS NOT NULL)']
     (project_id, id) [name: "idx_graph_relationships_project_id_id"]
-    (project_id, run_id) [name: "idx_graph_relationships_project_run"]
-    (project_id, branch_id, type, src_id, dst_id) [name: "uq_graph_relationships_head_branch", unique]
-    (project_id, type, src_id, dst_id) [name: "uq_graph_relationships_head_main", unique]
+    (project_id, run_id) [name: "idx_graph_relationships_project_run", note: '(run_id IS NOT NULL)']
+    (project_id, branch_id, type, src_id, dst_id) [name: "uq_graph_relationships_head_branch", unique, note: '((supersedes_id IS NULL) AND (branch_id IS NOT NULL))']
+    (project_id, type, src_id, dst_id) [name: "uq_graph_relationships_head_main", unique, note: '((supersedes_id IS NULL) AND (branch_id IS NULL))']
   }
 }
 
@@ -1470,10 +1472,10 @@ Table "kb"."graph_schemas" {
   "migrations" jsonb
 
   Indexes {
-    (draft) [name: "IDX_graph_schemas_draft"]
-    (parent_version_id) [name: "IDX_graph_schemas_parent_version_id"]
-    (name, version) [name: "graph_schemas_builtin_name_version_key", unique]
-    (project_id) [name: "idx_graph_schemas_project_id"]
+    (draft) [name: "IDX_graph_schemas_draft", note: '(draft = true)']
+    (parent_version_id) [name: "IDX_graph_schemas_parent_version_id", note: '(parent_version_id IS NOT NULL)']
+    (name, version) [name: "graph_schemas_builtin_name_version_key", unique, note: '(source = \'builtin\'::text)']
+    (project_id) [name: "idx_graph_schemas_project_id", note: '(project_id IS NOT NULL)']
   }
 }
 
@@ -1535,7 +1537,7 @@ Table "kb"."llm_usage_events" {
     (org_id, created_at) [name: "idx_llm_usage_events_org"]
     (project_id, created_at) [name: "idx_llm_usage_events_project"]
     (provider_slug, model, created_at) [name: "idx_llm_usage_events_provider_slug"]
-    (run_id) [name: "idx_llm_usage_events_run_id"]
+    (run_id) [name: "idx_llm_usage_events_run_id", note: '(run_id IS NOT NULL)']
     (user_id, created_at) [name: "idx_llm_usage_events_user"]
   }
 }
@@ -1559,9 +1561,9 @@ Table "kb"."mcp_server_oauth" {
 
   Indexes {
     (project_id) [name: "idx_mcp_server_oauth_project_id"]
-    (server_id) [name: "mcp_server_oauth_shared_uniq", unique]
-    (user_id) [name: "mcp_server_oauth_user_id"]
-    (server_id, user_id) [name: "mcp_server_oauth_user_uniq", unique]
+    (server_id) [name: "mcp_server_oauth_shared_uniq", unique, note: '(user_id IS NULL)']
+    (user_id) [name: "mcp_server_oauth_user_id", note: '(user_id IS NOT NULL)']
+    (server_id, user_id) [name: "mcp_server_oauth_user_uniq", unique, note: '(user_id IS NOT NULL)']
   }
 }
 // kb.mcp_server_oauth: OAuth credentials (client registration + token set) for a remote MCP server
@@ -1580,7 +1582,7 @@ Table "kb"."mcp_server_tools" {
   "enabled_override" boolean
 
   Indexes {
-    (server_id, enabled) [name: "idx_mcp_server_tools_enabled"]
+    (server_id, enabled) [name: "idx_mcp_server_tools_enabled", note: '(enabled = true)']
     (server_id) [name: "idx_mcp_server_tools_server_id"]
     (server_id, tool_name) [name: "idx_mcp_server_tools_server_name", unique]
   }
@@ -1610,7 +1612,7 @@ Table "kb"."mcp_servers" {
   "registry_repository_url" text [note: 'source repository URL from the registry entry; backs the configure form docs link']
 
   Indexes {
-    (project_id, enabled) [name: "idx_mcp_servers_project_enabled"]
+    (project_id, enabled) [name: "idx_mcp_servers_project_enabled", note: '(enabled = true)']
     (project_id) [name: "idx_mcp_servers_project_id"]
     (project_id, name) [name: "idx_mcp_servers_project_name", unique]
   }
@@ -1680,12 +1682,12 @@ Table "kb"."notifications" {
     (project_id) [name: "IDX_95464140d7dc04d7efb0afd6be"]
     (user_id) [name: "IDX_9a8a82462cab47c73d25f49261"]
     (read) [name: "IDX_f8b7ed75170d2d7dca4477cc94"]
-    (action_status) [name: "idx_notifications_action_status"]
+    (action_status) [name: "idx_notifications_action_status", note: '(action_status IS NOT NULL)']
     (task_id) [name: "idx_notifications_task"]
-    (type, action_status) [name: "idx_notifications_type_action_status"]
+    (type, action_status) [name: "idx_notifications_type_action_status", note: '(type IS NOT NULL)']
     (user_id, requires_action, read) [name: "idx_notifications_user_requires_action_read"]
     (user_id, scope, project_id, read) [name: "idx_notifications_user_scope_project_read"]
-    (user_id, group_key) [name: "ux_notifications_user_group_key_active", unique]
+    (user_id, group_key) [name: "ux_notifications_user_group_key_active", unique, note: '((group_key IS NOT NULL) AND (cleared_at IS NULL))']
   }
 }
 
@@ -1703,7 +1705,7 @@ Table "kb"."oauth_client_configs" {
 
   Indexes {
     (organization_id, provider) [name: "idx_oauth_client_configs_org_provider", unique]
-    (project_id, provider) [name: "idx_oauth_client_configs_project_provider", unique]
+    (project_id, provider) [name: "idx_oauth_client_configs_project_provider", unique, note: '(project_id IS NOT NULL)']
   }
 }
 
@@ -1802,7 +1804,7 @@ Table "kb"."object_extraction_jobs" {
     (status) [name: "IDX_3844c9efd6d2e06105a117f90c"]
     (document_id, created_at) [name: "idx_object_extraction_jobs_document_created"]
     (run_id) [name: "idx_object_extraction_jobs_run_id"]
-    (trace_id) [name: "idx_object_extraction_jobs_trace_id"]
+    (trace_id) [name: "idx_object_extraction_jobs_trace_id", note: '(trace_id IS NOT NULL)']
   }
 }
 
@@ -1929,7 +1931,7 @@ Table "kb"."orgs" {
   "deleted_by" uuid
 
   Indexes {
-    (deleted_at) [name: "idx_orgs_deleted_at"]
+    (deleted_at) [name: "idx_orgs_deleted_at", note: '(deleted_at IS NULL)']
   }
 }
 
@@ -2163,10 +2165,35 @@ Table "kb"."projects" {
   "budget_alert_threshold" numeric(3,2) [not null, default: 0.80]
   "auto_merge_extraction_branches" boolean [not null, default: false]
   "deletion_scheduled_for" timestamptz
+  "auto_discovery_enabled" boolean [not null, default: true]
 
   Indexes {
-    (deleted_at) [name: "idx_projects_deleted_at"]
-    (deletion_scheduled_for) [name: "idx_projects_deletion_scheduled_for"]
+    (deleted_at) [name: "idx_projects_deleted_at", note: '(deleted_at IS NULL)']
+    (deletion_scheduled_for) [name: "idx_projects_deletion_scheduled_for", note: '(deletion_scheduled_for IS NOT NULL)']
+  }
+}
+
+Table "kb"."provenance_contributions" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "branch_id" uuid
+  "subject_kind" text [not null]
+  "subject_version_id" uuid [not null]
+  "source_id" uuid [not null]
+  "external_id" text [not null]
+  "external_revision" text [not null, default: '']
+  "external_revision_seq" bigint [not null, default: 0]
+  "merged_from_version_id" uuid
+  "state" text [not null, default: 'present']
+  "first_seen_at" timestamptz [not null, default: `now()`]
+  "last_seen_at" timestamptz [not null, default: `now()`]
+  "withdrawn_at" timestamptz
+
+  Indexes {
+    (subject_version_id) [name: "idx_provenance_contributions_version"]
+    (project_id, branch_id, subject_kind, source_id, external_id) [name: "uq_provenance_contributions_present_branch", unique, note: '((state = \'present\'::text) AND (branch_id IS NOT NULL))']
+    (project_id, subject_kind, source_id, external_id) [name: "uq_provenance_contributions_present_main", unique, note: '((state = \'present\'::text) AND (branch_id IS NULL))']
+    (subject_kind, subject_version_id, source_id) [name: "uq_provenance_contributions_version_source", unique, note: '(state = \'present\'::text)']
   }
 }
 
@@ -2218,8 +2245,8 @@ Table "kb"."release_notification_recipients" {
 
   Indexes {
     (release_notification_id, user_id) [unique]
-    (email_job_id) [name: "idx_release_notification_recipients_email_job_id"]
-    (mailgun_message_id) [name: "idx_release_recipients_mailgun"]
+    (email_job_id) [name: "idx_release_notification_recipients_email_job_id", note: '(email_job_id IS NOT NULL)']
+    (mailgun_message_id) [name: "idx_release_recipients_mailgun", note: '(mailgun_message_id IS NOT NULL)']
     (release_notification_id) [name: "idx_release_recipients_release"]
     (user_id) [name: "idx_release_recipients_user"]
   }
@@ -2400,8 +2427,8 @@ Table "kb"."schema_studio_sessions" {
   "updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
-    (pack_id) [name: "IDX_schema_studio_sessions_schema_id"]
-    (status) [name: "IDX_schema_studio_sessions_status"]
+    (pack_id) [name: "IDX_schema_studio_sessions_schema_id", note: '(pack_id IS NOT NULL)']
+    (status) [name: "IDX_schema_studio_sessions_status", note: '(status = \'active\'::text)']
     (user_id) [name: "IDX_schema_studio_sessions_user_id"]
   }
 }
@@ -2459,9 +2486,9 @@ Table "kb"."skills" {
 
   Indexes {
     (description_embedding) [name: "idx_skills_embedding_hnsw"]
-    (name) [name: "idx_skills_name_global", unique]
-    (name, org_id) [name: "idx_skills_name_org", unique]
-    (name, project_id) [name: "idx_skills_name_project", unique]
+    (name) [name: "idx_skills_name_global", unique, note: '(project_id IS NULL)']
+    (name, org_id) [name: "idx_skills_name_org", unique, note: '((project_id IS NULL) AND (org_id IS NOT NULL))']
+    (name, project_id) [name: "idx_skills_name_project", unique, note: '(project_id IS NOT NULL)']
     (org_id) [name: "idx_skills_org_id"]
     (project_id) [name: "idx_skills_project_id"]
   }
@@ -2480,6 +2507,19 @@ Table "kb"."source_credentials" {
   Indexes {
     (project_id, provider, name) [unique]
     (project_id, provider) [name: "idx_source_credentials_project_provider"]
+  }
+}
+
+Table "kb"."source_generations" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "generation" bigint [not null]
+  "item_count" integer [not null, default: 0]
+  "applied_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (source_id, generation) [name: "uq_source_generations_source_generation", unique]
   }
 }
 
@@ -2509,7 +2549,7 @@ Table "kb"."source_sync_jobs" {
   "created_at" timestamptz [not null, default: `now()`]
 
   Indexes {
-    (source_id) [name: "idx_source_sync_jobs_active_source", unique]
+    (source_id) [name: "idx_source_sync_jobs_active_source", unique, note: '(status = ANY (ARRAY[\'pending\'::text, \'processing\'::text]))']
     (project_id) [name: "idx_source_sync_jobs_project_id"]
     (status, scheduled_at) [name: "idx_source_sync_jobs_status_scheduled"]
   }
@@ -2536,7 +2576,7 @@ Table "kb"."sources" {
   "credentials_updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
-    (credential_id) [name: "idx_sources_credential_id"]
+    (credential_id) [name: "idx_sources_credential_id", note: '(credential_id IS NOT NULL)']
   }
 }
 
@@ -2577,7 +2617,7 @@ Table "kb"."tasks" {
   "updated_at" timestamptz [default: `now()`]
 
   Indexes {
-    (status) [name: "idx_tasks_pending"]
+    (status) [name: "idx_tasks_pending", note: '(status = \'pending\'::text)']
     (project_id, status) [name: "idx_tasks_project_status"]
     (type) [name: "idx_tasks_type"]
   }
@@ -2619,6 +2659,23 @@ Table "kb"."user_recent_items" {
   Indexes {
     (user_id, project_id, resource_type, resource_id) [name: "idx_user_recent_items_unique_resource", unique]
     (user_id, project_id, accessed_at) [name: "idx_user_recent_items_user_project_accessed"]
+  }
+}
+
+Table "kb"."work_blocks" {
+  "canonical_id" uuid [pk]
+  "project_id" uuid [not null]
+  "reason" text [not null]
+  "failure_class" text
+  "blocked_at" timestamptz [not null, default: `now()`]
+  "blocked_by" text
+  "note" text
+  "run_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id) [name: "idx_work_blocks_project"]
   }
 }
 
@@ -2790,6 +2847,7 @@ Ref: "kb"."project_schemas"."schema_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."project_settings"."project_id" > "kb"."projects"."id"
 Ref: "kb"."projects"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."projects"."deleted_by" > "core"."user_profiles"."id"
+Ref: "kb"."provenance_contributions"."source_id" > "kb"."sources"."id"
 Ref: "kb"."release_notification_recipients"."email_job_id" > "kb"."email_jobs"."id"
 Ref: "kb"."release_notification_recipients"."in_app_notification_id" > "kb"."notifications"."id"
 Ref: "kb"."release_notification_recipients"."release_notification_id" > "kb"."release_notifications"."id"
@@ -2806,6 +2864,7 @@ Ref: "kb"."schema_studio_sessions"."pack_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"

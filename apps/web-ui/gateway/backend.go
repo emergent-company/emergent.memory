@@ -82,7 +82,7 @@ type MemoryBackend interface {
 	GetMCPShareInstance(ctx context.Context, id string) (*MCPShareInstance, error)
 	UpdateMCPShareInstance(ctx context.Context, id string, in *MCPShareInput) (*MCPShareInstance, error)
 	RevokeMCPShareInstance(ctx context.Context, id string) error
-	RotateMCPShareInstance(ctx context.Context, id string) (*MCPShareCreated, error)
+	RotateMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareCreated, error)
 	ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error)
 	// Agent-owned MCP endpoint + labeled keys (agent-scoped-mcp-endpoint; see
 	// agent_mcp_endpoint.go). The raw key secret is only ever present on
@@ -103,7 +103,7 @@ type MemoryBackend interface {
 	GetRelaySessionTools(ctx context.Context, instanceID string) ([]RelayTool, error)
 	ListModels(ctx context.Context) ([]Model, error)
 	ListDocuments(ctx context.Context, params DocumentListParams) (*DocumentPage, error)
-	ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error)
+	ListDocumentSourceCounts(ctx context.Context) ([]DocumentSourceCount, error)
 	GetDocument(ctx context.Context, id string) (*Document, error)
 	DeleteDocument(ctx context.Context, id string) error
 	ListChunks(ctx context.Context, documentID string) ([]Chunk, error)
@@ -219,6 +219,12 @@ type MemoryBackend interface {
 	MergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	PreviewMergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
+	// Schema discovery: the Schema page's card and the per-document trigger.
+	ListDiscoveryJobs(ctx context.Context) ([]discoveryJob, error)
+	StartProjectDiscovery(ctx context.Context) (*DiscoveryStartResult, error)
+	StartDocumentDiscovery(ctx context.Context, documentID string) (*DiscoveryStartResult, error)
+	RetryDiscoveryJob(ctx context.Context, jobID string) (*DiscoveryStartResult, error)
+	CancelDiscoveryJob(ctx context.Context, jobID string) error
 	ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)
 	GetSchema(ctx context.Context, packID string) (*BlueprintSchema, error)
 	CreateSchemaPack(ctx context.Context, req *SchemaPackWriteRequest) (*BlueprintSchema, error)

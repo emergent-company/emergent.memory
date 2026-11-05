@@ -26,9 +26,16 @@ type Project struct {
 
 	// AutoMergeExtractionBranches enables auto-merging extraction staging branches
 	// into the main graph once extraction completes (partial merge; added in migration 00129).
-	AutoMergeExtractionBranches bool       `bun:"auto_merge_extraction_branches,notnull,default:false" json:"auto_merge_extraction_branches"`
-	DeletedAt                   *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
-	DeletedBy                   *string    `bun:"deleted_by,type:uuid" json:"deleted_by,omitempty"`
+	AutoMergeExtractionBranches bool `bun:"auto_merge_extraction_branches,notnull,default:false" json:"auto_merge_extraction_branches"`
+
+	// AutoDiscoveryEnabled starts a schema-discovery job after a source sync
+	// creates documents (added in migration 00260). It defaults to true so a
+	// project keeps the behaviour it had before the flag existed; when false,
+	// discovery only runs through the explicit start/retry endpoints.
+	AutoDiscoveryEnabled bool `bun:"auto_discovery_enabled,notnull,default:true" json:"auto_discovery_enabled"`
+
+	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+	DeletedBy *string    `bun:"deleted_by,type:uuid" json:"deleted_by,omitempty"`
 
 	// DeletionScheduledFor is set (along with DeletedAt/DeletedBy) when a project
 	// is marked pending deletion. The project is hard-purged once this time
@@ -83,14 +90,6 @@ const (
 	RoleProjectViewer = "project_viewer"
 )
 
-// ViewerReadOnlyScopes are the only scopes a project_viewer may request on a token
-var ViewerReadOnlyScopes = map[string]bool{
-	"data:read":     true,
-	"schema:read":   true,
-	"agents:read":   true,
-	"projects:read": true,
-}
-
 // InstalledSchema represents an installed schema for a project
 type InstalledSchema struct {
 	Name              string   `json:"name"`
@@ -124,6 +123,10 @@ type ProjectDTO struct {
 	Stats                *ProjectStats  `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
+	// AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
+	// column defaults to true, so an absent field would read as "off" in a UI
+	// that renders a toggle and silently disable discovery for every project.
+	AutoDiscoveryEnabled *bool `json:"auto_discovery_enabled,omitempty"`
 	// MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
 	// Callers can use this as targetBranchID when merging without knowing the branch UUID,
 	// or pass the magic string "main" to the merge endpoint directly.
@@ -183,6 +186,7 @@ type UpdateProjectRequest struct {
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
+	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 }
 
 // ToDTO converts a Project entity to ProjectDTO
@@ -208,6 +212,12 @@ func (p *Project) ToDTO() ProjectDTO {
 		val := p.AutoMergeExtractionBranches
 		dto.AutoMergeExtractionBranches = &val
 	}
+
+	// AutoDiscoveryEnabled is emitted whether true or false: the column defaults
+	// to true, so an omitted field would render an unchecked toggle in the
+	// settings UI and disagree with the server's behaviour.
+	autoDiscovery := p.AutoDiscoveryEnabled
+	dto.AutoDiscoveryEnabled = &autoDiscovery
 
 	// Include config fields if they exist
 	if len(p.AutoExtractConfig) > 0 {

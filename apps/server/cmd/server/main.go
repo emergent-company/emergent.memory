@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.89.0
+// @version 0.90.0
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
@@ -560,4 +560,7 @@ func (a *superadminToolHandlerAdapter) RetryDocumentParsingJobs(ctx context.Cont
 }
 
 // serviceTokenScopes mirrors the superadmin HTTP service-token mint.
-var serviceTokenScopes = []string{"data:read", "schema:read", "agents:read", "projects:read"}
+var serviceTokenScopes = []string{
+	"documents:read", "search", "graph:read", "journal:read",
+	"schema:read", "agents:read", "projects:read",
+}

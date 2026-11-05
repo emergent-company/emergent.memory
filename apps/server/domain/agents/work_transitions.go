@@ -213,9 +213,9 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 		}
 		reason, _ := result.Summary["reason"].(string)
 		if reason == "user_cancelled" {
-			p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, "cancelled by user", FailureClassHuman)
+			p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, "cancelled by user", FailureClassHuman)
 		} else {
-			p.transitionToReady(ctx, log, canonicalID, projectID, agentDef)
+			p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
 		}
 		return
 	}
@@ -244,7 +244,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	case FailureClassRetryable:
 		p.retryableFailure(ctx, log, agent, agentDef, canonicalID, projectID, subjectType, errMsg)
 	default: // deterministic / poison
-		p.poisonFailure(ctx, log, agentDef, canonicalID, projectID, errMsg)
+		p.poisonFailure(ctx, log, agentDef, canonicalID, projectID, subjectType, errMsg)
 	}
 }
 
@@ -285,18 +285,17 @@ func (p *WorkerPool) timeoutFailure(ctx context.Context, log *slog.Logger, agent
 
 // poisonFailure: deterministic failure → block (no retry); budget +1. It does
 // NOT touch the agent breaker — a poison item blocks the item, not the agent.
-func (p *WorkerPool) poisonFailure(ctx context.Context, log *slog.Logger, agentDef *AgentDefinition, canonicalID, projectID, errMsg string) {
+func (p *WorkerPool) poisonFailure(ctx context.Context, log *slog.Logger, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string) {
 	p.recordFailure(ctx, log, canonicalID, projectID, agentDef, FailureClassDeterministic, nil)
-	p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, errMsg, FailureClassDeterministic)
+	p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, errMsg, FailureClassDeterministic)
 }
 
 // capabilityUnassign clears the assignee and returns the item to ready with a
 // requeue backoff; the item budget is unchanged and attempt history survives.
 func (p *WorkerPool) capabilityUnassign(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string) {
-	wc := workConfigOf(agentDef)
 	backoffAt := time.Now().Add(itemRequeueBackoff())
-	if _, err := p.workObjects.UnassignWorkObject(ctx, projectID, canonicalID, wc.InProgressStatus(), wc.ReadyStatus()); err != nil {
-		log.Warn("capability unassign transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
+	if _, err := p.workObjects.ReassignWorkObject(ctx, projectID, canonicalID, nil); err != nil {
+		log.Warn("capability unassign failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	}
 	// Keep attempt history: record the failure but do not consume the budget.
 	if _, err := p.repo.IncrementWorkItemFailure(ctx, projectID, canonicalID, string(FailureClassCapability), &backoffAt); err != nil {
@@ -310,21 +309,23 @@ func (p *WorkerPool) capabilityUnassign(ctx context.Context, log *slog.Logger, a
 // item budget remains; once exhausted the item is blocked (dead-letter). The
 // budget is resolved with per-type overrides (P4.3): type > agent > default.
 func (p *WorkerPool) retryOrBlock(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string, cls FailureClass) {
-	wc := workConfigOf(agentDef)
+	st := agentDef.EffectiveWorkStatus(subjectType)
 	policy := p.resolveWorkPolicy(ctx, projectID, subjectType, agentDef)
 	backoffAt := time.Now().Add(itemRequeueBackoff())
 	count := p.recordFailure(ctx, log, canonicalID, projectID, agentDef, cls, &backoffAt)
 	if count > policy.failureLimit {
-		p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, errMsg, cls)
+		p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, errMsg, cls)
 		return
 	}
-	if ok, err := p.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: wc.InProgressStatus(),
-		ToStatus:   wc.ReadyStatus(),
-	}); err != nil {
-		log.Warn("work item ready transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
-	} else if !ok {
-		log.Warn("work item ready transition skipped (not in progress)", slog.String("canonical_id", canonicalID))
+	// New-model items stay in their pickup status; only legacy in-progress rows
+	// need a transition back to ready.
+	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil && head.Status == st.InProgress {
+		if _, err := p.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
+			FromStatus: st.InProgress,
+			ToStatus:   st.Ready,
+		}); err != nil {
+			log.Warn("work item ready transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
+		}
 	}
 	p.reenqueueWork(ctx, log, agent, agentDef, canonicalID, projectID, subjectType, backoffAt)
 }
@@ -341,11 +342,11 @@ func (p *WorkerPool) recordFailure(ctx context.Context, log *slog.Logger, canoni
 
 // transitionToReady returns an in-progress item to ready (used by the cancelled
 // path).
-func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, canonicalID, projectID string, agentDef *AgentDefinition) {
-	wc := workConfigOf(agentDef)
+func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, canonicalID, projectID, subjectType string, agentDef *AgentDefinition) {
+	st := agentDef.EffectiveWorkStatus(subjectType)
 	if ok, err := p.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: wc.InProgressStatus(),
-		ToStatus:   wc.ReadyStatus(),
+		FromStatus: st.InProgress,
+		ToStatus:   st.Ready,
 	}); err != nil {
 		log.Warn("work item ready transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	} else if !ok {
@@ -355,12 +356,15 @@ func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, ca
 
 // blockWorkObject transitions an item to blocked and creates a human-facing
 // dead-letter task.
-func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, canonicalID, projectID string, agentDef *AgentDefinition, errMsg string, cls FailureClass) {
-	wc := workConfigOf(agentDef)
-	if ok, err := p.workObjects.BlockWorkObject(ctx, projectID, canonicalID, wc.InProgressStatus(), wc.BlockedStatus()); err != nil {
-		log.Warn("work item block transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
-	} else if !ok {
-		log.Warn("work item block transition skipped (not in progress)", slog.String("canonical_id", canonicalID))
+func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, canonicalID, projectID, subjectType string, agentDef *AgentDefinition, errMsg string, cls FailureClass) {
+	class := string(cls)
+	if err := p.repo.UpsertWorkBlock(ctx, &WorkBlock{
+		CanonicalID:  canonicalID,
+		ProjectID:    projectID,
+		Reason:       errMsg,
+		FailureClass: &class,
+	}); err != nil {
+		log.Warn("work item block failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	}
 	desc := fmt.Sprintf("class=%s: %s", cls, errMsg)
 	t := &tasks.Task{
@@ -391,13 +395,22 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 	if subjectType == "" {
 		subjectTypePtr = nil
 	}
+	meta := map[string]any{"work_trigger_event": string(EventTypeStatusChanged)}
+	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil && head.Status != "" {
+		meta["work_claim_status"] = head.Status
+	}
 	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: subjectTypePtr,
 		TrustedInternal:   true,
 		NextRunAt:         nextRunAt,
+		TriggerMetadata:   meta,
 	})
 	if err != nil {
+		if errors.Is(err, ErrWorkItemBusy) {
+			log.Info("work item already has a live run; re-enqueue skipped", slog.String("canonical_id", canonicalID))
+			return
+		}
 		log.Warn("failed to re-enqueue work run", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 		return
 	}

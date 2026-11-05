@@ -1947,6 +1947,10 @@ Checks performed:
                defined by some pack in the blueprint — an endpoint may be owned
                by a different pack than the one declaring the relationship),
                duplicate names within and across files.
+  Type metadata — labels, required property lists, property definitions and
+               types, enum values, array items, minimum/maximum, embedding
+               target, embedding/extraction blocks, inline ui and pack uiConfigs
+               (icon/color), and relationship properties.
   Agents     — required fields, enum values (visibility, dispatchMode),
                model.name required when model block is present, duplicate names.
   Skills     — required fields, non-empty content body, duplicate names.
@@ -1958,11 +1962,14 @@ This command is offline and checks relationship endpoints against the blueprint'
 own packs only; 'memory blueprints install' additionally accepts object types
 already present in the project.
 
-Exits 0 when only warnings are found, exits 1 when any error is found.
+Exits 0 when only warnings are found, exits 1 when any error is found. With
+--strict, warnings also make the command exit 1, so a blueprint must be fully
+clean to pass.
 
 Examples:
 
   memory blueprints validate ./my-config
+  memory blueprints validate ./my-config --strict
   memory blueprints validate https://github.com/acme/memory-blueprints
   memory blueprints validate https://github.com/acme/memory-blueprints#v1.2.0
 
@@ -1974,6 +1981,7 @@ memory blueprints validate <source> [flags]
 
 ```
   -h, --help           help for validate
+      --strict         Treat warnings as failures (exit 1)
       --token string   GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
 ```
 
@@ -3409,9 +3417,14 @@ Use --run-id, --credential-id, --credential-kind and --data-class to filter by
 the write stamp every version row records: which agent run produced the row
 (a root run matches the runs it delegated to), which credential wrote it, and
 what class of data it is. This answers "what did this session write" and "what
-did this key write" directly. Filters match the object's current version, so an
-object created by one run and later edited by another is returned for the writer
-of the current version only.
+did this key write" directly.
+
+By default the filters match the object's current version. Use --provenance to
+choose which version row must carry the stamp: updated (default) matches the
+current version, created matches the version that created the object, and any
+matches either — so a run that created an object which someone later edited is
+still found with --provenance created (or any). --provenance also applies to the
+--actor-type/--actor-id filter, which shares the selector.
 
   --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
 
@@ -3445,7 +3458,7 @@ memory graph objects list [flags]
       --ids string               Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
       --key string               Filter by object key (direct key-based lookup)
       --limit int                Maximum number of results (server default: 1000) (default 1000)
-      --provenance string        Provenance filter mode: created, updated, or any (default: any)
+      --provenance string        Which version row must carry the actor/write-stamp filter: updated (current version, default for write stamps), created, or any
       --run-id string            Filter by write-stamp run ID (matches the run or any run it delegated to)
       --status string            Filter by object status
       --type string              Filter by object type
@@ -3717,6 +3730,11 @@ Use --run-id, --credential-id and --credential-kind to filter by the write stamp
 every version row records (a root run matches the runs it delegated to).
 Relationships record no data class, so there is no --data-class here.
 
+By default those filters match the relationship's current version. Use
+--provenance to choose which version row must carry the stamp: updated
+(default) matches the current version, created matches the version that created
+the relationship, and any matches either.
+
 ```
 memory graph relationships list [flags]
 ```
@@ -3731,6 +3749,7 @@ memory graph relationships list [flags]
       --from string              Filter by source object ID
   -h, --help                     help for list
       --limit int                Maximum number of results (server default: 1000) (default 1000)
+      --provenance string        Which version row must carry the write-stamp filter: updated (current version, default), created, or any
       --run-id string            Filter by write-stamp run ID (matches the run or any run it delegated to)
       --to string                Filter by destination object ID
       --type string              Filter by relationship type
@@ -4128,7 +4147,8 @@ which is what makes subsequent CLI commands in that directory pick it up
 automatically. Writing a live credential to a file is opt-in: the current
 working directory is often a checkout, where a stray .env.local is a leak risk.
 
-Scopes default to: data:read data:write schema:read agents:read agents:write
+Scopes default to the read and write presets (documents:*, graph:*, schema:*,
+agents:*, projects:*, search, journal:read).
 
 Example:
   memory projects create-token my-project --name onboard-token
@@ -4143,7 +4163,7 @@ memory projects create-token [project-name-or-id] [flags]
 ```
   -h, --help             help for create-token
       --name string      Token name (default "cli-token")
-      --scopes strings   Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)
+      --scopes strings   Token scopes or presets (read, write; e.g. --scopes read,write). Default: read,write
       --write-env        Also write the token to .env.local in the current directory (mode 0600); off by default
 ```
 
@@ -4407,7 +4427,8 @@ Share read-only MCP access with a teammate or AI agent
 Generate a read-only API token for your project and print ready-to-use
 MCP config snippets for Claude Desktop, Cursor, and OpenCode.
 
-The token is scoped to data:read, schema:read, agents:read, and projects:read.
+The token is scoped to documents:read, search, graph:read, journal:read,
+schema:read, agents:read, projects:read, and chat:use.
 Write operations will be rejected. The token can be revoked at any time with:
 
   memory tokens revoke <token-id> --project <project>
@@ -6378,7 +6399,7 @@ On success, prints the full plaintext Token value prominently (this is the only
 time the full token is shown — save it immediately), followed by ID, Name, Type,
 Prefix, Scopes, and Created timestamp.
 
-Valid scopes: schema:read, schema:write, data:read, data:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, project:admin, admin, admin:all.
+Valid scopes: schema:read, schema:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, project:admin, admin, admin:all.
 Scopes are comma-separated. Use --scopes all to grant full admin access (admin:all).
 Run 'memory tokens scopes' for a description of each scope.
 
@@ -6391,7 +6412,7 @@ memory tokens create [flags]
 ```
   -h, --help             help for create
       --name string      Token name (required)
-      --scopes strings   Comma-separated scopes (e.g. --scopes data:read,data:write). Use --scopes all for full admin access.
+      --scopes strings   Comma-separated scopes or presets (read, write; e.g. --scopes read,write). Default: read. Use --scopes all for full admin access.
 ```
 
 ## memory tokens get
@@ -6523,7 +6544,7 @@ memory tokens update-scopes [token-id] [flags]
 
 ```
   -h, --help             help for update-scopes
-      --scopes strings   Comma-separated scopes (e.g. --scopes data:read,data:write). Use --scopes all for full admin access.
+      --scopes strings   Comma-separated scopes or presets (read, write; e.g. --scopes read,write). Use --scopes all for full admin access.
 ```
 
 ## memory traces

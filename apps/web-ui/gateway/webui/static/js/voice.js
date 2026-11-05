@@ -182,16 +182,23 @@
 
   function voiceAddLine(isUser) {
     var wrap = document.createElement("div");
-    wrap.className = isUser ? "chat chat-end memory-rise" : "chat chat-start memory-rise";
-    var bubble = document.createElement("div");
-    bubble.className = isUser
-      ? "chat-bubble chat-bubble-primary"
-      : "chat-bubble chat-bubble-neutral";
+    wrap.className = isUser ? "chat chat-end memory-rise" : "chat chat-start memory-rise memory-voice";
     var p = document.createElement("p");
     p.className = "whitespace-pre-wrap break-words";
     p.style.opacity = "0.7"; // interim; committed turns go full opacity
-    bubble.appendChild(p);
-    wrap.appendChild(bubble);
+    if (isUser) {
+      var bubble = document.createElement("div");
+      bubble.className = "chat-bubble chat-bubble-primary";
+      bubble.appendChild(p);
+      wrap.appendChild(bubble);
+    } else {
+      // The agent's interim line is a plain left-side row, flush with the
+      // transcript's content edge — the same edge its committed reply, tool
+      // steps and cards start on (see app.css "left-side transcript rows").
+      // A chat-start bubble would indent it by the bubble's padding + column
+      // gap, reintroducing the gutter the rest of the transcript dropped.
+      wrap.appendChild(p);
+    }
     var log = document.getElementById("chat-messages");
     if (log) {
       log.appendChild(wrap);

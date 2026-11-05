@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -311,5 +312,41 @@ func TestProject_ToDTO(t *testing.T) {
 
 		assert.NotNil(t, dto.ChatPromptTemplate)
 		assert.Equal(t, template, *dto.ChatPromptTemplate)
+	})
+
+	// AutoDiscoveryEnabled is emitted even when false, unlike the other
+	// booleans: the column defaults to true, so an omitted field would render as
+	// an unchecked toggle in the settings UI and disagree with the server.
+	t.Run("auto discovery is emitted when disabled", func(t *testing.T) {
+		project := &Project{
+			ID:                   "project-123",
+			Name:                 "Test Project",
+			OrganizationID:       "org-456",
+			AutoDiscoveryEnabled: false,
+		}
+
+		dto := project.ToDTO()
+
+		assert.NotNil(t, dto.AutoDiscoveryEnabled, "auto_discovery_enabled must be present when false")
+		assert.False(t, *dto.AutoDiscoveryEnabled)
+
+		raw, err := json.Marshal(dto)
+		assert.NoError(t, err)
+		assert.Contains(t, string(raw), `"auto_discovery_enabled":false`,
+			"the wire payload must carry the field even when false")
+	})
+
+	t.Run("auto discovery is emitted when enabled", func(t *testing.T) {
+		project := &Project{
+			ID:                   "project-123",
+			Name:                 "Test Project",
+			OrganizationID:       "org-456",
+			AutoDiscoveryEnabled: true,
+		}
+
+		dto := project.ToDTO()
+
+		assert.NotNil(t, dto.AutoDiscoveryEnabled)
+		assert.True(t, *dto.AutoDiscoveryEnabled)
 	})
 }

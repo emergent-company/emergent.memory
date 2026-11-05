@@ -23,7 +23,13 @@ type WorkItem struct {
 	LatestRunStatus       string `json:"latestRunStatus"`
 	LatestRunFailureClass string `json:"latestRunFailureClass"`
 	LatestRunID           string `json:"latestRunId"`
+	LatestRunAgentName    string `json:"latestRunAgentName,omitempty"`
+	IsWorking             bool   `json:"isWorking"`
+	NextRunAt             string `json:"nextRunAt,omitempty"`
 	RunCount              int    `json:"runCount"`
+	Blocked               bool   `json:"blocked"`
+	BlockReason           string `json:"blockReason,omitempty"`
+	BlockedAt             string `json:"blockedAt,omitempty"`
 
 	Unroutable bool `json:"unroutable"`
 }
@@ -127,6 +133,19 @@ func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName strin
 		return []WorkItem{}, nil
 	}
 	return env.Data, nil
+}
+
+// UnblockWorkItem clears a durable block and re-enqueues from the current status.
+func (m *MemoryClient) UnblockWorkItem(ctx context.Context, canonicalID, note string) (*WorkItemAction, error) {
+	body := map[string]any{}
+	if note != "" {
+		body["note"] = note
+	}
+	var env successEnvelope[WorkItemAction]
+	if err := m.do(ctx, http.MethodPost, m.workItemsPath(ctx)+"/"+url.PathEscape(canonicalID)+"/unblock", body, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
 }
 
 // ListBoardRuns lists the project's object-driven (board/work) runs, newest

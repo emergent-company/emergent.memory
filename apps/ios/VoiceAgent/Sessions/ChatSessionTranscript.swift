@@ -93,6 +93,9 @@ final class ChatSessionTranscriptStore {
         }
 
         history = entries
+        // A turn streamed over HTTP is persisted server-side, so a reload must
+        // not leave its live copy on top of the recorded one.
+        liveMessages.removeAll { historyCovers(role: $0.role, text: $0.text) }
         lastRecordCount = detail.records.count
         pendingApprovals = detail.pendingApprovals.map {
             ApprovalRequest(questionId: $0.questionID, tool: $0.tool, arguments: $0.arguments)
@@ -126,11 +129,6 @@ final class ChatSessionTranscriptStore {
 
     /// Applies already-mapped live transcripts (see ``syncLive(messages:)``).
     func syncLive(_ messages: [LiveTranscriptMessage]) {
-        let historyKeys = Set(history.compactMap { entry -> String? in
-            guard case let .message(message) = entry else { return nil }
-            return Self.key(role: message.role, text: message.text)
-        })
-
         var live: [ChatMessage] = []
         for message in messages {
             guard !message.text.isEmpty else { continue }
@@ -142,7 +140,50 @@ final class ChatSessionTranscriptStore {
             }
         }
 
-        liveMessages = live.filter { !historyKeys.contains(Self.key(role: $0.role, text: $0.text)) }
+        liveMessages = live.filter { !historyCovers(role: $0.role, text: $0.text) }
+    }
+
+    /// Whether the recorded transcript already contains this live message.
+    ///
+    /// Exact text first, then line-bounded containment: `loadHistory` merges
+    /// consecutive turns of the same role with a newline, so the live halves of a
+    /// resumed run only match that merged record line by line. Line-bounded (not
+    /// any substring) so a short reply cannot be hidden by a longer older one.
+    private func historyCovers(role: ChatRole, text: String) -> Bool {
+        let recorded = history.compactMap { entry -> String? in
+            guard case let .message(message) = entry, message.role == role else { return nil }
+            return message.text
+        }
+        if recorded.contains(text) {
+            return true
+        }
+        let needle = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard !needle.isEmpty else { return true }
+        return recorded.contains { candidate in
+            let lines = candidate.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            guard lines.count >= needle.count else { return false }
+            for start in 0 ... (lines.count - needle.count) where Array(lines[start ..< start + needle.count]) == needle {
+                return true
+            }
+            return false
+        }
+    }
+
+    /// Whether a fetched detail holds the finished version of a reply this client
+    /// saw cut off — the signal that a dropped run has been recorded.
+    ///
+    /// Three conditions, each earning its place:
+    /// - the record grew past `baseline`, so an older reply cannot pass for this
+    ///   one just because it starts the same way;
+    /// - its newest `turn` is an assistant turn, because a run still executing
+    ///   leaves step records after its last turn;
+    /// - that turn opens with what the client already saw and carries more.
+    static func recordedReply(extending partial: String, in detail: SessionDetail, since baseline: Int) -> Bool {
+        let opening = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !opening.isEmpty, detail.records.count > baseline else { return false }
+        guard let latest = detail.records.last(where: { $0.kind == "turn" }) else { return false }
+        guard latest.role != "user", let text = latest.text else { return false }
+        return text.count > opening.count && text.hasPrefix(opening)
     }
 
     /// Marks the start of a history fetch (the previous result stays visible
@@ -172,9 +213,5 @@ final class ChatSessionTranscriptStore {
         historyError = nil
         isLoadingHistory = false
         lastRecordCount = 0
-    }
-
-    private static func key(role: ChatRole, text: String) -> String {
-        "\(role.rawValue)\u{0}\(text)"
     }
 }

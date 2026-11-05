@@ -112,7 +112,11 @@ func (s *Server) listPendingInvites(c echo.Context) error {
 	return c.JSON(http.StatusOK, invites)
 }
 
-// acceptInvite handles POST /api/invites/accept (token).
+// acceptInvite handles POST /api/invites/accept (token). Refusals keep their
+// meaning instead of collapsing into one 502: 403 is "this invitation belongs
+// to a different account" (the browser should switch accounts, not retry) and
+// 404 is "unknown, expired or already accepted"; anything else is an upstream
+// failure.
 func (s *Server) acceptInvite(c echo.Context) error {
 	var in struct {
 		Token string `json:"token"`
@@ -124,6 +128,12 @@ func (s *Server) acceptInvite(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "token is required"})
 	}
 	if err := s.memory.AcceptInvite(c.Request().Context(), in.Token); err != nil {
+		switch {
+		case isMemoryStatus(err, http.StatusForbidden):
+			return c.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
+		case isMemoryStatus(err, http.StatusNotFound), isMemoryStatus(err, http.StatusGone):
+			return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+		}
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "accepted"})

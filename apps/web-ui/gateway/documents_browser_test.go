@@ -67,6 +67,52 @@ func TestUIDocumentsSourceProvenance(t *testing.T) {
 	}
 }
 
+// TestUIDocumentsSourceFilterOptions pins the source filter's per-source
+// wiring: each connected data source is named (not its kind), uploads get their
+// own bucket, a source the integration list no longer knows stays selectable
+// with an honest label, and counts come from the source-counts endpoint.
+func TestUIDocumentsSourceFilterOptions(t *testing.T) {
+	f := &fakeMemory{
+		documents:      []Document{{ID: "d1", Filename: "meeting.md", ProcessingStatus: "completed", SourceType: "meeting", SourceID: "ds-trale"}},
+		documentsTotal: 941,
+		dsIntegrations: []DSIntegration{
+			{ID: "ds-gh", Name: "Github Jon", SourceType: "repo"},
+			{ID: "ds-trale", Name: "Trale", SourceType: "meeting"},
+			{ID: "ds-web", Name: "Huma Website", SourceType: "web"},
+		},
+		docSourceCounts: []DocumentSourceCount{
+			{SourceID: "ds-gh", SourceType: "repo", Count: 933},
+			{SourceID: "ds-trale", SourceType: "meeting", Count: 7},
+			{SourceID: "ds-web", SourceType: "web", Count: 1},
+			{SourceType: "upload", Count: 2},
+			{SourceID: "ds-gone", SourceType: "drive", Count: 4},
+		},
+	}
+	e := documentsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents?sourceId=ds-trale", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`<option value="ds-gh">Github Jon (933)</option>`,
+		`<option value="ds-trale" selected>Trale (7)</option>`,
+		`<option value="ds-web">Huma Website (1)</option>`,
+		`<option value="none">Uploaded (2)</option>`,
+		`<option value="ds-gone">Google Drive (removed source) (4)</option>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("source filter missing %q", want)
+		}
+	}
+	if strings.Contains(body, `<option value="repo"`) || strings.Contains(body, `<option value="meeting"`) {
+		t.Error("source filter must list data sources, not source kinds")
+	}
+}
+
 // TestUIDocumentsListParams pins the query-parameter contract between the page
 // and the API: the filters, search, sort and cursor the user selected reach the
 // listing request, and unrecognised values normalize to the defaults instead of
@@ -80,19 +126,19 @@ func TestUIDocumentsListParams(t *testing.T) {
 	e := documentsTestServer(f)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents?q=spec&status=failed&sourceType=drive&sort=updated&order=asc&cursor=cur-1", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents?q=spec&status=failed&sourceId=ds-1&sort=updated&order=asc&cursor=cur-1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 
 	want := DocumentListParams{
-		Query:      "spec",
-		Status:     "failed",
-		SourceType: "drive",
-		Sort:       "updated",
-		Order:      "asc",
-		Cursor:     "cur-1",
-		Limit:      documentPageSize,
+		Query:    "spec",
+		Status:   "failed",
+		SourceID: "ds-1",
+		Sort:     "updated",
+		Order:    "asc",
+		Cursor:   "cur-1",
+		Limit:    documentPageSize,
 	}
 	if f.lastDocumentListParams != want {
 		t.Errorf("list params = %+v, want %+v", f.lastDocumentListParams, want)
@@ -106,8 +152,8 @@ func TestUIDocumentsListParams(t *testing.T) {
 	if !strings.Contains(body, `data-testid="documents-stats"`) {
 		t.Error("stats strip missing")
 	}
-	if got := f.catalogCallCount("ListDocumentSourceTypes"); got != 1 {
-		t.Errorf("page fetched source types %d times, want 1", got)
+	if got := f.catalogCallCount("ListDocumentSourceCounts"); got != 1 {
+		t.Errorf("page fetched source counts %d times, want 1", got)
 	}
 
 	// Unknown vocabulary falls back to the defaults rather than a 400: these
@@ -156,18 +202,18 @@ func TestUIDocumentsPartial(t *testing.T) {
 	e := documentsTestServer(f)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/partial?cursor=cur-2&q=note&status=ready&sourceType=upload&sort=updated&order=asc", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/partial?cursor=cur-2&q=note&status=ready&sourceId=none&sort=updated&order=asc", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	want := DocumentListParams{
-		Query:      "note",
-		Status:     "ready",
-		SourceType: "upload",
-		Sort:       "updated",
-		Order:      "asc",
-		Cursor:     "cur-2",
-		Limit:      documentPageSize,
+		Query:    "note",
+		Status:   "ready",
+		SourceID: "none",
+		Sort:     "updated",
+		Order:    "asc",
+		Cursor:   "cur-2",
+		Limit:    documentPageSize,
 	}
 	if f.lastDocumentListParams != want {
 		t.Errorf("partial params = %+v, want %+v", f.lastDocumentListParams, want)
@@ -190,9 +236,9 @@ func TestUIDocumentsPartial(t *testing.T) {
 		t.Error("partial should not render the stats strip")
 	}
 	// It renders rows, not the filter select, so it must not pay for the
-	// source-type catalog on every "Load more".
-	if got := f.catalogCallCount("ListDocumentSourceTypes"); got != 0 {
-		t.Errorf("partial fetched source types %d times, want 0", got)
+	// source catalog on every "Load more".
+	if got := f.catalogCallCount("ListDocumentSourceCounts"); got != 0 {
+		t.Errorf("partial fetched source counts %d times, want 0", got)
 	}
 
 	// A failure is a 502 for the HTMX swap, not a silently empty append.
@@ -271,13 +317,13 @@ func TestUIDocumentsPartialURL(t *testing.T) {
 	d := documentPageData{
 		Query:      "spec",
 		Status:     documentStatusFailed,
-		SourceType: "drive",
+		SourceID:   "ds-1",
 		Sort:       documentSortUpdated,
 		Order:      documentOrderAsc,
 		NextCursor: "cur-3",
 	}
 	got := documentsPartialURL(d)
-	for _, want := range []string{"cursor=cur-3", "q=spec", "status=failed", "sourceType=drive", "sort=updated", "order=asc"} {
+	for _, want := range []string{"cursor=cur-3", "q=spec", "status=failed", "sourceId=ds-1", "sort=updated", "order=asc"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("partial URL %q missing %q", got, want)
 		}

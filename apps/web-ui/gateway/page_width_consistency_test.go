@@ -184,7 +184,7 @@ const objectsContainerClass = "mx-auto p-6 lg:p-8 max-w-[100rem]"
 func TestObjectsBrowserWidthIsDeliberate(t *testing.T) {
 	agentsHTML := renderHTML(t, AgentsPage(
 		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		nil, "", nil,
+		nil, "", nil, "",
 	))
 	if got := firstClass(agentsHTML); got != pageContainerClass {
 		t.Errorf("/agents page container = %q, want %q", got, pageContainerClass)

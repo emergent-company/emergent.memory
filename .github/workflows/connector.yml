@@ -34,6 +34,8 @@ on:
       - '.github/workflows/connector.yml'
   pull_request:
     branches: [main]
+    # `ready_for_review` is not a default type; the heavy jobs skip drafts.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/connector.linux/**'
       - 'apps/connector.mac/**'
@@ -59,7 +61,7 @@ env:
 jobs:
   linux-lint:
     name: Linux connector lint
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
     steps:
@@ -106,7 +108,7 @@ jobs:
 
   mac-lint:
     name: Mac connector lint
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
     steps:
@@ -148,7 +150,7 @@ jobs:
   # rather than shelled out to it.
   mac-build:
     name: Mac connector build
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, mac]
     timeout-minutes: 40
     steps:

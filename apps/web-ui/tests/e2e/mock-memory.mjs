@@ -733,6 +733,28 @@ const providerDefinitions = [
 
 const projectProviderConfigs = [];
 let providerConfigSeq = 0;
+
+// Discovery runs for the Schema page card (GET
+// /api/discovery-jobs/projects/:id). One run in flight: the card is the only
+// surface that reports a discovery run, so the polling behaviour (#90) is only
+// exercisable with a non-terminal job, and a terminal one would render without
+// an interval. The panel's own discovery row (mockProcessingProblems, below) is
+// a separate fixture — a failed run — and is what the retry test drives.
+const mockDiscoveryJobs = [
+  {
+    id: "discovery-job-2",
+    status: "running",
+    progress: { current_step: 1, total_steps: 4, message: "Analysing batch 1 of 2" },
+    created_at: "2026-10-27T09:00:00Z",
+    discovered_types: [],
+    discovered_relationships: [],
+    trigger: "manual",
+    document_count: 8,
+    total_documents: 8,
+    cancellable: true,
+  },
+];
+
 // Needs-attention report (gateway/processing_problems.templ). The documents
 // area is deliberately made of chunk_embedding runs, not documents whose derived
 // status is failed: that is the shape that used to send the panel's "View all"
@@ -802,8 +824,8 @@ const mockProcessingProblems = {
           },
           errorMessage: "no generative model configured",
           occurredAt: "2026-10-27T08:00:00Z",
-          action: { kind: "open", label: "Open schema", href: "/schema" },
-          drilldownHref: "/schema",
+          action: { kind: "open", label: "Open discovery", href: "/schema#discovery" },
+          drilldownHref: "/schema#discovery",
         },
       ],
     },
@@ -1958,6 +1980,21 @@ const server = http.createServer((req, res) => {
   // render the same panel.
   if (/^\/api\/projects\/[^/]+\/processing-problems$/.test(path) && req.method === "GET") {
     return json(res, mockProcessingProblems);
+  }
+
+  // Discovery runs for the Schema page card. Served for any project id, like
+  // the report above, so both the dev-mode harness (MEMORY_PROJECT_ID=p1) and a
+  // per-test project render the card.
+  if (/^\/api\/discovery-jobs\/projects\/[^/]+$/.test(path) && req.method === "GET") {
+    return json(res, mockDiscoveryJobs);
+  }
+
+  // Retry, posted by both the panel row and the card. Without this route a spec
+  // that clicks the row's Retry gets a 404 from the gateway's Memory call, which
+  // is the coverage gap #88 recorded.
+  if (/^\/api\/discovery-jobs\/[^/]+\/retry$/.test(path) && req.method === "POST") {
+    res.statusCode = 202;
+    return json(res, { job_id: "discovery-job-2", document_count: 8, total_documents: 8 });
   }
 
   // Listing: enough seeded documents for the documents page (and its upload

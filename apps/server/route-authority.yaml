@@ -521,6 +521,10 @@ routes:
       path: /api/discovery-jobs/:jobId/finalize
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(discovery:write)
+    - method: POST
+      path: /api/discovery-jobs/:jobId/retry
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(discovery:write)
     - method: GET
       path: /api/discovery-jobs/projects/:projectId
       level: project-member
@@ -597,6 +601,10 @@ routes:
       path: /api/documents/deletion-impact
       level: project-member
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:delete)
+    - method: GET
+      path: /api/documents/source-counts
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/documents/source-types
       level: project-member
@@ -705,6 +713,10 @@ routes:
       path: /api/graph/branches/:targetBranchId/merge
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/graph/changesets
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/graph/embedding-policies
       level: auth
@@ -751,6 +763,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: PATCH
       path: /api/graph/objects/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/graph/objects/:id/contributions
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
@@ -1667,6 +1683,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
     - method: POST
       path: /api/projects/:projectId/work-items/:canonicalId/status
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/unblock
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
     - method: GET

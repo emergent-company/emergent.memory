@@ -107,6 +107,12 @@ func (s *Service) GetSourceTypes(ctx context.Context, projectID string) ([]Sourc
 	return s.repo.GetDistinctSourceTypes(ctx, projectID)
 }
 
+// GetSourceCounts returns the project's documents grouped by connected data
+// source (empty id for direct uploads) for the documents source filter.
+func (s *Service) GetSourceCounts(ctx context.Context, projectID string) ([]SourceCount, error) {
+	return s.repo.GetDistinctSourceIDs(ctx, projectID)
+}
+
 // CreateParams contains parameters for creating a document
 type CreateParams struct {
 	ProjectID string
