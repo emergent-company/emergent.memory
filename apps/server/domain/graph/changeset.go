@@ -124,19 +124,19 @@ type ApplyChangesetResponse struct {
 // so it is recorded and never compared.
 func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *ApplyChangesetRequest, actorID *uuid.UUID) (*ApplyChangesetResponse, error) {
 	if req.SourceID == uuid.Nil {
-		return nil, apperror.ErrBadRequest.WithMessage("source_id is required")
+		return nil, apperror.NewBadRequest("source_id is required")
 	}
 	if len(req.Objects) > changesetMaxObjectItems {
-		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects must not exceed %d", changesetMaxObjectItems))
+		return nil, apperror.NewBadRequest(fmt.Sprintf("objects must not exceed %d", changesetMaxObjectItems))
 	}
 	if len(req.Relationships) > changesetMaxRelationshipItems {
-		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships must not exceed %d", changesetMaxRelationshipItems))
+		return nil, apperror.NewBadRequest(fmt.Sprintf("relationships must not exceed %d", changesetMaxRelationshipItems))
 	}
 	if len(req.Withdrawals) > changesetMaxWithdrawalItems {
-		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("withdrawals must not exceed %d", changesetMaxWithdrawalItems))
+		return nil, apperror.NewBadRequest(fmt.Sprintf("withdrawals must not exceed %d", changesetMaxWithdrawalItems))
 	}
 	if len(req.Objects)+len(req.Relationships)+len(req.Withdrawals) == 0 {
-		return nil, apperror.ErrBadRequest.WithMessage("changeset is empty")
+		return nil, apperror.NewBadRequest("changeset is empty")
 	}
 
 	// An external id may appear once per changeset. Two items for the same record
@@ -155,30 +155,30 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 			continue
 		}
 		if refSet[obj.Ref] {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate _ref %q", i, obj.Ref))
+			return nil, apperror.NewBadRequest(fmt.Sprintf("objects[%d]: duplicate _ref %q", i, obj.Ref))
 		}
 		refSet[obj.Ref] = true
 	}
 	for i, rel := range req.Relationships {
 		if rel.SrcRef != "" {
 			if !refSet[rel.SrcRef] {
-				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
+				return nil, apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
 			}
 		} else if rel.SrcID == nil {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either src_ref or src_id", i))
+			return nil, apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: must specify either src_ref or src_id", i))
 		}
 		if rel.DstRef != "" {
 			if !refSet[rel.DstRef] {
-				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
+				return nil, apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
 			}
 		} else if rel.DstID == nil {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either src_ref or dst_id", i))
+			return nil, apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: must specify either src_ref or dst_id", i))
 		}
 		if rel.SrcRef != "" && rel.SrcRef == rel.DstRef {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed", i))
+			return nil, apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: self-loop not allowed", i))
 		}
 		if rel.SrcID != nil && rel.DstID != nil && *rel.SrcID == *rel.DstID {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed", i))
+			return nil, apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: self-loop not allowed", i))
 		}
 	}
 
@@ -189,12 +189,12 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 		return nil, err
 	}
 	if !ok {
-		return nil, apperror.ErrNotFound.WithMessage("source not found in this project")
+		return nil, apperror.New(404, "not_found", "source not found in this project")
 	}
 	if req.BranchID != nil {
 		if _, err := s.repo.GetBranchByID(ctx, projectID, *req.BranchID); err != nil {
 			if errors.Is(err, apperror.ErrNotFound) {
-				return nil, apperror.ErrNotFound.WithMessage("branch not found in this project")
+				return nil, apperror.New(404, "not_found", "branch not found in this project")
 			}
 			return nil, err
 		}
@@ -220,7 +220,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
@@ -274,7 +274,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 			`SELECT COALESCE(MAX(generation), 0) FROM kb.source_generations WHERE source_id = ?`,
 			req.SourceID,
 		).Scan(ctx, &last); err != nil {
-			return nil, apperror.ErrDatabase.WithInternal(err)
+			return nil, apperror.NewDatabase("Database operation failed", err)
 		}
 		if *req.Generation <= last {
 			return nil, apperror.New(409, "conflict", fmt.Sprintf("generation %d has already been applied for this source (last applied: %d)", *req.Generation, last))
@@ -298,7 +298,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 
 	if s.embeddingEnqueuer != nil {
@@ -447,10 +447,10 @@ func (s *Service) applyChangesetRelationship(
 		return result, nil, err
 	}
 	if !branchIDsEqual(srcObj.BranchID, branchID) || !branchIDsEqual(dstObj.BranchID, branchID) {
-		return result, nil, apperror.ErrBadRequest.WithMessage("relationship endpoints must live on the changeset's branch")
+		return result, nil, apperror.NewBadRequest("relationship endpoints must live on the changeset's branch")
 	}
 	if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
-		return result, nil, apperror.ErrBadRequest.WithMessage("relationship endpoints are on different branches")
+		return result, nil, apperror.NewBadRequest("relationship endpoints are on different branches")
 	}
 
 	if contrib != nil {
@@ -581,16 +581,16 @@ func resolveChangesetEndpoint(ctx context.Context, s *Service, projectID uuid.UU
 	if ref != "" {
 		obj, ok := objByRef[ref]
 		if !ok {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("%s_ref %q not found in objects", side, ref))
+			return nil, apperror.NewBadRequest(fmt.Sprintf("%s_ref %q not found in objects", side, ref))
 		}
 		return obj, nil
 	}
 	if id == nil {
-		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("must specify either %s_ref or %s_id", side, side))
+		return nil, apperror.NewBadRequest(fmt.Sprintf("must specify either %s_ref or %s_id", side, side))
 	}
 	obj, err := s.repo.GetByID(ctx, projectID, *id)
 	if err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("%s_id %q not found", side, id.String()))
+		return nil, apperror.NewBadRequest(fmt.Sprintf("%s_id %q not found", side, id.String()))
 	}
 	return obj, nil
 }
@@ -699,7 +699,7 @@ func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectS
 func checkSchemaProperties(props map[string]any, schema agents.ObjectSchema) error {
 	_, err := validateProperties(props, schema)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+		return apperror.NewBadRequest("property validation failed: " + err.Error())
 	}
 	return nil
 }
@@ -753,14 +753,14 @@ func checkDuplicateExternalIDs(objects []ChangesetObjectItem, relationships []Ch
 	for i, it := range objects {
 		key := ContributionSubjectObject + "/" + it.ExternalID
 		if prev, ok := seen[key]; ok {
-			return apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate external_id %q (already used by %s)", i, it.ExternalID, prev))
+			return apperror.NewBadRequest(fmt.Sprintf("objects[%d]: duplicate external_id %q (already used by %s)", i, it.ExternalID, prev))
 		}
 		seen[key] = fmt.Sprintf("objects[%d]", i)
 	}
 	for i, it := range relationships {
 		key := ContributionSubjectRelationship + "/" + it.ExternalID
 		if prev, ok := seen[key]; ok {
-			return apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: duplicate external_id %q (already used by %s)", i, it.ExternalID, prev))
+			return apperror.NewBadRequest(fmt.Sprintf("relationships[%d]: duplicate external_id %q (already used by %s)", i, it.ExternalID, prev))
 		}
 		seen[key] = fmt.Sprintf("relationships[%d]", i)
 	}

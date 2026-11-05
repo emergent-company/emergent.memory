@@ -76,7 +76,7 @@ func (r *Repository) SourceExistsInProject(ctx context.Context, db bun.IDB, proj
 		sourceID, projectID,
 	).Scan(ctx, &exists)
 	if err != nil {
-		return false, apperror.ErrDatabase.WithInternal(err)
+		return false, apperror.NewDatabase("Database operation failed", err)
 	}
 	return exists, nil
 }
@@ -111,7 +111,7 @@ func (r *Repository) GetPresentContribution(ctx context.Context, db bun.IDB, pro
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return &c, nil
 }
@@ -134,7 +134,7 @@ func (r *Repository) GetContributions(ctx context.Context, projectID uuid.UUID, 
 		OrderExpr("first_seen_at ASC, source_id ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 
 	for i := range rows {
@@ -161,7 +161,7 @@ func (r *Repository) InsertContribution(ctx context.Context, db bun.IDB, c *Prov
 		c.State = ContributionStatePresent
 	}
 	if _, err := db.NewInsert().Model(c).Exec(ctx); err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func (r *Repository) SupersedeContribution(ctx context.Context, db bun.IDB, id u
 		Where("state = ?", ContributionStatePresent).
 		Exec(ctx)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -196,7 +196,7 @@ func (r *Repository) WithdrawContribution(ctx context.Context, db bun.IDB, id uu
 		Where("state = ?", ContributionStatePresent).
 		Exec(ctx)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -254,7 +254,7 @@ func (r *Repository) copyContributions(
 
 	var rows []ProvenanceContribution
 	if err := q.Scan(ctx, &rows); err != nil {
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 	if len(rows) == 0 {
 		return 0, nil
@@ -294,7 +294,7 @@ func (r *Repository) copyContributions(
 		Where("state = ?", ContributionStatePresent).
 		Where("branch_id IS NOT DISTINCT FROM ?", toBranchID).
 		Exec(ctx); err != nil {
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 
 	copied := 0
@@ -359,7 +359,7 @@ func (r *Repository) bulkCopyContributions(
 		WHERE c.state = 'present' AND c.subject_kind = ?`
 
 	if _, err := r.db.NewRaw(query, args...).Exec(ctx); err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -377,7 +377,7 @@ func (r *Repository) NextSourceGeneration(ctx context.Context, db bun.IDB, sourc
 		if errors.Is(err, sql.ErrNoRows) {
 			return 1, nil
 		}
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 	return next, nil
 }
@@ -392,7 +392,7 @@ func (r *Repository) InsertSourceGeneration(ctx context.Context, db bun.IDB, g *
 		g.AppliedAt = time.Now()
 	}
 	if _, err := db.NewInsert().Model(g).Exec(ctx); err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -412,7 +412,7 @@ func (r *Repository) GetObjectVersionByID(ctx context.Context, db bun.IDB, proje
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.ErrNotFound
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return &obj, nil
 }
@@ -429,7 +429,7 @@ func (r *Repository) GetRelationshipVersionByID(ctx context.Context, db bun.IDB,
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.ErrNotFound
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return &rel, nil
 }

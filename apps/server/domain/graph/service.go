@@ -5160,8 +5160,15 @@ func (s *Service) applyMerge(
 			// here; every other merge path writes through the repository helpers.
 			applyRelationshipWriteStampFromContext(ctx, rel)
 
-			if _, err := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx); err != nil {
+			res, err := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx)
+			if err != nil {
 				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
+			}
+			// As on the object path: a conflict means the relationship already
+			// exists on the target and nothing was inserted, so there is no new
+			// version row to attribute a contribution to.
+			if n, _ := res.RowsAffected(); n == 0 {
+				continue
 			}
 			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectRelationship,
 				[]uuid.UUID{src.ID}, rel.ID, rel.BranchID); err != nil {

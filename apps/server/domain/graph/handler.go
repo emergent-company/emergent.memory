@@ -2568,12 +2568,12 @@ func (h *Handler) ReindexEmbeddings(c echo.Context) error {
 func (h *Handler) ApplyChangeset(c echo.Context) error {
 	projectID, err := auth.GetProjectUUID(c)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+		return apperror.NewBadRequest("invalid project_id")
 	}
 
 	var req ApplyChangesetRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	actorID, _ := getUserID(c)
@@ -2603,12 +2603,12 @@ func (h *Handler) ApplyChangeset(c echo.Context) error {
 func (h *Handler) GetObjectContributions(c echo.Context) error {
 	projectID, err := auth.GetProjectUUID(c)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+		return apperror.NewBadRequest("invalid project_id")
 	}
 
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return apperror.NewBadRequest("invalid object id")
 	}
 
 	resolveHead := c.QueryParam("resolveHead")
