@@ -1115,7 +1115,7 @@ func (f *fakeMemory) UpdateMCPShareInstance(ctx context.Context, id string, in *
 
 func (f *fakeMemory) RevokeMCPShareInstance(ctx context.Context, id string) error { return nil }
 
-func (f *fakeMemory) RotateMCPShareInstance(ctx context.Context, id string) (*MCPShareCreated, error) {
+func (f *fakeMemory) RotateMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareCreated, error) {
 	return &MCPShareCreated{}, nil
 }
 

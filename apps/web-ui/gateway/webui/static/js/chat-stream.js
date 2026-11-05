@@ -200,30 +200,6 @@
     return MemoryChatTransport.agentIconifyClass(icon, fallbackIcon);
   }
 
-  // agentAvatarHTML builds an assistant chat-image avatar. When the selected
-  // agent declares an appearance (icon/color, read from its <option>'s
-  // data-icon/data-color via ctx.currentAgentUI) the avatar uses that icon and
-  // tints its background/border/foreground with the color — mirroring the
-  // server-side typeColorStyle. Without an appearance it is byte-identical to
-  // the previous hardcoded avatar (caller's fallback icon + classes), so
-  // agent-less surfaces (side panel, approval gate) are unchanged.
-  function agentAvatarHTML(ui, fallbackIcon, fallbackClasses) {
-    var icon = ui && ui.icon ? String(ui.icon) : "";
-    var color = ui && ui.color ? String(ui.color) : "";
-    var glyph = agentIconifyClass(icon, fallbackIcon);
-    var style = "";
-    if (/^#[0-9a-fA-F]{3,8}$/.test(color)) {
-      style =
-        ' style="color:' + color +
-        ";background-color:color-mix(in oklch," + color + " 10%,transparent)" +
-        ";border-color:color-mix(in oklch," + color + " 15%,transparent)" + '"';
-    }
-    return (
-      '<div class="chat-image ' + fallbackClasses + ' flex items-center justify-center rounded-full border p-2"' + style + '>' +
-      '<span class="iconify ' + glyph + ' size-5" aria-hidden="true"></span></div>'
-    );
-  }
-
   // classifyTool turns a raw tool status + output into {status, error, summary}.
   //
   // When the server sent a view of the result, the view wins: its error is the
@@ -289,11 +265,6 @@
     // finishStream drop an empty assistant bubble even when the stream did not
     // abort (the surface card carries the agent's visible content instead).
     var hadSurface = false;
-
-    /* the selected agent's declared appearance, or null (bot fallback) */
-    function currentAgentUI() {
-      return (ctx.currentAgentUI && ctx.currentAgentUI()) || null;
-    }
 
     /* ---------- composer ---------- */
 
@@ -557,7 +528,7 @@
       var category = p.category || null;
       var icon = MemoryChatComponents.toolIcon(category);
       var chip = MemoryChatComponents.expandableBadge({
-        className: "memory-tool-chip col-start-2 row-start-2 w-full",
+        className: "memory-tool-chip w-full",
         icon: icon,
         label: MemoryChatComponents.toolLabel(category, tool, inFlight(status), p.subject),
         live: status === "running",
@@ -837,17 +808,16 @@
 
       ctx.hideEmpty();
 
-      // Same shell as an assistant bubble so the card reads as the agent asking
-      // (avatar + name header), with the card in the chat grid's bubble slot.
+      // A left-side transcript row like an assistant turn: no avatar and no
+      // name header, flush with the transcript's content edge (the card's own
+      // border is the only chrome). The wrapper keeps the chat-start marker
+      // classes the transcript CSS and the card selectors key on.
       var wrap = document.createElement("div");
-      wrap.className = "chat chat-start memory-rise";
-      wrap.innerHTML =
-        agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
-        '<div class="chat-header text-xs text-muted">' + escapeHTML(ctx.currentAgentName()) + '</div>';
+      wrap.className = "chat chat-start memory-rise memory-card";
 
       var card = document.createElement("div");
       card.className =
-        "memory-question card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
+        "memory-question card card-border bg-base-100 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
       card.setAttribute("data-testid", "chat-question-card");
       card.setAttribute("data-question-id", questionId || "");
       card.innerHTML =
@@ -1109,15 +1079,14 @@
 
       ctx.hideEmpty();
 
+      // Same left-side row contract as a question card (see renderQuestion):
+      // flush with the transcript's content edge, no avatar/name header.
       var wrap = document.createElement("div");
-      wrap.className = "chat chat-start memory-rise";
-      wrap.innerHTML =
-        agentAvatarHTML(currentAgentUI(), "lucide--shield-alert", "bg-warning/10 text-warning border-warning/20") +
-        '<div class="chat-header text-xs text-muted">' + escapeHTML(ctx.currentAgentName()) + '</div>';
+      wrap.className = "chat chat-start memory-rise memory-card";
 
       var card = document.createElement("div");
       card.className =
-        "memory-approval card card-border bg-base-100 col-start-2 row-start-2 w-full max-w-[85%] shadow-sm border-warning/30";
+        "memory-approval card card-border bg-base-100 w-full max-w-[85%] shadow-sm border-warning/30";
       card.setAttribute("data-testid", "chat-approval-card");
       card.setAttribute("data-question-id", questionId || "");
       card.innerHTML =

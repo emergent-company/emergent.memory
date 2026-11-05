@@ -5608,7 +5608,7 @@ definitions:
       updatedAt:
         type: string
     type: object
-  domain_mcp.CreateShareInstanceRequest:
+  domain_mcp.CreateShareInstanceHTTPRequest:
     properties:
       agents:
         items:
@@ -5616,6 +5616,10 @@ definitions:
         type: array
       description:
         type: string
+      emails:
+        items:
+          type: string
+        type: array
       name:
         type: string
       tools:
@@ -5629,6 +5633,12 @@ definitions:
         type: string
       description:
         type: string
+      emailError:
+        type: string
+      emailsSent:
+        items:
+          type: string
+        type: array
       id:
         type: string
       isLegacy:
@@ -5700,6 +5710,13 @@ definitions:
       jsonrpc:
         type: string
       result: {}
+    type: object
+  domain_mcp.RotateShareInstanceHTTPRequest:
+    properties:
+      emails:
+        items:
+          type: string
+        type: array
     type: object
   domain_mcp.ShareMCPAccessRequest:
     properties:
@@ -21127,7 +21144,9 @@ paths:
       consumes:
       - application/json
       description: Creates a named MCP share instance bound to a new project API token
-        with the selected tool/agent allowlists. Returns the raw token exactly once.
+        with the selected tool allowlist, and optionally emails the one-time key and
+        client setup snippets to the listed recipients. Returns the raw token exactly
+        once.
       parameters:
       - description: Project ID (UUID)
         in: path
@@ -21139,7 +21158,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/domain_mcp.CreateShareInstanceRequest'
+          $ref: '#/definitions/domain_mcp.CreateShareInstanceHTTPRequest'
       produces:
       - application/json
       responses:
@@ -21156,12 +21175,59 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "422":
-          description: Invalid allowlist
+          description: Invalid allowlist or email address
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
       summary: Create an MCP share instance
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/shares/{id}/rotate:
+    post:
+      consumes:
+      - application/json
+      description: Issues a new key for a share instance, invalidating the previous
+        one, and optionally emails the new key and client setup snippets to the listed
+        recipients. The body may be omitted.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Share instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Optional invite recipients
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_mcp.RotateShareInstanceHTTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcp.CreateShareInstanceResponse'
+        "404":
+          description: Unknown share
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Share is revoked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid email address
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Rotate an MCP share key
       tags:
       - mcp
   /api/projects/{projectId}/mcp/tools:

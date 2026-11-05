@@ -329,8 +329,6 @@ test.describe('tool step chip', () => {
         hideEmpty: () => {},
         setStreaming: () => {},
         onStreamFail: () => {},
-        currentAgentName: () => 'Agent',
-        currentAgentUI: () => ({}),
       });
       (window as unknown as { __engine: unknown }).__engine = engine;
     });

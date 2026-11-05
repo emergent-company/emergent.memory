@@ -567,15 +567,15 @@
     return true;
   }
 
-  // auxShell is the chat-start row a step and a run both sit in: the same shell,
-  // so a run summary lines up with the step it replaces, and a single-step turn
-  // can go back to being a plain step without moving its text.
+  // auxShell is the row a step and a run both sit in: the same shell, so a run
+  // summary lines up with the step it replaces, and a single-step turn can go
+  // back to being a plain step without moving its text. Like an assistant turn
+  // it is a plain block row with no avatar gutter, so every left-side row in
+  // the transcript starts at the same content edge (see app.css
+  // "left-side transcript rows").
   function auxShell() {
     var wrap = document.createElement("div");
     wrap.className = "chat chat-start memory-rise memory-aux";
-    wrap.innerHTML =
-      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
     return wrap;
   }
 
@@ -592,7 +592,7 @@
 
     var shell = auxShell();
     var el = document.createElement("details");
-    el.className = "memory-tool-run memory-tool-group col-start-2 row-start-2 w-full";
+    el.className = "memory-tool-run memory-tool-group w-full";
     el.setAttribute("data-tool-group", "1");
     el.setAttribute("data-tool-count", "0");
     if (turnKey) el.setAttribute("data-turn", String(turnKey));
@@ -892,17 +892,14 @@
     if (!messages) return null;
     var live = !!(opts && opts.live);
 
-    // Same chat-start shell as assistant bubbles so the badge aligns with (and
-    // is constrained to) the chat content column.
+    // Same left-side row as an assistant turn (no avatar gutter), so the badge
+    // starts at the transcript's content edge.
     var wrap = document.createElement("div");
     wrap.className = "chat chat-start memory-rise memory-aux";
-    wrap.innerHTML =
-      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
     messages.appendChild(wrap);
 
     var badge = expandableBadge({
-      className: "memory-thinking col-start-2 row-start-2 w-full",
+      className: "memory-thinking w-full",
       icon: "lucide--brain",
       label: "Thinking",
       live: live,
@@ -1016,13 +1013,10 @@
 
     var wrap = document.createElement("div");
     wrap.className = "chat chat-start memory-rise memory-aux";
-    wrap.innerHTML =
-      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
     messages.appendChild(wrap);
 
     var badge = expandableBadge({
-      className: "memory-agent-prompt col-start-2 row-start-2 w-full",
+      className: "memory-agent-prompt w-full",
       icon: "lucide--scroll-text",
       label: "Agent prompt",
       afterLabel:
@@ -1086,14 +1080,11 @@
     var icon = isHeader ? "lucide--flag" : "lucide--arrow-down-to-line";
     var wrap = document.createElement("div");
     wrap.className = "chat chat-start memory-rise memory-aux";
-    wrap.innerHTML =
-      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-      '<span class="iconify ' + icon + ' size-5" aria-hidden="true"></span></div>';
     messages.appendChild(wrap);
 
     var kindLabel = stageKindLabel(kind);
     var badge = expandableBadge({
-      className: "memory-stage-input col-start-2 row-start-2 w-full",
+      className: "memory-stage-input w-full",
       icon: icon,
       label: stage || "Stage",
       afterLabel: kindLabel
@@ -1526,12 +1517,6 @@
   // component ids fall back to a summary card and never throw. All user/model
   // text is escaped (textContent / escapeHTML), never injected via innerHTML.
 
-  // Bot avatar byte-identical to the assistant-bubble fallback (chat-stream.js
-  // agentAvatarHTML with no agent appearance), so A2UI cards align with chat.
-  var A2UI_AVATAR =
-    '<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-    '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
-
   function renderA2UISurface(surfaceId, messages, ctx) {
     ctx = ctx || {};
     var container = ctx.messages;
@@ -1584,16 +1569,17 @@
     }
   }
 
-  // a2uiShell builds the chat-grid wrapper + card shell every card lives in:
-  // the same `chat chat-start` + `card` structure the question/approval cards
-  // use, so A2UI cards read as the agent speaking.
+  // a2uiShell builds the wrapper + card shell every card lives in: the same
+  // `chat chat-start` + `card` structure the question/approval cards use, so
+  // A2UI cards read as the agent speaking. Like those cards it is a plain
+  // block row — no avatar gutter — so every card starts at the transcript's
+  // content edge.
   function a2uiShell() {
     var wrap = document.createElement("div");
-    wrap.className = "chat chat-start memory-rise";
-    wrap.innerHTML = A2UI_AVATAR;
+    wrap.className = "chat chat-start memory-rise memory-card";
     var card = document.createElement("div");
     card.className =
-      "card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
+      "card card-border bg-base-100 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
     wrap.appendChild(card);
     var body = document.createElement("div");
     body.className = "card-body gap-3 p-4";
@@ -1801,7 +1787,7 @@
   function a2uiApproval(comp, surfaceId, canDecide) {
     var shell = a2uiShell();
     shell.card.className =
-      "memory-approval card card-border bg-base-100 col-start-2 row-start-2 w-full max-w-[85%] shadow-sm border-warning/30";
+      "memory-approval card card-border bg-base-100 w-full max-w-[85%] shadow-sm border-warning/30";
     shell.card.setAttribute("data-testid", "chat-approval-card");
     shell.card.setAttribute("data-question-id", surfaceId || "");
 
@@ -1891,7 +1877,7 @@
   function a2uiQuestion(comp, surfaceId, canDecide) {
     var shell = a2uiShell();
     shell.card.className =
-      "memory-question card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
+      "memory-question card card-border bg-base-100 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
     shell.card.setAttribute("data-testid", "chat-question-card");
     shell.card.setAttribute("data-question-id", surfaceId || "");
 

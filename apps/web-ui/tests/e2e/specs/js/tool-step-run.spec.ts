@@ -96,8 +96,6 @@ async function renderHistory(page: Page, items: HistoryStep[]): Promise<void> {
       setStreaming() {},
       onStreamFinish() {},
       onStreamFail() {},
-      currentAgentName: () => 'Memory',
-      currentAgentUI: () => null,
     });
     const ctx = {
       container: messages,
@@ -141,8 +139,6 @@ async function liveEngine(page: Page, runId = ''): Promise<void> {
       setStreaming() {},
       onStreamFinish() {},
       onStreamFail() {},
-      currentAgentName: () => 'Memory',
-      currentAgentUI: () => null,
       currentRunId: () => w.__runId || '',
     }) as typeof w.__stream;
   }, runId);
@@ -585,8 +581,6 @@ test.describe('tool runs — live turn', () => {
         setStreaming() {},
         onStreamFinish() {},
         onStreamFail() {},
-        currentAgentName: () => 'Memory',
-        currentAgentUI: () => null,
       });
       const dispatch = (
         window as unknown as {

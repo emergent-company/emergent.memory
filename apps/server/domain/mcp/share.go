@@ -64,6 +64,44 @@ var readOnlyMCPScopes = []string{
 // emailRegexp is a simple RFC 5322-ish email validator.
 var emailRegexp = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 
+// normalizeInviteEmails trims and de-duplicates (case-insensitively) invite
+// recipients and rejects the first malformed address with a 422 validation
+// error. Blank entries are ignored so a trailing comma in a form field is not
+// an error.
+func normalizeInviteEmails(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, raw := range in {
+		addr := strings.TrimSpace(raw)
+		if addr == "" {
+			continue
+		}
+		if !emailRegexp.MatchString(addr) {
+			return nil, apperror.New(http.StatusUnprocessableEntity, "invalid_email",
+				"invalid email address: "+addr)
+		}
+		key := strings.ToLower(addr)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, addr)
+	}
+	return out, nil
+}
+
+// projectNameFor returns the project's display name, or "" when it cannot be
+// read. Invite emails fall back to the project ID when the name is empty.
+func (s *Service) projectNameFor(ctx context.Context, projectID string) string {
+	var name string
+	_ = s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("name").
+		Where("id = ?", projectID).
+		Scan(ctx, &name)
+	return name
+}
+
 // ShareMCPAccess creates a read-only MCP API token for a project and optionally
 // sends invite emails to the provided addresses.
 func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderName, mcpBaseURL string, req ShareMCPAccessRequest) (*ShareMCPAccessResponse, error) {
@@ -84,12 +122,7 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 	// This makes it trivial to find and revoke a specific recipient's access later.
 	if len(req.Emails) > 0 {
 		// Fetch project name once for all invite emails.
-		var projectName string
-		_ = s.db.NewSelect().
-			TableExpr("kb.projects").
-			ColumnExpr("name").
-			Where("id = ?", projectID).
-			Scan(ctx, &projectName)
+		projectName := s.projectNameFor(ctx, projectID)
 
 		// Issue one token per recipient.
 		var firstToken string
@@ -329,6 +362,69 @@ func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName
 	return err
 }
 
+// SendShareInviteEmails emails a freshly minted MCP share key to each
+// recipient using the `mcp-invite` template, so a share created from the web UI
+// (or the API) can be handed over without the sender copying the key by hand.
+//
+// Delivery is enqueued, never awaited: this returns as soon as the emails are
+// on the queue. A share must not fail because email is unavailable, so the
+// returned problem string describes a delivery problem for the caller to surface
+// instead of an error. Addresses that made it onto the queue are returned in
+// sent.
+func (s *Service) SendShareInviteEmails(ctx context.Context, projectID, senderName, baseURL, token string, emails []string) (sent []string, problem string) {
+	if len(emails) == 0 {
+		return nil, ""
+	}
+	if s.emailSvc == nil {
+		return nil, "Invite email is unavailable on this server."
+	}
+	mcpURL := mcpEndpointURL(baseURL)
+	projectName := s.projectNameFor(ctx, projectID)
+	snippets := buildSnippets(baseURL, mcpURL, token)
+	bundleURL := fmt.Sprintf("%s/api/mcp/bundle?token=%s", strings.TrimRight(baseURL, "/"), url.QueryEscape(token))
+
+	sent = make([]string, 0, len(emails))
+	failed := 0
+	for _, addr := range emails {
+		if err := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, token, bundleURL, snippets); err != nil {
+			failed++
+			s.log.Warn("failed to enqueue mcp share invite email",
+				"email", addr,
+				"project_id", projectID,
+				"error", err)
+			continue
+		}
+		sent = append(sent, addr)
+	}
+	if failed > 0 {
+		return sent, fmt.Sprintf("Could not queue %d of %d invite email(s).", failed, len(emails))
+	}
+	return sent, ""
+}
+
+// senderDisplayName resolves the name shown as the invite sender, preferring
+// the profile display name, then the account email, then a generic label.
+func (h *Handler) senderDisplayName(ctx context.Context, userID, email string) string {
+	name := email
+	if h.userProfileSvc != nil {
+		if profile, err := h.userProfileSvc.GetByID(ctx, userID); err == nil {
+			if profile.DisplayName != nil && *profile.DisplayName != "" {
+				name = *profile.DisplayName
+			} else if profile.FirstName != nil && *profile.FirstName != "" {
+				lastName := ""
+				if profile.LastName != nil {
+					lastName = *profile.LastName
+				}
+				name = strings.TrimSpace(*profile.FirstName + " " + lastName)
+			}
+		}
+	}
+	if name == "" {
+		name = "A team member"
+	}
+	return name
+}
+
 // HandleShareMCPAccess handles POST /api/projects/:projectId/mcp/share.
 //
 // @Summary      Share read-only MCP access
@@ -359,39 +455,16 @@ func (h *Handler) HandleShareMCPAccess(c echo.Context) error {
 	}
 
 	// Validate email addresses before creating the token.
-	for _, email := range req.Emails {
-		if !emailRegexp.MatchString(email) {
-			return apperror.New(http.StatusUnprocessableEntity, "invalid_email",
-				fmt.Sprintf("invalid email address: %s", email))
-		}
+	emails, err := normalizeInviteEmails(req.Emails)
+	if err != nil {
+		return err
 	}
+	req.Emails = emails
 
 	// Derive the public base URL from the incoming request.
-	scheme := "https"
-	if c.Request().TLS == nil && c.Request().Header.Get("X-Forwarded-Proto") == "" {
-		scheme = "http"
-	}
-	if proto := c.Request().Header.Get("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	}
-	mcpBaseURL := fmt.Sprintf("%s://%s", scheme, c.Request().Host)
+	mcpBaseURL := requestBaseURL(c)
 
-	senderName := user.Email
-	if profile, err := h.userProfileSvc.GetByID(c.Request().Context(), user.ID); err == nil {
-		if profile.DisplayName != nil && *profile.DisplayName != "" {
-			senderName = *profile.DisplayName
-		} else if profile.FirstName != nil && *profile.FirstName != "" {
-			senderName = strings.TrimSpace(*profile.FirstName + " " + func() string {
-				if profile.LastName != nil {
-					return *profile.LastName
-				}
-				return ""
-			}())
-		}
-	}
-	if senderName == "" {
-		senderName = "A team member"
-	}
+	senderName := h.senderDisplayName(c.Request().Context(), user.ID, user.Email)
 
 	resp, err := h.svc.ShareMCPAccess(c.Request().Context(), projectID, user.ID, senderName, mcpBaseURL, req)
 	if err != nil {

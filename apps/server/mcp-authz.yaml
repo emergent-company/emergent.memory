@@ -198,8 +198,8 @@
     },
     {
       "file": "apps/server/domain/mcp/share.go",
-      "func": "ShareMCPAccess",
-      "why": "read kb.projects name; project_admin role already enforced via apitokenSvc.GetUserProjectRole at the top of the function; read-only"
+      "func": "projectNameFor",
+      "why": "read kb.projects name for invite-email display; every caller runs project_admin authorization first (ShareMCPAccess via apitokenSvc.GetUserProjectRole, share-instance handlers via EnsureProjectAdmin); read-only, project-scoped"
     }
   ]
 }

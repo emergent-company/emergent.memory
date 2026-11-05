@@ -10,7 +10,7 @@
  * sealed-cookie transport against /share/api/*, the email gate, terminal states
  * (invalid/revoked/expired/rate-limited/budget-exceeded via an injected error
  * `code`), the session rail, answerQuestion/postDecision against the share
- * approval route, and currentAgentName/currentAgentUI from the sanitized config.
+ * approval route, and currentAgentName from the sanitized config.
  *
  * Key handling
  * ------------
@@ -66,10 +66,10 @@
     bubble: null,
     bubbleHTML: "",
     bubbleText: "",
-    // agentName / agentUI label the assistant bubbles + avatar from the
-    // sanitized config (mirrors the app chat's per-agent identity).
+    // agentName labels the shared page header and the run-transcript turn
+    // headers. The avatar is applied to the page header by applyAvatar, not
+    // carried on the transcript rows.
     agentName: "",
-    agentUI: { icon: "", color: "" },
     // email holds the visitor-supplied address for this page session only.
     // It is never persisted or written to the URL/DOM.
     email: "",
@@ -357,7 +357,6 @@
     var desc = config.agentDescription || "";
     var welcome = config.welcomeMessage || "";
 
-    state.agentUI = { icon: config.icon || "", color: config.color || "" };
     applyAvatar(config.icon, config.color);
 
     var nameEl = document.getElementById("share-agent-name");
@@ -461,10 +460,6 @@
 
   function currentAgentName() {
     return state.agentName || "Memory";
-  }
-
-  function currentAgentUI() {
-    return state.agentUI || { icon: "", color: "" };
   }
 
   /* ---------- thinking blocks (shared with chat.js + sidepanel.js) ---------- */
@@ -596,8 +591,6 @@
     get bubbleHTML() { return state.bubbleHTML; }, set bubbleHTML(v) { state.bubbleHTML = v; },
     get bubbleText() { return state.bubbleText; }, set bubbleText(v) { state.bubbleText = v; },
     get conversationId() { return state.sessionId; },
-    currentAgentName: currentAgentName,
-    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,

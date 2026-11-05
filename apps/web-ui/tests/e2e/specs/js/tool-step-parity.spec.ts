@@ -135,8 +135,6 @@ test.describe('tool step parity', () => {
         hideEmpty: () => {},
         setStreaming: () => {},
         onStreamFail: () => {},
-        currentAgentName: () => 'Agent',
-        currentAgentUI: () => ({}),
       });
       engine.handleToolEvent({
         tool: c.tool,

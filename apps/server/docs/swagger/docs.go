@@ -14987,7 +14987,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool/agent allowlists. Returns the raw token exactly once.",
+                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool allowlist, and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15012,7 +15012,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceRequest"
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceHTTPRequest"
                         }
                     }
                 ],
@@ -15036,7 +15036,77 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "Invalid allowlist",
+                        "description": "Invalid allowlist or email address",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/shares/{id}/rotate": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Issues a new key for a share instance, invalidating the previous one, and optionally emails the new key and client setup snippets to the listed recipients. The body may be omitted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Rotate an MCP share key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Share instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional invite recipients",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.RotateShareInstanceHTTPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown share",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Share is revoked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid email address",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -35416,7 +35486,7 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_mcp.CreateShareInstanceRequest": {
+        "domain_mcp.CreateShareInstanceHTTPRequest": {
             "type": "object",
             "properties": {
                 "agents": {
@@ -35427,6 +35497,12 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -35447,6 +35523,15 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "emailError": {
+                    "type": "string"
+                },
+                "emailsSent": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "id": {
                     "type": "string"
@@ -35555,6 +35640,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "result": {}
+            }
+        },
+        "domain_mcp.RotateShareInstanceHTTPRequest": {
+            "type": "object",
+            "properties": {
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
             }
         },
         "domain_mcp.ShareMCPAccessRequest": {
