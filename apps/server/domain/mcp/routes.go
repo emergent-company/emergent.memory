@@ -79,6 +79,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	adminGroup.PATCH("/shares/:id", h.HandleUpdateShareInstance)
 	adminGroup.DELETE("/shares/:id", h.HandleRevokeShareInstance)
 	adminGroup.POST("/shares/:id/rotate", h.HandleRotateShareInstance)
+	// Ad-hoc invite: emails the share's EXISTING key (recovered from encrypted
+	// storage) instead of minting a new one, so people already using the share
+	// keep working. Falls back to reporting not_recoverable for keys stored
+	// before encryption was enabled.
+	adminGroup.POST("/shares/:id/invite", h.HandleInviteShareInstance)
 
 	// Includable tool catalog for the allowlist picker
 	adminGroup.GET("/tools", h.HandleListToolCatalog)
