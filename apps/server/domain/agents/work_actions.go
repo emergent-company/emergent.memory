@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -190,26 +191,87 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 	return res, nil
 }
 
+// Unblock clears a durable block and re-enqueues the item from its current
+// workflow status. The optional note becomes the run's user message so the
+// agent gets the human context. The failure budget is reset.
+func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID, note string) (*WorkActionResult, error) {
+	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	cleared, err := s.repo.ClearWorkBlock(ctx, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if !cleared {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+	}
+	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+	res := &WorkActionResult{}
+	if agent != nil {
+		opts := CreateRunQueuedOptions{
+			SubjectObjectID:   &head.CanonicalID,
+			SubjectObjectType: &head.Type,
+			TrustedInternal:   true,
+			TriggerMetadata: map[string]any{
+				"work_trigger_event": string(EventTypeStatusChanged),
+				"work_claim_status":  head.Status,
+			},
+		}
+		if note != "" {
+			opts.TriggerMessage = &note
+			opts.TriggerMetadata["work_unblock_note"] = note
+		}
+		maxAttempts := 1
+		if def != nil && def.WorkConfig.RetryPolicy.MaxAttempts > 0 {
+			maxAttempts = def.WorkConfig.RetryPolicy.MaxAttempts
+		}
+		if run, err := s.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts); err != nil {
+			if !errors.Is(err, ErrWorkItemBusy) {
+				s.log.Warn("unblock: enqueue failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
+			}
+		} else {
+			res.RunID = run.ID
+		}
+	}
+	res.Head, err = s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
 // Retry returns a blocked work item to ready and enqueues it, clearing the
 // failure ledger. Returns a conflict when the item is not blocked.
+
 func (s *WorkActionService) Retry(ctx context.Context, projectID, canonicalID string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
 	}
-	st := def.EffectiveWorkStatus(head.Type)
-	ok, err := s.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
-		FromStatus: st.Blocked,
-		ToStatus:   st.Ready,
-	})
+	blocked, err := s.repo.IsWorkBlocked(ctx, canonicalID)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not in the blocked status")
+	st := def.EffectiveWorkStatus(head.Type)
+	if !blocked && head.Status != st.Blocked {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+	}
+	if _, err := s.repo.ClearWorkBlock(ctx, canonicalID); err != nil {
+		return nil, err
+	}
+	// Legacy rows may still be in the blocked status; return them to ready.
+	if head.Status == st.Blocked {
+		if ok, err := s.workObjects.TransitionWorkObject(ctx, projectID, canonicalID, graph.WorkObjectTransition{
+			FromStatus: st.Blocked,
+			ToStatus:   st.Ready,
+		}); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+		}
 	}
 	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
-
 	res := &WorkActionResult{}
 	if agent != nil {
 		if runID, err := s.enqueueWorkRun(ctx, head, agent, def, nil); err != nil {
@@ -428,12 +490,22 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 		SubjectObjectID:   &head.CanonicalID,
 		SubjectObjectType: &head.Type,
 		TrustedInternal:   true,
+		TriggerMetadata: map[string]any{
+			"work_trigger_event": string(EventTypeStatusChanged),
+			"work_claim_status":  head.Status,
+		},
 	}
 	if len(feedback) > 0 {
-		opts.TriggerMetadata = map[string]any{"work_feedback": feedback}
+		if opts.TriggerMetadata == nil {
+			opts.TriggerMetadata = map[string]any{}
+		}
+		opts.TriggerMetadata["work_feedback"] = feedback
 	}
 	run, err := s.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts)
 	if err != nil {
+		if errors.Is(err, ErrWorkItemBusy) {
+			return "", nil // a live run already covers the item
+		}
 		return "", err
 	}
 	return run.ID, nil

@@ -71,7 +71,6 @@ func completeWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (
 	st := wc.EffectiveStatus(deps.SubjectObjectType)
 	doneStatus := st.Done
 	reviewStatus := st.Review
-	inProgressStatus := st.InProgress
 
 	if deps.Store == nil || deps.CanonicalID == "" {
 		return map[string]any{"error": "work_complete: no subject work object to complete"}, nil
@@ -89,16 +88,29 @@ func completeWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (
 		return map[string]any{"error": msg}, nil
 	}
 
+	head, err := deps.Store.GetHeadObject(ctx, deps.ProjectID, deps.CanonicalID)
+	if err != nil {
+		return map[string]any{"error": "work_complete: " + err.Error()}, nil
+	}
+	if head == nil {
+		return map[string]any{"error": "work_complete: work object not found"}, nil
+	}
+	fromStatus := head.Status
 	targetStatus := doneStatus
 	if wc.RequiresReview {
 		targetStatus = reviewStatus
 	}
-	if !wc.RuleFor(deps.SubjectObjectType).PermitsTransition(inProgressStatus, targetStatus, st) {
-		return map[string]any{"error": fmt.Sprintf("work_complete: transition %q → %q is not allowed by this agent's work rules", inProgressStatus, targetStatus)}, nil
+	rule := wc.RuleFor(deps.SubjectObjectType)
+	if !rule.PermitsTransition(fromStatus, targetStatus, st) {
+		return map[string]any{"error": fmt.Sprintf("work_complete: transition %q → %q is not allowed by this agent's work rules", fromStatus, targetStatus)}, nil
 	}
-
-	transitioned, err := deps.Store.CompleteWorkObject(
-		ctx, deps.ProjectID, deps.CanonicalID, inProgressStatus, doneStatus, reviewStatus, wc.RequiresReview)
+	needsReview := wc.RequiresReview
+	transitioned, err := deps.Store.TransitionWorkObject(ctx, deps.ProjectID, deps.CanonicalID, graph.WorkObjectTransition{
+		FromStatus:     fromStatus,
+		ToStatus:       targetStatus,
+		SetNeedsReview: &needsReview,
+		ClearAssignee:  rule != nil && rule.ClearAssigneeOnComplete,
+	})
 	if err != nil {
 		deps.Logger.Error("work_complete: transition failed",
 			slog.String("canonical_id", deps.CanonicalID),
@@ -251,35 +263,31 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 			}
 			kind, _ := args["kind"].(string)
 
-			wc := deps.WorkConfig
-			st := wc.EffectiveStatus(deps.SubjectObjectType)
-			inProgressStatus := st.InProgress
-			blockedStatus := st.Blocked
-
 			if deps.Store == nil || deps.CanonicalID == "" {
 				return map[string]any{"error": "work_block: no subject work object to block"}, nil
 			}
-			if !wc.RuleFor(deps.SubjectObjectType).PermitsTransition(inProgressStatus, blockedStatus, st) {
-				return map[string]any{"error": fmt.Sprintf("work_block: transition %q → %q is not allowed by this agent's work rules", inProgressStatus, blockedStatus)}, nil
-			}
-
-			transitioned, err := deps.Store.BlockWorkObject(
-				ctx, deps.ProjectID, deps.CanonicalID, inProgressStatus, blockedStatus)
+			head, err := deps.Store.GetHeadObject(ctx, deps.ProjectID, deps.CanonicalID)
 			if err != nil {
-				deps.Logger.Error("work_block: transition failed",
-					slog.String("canonical_id", deps.CanonicalID),
-					slog.String("error", err.Error()),
-				)
 				return map[string]any{"error": "work_block: " + err.Error()}, nil
 			}
-			if !transitioned {
-				// The block transition failed (concurrent cancel/complete): do not
-				// create the human task and do not finalize the run. The run must
-				// surface as an error so it is retried/blocked by the failure policy.
-				deps.Logger.Warn("work_block: transition skipped (object not in progress)",
-					slog.String("canonical_id", deps.CanonicalID),
-				)
-				return map[string]any{"error": "work_block: object is not in the in-progress status (concurrent cancel/complete or already transitioned)"}, nil
+			if head == nil {
+				return map[string]any{"error": "work_block: work object not found"}, nil
+			}
+			// Blocked is durable execution state, not a status: the workflow
+			// position is preserved for the human retry.
+			blockedBy := deps.ActorName
+			class := "agent"
+			if deps.Repo != nil {
+				if err := deps.Repo.UpsertWorkBlock(ctx, &WorkBlock{
+					CanonicalID:  deps.CanonicalID,
+					ProjectID:    deps.ProjectID,
+					Reason:       reason,
+					FailureClass: &class,
+					BlockedBy:    &blockedBy,
+					RunID:        strPtrIfNotEmpty(deps.RunID),
+				}); err != nil {
+					return map[string]any{"error": "work_block: " + err.Error()}, nil
+				}
 			}
 
 			// Human-facing task (kb.tasks) — best-effort; a failure to create the
@@ -316,14 +324,14 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 
 			result := map[string]any{
 				"status":      "blocked",
-				"work_status": blockedStatus,
+				"work_status": head.Status,
 				"reason":      reason,
 				"task_id":     taskID,
 			}
 
 			deps.Terminator.Finalize(WorkTerminatorBlock, map[string]any{
 				"work_terminator": WorkTerminatorBlock,
-				"work_status":     blockedStatus,
+				"work_status":     head.Status,
 				"reason":          reason,
 			})
 
@@ -360,6 +368,35 @@ func BuildWorkTransitionTool(deps WorkToolDeps) (tool.Tool, error) {
 			st := deps.WorkConfig.EffectiveStatus(deps.SubjectObjectType)
 			if !deps.WorkConfig.RuleFor(deps.SubjectObjectType).PermitsTransition(head.Status, to, st) {
 				return map[string]any{"error": fmt.Sprintf("work_transition: transition %q → %q is not allowed by this agent's work rules", head.Status, to)}, nil
+			}
+			// Blocked is durable execution state, not a workflow status. Route a
+			// transition to the blocked status through the same block row as
+			// work_block so pickup stays suppressed.
+			if to == st.Blocked {
+				reason, _ := args["reason"].(string)
+				if reason == "" {
+					reason = "agent transitioned the item to blocked"
+				}
+				if deps.Repo != nil {
+					class := "agent"
+					blockedBy := deps.ActorName
+					if err := deps.Repo.UpsertWorkBlock(ctx, &WorkBlock{
+						CanonicalID:  deps.CanonicalID,
+						ProjectID:    deps.ProjectID,
+						Reason:       reason,
+						FailureClass: &class,
+						BlockedBy:    &blockedBy,
+						RunID:        strPtrIfNotEmpty(deps.RunID),
+					}); err != nil {
+						return map[string]any{"error": "work_transition: " + err.Error()}, nil
+					}
+				}
+				deps.Terminator.Finalize(WorkTerminatorTransition, map[string]any{
+					"work_terminator": WorkTerminatorTransition,
+					"work_status":     head.Status,
+					"reason":          reason,
+				})
+				return map[string]any{"status": "blocked", "work_status": head.Status, "reason": reason}, nil
 			}
 			needsReview := to == st.Review
 			transitioned, err := deps.Store.TransitionWorkObject(ctx, deps.ProjectID, deps.CanonicalID, graph.WorkObjectTransition{

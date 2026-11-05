@@ -503,6 +503,11 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	// For graph objects the event ID is already the object's canonical_id
 	// (graph/service.go emitObjectCreated passes obj.CanonicalID).
 	canonicalID, _ := input["id"].(string)
+	if canonicalID != "" {
+		if blocked, berr := ts.repo.IsWorkBlocked(ctx, canonicalID); berr == nil && blocked {
+			return
+		}
+	}
 	if canonicalID == "" {
 		ts.log.Warn("cannot enqueue work run: missing object id",
 			slog.String("agent_id", agent.ID),

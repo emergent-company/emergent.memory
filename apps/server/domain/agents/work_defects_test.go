@@ -25,7 +25,12 @@ func TestIsReworkRun(t *testing.T) {
 type claimRecordingStore struct {
 	fakeWorkObjectStore
 	claimedReady string
+	headStatus   string
 	transitions  []graph.WorkObjectTransition
+}
+
+func (f *claimRecordingStore) GetHeadObject(ctx context.Context, projectID, canonicalID string) (*graph.WorkObjectHead, error) {
+	return &graph.WorkObjectHead{CanonicalID: canonicalID, Type: "Task", Status: f.headStatus}, nil
 }
 
 func (f *claimRecordingStore) ClaimWorkObject(ctx context.Context, projectID, canonicalID, readyStatus, inProgressStatus string) (bool, error) {
@@ -56,18 +61,18 @@ func TestClaimWorkObject_ReworkClaimsFromRevision(t *testing.T) {
 		SubjectObjectID: &subjectID,
 		TriggerMetadata: map[string]any{"work_feedback": []any{map[string]any{"round": 1, "text": "fix"}}},
 	}
+	store.headStatus = "revision"
 	claimed, err := pool.claimWorkObject(context.Background(), reworkRun, agent, def)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	require.Len(t, store.transitions, 1)
-	require.Equal(t, "revision", store.transitions[0].FromStatus)
-	require.Equal(t, "in_progress", store.transitions[0].ToStatus)
+	require.Empty(t, store.transitions)
 
+	store.headStatus = "ready"
 	normalRun := &AgentRun{SubjectObjectID: &subjectID}
 	claimed, err = pool.claimWorkObject(context.Background(), normalRun, agent, def)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	require.Equal(t, "ready", store.claimedReady)
+	require.Empty(t, store.transitions)
 }
 
 // TestIncrementWorkItemFailure_Concurrent verifies the failure count is

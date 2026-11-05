@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
@@ -2785,6 +2786,16 @@ func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID
 
 // CreateRunQueued creates an agent_runs row with status=queued and an
 // agent_run_jobs row in the same transaction. Returns the new run.
+// ErrWorkItemBusy reports that the work object already has a live run. The
+// live-run partial unique index enforces one execution per item.
+var ErrWorkItemBusy = errors.New("work item already has a live run")
+
+// isLiveRunConflict reports whether err is the live subject-run unique
+// violation rather than an unrelated constraint.
+func isLiveRunConflict(err error) bool {
+	return err != nil && pgutils.IsUniqueViolation(err) && strings.Contains(err.Error(), "idx_agent_runs_live_subject")
+}
+
 func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int, opts ...CreateRunQueuedOptions) (*AgentRun, error) {
 	var o CreateRunQueuedOptions
 	if len(opts) > 0 {
@@ -2798,6 +2809,9 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		return err
 	})
 	if err != nil {
+		if isLiveRunConflict(err) {
+			return nil, ErrWorkItemBusy
+		}
 		// Unwrap QueueFullError from the transaction wrapper so callers can type-assert it.
 		var qfe *QueueFullError
 		if errors.As(err, &qfe) {
@@ -2904,6 +2918,9 @@ func (r *Repository) EnqueueWorkRunDeduped(ctx context.Context, logEntry *AgentP
 		return err
 	})
 	if err != nil {
+		if isLiveRunConflict(err) {
+			return nil, false, nil
+		}
 		var qfe *QueueFullError
 		if errors.As(err, &qfe) {
 			return nil, claimed, qfe

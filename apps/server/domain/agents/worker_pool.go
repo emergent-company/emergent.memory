@@ -460,64 +460,55 @@ func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *
 	} else {
 		st = st.withDefaults()
 	}
-	readyStatus := st.Ready
-	revisionStatus := st.Revision
-	inProgressStatus := st.InProgress
-	// A rework run (request-changes) claims from the revision status, not ready:
-	// RequestChangesWorkObject moved the object to revision, and the claim would
-	// otherwise be skipped, stranding the item in revision forever.
-	if isReworkRun(run) {
-		return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
-			FromStatus: revisionStatus,
-			ToStatus:   inProgressStatus,
-		})
+	if run.SubjectObjectID == nil || *run.SubjectObjectID == "" {
+		return false, nil
 	}
 
-	// Rules-based pickup guard: only ready or a status declared as a trigger may
-	// be claimed. This stops the reconciler from dragging a review/blocked item
-	// into in-progress when it sweeps a status the agent does not actually pick
-	// up.
-	ruleBased := agentDef != nil && len(agentDef.WorkConfig.ObjectRules) > 0
-	claimAllowed := func(from string) bool {
-		if !ruleBased {
-			return true
-		}
-		return agentDef.TriggerAllowsStatus(subjectType, from)
-	}
-
-	// Work-pickup claim source recorded at enqueue. status_changed CASes from the
-	// matched status; assigned CASes from the HEAD's current status; created and
-	// updated (and any legacy dispatch without trigger metadata) claim from ready.
-	switch claimTriggerEvent(run) {
-	case EventTypeStatusChanged:
-		claimStatus, _ := run.TriggerMetadata["work_claim_status"].(string)
-		if claimStatus == "" {
-			claimStatus = readyStatus
-		}
-		if !claimAllowed(claimStatus) {
+	// Blocked is a durable execution state: no new run may claim the item.
+	if p.repo != nil {
+		if blocked, err := p.repo.IsWorkBlocked(ctx, *run.SubjectObjectID); err != nil {
+			return false, err
+		} else if blocked {
 			return false, nil
 		}
-		return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
-			FromStatus: claimStatus,
-			ToStatus:   inProgressStatus,
-		})
-	case EventTypeCreated:
-		claimStatus, _ := run.TriggerMetadata["work_claim_status"].(string)
-		if claimStatus != "" {
-			if !claimAllowed(claimStatus) {
-				return false, nil
-			}
-			return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
-				FromStatus: claimStatus,
-				ToStatus:   inProgressStatus,
-			})
-		}
-		return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
-	case EventTypeAssigned:
-		return p.claimFromCurrentStatus(ctx, agent, run, inProgressStatus)
-	default:
-		return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
 	}
+
+	head, err := p.workObjects.GetHeadObject(ctx, agent.ProjectID, *run.SubjectObjectID)
+	if err != nil {
+		return false, err
+	}
+	if head == nil {
+		return false, nil
+	}
+
+	// Claim is an assertion, not a status write: the single live run for the
+	// object (enforced by a partial unique index) holds the claim, and the item
+	// stays in its pickup status while the agent works.
+	expected := ""
+	if isReworkRun(run) {
+		expected = st.Revision
+	} else {
+		switch claimTriggerEvent(run) {
+		case EventTypeStatusChanged, EventTypeCreated:
+			expected, _ = run.TriggerMetadata["work_claim_status"].(string)
+			if expected == "" {
+				expected = st.Ready
+			}
+		case EventTypeAssigned:
+			return true, nil
+		default:
+			// Re-enqueued/retry/unblock runs carry only the claim status; prefer
+			// it over the ready default so a custom pickup status is not skipped.
+			expected = st.Ready
+			if cs, _ := run.TriggerMetadata["work_claim_status"].(string); cs != "" {
+				expected = cs
+			}
+		}
+	}
+	if head.Status != expected {
+		return false, nil
+	}
+	return true, nil
 }
 
 // claimTriggerEvent returns the work_trigger_event recorded at enqueue, or "" for

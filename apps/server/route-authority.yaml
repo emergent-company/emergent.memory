@@ -1685,6 +1685,10 @@ routes:
       path: /api/projects/:projectId/work-items/:canonicalId/status
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/unblock
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
     - method: GET
       path: /api/projects/:projectId/work-items/runs
       level: project-member

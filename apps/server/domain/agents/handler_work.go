@@ -3,6 +3,7 @@ package agents
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -35,6 +36,11 @@ type WorkItemActionDTO struct {
 type RequestChangesWorkItemDTO struct {
 	// Feedback is required (non-empty) review feedback recorded as a new round.
 	Feedback string `json:"feedback"`
+}
+
+// UnblockWorkItemDTO is the request body for unblock.
+type UnblockWorkItemDTO struct {
+	Note string `json:"note"`
 }
 
 // ReassignWorkItemDTO is the request body for reassign. An empty assignee
@@ -71,7 +77,13 @@ type WorkItemDTO struct {
 	LatestRunStatus       string `json:"latestRunStatus,omitempty"`
 	LatestRunFailureClass string `json:"latestRunFailureClass,omitempty"`
 	LatestRunID           string `json:"latestRunId,omitempty"`
+	LatestRunAgentName    string `json:"latestRunAgentName,omitempty"`
+	IsWorking             bool   `json:"isWorking"`
+	NextRunAt             string `json:"nextRunAt,omitempty"`
 	RunCount              int    `json:"runCount"`
+	Blocked               bool   `json:"blocked"`
+	BlockReason           string `json:"blockReason,omitempty"`
+	BlockedAt             string `json:"blockedAt,omitempty"`
 	Unroutable            bool   `json:"unroutable"`
 }
 
@@ -92,9 +104,22 @@ func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
 		LatestRunStatus:       it.LatestRunStatus,
 		LatestRunFailureClass: it.LatestRunFailureClass,
 		LatestRunID:           it.LatestRunID,
+		LatestRunAgentName:    it.LatestRunAgentName,
+		IsWorking:             it.IsWorking,
 		RunCount:              it.RunCount,
+		Blocked:               it.Blocked,
+		BlockReason:           it.BlockReason,
 		Unroutable:            it.Unroutable,
+		NextRunAt:             formatTimePtr(it.NextRunAt),
+		BlockedAt:             formatTimePtr(it.BlockedAt),
 	}
+}
+
+func formatTimePtr(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 // WorkItemRunDTO is a compact run summary in the work-item detail response.
@@ -418,6 +443,40 @@ func (h *Handler) RetryWorkItem(c echo.Context) error {
 		return err
 	}
 	res, err := h.workActions.Retry(c.Request().Context(), projectID, canonicalID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(&WorkItemActionDTO{
+		Item:  toWorkItemHeadDTO(res.Head),
+		RunID: res.RunID,
+	}))
+}
+
+// UnblockWorkItem handles POST /api/projects/:projectId/work-items/:canonicalId/unblock
+//
+// @Summary      Unblock a work item
+// @Description  Clears the durable block, resets the failure budget, and re-enqueues from the current status with an optional note
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        canonicalId path string true "Work item canonical ID"
+// @Success      200 {object} APIResponse[WorkItemActionDTO] "Unblocked"
+// @Failure      409 {object} apperror.Error "Not blocked"
+// @Router       /api/projects/{projectId}/work-items/{canonicalId}/unblock [post]
+// @Security     bearerAuth
+func (h *Handler) UnblockWorkItem(c echo.Context) error {
+	projectID, canonicalID, err := h.workActionParams(c)
+	if err != nil {
+		return err
+	}
+	var dto UnblockWorkItemDTO
+	_ = c.Bind(&dto) // body is optional
+	note := strings.TrimSpace(dto.Note)
+	if note == "" {
+		note = strings.TrimSpace(c.FormValue("note"))
+	}
+	res, err := h.workActions.Unblock(c.Request().Context(), projectID, canonicalID, note)
 	if err != nil {
 		return err
 	}

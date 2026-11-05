@@ -1597,6 +1597,8 @@ type workItemRunProjection struct {
 	Status       string     `bun:"status"`
 	FailureClass *string    `bun:"failure_class"`
 	CompletedAt  *time.Time `bun:"completed_at"`
+	AgentName    string     `bun:"agent_name"`
+	NextRunAt    *time.Time `bun:"next_run_at"`
 	RunCount     int        `bun:"run_count"`
 }
 
@@ -1610,20 +1612,58 @@ func (r *Repository) listLatestRunsForSubjects(ctx context.Context, canonicalIDs
 	}
 	rows := make([]*workItemRunProjection, 0)
 	err := r.db.NewRaw(`
-		SELECT DISTINCT ON (subject_object_id)
-			subject_object_id AS canonical_id,
-			id AS run_id,
-			status,
-			failure_class,
-			completed_at,
-			COUNT(*) OVER (PARTITION BY subject_object_id) AS run_count
-		FROM kb.agent_runs
-		WHERE subject_object_id IN (?)
-		ORDER BY subject_object_id, created_at DESC`,
+		SELECT DISTINCT ON (ar.subject_object_id)
+			ar.subject_object_id AS canonical_id,
+			ar.id AS run_id,
+			ar.status,
+			ar.failure_class,
+			ar.completed_at,
+			COALESCE(ag.name, '') AS agent_name,
+			j.next_run_at,
+			COUNT(*) OVER (PARTITION BY ar.subject_object_id) AS run_count
+		FROM kb.agent_runs ar
+		LEFT JOIN kb.agents ag ON ag.id = ar.agent_id
+		LEFT JOIN LATERAL (
+			SELECT next_run_at
+			FROM kb.agent_run_jobs
+			WHERE run_id = ar.id
+			ORDER BY next_run_at ASC
+			LIMIT 1
+		) j ON true
+		WHERE ar.subject_object_id IN (?)
+		ORDER BY ar.subject_object_id, ar.created_at DESC`,
 		bun.In(canonicalIDs),
 	).Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("list latest runs for subjects: %w", err)
+	}
+	for _, row := range rows {
+		out[row.CanonicalID] = row
+	}
+	return out, nil
+}
+
+// workBlockProjection is the durable blocked state for a work item.
+type workBlockProjection struct {
+	CanonicalID uuid.UUID  `bun:"canonical_id"`
+	Reason      string     `bun:"reason"`
+	BlockedAt   *time.Time `bun:"blocked_at"`
+}
+
+// listWorkBlocksForSubjects returns block rows keyed by subject canonical id.
+func (r *Repository) listWorkBlocksForSubjects(ctx context.Context, canonicalIDs []uuid.UUID) (map[uuid.UUID]*workBlockProjection, error) {
+	out := make(map[uuid.UUID]*workBlockProjection)
+	if len(canonicalIDs) == 0 {
+		return out, nil
+	}
+	var rows []*workBlockProjection
+	if err := r.db.NewRaw(`
+		SELECT canonical_id, reason, blocked_at
+		FROM kb.work_blocks
+		WHERE canonical_id IN (?)`,
+		bun.In(canonicalIDs),
+	).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("list work blocks: %w", err)
 	}
 	for _, row := range rows {
 		out[row.CanonicalID] = row
