@@ -1,6 +1,7 @@
 package schemas
 
 import (
+	"bytes"
 	"encoding/json"
 	"time"
 
@@ -369,12 +370,51 @@ type SchemaConflict struct {
 // object_type_schemas column: the array form is the canonical writer shape
 // (blueprint apply/seeder and the HTTP request path), while the map form is the
 // legacy stored shape and remains read-compatible.
+//
+// The object-type field accepts the same snake_case and camelCase spellings as
+// the sibling pack request structs. Use GetObjectTypes() to retrieve the
+// resolved value.
 type MergePreviewPack struct {
 	Name string `json:"name"`
 	// ObjectTypes is a JSON array of {"name","label","properties",...} objects.
 	// The map-of-type-name → schema stored form is also accepted here and is
 	// read-compatible.
-	ObjectTypes json.RawMessage `json:"objectTypes" swaggertype:"array,object"`
+	ObjectTypes json.RawMessage `json:"objectTypes,omitempty" swaggertype:"array,object"`
+	// ObjectTypeSchemasSnake mirrors the sibling pack request/storage spelling.
+	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas,omitempty" swaggertype:"array,object"`
+	// ObjectTypesSnake accepts the short snake_case spelling named in #163.
+	ObjectTypesSnake json.RawMessage `json:"object_types,omitempty" swaggertype:"array,object"`
+}
+
+// UnmarshalJSON accepts the documented camelCase key and both snake_case
+// aliases, while rejecting genuinely unknown pack keys. A typo such as
+// "objectTypesTypo" must not bind to nothing and look like an absent
+// objectTypes value: that is the fail-open the merge preview gate is meant to
+// prevent. Other pack-level keys are not part of this endpoint's contract.
+func (p *MergePreviewPack) UnmarshalJSON(data []byte) error {
+	type packJSON MergePreviewPack
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var decoded packJSON
+	if err := dec.Decode(&decoded); err != nil {
+		return err
+	}
+	*p = MergePreviewPack(decoded)
+	return nil
+}
+
+// GetObjectTypes returns the resolved object-type value, preferring snake_case
+// over camelCase to match CreatePackRequest/UpdatePackRequest. The long
+// storage-column spelling object_type_schemas wins over the short object_types
+// alias when both are present.
+func (p *MergePreviewPack) GetObjectTypes() json.RawMessage {
+	if len(p.ObjectTypeSchemasSnake) > 0 {
+		return p.ObjectTypeSchemasSnake
+	}
+	if len(p.ObjectTypesSnake) > 0 {
+		return p.ObjectTypesSnake
+	}
+	return p.ObjectTypes
 }
 
 // MergePreviewConflict describes one type-name collision found by a merge

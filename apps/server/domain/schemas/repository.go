@@ -397,7 +397,7 @@ func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs [
 	result := &MergePreviewResult{Conflicts: []MergePreviewConflict{}}
 
 	for _, pack := range packs {
-		typeMap, err := parseIncomingObjectTypesStrict(pack.ObjectTypes)
+		typeMap, err := parseIncomingObjectTypesStrict(pack.GetObjectTypes())
 		if err != nil {
 			return nil, err
 		}
@@ -711,16 +711,27 @@ func parseIncomingObjectTypesStrict(data json.RawMessage) (map[string]json.RawMe
 			if err := json.Unmarshal(entry, &obj); err != nil || obj == nil {
 				return nil, invalidObjectTypes(fmt.Sprintf("objectTypes entry %d must be a JSON object", i+1))
 			}
-			rawName, ok := obj["name"]
-			if !ok || bytes.Equal(bytes.TrimSpace(rawName), []byte("null")) {
-				return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d is missing a non-empty string "name"`, i+1))
-			}
-			var name string
-			if err := json.Unmarshal(rawName, &name); err != nil {
-				return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d has a "name" that is not a string`, i+1))
-			}
-			if name == "" {
-				return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d has an empty "name"`, i+1))
+
+			// Validate every string field the tolerant array decoder reads, so
+			// a bad label/description is reported with its position and key
+			// instead of falling through to the catch-all "array could not be
+			// read" after the normaliser fails. RawMessage fields cannot fail
+			// to decode, so they need no type check here.
+			for _, field := range []string{"name", "label", "description"} {
+				raw, ok := obj[field]
+				if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+					if field == "name" {
+						return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d is missing a non-empty string "name"`, i+1))
+					}
+					continue
+				}
+				var value string
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d has an invalid %q field: expected a string`, i+1, field))
+				}
+				if field == "name" && value == "" {
+					return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d has an empty "name"`, i+1))
+				}
 			}
 		}
 		typeMap := schemanorm.ObjectTypeSchemasToMap(trimmed)

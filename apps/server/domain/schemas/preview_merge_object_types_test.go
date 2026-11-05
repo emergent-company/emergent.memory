@@ -101,6 +101,12 @@ func TestParseIncomingObjectTypesStrict(t *testing.T) {
 			wantInErr: []string{"objectTypes", "entry 2", `"name"`, "string", "JSON array", "JSON object", shapeExample},
 		},
 		{
+			name:      "array entry with a non-string label",
+			data:      json.RawMessage(`[{"name":"Person"},{"name":"Note","label":42}]`),
+			wantErr:   true,
+			wantInErr: []string{"objectTypes", "entry 2", "label", "expected a string", "JSON array", "JSON object", shapeExample},
+		},
+		{
 			name:      "map with a non-schema value",
 			data:      json.RawMessage(`{"Person":"hello"}`),
 			wantErr:   true,
