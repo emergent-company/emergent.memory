@@ -223,6 +223,42 @@ func (h *Handler) AssignPack(c echo.Context) error {
 	return c.JSON(http.StatusCreated, result)
 }
 
+// PreviewMerge handles POST /api/schemas/projects/:projectId/merge-preview
+// @Summary      Preview pack merge
+// @Description  Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body MergePreviewRequest true "Packs to preview"
+// @Success      200 {object} MergePreviewResult "Merge preview"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/merge-preview [post]
+// @Security     bearerAuth
+func (h *Handler) PreviewMerge(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req MergePreviewRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if len(req.Packs) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one pack is required")
+	}
+
+	result, err := h.svc.PreviewMerge(c.Request().Context(), projectID, req.Packs)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
 // UpdateAssignment handles PATCH /api/schemas/projects/:projectId/assignments/:assignmentId
 // @Summary      Update pack assignment
 // @Description  Updates a schema assignment (e.g., toggle active status)

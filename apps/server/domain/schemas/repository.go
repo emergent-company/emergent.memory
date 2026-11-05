@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -381,6 +382,101 @@ func (r *Repository) ListPackClaims(ctx context.Context, projectID string) ([]Pa
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	return groupPackClaims(rows), nil
+}
+
+// PreviewMerge computes a read-only merge preview for one or more incoming
+// packs against the project's object-type registry. It never writes: no
+// registry rows, assignments, or packs are changed.
+//
+// For every incoming type name that already exists in the project, a conflict
+// is reported unless the existing registry row is owned by a schema with the
+// same name as the incoming pack (a same-pack re-apply/update is not a
+// collision). A manual registry row with no schema_id still collides; its
+// existing schema name/version are simply empty.
+func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs []MergePreviewPack) (*MergePreviewResult, error) {
+	result := &MergePreviewResult{Conflicts: []MergePreviewConflict{}}
+
+	for _, pack := range packs {
+		typeMap := parseObjectTypeSchemasToMap(pack.ObjectTypes)
+		if typeMap == nil {
+			continue
+		}
+
+		for typeName, incomingSchema := range typeMap {
+			var row struct {
+				JSONSchema    json.RawMessage `bun:"json_schema"`
+				SchemaID      *string         `bun:"schema_id"`
+				SchemaName    *string         `bun:"schema_name"`
+				SchemaVersion *string         `bun:"schema_version"`
+			}
+			err := r.db.NewRaw(`
+				SELECT por.json_schema,
+				       por.schema_id,
+				       gs.name AS schema_name,
+				       gs.version AS schema_version
+				FROM kb.project_object_schema_registry por
+				LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
+				WHERE por.project_id = ? AND por.type_name = ?
+				LIMIT 1
+			`, projectID, typeName).Scan(ctx, &row)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				r.log.Error("failed to read registry row for merge preview", logger.Error(err))
+				return nil, apperror.ErrDatabase.WithInternal(err)
+			}
+
+			// Same pack re-applied (possibly a new version): not a collision.
+			if row.SchemaName != nil && *row.SchemaName == pack.Name {
+				continue
+			}
+
+			conflict := MergePreviewConflict{
+				TypeName:         typeName,
+				IncomingPackName: pack.Name,
+				ExistingSchema:   row.JSONSchema,
+				IncomingSchema:   incomingSchema,
+			}
+			if row.SchemaID != nil {
+				conflict.ExistingSchemaID = *row.SchemaID
+			}
+			if row.SchemaName != nil {
+				conflict.ExistingSchemaName = *row.SchemaName
+			}
+			if row.SchemaVersion != nil {
+				conflict.ExistingSchemaVersion = *row.SchemaVersion
+			}
+
+			merged, added, propConflicts, mergeErr := mergeSchemas(row.JSONSchema, incomingSchema)
+			if mergeErr != nil {
+				r.log.Warn("failed to merge schemas for preview",
+					slog.String("typeName", typeName),
+					logger.Error(mergeErr))
+			} else {
+				conflict.MergedSchema = merged
+			}
+			// Sort property lists so the preview is deterministic — mergeSchemas
+			// iterates maps, whose order is random.
+			sort.Strings(added)
+			sort.Slice(propConflicts, func(i, j int) bool {
+				return propConflicts[i].Property < propConflicts[j].Property
+			})
+			conflict.AddedProperties = added
+			conflict.ConflictingProperties = propConflicts
+
+			result.Conflicts = append(result.Conflicts, conflict)
+		}
+	}
+
+	sort.Slice(result.Conflicts, func(i, j int) bool {
+		if result.Conflicts[i].TypeName != result.Conflicts[j].TypeName {
+			return result.Conflicts[i].TypeName < result.Conflicts[j].TypeName
+		}
+		return result.Conflicts[i].IncomingPackName < result.Conflicts[j].IncomingPackName
+	})
+	result.RequiresMerge = len(result.Conflicts) > 0
+	return result, nil
 }
 
 // MigrateTypes renames object/edge types and/or property keys across live graph data.

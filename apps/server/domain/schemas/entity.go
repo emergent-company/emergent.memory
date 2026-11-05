@@ -364,6 +364,43 @@ type SchemaConflict struct {
 	ConflictingProperties []PropertyConflict `json:"conflicting_properties,omitempty"`
 }
 
+// MergePreviewPack is one incoming pack in a merge preview request. ObjectTypes
+// accepts the same array/map storage formats as a stored pack's
+// object_type_schemas column.
+type MergePreviewPack struct {
+	Name        string          `json:"name"`
+	ObjectTypes json.RawMessage `json:"objectTypes"`
+}
+
+// MergePreviewConflict describes one type-name collision found by a merge
+// preview. It is reported even when no properties are added or conflicting,
+// because the type-name collision itself requires a merge decision.
+type MergePreviewConflict struct {
+	TypeName              string             `json:"typeName"`
+	IncomingPackName      string             `json:"incomingPackName"`
+	ExistingSchemaID      string             `json:"existingSchemaId,omitempty"`
+	ExistingSchemaName    string             `json:"existingSchemaName,omitempty"`
+	ExistingSchemaVersion string             `json:"existingSchemaVersion,omitempty"`
+	ExistingSchema        json.RawMessage    `json:"existingSchema,omitempty"`
+	IncomingSchema        json.RawMessage    `json:"incomingSchema,omitempty"`
+	MergedSchema          json.RawMessage    `json:"mergedSchema,omitempty"`
+	AddedProperties       []string           `json:"addedProperties,omitempty"`
+	ConflictingProperties []PropertyConflict `json:"conflictingProperties,omitempty"`
+}
+
+// MergePreviewRequest is the body for POST
+// /api/schemas/projects/:projectId/merge-preview.
+type MergePreviewRequest struct {
+	Packs []MergePreviewPack `json:"packs"`
+}
+
+// MergePreviewResult is the response from a merge preview. RequiresMerge is
+// true whenever Conflicts is non-empty.
+type MergePreviewResult struct {
+	Conflicts     []MergePreviewConflict `json:"conflicts"`
+	RequiresMerge bool                   `json:"requiresMerge"`
+}
+
 // AssignPackResult is the response from AssignPack / dry-run.
 // Replaces the bare *ProjectMemorySchema return so callers get conflict details.
 type AssignPackResult struct {

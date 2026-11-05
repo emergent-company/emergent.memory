@@ -151,6 +151,16 @@ func (h *Handler) PreviewImport(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+
+	// Project-scoped previews also report object-type collisions an apply would
+	// hit. Global previews (no project) have no registry to compare against.
+	if projectID != "" {
+		conflicts, cerr := h.svc.PreviewManifestConflicts(c.Request().Context(), projectID, preview.Manifest)
+		if cerr != nil {
+			return cerr
+		}
+		preview.TypeConflicts = conflicts
+	}
 	return c.JSON(http.StatusOK, preview)
 }
 
@@ -417,6 +427,40 @@ func (h *Handler) ApplyBlueprint(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, result)
+}
+
+// PreviewApplyBlueprint handles POST /api/blueprints/:id/apply/preview
+// @Summary      Preview blueprint apply
+// @Description  Read-only preview of the object-type name collisions that would block (or require merge confirmation for) applying this blueprint to the caller's project, including property-level diff detail. Materializes nothing.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Blueprint ID (UUID)"
+// @Success      200 {object} ApplyPreview "Apply preview"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Blueprint not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/{id}/apply/preview [post]
+// @Security     bearerAuth
+func (h *Handler) PreviewApplyBlueprint(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.ErrBadRequest.WithMessage("id is required")
+	}
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
+	}
+
+	preview, err := h.svc.PreviewApply(c.Request().Context(), id, projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, preview)
 }
 
 // DeleteBlueprint handles DELETE /api/blueprints/:id
@@ -713,11 +757,59 @@ func (h *Handler) ApplyBlueprintUpdates(c echo.Context) error {
 		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
-	job, err := h.svc.EnqueueBlueprintUpdate(c.Request().Context(), projectID, name)
+	var req ApplyBlueprintUpdateRequest
+	if c.Request().ContentLength != 0 {
+		if err := c.Bind(&req); err != nil {
+			return apperror.NewBadRequest("invalid request body")
+		}
+	}
+
+	job, err := h.svc.EnqueueBlueprintUpdateWithOptions(c.Request().Context(), projectID, name, UpdateJobOptions{
+		MergeTypeConflicts: req.MergeTypeConflicts,
+	})
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusAccepted, job)
+}
+
+// ApplyBlueprintUpdateRequest is the optional body for
+// POST /api/blueprints/:name/updates/apply.
+type ApplyBlueprintUpdateRequest struct {
+	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
+}
+
+// PreviewBlueprintUpdates handles POST /api/blueprints/:name/updates/preview.
+// @Summary      Preview a blueprint update
+// @Description  Fetches the upstream manifest for the caller's applied GitHub blueprint and reports the object-type collisions an update apply would hit, WITHOUT creating, publishing, or applying a new version.
+// @Tags         blueprints
+// @Produce      json
+// @Param        name path string true "Blueprint name"
+// @Success      200 {object} BlueprintUpdatePreview "Update preview"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Applied GitHub blueprint not found"
+// @Failure      502 {object} apperror.Error "Fetch failed"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/{name}/updates/preview [post]
+// @Security     bearerAuth
+func (h *Handler) PreviewBlueprintUpdates(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	name := c.Param("name")
+	if name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	preview, err := h.svc.PreviewBlueprintUpdate(c.Request().Context(), projectID, name)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, preview)
 }
 
 // SaveGithubCredentials handles PUT /api/blueprints/github-credentials.

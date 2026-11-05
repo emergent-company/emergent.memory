@@ -328,6 +328,39 @@ type SchemaConflict struct {
 	ConflictingProperties []PropertyConflict `json:"conflicting_properties,omitempty"`
 }
 
+// MergePreviewPack is one incoming pack in a merge preview request.
+type MergePreviewPack struct {
+	Name        string          `json:"name"`
+	ObjectTypes json.RawMessage `json:"objectTypes"`
+}
+
+// MergePreviewConflict describes one type-name collision found by a merge
+// preview.
+type MergePreviewConflict struct {
+	TypeName              string             `json:"typeName"`
+	IncomingPackName      string             `json:"incomingPackName"`
+	ExistingSchemaID      string             `json:"existingSchemaId,omitempty"`
+	ExistingSchemaName    string             `json:"existingSchemaName,omitempty"`
+	ExistingSchemaVersion string             `json:"existingSchemaVersion,omitempty"`
+	ExistingSchema        json.RawMessage    `json:"existingSchema,omitempty"`
+	IncomingSchema        json.RawMessage    `json:"incomingSchema,omitempty"`
+	MergedSchema          json.RawMessage    `json:"mergedSchema,omitempty"`
+	AddedProperties       []string           `json:"addedProperties,omitempty"`
+	ConflictingProperties []PropertyConflict `json:"conflictingProperties,omitempty"`
+}
+
+// MergePreviewRequest is the body for POST
+// /api/schemas/projects/:projectId/merge-preview.
+type MergePreviewRequest struct {
+	Packs []MergePreviewPack `json:"packs"`
+}
+
+// MergePreviewResult is the response from a merge preview.
+type MergePreviewResult struct {
+	Conflicts     []MergePreviewConflict `json:"conflicts"`
+	RequiresMerge bool                   `json:"requiresMerge"`
+}
+
 // AssignPackResult is the response from the assign endpoint.
 // Replaces the bare ProjectMemorySchema return so callers get conflict details.
 type AssignPackResult struct {
@@ -538,6 +571,17 @@ func (c *Client) GetInstalledPacks(ctx context.Context) ([]InstalledSchemaItem, 
 func (c *Client) AssignPack(ctx context.Context, req *AssignPackRequest) (*AssignPackResult, error) {
 	var result AssignPackResult
 	if err := c.postJSON(ctx, c.projectPath()+"/assign", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PreviewMerge computes a read-only merge preview for incoming packs, reporting
+// type-name collisions and property-level conflicts without changing anything.
+// POST /api/schemas/projects/:projectId/merge-preview
+func (c *Client) PreviewMerge(ctx context.Context, req *MergePreviewRequest) (*MergePreviewResult, error) {
+	var result MergePreviewResult
+	if err := c.postJSON(ctx, c.projectPath()+"/merge-preview", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

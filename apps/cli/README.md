@@ -138,6 +138,8 @@ memory blueprints install ./my-config                          # from local fold
 memory blueprints install https://github.com/org/repo          # from GitHub
 memory blueprints install ./my-config --dry-run                # preview only
 memory blueprints install ./my-config --upgrade                # update existing resources
+memory blueprints install ./my-config --merge-types            # merge colliding object types
+memory blueprints update crm --merge-types                     # confirm an upstream type merge
 memory blueprints dump ./exported                              # export project graph as seed files
 
 ```
@@ -147,6 +149,13 @@ memory blueprints dump ./exported                              # export project 
 `ui`/`uiConfigs` icon and color metadata, `embedding`/`extraction` blocks, and
 relationship properties. `install` (and `--upgrade`) preserves those same
 fields when applying packs.
+
+Before mutating packs, `install` and `update` preview object type names already
+registered in the project. A collision with a type owned by a different pack
+prints the property-level diff (added properties; conflicting properties where
+the existing definition wins) and requires confirmation. Interactive terminals
+are prompted; non-interactive callers must pass `--merge-types`. Re-applying or
+upgrading the same pack name is not a conflict.
 
 A blueprint directory layout:
 

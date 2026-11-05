@@ -33,6 +33,7 @@ memory blueprints install <source>
 memory blueprints install <source> --project <project-id>
 memory blueprints install <source> --upgrade
 memory blueprints install <source> --dry-run
+memory blueprints install <source> --merge-types
 ```
 
 `<source>` can be:
@@ -50,6 +51,27 @@ Install (and `--upgrade`) preserves the full schema metadata it reads: object
 `labels`, `required` lists, `ui` blocks, `embedding`/`extraction` blocks, pack
 `uiConfigs`, and relationship `properties`. No separate metadata script is
 needed — author the fields in the pack files and they are applied verbatim.
+
+Before applying packs, install previews object type names already registered in
+the project. A collision with a type owned by a different pack prints the
+property-level diff (added properties and conflicting properties, where the
+existing definition wins) and requires confirmation. Interactive terminals are
+prompted; non-interactive callers must pass `--merge-types`. Re-applying or
+upgrading the same pack name is not a conflict.
+
+### Update an applied GitHub blueprint
+
+```bash
+memory blueprints update <name>
+memory blueprints update <name> --wait
+memory blueprints update <name> --merge-types
+```
+
+Before enqueuing, update previews upstream object types against the project's
+registry. If the upstream pack collides with a type owned by a different pack,
+the property-level conflicts are printed and an interactive confirmation (or
+`--merge-types` for non-interactive use) is required. A merge-flagged update
+job proceeds with additive type merging.
 
 ### Validate a blueprint (no API calls required)
 
@@ -152,7 +174,16 @@ Optional fields: `weight` (float), `properties` (object).
 | `--project <id>` | Target project ID or name |
 | `--upgrade` | Update existing resources instead of skipping them |
 | `--dry-run` | Preview only — no API calls |
+| `--merge-types` | Merge incoming object types into existing registered types (required non-interactively on a type-name collision) |
 | `--token <tok>` | GitHub PAT for private repos (also: `MEMORY_GITHUB_TOKEN`) |
+
+### `memory blueprints update <name>`
+
+| Flag | Description |
+|---|---|
+| `--project <id>` | Target project ID or name |
+| `--wait` | Block until the update job reaches a terminal state |
+| `--merge-types` | Merge incoming object types into existing registered types (required non-interactively on a type-name collision) |
 
 ### `memory blueprints validate <source>`
 

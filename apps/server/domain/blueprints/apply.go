@@ -28,6 +28,18 @@ type ApplyOptions struct {
 	// memory, over the stored manifest; when non-empty it is also persisted
 	// per-project (keyed by blueprint name) after a successful apply.
 	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
+	// MergeTypeConflicts allows apply to proceed when an incoming pack declares
+	// an object type name already registered in the project. Without it, apply
+	// blocks with 409 before materializing anything.
+	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
+}
+
+// ApplyPreview is the read-only result of previewing a blueprint apply: the
+// object-type collisions that would block (or require merge confirmation), with
+// property-level detail.
+type ApplyPreview struct {
+	RequiresMerge bool                           `json:"requiresMerge"`
+	Conflicts     []schemas.MergePreviewConflict `json:"conflicts"`
 }
 
 // ApplyCounts reports per-entity-type materialization counts.
@@ -53,6 +65,9 @@ type ApplyResult struct {
 	Agents        ApplyCounts `json:"agents"`
 	Skills        ApplyCounts `json:"skills"`
 	Seed          ApplyCounts `json:"seed"`
+	// TypeConflicts lists the object-type collisions that were accepted via
+	// MergeTypeConflicts. Empty on a conflict-free apply.
+	TypeConflicts []schemas.MergePreviewConflict `json:"typeConflicts,omitempty"`
 }
 
 // Apply materializes a blueprint's manifest into concrete memory entities:
@@ -110,6 +125,19 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		return nil, err
 	}
 
+	// Object-type collision gate: computed read-only BEFORE any materialization.
+	// A same-pack re-apply/update is ignored by schemas.PreviewMerge; anything
+	// else needs an explicit merge confirmation.
+	typeConflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest)
+	if err != nil {
+		return nil, err
+	}
+	if len(typeConflicts) > 0 && !opts.MergeTypeConflicts {
+		return nil, apperror.ErrConflict.
+			WithMessage("object type name conflicts require merge confirmation").
+			WithDetails(map[string]any{"conflicts": typeConflicts})
+	}
+
 	var actorID *uuid.UUID
 	if uid, err := uuid.Parse(userID); err == nil {
 		actorID = &uid
@@ -120,6 +148,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		BlueprintName: bp.Name,
 		Version:       bp.Version,
 		Checksum:      bp.Checksum,
+		TypeConflicts: typeConflicts,
 	}
 
 	// Packs: create-or-skip by (name, version); assign runs on EVERY apply so
@@ -161,6 +190,56 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	}
 
 	return result, nil
+}
+
+// PreviewApply computes the read-only object-type merge preview for a
+// blueprint's stored manifest. It never materializes anything.
+func (s *Service) PreviewApply(ctx context.Context, blueprintID, projectID string) (*ApplyPreview, error) {
+	bp, err := s.repo.GetByID(ctx, projectID, blueprintID)
+	if err != nil {
+		return nil, err
+	}
+
+	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest)
+	if err != nil {
+		return nil, err
+	}
+	return &ApplyPreview{
+		RequiresMerge: len(conflicts) > 0,
+		Conflicts:     conflicts,
+	}, nil
+}
+
+// PreviewManifestConflicts returns the object-type collisions between a
+// blueprint manifest's packs and the project's registered types. Shared by
+// apply, import preview, update preview, and the MCP preview tool. Same-pack
+// names are already ignored by schemas.PreviewMerge.
+func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string, manifest json.RawMessage) ([]schemas.MergePreviewConflict, error) {
+	var m BlueprintManifest
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
+	}
+	if len(m.Packs) == 0 {
+		return nil, nil
+	}
+
+	packs := make([]schemas.MergePreviewPack, 0, len(m.Packs))
+	for _, p := range m.Packs {
+		objectTypes, err := json.Marshal(p.ObjectTypes)
+		if err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
+		}
+		packs = append(packs, schemas.MergePreviewPack{Name: p.Name, ObjectTypes: objectTypes})
+	}
+
+	if s.schemasSvc == nil {
+		return nil, apperror.NewInternal("schema service is not configured", nil)
+	}
+	preview, err := s.schemasSvc.PreviewMerge(ctx, projectID, packs)
+	if err != nil {
+		return nil, err
+	}
+	return preview.Conflicts, nil
 }
 
 // applyModelOverrides rewrites each manifest agent whose Name is a key in

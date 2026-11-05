@@ -22,6 +22,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -75,6 +76,9 @@ type ImportGitHubRequest struct {
 	Token          string            `json:"token,omitempty"`
 	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
 	Apply          bool              `json:"apply,omitempty"`
+	// MergeTypeConflicts allows an apply=true import to proceed when a pack
+	// declares an object type name already registered in the project.
+	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
 }
 
 // BlueprintPreview is the create-nothing result of a GitHub import preview:
@@ -86,6 +90,9 @@ type BlueprintPreview struct {
 	Description string          `json:"description"`
 	Author      string          `json:"author"`
 	Manifest    json.RawMessage `json:"manifest"`
+	// TypeConflicts is populated when the preview runs in project scope: the
+	// object-type collisions an apply would hit, with property-level detail.
+	TypeConflicts []schemas.MergePreviewConflict `json:"typeConflicts,omitempty"`
 }
 
 // GitHubFetcher downloads and safely extracts a GitHub repository tarball. All
@@ -227,7 +234,10 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	// Model overrides route through apply-time (not import-time manifest
 	// rewriting): Apply applies them to the in-memory manifest and persists them
 	// per-project after success.
-	applyOpts := ApplyOptions{ModelOverrides: req.ModelOverrides}
+	applyOpts := ApplyOptions{
+		ModelOverrides:     req.ModelOverrides,
+		MergeTypeConflicts: req.MergeTypeConflicts,
+	}
 	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), applyOpts); applyErr != nil {
 		if !created {
 			if adoptedDraft {

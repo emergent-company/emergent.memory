@@ -215,17 +215,20 @@ type BlueprintUpdateCheck struct {
 type BlueprintUpdateJob struct {
 	bun.BaseModel `bun:"table:kb.blueprint_update_jobs,alias:buj"`
 
-	ID            string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	ProjectID     string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	BlueprintName string          `bun:"blueprint_name,notnull" json:"blueprintName"`
-	Action        string          `bun:"action,notnull" json:"action"`
-	Status        string          `bun:"status,notnull,default:'pending'" json:"status"`
-	Attempts      int             `bun:"attempts,notnull,default:0" json:"attempts"`
-	LastError     string          `bun:"last_error,type:text" json:"lastError,omitempty"`
-	Result        json.RawMessage `bun:"result,type:jsonb,notnull,default:'{}'" json:"result,omitempty"`
-	CreatedAt     time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	StartedAt     *time.Time      `bun:"started_at,type:timestamptz" json:"startedAt,omitempty"`
-	FinishedAt    *time.Time      `bun:"finished_at,type:timestamptz" json:"finishedAt,omitempty"`
+	ID            string `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID     string `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	BlueprintName string `bun:"blueprint_name,notnull" json:"blueprintName"`
+	Action        string `bun:"action,notnull" json:"action"`
+	Status        string `bun:"status,notnull,default:'pending'" json:"status"`
+	Attempts      int    `bun:"attempts,notnull,default:0" json:"attempts"`
+	// MergeTypeConflicts records the caller's explicit merge confirmation so
+	// the async update executor may proceed through object-type collisions.
+	MergeTypeConflicts bool            `bun:"merge_type_conflicts,notnull,default:false" json:"mergeTypeConflicts,omitempty"`
+	LastError          string          `bun:"last_error,type:text" json:"lastError,omitempty"`
+	Result             json.RawMessage `bun:"result,type:jsonb,notnull,default:'{}'" json:"result,omitempty"`
+	CreatedAt          time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	StartedAt          *time.Time      `bun:"started_at,type:timestamptz" json:"startedAt,omitempty"`
+	FinishedAt         *time.Time      `bun:"finished_at,type:timestamptz" json:"finishedAt,omitempty"`
 }
 
 // BlueprintModelOverride records a project's per-blueprint model override for a
