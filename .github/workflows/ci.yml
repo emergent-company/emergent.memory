@@ -46,15 +46,19 @@ name: Meta CI
 # docs-only classifier above deliberately does not do. The rule there is about
 # *required* contexts: a skipped matrix job reports one check run under the
 # unexpanded name, so a required per-leg context would never be reported and the
-# PR would block forever (#797). The required contexts on `main` are exactly
-# `ci` and `merge-guard` — verified against branch protection on 2026-11-04 —
-# so no per-leg name is required, and on an un-drafted PR (`ready_for_review` or
-# any `synchronize`) the legs report normally. Gating a matrix job is safe only
-# while that stays true: if a per-leg context is ever made required, un-gate it
-# in the same change.
+# PR would block forever (#797). Branch protection on `main` requires exactly
+# the `ci` context, so no per-leg name is required, and on an un-drafted PR
+# (`ready_for_review` or any `synchronize`) the legs report normally. Gating a
+# matrix job is safe only while that stays true: if a per-leg context is ever
+# made required, un-gate it in the same change.
 #
-# There is no review bot: a maintainer posts the review verdict before a merge.
-# That verdict is process, not a check — the required `ci` check does not read it.
+# `merge-guard` still runs as a check but is NOT a required context: a required
+# context is pinned to the app that reports it, and the guard publishes through
+# the Checks API, which a pinned context never credits (#843). The `Reviewed-SHA`
+# marker is enforced by scripts/merge-reviewed-pr.sh in the infra repo (and by
+# hand on paths that skip it), not by branch protection. There is no review bot:
+# a maintainer posts the review verdict as process, not as a check — the
+# required `ci` check does not read it.
 on:
   push:
     branches: [main]
@@ -77,11 +81,11 @@ jobs:
     # control repository (issue #819 there), which the tree-hygiene gate forbids
     # naming from this repo.
     #
-    # `ci` is one of the two branch-protection-required contexts on `main` and it
+    # `ci` is the branch-protection-required context on `main` and it
     # is ~40 s of cheap guards, yet on the 7-slot self-hosted pool
     # (`[self-hosted, linux, x64, memory]`) it queued 171-489 s behind advisory
     # Playwright/E2E work that cannot gate a merge (measured 2026-11-04: PR #54's
-    # `ci` job queued 171 s, job 41838166310; the worst queue on the same PR
+    # `ci` job queued 171 s, run 41838166310; the worst queue on the same PR
     # update was 489 s and 15 of 36 checks were waiting). Only `ci`'s queue time
     # is added directly to time-to-merge: every other suite is advisory, and
     # `merge-guard` already runs on `ubuntu-latest`. The repo is public, so
@@ -89,7 +93,7 @@ jobs:
     # competing with work that cannot block a merge.
     #
     # Nothing depends on the move except this line. The toolchain is either
-    # fetched by a pinned step (`actions/setup-go@v5` at 1.26 for `go`/`gofmt`,
+    # fetched by a pinned step (`actions/setup-go@v5` from `go.work` for `go`/`gofmt`,
     # and `.github/scripts/install-gitleaks.sh`, which verifies a sha256 of the
     # release tarball) or provided by the image and ASSERTED by the "Verify
     # preflight toolchain" step below — so a hosted image that lacks a binary
@@ -134,11 +138,11 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version-file: go.work
           cache: false
       # Assert the toolchain every step below assumes, before any guard runs
       # (control-repo issue #819). Two tools are fetched by pinned steps —
-      # `go`/`gofmt` by actions/setup-go at 1.26, `gitleaks` by
+      # `go`/`gofmt` by actions/setup-go from `go.work`, `gitleaks` by
       # .github/scripts/install-gitleaks.sh (sha256-verified) — and the rest come
       # from the runner image. Asserting them explicitly is what makes the move to
       # a hosted image safe: this job's worst failure mode is a guard that goes
