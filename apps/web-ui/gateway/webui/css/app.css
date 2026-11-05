@@ -1946,14 +1946,31 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
   .stacked-table tbody > tr > td:nth-child(8)::before { content: var(--h8, ""); }
 }
 
-/* ---------- Paseo-style assistant turns ---------- */
-/* Assistant replies are plain, full-width markdown: no bubble, avatar or name
-   header. The wrapper stays a chat row so turn footers/sources/actions keep
-   their place and alignment. */
-.chat.memory-assistant {
+/* ---------- left-side transcript rows ---------- */
+/* Every left-side row — an assistant reply, a tool step, a thinking badge, an
+   agent-prompt/stage card, a question or approval card, an A2UI card — starts
+   at the same content edge. The wrapper keeps its `chat-start` marker class,
+   but the row is a plain block: no avatar gutter, no bubble.
+
+   daisyUI's `.chat-start` is a two-column grid (`auto 1fr` = avatar | content)
+   with a 12px column gap, so any row built on it sits ~52px right of the
+   assistant's markdown, which is a plain block. These rules are unlayered, so
+   they beat the layered component rules the way `width: fit-content` on
+   `.chat-bubble` does above. Rows keep `padding-block: 0` so vertical rhythm
+   comes from the message list's `gap-3` alone, not from a phantom avatar's
+   height. */
+.chat.memory-assistant,
+.chat.memory-aux,
+.chat.memory-card {
   display: block;
   width: 100%;
   padding-block: 0;
+}
+/* Defensive: a row that still carries an avatar (an older cached transcript
+   fragment, or a host building its own row) must not re-open the gutter. */
+.chat.memory-aux > .chat-image,
+.chat.memory-card > .chat-image {
+  display: none;
 }
 .chat.memory-assistant > .memory-md {
   width: 100%;

@@ -240,7 +240,6 @@
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
     currentAgentName: currentAgentName,
-    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
@@ -580,19 +579,6 @@
   function transcriptAgentName() {
     if (currentScopeIsRun() && activeRunAgentName) return activeRunAgentName;
     return currentAgentName();
-  }
-
-  // currentAgentUI is the selected agent's declared appearance, read from the
-  // #chat-agent option's data-icon/data-color attributes (emitted by chat.templ
-  // from the agent's uiConfig). Empty strings mean "no appearance" so the
-  // shared bubbles fall back to the default bot avatar.
-  function currentAgentUI() {
-    var opt = agentSelect && agentSelect.selectedOptions.length ? agentSelect.selectedOptions[0] : null;
-    if (!opt) return { icon: "", color: "" };
-    return {
-      icon: opt.getAttribute("data-icon") || "",
-      color: opt.getAttribute("data-color") || "",
-    };
   }
 
   // Pre-send model-availability warning: mirror the selected #chat-agent
@@ -2480,8 +2466,8 @@
     if (!messages) return null;
     var existing = workingPlaceholder();
     if (existing) return existing;
-    // Same shell as a real assistant bubble (avatar + agent header + neutral
-    // bubble) so the placeholder aligns and tints identically.
+    // Same shell as a real assistant turn (plain full-width markdown row) so
+    // the placeholder aligns and tints identically.
     var wrap = addAssistantMessage("", name || currentAgentName(), true);
     if (!wrap) return null;
     wrap.setAttribute("data-memory-working", "");
