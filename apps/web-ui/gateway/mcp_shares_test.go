@@ -316,7 +316,7 @@ func TestMemoryClientMCPSharePaths(t *testing.T) {
 	if err := m.RevokeMCPShareInstance(ctx, "s1"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if _, err := m.RotateMCPShareInstance(ctx, "s1"); err != nil {
+	if _, err := m.RotateMCPShareInstance(ctx, "s1", nil); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 	if _, err := m.ListMCPShareTools(ctx); err != nil {
@@ -337,6 +337,45 @@ func TestMemoryClientMCPSharePaths(t *testing.T) {
 		if calls[i].method != w.method || calls[i].path != w.path {
 			t.Errorf("call %d = %s %s, want %s %s", i, calls[i].method, calls[i].path, w.method, w.path)
 		}
+	}
+}
+
+// TestMemoryClientMCPShareInviteEmail asserts the invite list is sent on create
+// and rotate, and that the delivery outcome is decoded from the response.
+func TestMemoryClientMCPShareInviteEmail(t *testing.T) {
+	var bodies []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		_, _ = io.WriteString(w, `{"id":"s1","name":"alpha","token":"t","mcpUrl":"u","emailsSent":["alice@example.com"],"emailError":"invite email is unavailable"}`)
+	}))
+	defer ts.Close()
+
+	m := NewMemoryClient(ts.URL, "proj-1")
+	ctx := t.Context()
+	created, err := m.CreateMCPShareInstance(ctx, &MCPShareInput{
+		Name: "alpha", Tools: []string{"a"}, Emails: []string{"alice@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if len(created.EmailsSent) != 1 || created.EmailsSent[0] != "alice@example.com" {
+		t.Errorf("created.EmailsSent = %v", created.EmailsSent)
+	}
+	if created.EmailError != "invite email is unavailable" {
+		t.Errorf("created.EmailError = %q", created.EmailError)
+	}
+	if _, err := m.RotateMCPShareInstance(ctx, "s1", []string{"bob@example.com"}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("bodies = %v", bodies)
+	}
+	if !strings.Contains(bodies[0], `"emails":["alice@example.com"]`) {
+		t.Errorf("create body = %q, want the invite list", bodies[0])
+	}
+	if !strings.Contains(bodies[1], `{"emails":["bob@example.com"]}`) {
+		t.Errorf("rotate body = %q, want the invite list", bodies[1])
 	}
 }
 

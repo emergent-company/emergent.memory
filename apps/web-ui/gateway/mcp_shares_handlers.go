@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/labstack/echo/v4"
 )
@@ -41,18 +43,22 @@ type mcpSharesPageData struct {
 
 // mcpShareFieldErrs carries one inline error message per form field group.
 type mcpShareFieldErrs struct {
-	Name  string
-	Tools string
+	Name   string
+	Tools  string
+	Emails string
 }
 
 // mcpShareFormData is the payload shared by the create and edit pages and by
 // their inline validation re-renders. Catalog is loaded from the backend; the
-// rest is the user's draft or the instance being edited.
+// rest is the user's draft or the instance being edited. Emails is the raw
+// invite list typed into the create/rotate form (kept verbatim on a failed
+// submit so the user does not retype it).
 type mcpShareFormData struct {
 	ID          string
 	Name        string
 	Description string
 	Tools       []string
+	Emails      string
 	Catalog     []MCPShareTool
 
 	Legacy     bool
@@ -64,14 +70,17 @@ type mcpShareFormData struct {
 }
 
 // mcpShareReveal is the one-time key panel rendered after create/rotate. It is
-// held only for the lifetime of that one response.
+// held only for the lifetime of that one response. EmailsSent lists the invite
+// recipients the key was queued to; EmailWarn reports a delivery problem.
 type mcpShareReveal struct {
-	Heading   string
-	Name      string
-	Token     string
-	MCPURL    string
-	BundleURL string
-	Snippets  []mcpShareSnippet
+	Heading    string
+	Name       string
+	Token      string
+	MCPURL     string
+	BundleURL  string
+	EmailsSent []string
+	EmailWarn  string
+	Snippets   []mcpShareSnippet
 }
 
 // --- list page ---
@@ -147,14 +156,19 @@ func (s *Server) uiMCPShareCreate(c echo.Context) error {
 		draft.FieldErrs = fe
 		return s.renderMCPShareNewPage(c, draft)
 	}
+	emails := mcpShareParseEmails(draft.Emails)
 	created, err := s.memory.CreateMCPShareInstance(ctx, &MCPShareInput{
 		Name:        draft.Name,
 		Description: draft.Description,
 		Tools:       draft.Tools,
+		Emails:      emails,
 	})
 	if err != nil {
 		if mcpShareIsNameConflict(err) {
 			fe.Name = err.Error()
+			draft.FieldErrs = fe
+		} else if mcpShareIsInvalidEmail(err) {
+			fe.Emails = mcpShareInvalidEmailMessage(err)
 			draft.FieldErrs = fe
 		} else {
 			draft.GeneralErr = userFacingError(err)
@@ -280,7 +294,11 @@ func (s *Server) uiMCPShareRotate(c echo.Context) error {
 	if inst, err := s.memory.GetMCPShareInstance(ctx, id); err == nil && inst != nil && inst.IsLegacy {
 		return redirectWithError(c, mcpShareSettingsBase, legacyShareRotateErr())
 	}
-	created, err := s.memory.RotateMCPShareInstance(ctx, id)
+	rawEmails := strings.TrimSpace(c.FormValue("emails"))
+	if invalid := mcpShareInvalidEmails(rawEmails); len(invalid) > 0 {
+		return redirectWithError(c, mcpShareSettingsBase, fmt.Errorf("not a valid email address: %s", invalid[0]))
+	}
+	created, err := s.memory.RotateMCPShareInstance(ctx, id, mcpShareParseEmails(rawEmails))
 	if err != nil {
 		return redirectWithError(c, mcpShareSettingsBase, err)
 	}
@@ -354,13 +372,21 @@ func (s *Server) deleteMCPShare(c echo.Context) error {
 }
 
 // rotateMCPShare handles POST /api/mcp-shares/:id/rotate and returns the new
-// one-time token.
+// one-time token. An optional {"emails":[...]} body emails the new key.
 func (s *Server) rotateMCPShare(c echo.Context) error {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": errShareIDRequired().Error()})
 	}
-	created, err := s.memory.RotateMCPShareInstance(c.Request().Context(), id)
+	var in struct {
+		Emails []string `json:"emails,omitempty"`
+	}
+	if c.Request().ContentLength > 0 {
+		if err := c.Bind(&in); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+		}
+	}
+	created, err := s.memory.RotateMCPShareInstance(c.Request().Context(), id, in.Emails)
 	if err != nil {
 		return mcpShareJSONErr(c, err)
 	}
@@ -415,12 +441,19 @@ func (s *Server) mcpShareCreatedJSON(created *MCPShareCreated) map[string]any {
 		return map[string]any{}
 	}
 	created.MCPURL = s.externalMCPURL(created.MCPURL)
-	return map[string]any{
+	out := map[string]any{
 		"instance": created.MCPShareInstance,
 		"token":    created.Token,
 		"mcpUrl":   created.MCPURL,
 		"snippets": mcpShareSnippetsMap(created.MCPShareSecret),
 	}
+	if len(created.EmailsSent) > 0 {
+		out["emailsSent"] = created.EmailsSent
+	}
+	if created.EmailError != "" {
+		out["emailError"] = created.EmailError
+	}
+	return out
 }
 
 // mcpShareRevealFromCreated builds the reveal payload from a create/rotate
@@ -432,12 +465,14 @@ func (s *Server) mcpShareRevealFromCreated(heading string, created *MCPShareCrea
 	}
 	created.MCPURL = s.externalMCPURL(created.MCPURL)
 	return mcpShareReveal{
-		Heading:   heading,
-		Name:      created.Name,
-		Token:     created.Token,
-		MCPURL:    created.MCPURL,
-		BundleURL: s.serverPublicBaseURL() + "/api/mcp/bundle?token=" + url.QueryEscape(created.Token),
-		Snippets:  mcpShareSnippets(created.MCPShareSecret),
+		Heading:    heading,
+		Name:       created.Name,
+		Token:      created.Token,
+		MCPURL:     created.MCPURL,
+		BundleURL:  s.serverPublicBaseURL() + "/api/mcp/bundle?token=" + url.QueryEscape(created.Token),
+		EmailsSent: created.EmailsSent,
+		EmailWarn:  created.EmailError,
+		Snippets:   mcpShareSnippets(created.MCPShareSecret),
 	}
 }
 
@@ -445,13 +480,35 @@ func (s *Server) mcpShareRevealFromCreated(heading string, created *MCPShareCrea
 // optional modal).
 func mcpShareRevealPtr(r mcpShareReveal) *mcpShareReveal { return &r }
 
+// mcpShareDeliveryNote renders the reveal's invite confirmation for the
+// recipients the key was queued to.
+func mcpShareDeliveryNote(emails []string) string {
+	switch len(emails) {
+	case 0:
+		return ""
+	case 1:
+		return "Key emailed to " + emails[0] + "."
+	default:
+		return fmt.Sprintf("Key emailed to %d recipients: %s.", len(emails), strings.Join(emails, ", "))
+	}
+}
+
+// mcpShareDeliveryWarn renders the reveal's delivery problem, if any, with the
+// actionable framing that the share itself is fine.
+func mcpShareDeliveryWarn(warn string) string {
+	if warn == "" {
+		return ""
+	}
+	return "The share exists and the key above works, but the invite email did not go out: " + warn
+}
+
 // mcpShareFieldErrsNonEmpty reports whether any inline field error is set.
 func mcpShareFieldErrsNonEmpty(fe mcpShareFieldErrs) bool {
-	return fe.Name != "" || fe.Tools != ""
+	return fe.Name != "" || fe.Tools != "" || fe.Emails != ""
 }
 
 // mcpShareFormDataFromRequest parses the create/edit draft from the submitted
-// form (name, description, tools[]).
+// form (name, description, tools[], and the optional invite list).
 func mcpShareFormDataFromRequest(c echo.Context) mcpShareFormData {
 	values, _ := c.FormParams()
 	tools := mcpDedupeStrings(values["tools"])
@@ -459,11 +516,12 @@ func mcpShareFormDataFromRequest(c echo.Context) mcpShareFormData {
 		Name:        strings.TrimSpace(c.FormValue("name")),
 		Description: strings.TrimSpace(c.FormValue("description")),
 		Tools:       tools,
+		Emails:      strings.TrimSpace(c.FormValue("emails")),
 	}
 }
 
-// validate enforces the create/edit rules: a non-empty name and at least one
-// tool.
+// validate enforces the create/edit rules: a non-empty name, at least one tool,
+// and only valid invite addresses (when any are given).
 func (d mcpShareFormData) validate() mcpShareFieldErrs {
 	var fe mcpShareFieldErrs
 	if d.Name == "" {
@@ -472,7 +530,49 @@ func (d mcpShareFormData) validate() mcpShareFieldErrs {
 	if len(d.Tools) == 0 {
 		fe.Tools = "Select at least one tool to expose."
 	}
+	if invalid := mcpShareInvalidEmails(d.Emails); len(invalid) > 0 {
+		fe.Emails = "Not a valid email address: " + invalid[0]
+	}
 	return fe
+}
+
+// mcpShareEmailPattern mirrors the server's invite-address rule so a typo is
+// caught inline instead of after a round trip. The server remains authoritative.
+var mcpShareEmailPattern = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$`)
+
+// mcpShareParseEmails splits a raw invite list on commas, semicolons and
+// whitespace, trims each address, drops blanks, and removes case-insensitive
+// duplicates.
+func mcpShareParseEmails(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || unicode.IsSpace(r)
+	})
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		addr := strings.TrimSpace(f)
+		if addr == "" {
+			continue
+		}
+		key := strings.ToLower(addr)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, addr)
+	}
+	return out
+}
+
+// mcpShareInvalidEmails lists the invite addresses that are not valid targets.
+func mcpShareInvalidEmails(raw string) []string {
+	var invalid []string
+	for _, addr := range mcpShareParseEmails(raw) {
+		if !mcpShareEmailPattern.MatchString(addr) {
+			invalid = append(invalid, addr)
+		}
+	}
+	return invalid
 }
 
 // mcpDedupeStrings drops blank and repeated values, preserving order.
@@ -500,6 +600,26 @@ func mcpShareIsNameConflict(err error) bool {
 	return strings.Contains(msg, "already exists") ||
 		strings.Contains(msg, "conflict") ||
 		strings.Contains(msg, "duplicate")
+}
+
+// mcpShareIsInvalidEmail reports whether a backend error is an invite-address
+// rejection, so the create form can point at the email field instead of showing
+// a generic failure.
+func mcpShareIsInvalidEmail(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "invalid_email")
+}
+
+// mcpShareInvalidEmailMessage extracts the offending address from a backend
+// rejection into a form-field message.
+func mcpShareInvalidEmailMessage(err error) string {
+	const marker = "invalid email address:"
+	if msg := err.Error(); strings.Contains(msg, marker) {
+		addr := strings.TrimSpace(msg[strings.Index(msg, marker)+len(marker):])
+		if addr != "" {
+			return "Not a valid email address: " + addr
+		}
+	}
+	return "One of the email addresses is not valid."
 }
 
 // mcpShareJSONErr writes a {"error": msg} JSON response, preserving the
