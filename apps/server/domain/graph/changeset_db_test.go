@@ -1249,3 +1249,124 @@ func TestPatchRelationshipKeepsContributions(t *testing.T) {
 	assert.Equal(t, graph.ContributionStateSuperseded, byVersion[relID].State, "the version it arrived on keeps its row as history")
 	assert.Equal(t, graph.ContributionStatePresent, byVersion[patched.ID].State, "the relationship edit must keep its contribution")
 }
+
+// TestBranchTombstoneCarriesContributions covers the one version write that does
+// not go through CreateVersion: a branch-scoped delete of an object that only
+// exists on main inserts its tombstone directly on the branch. It carries the
+// main head's contributors the way a fork copy does — the branch's version now
+// describes the same content — while the main-line provenance is left alone.
+func TestBranchTombstoneCarriesContributions(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "branch-tombstone")
+
+	// The branch exists before the object does, so it holds no copy of it.
+	forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "tombstone"})
+	require.NoError(t, err)
+	branchID := uuid.MustParse(forkResp.BranchID)
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Tombstone"},
+			ExternalID:          "tombstone-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	mainVersion := *applied.Results[0].SubjectID
+	canonicalID := *applied.Results[0].CanonicalID
+
+	reason := "gone on this branch"
+	require.NoError(t, svc.Delete(ctx, projectID, mainVersion, nil, &branchID, &reason))
+
+	var tombstone uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT id FROM kb.graph_objects
+		WHERE project_id = ? AND canonical_id = ? AND branch_id = ? AND supersedes_id IS NULL`,
+		projectID, canonicalID, branchID).Scan(ctx, &tombstone))
+
+	var onBranch []contributionRow
+	require.NoError(t, db.NewRaw(`
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
+		FROM kb.provenance_contributions
+		WHERE subject_version_id = ? AND state = 'present'`, tombstone).Scan(ctx, &onBranch))
+	require.Len(t, onBranch, 1, "the branch tombstone keeps the object's contributor")
+	assert.Equal(t, sourceID, onBranch[0].SourceID)
+	require.NotNil(t, onBranch[0].MergedFrom)
+	assert.Equal(t, mainVersion, *onBranch[0].MergedFrom)
+
+	// The main line keeps its own present row: the supersede is scoped to the
+	// branch, so the copy is an addition, not a move.
+	rows := contributionsFor(t, ctx, db, sourceID, "tombstone-1")
+	require.Len(t, rows, 2)
+	var mainPresent *contributionRow
+	for i := range rows {
+		if rows[i].State == graph.ContributionStatePresent && rows[i].BranchID == nil {
+			mainPresent = &rows[i]
+		}
+	}
+	require.NotNil(t, mainPresent, "the main-line contribution must stay present")
+	assert.Equal(t, mainVersion, mainPresent.SubjectVersionID)
+}
+
+// TestBranchTombstoneSkipsRecordTheBranchAlreadyCarries is the case the copy
+// must not walk into: the same source pushed that external id on the branch as
+// its own object, so the branch already holds the addressing slot the tombstone
+// copy would claim. Before the guard, this delete failed with
+// uq_provenance_contributions_present_branch (23505) — a 500 on delete. The
+// branch's own row is the live one and must be left exactly as it is.
+func TestBranchTombstoneSkipsRecordTheBranchAlreadyCarries(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "tombstone-collide")
+
+	forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "collide"})
+	require.NoError(t, err)
+	branchID := uuid.MustParse(forkResp.BranchID)
+
+	item := graph.ChangesetObjectItem{
+		Type:                "Person",
+		Properties:          map[string]any{"name": "Collide"},
+		ExternalID:          "collide-1",
+		ExternalRevisionSeq: seq(1),
+	}
+	mainApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects:  []graph.ChangesetObjectItem{item},
+	}, nil)
+	require.NoError(t, err)
+	mainVersion := *mainApplied.Results[0].SubjectID
+	canonicalID := *mainApplied.Results[0].CanonicalID
+
+	// The same external id is legitimate once per branch: the branch has its own
+	// object for the record, with its own contribution.
+	branchApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		BranchID: &branchID,
+		Objects:  []graph.ChangesetObjectItem{item},
+	}, nil)
+	require.NoError(t, err)
+	branchVersion := *branchApplied.Results[0].SubjectID
+	require.NotEqual(t, mainVersion, branchVersion)
+
+	reason := "gone on this branch"
+	require.NoError(t, svc.Delete(ctx, projectID, mainVersion, nil, &branchID, &reason),
+		"the tombstone must not collide with the branch's own record for the same source")
+
+	var tombstone uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT id FROM kb.graph_objects
+		WHERE project_id = ? AND canonical_id = ? AND branch_id = ? AND supersedes_id IS NULL`,
+		projectID, canonicalID, branchID).Scan(ctx, &tombstone))
+
+	// One present row on that address, still the branch's own object.
+	var held []contributionRow
+	require.NoError(t, db.NewRaw(`
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
+		FROM kb.provenance_contributions
+		WHERE project_id = ? AND subject_kind = 'object' AND branch_id = ?
+		  AND source_id = ? AND external_id = ? AND state = 'present'`,
+		projectID, branchID, sourceID, "collide-1").Scan(ctx, &held))
+	require.Len(t, held, 1)
+	assert.Equal(t, branchVersion, held[0].SubjectVersionID, "the branch's record stays attributed to its own object")
+}

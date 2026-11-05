@@ -34565,6 +34565,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "merged_from_version_id": {
+                    "description": "MergedFromVersionID is the version this contribution was carried from,\nwhen it was not written onto the row it describes: a merge union, a fork\ncopy, or a new version that inherits its predecessor's contributors. It is\nnull when the source's record arrived on this row.",
                     "type": "string"
                 },
                 "project_id": {

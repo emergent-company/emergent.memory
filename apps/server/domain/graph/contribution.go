@@ -46,11 +46,9 @@ type ProvenanceContribution struct {
 	ExternalRevision    string     `bun:"external_revision,notnull,default:''" json:"external_revision"`
 	ExternalRevisionSeq int64      `bun:"external_revision_seq,notnull,default:0" json:"external_revision_seq"`
 	// MergedFromVersionID is the version this contribution was carried from,
-	// when it was not written onto the row it describes. It is set on a merge
-	// union, on a fork copy, and on any new version that inherits its
-	// predecessor's contributors; it is NULL when the source's record arrived on
-	// this row. Migration 00261's column comment predates the last of those and
-	// describes the merge case only.
+	// when it was not written onto the row it describes: a merge union, a fork
+	// copy, or a new version that inherits its predecessor's contributors. It is
+	// null when the source's record arrived on this row.
 	MergedFromVersionID *uuid.UUID `bun:"merged_from_version_id,type:uuid" json:"merged_from_version_id,omitempty"`
 	State               string     `bun:"state,notnull,default:'present'" json:"state"`
 	FirstSeenAt         time.Time  `bun:"first_seen_at,notnull,default:now()" json:"first_seen_at"`
@@ -234,6 +232,33 @@ func (r *Repository) CopyContributionsToVersion(ctx context.Context, db bun.IDB,
 	return r.copyContributions(ctx, db, projectID, kind, fromVersionIDs, toVersionID, toBranchID, true)
 }
 
+// address is one source's record on the destination branch: the key the partial
+// unique indexes uq_provenance_contributions_present_{main,branch} enforce.
+type address struct {
+	sourceID   uuid.UUID
+	externalID string
+}
+
+// crossesBranch reports whether a copy reads rows from a branch other than the
+// one it writes to. Such a copy can land on an address the destination branch
+// already holds; a same-branch carry-forward cannot, because the row it copies
+// is the row it supersedes.
+func crossesBranch(rows []ProvenanceContribution, toBranchID *uuid.UUID) bool {
+	for _, row := range rows {
+		a, b := row.BranchID, toBranchID
+		if a == nil || b == nil {
+			if a != nil || b != nil {
+				return true
+			}
+			continue
+		}
+		if *a != *b {
+			return true
+		}
+	}
+	return false
+}
+
 // copyContributions is the shared body of the union-on-merge and the
 // carry-forward-on-version-write rules.
 //
@@ -346,9 +371,50 @@ func (r *Repository) copyContributions(
 		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 
+	// A cross-branch copy can collide with a record the destination branch
+	// already carries: the same source may have pushed that external id on the
+	// branch itself, and a branch-scoped delete of a main-only object copies the
+	// main line's contributors onto a branch tombstone while the branch's own
+	// object for that record already holds the addressing slot. The branch's row
+	// is the live one there — writing the copy would violate
+	// uq_provenance_contributions_present_{main,branch} and leave the branch
+	// addressing one record twice — so a candidate the destination branch
+	// already addresses is skipped, unless the row it collides with is one this
+	// copy supersedes.
+	occupied := map[address]struct{}{}
+	if crossesBranch(rows, toBranchID) {
+		superseded := make(map[uuid.UUID]struct{}, len(ids))
+		for _, id := range ids {
+			superseded[id] = struct{}{}
+		}
+		// The destination version's own rows are not foreign occupants: they
+		// are the ones this copy is here to write over (includeDestination), so
+		// only rows on some *other* live version of the branch can be in the way.
+		var holders []ProvenanceContribution
+		if err := db.NewSelect().
+			Model(&holders).
+			Where("project_id = ?", projectID).
+			Where("subject_kind = ?", kind).
+			Where("branch_id IS NOT DISTINCT FROM ?", toBranchID).
+			Where("subject_version_id <> ?", toVersionID).
+			Where("state = ?", ContributionStatePresent).
+			Scan(ctx); err != nil {
+			return 0, apperror.NewDatabase("Database operation failed", err)
+		}
+		for _, holder := range holders {
+			if _, moved := superseded[holder.ID]; moved {
+				continue
+			}
+			occupied[address{sourceID: holder.SourceID, externalID: holder.ExternalID}] = struct{}{}
+		}
+	}
+
 	copied := 0
 	for _, cand := range bySource {
 		row := cand.row
+		if _, taken := occupied[address{sourceID: row.SourceID, externalID: row.ExternalID}]; taken {
+			continue
+		}
 		c := &ProvenanceContribution{
 			ProjectID:           projectID,
 			BranchID:            toBranchID,
