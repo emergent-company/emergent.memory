@@ -67,14 +67,27 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
   exit 0
 fi
 
+# This guard is about what THIS branch changed. Compare removal and modification
+# candidates against the merge base of the base ref and HEAD, not against the
+# base tip: a branch that is merely behind the base would otherwise look like it
+# deleted every migration the base gained after the branch point.
+if ! mb="$(git merge-base "$base" HEAD 2>/dev/null)"; then
+  echo "migration-immutability: WARNING no merge base between $base and HEAD; skipping" >&2
+  exit 0
+fi
+
 # Extract the numeric version from a migration filename (basename only).
 version_of() {
   printf '%s' "$(basename "$1")" | sed -n 's/^0*\([0-9][0-9]*\)_.*\.sql$/\1/p'
 }
 
-# Migration *.sql files present on the base ref, and present now (tracked +
-# untracked, excluding ignored). Newline-delimited; paths contain no spaces.
+# Migration *.sql files present on the base ref (tip), present at the merge base,
+# and present now (tracked + untracked, excluding ignored). Newline-delimited;
+# paths contain no spaces. Removal/modification candidates come from the merge
+# base, so files the base gained after this branch's fork point are not treated as
+# deletions here. max_base stays anchored to the base tip.
 base_files="$(git ls-tree -r --name-only "$base" -- "$mig_dir" | grep '\.sql$' | sort)"
+mb_files="$(git ls-tree -r --name-only "$mb" -- "$mig_dir" | grep '\.sql$' | sort)"
 current_files="$(git ls-files --cached --others --exclude-standard -- "$mig_dir" | grep '\.sql$' | sort)"
 
 # Highest version among migrations already on the base ref.
@@ -131,15 +144,16 @@ while IFS= read -r f; do
     fi
 
     echo "migration-immutability: FAIL existing migration deleted/renamed: $f (Goose records versions by number; renumbering an applied migration silently skips it. Only a duplicated base version repaired by a contiguous successor is exempt — see the header of scripts/preflight/migration-immutability.sh)" >&2
+    echo "migration-immutability: NOTE if this branch never touched migrations, the base branch likely gained this migration after your branch point; merge the base branch (e.g. git merge origin/main) and re-run" >&2
     status=1
     continue
   fi
 
-  if ! git diff --quiet "$base" -- "$f"; then
+  if ! git diff --quiet "$mb" -- "$f"; then
     echo "migration-immutability: FAIL existing migration modified: $f (Goose has already applied it; create a NEW migration instead)" >&2
     status=1
   fi
-done <<< "$base_files"
+done <<< "$mb_files"
 
 if [ "$status" -ne 0 ]; then
   echo "migration-immutability: FAILED" >&2
