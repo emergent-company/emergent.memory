@@ -40026,10 +40026,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "relationshipTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "RelationshipTypeSchemas is the stored relationship-type definitions. Two\nlive writer shapes exist: a JSON array of {\"name\",\"sourceType\",\n\"targetType\"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder\nand the builtin seeder) and a map of relationship type name → schema (the\nMCP create-schema tool and the discovery job; older stored rows are also\nmaps). Readers normalise both, so no single Swagger 2.0 item type is\ndeclared for it.",
+                    "type": "object"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -40612,10 +40610,8 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name, each value\na prompt config such as {\"system_prompt\":\"...\",\"field_hints\":{...}}.\nEvery writer produces that map (HTTP CreatePack/UpdatePack, the MCP\ncreate-schema tool and the discovery job). The column is opaque jsonb,\nso reads are best-effort for anything else stored there.",
+                    "type": "object"
                 },
                 "id": {
                     "type": "string"
@@ -40630,10 +40626,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "objectTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ObjectTypeSchemas is the stored object-type definitions. Two live writer\nshapes exist: a JSON array of {\"name\",\"label\",\"properties\",...} objects\n(HTTP CreatePack/UpdatePack, blueprint apply/seeder and the builtin\nseeder) and a map of type name → schema (the MCP create-schema tool and\nthe discovery job; older stored rows are also maps). Readers normalise\nboth, so no single Swagger 2.0 item type is declared for it.",
+                    "type": "object"
                 },
                 "pendingReview": {
                     "description": "PendingReview marks discovery output that is awaiting an explicit\ninstall. It is false for a pack created or imported any other way, so a\nclient can tell \"proposed by a run\" from \"unassigned\".",
@@ -40646,10 +40640,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "relationshipTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "RelationshipTypeSchemas is the stored relationship-type definitions. Two\nlive writer shapes exist: a JSON array of {\"name\",\"sourceType\",\n\"targetType\"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder\nand the builtin seeder) and a map of relationship type name → schema (the\nMCP create-schema tool and the discovery job; older stored rows are also\nmaps). Readers normalise both, so no single Swagger 2.0 item type is\ndeclared for it.",
+                    "type": "object"
                 },
                 "repositoryUrl": {
                     "type": "string"
@@ -40658,10 +40650,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "uiConfigs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfigs is a JSON object keyed by object type name, each value a UI\nconfig such as {\"icon\":\"file-text\",\"color\":\"#3B82F6\"}. Every writer\nproduces that map (HTTP CreatePack/UpdatePack, the MCP create-schema tool\nand the discovery job). The column is opaque jsonb, so reads are\nbest-effort for anything else stored there.",
+                    "type": "object"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -40685,10 +40675,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is the installed pack's extraction_prompts: a JSON\nobject keyed by object type name, each value a prompt config such as\n{\"system_prompt\":\"...\",\"field_hints\":{...}}. Every writer produces that\nmap (HTTP CreatePack/UpdatePack, the MCP create-schema tool and the\ndiscovery job); the column is opaque jsonb, so reads are best-effort for\nanything else stored there.",
+                    "type": "object"
                 },
                 "id": {
                     "description": "assignment ID",
