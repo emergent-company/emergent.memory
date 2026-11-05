@@ -130,12 +130,16 @@ func (s *Server) renderMCPShareListWithReveal(c echo.Context, reveal *mcpShareRe
 
 // --- create page + create flow ---
 
-// uiMCPShareNewPage renders the create form (GET .../shares/new).
+// uiMCPShareNewPage renders the create form (GET .../shares/new). Only this
+// path applies the default preset: a submitted draft must reach validation
+// exactly as the user left it.
 func (s *Server) uiMCPShareNewPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	data := mcpShareFormData{FlashErr: flashError(c)}
 	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
 		data.LoadErr = userFacingError(err)
+	} else {
+		data.Tools = mcpShareApplyDefaultTemplate(&MCPShareCatalog{Tools: data.Catalog, Templates: data.Templates}, data.Tools)
 	}
 	return s.page(c, pageTitle("New MCP share"), MCPShareNewPage(data))
 }
@@ -481,19 +485,19 @@ func (s *Server) listMCPShareTools(c echo.Context) error {
 
 // loadMCPShareFormData fills the tool catalog and presets on a form payload,
 // preserving any draft/instance fields already set. A catalog failure is
-// returned so the page renders its error state.
+// returned so the page renders its error state. It never touches Tools: the
+// create-page default is applied by the GET handler, so a submitted (possibly
+// emptied) selection reaches validation unchanged.
 func (s *Server) loadMCPShareFormData(ctx context.Context, data *mcpShareFormData) error {
 	catalog, err := s.memory.ListMCPShareCatalog(ctx)
 	if err != nil {
 		return err
 	}
+	if catalog == nil {
+		return nil
+	}
 	data.Catalog = catalog.Tools
 	data.Templates = catalog.Templates
-	// Create form only: preselect the default preset when the draft is empty.
-	// An edit always carries data.ID and keeps the share's existing grant.
-	if data.ID == "" {
-		data.Tools = mcpShareApplyDefaultTemplate(catalog, data.Tools)
-	}
 	return nil
 }
 

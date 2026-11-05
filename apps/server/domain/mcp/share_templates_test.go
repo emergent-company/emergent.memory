@@ -8,8 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testShareCatalog builds the real shareable catalog for a bare service, the
-// same way HandleListToolCatalog does for a project admin.
+// testShareCatalog builds the catalog a project admin sees when no
+// project-specific dynamic tools are registered: BuildToolCatalog over a bare
+// Service, which reads the static tool definitions and applies the same
+// shareability filter the endpoint uses.
 func testShareCatalog(t *testing.T) []CatalogToolDTO {
 	t.Helper()
 	svc := &Service{}
@@ -56,10 +58,6 @@ func TestResolveShareTemplatesAgainstRealCatalog(t *testing.T) {
 	templates := ResolveShareTemplates(catalog)
 	require.Len(t, templates, len(shareTemplates), "every preset must resolve against the real catalog")
 
-	byScope := map[string]string{}
-	for _, tool := range catalog {
-		byScope[tool.Name] = tool.RequiredScope
-	}
 	has := map[string]bool{}
 	for _, tool := range catalog {
 		has[tool.Name] = true
@@ -110,8 +108,11 @@ func TestShareTemplatesNeverCarryNonShareableScopes(t *testing.T) {
 }
 
 // TestReadOnlyTemplateCoversLegacyScopes keeps the default preset at least as
-// capable as the legacy read-only share token, so an outside client migrated to
-// a template-keyed share does not lose tools it used to have.
+// capable as the legacy read-only share token for every tool the catalog
+// exposes under those scopes, so an outside client migrated to a
+// template-keyed share does not lose tools it used to have. The legacy token's
+// non-tool scopes (chat:use, projects:read baseline) are covered separately by
+// TestSearchKnowledgeShareDerivesChatUse.
 func TestReadOnlyTemplateCoversLegacyScopes(t *testing.T) {
 	catalog := testShareCatalog(t)
 	var readOnly *ShareTemplateDTO
@@ -133,6 +134,55 @@ func TestReadOnlyTemplateCoversLegacyScopes(t *testing.T) {
 	for _, tool := range catalog {
 		if scopeSet[tool.RequiredScope] {
 			assert.True(t, granted[tool.Name], "read-only template must include %q (scope %q)", tool.Name, tool.RequiredScope)
+		}
+	}
+}
+
+// TestSearchKnowledgeShareDerivesChatUse guards the runtime-only scope: the tool
+// calls the /query loopback with the caller's token, and that route requires
+// chat:use. A share without it would advertise the tool and then 403 every call.
+// The legacy read-only token carried chat:use for exactly this reason.
+func TestSearchKnowledgeShareDerivesChatUse(t *testing.T) {
+	svc := &Service{}
+	scopes, err := deriveScopesForToolNames([]string{"search-knowledge"}, svc.GetToolByName)
+	require.NoError(t, err)
+	assert.Contains(t, scopes, "search", "transport scope is still derived")
+	assert.Contains(t, scopes, "chat:use", "runtime loopback scope must be derived")
+
+	plain, err := deriveScopesForToolNames([]string{"entity-search"}, svc.GetToolByName)
+	require.NoError(t, err)
+	assert.NotContains(t, plain, "chat:use", "a graph-only tool must not widen the token to chat")
+}
+
+// TestShareTemplateDerivedScopesStayWithinDocumentedSet pins the scopes a preset
+// may put on a share token. Presets are the most likely place for a new scope to
+// slip in unnoticed, and a share token is an ordinary API token: its scopes are
+// honoured by REST routes too, not just the MCP handlers.
+func TestShareTemplateDerivedScopesStayWithinDocumentedSet(t *testing.T) {
+	allowed := map[string]bool{
+		"projects:read":   true, // baseline
+		"search":          true,
+		"chat:use":        true,
+		"graph:read":      true,
+		"graph:write":     true,
+		"documents:read":  true,
+		"documents:write": true,
+		"journal:read":    true,
+		"journal:write":   true,
+		"schema:read":     true,
+		"schema:write":    true,
+		"schema:migrate":  true,
+		"skills:read":     true,
+		"skills:write":    true,
+		"agents:read":     true,
+	}
+	svc := &Service{}
+	for _, tmpl := range ResolveShareTemplates(testShareCatalog(t)) {
+		scopes, err := deriveScopesForToolNames(tmpl.Tools, svc.GetToolByName)
+		require.NoError(t, err, "template %q", tmpl.ID)
+		for _, scope := range scopes {
+			assert.False(t, isNonShareableScope(scope), "template %q derived non-shareable scope %q", tmpl.ID, scope)
+			assert.True(t, allowed[scope], "template %q derived %q — add it to the documented set only with a deliberate decision", tmpl.ID, scope)
 		}
 	}
 }

@@ -462,6 +462,25 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	}
 }
 
+// A submitted form must reach validation exactly as the user left it. The
+// create-page default is applied only on GET; injecting it into the POST made
+// the "at least one tool" rule unenforceable once presets existed.
+func TestMCPShareCreateDoesNotInjectDefaultPreset(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	f.templates = mcpShareTemplateFixture()
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	before := len(f.shares)
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new", "name=no-tools")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Select at least one tool to expose.") {
+		t.Errorf("empty-tools create with presets = %d, want inline tools error", rec.Code)
+	}
+	if len(f.shares) != before || f.lastCreate != nil {
+		t.Errorf("an empty submission must not create a share even when a default preset exists")
+	}
+}
+
 func TestMCPShareCreateValidationInline(t *testing.T) {
 	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
 	s := &Server{cfg: Config{}, memory: f}
@@ -1206,11 +1225,19 @@ func TestMCPShareNewPageRendersPresetRow(t *testing.T) {
 		`data-share-template-tools="[&#34;search_memory&#34;]"`,
 		`data-share-template-tools="[&#34;search_memory&#34;,&#34;create_agent&#34;]"`,
 		"Read-only", "Knowledge writer", "1 tool", "2 tools",
-		`data-mcp-tool-count`, "0 selected",
+		`data-mcp-tool-count`, "1 selected",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("new share page missing %q", want)
 		}
+	}
+	// The default preset is what the form starts on, so its chip must render
+	// pressed rather than looking like no preset was chosen.
+	if strings.Count(body, `aria-pressed="true"`) != 1 {
+		t.Errorf("exactly the default preset chip must be pressed")
+	}
+	if !strings.Contains(body, "gap-1.5 btn-active") {
+		t.Error("the default preset chip must carry btn-active")
 	}
 }
 
@@ -1304,5 +1331,62 @@ func TestMCPShareTemplateToolsAttr(t *testing.T) {
 		if got := mcpShareTemplateToolsAttr(MCPShareTemplate{Tools: tc.in}); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestMCPShareSameToolSet(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b []string
+		want bool
+	}{
+		{"same order", []string{"a", "b"}, []string{"a", "b"}, true},
+		{"reordered", []string{"a", "b"}, []string{"b", "a"}, true},
+		{"duplicates collapse", []string{"a", "a", "b"}, []string{"b", "a"}, true},
+		{"subset is not equal", []string{"a"}, []string{"a", "b"}, false},
+		{"disjoint", []string{"a"}, []string{"b"}, false},
+		{"both empty", nil, nil, false},
+		{"one empty", nil, []string{"a"}, false},
+	}
+	for _, tc := range cases {
+		if got := mcpShareSameToolSet(tc.a, tc.b); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestMCPShareSelectedLabel(t *testing.T) {
+	catalog := []MCPShareTool{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	cases := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"none", nil, "0 selected"},
+		{"some", []string{"b"}, "1 selected"},
+		{"all", []string{"a", "b", "c"}, "3 selected"},
+		// A tool the catalog no longer offers has no checkbox to tick, so it
+		// must not inflate the count the picker shows.
+		{"unknown ignored", []string{"a", "gone"}, "1 selected"},
+	}
+	for _, tc := range cases {
+		if got := mcpShareSelectedLabel(catalog, tc.in); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestMCPShareTemplateActivePresentation(t *testing.T) {
+	if got := mcpShareTemplateActiveClass(true); got != "gap-1.5 btn-active" {
+		t.Errorf("active class = %q", got)
+	}
+	if got := mcpShareTemplateActiveClass(false); got != "gap-1.5" {
+		t.Errorf("inactive class = %q", got)
+	}
+	if got := mcpShareAriaPressed(true); got != "true" {
+		t.Errorf("aria-pressed true = %q", got)
+	}
+	if got := mcpShareAriaPressed(false); got != "false" {
+		t.Errorf("aria-pressed false = %q", got)
 	}
 }

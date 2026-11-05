@@ -441,15 +441,17 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 				</div>
 				<div class="flex flex-wrap gap-1.5" data-mcp-share-templates>
 					for _, t := range data.Templates {
+						{{ active := mcpShareSameToolSet(data.Tools, t.Tools) }}
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeButton,
 							Variant:    ui.ButtonOutline,
 							Size:       ui.ButtonXS,
-							ExtraClass: "gap-1.5",
+							ExtraClass: mcpShareTemplateActiveClass(active),
 							Attrs: templ.Attributes{
 								"data-share-template":       t.ID,
 								"data-share-template-tools": mcpShareTemplateToolsAttr(t),
 								"title":                     t.Description,
+								"aria-pressed":              mcpShareAriaPressed(active),
 							},
 						}) {
 							{ t.Label }
@@ -462,7 +464,7 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			@ui.Eyebrow("Memory tools", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
 			<div class="flex items-center gap-1">
-				<span class="text-muted text-[11px]" data-mcp-tool-count aria-live="polite">0 selected</span>
+				<span class="text-muted text-[11px]" data-mcp-tool-count aria-live="polite">{ mcpShareSelectedLabel(data.Catalog, data.Tools) }</span>
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-mcp-tool-select-all": ""}}) {
 					Select all
 				}
@@ -549,8 +551,16 @@ templ mcpShareScripts() {
 	<script type="text/javascript">
 		(function () {
 			function clearMcpShareTemplateActive(picker) {
+				setMcpShareTemplateActive(picker, null);
+			}
+
+			function setMcpShareTemplateActive(picker, activeEl) {
 				var tpls = picker.querySelectorAll('[data-share-template]');
-				for (var t = 0; t < tpls.length; t++) { tpls[t].classList.remove('btn-active'); }
+				for (var t = 0; t < tpls.length; t++) {
+					var on = activeEl !== null && tpls[t] === activeEl;
+					tpls[t].classList.toggle('btn-active', on);
+					tpls[t].setAttribute('aria-pressed', on ? 'true' : 'false');
+				}
 			}
 
 			function syncMcpShareToolCount(picker) {
@@ -604,9 +614,7 @@ templ mcpShareScripts() {
 					} catch (err) { return; }
 					var boxes = picker.querySelectorAll('[data-mcp-tool-option] input[type="checkbox"]');
 					for (var b = 0; b < boxes.length; b++) { boxes[b].checked = !!wanted[boxes[b].value]; }
-					var siblings = picker.querySelectorAll('[data-share-template]');
-					for (var s = 0; s < siblings.length; s++) { siblings[s].classList.remove('btn-active'); }
-					tpl.classList.add('btn-active');
+					setMcpShareTemplateActive(picker, tpl);
 					syncMcpShareToolCount(picker);
 					return;
 				}

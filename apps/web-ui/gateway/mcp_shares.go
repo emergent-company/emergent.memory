@@ -226,8 +226,9 @@ func decodeMCPShareCatalog(raw json.RawMessage) (*MCPShareCatalog, error) {
 }
 
 // mcpShareApplyDefaultTemplate returns the tools of the preset flagged Default
-// when the draft has no selection yet. Used only on the create form: editing an
-// existing share must never rewrite its grant behind the user's back.
+// when the draft has no selection yet. Used only by the create-page GET: a
+// submitted draft must reach validation exactly as the user left it, and an
+// edit must never rewrite an existing grant.
 func mcpShareApplyDefaultTemplate(catalog *MCPShareCatalog, current []string) []string {
 	if catalog == nil || len(current) > 0 {
 		return current
@@ -238,6 +239,66 @@ func mcpShareApplyDefaultTemplate(catalog *MCPShareCatalog, current []string) []
 		}
 	}
 	return current
+}
+
+// mcpShareToolSet turns a tool list into a set.
+func mcpShareToolSet(tools []string) map[string]bool {
+	set := make(map[string]bool, len(tools))
+	for _, name := range tools {
+		set[name] = true
+	}
+	return set
+}
+
+// mcpShareSameToolSet reports whether two tool lists describe the same set.
+// Order and duplicates are irrelevant, and two empty lists are not "equal" (an
+// empty selection matches no preset).
+func mcpShareSameToolSet(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	as, bs := mcpShareToolSet(a), mcpShareToolSet(b)
+	if len(as) != len(bs) {
+		return false
+	}
+	for name := range as {
+		if !bs[name] {
+			return false
+		}
+	}
+	return true
+}
+
+// mcpShareSelectedLabel seeds the picker's live counter server-side, so a
+// preselected preset never renders "0 selected" until the first interaction.
+// It counts selected tools the catalog actually offers, matching the checkboxes
+// the browser can see.
+func mcpShareSelectedLabel(catalog []MCPShareTool, tools []string) string {
+	set := mcpShareToolSet(tools)
+	count := 0
+	for _, tool := range catalog {
+		if set[tool.Name] {
+			count++
+		}
+	}
+	return fmt.Sprintf("%d selected", count)
+}
+
+// mcpShareTemplateActiveClass marks the preset whose tools exactly match the
+// current selection, so a server-preselected default renders as chosen.
+func mcpShareTemplateActiveClass(active bool) string {
+	if active {
+		return "gap-1.5 btn-active"
+	}
+	return "gap-1.5"
+}
+
+// mcpShareAriaPressed is the pressed state of a preset toggle button.
+func mcpShareAriaPressed(active bool) string {
+	if active {
+		return "true"
+	}
+	return "false"
 }
 
 // decodeMCPShareCreated accepts the instance fields and the secret fields

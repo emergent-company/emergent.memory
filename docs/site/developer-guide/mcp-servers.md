@@ -130,7 +130,7 @@ afterwards:
 | **Knowledge writer** | Read-only plus creating and editing objects, relationships, documents, and journal notes. |
 | **Schema & blueprints** | Graph reads, then schema read/write, schema migrations, and blueprints. Does not write knowledge objects. |
 | **Agent observer** | Agent, run, question, and session reads, plus search and graph reads. |
-| **Documents** | Upload, list, retrieve, and delete documents, plus document classification/reextraction and search. |
+| **Documents** | Upload, list, retrieve, and delete documents, plus document classification and search. |
 | **Full access** | Every tool a share key can carry. |
 
 Presets never exceed what a share may grant: platform administration, project

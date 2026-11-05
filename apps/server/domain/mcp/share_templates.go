@@ -69,7 +69,7 @@ var shareTemplates = []ShareTemplate{
 	{
 		ID:          "knowledge-writer",
 		Label:       "Knowledge writer",
-		Description: "Everything read-only, plus creating and editing objects, relationships, documents and journal notes.",
+		Description: "Everything read-only, plus creating, editing and deleting objects, relationships, documents and journal notes.",
 		Scopes: []string{
 			"search",
 			"graph:read",
@@ -87,7 +87,7 @@ var shareTemplates = []ShareTemplate{
 	{
 		ID:          "schema-admin",
 		Label:       "Schema & blueprints",
-		Description: "Inspect the graph, then manage schemas, schema migrations and blueprints. Does not write knowledge objects.",
+		Description: "Inspect the graph, then manage schemas, schema migrations and blueprints.",
 		Scopes: []string{
 			"graph:read",
 			"schema:read",
@@ -116,7 +116,6 @@ var shareTemplates = []ShareTemplate{
 		},
 		Tools: []string{
 			"classify-document",
-			"queue-reextraction",
 			"search-hybrid",
 			"search-knowledge",
 		},

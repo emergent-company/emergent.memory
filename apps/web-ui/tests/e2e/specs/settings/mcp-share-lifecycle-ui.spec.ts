@@ -161,8 +161,11 @@ test('MCP share presets: read-only is preselected and a preset replaces the sele
   await expect(checked).toHaveCount(full.length);
   await expect(checked).toHaveCount(await toolBoxes.count());
 
-  // A manual change detaches the preset highlight without altering the checks.
+  // The chosen preset is announced as pressed; a manual change detaches it
+  // without altering the checks.
+  await expect(page.locator('[data-share-template="full-access"][aria-pressed="true"]')).toHaveCount(1);
   await toolBoxes.first().uncheck();
-  await expect(page.locator('[data-share-template="full-access"].btn-active')).toHaveCount(0);
+  await expect(page.locator('[data-share-template][aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.locator('[data-share-template].btn-active')).toHaveCount(0);
   await expect(checked).toHaveCount(full.length - 1);
 });

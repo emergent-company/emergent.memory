@@ -383,8 +383,18 @@ func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, e
 	return dedupeStrings(out), nil
 }
 
+// shareToolAdditionalScopes lists scopes a tool needs at runtime but does not
+// declare as its transport-level RequiredScope. search-knowledge calls the
+// /query loopback with the caller's own token, and that route requires
+// chat:use; without this a share that includes the tool would 403 on every
+// call. The legacy read-only share token carried chat:use for the same reason.
+var shareToolAdditionalScopes = map[string][]string{
+	"search-knowledge": {"chat:use"},
+}
+
 // deriveScopesForToolNames returns the union of the required scopes of the
-// selected tools plus the baseline projects:read scope.
+// selected tools, plus any runtime-only scope a tool needs, plus the baseline
+// projects:read scope.
 func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, error) {
 	seen := map[string]bool{instanceScopeBaseline: true}
 	for _, name := range tools {
@@ -400,6 +410,12 @@ func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, 
 		}
 		if def.RequiredScope != "" {
 			seen[def.RequiredScope] = true
+		}
+		for _, scope := range shareToolAdditionalScopes[name] {
+			if isNonShareableScope(scope) {
+				return nil, apperror.NewValidation("tool requires an administrative or project-management scope: " + name)
+			}
+			seen[scope] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
