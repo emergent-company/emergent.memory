@@ -157,6 +157,9 @@ test.describe.serial('object detail subpages + workflow controls', () => {
     await expect(
       page.getByRole('navigation', { name: 'Object sections' }).getByTestId('object-similar-count'),
     ).toHaveText('4');
+    // The deferred count swap must stay scoped to the rail badge: without its
+    // own hx-target it inherits #main-content and replaces the page body.
+    await expect(page.getByTestId('object-workflow-panel')).toBeVisible();
     await page.unroute(`**/objects/${canonicalId}/similar/count`);
   });
 

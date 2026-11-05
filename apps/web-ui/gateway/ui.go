@@ -417,7 +417,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	var user *currentUser
 	var accounts []currentUser
 	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
-		user = &currentUser{Name: sc.Name, Email: sc.Email, Picture: resolveAvatar(sc.AvatarOverrideURL, sc.Picture), Sub: sc.Sub}
+		user = &currentUser{Name: sc.Name, Email: sc.Email, Picture: resolveSelfAvatar(sc.AvatarOverrideURL, sc.Picture), Sub: sc.Sub}
 		if user.Name == "" || user.Email == "" {
 			if p, err := s.memory.GetProfile(c.Request().Context()); err == nil && p != nil {
 				if user.Name == "" {
@@ -548,13 +548,68 @@ func initials(name string) string {
 	return out
 }
 
-// resolveAvatar picks the avatar URL to display: the uploaded Memory photo
-// (override) wins when present, else the IdP picture, else "" (initials).
+// absoluteAvatarSrc reports whether an avatar value is already a usable URL:
+// an absolute URL (scheme), a protocol-relative URL, a root-relative path, or a
+// data URI. Anything else (e.g. a bare object key like "avatars/<uuid>.jpg") is
+// not a URL and would resolve relative to the current page path.
+func absoluteAvatarSrc(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	switch {
+	case raw == "":
+		return "", false
+	case strings.HasPrefix(raw, "//"), strings.HasPrefix(raw, "/"),
+		strings.Contains(raw, "://"), strings.HasPrefix(raw, "data:"):
+		return raw, true
+	default:
+		return raw, false
+	}
+}
+
+// avatarSrc returns a safe <img src> for an avatar value, or "" when the value
+// is a bare object key. Member/list avatars are raw storage keys today (see
+// MemoryClient.ListMembers) and there is no cross-user serve route, so a
+// relative key must fall back to initials rather than request a 404 under the
+// current page path. Absolute and root-relative URLs pass through unchanged.
+func avatarSrc(raw string) string {
+	if v, ok := absoluteAvatarSrc(raw); ok {
+		return v
+	}
+	return ""
+}
+
+// selfAvatarSrc is avatarSrc for the signed-in user, whose relative key can be
+// served by the authenticated avatar proxy (avatarProxy). The v parameter is a
+// cache-buster; it does not select the object.
+func selfAvatarSrc(raw string) string {
+	if v, ok := absoluteAvatarSrc(raw); ok {
+		return v
+	}
+	return "/api/user/avatar?v=" + url.QueryEscape(strings.TrimSpace(raw))
+}
+
+// resolveAvatar picks the avatar URL to display for an arbitrary cached
+// account: the uploaded Memory photo (override) wins when present, else the IdP
+// picture, else "" (initials). Bare object keys are dropped (avatarSrc): only
+// the signed-in user has a serving route, and a cached account's key would
+// otherwise resolve against the current page path.
 func resolveAvatar(override, picture string) string {
 	if override != "" {
-		return override
+		return avatarSrc(override)
 	}
-	return picture
+	return avatarSrc(picture)
+}
+
+// resolveSelfAvatar is resolveAvatar for the signed-in user: their relative IdP
+// picture is their own memory avatar key and can be served by the authenticated
+// avatar proxy.
+func resolveSelfAvatar(override, picture string) string {
+	if override != "" {
+		return avatarSrc(override)
+	}
+	if picture == "" {
+		return ""
+	}
+	return selfAvatarSrc(picture)
 }
 
 // uiAgents renders the agents management page (list + create/edit/delete).

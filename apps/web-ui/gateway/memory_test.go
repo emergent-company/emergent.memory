@@ -681,7 +681,8 @@ func TestListMembers(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[
 			{"id":"u1","email":"a@example.com","displayName":"Ada","firstName":"Ada","lastName":"Lovelace","avatarUrl":"http://a","role":"project_admin","joinedAt":"2024-01-01T00:00:00Z"},
-			{"id":"u2","email":"b@example.com","displayName":"Bob","role":"project_user","joinedAt":"2024-02-01T00:00:00Z"}
+			{"id":"u2","email":"b@example.com","displayName":"Bob","role":"project_user","joinedAt":"2024-02-01T00:00:00Z"},
+			{"id":"u3","email":"c@example.com","displayName":"Cyd","avatarUrl":"avatars/abc.png","role":"project_user","joinedAt":"2024-03-01T00:00:00Z"}
 		]`)
 	}))
 	defer srv.Close()
@@ -693,7 +694,7 @@ func TestListMembers(t *testing.T) {
 	if gotPath != "/api/projects/proj/members" {
 		t.Errorf("path = %q, want /api/projects/proj/members", gotPath)
 	}
-	if len(members) != 2 {
+	if len(members) != 3 {
 		t.Fatalf("members = %+v", members)
 	}
 	if members[0].ID != "u1" || members[0].Email != "a@example.com" || members[0].DisplayName != "Ada" || members[0].Role != "project_admin" || members[0].FirstName != "Ada" || members[0].LastName != "Lovelace" || members[0].AvatarURL != "http://a" || members[0].JoinedAt == "" {
@@ -701,6 +702,11 @@ func TestListMembers(t *testing.T) {
 	}
 	if members[1].Role != "project_user" || members[1].Email != "b@example.com" {
 		t.Errorf("second member = %+v", members[1])
+	}
+	// A raw avatar object key is not a URL; it must not reach an <img src>
+	// (it would resolve under the current page path and 404).
+	if members[2].AvatarURL != "" {
+		t.Errorf("relative member avatar key = %q, want empty", members[2].AvatarURL)
 	}
 }
 

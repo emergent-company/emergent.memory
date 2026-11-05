@@ -239,11 +239,17 @@ templ objectRailCount(label, testID string) {
 // swaps itself for the count badge after paint, so the slow vector search never
 // blocks the page (issue #1096). A zero count swaps in nothing, removing the
 // badge.
+//
+// hx-target="this" overrides the hx-target="#main-content" inherited from the
+// page shell's <main> (htmx implicitInheritance=true); without it the count
+// swap would replace the whole main-content region (and an empty zero-count
+// response would delete it) — see objects.templ's objectSimilarObjectsDeferred.
 templ objectSimilarCountSlot(objectID string) {
 	<span
 		class="inline-flex"
 		hx-get={ templ.URL("/objects/" + url.PathEscape(objectID) + "/similar/count") }
 		hx-trigger="load"
+		hx-target="this"
 		hx-swap="outerHTML"
 		data-testid="object-similar-count-slot"
 	></span>
