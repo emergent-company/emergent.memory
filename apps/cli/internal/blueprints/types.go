@@ -5,9 +5,119 @@ package blueprints
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"gopkg.in/yaml.v3"
 )
+
+// JSONBlob is a raw JSON value decoded from either JSON or YAML.
+//
+// json.RawMessage only implements json.Unmarshaler; yaml.v3 cannot decode a
+// YAML mapping or sequence into it ("cannot unmarshal !!map into
+// jsontext.Value"). JSONBlob adds a YAML decoder that converts the node to its
+// JSON representation, so a pack file may declare uiConfigs/extractionPrompts
+// as native YAML maps.
+type JSONBlob json.RawMessage
+
+// MarshalJSON emits the raw bytes, or null when unset (matching
+// json.RawMessage(nil)).
+func (b JSONBlob) MarshalJSON() ([]byte, error) {
+	if len(b) == 0 {
+		return []byte("null"), nil
+	}
+	return []byte(b), nil
+}
+
+// UnmarshalJSON copies the raw bytes so the blob does not alias the input
+// buffer.
+func (b *JSONBlob) UnmarshalJSON(data []byte) error {
+	if b == nil {
+		return fmt.Errorf("blueprints.JSONBlob: UnmarshalJSON on nil pointer")
+	}
+	if len(data) == 0 {
+		*b = nil
+		return nil
+	}
+	*b = append(JSONBlob(nil), data...)
+	return nil
+}
+
+// UnmarshalYAML decodes the YAML node into a generic value and stores its JSON
+// encoding. A null/absent node leaves the blob unset.
+func (b *JSONBlob) UnmarshalYAML(value *yaml.Node) error {
+	if b == nil {
+		return fmt.Errorf("blueprints.JSONBlob: UnmarshalYAML on nil pointer")
+	}
+	var v any
+	if err := value.Decode(&v); err != nil {
+		return err
+	}
+	v, err := normalizeYAMLValue(v)
+	if err != nil {
+		return err
+	}
+	if v == nil {
+		*b = nil
+		return nil
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encode YAML value as JSON: %w", err)
+	}
+	*b = JSONBlob(data)
+	return nil
+}
+
+// Raw returns the blob as a json.RawMessage, or nil when unset.
+func (b JSONBlob) Raw() json.RawMessage {
+	if len(b) == 0 {
+		return nil
+	}
+	return json.RawMessage(b)
+}
+
+// normalizeYAMLValue recursively converts yaml.v3's generic mappings into the
+// string-keyed shape json.Marshal accepts.
+func normalizeYAMLValue(v any) (any, error) {
+	switch m := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(m))
+		for k, val := range m {
+			norm, err := normalizeYAMLValue(val)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = norm
+		}
+		return out, nil
+	case map[any]any:
+		out := make(map[string]any, len(m))
+		for k, val := range m {
+			ks, ok := k.(string)
+			if !ok {
+				return nil, fmt.Errorf("YAML mapping key %v is not a string", k)
+			}
+			norm, err := normalizeYAMLValue(val)
+			if err != nil {
+				return nil, err
+			}
+			out[ks] = norm
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(m))
+		for i, val := range m {
+			norm, err := normalizeYAMLValue(val)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = norm
+		}
+		return out, nil
+	default:
+		return v, nil
+	}
+}
 
 // ──────────────────────────────────────────────
 // ProjectFile — project.[json|yaml|yml] (blueprint root)
@@ -55,8 +165,8 @@ type PackFile struct {
 	// normalizeSchemaAliases and cleared, so they never reach apply/marshal.
 	ObjectTypeSchemas       []ObjectTypeDef       `json:"objectTypeSchemas,omitempty" yaml:"objectTypeSchemas,omitempty"`
 	RelationshipTypeSchemas []RelationshipTypeDef `json:"relationshipTypeSchemas,omitempty" yaml:"relationshipTypeSchemas,omitempty"`
-	UIConfigs               json.RawMessage       `json:"uiConfigs"        yaml:"uiConfigs"`
-	ExtractionPrompts       json.RawMessage       `json:"extractionPrompts" yaml:"extractionPrompts"`
+	UIConfigs               JSONBlob              `json:"uiConfigs"        yaml:"uiConfigs"`
+	ExtractionPrompts       JSONBlob              `json:"extractionPrompts" yaml:"extractionPrompts"`
 
 	// SourceFile is the path from which this pack was loaded (not serialised).
 	SourceFile string `json:"-" yaml:"-"`
@@ -80,8 +190,21 @@ func (p *PackFile) normalizeSchemaAliases() {
 type ObjectTypeDef struct {
 	Name        string         `json:"name"        yaml:"name"`
 	Label       string         `json:"label"       yaml:"label"`
+	Labels      []string       `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Description string         `json:"description" yaml:"description"`
 	Properties  map[string]any `json:"properties"  yaml:"properties"`
+	// Required lists the property names the type marks required. Preserved
+	// through install/update so a pack authored with a required list reaches
+	// the schema registry unchanged.
+	Required []string `json:"required,omitempty" yaml:"required,omitempty"`
+	// UI is the type-level appearance block (e.g. {"icon":"file-text",
+	// "color":"#3B82F6"}). When absent the pack-level uiConfigs entry for the
+	// type is used. Carried as a raw map so free-form keys round-trip.
+	UI map[string]any `json:"ui,omitempty" yaml:"ui,omitempty"`
+	// Embedding/Extraction are behavioural blocks (e.g. embedding.mode,
+	// extraction.enabled). Carried as raw maps so they round-trip losslessly.
+	Embedding  map[string]any `json:"embedding,omitempty" yaml:"embedding,omitempty"`
+	Extraction map[string]any `json:"extraction,omitempty" yaml:"extraction,omitempty"`
 	// ScopeKey is the effective scope-key declaration (issue #1148): the
 	// property on this type that scopes it to a parent document, plus the
 	// reference it points at. It is the canonical (camelCase) spelling; the
@@ -152,6 +275,10 @@ type RelationshipTypeDef struct {
 	TargetType  string   `json:"targetType"  yaml:"targetType"`
 	SourceTypes []string `json:"sourceTypes" yaml:"sourceTypes"`
 	TargetTypes []string `json:"targetTypes" yaml:"targetTypes"`
+	// Properties carries relationship-level property definitions. The schemas
+	// service accepts them and the server's manifest round-trips them; the CLI
+	// must preserve them so install/update does not silently drop them.
+	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
 // GetSourceTypes returns the effective source types, preferring the plural
