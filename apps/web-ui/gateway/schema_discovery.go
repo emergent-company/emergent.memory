@@ -64,7 +64,7 @@ func (s *Server) uiSchemaDiscoveryCard(c echo.Context) error {
 func (s *Server) uiSchemaDiscoveryStart(c echo.Context) error {
 	ctx := c.Request().Context()
 	if _, err := s.memory.StartProjectDiscovery(ctx); err != nil {
-		return redirectWithError(c, "/schema", err)
+		return redirectWithError(c, "/schema#discovery", err)
 	}
 	s.invalidateProcessingProblems(ctx)
 	// redirectAfterMutation, not c.Redirect: a boosted form (the card's own
@@ -82,10 +82,10 @@ func (s *Server) uiSchemaDiscoveryRetry(c echo.Context) error {
 	ctx := c.Request().Context()
 	jobID := strings.TrimSpace(c.Param("jobID"))
 	if jobID == "" {
-		return redirectWithError(c, "/schema", errDiscoveryJobIDRequired)
+		return redirectWithError(c, "/schema#discovery", errDiscoveryJobIDRequired)
 	}
 	if _, err := s.memory.RetryDiscoveryJob(ctx, jobID); err != nil {
-		return redirectWithError(c, "/schema", err)
+		return redirectWithError(c, "/schema#discovery", err)
 	}
 	s.invalidateProcessingProblems(ctx)
 	redirectAfterMutation(c, "/schema?discovered=1#discovery")
@@ -100,10 +100,10 @@ func (s *Server) uiSchemaDiscoveryCancel(c echo.Context) error {
 	ctx := c.Request().Context()
 	jobID := strings.TrimSpace(c.Param("jobID"))
 	if jobID == "" {
-		return redirectWithError(c, "/schema", errDiscoveryJobIDRequired)
+		return redirectWithError(c, "/schema#discovery", errDiscoveryJobIDRequired)
 	}
 	if err := s.memory.CancelDiscoveryJob(ctx, jobID); err != nil {
-		return redirectWithError(c, "/schema", err)
+		return redirectWithError(c, "/schema#discovery", err)
 	}
 	s.invalidateProcessingProblems(ctx)
 	redirectAfterMutation(c, "/schema?cancelled=1#discovery")

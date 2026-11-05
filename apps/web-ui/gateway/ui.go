@@ -217,15 +217,33 @@ func flashToast(kind, message string) templ.Component {
 
 // redirectWithError redirects to path, carrying the real error message as ?err=
 // so the target page can surface it instead of a generic "operation failed".
+//
+// It goes through redirectAfterMutation rather than c.Redirect because every
+// mutation form in the shell is hx-boosted: a plain 303 is followed inside the
+// XHR and htmx pushes the followed URL, which has no fragment — the reader
+// lands at the top of the target page even when the flash is about a card
+// further down. redirectAfterMutation emits HX-Redirect for an htmx request (a
+// real navigation, fragment intact) and a 303 for a plain one; scopeLocation
+// scopes whichever header that produces.
+//
+// The error param is inserted before any #fragment. Appending it after the
+// fragment would put it inside the fragment, which is never sent to the server,
+// so the flash would be lost.
+//
 // When path already carries a query (e.g. a form selector like
 // ?providerType=google_drive&method=credentials), the error is appended with
 // `&` so the existing params are preserved and the URL stays well-formed.
 func redirectWithError(c echo.Context, path string, err error) error {
+	fragment := ""
+	if i := strings.IndexByte(path, '#'); i >= 0 {
+		path, fragment = path[:i], path[i:]
+	}
 	sep := "?"
 	if strings.Contains(path, "?") {
 		sep = "&"
 	}
-	return c.Redirect(http.StatusSeeOther, path+sep+"err="+url.QueryEscape(err.Error()))
+	redirectAfterMutation(c, path+sep+"err="+url.QueryEscape(err.Error())+fragment)
+	return nil
 }
 
 // flashError decodes the ?err= query param into an error for PRG flash feedback.
