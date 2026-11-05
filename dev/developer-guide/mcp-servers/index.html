@@ -681,6 +681,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sharing-a-scoped-key-with-someone-else" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sharing a scoped key with someone else
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#brave-search-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3338,6 +3349,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sharing-a-scoped-key-with-someone-else" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sharing a scoped key with someone else
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#brave-search-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3785,6 +3807,26 @@ verify the connection.</p>
 <blockquote>
 <p>See <code>apps/server/domain/mcp/README.md</code> for the complete tools, resources, and prompts reference.</p>
 </blockquote>
+<h3 id="sharing-a-scoped-key-with-someone-else">Sharing a scoped key with someone else<a class="headerlink" href="#sharing-a-scoped-key-with-someone-else" title="Permanent link">&para;</a></h3>
+<p>To hand an outside client — a teammate's agent, a partner, a demo — access to
+one project without giving it your own token, create a <strong>share</strong>: a named key
+bound to the exact tools you choose.</p>
+<p><strong>In the web UI:</strong> Settings → MCP Servers → <strong>Sharing</strong> →
+<strong>New share</strong>. Name the share, tick the tools it may call, and optionally enter
+one or more email addresses under <strong>Email the key</strong>. Each recipient receives the
+endpoint, the key, and ready-to-paste client configs; the sender is named in the
+email.</p>
+<p>The key is shown to <em>you</em> exactly once, on the creation screen. If you also
+entered recipients, they have their own copy; otherwise copy it before closing
+the dialog. Later, <strong>Rotate</strong> issues a new key (the old one stops working
+immediately) and its dialog offers the same optional email field, which is the
+recovery path when a recipient loses theirs.</p>
+<p><strong>From the CLI:</strong> <code>memory projects share-mcp --project my-project
+--email alice@example.com</code> does the same through the legacy share endpoint and
+mints one key per recipient.</p>
+<p>Sharing only ever narrows access: a share token carries just the scopes its
+selected tools require, so it cannot reach project administration or other
+projects.</p>
 <h3 id="brave-search-integration">Brave Search integration<a class="headerlink" href="#brave-search-integration" title="Permanent link">&para;</a></h3>
 <p>The built-in server includes a <code>brave_web_search</code> tool backed by the Brave Search API. The API key can be set globally (via environment variable) or overridden per-org or per-project — see <a href="#built-in-tool-configuration">Built-in tool configuration</a> below.</p>
 <hr />

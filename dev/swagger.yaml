@@ -735,6 +735,45 @@ definitions:
     - ExecutionModeSuggest
     - ExecutionModeExecute
     - ExecutionModeHybrid
+  domain_agents.AgentObjectRule:
+    properties:
+      canCreate:
+        description: |-
+          CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an
+          explicit false denies the action for this type.
+        type: boolean
+      canDelete:
+        type: boolean
+      canUpdate:
+        type: boolean
+      fields:
+        description: |-
+          Fields is the writable-property allowlist for this type. Empty means all
+          declared properties are writable.
+        items:
+          type: string
+        type: array
+      objectType:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentWorkStatusConfig'
+        description: |-
+          Status overrides the agent-level phase map for this type. Nil inherits
+          the agent-level map.
+      transitions:
+        description: |-
+          Transitions are the status edges this agent may perform for this type.
+          Empty means only the standard terminator edges are allowed.
+        items:
+          $ref: '#/definitions/domain_agents.AgentTransition'
+        type: array
+      triggers:
+        description: Triggers are the (status, prompt) pickup rows for this type.
+        items:
+          $ref: '#/definitions/domain_agents.AgentWorkTrigger'
+        type: array
+    type: object
   domain_agents.AgentQuestionDTO:
     properties:
       agentId:
@@ -993,6 +1032,13 @@ definitions:
       toolName:
         type: string
     type: object
+  domain_agents.AgentTransition:
+    properties:
+      from:
+        type: string
+      to:
+        type: string
+    type: object
   domain_agents.AgentTriggerType:
     enum:
     - schedule
@@ -1029,6 +1075,13 @@ definitions:
     properties:
       failureLimit:
         type: integer
+      objectRules:
+        description: |-
+          ObjectRules carries the per-object-type rules: phase map, write actions,
+          writable fields, pickup triggers with prompts, and the transition matrix.
+        items:
+          $ref: '#/definitions/domain_agents.AgentObjectRule'
+        type: array
       requiresReview:
         type: boolean
       retryPolicy:
@@ -1046,7 +1099,8 @@ definitions:
         description: |-
           TriggerStatuses lists the status values that, when an object transitions
           into one of them, wake this agent (the `status_changed` signal). Defaults
-          to the built-in "ready" status when unset.
+          to the built-in "ready" status when unset. Legacy: used only when
+          ObjectRules declares no trigger rows.
         items:
           type: string
         type: array
@@ -1089,6 +1143,15 @@ definitions:
       review:
         type: string
       revision:
+        type: string
+    type: object
+  domain_agents.AgentWorkTrigger:
+    properties:
+      objectType:
+        type: string
+      prompt:
+        type: string
+      status:
         type: string
     type: object
   domain_agents.BatchTriggerDTO:
@@ -5358,7 +5421,7 @@ definitions:
       updatedAt:
         type: string
     type: object
-  domain_mcp.CreateShareInstanceRequest:
+  domain_mcp.CreateShareInstanceHTTPRequest:
     properties:
       agents:
         items:
@@ -5366,6 +5429,10 @@ definitions:
         type: array
       description:
         type: string
+      emails:
+        items:
+          type: string
+        type: array
       name:
         type: string
       tools:
@@ -5379,6 +5446,12 @@ definitions:
         type: string
       description:
         type: string
+      emailError:
+        type: string
+      emailsSent:
+        items:
+          type: string
+        type: array
       id:
         type: string
       isLegacy:
@@ -5450,6 +5523,13 @@ definitions:
       jsonrpc:
         type: string
       result: {}
+    type: object
+  domain_mcp.RotateShareInstanceHTTPRequest:
+    properties:
+      emails:
+        items:
+          type: string
+        type: array
     type: object
   domain_mcp.ShareMCPAccessRequest:
     properties:
@@ -20786,7 +20866,9 @@ paths:
       consumes:
       - application/json
       description: Creates a named MCP share instance bound to a new project API token
-        with the selected tool/agent allowlists. Returns the raw token exactly once.
+        with the selected tool allowlist, and optionally emails the one-time key and
+        client setup snippets to the listed recipients. Returns the raw token exactly
+        once.
       parameters:
       - description: Project ID (UUID)
         in: path
@@ -20798,7 +20880,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/domain_mcp.CreateShareInstanceRequest'
+          $ref: '#/definitions/domain_mcp.CreateShareInstanceHTTPRequest'
       produces:
       - application/json
       responses:
@@ -20815,12 +20897,59 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "422":
-          description: Invalid allowlist
+          description: Invalid allowlist or email address
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
       summary: Create an MCP share instance
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/shares/{id}/rotate:
+    post:
+      consumes:
+      - application/json
+      description: Issues a new key for a share instance, invalidating the previous
+        one, and optionally emails the new key and client setup snippets to the listed
+        recipients. The body may be omitted.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Share instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Optional invite recipients
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_mcp.RotateShareInstanceHTTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcp.CreateShareInstanceResponse'
+        "404":
+          description: Unknown share
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Share is revoked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid email address
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Rotate an MCP share key
       tags:
       - mcp
   /api/projects/{projectId}/mcp/tools:
@@ -28213,8 +28342,9 @@ paths:
       - health
   /invites/accept:
     get:
-      description: Accepts a pending invitation using a token passed as a query parameter.
-        Designed for email invite links. Redirects to login if not authenticated.
+      description: 'Redirects an invitation link to the web UI accept page, which
+        authenticates and presents the accept/decline actions. The link never accepts
+        on its own: a GET triggered by a link prefetcher must not mutate state.'
       parameters:
       - description: Invitation token
         in: query
@@ -28224,23 +28354,17 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
-          description: Acceptance confirmation
-          schema:
-            additionalProperties:
-              type: string
-            type: object
         "302":
-          description: Redirect to login
+          description: Redirect to the web UI accept page
         "400":
           description: Missing token
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Invitation not found or expired
+        "503":
+          description: No web UI host configured
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      summary: Accept invitation via link
+      summary: Invitation link target
       tags:
       - invites
   /openapi.json:
