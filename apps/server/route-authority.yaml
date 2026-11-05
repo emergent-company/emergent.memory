@@ -1538,6 +1538,10 @@ routes:
       level: auth
       note: RequireAuth, RequireAPITokenScopes(admin)
     - method: POST
+      path: /api/projects/:projectId/mcp/shares/:id/invite
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(admin)
+    - method: POST
       path: /api/projects/:projectId/mcp/shares/:id/rotate
       level: auth
       note: RequireAuth, RequireAPITokenScopes(admin)
