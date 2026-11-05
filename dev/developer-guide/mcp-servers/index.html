@@ -3816,6 +3816,58 @@ bound to the exact tools you choose.</p>
 one or more email addresses under <strong>Email the key</strong>. Each recipient receives the
 endpoint, the key, and ready-to-paste client configs; the sender is named in the
 email.</p>
+<p><strong>Presets.</strong> The create form offers a preset row that ticks a curated tool set in
+one click — it replaces the current selection, and you can adjust the ticks
+afterwards:</p>
+<table>
+<thead>
+<tr>
+<th>Preset</th>
+<th>What it grants</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Read-only</strong> (default)</td>
+<td>Search, graph reads, document and journal reads, schema reads, skill reads, and agent/run reads. No MCP tool in this set writes.</td>
+</tr>
+<tr>
+<td><strong>Knowledge writer</strong></td>
+<td>Read-only plus creating, editing, and deleting objects, relationships, documents, and journal notes.</td>
+</tr>
+<tr>
+<td><strong>Schema &amp; blueprints</strong></td>
+<td>Graph reads, then schema read/write, schema migrations, and blueprints.</td>
+</tr>
+<tr>
+<td><strong>Agent observer</strong></td>
+<td>Agent, run, question, and session reads, plus search and graph reads.</td>
+</tr>
+<tr>
+<td><strong>Documents</strong></td>
+<td>Upload, list, retrieve, and delete documents, plus document classification, keyword search, and semantic search.</td>
+</tr>
+<tr>
+<td><strong>Full access</strong></td>
+<td>Every tool a share key can carry.</td>
+</tr>
+</tbody>
+</table>
+<p>A share key is also an ordinary project API token, so the scopes behind the
+selected tools are honoured by the REST API as well as the MCP tools. Presets
+keep that set as narrow as the tools allow — the Documents preset, for
+example, grants document read/write and search but no knowledge or chat
+writes.</p>
+<p>Presets never exceed what a share may grant: platform administration, project
+settings, credential minting, and agent execution/management are not shareable,
+so <strong>Full access</strong> is the ceiling rather than "admin". Each preset's tool count
+is resolved against your project's catalog when the page loads, so it always
+matches the tools the backend currently offers.</p>
+<p>The same data is available to API clients: <code>GET /api/projects/{projectId}/mcp/tools</code>
+returns <code>tools</code> plus a <code>templates</code> array (id, label, description, <code>tools</code>,
+<code>toolCount</code>, and <code>default</code> on the preselected one). Creating a share still sends
+an explicit <code>tools</code> list — a template is a UI convenience, not a new request
+field.</p>
 <p>The key is shown to <em>you</em> exactly once, on the creation screen. If you also
 entered recipients, they have their own copy; otherwise copy it before closing
 the dialog.</p>

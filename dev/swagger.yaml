@@ -5616,6 +5616,10 @@ definitions:
     type: object
   domain_mcp.CatalogResponse:
     properties:
+      templates:
+        items:
+          $ref: '#/definitions/domain_mcp.ShareTemplateDTO'
+        type: array
       tools:
         items:
           $ref: '#/definitions/domain_mcp.CatalogToolDTO'
@@ -5823,6 +5827,23 @@ definitions:
       token:
         description: Token is the raw API token value — returned only once.
         type: string
+    type: object
+  domain_mcp.ShareTemplateDTO:
+    properties:
+      default:
+        type: boolean
+      description:
+        type: string
+      id:
+        type: string
+      label:
+        type: string
+      toolCount:
+        type: integer
+      tools:
+        items:
+          type: string
+        type: array
     type: object
   domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO:
     properties:
@@ -21364,8 +21385,8 @@ paths:
   /api/projects/{projectId}/mcp/tools:
     get:
       description: Returns the memory tools that can be granted to an MCP share instance
-        (name, description, required scope, category), excluding agent-only tools.
-        Admin only.
+        (name, description, required scope, category), excluding agent-only tools,
+        plus the named share templates resolved against that catalog. Admin only.
       parameters:
       - description: Project ID (UUID)
         in: path
