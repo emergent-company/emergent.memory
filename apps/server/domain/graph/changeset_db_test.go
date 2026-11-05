@@ -1370,3 +1370,402 @@ func TestBranchTombstoneSkipsRecordTheBranchAlreadyCarries(t *testing.T) {
 	require.Len(t, held, 1)
 	assert.Equal(t, branchVersion, held[0].SubjectVersionID, "the branch's record stays attributed to its own object")
 }
+
+// countingContributionSelectHook counts SELECTs against the contributions table.
+// It is the read-path probe: a detail or list response must cost one
+// contribution query, whichever how many rows it describes.
+type countingContributionSelectHook struct {
+	count int
+}
+
+func (h *countingContributionSelectHook) BeforeQuery(ctx context.Context, event *bun.QueryEvent) context.Context {
+	// bun renders the schema and table separately ("kb"."provenance_contributions"),
+	// so match the table name alone.
+	if event.Operation() == "SELECT" && strings.Contains(event.Query, "provenance_contributions") {
+		h.count++
+	}
+	return ctx
+}
+
+func (h *countingContributionSelectHook) AfterQuery(ctx context.Context, event *bun.QueryEvent) {}
+
+// TestObjectDetailExposesContributions is 12.1's object half: the detail
+// response names a version row and reports the sources backing it.
+func TestObjectDetailExposesContributions(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "detail")
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Detail"},
+			ExternalID:          "detail-1",
+			ExternalRevisionSeq: seq(7),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	versionID := *applied.Results[0].SubjectID
+	canonicalID := *applied.Results[0].CanonicalID
+
+	detail, err := svc.GetByID(ctx, projectID, versionID, true)
+	require.NoError(t, err)
+	require.Len(t, detail.Contributions, 1, "the detail response must expose the version's contributor")
+	contrib := detail.Contributions[0]
+	assert.Equal(t, versionID, contrib.SubjectVersionID, "the contribution must describe the version the response names")
+	assert.Equal(t, sourceID, contrib.SourceID)
+	assert.Equal(t, "detail-1", contrib.ExternalID)
+	assert.Equal(t, int64(7), contrib.ExternalRevisionSeq)
+	assert.Equal(t, graph.ContributionStatePresent, contrib.State)
+
+	// A canonical id resolves to HEAD and reports the same contributor.
+	byCanonical, err := svc.GetByID(ctx, projectID, canonicalID, true)
+	require.NoError(t, err)
+	require.Len(t, byCanonical.Contributions, 1)
+
+	// An object Memory synthesized itself reports none — the field is absent,
+	// not "zero contributors" on a version that has some.
+	plain, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{Type: "Person"}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, plain.Contributions)
+}
+
+// TestHistoryExposesContributionsPerVersionInOneQuery is 12.1's history half
+// plus 12.3's N+1 guard: each version reports the rows keyed to it, and the
+// whole history costs one contribution query.
+func TestHistoryExposesContributionsPerVersionInOneQuery(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "history")
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "v1"},
+			ExternalID:          "history-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	canonicalID := *applied.Results[0].CanonicalID
+
+	for _, name := range []string{"v2", "v3"} {
+		_, err := svc.Patch(ctx, projectID, canonicalID, &graph.PatchGraphObjectRequest{
+			Properties: map[string]any{"name": name},
+		}, nil)
+		require.NoError(t, err)
+	}
+
+	bdb, ok := db.(*bun.DB)
+	require.True(t, ok, "test DB must be a *bun.DB when no transaction is active")
+	hook := &countingContributionSelectHook{}
+	bdb.AddQueryHook(hook)
+
+	history, err := svc.GetHistory(ctx, projectID, canonicalID)
+	require.NoError(t, err)
+	require.Len(t, history.Versions, 3)
+	assert.Equal(t, 1, hook.count, "version history must read contributions once, not once per version")
+
+	// History order is the repository's business; which version is HEAD is not.
+	// Every version keeps the rows it arrived with, and exactly the highest
+	// version's row is still present.
+	presentVersion := uuid.Nil
+	presentCount := 0
+	for _, version := range history.Versions {
+		require.Len(t, version.Contributions, 1, "version %d lost its contributor", version.Version)
+		assert.Equal(t, version.ID, version.Contributions[0].SubjectVersionID)
+		if version.Contributions[0].State == graph.ContributionStatePresent {
+			presentVersion = version.ID
+			presentCount++
+		} else {
+			assert.Equal(t, graph.ContributionStateSuperseded, version.Contributions[0].State)
+		}
+	}
+	require.Equal(t, 1, presentCount, "only the HEAD version's contribution is present")
+	head, err := svc.GetByID(ctx, projectID, canonicalID, true)
+	require.NoError(t, err)
+	assert.Equal(t, head.ID, presentVersion, "the present contribution sits on the HEAD version")
+}
+
+// TestObjectDetailReportsWithdrawnContribution is 12.3's state case: a
+// withdrawal does not delete the row, so the detail response reports the
+// contribution as no longer present instead of silently dropping it.
+func TestObjectDetailReportsWithdrawnContribution(t *testing.T) {
+	ctx, db, repo, svc, projectID := setupProvenanceTest(t)
+	sourceA := createTestSource(t, ctx, db, projectID, "wd-a")
+	sourceB := createTestSource(t, ctx, db, projectID, "wd-b")
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceA,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Shared"},
+			ExternalID:          "wd-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	versionID := *applied.Results[0].SubjectID
+
+	require.NoError(t, repo.InsertContribution(ctx, db, &graph.ProvenanceContribution{
+		ProjectID:           projectID,
+		SubjectKind:         graph.ContributionSubjectObject,
+		SubjectVersionID:    versionID,
+		SourceID:            sourceB,
+		ExternalID:          "wd-1-b",
+		ExternalRevisionSeq: 2,
+	}))
+
+	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID:    sourceA,
+		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "wd-1"}},
+	}, nil)
+	require.NoError(t, err)
+
+	detail, err := svc.GetByID(ctx, projectID, versionID, true)
+	require.NoError(t, err)
+	require.Len(t, detail.Contributions, 2, "withdrawal is a state change, not a delete")
+
+	bySource := make(map[uuid.UUID]*graph.ProvenanceContribution, len(detail.Contributions))
+	for _, c := range detail.Contributions {
+		bySource[c.SourceID] = c
+	}
+	require.Contains(t, bySource, sourceA)
+	require.Contains(t, bySource, sourceB)
+	assert.Equal(t, graph.ContributionStateWithdrawn, bySource[sourceA].State)
+	assert.NotNil(t, bySource[sourceA].WithdrawnAt, "the withdrawn contribution says when")
+	assert.Equal(t, graph.ContributionStatePresent, bySource[sourceB].State)
+}
+
+// TestRelationshipReadsExposeContributions is the relationship half of 12.1/12.3:
+// detail, list and edges all report subject_kind = relationship contributions,
+// and the list path reads them once for the whole page.
+func TestRelationshipReadsExposeContributions(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "rel-read")
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{
+			{Ref: "a", Type: "Person", ExternalID: "r-a", ExternalRevisionSeq: seq(1)},
+			{Ref: "b", Type: "Person", ExternalID: "r-b", ExternalRevisionSeq: seq(1)},
+			{Ref: "c", Type: "Person", ExternalID: "r-c", ExternalRevisionSeq: seq(1)},
+		},
+		Relationships: []graph.ChangesetRelationshipItem{
+			{Type: "KNOWS", SrcRef: "a", DstRef: "b", ExternalID: "r-knows-ab", ExternalRevisionSeq: seq(1)},
+			{Type: "KNOWS", SrcRef: "a", DstRef: "c", ExternalID: "r-knows-ac", ExternalRevisionSeq: seq(1)},
+		},
+	}, nil)
+	require.NoError(t, err)
+	relAB := *resultFor(t, applied, "r-knows-ab").SubjectID
+	objectA := *resultFor(t, applied, "r-a").SubjectID
+
+	one, err := svc.GetRelationship(ctx, projectID, relAB)
+	require.NoError(t, err)
+	require.Len(t, one.Contributions, 1)
+	assert.Equal(t, graph.ContributionSubjectRelationship, one.Contributions[0].SubjectKind)
+	assert.Equal(t, relAB, one.Contributions[0].SubjectVersionID)
+	assert.Equal(t, "r-knows-ab", one.Contributions[0].ExternalID)
+
+	bdb, ok := db.(*bun.DB)
+	require.True(t, ok, "test DB must be a *bun.DB when no transaction is active")
+	hook := &countingContributionSelectHook{}
+	bdb.AddQueryHook(hook)
+
+	list, err := svc.ListRelationships(ctx, graph.RelationshipListParams{ProjectID: projectID, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, list.Items, 2)
+	assert.Equal(t, 1, hook.count, "the relationship list must read contributions once for the page")
+	for _, item := range list.Items {
+		require.Len(t, item.Contributions, 1, "relationship %s lost its contributor", item.Type)
+		assert.Equal(t, item.ID, item.Contributions[0].SubjectVersionID)
+	}
+
+	// Edges read both directions in one query too.
+	hook.count = 0
+	edges, err := svc.GetEdges(ctx, projectID, objectA, graph.GetEdgesParams{})
+	require.NoError(t, err)
+	require.Len(t, edges.Outgoing, 2)
+	assert.Equal(t, 1, hook.count, "edges must read contributions once for the request")
+	for _, edge := range edges.Outgoing {
+		require.Len(t, edge.Contributions, 1)
+	}
+}
+
+// TestRelationshipHistoryExposesContributions is the relationship counterpart
+// of the object-history read: each version reports the rows keyed to it, so a
+// relationship's contributor is visible in its history too.
+func TestRelationshipHistoryExposesContributions(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "rel-history")
+
+	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{
+			{Ref: "a", Type: "Person", ExternalID: "rh-a", ExternalRevisionSeq: seq(1)},
+			{Ref: "b", Type: "Person", ExternalID: "rh-b", ExternalRevisionSeq: seq(1)},
+		},
+		Relationships: []graph.ChangesetRelationshipItem{
+			{Type: "KNOWS", SrcRef: "a", DstRef: "b", ExternalID: "rh-knows", ExternalRevisionSeq: seq(1)},
+		},
+	}, nil)
+	require.NoError(t, err)
+	relID := *resultFor(t, first, "rh-knows").SubjectID
+	srcA := *resultFor(t, first, "rh-a").SubjectID
+	dstB := *resultFor(t, first, "rh-b").SubjectID
+
+	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Relationships: []graph.ChangesetRelationshipItem{
+			{Type: "KNOWS", SrcID: &srcA, DstID: &dstB, ExternalID: "rh-knows", ExternalRevisionSeq: seq(2)},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	history, err := svc.GetRelationshipHistory(ctx, projectID, relID)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	present := 0
+	for _, version := range history {
+		require.Len(t, version.Contributions, 1, "relationship version %d lost its contributor", version.Version)
+		assert.Equal(t, version.ID, version.Contributions[0].SubjectVersionID)
+		assert.Equal(t, graph.ContributionSubjectRelationship, version.Contributions[0].SubjectKind)
+		if version.Contributions[0].State == graph.ContributionStatePresent {
+			present++
+		}
+	}
+	assert.Equal(t, 1, present, "exactly the HEAD version's contribution is still present")
+}
+
+// insertPresentContribution writes a contribution row straight to the table so
+// the index under test is the one that refuses the second row, not
+// InsertContribution's upsert.
+func insertPresentContribution(t *testing.T, ctx context.Context, db bun.IDB, c *graph.ProvenanceContribution) error {
+	t.Helper()
+	_, err := db.NewRaw(`
+		INSERT INTO kb.provenance_contributions
+			(project_id, branch_id, subject_kind, subject_version_id, source_id, external_id, external_revision, external_revision_seq, state)
+		VALUES (?, ?, ?, ?, ?, ?, '', 1, 'present')
+	`, c.ProjectID, c.BranchID, c.SubjectKind, c.SubjectVersionID, c.SourceID, c.ExternalID).Exec(ctx)
+	return err
+}
+
+// TestPresentContributionAddressIsUnique is 8.5: the addressing key is enforced
+// by the database, not by a read-then-write check, so two present rows for the
+// same (project, branch, kind, source, external id) cannot exist.
+func TestPresentContributionAddressIsUnique(t *testing.T) {
+	ctx, db, _, _, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "unique")
+
+	branchA, branchB := uuid.New(), uuid.New()
+	row := func(branchID *uuid.UUID, versionID uuid.UUID) *graph.ProvenanceContribution {
+		return &graph.ProvenanceContribution{
+			ProjectID:        projectID,
+			BranchID:         branchID,
+			SubjectKind:      graph.ContributionSubjectObject,
+			SubjectVersionID: versionID,
+			SourceID:         sourceID,
+			ExternalID:       "dup-1",
+		}
+	}
+
+	// The branch-scoped index: a second present row for the same address on the
+	// same branch is refused even though it names a different version row.
+	require.NoError(t, insertPresentContribution(t, ctx, db, row(&branchA, uuid.New())))
+	err := insertPresentContribution(t, ctx, db, row(&branchA, uuid.New()))
+	require.Error(t, err, "a second present row for one address on a branch must be refused")
+	assert.Contains(t, err.Error(), "uq_provenance_contributions_present_branch")
+
+	// The same address on another branch is a different record, which is the
+	// point of putting the branch in the key.
+	require.NoError(t, insertPresentContribution(t, ctx, db, row(&branchB, uuid.New())))
+
+	// The main-line index has the same shape with branch_id IS NULL.
+	require.NoError(t, insertPresentContribution(t, ctx, db, row(nil, uuid.New())))
+	err = insertPresentContribution(t, ctx, db, row(nil, uuid.New()))
+	require.Error(t, err, "a second main-line present row for one address must be refused")
+	assert.Contains(t, err.Error(), "uq_provenance_contributions_present_main")
+
+	// A superseded row does not occupy the address: that is what lets a source
+	// re-contribute a record it previously retired.
+	_, err = db.NewRaw(`
+		UPDATE kb.provenance_contributions SET state = 'superseded'
+		WHERE project_id = ? AND branch_id = ? AND external_id = 'dup-1'`, projectID, branchA).Exec(ctx)
+	require.NoError(t, err)
+	require.NoError(t, insertPresentContribution(t, ctx, db, row(&branchA, uuid.New())),
+		"a superseded row must not block the address")
+}
+
+// TestApplyReportsOneResultPerItemInRequestOrder is 9.6: a mixed changeset
+// reports one result per item, positionally, not only one per kind found by
+// lookup.
+func TestApplyReportsOneResultPerItemInRequestOrder(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "mixed")
+
+	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{
+			{Ref: "a", Type: "Person", Properties: map[string]any{"name": "A"}, ExternalID: "m-a", ExternalRevisionSeq: seq(1)},
+			{Ref: "b", Type: "Person", Properties: map[string]any{"name": "B"}, ExternalID: "m-b", ExternalRevisionSeq: seq(1)},
+			{Ref: "c", Type: "Person", Properties: map[string]any{"name": "C"}, ExternalID: "m-c", ExternalRevisionSeq: seq(1)},
+		},
+		Relationships: []graph.ChangesetRelationshipItem{
+			{Type: "KNOWS", SrcRef: "a", DstRef: "b", ExternalID: "m-knows", ExternalRevisionSeq: seq(1)},
+		},
+	}, nil)
+	require.NoError(t, err)
+	// A second push addresses the endpoints by id: _ref only resolves within the
+	// changeset that defines it.
+	srcA := *resultFor(t, first, "m-a").SubjectID
+
+	mixed, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{
+			{Type: "Person", Properties: map[string]any{"name": "A2"}, ExternalID: "m-a", ExternalRevisionSeq: seq(2)},
+		},
+		Relationships: []graph.ChangesetRelationshipItem{
+			{Type: "KNOWS", SrcID: &srcA, DstID: resultFor(t, first, "m-b").SubjectID, ExternalID: "m-knows", ExternalRevisionSeq: seq(2)},
+		},
+		Withdrawals: []graph.ChangesetWithdrawalItem{
+			{ExternalID: "m-c"},
+		},
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, mixed.Results, 3, "one result per item, across all three arrays")
+
+	// Positional: objects first, then relationships, then withdrawals — each in
+	// its own request order. A result found by lookup would pass even if the
+	// slice were ordered by outcome.
+	assert.Equal(t, graph.ChangesetItemResult{
+		Kind:       graph.ContributionSubjectObject,
+		ExternalID: "m-a",
+		Outcome:    graph.ChangesetOutcomeUpdated,
+	}, withoutIDs(mixed.Results[0]))
+	assert.Equal(t, graph.ChangesetItemResult{
+		Kind:       graph.ContributionSubjectRelationship,
+		ExternalID: "m-knows",
+		Outcome:    graph.ChangesetOutcomeUpdated,
+	}, withoutIDs(mixed.Results[1]))
+	assert.Equal(t, graph.ChangesetItemResult{
+		Kind:       graph.ContributionSubjectObject,
+		ExternalID: "m-c",
+		Outcome:    graph.ChangesetOutcomeWithdrawn,
+	}, withoutIDs(mixed.Results[2]))
+
+	// The withdrawal is really applied, so the position is not reporting a
+	// planned shape that nothing wrote.
+	withdrawn := contributionsFor(t, ctx, db, sourceID, "m-c")
+	require.Len(t, withdrawn, 1)
+	assert.Equal(t, graph.ContributionStateWithdrawn, withdrawn[0].State)
+}
+
+// withoutIDs strips the resolved ids from a result so a positional comparison
+// reads as one expectation instead of five field assertions.
+func withoutIDs(r graph.ChangesetItemResult) graph.ChangesetItemResult {
+	r.SubjectID = nil
+	r.CanonicalID = nil
+	r.Version = nil
+	r.Reason = ""
+	return r
+}
