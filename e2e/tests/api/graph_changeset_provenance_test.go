@@ -21,7 +21,13 @@ import (
 
 const (
 	changesetE2EObjectType = "ChangesetE2EObject"
-	changesetE2ERelType    = "CHANGESET_E2E_LINKS"
+	// Relationship types are lower_snake_case: every ordinary write path
+	// normalises them (normalizeRelationType) and the search filter lowercases
+	// unconditionally. The changeset apply does not normalise yet, so this
+	// fixture is written already-normalised — pushing a mixed-case type and
+	// filtering for it is the bug filed as #140, not something this test should
+	// paper over by asserting the unnormalised row.
+	changesetE2ERelType = "changeset_e2e_links"
 )
 
 // changesetPushResult mirrors the subset of POST /api/graph/changesets this
@@ -167,9 +173,15 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 	ada := outcomeFor(t, pushed, "e2e-ada")
 	bob := outcomeFor(t, pushed, "e2e-bob")
 	knows := outcomeFor(t, pushed, "e2e-knows")
+	// Cleanup runs after rl.Close(), so it uses the unlogged helpers. Delete by
+	// canonical id: the id the push reported is the version that later becomes
+	// superseded, while the canonical id resolves to the head of the chain.
+	// Relationships are deleted through the object delete cascade only when their
+	// endpoints go, so remove the relationship explicitly first.
 	t.Cleanup(func() {
-		deleteGraphObject(t, projectID, ada.SubjectID)
-		deleteGraphObject(t, projectID, bob.SubjectID)
+		deleteRelationship(t, projectID, knows.SubjectID)
+		deleteGraphObject(t, projectID, ada.CanonicalID)
+		deleteGraphObject(t, projectID, bob.CanonicalID)
 	})
 
 	// ── 3. The object read reports the source that owns it ───────────────────
