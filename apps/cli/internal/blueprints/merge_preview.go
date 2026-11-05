@@ -57,7 +57,7 @@ func PrintMergeConflicts(out io.Writer, conflicts []sdkschemas.MergePreviewConfl
 	if len(conflicts) == 0 {
 		return
 	}
-	fmt.Fprintln(out, "Existing object type names detected:")
+	_, _ = fmt.Fprintln(out, "Existing object type names detected:")
 	for _, c := range conflicts {
 		existing := c.ExistingSchemaName
 		if existing == "" {
@@ -70,12 +70,12 @@ func PrintMergeConflicts(out io.Writer, conflicts []sdkschemas.MergePreviewConfl
 		if incoming == "" {
 			incoming = "(unknown pack)"
 		}
-		fmt.Fprintf(out, "  type %q: existing pack %q → incoming pack %q\n", c.TypeName, existing, incoming)
+		_, _ = fmt.Fprintf(out, "  type %q: existing pack %q → incoming pack %q\n", c.TypeName, existing, incoming)
 
 		if len(c.AddedProperties) > 0 {
 			added := append([]string(nil), c.AddedProperties...)
 			sort.Strings(added)
-			fmt.Fprintf(out, "    added properties: %s\n", strings.Join(added, ", "))
+			_, _ = fmt.Fprintf(out, "    added properties: %s\n", strings.Join(added, ", "))
 		}
 		if len(c.ConflictingProperties) > 0 {
 			names := make([]string, 0, len(c.ConflictingProperties))
@@ -83,7 +83,7 @@ func PrintMergeConflicts(out io.Writer, conflicts []sdkschemas.MergePreviewConfl
 				names = append(names, pc.Property)
 			}
 			sort.Strings(names)
-			fmt.Fprintf(out, "    conflicting properties (existing definition wins): %s\n", strings.Join(names, ", "))
+			_, _ = fmt.Fprintf(out, "    conflicting properties (existing definition wins): %s\n", strings.Join(names, ", "))
 		}
 	}
 }

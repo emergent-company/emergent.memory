@@ -259,7 +259,7 @@ func confirmMergeTypeConflicts(cmd *cobra.Command, conflicts []sdkschemas.MergeP
 // promptMergeConfirmation asks the y/N question on the command's input/output.
 // EOF or anything other than y/yes aborts.
 func promptMergeConfirmation(cmd *cobra.Command) error {
-	fmt.Fprint(cmd.OutOrStdout(), "Existing object type names will be merged. Continue? [y/N]: ")
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), "Existing object type names will be merged. Continue? [y/N]: ")
 	scanner := bufio.NewScanner(cmd.InOrStdin())
 	if !scanner.Scan() {
 		return fmt.Errorf("merge cancelled — no changes applied")
@@ -805,7 +805,7 @@ func printUpdateJobConflicts(out io.Writer, job *blueprintUpdateJobStatus) {
 	}
 	if len(result.Conflicts) > 0 {
 		blueprints.PrintMergeConflicts(out, result.Conflicts)
-		fmt.Fprintln(out, "Re-run with --merge-types to confirm the merge.")
+		_, _ = fmt.Fprintln(out, "Re-run with --merge-types to confirm the merge.")
 	}
 }
 
