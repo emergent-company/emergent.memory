@@ -324,7 +324,7 @@ Schemas are versioned bundles of object type schemas, relationship type schemas,
 | `license` | string | SPDX license ID |
 | `repository_url` | string | |
 | `documentation_url` | string | |
-| `object_type_schemas` | jsonb | map of type name → JSON Schema |
+| `object_type_schemas` | jsonb | array of `{"name","label","properties",...}` objects; legacy map of type name → JSON Schema is read-compatible |
 | `relationship_type_schemas` | jsonb | array of `{"name","sourceType","targetType"}`; legacy map of rel type → schema is read-compatible |
 | `ui_configs` | jsonb | map of type name → UI config |
 | `extraction_prompts` | jsonb | map of type name → prompt config |

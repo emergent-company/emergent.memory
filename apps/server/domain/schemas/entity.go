@@ -417,10 +417,12 @@ type CreatePackRequest struct {
 
 	// ObjectTypeSchemas is the object-type definitions in the request shape: a
 	// JSON array of {"name","label","properties",...} objects, e.g.
-	// [{"name":"Note","properties":{...}}]. The map-of-type-name → schema form
-	// stored in kb.graph_schemas.object_type_schemas (written by some blueprint
-	// seeds) is read-compatible on later reads, but validateSchemaDefinitions
-	// does NOT accept it on this request.
+	// [{"name":"Note","properties":{...}}]. This is the shape the validator
+	// accepts and the shape blueprint apply/seeder write. The map-of-type-name
+	// → schema form stored in kb.graph_schemas.object_type_schemas (legacy
+	// rows, the MCP create-schema tool, and the discovery path) is
+	// read-compatible on later reads, but validateSchemaDefinitions does NOT
+	// accept it on this request.
 	// Accepts both snake_case and camelCase keys.
 	// Use GetObjectTypeSchemas() to retrieve the resolved value.
 	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas" swaggertype:"array,object"`
@@ -439,9 +441,11 @@ type CreatePackRequest struct {
 
 	// UIConfigs is a JSON object keyed by object type name, each value a UI
 	// config such as {"icon":"file-text","color":"#3B82F6"}. This map form is
-	// what the docs and blueprint seeds write; the compiled-types reader
-	// unmarshals it as map[string]json.RawMessage, so an array is not a
-	// supported shape.
+	// what the MCP create-schema tool writes (it rejects a non-object with
+	// "must be an object, got %T"), the published API docs and SKILL.md show,
+	// and the compiled-types reader unmarshals as map[string]json.RawMessage;
+	// an array is not a supported shape. Blueprint manifests express UI per
+	// type, inline, not through this pack-level map.
 	// Accepts both snake_case and camelCase keys.
 	// Use GetUIConfigs() to retrieve the resolved value.
 	UIConfigsSnake json.RawMessage `json:"ui_configs,omitempty" swaggertype:"object"`
@@ -449,8 +453,11 @@ type CreatePackRequest struct {
 
 	// ExtractionPrompts is a JSON object keyed by object type name, each value
 	// a prompt config such as {"system_prompt":"...","field_hints":{...}}.
-	// This map form is what the docs and blueprint seeds write; no array form
-	// is read.
+	// This map form is what the MCP create-schema tool writes (it rejects a
+	// non-object with "must be an object, got %T"), the published API docs and
+	// SKILL.md show, and the assign/restore readers unmarshal as
+	// map[string]json.RawMessage; no array form is read. Blueprint manifests do
+	// not carry a pack-level extraction_prompts field.
 	// Accepts both snake_case and camelCase keys.
 	// Use GetExtractionPrompts() to retrieve the resolved value.
 	ExtractionPromptsSnake json.RawMessage `json:"extraction_prompts,omitempty" swaggertype:"object"`
@@ -499,8 +506,10 @@ type UpdatePackRequest struct {
 	RepositoryURL    *string `json:"repository_url,omitempty"`
 	DocumentationURL *string `json:"documentation_url,omitempty"`
 	// ObjectTypeSchemas is the request shape only: a JSON array of
-	// {"name","label","properties",...} objects. The map-of-type-name → schema
-	// stored form is read-compatible elsewhere but is not accepted on update.
+	// {"name","label","properties",...} objects, which is also what blueprint
+	// apply/seeder write. The map-of-type-name → schema stored form (legacy
+	// rows, MCP create-schema, discovery) is read-compatible elsewhere but is
+	// not accepted on update.
 	ObjectTypeSchemas json.RawMessage `json:"object_type_schemas,omitempty" swaggertype:"array,object"`
 	// RelationshipTypeSchemas is the request shape only: a JSON array of
 	// {"name","sourceType","targetType"} objects. The stored map form is not

@@ -269,7 +269,7 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 			ScopeKeySnake json.RawMessage `json:"scope_key"`
 		}
 		if err := json.Unmarshal(objectTypeSchemas, &entries); err != nil {
-			errs = append(errs, fmt.Sprintf("objectTypeSchemas is not a valid JSON array: %v", err))
+			errs = append(errs, objectTypeSchemasShapeError(objectTypeSchemas))
 		} else if len(entries) == 0 {
 			errs = append(errs, "objectTypeSchemas array is empty — did you use 'objectTypes' instead of 'objectTypeSchemas'?")
 		} else {
@@ -333,6 +333,36 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 	}
 
 	return errs
+}
+
+// objectTypeSchemasExpectedShape is the request shape validateSchemaDefinitions
+// accepts for object_type_schemas. It is spelled out in the error so a caller
+// never has to read the validator (or a "[]struct { Name ... }" Go type) to
+// learn what to send.
+const objectTypeSchemasExpectedShape = `[{"name":"Note","properties":{"title":{"type":"string"}}}]`
+
+// objectTypeSchemasShapeError turns an object-type decoding failure into an
+// actionable message that names the expected array shape. The request shape and
+// the stored shape differ: kb.graph_schemas.object_type_schemas also accepts
+// the legacy map-of-type-name → schema form on read, but the API request is
+// always the array form. The raw json decoder error is deliberately not
+// included — it leaks a Go type name that tells the caller nothing.
+func objectTypeSchemasShapeError(raw json.RawMessage) string {
+	got := "unparseable JSON"
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 {
+		switch trimmed[0] {
+		case '{':
+			got = "a JSON object (the stored map form, not the request shape)"
+		case '[':
+			got = "a JSON array whose entries are not all {name, properties, ...} objects"
+		default:
+			got = "a JSON scalar"
+		}
+	}
+	return fmt.Sprintf(
+		"objectTypeSchemas must be a JSON array of {\"name\",\"properties\",...} objects, for example %s; got %s",
+		objectTypeSchemasExpectedShape, got,
+	)
 }
 
 // relationshipTypeSchemasExpectedShape is the request shape the API accepts.

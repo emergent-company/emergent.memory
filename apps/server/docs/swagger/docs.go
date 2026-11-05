@@ -40277,7 +40277,7 @@ const docTemplate = `{
                     "type": "object"
                 },
                 "extraction_prompts": {
-                    "description": "ExtractionPrompts is a JSON object keyed by object type name, each value\na prompt config such as {\"system_prompt\":\"...\",\"field_hints\":{...}}.\nThis map form is what the docs and blueprint seeds write; no array form\nis read.\nAccepts both snake_case and camelCase keys.\nUse GetExtractionPrompts() to retrieve the resolved value.",
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name, each value\na prompt config such as {\"system_prompt\":\"...\",\"field_hints\":{...}}.\nThis map form is what the MCP create-schema tool writes (it rejects a\nnon-object with \"must be an object, got %T\"), the published API docs and\nSKILL.md show, and the assign/restore readers unmarshal as\nmap[string]json.RawMessage; no array form is read. Blueprint manifests do\nnot carry a pack-level extraction_prompts field.\nAccepts both snake_case and camelCase keys.\nUse GetExtractionPrompts() to retrieve the resolved value.",
                     "type": "object"
                 },
                 "license": {
@@ -40301,7 +40301,7 @@ const docTemplate = `{
                     }
                 },
                 "object_type_schemas": {
-                    "description": "ObjectTypeSchemas is the object-type definitions in the request shape: a\nJSON array of {\"name\",\"label\",\"properties\",...} objects, e.g.\n[{\"name\":\"Note\",\"properties\":{...}}]. The map-of-type-name → schema form\nstored in kb.graph_schemas.object_type_schemas (written by some blueprint\nseeds) is read-compatible on later reads, but validateSchemaDefinitions\ndoes NOT accept it on this request.\nAccepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
+                    "description": "ObjectTypeSchemas is the object-type definitions in the request shape: a\nJSON array of {\"name\",\"label\",\"properties\",...} objects, e.g.\n[{\"name\":\"Note\",\"properties\":{...}}]. This is the shape the validator\naccepts and the shape blueprint apply/seeder write. The map-of-type-name\n→ schema form stored in kb.graph_schemas.object_type_schemas (legacy\nrows, the MCP create-schema tool, and the discovery path) is\nread-compatible on later reads, but validateSchemaDefinitions does NOT\naccept it on this request.\nAccepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
                     "type": "array",
                     "items": {
                         "type": "object"
@@ -40327,7 +40327,7 @@ const docTemplate = `{
                     "type": "object"
                 },
                 "ui_configs": {
-                    "description": "UIConfigs is a JSON object keyed by object type name, each value a UI\nconfig such as {\"icon\":\"file-text\",\"color\":\"#3B82F6\"}. This map form is\nwhat the docs and blueprint seeds write; the compiled-types reader\nunmarshals it as map[string]json.RawMessage, so an array is not a\nsupported shape.\nAccepts both snake_case and camelCase keys.\nUse GetUIConfigs() to retrieve the resolved value.",
+                    "description": "UIConfigs is a JSON object keyed by object type name, each value a UI\nconfig such as {\"icon\":\"file-text\",\"color\":\"#3B82F6\"}. This map form is\nwhat the MCP create-schema tool writes (it rejects a non-object with\n\"must be an object, got %T\"), the published API docs and SKILL.md show,\nand the compiled-types reader unmarshals as map[string]json.RawMessage;\nan array is not a supported shape. Blueprint manifests express UI per\ntype, inline, not through this pack-level map.\nAccepts both snake_case and camelCase keys.\nUse GetUIConfigs() to retrieve the resolved value.",
                     "type": "object"
                 },
                 "version": {
@@ -41213,7 +41213,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "object_type_schemas": {
-                    "description": "ObjectTypeSchemas is the request shape only: a JSON array of\n{\"name\",\"label\",\"properties\",...} objects. The map-of-type-name → schema\nstored form is read-compatible elsewhere but is not accepted on update.",
+                    "description": "ObjectTypeSchemas is the request shape only: a JSON array of\n{\"name\",\"label\",\"properties\",...} objects, which is also what blueprint\napply/seeder write. The map-of-type-name → schema stored form (legacy\nrows, MCP create-schema, discovery) is read-compatible elsewhere but is\nnot accepted on update.",
                     "type": "array",
                     "items": {
                         "type": "object"
