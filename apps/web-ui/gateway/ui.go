@@ -566,6 +566,12 @@ func (s *Server) uiAgents(c echo.Context) error {
 		defaultModel    string
 		defaultModelErr error
 	)
+	// ?accepted=1 is where accepting an invitation lands (inviteAcceptPath):
+	// confirm it on the page the invitee arrives at, not only in the switcher.
+	var flashMsg string
+	if c.QueryParam("accepted") != "" {
+		flashMsg = "Invitation accepted."
+	}
 	var g errgroup.Group
 	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
 	g.Go(func() error { providers, providersErr = s.memory.ListProjectProviders(ctx); return nil })
@@ -582,7 +588,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	})
 	_ = g.Wait()
 	if agentsErr != nil {
-		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", userFacingError(agentsErr)))
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", userFacingError(agentsErr), flashMsg))
 	}
 	captureError(providersErr)
 	captureError(defaultModelErr)
@@ -597,7 +603,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	// Per-agent model info rides on the list response now (memory reports
 	// effectiveModel per summary), so there is no per-agent GET round-trip
 	// here — the agents page renders the card grid straight from the list.
-	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil))
+	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil, flashMsg))
 }
 
 // chatRailData loads the session-rail data (agents, agent appearance map, past

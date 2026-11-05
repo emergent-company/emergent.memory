@@ -26178,6 +26178,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
+                    "403": {
+                        "description": "Invitation is for another account",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Invitation not found or expired",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
                     "503": {
                         "description": "No web UI host configured",
                         "schema": {

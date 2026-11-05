@@ -210,7 +210,7 @@ func (errTestType) Error() string { return "backend unreachable" }
 // and the create flow's submit hook.
 func TestAgentFormDialogOmitsToolsAndSkills(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil, ""))
 
 	for _, gone := range []string{
 		`id="agent-tools"`, `name="tools"`,
@@ -280,7 +280,7 @@ func TestAgentModelDisplay(t *testing.T) {
 		{ID: "a2", Name: "milo"},
 		{ID: "a3", Name: "reggie"},
 	}
-	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil, ""))
 
 	// both breakpoint wrappers present: table desktop-only, cards mobile-only.
 	for _, want := range []string{`class="hidden md:block"`, `class="md:hidden"`} {

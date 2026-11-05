@@ -1078,7 +1078,6 @@ func (z *ZitadelConfig) GetIssuer() string {
 	return fmt.Sprintf("https://%s", z.Domain)
 }
 
-// NewConfig loads configuration from environment variables
 // FrontendURL returns the base URL browser-facing links should point at:
 // WebUIURL when configured, otherwise AppURL. Trailing slashes are removed so
 // callers can append paths directly.
@@ -1089,6 +1088,7 @@ func (c *Config) FrontendURL() string {
 	return strings.TrimRight(strings.TrimSpace(c.AppURL), "/")
 }
 
+// NewConfig loads configuration from environment variables
 func NewConfig(log *slog.Logger) (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {

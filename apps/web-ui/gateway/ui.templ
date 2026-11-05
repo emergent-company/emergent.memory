@@ -287,9 +287,12 @@ script openDeleteConfirm(id string, name string) {
 // --- Agents ---
 // defaultModel is the project's pinned default generative model ("" when none
 // is pinned) — it names the create/edit dialog's "Auto" option.
-templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel string, loadErr error) {
+// flashMsg surfaces PRG feedback from an action that lands here (accepting an
+// invitation redirects to the joined project's agents page with ?accepted=1).
+templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel string, loadErr error, flashMsg string) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@agentsHeader(len(agents), loadErr == nil)
+		@flashToasts(flashMsg, nil)
 		if loadErr != nil {
 			@pageError("Agents unavailable", loadErr)
 		} else if len(agents) == 0 {

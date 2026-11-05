@@ -273,6 +273,8 @@ func (h *Handler) Accept(c echo.Context) error {
 // @Success      200 {object} map[string]string "Acceptance confirmation"
 // @Success      302 "Redirect to the web UI accept page"
 // @Failure      400 {object} apperror.Error "Missing token"
+// @Failure      403 {object} apperror.Error "Invitation is for another account"
+// @Failure      404 {object} apperror.Error "Invitation not found or expired"
 // @Failure      503 {object} apperror.Error "No web UI host configured"
 // @Router       /invites/accept [get]
 func (h *Handler) AcceptViaLink(c echo.Context) error {

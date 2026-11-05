@@ -308,3 +308,32 @@ func TestUiAcceptInviteExternallyHostedReturnToRejected(t *testing.T) {
 		t.Errorf("Location = %q, want the local invitations page", got)
 	}
 }
+
+// TestAgentsPageConfirmsInvitationAcceptance covers the landing confirmation:
+// accepting an invitation redirects to the joined project's agents page with
+// ?accepted=1, and that page has to say so — otherwise the one action the user
+// took leaves no visible trace.
+func TestAgentsPageConfirmsInvitationAcceptance(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := sessionServer(s)
+
+	read := func(query string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/agents"+query, nil)
+		addSessionCookie(t, req, "test-secret", testSessionClaims())
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /agents%s = %d, want 200 (%s)", query, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	if body := read("?accepted=1"); !strings.Contains(body, "Invitation accepted.") {
+		t.Errorf("agents page with ?accepted=1 must confirm the acceptance")
+	}
+	if body := read(""); strings.Contains(body, "Invitation accepted.") {
+		t.Errorf("agents page without ?accepted=1 must not claim an invitation was accepted")
+	}
+}

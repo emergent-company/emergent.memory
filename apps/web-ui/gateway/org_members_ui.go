@@ -186,6 +186,15 @@ func (s *Server) uiOrgs(c echo.Context) error {
 	if c.QueryParam("ok") != "" {
 		data.FlashMsg = "Organization created."
 	}
+	// The pending-invitation rows here accept/decline in place; both land back
+	// on this page, so both get a confirmation (accept also lands in the project
+	// when the invitation is project-scoped, which is where its flash shows).
+	switch {
+	case c.QueryParam("accepted") != "":
+		data.FlashMsg = "Invitation accepted."
+	case c.QueryParam("declined") != "":
+		data.FlashMsg = "Invitation declined."
+	}
 	data.FlashErr = flashError(c)
 	orgs, err := s.orgAccessTree(c)
 	if err != nil {
