@@ -45,6 +45,10 @@ type ProvenanceContribution struct {
 	ExternalID          string     `bun:"external_id,notnull" json:"external_id"`
 	ExternalRevision    string     `bun:"external_revision,notnull,default:''" json:"external_revision"`
 	ExternalRevisionSeq int64      `bun:"external_revision_seq,notnull,default:0" json:"external_revision_seq"`
+	// MergedFromVersionID is the version this contribution was carried from,
+	// when it was not written onto the row it describes: a merge union, a fork
+	// copy, or a new version that inherits its predecessor's contributors. It is
+	// null when the source's record arrived on this row.
 	MergedFromVersionID *uuid.UUID `bun:"merged_from_version_id,type:uuid" json:"merged_from_version_id,omitempty"`
 	State               string     `bun:"state,notnull,default:'present'" json:"state"`
 	FirstSeenAt         time.Time  `bun:"first_seen_at,notnull,default:now()" json:"first_seen_at"`
@@ -146,6 +150,15 @@ func (r *Repository) GetContributions(ctx context.Context, projectID uuid.UUID, 
 
 // InsertContribution writes one contribution row inside the caller's
 // transaction.
+//
+// It upserts the present row of (version, source) rather than blindly inserting
+// one: a new version inherits its predecessor's contributions (CreateVersion),
+// so the source that wrote the version records its revised contribution onto a
+// version that already carries its previous one. Replacing it in place is what
+// keeps "one present row per version per source" true — the invariant the
+// partial unique index uq_provenance_contributions_version_source states — and
+// first_seen_at is deliberately left alone so the source's original sighting
+// survives a revision.
 func (r *Repository) InsertContribution(ctx context.Context, db bun.IDB, c *ProvenanceContribution) error {
 	if c.ID == uuid.Nil {
 		c.ID = uuid.New()
@@ -160,7 +173,14 @@ func (r *Repository) InsertContribution(ctx context.Context, db bun.IDB, c *Prov
 	if c.State == "" {
 		c.State = ContributionStatePresent
 	}
-	if _, err := db.NewInsert().Model(c).Exec(ctx); err != nil {
+	if _, err := db.NewInsert().Model(c).
+		On(`CONFLICT (subject_kind, subject_version_id, source_id) WHERE state = 'present' DO UPDATE SET
+			external_id = EXCLUDED.external_id,
+			external_revision = EXCLUDED.external_revision,
+			external_revision_seq = EXCLUDED.external_revision_seq,
+			merged_from_version_id = EXCLUDED.merged_from_version_id,
+			last_seen_at = EXCLUDED.last_seen_at`).
+		Exec(ctx); err != nil {
 		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
@@ -209,25 +229,51 @@ func (r *Repository) WithdrawContribution(ctx context.Context, db bun.IDB, id uu
 // source of both sides, and the merge itself stays attributed to the merging
 // actor rather than to a contributing source.
 func (r *Repository) CopyContributionsToVersion(ctx context.Context, db bun.IDB, projectID uuid.UUID, kind string, fromVersionIDs []uuid.UUID, toVersionID uuid.UUID, toBranchID *uuid.UUID) (int, error) {
-	return r.copyContributions(ctx, db, projectID, kind, fromVersionIDs, toVersionID, toBranchID, nil)
+	return r.copyContributions(ctx, db, projectID, kind, fromVersionIDs, toVersionID, toBranchID, true)
 }
 
-// CarryForwardContributions moves the present contributions of one version onto
-// a newly written one, except the source that wrote the new version. A revision
-// by one source therefore does not evict the others from the live version: the
-// set of sources backing an object survives edits, just as it survives a merge.
-func (r *Repository) CarryForwardContributions(ctx context.Context, db bun.IDB, projectID uuid.UUID, kind string, fromVersionID, toVersionID uuid.UUID, toBranchID *uuid.UUID, excludeSource uuid.UUID) (int, error) {
-	return r.copyContributions(ctx, db, projectID, kind, []uuid.UUID{fromVersionID}, toVersionID, toBranchID, &excludeSource)
+// address is one source's record on the destination branch: the key the partial
+// unique indexes uq_provenance_contributions_present_{main,branch} enforce.
+type address struct {
+	sourceID   uuid.UUID
+	externalID string
+}
+
+// crossesBranch reports whether a copy reads rows from a branch other than the
+// one it writes to. Such a copy can land on an address the destination branch
+// already holds; a same-branch carry-forward cannot, because the row it copies
+// is the row it supersedes.
+func crossesBranch(rows []ProvenanceContribution, toBranchID *uuid.UUID) bool {
+	for _, row := range rows {
+		a, b := row.BranchID, toBranchID
+		if a == nil || b == nil {
+			if a != nil || b != nil {
+				return true
+			}
+			continue
+		}
+		if *a != *b {
+			return true
+		}
+	}
+	return false
 }
 
 // copyContributions is the shared body of the union-on-merge and the
-// carry-forward-on-revision rules.
+// carry-forward-on-version-write rules.
 //
 // A copied contribution is superseded at the version it arrived on before it is
-// re-inserted at the new one, because the addressing index allows only one
-// present row per (project, branch, kind, source, external_id): marking the old
-// row superseded — never deleting it — is what keeps both the live set correct
-// and the arrival history recoverable.
+// written at the new one, because the addressing index allows only one present
+// row per (project, branch, kind, source, external_id): marking the old row
+// superseded — never deleting it — is what keeps both the live set correct and
+// the arrival history recoverable.
+//
+// includeDestination adds the rows already present on the destination version as
+// candidates. Only a merge needs it: it writes its target version through
+// CreateVersion, which has already carried the target head's contributions
+// forward, so the union has to dedupe against them rather than collide with (or
+// overwrite them with a lower) revision. The plain inheritance call skips the
+// lookup because the destination version it writes is brand new.
 func (r *Repository) copyContributions(
 	ctx context.Context,
 	db bun.IDB,
@@ -236,7 +282,7 @@ func (r *Repository) copyContributions(
 	fromVersionIDs []uuid.UUID,
 	toVersionID uuid.UUID,
 	toBranchID *uuid.UUID,
-	excludeSource *uuid.UUID,
+	includeDestination bool,
 ) (int, error) {
 	if len(fromVersionIDs) == 0 {
 		return 0, nil
@@ -248,9 +294,6 @@ func (r *Repository) copyContributions(
 		Where("subject_kind = ?", kind).
 		Where("subject_version_id IN (?)", bun.In(fromVersionIDs)).
 		Where("state = ?", ContributionStatePresent)
-	if excludeSource != nil {
-		q = q.Where("source_id <> ?", *excludeSource)
-	}
 
 	var rows []ProvenanceContribution
 	if err := q.Scan(ctx, &rows); err != nil {
@@ -260,6 +303,21 @@ func (r *Repository) copyContributions(
 		return 0, nil
 	}
 
+	// Contributions the destination version already carries — the ones
+	// CreateVersion inherited from the head a merge is superseding.
+	var inherited []ProvenanceContribution
+	if includeDestination {
+		if err := db.NewSelect().
+			Model(&inherited).
+			Where("project_id = ?", projectID).
+			Where("subject_kind = ?", kind).
+			Where("subject_version_id = ?", toVersionID).
+			Where("state = ?", ContributionStatePresent).
+			Scan(ctx); err != nil {
+			return 0, apperror.NewDatabase("Database operation failed", err)
+		}
+	}
+
 	// A source present on both sides appears once, keeping the higher revision
 	// sequence (the union rule the `_sources` array already uses). The version
 	// row carries at most one record per source — that is what the unique index
@@ -267,19 +325,35 @@ func (r *Repository) copyContributions(
 	// with two different external ids on the joined objects keeps the newer
 	// record, and the tie is broken on the external id so the outcome does not
 	// depend on row order.
-	bySource := make(map[uuid.UUID]ProvenanceContribution, len(rows))
+	//
+	// Each candidate remembers which version its record arrived on: a row read
+	// from a source version arrived there, an inherited row keeps whatever
+	// arrival version it already recorded (NULL if it was written onto the
+	// version it describes).
+	type candidate struct {
+		row        ProvenanceContribution
+		mergedFrom *uuid.UUID
+	}
+	bySource := make(map[uuid.UUID]candidate, len(rows)+len(inherited))
 	ids := make([]uuid.UUID, 0, len(rows))
-	for _, row := range rows {
-		ids = append(ids, row.ID)
-		cur, ok := bySource[row.SourceID]
+	consider := func(c candidate) {
+		cur, ok := bySource[c.row.SourceID]
 		switch {
 		case !ok:
-			bySource[row.SourceID] = row
-		case row.ExternalRevisionSeq > cur.ExternalRevisionSeq:
-			bySource[row.SourceID] = row
-		case row.ExternalRevisionSeq == cur.ExternalRevisionSeq && row.ExternalID < cur.ExternalID:
-			bySource[row.SourceID] = row
+			bySource[c.row.SourceID] = c
+		case c.row.ExternalRevisionSeq > cur.row.ExternalRevisionSeq:
+			bySource[c.row.SourceID] = c
+		case c.row.ExternalRevisionSeq == cur.row.ExternalRevisionSeq && c.row.ExternalID < cur.row.ExternalID:
+			bySource[c.row.SourceID] = c
 		}
+	}
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+		arrivedOn := row.SubjectVersionID
+		consider(candidate{row: row, mergedFrom: &arrivedOn})
+	}
+	for _, row := range inherited {
+		consider(candidate{row: row, mergedFrom: row.MergedFromVersionID})
 	}
 
 	// Only rows on the destination branch are superseded. The source branch
@@ -297,9 +371,50 @@ func (r *Repository) copyContributions(
 		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 
+	// A cross-branch copy can collide with a record the destination branch
+	// already carries: the same source may have pushed that external id on the
+	// branch itself, and a branch-scoped delete of a main-only object copies the
+	// main line's contributors onto a branch tombstone while the branch's own
+	// object for that record already holds the addressing slot. The branch's row
+	// is the live one there — writing the copy would violate
+	// uq_provenance_contributions_present_{main,branch} and leave the branch
+	// addressing one record twice — so a candidate the destination branch
+	// already addresses is skipped, unless the row it collides with is one this
+	// copy supersedes.
+	occupied := map[address]struct{}{}
+	if crossesBranch(rows, toBranchID) {
+		superseded := make(map[uuid.UUID]struct{}, len(ids))
+		for _, id := range ids {
+			superseded[id] = struct{}{}
+		}
+		// The destination version's own rows are not foreign occupants: they
+		// are the ones this copy is here to write over (includeDestination), so
+		// only rows on some *other* live version of the branch can be in the way.
+		var holders []ProvenanceContribution
+		if err := db.NewSelect().
+			Model(&holders).
+			Where("project_id = ?", projectID).
+			Where("subject_kind = ?", kind).
+			Where("branch_id IS NOT DISTINCT FROM ?", toBranchID).
+			Where("subject_version_id <> ?", toVersionID).
+			Where("state = ?", ContributionStatePresent).
+			Scan(ctx); err != nil {
+			return 0, apperror.NewDatabase("Database operation failed", err)
+		}
+		for _, holder := range holders {
+			if _, moved := superseded[holder.ID]; moved {
+				continue
+			}
+			occupied[address{sourceID: holder.SourceID, externalID: holder.ExternalID}] = struct{}{}
+		}
+	}
+
 	copied := 0
-	for _, row := range bySource {
-		from := row.SubjectVersionID
+	for _, cand := range bySource {
+		row := cand.row
+		if _, taken := occupied[address{sourceID: row.SourceID, externalID: row.ExternalID}]; taken {
+			continue
+		}
 		c := &ProvenanceContribution{
 			ProjectID:           projectID,
 			BranchID:            toBranchID,
@@ -309,7 +424,7 @@ func (r *Repository) copyContributions(
 			ExternalID:          row.ExternalID,
 			ExternalRevision:    row.ExternalRevision,
 			ExternalRevisionSeq: row.ExternalRevisionSeq,
-			MergedFromVersionID: &from,
+			MergedFromVersionID: cand.mergedFrom,
 			State:               ContributionStatePresent,
 			FirstSeenAt:         row.FirstSeenAt,
 		}

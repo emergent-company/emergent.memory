@@ -374,13 +374,12 @@ func (s *Service) applyChangesetObject(
 		if err := s.repo.CreateVersion(ctx, tx, head, version); err != nil {
 			return result, nil, err
 		}
+		// CreateVersion carried the previous version's contributions onto the
+		// new one, so the other sources already follow the object. This
+		// source's record still has to leave the version it arrived on — the
+		// anchor is not necessarily the head that was just superseded — and the
+		// row written below then replaces its inherited copy on the new version.
 		if err := s.repo.SupersedeContribution(ctx, tx, contrib.ID); err != nil {
-			return result, nil, err
-		}
-		// Every other source backing the version being superseded follows the
-		// object onto the new one, so a revision by one source does not evict
-		// the rest from the live contribution set.
-		if _, err := s.repo.CarryForwardContributions(ctx, tx, projectID, ContributionSubjectObject, head.ID, version.ID, version.BranchID, sourceID); err != nil {
 			return result, nil, err
 		}
 		c := newContribution(projectID, branchID, ContributionSubjectObject, version.ID, sourceID, item.ExternalID, item.ExternalRevision, seq)
@@ -492,10 +491,10 @@ func (s *Service) applyChangesetRelationship(
 		if err := s.repo.CreateRelationshipVersion(ctx, tx, head, &version); err != nil {
 			return result, nil, err
 		}
+		// Same as the object path: the relationship version inherited the
+		// previous version's contributions, so only this source's own record
+		// moves.
 		if err := s.repo.SupersedeContribution(ctx, tx, contrib.ID); err != nil {
-			return result, nil, err
-		}
-		if _, err := s.repo.CarryForwardContributions(ctx, tx, projectID, ContributionSubjectRelationship, head.ID, version.ID, version.BranchID, sourceID); err != nil {
 			return result, nil, err
 		}
 		c := newContribution(projectID, branchID, ContributionSubjectRelationship, version.ID, sourceID, item.ExternalID, item.ExternalRevision, seq)
