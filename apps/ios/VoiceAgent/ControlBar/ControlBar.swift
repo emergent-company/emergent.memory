@@ -5,7 +5,7 @@ import LiveKitComponents
 /// - SeeAlso: ``AgentFeatures``
 struct ControlBar: View {
     @EnvironmentObject private var session: Session
-    @EnvironmentObject private var localMedia: LocalMedia
+    @EnvironmentObject private var localMedia: LocalMediaModel
 
     @Binding var chat: Bool
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass

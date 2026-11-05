@@ -44,8 +44,15 @@ struct ChatTranscriptView: View {
                 .padding(.vertical, 2 * .grid)
             }
             .scrollDismissesKeyboard(.interactively)
+            // A chat always opens on its newest message: anchoring the scroll
+            // view to the bottom makes the first layout land there, instead of
+            // relying on `onAppear` racing the LazyVStack's layout (which could
+            // leave the view at a stale offset inherited from another chat).
+            .defaultScrollAnchor(.bottom)
             .onAppear { scrollToBottom(proxy, animated: false) }
-            .onChange(of: transcript.history.count) { _, _ in scrollToBottom(proxy, animated: true) }
+            // Recorded history replaces the empty view in one shot: snap rather
+            // than animate from a position that no longer exists.
+            .onChange(of: transcript.history.count) { _, _ in scrollToBottom(proxy, animated: false) }
             .onChange(of: transcript.liveMessages) { _, _ in scrollToBottom(proxy, animated: true) }
             .onChange(of: activity.turns) { _, _ in scrollToBottom(proxy, animated: true) }
             .onChange(of: transcript.isLoadingHistory) { _, loading in

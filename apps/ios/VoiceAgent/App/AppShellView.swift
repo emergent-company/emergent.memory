@@ -128,13 +128,21 @@ struct AppShellView: View {
     /// Logs the push, then builds the session detail.
     private func sessionDestination(_ route: SessionRoute) -> some View {
         Log.nav.info("push SessionDetailView \(route.room)")
+        // A route value is the screen's identity: reusing the destination slot
+        // for another session must not inherit the previous one's scroll state.
         return SessionDetailView(room: route.room)
+            .id(route)
     }
 
     /// Logs the push, then builds the full chat room for the conversation.
     private func chatDestination(_ route: ChatRoute) -> some View {
         Log.nav.info("push ChatSessionView \(route.conversationID ?? "new")")
+        // Same as the session detail: a different conversation is a different
+        // screen, even when SwiftUI reuses the destination position in the
+        // stack. Without this the transcript opens at the previous chat's
+        // scroll offset.
         return ChatSessionView(route: route)
+            .id(route)
     }
 
     /// Logs the push, then builds the agent's object browser.
