@@ -14849,7 +14849,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool/agent allowlists. Returns the raw token exactly once.",
+                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool allowlist, and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14874,7 +14874,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceRequest"
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceHTTPRequest"
                         }
                     }
                 ],
@@ -14898,7 +14898,77 @@
                         }
                     },
                     "422": {
-                        "description": "Invalid allowlist",
+                        "description": "Invalid allowlist or email address",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/shares/{id}/rotate": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Issues a new key for a share instance, invalidating the previous one, and optionally emails the new key and client setup snippets to the listed recipients. The body may be omitted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Rotate an MCP share key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Share instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional invite recipients",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.RotateShareInstanceHTTPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown share",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Share is revoked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid email address",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -26139,14 +26209,14 @@
         },
         "/invites/accept": {
             "get": {
-                "description": "Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Redirects to login if not authenticated.",
+                "description": "Redirects an invitation link to the web UI accept page, which authenticates and presents the accept/decline actions. The link never accepts on its own: a GET triggered by a link prefetcher must not mutate state.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "invites"
                 ],
-                "summary": "Accept invitation via link",
+                "summary": "Invitation link target",
                 "parameters": [
                     {
                         "type": "string",
@@ -26157,17 +26227,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Acceptance confirmation",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
                     "302": {
-                        "description": "Redirect to login"
+                        "description": "Redirect to the web UI accept page"
                     },
                     "400": {
                         "description": "Missing token",
@@ -26175,8 +26236,8 @@
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
-                    "404": {
-                        "description": "Invitation not found or expired",
+                    "503": {
+                        "description": "No web UI host configured",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -28438,6 +28499,53 @@
                 "ExecutionModeHybrid"
             ]
         },
+        "domain_agents.AgentObjectRule": {
+            "type": "object",
+            "properties": {
+                "canCreate": {
+                    "description": "CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an\nexplicit false denies the action for this type.",
+                    "type": "boolean"
+                },
+                "canDelete": {
+                    "type": "boolean"
+                },
+                "canUpdate": {
+                    "type": "boolean"
+                },
+                "fields": {
+                    "description": "Fields is the writable-property allowlist for this type. Empty means all\ndeclared properties are writable.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "objectType": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status overrides the agent-level phase map for this type. Nil inherits\nthe agent-level map.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
+                        }
+                    ]
+                },
+                "transitions": {
+                    "description": "Transitions are the status edges this agent may perform for this type.\nEmpty means only the standard terminator edges are allowed.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentTransition"
+                    }
+                },
+                "triggers": {
+                    "description": "Triggers are the (status, prompt) pickup rows for this type.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentWorkTrigger"
+                    }
+                }
+            }
+        },
         "domain_agents.AgentQuestionDTO": {
             "type": "object",
             "properties": {
@@ -28787,6 +28895,17 @@
                 }
             }
         },
+        "domain_agents.AgentTransition": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.AgentTriggerType": {
             "type": "string",
             "enum": [
@@ -28831,6 +28950,13 @@
                 "failureLimit": {
                     "type": "integer"
                 },
+                "objectRules": {
+                    "description": "ObjectRules carries the per-object-type rules: phase map, write actions,\nwritable fields, pickup triggers with prompts, and the transition matrix.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentObjectRule"
+                    }
+                },
                 "requiresReview": {
                     "type": "boolean"
                 },
@@ -28850,7 +28976,7 @@
                     "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
                 },
                 "triggerStatuses": {
-                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the `status_changed` signal). Defaults\nto the built-in \"ready\" status when unset.",
+                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the `status_changed` signal). Defaults\nto the built-in \"ready\" status when unset. Legacy: used only when\nObjectRules declares no trigger rows.",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -28901,6 +29027,20 @@
                     "type": "string"
                 },
                 "revision": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.AgentWorkTrigger": {
+            "type": "object",
+            "properties": {
+                "objectType": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }
@@ -34945,7 +35085,7 @@
                 }
             }
         },
-        "domain_mcp.CreateShareInstanceRequest": {
+        "domain_mcp.CreateShareInstanceHTTPRequest": {
             "type": "object",
             "properties": {
                 "agents": {
@@ -34956,6 +35096,12 @@
                 },
                 "description": {
                     "type": "string"
+                },
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -34976,6 +35122,15 @@
                 },
                 "description": {
                     "type": "string"
+                },
+                "emailError": {
+                    "type": "string"
+                },
+                "emailsSent": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "id": {
                     "type": "string"
@@ -35084,6 +35239,17 @@
                     "type": "string"
                 },
                 "result": {}
+            }
+        },
+        "domain_mcp.RotateShareInstanceHTTPRequest": {
+            "type": "object",
+            "properties": {
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
             }
         },
         "domain_mcp.ShareMCPAccessRequest": {
