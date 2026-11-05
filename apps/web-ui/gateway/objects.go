@@ -495,7 +495,7 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Objects"), ObjectsPage(objectsPageData{LoadErr: userFacingError(err)}))
+		return s.renderObjects(c, pageTitle("Objects"), objectsPageData{LoadErr: userFacingError(err)})
 	}
 
 	data := objectsPageData{
@@ -514,7 +514,7 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 
 	if err := s.loadObjectBrowsePage(ctx, &data, c.QueryParam("cursor")); err != nil {
 		data.LoadErr = userFacingError(err)
-		return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
+		return s.renderObjects(c, pageTitle(agent.Name, "Objects"), data)
 	}
 	return s.renderObjects(c, pageTitle(agent.Name, "Objects"), data)
 }
@@ -611,7 +611,14 @@ func (s *Server) renderObjects(c echo.Context, title string, data objectsPageDat
 		// one control that closes its own menu on pick, so replacing the row
 		// cannot steal focus from something still in use.
 		actorPicked := strings.TrimSpace(c.QueryParam("actor")) != ""
-		renderPartial(c.Response().Writer, c.Request(), objectsResultsFragment(data, actorPicked))
+		// Starting or ending a search changes the row too: objectsFilterControls
+		// hides the actor picker and the provenance toggle while a query is
+		// active (the search endpoints cannot be provenance-scoped), so a search
+		// submitted in place has to remove them, and clearing the query has to
+		// bring them back — neither happens without a reload otherwise. The row
+		// is browse-only, so this is the only other transition that rewrites it.
+		modeChanged := hxSource(c.Request()) == objectsSearchFormSource
+		renderPartial(c.Response().Writer, c.Request(), objectsResultsFragment(data, actorPicked || modeChanged))
 		return nil
 	}
 	return s.page(c, title, ObjectsPage(data))

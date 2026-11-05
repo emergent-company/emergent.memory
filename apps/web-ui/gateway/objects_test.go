@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -456,6 +457,97 @@ func TestUIObjectsFilterChangeKeepsActor(t *testing.T) {
 	if f.lastPageActorType != "user" || f.lastPageActorID != "u-9" {
 		t.Errorf("fresh pick = %q/%q, want user/u-9", f.lastPageActorType, f.lastPageActorID)
 	}
+}
+
+// TestUIObjectsRegionDispatch pins the boundary of the in-place refresh on the
+// paths a browser click cannot reach: a request that named the results region
+// gets the region and never a page shell. `s.page` honours render.IsPartial, so
+// htmx's partial marker would happily swap the whole surface (a second
+// #objects-filters-form, #objects-filter-controls and #objects-results) into
+// #objects-results on any route that skipped renderObjects.
+//
+// It also pins when the filter row itself is replaced out of band: on an actor
+// pick, and when a search starts or ends (the row's actor picker and provenance
+// toggle are browse-only, so a search submitted in place must remove them and a
+// cleared query must bring them back).
+func TestUIObjectsRegionDispatch(t *testing.T) {
+	regionHeader := func(req *http.Request) *http.Request {
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("HX-Target", "div#"+objectsResultsRegion)
+		return req
+	}
+	bodyFor := func(t *testing.T, f *fakeMemory, path, source string) string {
+		t.Helper()
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.GET("/objects", s.uiObjects)
+		e.GET("/agents/:id/objects", s.uiAgentObjects)
+		req := regionHeader(httptest.NewRequest(http.MethodGet, path, nil))
+		if source != "" {
+			req.Header.Set("HX-Source", source)
+		}
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	assertRegionOnly := func(t *testing.T, body string) {
+		t.Helper()
+		if !strings.Contains(body, `id="`+objectsResultsRegion+`"`) {
+			t.Errorf("region request must return the results region: %s", body)
+		}
+		for _, chrome := range []string{`id="main-content"`, "<html", `id="objects-filters-form"`} {
+			if strings.Contains(body, chrome) {
+				t.Errorf("region request must not carry page chrome (%s)", chrome)
+			}
+		}
+	}
+
+	t.Run("agent scoped error path", func(t *testing.T) {
+		f := &fakeMemory{defErrs: map[string]error{"a1": errors.New("agent lookup failed")}}
+		assertRegionOnly(t, bodyFor(t, f, "/agents/a1/objects", ""))
+	})
+
+	t.Run("agent scoped browse error path", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:    map[string]*AgentDefinition{"a1": {ID: "a1", Name: "Memory"}},
+			pageErr: errors.New("list failed"),
+		}
+		assertRegionOnly(t, bodyFor(t, f, "/agents/a1/objects", ""))
+	})
+
+	t.Run("a search refreshes the browse-only filter row", func(t *testing.T) {
+		f := &fakeMemory{searchResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
+		}}
+		body := bodyFor(t, f, "/objects?q=sam&mode=hybrid", objectsSearchFormSource)
+		assertRegionOnly(t, body)
+		if !strings.Contains(body, `id="objects-filter-controls"`) || !strings.Contains(body, `hx-swap-oob="innerHTML"`) {
+			t.Errorf("a search must refresh the filter row out of band: %s", body)
+		}
+	})
+
+	t.Run("a plain filter change leaves the row alone", func(t *testing.T) {
+		f := &fakeMemory{}
+		body := bodyFor(t, f, "/objects?branch=b1", "form#objects-filters-form")
+		assertRegionOnly(t, body)
+		// Replacing the row on every change would drop focus out of the select
+		// the user just operated, so it is refreshed only when it can differ.
+		if strings.Contains(body, `id="objects-filter-controls"`) {
+			t.Errorf("a branch change must not replace the filter row: %s", body)
+		}
+	})
+
+	t.Run("an actor pick refreshes the row", func(t *testing.T) {
+		f := &fakeMemory{}
+		body := bodyFor(t, f, "/objects?actor=user:u-1", "form#objects-filters-form")
+		assertRegionOnly(t, body)
+		if !strings.Contains(body, `id="objects-filter-controls"`) {
+			t.Errorf("an actor pick must refresh the filter row: %s", body)
+		}
+	})
 }
 
 // TestUIObjectsCombinedActorParam pins the actor dropdown's submission contract:

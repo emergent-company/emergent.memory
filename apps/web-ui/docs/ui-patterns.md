@@ -196,7 +196,20 @@ itself all stay. The rules, and the failure each one prevents:
   (the search results count in the header, the branch-scoped stats strip), or,
   when it is pure selection state, painted from the input by CSS —
   `.memory-provenance-segment:has(> input:checked)` — so a swap cannot leave two
-  segments lit or the previous mode filled.
+  segments lit or the previous mode filled. The same applies to a control the
+  filter response changes the *existence* of: the objects filter row hides its
+  actor picker while a search is active, so a response that starts or ends a
+  search replaces the row as well (the server tells which form asked from
+  `HX-Source`, `hxSource` in `list_filters.go`). Refresh the row only when it can
+  differ, though: replacing it on a branch change drops focus out of the select
+  the user just operated.
+- **Mark the elements that replace a list a user can select rows in.** htmx
+  dispatches `htmx:after:swap` on the element that issued the request, but
+  substitutes the swap target when that element is no longer in the document —
+  which is exactly what replacing a region does to the sort links inside it. Put
+  the same marker (`data-objects-list-refresh`) on the forms, the sort links and
+  the region, and match the event target exactly: a "load more" button that lives
+  inside the region must not clear a selection it only appended to.
 
 The helper is `apps/web-ui/gateway/list_filters.go` (`filterFormAttrs`,
 `submitFilterFormAttrs`, `selectFilterFormAttrs`, `regionFilterAttrs`); the

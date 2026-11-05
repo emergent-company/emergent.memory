@@ -41,6 +41,20 @@ func targetsResultsRegion(r *http.Request, region string) bool {
 	return target == region || strings.HasSuffix(target, "#"+region)
 }
 
+// objectsSearchFormSource is the HX-Source selector of the objects search form.
+// A surface with two toolbar forms needs it to tell which one asked: the search
+// form changes the browse/search mode, which rewrites the filter row, while the
+// filter form does not.
+const objectsSearchFormSource = "form#objects-search-form"
+
+// hxSource returns the element that issued an HTMX request, as htmx v4 reports
+// it in HX-Source ("form#objects-search-form", "a#sort-created", …). Empty on a
+// full load. go-daisy's render package mirrors HX-Target/HX-Request but not this
+// one, so it is read here once rather than at each call site.
+func hxSource(r *http.Request) string {
+	return strings.TrimSpace(r.Header.Get("HX-Source"))
+}
+
 // regionFilterAttrs is the htmx wiring shared by every list filter form: the
 // request carries the form's own values to the page URL, the response replaces
 // one results region, and the URL is pushed so the address bar, a reload, and

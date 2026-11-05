@@ -1296,12 +1296,19 @@
 
   /* A results refresh replaces the rows under a live Alpine selection model.
      Drop the selection with them: otherwise the bulk bar keeps counting (and
-     mutating) rows that are no longer on screen. Keyed on the elements that
-     refresh the list, not on the region, so "Load more" — which appends rows —
-     keeps the selection. */
+     mutating) rows that are no longer on screen.
+
+     The event lands on the element that issued the request — the filter form,
+     a sort link — but htmx substitutes the swap target when that element is no
+     longer in the document, which is exactly what replacing #objects-results
+     does to the sort links inside it. So the region carries the same marker
+     and every case is an exact match on the event target. "Load more" targets
+     #objects-list, which carries neither: it appends rows to the list the user
+     is still selecting from, so that selection survives. */
   document.addEventListener("htmx:after:swap", function (ev) {
     var source = ev.target;
-    if (!source || !source.closest || !source.closest("[data-objects-list-refresh]")) return;
+    if (!source || !source.matches) return;
+    if (!source.matches("[data-objects-list-refresh]")) return;
     var root = document.querySelector("[data-object-select-root]");
     if (!root || !window.Alpine) return;
     var model = window.Alpine.$data(root);

@@ -227,7 +227,7 @@ templ objectsBrowserResultsNote(data objectsPageData) {
 // the toolbar's forms request (objectsResultsRegion) and the region a filter
 // response replaces — the page around it never moves.
 templ objectsBrowserResults(data objectsPageData) {
-	<div id="objects-results" data-testid="objects-results">
+	<div id="objects-results" data-testid="objects-results" data-objects-list-refresh="true">
 		if data.LoadErr != nil {
 			// A filter request that failed to load keeps the page: the error
 			// replaces the list instead of the whole surface (the page path

@@ -22,6 +22,13 @@ const APP_JS = path.resolve(
   '../../../../gateway/webui/static/js/app.js',
 );
 
+// The shipped htmx, for the one case that cannot be synthesised: where htmx
+// dispatches `htmx:after:swap` depends on which elements survived the swap.
+const HTMX_JS = path.resolve(
+  __dirname,
+  '../../../../gateway/webui/static/js/htmx.min.js',
+);
+
 // Mirrors objectsFilterSelect (span + transparent select) and the objects
 // filter form's refresh marker.
 const FILTER_HTML = `<!doctype html><html><body>
@@ -46,8 +53,12 @@ const FILTER_HTML = `<!doctype html><html><body>
       <option value="b">b</option>
     </select>
   </form>
-  <div id="objects-load-more">
-    <button id="load-more" type="button">Load more</button>
+  <div id="objects-results" data-objects-list-refresh="true">
+    <div id="objects-list"></div>
+    <div id="objects-load-more">
+      <button id="load-more" type="button">Load more</button>
+      <a id="sort" href="?order=asc" data-objects-list-refresh="true">Sort</a>
+    </div>
   </div>
   <div id="selection-root" data-object-select-root></div>
 </body></html>`;
@@ -123,8 +134,23 @@ test('a list refresh clears the row selection, "Load more" keeps it', async ({
     await page.evaluate(() => (window as unknown as { __model: { sel: string[] } }).__model.sel),
   ).toEqual([]);
 
+  // A sort link lives INSIDE the region it replaces, so htmx dispatches the
+  // event on the swapped-in target instead of the (now detached) link. That
+  // path must clear too — it is the difference between clearing on sort and
+  // silently keeping a selection over reordered rows.
+  await page.evaluate(() => {
+    (window as unknown as { __model: { sel: string[] } }).__model.sel = ['a', 'b'];
+    document
+      .getElementById('objects-results')!
+      .dispatchEvent(new CustomEvent('htmx:after:swap', { bubbles: true }));
+  });
+  expect(
+    await page.evaluate(() => (window as unknown as { __model: { sel: string[] } }).__model.sel),
+  ).toEqual([]);
+
   // "Load more" appends rows to the list the user is still selecting from, so
-  // the selection survives.
+  // the selection survives. Its button sits inside the region, which is why the
+  // check is an exact match on the event target rather than a closest() walk.
   await page.evaluate(() => {
     (window as unknown as { __model: { sel: string[] } }).__model.sel = ['a', 'b'];
     document
@@ -134,6 +160,89 @@ test('a list refresh clears the row selection, "Load more" keeps it', async ({
   expect(
     await page.evaluate(() => (window as unknown as { __model: { sel: string[] } }).__model.sel),
   ).toEqual(['a', 'b']);
+
+  expect(errors).toEqual([]);
+});
+
+// The synthesised case above proves the handler's rule; this one proves the
+// rule is reachable through the real htmx. A sort link lives inside the region
+// it replaces, so after the swap htmx finds the source detached and dispatches
+// `htmx:after:swap` on the swapped-in target instead — the selection must still
+// clear. (htmx only tells the difference by DOM liveness, so nothing but the
+// real client can pin it.)
+test('htmx delivers a sort swap on the new region, which still clears', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+
+  const pageBody = `<!doctype html><html><body>
+    <div id="selection-root" data-object-select-root></div>
+    <div id="objects-results" data-objects-list-refresh="true">
+      <div id="objects-list"></div>
+      <a id="sort" href="?order=asc" data-objects-list-refresh="true"
+         hx-get="/sorted" hx-target="#objects-results" hx-swap="outerHTML" hx-push-url="false">Sort</a>
+      <button id="more" type="button" hx-get="/more" hx-target="#objects-list" hx-swap="beforeend">Load more</button>
+    </div>
+  </body></html>`;
+  const swapped = `<div id="objects-results" data-objects-list-refresh="true">
+      <div id="objects-list"></div>
+      <a id="sort" href="?order=desc" data-objects-list-refresh="true"
+         hx-get="/sorted" hx-target="#objects-results" hx-swap="outerHTML" hx-push-url="false">Sort</a>
+      <button id="more" type="button" hx-get="/more" hx-target="#objects-list" hx-swap="beforeend">Load more</button>
+    </div>`;
+
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/sorted') {
+      return route.fulfill({ status: 200, contentType: 'text/html', body: swapped });
+    }
+    if (url.pathname === '/more') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<div class="appended">row</div>',
+      });
+    }
+    return route.fulfill({ status: 200, contentType: 'text/html', body: pageBody });
+  });
+
+  await page.goto('http://list-filter.test/objects');
+  await page.addScriptTag({ path: HTMX_JS });
+  await page.addScriptTag({ path: APP_JS });
+  await page.evaluate(() => {
+    const root = document.getElementById('selection-root')!;
+    const model = { sel: ['a', 'b'] };
+    (window as unknown as { __model: { sel: string[] } }).__model = model;
+    (window as unknown as { Alpine: unknown }).Alpine = {
+      $data: (el: Element) => (el === root ? model : undefined),
+    };
+  });
+
+  await page.locator('#sort').click();
+  await expect(page.locator('#objects-results')).toHaveAttribute(
+    'data-objects-list-refresh',
+    'true',
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __model: { sel: string[] } }).__model.sel,
+      ),
+    )
+    .toEqual([]);
+
+  // "Load more" keeps appending into #objects-list, so the selection survives.
+  await page.evaluate(() => {
+    (window as unknown as { __model: { sel: string[] } }).__model.sel = ['c'];
+  });
+  await page.locator('#more').click();
+  await expect(page.locator('#objects-list .appended')).toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __model: { sel: string[] } }).__model.sel,
+    ),
+  ).toEqual(['c']);
 
   expect(errors).toEqual([]);
 });
