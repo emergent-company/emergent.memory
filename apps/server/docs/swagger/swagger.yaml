@@ -9170,6 +9170,18 @@ definitions:
     properties:
       name:
         type: string
+      object_type_schemas:
+        description: ObjectTypeSchemasSnake mirrors the sibling pack request/storage
+          spelling.
+        items:
+          type: object
+        type: array
+      object_types:
+        description: 'ObjectTypesSnake accepts the short snake_case spelling named
+          in #163.'
+        items:
+          type: object
+        type: array
       objectTypes:
         description: |-
           ObjectTypes is a JSON array of {"name","label","properties",...} objects.

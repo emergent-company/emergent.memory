@@ -40784,6 +40784,20 @@ const docTemplate = `{
                     "items": {
                         "type": "object"
                     }
+                },
+                "object_type_schemas": {
+                    "description": "ObjectTypeSchemasSnake mirrors the sibling pack request/storage spelling.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "object_types": {
+                    "description": "ObjectTypesSnake accepts the short snake_case spelling named in #163.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 }
             }
         },
