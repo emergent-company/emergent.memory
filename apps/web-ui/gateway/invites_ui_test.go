@@ -368,12 +368,27 @@ func TestOrgLandingConfirmsInvitationAcceptance(t *testing.T) {
 	}
 }
 
-// TestOrgsPendingRowDeclineReturnsToOrgs pins the return path of the decline
-// form on /orgs: without return_to the user is bounced to the profile
-// invitations page and the /orgs decline flash can never be seen.
-func TestOrgsPendingRowDeclineReturnsToOrgs(t *testing.T) {
-	html := renderHTML(t, OrgsPage(orgsPageData{Pending: []PendingInviteDto{pendingInviteAcceptFixture()}}))
-	if !strings.Contains(html, `name="return_to" value="/orgs"`) {
+// TestPendingInviteRowDeclineReturnsToItsPage pins the return path of the
+// decline form per surface. The row is rendered on both /orgs and
+// /profile/invitations, and each has its own decline flash: a single hardcoded
+// return_to makes the other page's flash unreachable (and bounces the user to a
+// page they were not on).
+func TestPendingInviteRowDeclineReturnsToItsPage(t *testing.T) {
+	pending := []PendingInviteDto{pendingInviteAcceptFixture()}
+
+	orgs := renderHTML(t, OrgsPage(orgsPageData{Pending: pending}))
+	if !strings.Contains(orgs, `name="return_to" value="/orgs"`) {
 		t.Error("decline form on /orgs must carry return_to=/orgs")
+	}
+	if strings.Contains(orgs, `name="return_to" value="/profile/invitations"`) {
+		t.Error("decline form on /orgs must not send the user to /profile/invitations")
+	}
+
+	invitations := renderHTML(t, InvitationsPage(invitationsPageData{Pending: pending}))
+	if !strings.Contains(invitations, `name="return_to" value="/profile/invitations"`) {
+		t.Error("decline form on /profile/invitations must carry return_to=/profile/invitations")
+	}
+	if strings.Contains(invitations, `name="return_to" value="/orgs"`) {
+		t.Error("decline form on /profile/invitations must not send the user to /orgs")
 	}
 }
