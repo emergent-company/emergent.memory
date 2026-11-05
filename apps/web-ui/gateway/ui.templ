@@ -25,7 +25,7 @@ import (
 // can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
 // instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
 // after load. Everything else mirrors PageFull's document structure.
-templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
+templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, pendingInvites []PendingInviteDto, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
 		<head>
@@ -116,7 +116,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 					     main#main-content, and it must stay above page chrome. -->
 					<div id="_layout-topbar-wrap" class="bg-base-100 sticky top-0 z-20 shrink-0">
 						@layout.Navbar(appBrand, ui.CommandPaletteButton("spotlight", "Search…")) {
-							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
+							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent, pendingInvites)
 							if assistantAgent != "" {
 								@ui.Button(ui.ButtonProps{
 									Type:      ui.ButtonTypeButton,

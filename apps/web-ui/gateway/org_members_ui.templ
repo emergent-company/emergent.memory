@@ -37,6 +37,18 @@ templ OrgsPage(data orgsPageData) {
 		if data.LoadErr != nil {
 			@pageError("Organizations unavailable", data.LoadErr)
 		} else {
+			if len(data.Pending) > 0 {
+				@ui.Section("Pending invitations", ui.SectionProps{
+					Margin:    "mb-6",
+					BodyClass: "memory-density-flush",
+				}) {
+					<div class="divide-y divide-base-200">
+						for _, inv := range data.Pending {
+							@pendingInviteRow(inv)
+						}
+					</div>
+				}
+			}
 			@ui.Section("Your organizations", ui.SectionProps{
 				Margin:    "mb-6",
 				BodyClass: "memory-density-flush",
@@ -797,6 +809,7 @@ templ pendingInviteRow(inv PendingInviteDto) {
 			<div class="flex shrink-0 gap-1.5">
 				<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/accept") }>
 					<input type="hidden" name="token" value={ inv.Token }/>
+					<input type="hidden" name="return_to" value={ inviteAcceptPath(inv.OrganizationID, inv.ProjectID) }/>
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeSubmit,
 						Variant: ui.ButtonSuccess,

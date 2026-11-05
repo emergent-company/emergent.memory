@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -123,9 +124,18 @@ type Config struct {
 	// user consents. Zitadel remains the login provider.
 	OAuthAS OAuthASConfig
 
-	// AppURL is the base URL of the application frontend (used for invite links in emails).
-	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
+	// AppURL is the base URL of the API host, e.g.
+	// https://memory.emergent-company.ai. A2A discovery advertises it, and it
+	// is the fallback for browser-facing links when WEB_UI_URL is unset.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
+
+	// WebUIURL is the base URL of the web UI host that serves the signed-in
+	// app, e.g. https://app.memory.emergent-company.ai. Invite links in emails
+	// and in-app notifications point here because only the web UI owns a user
+	// session — the API host authenticates Bearer tokens, so a browser arriving
+	// there has no identity to accept the invitation with. When unset, links
+	// fall back to AppURL.
+	WebUIURL string `env:"WEB_UI_URL" envDefault:""`
 
 	// A2AOrigin is the public origin advertised in A2A AgentCards
 	// (supportedInterfaces[].url). When empty, the interface URL is derived from
@@ -1069,6 +1079,16 @@ func (z *ZitadelConfig) GetIssuer() string {
 }
 
 // NewConfig loads configuration from environment variables
+// FrontendURL returns the base URL browser-facing links should point at:
+// WebUIURL when configured, otherwise AppURL. Trailing slashes are removed so
+// callers can append paths directly.
+func (c *Config) FrontendURL() string {
+	if u := strings.TrimRight(strings.TrimSpace(c.WebUIURL), "/"); u != "" {
+		return u
+	}
+	return strings.TrimRight(strings.TrimSpace(c.AppURL), "/")
+}
+
 func NewConfig(log *slog.Logger) (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {

@@ -46,7 +46,7 @@ func NewService(db bun.IDB, emailSvc *email.JobsService, cfg *config.Config, not
 	return &Service{
 		db:               db,
 		emailSvc:         emailSvc,
-		baseURL:          cfg.AppURL,
+		baseURL:          cfg.FrontendURL(),
 		log:              log,
 		notificationsSvc: n,
 	}

@@ -445,11 +445,25 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		bellScope, bellProject := s.inboxBellScope(c)
 		unreadNotifications = s.notificationUnread(c.Request().Context(), bellScope, bellProject)
 	}
+	// Invitations addressed to the signed-in account, surfaced in the project
+	// switcher (and counted on its trigger) so an invitee who is already signed
+	// in discovers the invitation without digging the email out — the failure
+	// mode that stranded an invited user on the org list. Session-only and
+	// best-effort: no session means no invites to discover, and a fetch failure
+	// degrades to an empty section rather than an error page.
+	var pendingInvites []PendingInviteDto
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
+		if invites, err := s.memory.ListPendingInvites(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			pendingInvites = invites
+		}
+	}
 	// Route the full page through renderScoped too: internal content links
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
 	return nil
 }
 

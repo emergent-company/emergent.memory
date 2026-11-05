@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
@@ -256,16 +257,23 @@ func (h *Handler) Accept(c echo.Context) error {
 }
 
 // AcceptViaLink accepts an invitation via GET with token as query parameter.
-// If the user is not authenticated, redirects to the Zitadel login page.
+//
+// With an authenticated caller (Bearer token or X-API-Key) it accepts the
+// invitation and answers JSON. A browser arriving on the API host carries no
+// such credential — the API has no session — so the request is handed off to
+// the web UI's accept page, which owns the login redirect and the
+// accept/decline buttons. It previously redirected to Zitadel's legacy
+// /ui/login, which is retired under login_v2.required and drops redirect_uri,
+// stranding the invitee at the console.
 // @Summary      Accept invitation via link
-// @Description  Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Redirects to login if not authenticated.
+// @Description  Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links: an unauthenticated browser is redirected to the web UI accept page.
 // @Tags         invites
 // @Produce      json
 // @Param        token query string true "Invitation token"
 // @Success      200 {object} map[string]string "Acceptance confirmation"
-// @Success      302 "Redirect to login"
+// @Success      302 "Redirect to the web UI accept page"
 // @Failure      400 {object} apperror.Error "Missing token"
-// @Failure      404 {object} apperror.Error "Invitation not found or expired"
+// @Failure      503 {object} apperror.Error "No web UI host configured"
 // @Router       /invites/accept [get]
 func (h *Handler) AcceptViaLink(c echo.Context) error {
 	token := c.QueryParam("token")
@@ -273,21 +281,31 @@ func (h *Handler) AcceptViaLink(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("token is required")
 	}
 
-	user := auth.GetUser(c)
-	if user == nil {
-		// Redirect to Zitadel login; pass the full invite URL as login_hint so
-		// the user lands back here after authenticating.
-		issuer := h.cfg.Zitadel.GetIssuer()
-		returnURL := fmt.Sprintf("%s/invites/accept?token=%s", h.cfg.AppURL, url.QueryEscape(token))
-		loginURL := fmt.Sprintf("%s/ui/login?redirect_uri=%s", issuer, url.QueryEscape(returnURL))
-		return c.Redirect(http.StatusFound, loginURL)
+	if user := auth.GetUser(c); user != nil {
+		if err := h.svc.Accept(c.Request().Context(), user.ID, token); err != nil {
+			return err
+		}
+		return c.JSON(http.StatusOK, map[string]string{"status": "accepted"})
 	}
 
-	if err := h.svc.Accept(c.Request().Context(), user.ID, token); err != nil {
+	target, err := h.webUIAcceptURL(token)
+	if err != nil {
 		return err
 	}
+	return c.Redirect(http.StatusFound, target)
+}
 
-	return c.JSON(http.StatusOK, map[string]string{"status": "accepted"})
+// webUIAcceptURL builds the browser accept URL on the web UI host. It refuses
+// to build one when no distinct web-UI host is configured: pointing at the API
+// host again would loop the request straight back into AcceptViaLink.
+func (h *Handler) webUIAcceptURL(token string) (string, error) {
+	frontend := h.cfg.FrontendURL()
+	api := strings.TrimRight(strings.TrimSpace(h.cfg.AppURL), "/")
+	if frontend == "" || frontend == api {
+		return "", apperror.ErrServiceUnavailable.WithMessage(
+			"invitation links are not configured for this deployment")
+	}
+	return fmt.Sprintf("%s/invites/accept?token=%s", frontend, url.QueryEscape(token)), nil
 }
 
 // Decline declines an invitation

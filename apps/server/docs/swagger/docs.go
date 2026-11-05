@@ -26142,7 +26142,7 @@ const docTemplate = `{
         },
         "/invites/accept": {
             "get": {
-                "description": "Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Redirects to login if not authenticated.",
+                "description": "Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links: an unauthenticated browser is redirected to the web UI accept page.",
                 "produces": [
                     "application/json"
                 ],
@@ -26170,7 +26170,7 @@ const docTemplate = `{
                         }
                     },
                     "302": {
-                        "description": "Redirect to login"
+                        "description": "Redirect to the web UI accept page"
                     },
                     "400": {
                         "description": "Missing token",
@@ -26178,8 +26178,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
-                    "404": {
-                        "description": "Invitation not found or expired",
+                    "503": {
+                        "description": "No web UI host configured",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }

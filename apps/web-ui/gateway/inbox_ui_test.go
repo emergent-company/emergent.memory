@@ -350,6 +350,7 @@ func TestAppShellRendersBell(t *testing.T) {
 	html := renderHTML(t, appShell(
 		"Inbox", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		7,
+		nil,
 		&currentUser{Name: "Ada", Sub: "sub-a"}, nil, templ.NopComponent, nil,
 		"", "", 0, 0, 0, "",
 	))
