@@ -5728,6 +5728,24 @@ definitions:
       message:
         type: string
     type: object
+  domain_mcp.InviteShareInstanceHTTPRequest:
+    properties:
+      emails:
+        items:
+          type: string
+        type: array
+    type: object
+  domain_mcp.InviteShareInstanceResponse:
+    properties:
+      emailError:
+        type: string
+      emailsSent:
+        items:
+          type: string
+        type: array
+      tokenPrefix:
+        type: string
+    type: object
   domain_mcp.MCPSnippets:
     properties:
       claudeCode:
@@ -21237,6 +21255,63 @@ paths:
       security:
       - bearerAuth: []
       summary: Create an MCP share instance
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/shares/{id}/invite:
+    post:
+      consumes:
+      - application/json
+      description: Emails the share instance's CURRENT key and client setup snippets
+        to the listed recipients. The key is recovered from encrypted storage, never
+        rotated, so existing clients keep working. Returns a 422 not_recoverable when
+        the key was stored without encryption — rotate the share instead.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Share instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Invite recipients
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcp.InviteShareInstanceHTTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcp.InviteShareInstanceResponse'
+        "400":
+          description: No recipients supplied
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Unknown share
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Share is revoked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid email address, or the key is not recoverable
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Email an existing MCP share key
       tags:
       - mcp
   /api/projects/{projectId}/mcp/shares/{id}/rotate:

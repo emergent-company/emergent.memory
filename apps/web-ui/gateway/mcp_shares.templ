@@ -74,6 +74,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 		if data.Reveal != nil {
 			@mcpShareRevealModal(*data.Reveal)
 		}
+		@ui.PopoverScript()
 		@mcpShareScripts()
 	}
 }
@@ -100,37 +101,7 @@ templ mcpShareRow(inst MCPShareInstance) {
 			</div>
 			if !inst.IsLegacy {
 				<div class="flex shrink-0 items-center gap-1">
-					@ui.Button(ui.ButtonProps{
-						Type:      ui.ButtonTypeLink,
-						Href:      mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/edit",
-						Variant:   ui.ButtonGhost,
-						Size:      ui.ButtonSM,
-						Shape:     ui.ButtonShapeSquare,
-						Icon:      "lucide--sliders-horizontal",
-						AriaLabel: "Edit " + inst.Name,
-						Attrs:     templ.Attributes{"title": "Edit tools"},
-					})
-					@ui.Button(ui.ButtonProps{
-						Type:      ui.ButtonTypeButton,
-						Variant:   ui.ButtonGhost,
-						Size:      ui.ButtonSM,
-						Shape:     ui.ButtonShapeSquare,
-						Icon:      "lucide--refresh-cw",
-						AriaLabel: "Rotate key for " + inst.Name,
-						Attrs:     templ.Attributes{"title": "Issue a new key"},
-						OnClick:   templ.JSFuncCall("openDialogByID", "mcp-share-rotate-"+inst.ID),
-					})
-					@ui.Button(ui.ButtonProps{
-						Type:      ui.ButtonTypeButton,
-						Variant:   ui.ButtonGhost,
-						Size:      ui.ButtonSM,
-						Shape:     ui.ButtonShapeSquare,
-						Icon:      "lucide--trash-2",
-						ExtraClass: "text-error hover:text-error",
-						AriaLabel: "Revoke " + inst.Name,
-						Attrs:     templ.Attributes{"title": "Revoke this share"},
-						OnClick:   templ.JSFuncCall("openDialogByID", "mcp-share-revoke-"+inst.ID),
-					})
+					@mcpShareActionsMenu(inst)
 				</div>
 			}
 		</div>
@@ -142,6 +113,62 @@ templ mcpShareRow(inst MCPShareInstance) {
 	</div>
 	@mcpShareRevokeDialog(inst)
 	@mcpShareRotateDialog(inst)
+	@mcpShareInviteDialog(inst)
+}
+
+// mcpShareActionsMenu is the row's overflow menu. It replaces three bare icon
+// buttons so the row can grow (invite is the newest action) without turning
+// into an icon strip, and so every action has a visible label. go-daisy's
+// Popover owns positioning, click-away, Escape and exclusivity; the destructive
+// and modal items only open the row's dialog, they never post.
+templ mcpShareActionsMenu(inst MCPShareInstance) {
+	@ui.Popover(ui.PopoverRootProps{}) {
+		@ui.PopoverTrigger(ui.PopoverTriggerProps{
+			Class: "btn btn-ghost btn-sm btn-square",
+			Attrs: templ.Attributes{
+				"aria-haspopup": "menu",
+				"aria-label":    "Actions for " + inst.Name,
+				"title":         "Share actions",
+				"data-testid":   "mcp-share-actions-" + inst.ID,
+			},
+		}) {
+			@ui.IconSpan("lucide--ellipsis-vertical", "size-5")
+		}
+		@ui.PopoverContent(ui.PopoverContentProps{
+			Placement: ui.PopoverBottomEnd,
+			Offset:    4,
+			Exclusive: true,
+			Class:     "w-56",
+			Attrs:     templ.Attributes{"role": "menu"},
+		}) {
+			<ul class="menu menu-sm p-1">
+				<li>
+					<a href={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/edit") } class="flex items-center gap-2" data-testid={ "mcp-share-edit-link-" + inst.ID }>
+						@ui.IconSpan("lucide--sliders-horizontal", "size-4")
+						<span>Edit tools</span>
+					</a>
+				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2" data-dialog-open={ "mcp-share-invite-" + inst.ID } data-testid={ "mcp-share-invite-open-" + inst.ID }>
+						@ui.IconSpan("lucide--mail-plus", "size-4")
+						<span>Invite by email</span>
+					</button>
+				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2" data-dialog-open={ "mcp-share-rotate-" + inst.ID } data-testid={ "mcp-share-rotate-open-" + inst.ID }>
+						@ui.IconSpan("lucide--refresh-cw", "size-4")
+						<span>Issue a new key</span>
+					</button>
+				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2 text-error" data-dialog-open={ "mcp-share-revoke-" + inst.ID } data-testid={ "mcp-share-revoke-open-" + inst.ID }>
+						@ui.IconSpan("lucide--trash-2", "size-4")
+						<span>Revoke share</span>
+					</button>
+				</li>
+			</ul>
+		}
+	}
 }
 
 // mcpShareStatusBadge renders the share's status badge.
@@ -224,6 +251,69 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 					Icon:    "lucide--refresh-cw",
 				}) {
 					Rotate key
+				}
+			}
+		</form>
+	}
+}
+
+// mcpShareInviteDialog emails an ALREADY-CREATED share's current key, without
+// rotating it: the backend recovers the plaintext from encrypted storage, so
+// everyone already using the share keeps working. A share whose key predates
+// key encryption cannot be recovered; the dialog keeps the rotate flow one
+// click away ("Issue a new key instead") for exactly that case, using the same
+// recipient field.
+templ mcpShareInviteDialog(inst MCPShareInstance) {
+	@ui.Dialog(ui.DialogProps{ID: "mcp-share-invite-" + inst.ID, BoxClass: "max-w-sm"}) {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--mail-plus", "size-5")
+			</div>
+			<div>
+				@ui.DialogTitle() { Email the share key? }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+					<span class="font-medium text-base-content">{ inst.Name }</span>'s current key and client setup instructions are emailed to the addresses below. The key does not change, so anyone already using the share keeps working.
+				}
+			</div>
+		</div>
+		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/invite") }>
+			<div class="mb-4">
+				@form.FormControl("mcp-share-invite-emails-"+inst.ID, "Email to", form.LabelAbove, "Separate several addresses with commas.", "", nil) {
+					<input id={ "mcp-share-invite-emails-" + inst.ID } name="emails" type="text" required placeholder="alice@example.com" class="input input-sm w-full"/>
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-2"}) {
+					Shares created before key encryption was enabled cannot be recovered — use “Issue a new key instead” for those.
+				}
+			</div>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+					Attrs: templ.Attributes{
+						"formaction":  mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/rotate",
+						"data-testid": "mcp-share-invite-rotate-" + inst.ID,
+					},
+				}) {
+					Issue a new key instead
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--send",
+					Attrs:   templ.Attributes{"data-testid": "mcp-share-invite-send-" + inst.ID},
+				}) {
+					Send invite
 				}
 			}
 		</form>
@@ -406,7 +496,7 @@ templ mcpShareRevealModal(r mcpShareReveal) {
 		Secret:     r.Token,
 		EndpointID:   "mcp-share-endpoint",
 		Endpoint:     r.MCPURL,
-		Warning:      "This key will not be shown again. If you lose it, rotate the share to issue a new one.",
+		Warning:      "This key will not be shown again. You can email it to someone later from the share's ⋯ menu; if you lose it, issue a new key.",
 		BundleURL:    r.BundleURL,
 		BundleTestID: "mcp-share-bundle-link",
 		DialogID:     "mcp-share-reveal-modal",

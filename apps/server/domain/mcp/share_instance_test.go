@@ -141,6 +141,14 @@ type fakeTokenSvc struct {
 	createErrOnce    error
 	createCalls      int
 	regenerateCalled bool
+
+	// Reveal seam: the plaintext key a share's token decrypts to, plus the
+	// "no ciphertext" and failure shapes of apitoken.Service.GetByID.
+	getByIDToken   string
+	getByIDTokenID string
+	getByIDNil     bool
+	getByIDErr     error
+	getByIDCalls   int
 }
 
 func (f *fakeTokenSvc) Create(_ context.Context, _, _, _ string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error) {
@@ -218,6 +226,22 @@ func (f *fakeTokenSvc) GetUserProjectRole(_ context.Context, _, _ string) (strin
 		return "project_admin", nil
 	}
 	return f.role, nil
+}
+
+// GetByID returns the fake's stored plaintext key, or a token with an empty
+// Token to model a share whose ciphertext was never stored.
+func (f *fakeTokenSvc) GetByID(_ context.Context, _, _ string) (*apitoken.GetApiTokenResponseDTO, error) {
+	f.getByIDCalls++
+	if f.getByIDErr != nil {
+		return nil, f.getByIDErr
+	}
+	if f.getByIDNil {
+		return nil, nil
+	}
+	return &apitoken.GetApiTokenResponseDTO{
+		ApiTokenDTO: apitoken.ApiTokenDTO{ID: f.getByIDTokenID},
+		Token:       f.getByIDToken,
+	}, nil
 }
 
 // fakeAgentDir implements the agentDirectory seam used by the agent-scoped

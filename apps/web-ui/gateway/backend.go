@@ -83,6 +83,9 @@ type MemoryBackend interface {
 	UpdateMCPShareInstance(ctx context.Context, id string, in *MCPShareInput) (*MCPShareInstance, error)
 	RevokeMCPShareInstance(ctx context.Context, id string) error
 	RotateMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareCreated, error)
+	// InviteMCPShareInstance emails an existing share's CURRENT key (recovered
+	// from encrypted storage) to the listed recipients; it never rotates.
+	InviteMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareInvite, error)
 	ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error)
 	// Agent-owned MCP endpoint + labeled keys (agent-scoped-mcp-endpoint; see
 	// agent_mcp_endpoint.go). The raw key secret is only ever present on

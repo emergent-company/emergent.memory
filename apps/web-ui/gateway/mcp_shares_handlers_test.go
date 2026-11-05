@@ -32,6 +32,11 @@ type mcpShareTestBackend struct {
 	updateErr error
 	revokeErr error
 	rotateErr error
+	inviteErr error
+
+	// inviteEmailErr models a partial failure: the API accepts the invite but
+	// the email queue reports a problem.
+	inviteEmailErr string
 
 	lastCreate       *MCPShareInput
 	lastUpdateID     string
@@ -39,6 +44,8 @@ type mcpShareTestBackend struct {
 	lastRevokeID     string
 	lastRotateID     string
 	lastRotateEmails []string
+	lastInviteID     string
+	lastInviteEmails []string
 }
 
 func newMCPShareTestBackend(shares []MCPShareInstance, catalog []MCPShareTool) *mcpShareTestBackend {
@@ -178,6 +185,21 @@ func (b *mcpShareTestBackend) RotateMCPShareInstance(ctx context.Context, id str
 	}, nil
 }
 
+func (b *mcpShareTestBackend) InviteMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareInvite, error) {
+	if b.inviteErr != nil {
+		return nil, b.inviteErr
+	}
+	b.lastInviteID = id
+	b.lastInviteEmails = emails
+	if b.find(id) == nil {
+		return nil, fmt.Errorf("memory 404 not found")
+	}
+	if b.inviteEmailErr != "" {
+		return &MCPShareInvite{TokenPrefix: "emt_existing", EmailError: b.inviteEmailErr}, nil
+	}
+	return &MCPShareInvite{TokenPrefix: "emt_existing", EmailsSent: emails}, nil
+}
+
 func (b *mcpShareTestBackend) ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error) {
 	if b.toolsErr != nil {
 		return nil, b.toolsErr
@@ -219,6 +241,7 @@ func mcpShareTestServer(s *Server) *echo.Echo {
 	e.POST("/settings/mcp-servers/shares/:id/update", s.uiMCPShareUpdate)
 	e.POST("/settings/mcp-servers/shares/:id/revoke", s.uiMCPShareRevoke)
 	e.POST("/settings/mcp-servers/shares/:id/rotate", s.uiMCPShareRotate)
+	e.POST("/settings/mcp-servers/shares/:id/invite", s.uiMCPShareInvite)
 	e.GET("/api/mcp-shares", s.listMCPShares)
 	e.POST("/api/mcp-shares", s.createMCPShare)
 	e.GET("/api/mcp-shares/tools", s.listMCPShareTools)
@@ -226,6 +249,7 @@ func mcpShareTestServer(s *Server) *echo.Echo {
 	e.PATCH("/api/mcp-shares/:id", s.updateMCPShare)
 	e.DELETE("/api/mcp-shares/:id", s.deleteMCPShare)
 	e.POST("/api/mcp-shares/:id/rotate", s.rotateMCPShare)
+	e.POST("/api/mcp-shares/:id/invite", s.inviteMCPShare)
 	return e
 }
 
@@ -267,7 +291,8 @@ func TestMCPSharesListRendersRowsAndLegacyReadOnly(t *testing.T) {
 		"MCP Sharing", "research", "read-only research access",
 		"2 tools",
 		`href="/settings/mcp-servers/shares/sh-1/edit"`,
-		`aria-label="Rotate key for research"`, `aria-label="Revoke research"`,
+		`data-testid="mcp-share-actions-sh-1"`, `aria-label="Actions for research"`,
+		`data-dialog-open="mcp-share-invite-sh-1"`,
 		"legacy", "old share",
 		`href="/settings/mcp-servers/shares/new"`,
 	} {
@@ -945,5 +970,201 @@ func TestMCPShareExternalOriginAndBundle(t *testing.T) {
 	}
 	if strings.Contains(jsonRec.Body.String(), `"mcpUrl":"https://gateway.example.com/api/mcp"`) {
 		t.Errorf("json create used the gateway PUBLIC_BASE_URL instead of the memory-server origin: %s", jsonRec.Body.String())
+	}
+}
+
+// --- ad-hoc invite (emails the existing key, never rotates) ---
+
+// TestMCPShareInviteEmailsExistingKey proves the invite action reaches the
+// backend with the row's id and recipients, redirects to the list, and leaves
+// the key alone (the rotate path is never touched).
+func TestMCPShareInviteEmailsExistingKey(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/invite",
+		"emails="+url.QueryEscape("carol@example.com, dave@example.com"))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("invite = %d, want 303 redirect", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasSuffix(loc, "?invited=2") {
+		t.Fatalf("invite redirect = %q, want the invited count", loc)
+	}
+	if f.lastInviteID != "sh-1" {
+		t.Fatalf("invite id = %q, want sh-1", f.lastInviteID)
+	}
+	if len(f.lastInviteEmails) != 2 || f.lastInviteEmails[1] != "dave@example.com" {
+		t.Fatalf("invite emails = %v", f.lastInviteEmails)
+	}
+	if f.lastRotateID != "" {
+		t.Error("invite must not rotate the share key")
+	}
+}
+
+// TestMCPShareInviteNotRecoverablePointsAtRotate proves the one dead end is
+// explained rather than surfaced as a raw backend 422.
+func TestMCPShareInviteNotRecoverablePointsAtRotate(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	f.inviteErr = &memoryHTTPError{Status: 422, Code: "not_recoverable", Message: "share key cannot be recovered"}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/invite", "emails=carol%40example.com")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("invite = %d, want redirect", rec.Code)
+	}
+	loc, err := url.QueryUnescape(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("unescape location: %v", err)
+	}
+	if !strings.Contains(loc, "Issue a new key instead") {
+		t.Fatalf("flash %q does not point at the rotate fallback", loc)
+	}
+}
+
+// TestMCPShareInviteEmailFailureKeepsKey proves a queue failure is reported
+// without implying the key changed.
+func TestMCPShareInviteEmailFailureKeepsKey(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	f.inviteEmailErr = "Invite email is unavailable on this server."
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/invite", "emails=carol%40example.com")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("invite = %d, want redirect", rec.Code)
+	}
+	loc, err := url.QueryUnescape(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("unescape location: %v", err)
+	}
+	if !strings.Contains(loc, "key was not changed") {
+		t.Fatalf("flash %q does not say the key survived", loc)
+	}
+}
+
+// TestMCPShareInviteRejectsBadInput proves validation runs before the backend
+// is called.
+func TestMCPShareInviteRejectsBadInput(t *testing.T) {
+	for name, body := range map[string]string{
+		"invalid address": "emails=nope",
+		"no recipients":   "emails=",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+			s := &Server{cfg: Config{}, memory: f}
+			e := mcpShareTestServer(s)
+
+			rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/invite", body)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("invite = %d, want redirect back to the list", rec.Code)
+			}
+			if !strings.Contains(rec.Header().Get("Location"), "err=") {
+				t.Error("rejected invite must carry an error flash")
+			}
+			if f.lastInviteID != "" {
+				t.Error("the backend must not be called with a rejected invite list")
+			}
+			if f.lastRotateID != "" {
+				t.Error("a rejected invite must not rotate the key")
+			}
+		})
+	}
+}
+
+// TestMCPShareInviteLegacyRejected matches rotate/revoke: legacy token rows are
+// read-only.
+func TestMCPShareInviteLegacyRejected(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-legacy/invite", "emails=carol%40example.com")
+	if f.lastInviteID != "" {
+		t.Error("legacy shares must not be invited")
+	}
+	if !strings.Contains(rec.Header().Get("Location"), "err=") {
+		t.Error("legacy invite must flash an explanation")
+	}
+}
+
+// TestMCPShareInviteFlashCount proves the list confirms how many recipients the
+// key went to.
+func TestMCPShareInviteFlashCount(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares?invited=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Invite emailed to 2 recipients.") {
+		t.Error("list does not confirm the invite recipients")
+	}
+}
+
+// TestMCPShareActionsMenuItems proves the row exposes a labelled actions menu
+// (edit, invite, issue a new key, revoke) and that legacy rows stay read-only.
+func TestMCPShareActionsMenuItems(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="mcp-share-actions-sh-1"`,
+		`data-dialog-open="mcp-share-invite-sh-1"`,
+		`data-testid="mcp-share-invite-open-sh-1"`,
+		`Invite by email`,
+		`id="mcp-share-invite-sh-1"`,
+		`mcp-share-invite-send-sh-1`,
+		`mcp-share-rotate-open-sh-1`,
+		`mcp-share-revoke-open-sh-1`,
+		`mcp-share-edit-link-sh-1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("share row missing %q", want)
+		}
+	}
+	if strings.Contains(body, `data-testid="mcp-share-actions-sh-legacy"`) {
+		t.Error("legacy rows must not offer the actions menu")
+	}
+	// The invite dialog can fall back to the rotate flow with the same field.
+	if !strings.Contains(body, `formaction="/settings/mcp-servers/shares/sh-1/rotate"`) {
+		t.Error("invite dialog does not offer the rotate fallback")
+	}
+}
+
+// TestMCPShareJSONInvite proves the JSON surface proxies the invite and reports
+// which key went out.
+func TestMCPShareJSONInvite(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares/sh-1/invite", `{"emails":["carol@example.com"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invite = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var got MCPShareInvite
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.TokenPrefix != "emt_existing" {
+		t.Fatalf("tokenPrefix = %q, want the existing key's prefix", got.TokenPrefix)
+	}
+	if len(got.EmailsSent) != 1 || got.EmailsSent[0] != "carol@example.com" {
+		t.Fatalf("emailsSent = %v", got.EmailsSent)
+	}
+	if f.lastRotateID != "" {
+		t.Error("JSON invite must not rotate the key")
+	}
+
+	bad := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares/sh-1/invite", `{"emails":[]}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("empty invite = %d, want 400", bad.Code)
 	}
 }

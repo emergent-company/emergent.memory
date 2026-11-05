@@ -73,6 +73,10 @@ type shareTokenService interface {
 	// RegenerateWith additionally runs after inside the same transaction with
 	// the new token ID, so callers can update related rows atomically.
 	RegenerateWith(ctx context.Context, tokenID, projectID, userID string, after func(ctx context.Context, tx bun.Tx, newTokenID string) error) (*apitoken.CreateApiTokenResponseDTO, error)
+	// GetByID returns the token with its plaintext value decrypted from
+	// core.api_tokens.token_encrypted when the server has token encryption
+	// configured. Empty Token means the ciphertext was never stored.
+	GetByID(ctx context.Context, tokenID, projectID string) (*apitoken.GetApiTokenResponseDTO, error)
 	GetUserProjectRole(ctx context.Context, projectID, userID string) (string, error)
 }
 
@@ -255,6 +259,22 @@ type CreateShareInstanceHTTPRequest struct {
 // POST .../shares/:id/rotate. An empty body rotates without sending email.
 type RotateShareInstanceHTTPRequest struct {
 	Emails []string `json:"emails,omitempty"`
+}
+
+// InviteShareInstanceHTTPRequest is the body for POST .../shares/:id/invite:
+// the recipients that receive the share's existing key and setup instructions.
+type InviteShareInstanceHTTPRequest struct {
+	Emails []string `json:"emails"`
+}
+
+// InviteShareInstanceResponse reports the outcome of an ad-hoc invite. The key
+// itself is deliberately absent — it is emailed, never returned to the caller —
+// while TokenPrefix names which key went out, so a caller can confirm the
+// existing key was re-sent rather than a replacement minted.
+type InviteShareInstanceResponse struct {
+	TokenPrefix string   `json:"tokenPrefix"`
+	EmailsSent  []string `json:"emailsSent,omitempty"`
+	EmailError  string   `json:"emailError,omitempty"`
 }
 
 // CatalogToolDTO is one includable tool in the catalog endpoint.
@@ -1116,6 +1136,53 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 		Token:            newToken.Token,
 		MCPURL:           mcpEndpointURL(baseURL),
 	}, nil
+}
+
+// RevealShareInstanceKey returns the plaintext key bound to an existing share
+// instance, decrypted from core.api_tokens.token_encrypted. It is the ad-hoc
+// invite path: the key is not rotated, so everyone already using the share
+// keeps working.
+//
+// A deployment without token encryption stores no ciphertext, and a share whose
+// key predates it cannot be recovered; that is a clear 422 `not_recoverable`
+// rather than an empty or partial key, so the caller can offer rotation.
+func (s *Service) RevealShareInstanceKey(ctx context.Context, projectID, userID, id string) (string, error) {
+	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
+		return "", err
+	}
+	store := s.shareStore()
+	tokenSvc := s.shareTokenSvc()
+	if store == nil || tokenSvc == nil {
+		return "", apperror.NewInternal("share instance storage unavailable", nil)
+	}
+	inst, err := store.GetByID(ctx, projectID, id)
+	if err != nil {
+		return "", err
+	}
+	if inst == nil {
+		return "", apperror.NewNotFound("Share instance", id)
+	}
+	if inst.RevokedAt != nil {
+		return "", apperror.New(409, "share_instance_revoked", "Share instance is revoked and its key cannot be emailed")
+	}
+	result, err := tokenSvc.GetByID(ctx, inst.TokenID, projectID)
+	if err != nil {
+		return "", err
+	}
+	if result == nil || result.Token == "" {
+		return "", apperror.New(422, "not_recoverable",
+			"this share's key was stored before key encryption was enabled, so it cannot be emailed")
+	}
+	return result.Token, nil
+}
+
+// shareKeyPrefix mirrors apitoken's token prefix rule (the first 12 characters)
+// so a response can name the key it emailed without carrying the secret.
+func shareKeyPrefix(key string) string {
+	if len(key) < 12 {
+		return key
+	}
+	return key[:12]
 }
 
 // ListToolCatalog returns the includable tool catalog for a project, admin-only.
