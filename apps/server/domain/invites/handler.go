@@ -256,38 +256,33 @@ func (h *Handler) Accept(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "accepted"})
 }
 
-// AcceptViaLink accepts an invitation via GET with token as query parameter.
+// AcceptViaLink is the invitation-link target (GET /invites/accept?token=...).
 //
-// With an authenticated caller (Bearer token or X-API-Key) it accepts the
-// invitation and answers JSON. A browser arriving on the API host carries no
-// such credential — the API has no session — so the request is handed off to
-// the web UI's accept page, which owns the login redirect and the
-// accept/decline buttons. It previously redirected to Zitadel's legacy
-// /ui/login, which is retired under login_v2.required and drops redirect_uri,
-// stranding the invitee at the console.
-// @Summary      Accept invitation via link
-// @Description  Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links: an unauthenticated browser is redirected to the web UI accept page.
+// It never accepts on its own. The link arrives by email, so the request can be
+// a link prefetcher or scanner rather than the recipient, and a GET must not
+// mutate state. Every request is handed to the web UI's accept page, which owns
+// the login redirect and the accept/decline buttons; accepting over the API is
+// POST /api/invites/accept, which is authenticated. (An earlier version accepted
+// when a caller credential was present, but this route is registered without
+// authentication middleware — nothing populates the user — so that branch could
+// not run.)
+//
+// It previously redirected to Zitadel's legacy /ui/login, which is retired under
+// login_v2.required and drops redirect_uri, stranding the invitee at the
+// console.
+// @Summary      Invitation link target
+// @Description  Redirects an invitation link to the web UI accept page, which authenticates and presents the accept/decline actions. The link never accepts on its own: a GET triggered by a link prefetcher must not mutate state.
 // @Tags         invites
 // @Produce      json
 // @Param        token query string true "Invitation token"
-// @Success      200 {object} map[string]string "Acceptance confirmation"
 // @Success      302 "Redirect to the web UI accept page"
 // @Failure      400 {object} apperror.Error "Missing token"
-// @Failure      403 {object} apperror.Error "Invitation is for another account"
-// @Failure      404 {object} apperror.Error "Invitation not found or expired"
 // @Failure      503 {object} apperror.Error "No web UI host configured"
 // @Router       /invites/accept [get]
 func (h *Handler) AcceptViaLink(c echo.Context) error {
 	token := c.QueryParam("token")
 	if token == "" {
 		return apperror.ErrBadRequest.WithMessage("token is required")
-	}
-
-	if user := auth.GetUser(c); user != nil {
-		if err := h.svc.Accept(c.Request().Context(), user.ID, token); err != nil {
-			return err
-		}
-		return c.JSON(http.StatusOK, map[string]string{"status": "accepted"})
 	}
 
 	target, err := h.webUIAcceptURL(token)

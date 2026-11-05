@@ -11,6 +11,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // newAcceptLinkContext builds the echo context AcceptViaLink expects, with no
@@ -48,6 +49,33 @@ func TestAcceptViaLinkRedirectsBrowserToWebUI(t *testing.T) {
 	}
 	if strings.Contains(rec.Header().Get("Location"), "/ui/login") {
 		t.Errorf("Location must not point at the retired Zitadel login page")
+	}
+}
+
+// TestAcceptViaLinkNeverAcceptsEvenWithUser proves the GET link is a pure
+// hand-off: a caller identity in the request context does not make it accept.
+// The link arrives by email, so it can be fetched by a preview bot; accepting
+// there would consume an invitation nobody meant to accept. Acceptance over the
+// API is POST /api/invites/accept, which is authenticated.
+//
+// The handler is built with a nil service on purpose: if the old
+// credentialed-accept branch came back, this test would panic instead of
+// redirecting, so it pins the contract rather than the implementation.
+func TestAcceptViaLinkNeverAcceptsEvenWithUser(t *testing.T) {
+	c, rec := newAcceptLinkContext("tok-123")
+	(*c).Set(string(auth.UserContextKey), &auth.AuthUser{ID: "user-1", Email: "invitee@example.com"})
+	cfg := &config.Config{AppURL: "https://memory.example.com", WebUIURL: "https://app.example.com"}
+	h := NewHandler(nil, cfg, nil, nil, nil)
+
+	if err := h.AcceptViaLink(*c); err != nil {
+		t.Fatalf("AcceptViaLink: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d (the link must not answer an acceptance)", rec.Code, http.StatusFound)
+	}
+	want := "https://app.example.com/invites/accept?token=tok-123"
+	if got := rec.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
 	}
 }
 
