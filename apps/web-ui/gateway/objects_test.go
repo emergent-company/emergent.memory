@@ -146,7 +146,7 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	// Branch, type and actor are one control family: the actor picker's closed
 	// trigger wears the same select chrome as the two <select>s instead of its
 	// own input box and hand-rolled chevron (#123).
-	filterForm := filterFormMarkup(t, html)
+	filterForm := formBlock(t, html, "objects-filters-form")
 	if got := strings.Count(filterForm, `class="select select-sm`); got != 3 {
 		t.Errorf("filter controls sharing the select chrome = %d, want 3 (branch, type, actor):\n%s", got, filterForm)
 	}
@@ -199,6 +199,30 @@ func TestRenderObjectsActorFilterFallbackOption(t *testing.T) {
 	// already active); only the closed control names it.
 	if strings.Contains(html, `value="user:deadbeef-0000-0000-0000-000000000000"`) {
 		t.Error("an unknown actor must not be offered as a pickable row")
+	}
+}
+
+// TestRenderObjectsProvenanceDefaultsToAny pins the toggle's rendered
+// invariant: the template normalizes the mode before comparing, so an absent or
+// unrecognised ?provenance= still renders the group with exactly one selected
+// segment (Any) — never a join of three buttons with nothing chosen (#121).
+func TestRenderObjectsProvenanceDefaultsToAny(t *testing.T) {
+	for _, raw := range []string{"", "sideways"} {
+		html := renderHTML(t, ObjectsPage(objectsPageData{
+			Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
+			Provenance: raw,
+			ActorType:  "agent",
+			ActorID:    "11111111-1111-1111-1111-111111111111",
+			ActorOptions: []objectActorOption{
+				{Type: "agent", ID: "11111111-1111-1111-1111-111111111111", Label: "diane"},
+			},
+		}))
+		if got := strings.Count(html, "btn btn-sm join-item btn-primary"); got != 1 {
+			t.Errorf("provenance %q: filled segments = %d, want 1", raw, got)
+		}
+		if want := `name="provenance" value="any" checked`; !strings.Contains(html, want) {
+			t.Errorf("provenance %q: Any should be the selected segment", raw)
+		}
 	}
 }
 
@@ -4696,20 +4720,4 @@ func TestObjectSubpages(t *testing.T) {
 			t.Errorf("saturated similar count should carry +: %s", body)
 		}
 	})
-}
-
-// filterFormMarkup returns the objects filter form's own markup, so an assertion
-// about the filter controls cannot be satisfied — or broken — by a <select>
-// elsewhere on the page, such as the bulk Set-status dialog.
-func filterFormMarkup(t *testing.T, html string) string {
-	t.Helper()
-	_, rest, ok := strings.Cut(html, `id="objects-filters-form"`)
-	if !ok {
-		t.Fatal("objects filter form not rendered")
-	}
-	form, _, ok := strings.Cut(rest, "</form>")
-	if !ok {
-		t.Fatal("objects filter form is unterminated")
-	}
-	return form
 }
