@@ -45,6 +45,12 @@ type ProvenanceContribution struct {
 	ExternalID          string     `bun:"external_id,notnull" json:"external_id"`
 	ExternalRevision    string     `bun:"external_revision,notnull,default:''" json:"external_revision"`
 	ExternalRevisionSeq int64      `bun:"external_revision_seq,notnull,default:0" json:"external_revision_seq"`
+	// MergedFromVersionID is the version this contribution was carried from,
+	// when it was not written onto the row it describes. It is set on a merge
+	// union, on a fork copy, and on any new version that inherits its
+	// predecessor's contributors; it is NULL when the source's record arrived on
+	// this row. Migration 00261's column comment predates the last of those and
+	// describes the merge case only.
 	MergedFromVersionID *uuid.UUID `bun:"merged_from_version_id,type:uuid" json:"merged_from_version_id,omitempty"`
 	State               string     `bun:"state,notnull,default:'present'" json:"state"`
 	FirstSeenAt         time.Time  `bun:"first_seen_at,notnull,default:now()" json:"first_seen_at"`
@@ -225,7 +231,7 @@ func (r *Repository) WithdrawContribution(ctx context.Context, db bun.IDB, id uu
 // source of both sides, and the merge itself stays attributed to the merging
 // actor rather than to a contributing source.
 func (r *Repository) CopyContributionsToVersion(ctx context.Context, db bun.IDB, projectID uuid.UUID, kind string, fromVersionIDs []uuid.UUID, toVersionID uuid.UUID, toBranchID *uuid.UUID) (int, error) {
-	return r.copyContributions(ctx, db, projectID, kind, fromVersionIDs, toVersionID, toBranchID)
+	return r.copyContributions(ctx, db, projectID, kind, fromVersionIDs, toVersionID, toBranchID, true)
 }
 
 // copyContributions is the shared body of the union-on-merge and the
@@ -237,10 +243,12 @@ func (r *Repository) CopyContributionsToVersion(ctx context.Context, db bun.IDB,
 // superseded — never deleting it — is what keeps both the live set correct and
 // the arrival history recoverable.
 //
-// Rows already present on the destination version are candidates too. A merge
-// writes its target version through CreateVersion, which has already carried
-// the target head's contributions forward, so the union has to dedupe against
-// them rather than collide with (or overwrite them with a lower) revision.
+// includeDestination adds the rows already present on the destination version as
+// candidates. Only a merge needs it: it writes its target version through
+// CreateVersion, which has already carried the target head's contributions
+// forward, so the union has to dedupe against them rather than collide with (or
+// overwrite them with a lower) revision. The plain inheritance call skips the
+// lookup because the destination version it writes is brand new.
 func (r *Repository) copyContributions(
 	ctx context.Context,
 	db bun.IDB,
@@ -249,6 +257,7 @@ func (r *Repository) copyContributions(
 	fromVersionIDs []uuid.UUID,
 	toVersionID uuid.UUID,
 	toBranchID *uuid.UUID,
+	includeDestination bool,
 ) (int, error) {
 	if len(fromVersionIDs) == 0 {
 		return 0, nil
@@ -270,16 +279,18 @@ func (r *Repository) copyContributions(
 	}
 
 	// Contributions the destination version already carries — the ones
-	// CreateVersion inherited from the head the merge is superseding.
+	// CreateVersion inherited from the head a merge is superseding.
 	var inherited []ProvenanceContribution
-	if err := db.NewSelect().
-		Model(&inherited).
-		Where("project_id = ?", projectID).
-		Where("subject_kind = ?", kind).
-		Where("subject_version_id = ?", toVersionID).
-		Where("state = ?", ContributionStatePresent).
-		Scan(ctx); err != nil {
-		return 0, apperror.NewDatabase("Database operation failed", err)
+	if includeDestination {
+		if err := db.NewSelect().
+			Model(&inherited).
+			Where("project_id = ?", projectID).
+			Where("subject_kind = ?", kind).
+			Where("subject_version_id = ?", toVersionID).
+			Where("state = ?", ContributionStatePresent).
+			Scan(ctx); err != nil {
+			return 0, apperror.NewDatabase("Database operation failed", err)
+		}
 	}
 
 	// A source present on both sides appears once, keeping the higher revision

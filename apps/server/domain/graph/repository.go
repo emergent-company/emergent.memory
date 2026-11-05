@@ -1067,7 +1067,7 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	// the other sources' rows stayed `present` on the superseded version,
 	// orphaned for good.
 	if _, err := r.copyContributions(ctx, tx, newVersion.ProjectID, ContributionSubjectObject,
-		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
+		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID, false); err != nil {
 		return fmt.Errorf("carry forward object contributions: %w", err)
 	}
 
@@ -1152,6 +1152,15 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 	if err != nil {
 		r.log.Error("failed to create branch tombstone", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// The branch tombstone is a new version on this branch, so it inherits the
+	// main head's contributors the same way any other version does (#112). The
+	// rows it copies are on main, so the supersede (scoped to the destination
+	// branch) leaves the main-line provenance untouched — the fork-copy rule.
+	if _, err := r.copyContributions(ctx, tx, tombstone.ProjectID, ContributionSubjectObject,
+		[]uuid.UUID{mainHead.ID}, tombstone.ID, tombstone.BranchID, false); err != nil {
+		return fmt.Errorf("carry forward branch tombstone contributions: %w", err)
 	}
 	return nil
 }
@@ -2096,7 +2105,7 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 	// Same rule as an object version (#112): the new version carries the
 	// previous version's live contributions forward instead of starting empty.
 	if _, err := r.copyContributions(ctx, tx, newVersion.ProjectID, ContributionSubjectRelationship,
-		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
+		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID, false); err != nil {
 		return fmt.Errorf("carry forward relationship contributions: %w", err)
 	}
 
