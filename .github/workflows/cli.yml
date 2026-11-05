@@ -33,9 +33,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  GO_VERSION: '1.26.6'
-
 jobs:
   lint:
     name: Lint
@@ -51,7 +48,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: apps/cli/go.mod
           # Persistent self-hosted runner: GOMODCACHE/GOCACHE already survive
           # between jobs on disk, so setup-go's GH cache is redundant — it tries
           # to upload ~10GB and always exceeds the 10GB cache limit.
@@ -189,7 +186,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: apps/cli/go.mod
           cache: false
       # No build-cache restore here: the persistent runner already keeps
       # GOCACHE on local disk, so this step only re-uploaded ~5 GB.
@@ -259,7 +256,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: apps/cli/go.mod
           cache: false
       - name: Get version info
         id: version
@@ -330,7 +327,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: apps/cli/go.mod
           cache: false
       - name: Get version info
         id: version

@@ -85,7 +85,7 @@ jobs:
     # is ~40 s of cheap guards, yet on the 7-slot self-hosted pool
     # (`[self-hosted, linux, x64, memory]`) it queued 171-489 s behind advisory
     # Playwright/E2E work that cannot gate a merge (measured 2026-11-04: PR #54's
-    # `ci` job queued 171 s, job 41838166310; the worst queue on the same PR
+    # `ci` job queued 171 s, run 41838166310; the worst queue on the same PR
     # update was 489 s and 15 of 36 checks were waiting). Only `ci`'s queue time
     # is added directly to time-to-merge: every other suite is advisory, and
     # `merge-guard` already runs on `ubuntu-latest`. The repo is public, so
@@ -93,7 +93,7 @@ jobs:
     # competing with work that cannot block a merge.
     #
     # Nothing depends on the move except this line. The toolchain is either
-    # fetched by a pinned step (`actions/setup-go@v5` at 1.26.6 for `go`/`gofmt`,
+    # fetched by a pinned step (`actions/setup-go@v5` from `go.work` for `go`/`gofmt`,
     # and `.github/scripts/install-gitleaks.sh`, which verifies a sha256 of the
     # release tarball) or provided by the image and ASSERTED by the "Verify
     # preflight toolchain" step below — so a hosted image that lacks a binary
@@ -138,11 +138,11 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version-file: go.work
           cache: false
       # Assert the toolchain every step below assumes, before any guard runs
       # (control-repo issue #819). Two tools are fetched by pinned steps —
-      # `go`/`gofmt` by actions/setup-go at 1.26.6, `gitleaks` by
+      # `go`/`gofmt` by actions/setup-go from `go.work`, `gitleaks` by
       # .github/scripts/install-gitleaks.sh (sha256-verified) — and the rest come
       # from the runner image. Asserting them explicitly is what makes the move to
       # a hosted image safe: this job's worst failure mode is a guard that goes
