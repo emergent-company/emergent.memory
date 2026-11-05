@@ -1,0 +1,28 @@
+# Workflows auto-tag.yml must start when a v* tag is created and no PAT is
+# available to make the tag push trigger them (#116). One entry per line:
+#
+#   <workflow-file>
+#   <workflow-file>|<extra `gh workflow run` arguments>
+#
+# The set must equal the workflows whose `on: push: tags:` matches the release
+# tag, and every entry must declare `workflow_dispatch:`. That equality is
+# enforced *before* the tag is created by
+# .github/scripts/check-release-fanout.py; the dispatch step reads this file so
+# the manifest is the single source of truth.
+#
+# `@TAG@` in the extra-argument column is replaced with the release tag.
+# release-versions.yml takes a required `tag` input because a run may be
+# dispatched for a past release.
+#
+# python-sdk-release.yml is absent on purpose: it triggers on `python-sdk/v*`,
+# not on a release tag.
+publish-self-hosted-images.yml
+build-publish.yml
+cli.yml
+publish-workspace-image.yml
+server-sdk.yml
+release-versions.yml|--field tag=@TAG@
+docs.yml
+connector-release.yml
+ios-release.yml
+mac-release.yml

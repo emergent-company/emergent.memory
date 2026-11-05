@@ -85,6 +85,21 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      # Fails *before* the tag is created if the fan-out manifest has drifted
+      # from the workflows that actually trigger on this tag. Without this, a
+      # renamed or newly added `on: push: tags: v*` workflow would leave the
+      # tag in place with one release workflow never started — the exact
+      # half-state #116 exists to prevent. The manifest is the single source of
+      # truth read by both the dispatch step and the final verification.
+      - name: Check release fan-out coverage
+        if: steps.check.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-release-fanout.py \
+            .github/workflows .github/release-workflows.txt "v${VERSION}"
+
       # One credential decision, made once and then referenced by every later
       # step, so the log names the path that actually ran.
       - name: Resolve release credential
@@ -121,12 +136,13 @@ jobs:
       # in effect to the push-triggered runs: each workflow is dispatched **on
       # the tag ref**, because they derive the version and the changelog base
       # from `github.ref_name` — dispatching on `main` would build the wrong tree
-      # or no-op. Keep the list in sync with every workflow declaring
-      # `on: push: tags: v*`; each one must accept `workflow_dispatch` (that is
-      # why docs.yml and connector-release.yml declare it).
+      # or no-op. The list lives in .github/release-workflows.txt so this step
+      # and the coverage check above cannot disagree; each entry must accept
+      # `workflow_dispatch` (that is why docs.yml and connector-release.yml
+      # declare it).
       #
-      # python-sdk-release.yml is deliberately absent: it triggers on
-      # `python-sdk/v*`, not on a release tag.
+      # python-sdk-release.yml is deliberately absent from the manifest: it
+      # triggers on `python-sdk/v*`, not on a release tag.
       - name: Dispatch release workflows
         if: steps.check.outputs.exists == 'false' && steps.cred.outputs.mode == 'dispatch'
         env:
@@ -135,26 +151,19 @@ jobs:
         run: |
           set -uo pipefail
           TAG="v${VERSION}"
+          MANIFEST=".github/release-workflows.txt"
 
-          # One entry per workflow that declares `on: push: tags: v*`.
-          # Format: <workflow-file>[|<extra `gh workflow run` args>]. The extra
-          # field exists for release-versions.yml, whose `tag` input is required
-          # because a run may be dispatched for a past release.
-          DISPATCHES=(
-            "publish-self-hosted-images.yml"
-            "build-publish.yml"
-            "cli.yml"
-            "publish-workspace-image.yml"
-            "server-sdk.yml"
-            "release-versions.yml|--field tag=${TAG}"
-            "docs.yml"
-            "connector-release.yml"
-            "ios-release.yml"
-            "mac-release.yml"
-          )
+          mapfile -t ENTRIES < <(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST")
+          if [ "${#ENTRIES[@]}" -eq 0 ]; then
+            echo "ERROR: $MANIFEST has no entries; refusing to skip the fan-out." >&2
+            exit 1
+          fi
 
           failed=()
-          for entry in "${DISPATCHES[@]}"; do
+          for entry in "${ENTRIES[@]}"; do
+            # `@TAG@` is substituted here, not left to the shell: a value read
+            # from a file is never re-expanded for parameter substitution.
+            entry="${entry//@TAG@/$TAG}"
             wf="${entry%%|*}"
             extra="${entry#*|}"
             if [ "$extra" = "$entry" ]; then extra=""; fi
@@ -191,31 +200,62 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           MODE: ${{ steps.cred.outputs.mode }}
         run: |
+          set -uo pipefail
           TAG="v${VERSION}"
+          MANIFEST=".github/release-workflows.txt"
+
+          mapfile -t EXPECTED < <(
+            grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | cut -d'|' -f1
+          )
+          if [ "${#EXPECTED[@]}" -eq 0 ]; then
+            echo "ERROR: $MANIFEST has no entries; there is nothing to verify." >&2
+            exit 1
+          fi
+
           # Whichever path ran — the tag push (mode=token) or the explicit
-          # dispatch (mode=dispatch) — runs must now exist for this ref. Give the
-          # API a moment, then confirm.
-          for i in 1 2 3 4 5 6; do
-            COUNT=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=50" \
-              --jq "[.workflow_runs[] | select(.head_branch == \"$TAG\")] | length")
-            echo "attempt $i: $COUNT run(s) found for $TAG"
-            if [ "$COUNT" -gt 0 ]; then
-              echo "Release workflows for $TAG: $COUNT run(s) (credential mode: $MODE)."
+          # dispatch (mode=dispatch) — a run must now exist for **every**
+          # workflow in the manifest. Counting >=1 would let a partial fan-out
+          # read as success; the manifest is the declared complete set.
+          missing=()
+          for attempt in 1 2 3 4 5 6 7 8 9; do
+            RUN_PATHS=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+              --jq "[.workflow_runs[] | select(.head_branch == \"${TAG}\") | .path] | unique | .[]" \
+              2>/dev/null || true)
+            missing=()
+            for wf in "${EXPECTED[@]}"; do
+              if ! grep -Fxq ".github/workflows/${wf}" <<< "$RUN_PATHS"; then
+                missing+=("$wf")
+              fi
+            done
+            COUNT=$(printf '%s\n' "$RUN_PATHS" | grep -c '^\.github/workflows/' || true)
+            echo "attempt $attempt: ${COUNT} workflow(s) started for $TAG; not started: ${missing[*]-none}"
+            if [ "${#missing[@]}" -eq 0 ]; then
+              echo "Release workflows for $TAG: all ${#EXPECTED[@]} started (credential mode: $MODE)."
               exit 0
             fi
             sleep 10
           done
-          echo "ERROR: no workflow runs appeared for tag $TAG (credential mode: $MODE)." >&2
+
+          echo "ERROR: ${#missing[@]}/${#EXPECTED[@]} release workflow(s) did not start for $TAG (credential mode: $MODE):" >&2
+          for wf in "${missing[@]}"; do
+            echo "  - ${wf}" >&2
+          done
           if [ "$MODE" = "token" ]; then
             echo "The tag was pushed with RELEASE_TOKEN, so the push itself should have" >&2
-            echo "started the release workflows. Check that RELEASE_TOKEN is a user/App" >&2
-            echo "token and not a GITHUB_TOKEN: events caused by GITHUB_TOKEN never start runs." >&2
+            echo "started these workflows. Check that RELEASE_TOKEN is a user/App token" >&2
+            echo "and not a GITHUB_TOKEN: events caused by GITHUB_TOKEN never start runs." >&2
           else
             echo "No RELEASE_TOKEN was set, so the fan-out was dispatched explicitly and" >&2
             echo "the dispatch step reported success. Re-run this job once the Actions API" >&2
-            echo "settles; if runs still do not appear, check the dispatch step's names against" >&2
-            echo ".github/workflows (a renamed workflow file silently stops being dispatched)." >&2
+            echo "settles; if runs still do not appear, check the workflow files against" >&2
+            echo "$MANIFEST (a renamed workflow file silently stops being dispatched)." >&2
           fi
-          echo "Do not leave the tag in place: a tag that exists on origin with no runs is" >&2
-          echo "the half-state that only a manual delete + re-push repairs." >&2
+          echo "Start the missing workflow(s) by hand:" >&2
+          for wf in "${missing[@]}"; do
+            extra=""
+            if [ "$wf" = "release-versions.yml" ]; then extra="--field tag=${TAG}"; fi
+            echo "  gh workflow run ${wf} --repo ${GITHUB_REPOSITORY} --ref ${TAG} ${extra}" >&2
+          done
+          echo "Do not leave the tag in place: a tag that exists on origin with an" >&2
+          echo "incomplete fan-out is the half-state #116 exists to prevent." >&2
           exit 1
