@@ -53,8 +53,8 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 						ActionIcon:  "lucide--plus",
 					})
 				} else {
-					@compiledTypesTable("Object types", compiled.ObjectTypes, false, "/schema/object-types/", provenance)
-					@compiledTypesTable("Relationship types", compiled.RelationshipTypes, true, "", nil)
+					@compiledTypeCards("Object types", compiled.ObjectTypes, false, "/schema/object-types/", provenance)
+					@compiledTypeCards("Relationship types", compiled.RelationshipTypes, true, "", provenance)
 				}
 			}
 		}
@@ -256,44 +256,189 @@ templ schemaHeader(compiled *CompiledSchemaTypes) {
 	}
 }
 
-// compiledTypesTable lists compiled types in one shared card-list component —
-// used for both object types and relationship types (endpoints only applies to
-// the latter). Object types delegate to objectTypeRow with a detail-page link
-// (linkPrefix); relationship rows stay plain text inline markup. provenance,
-// when set, marks a blueprint-derived object type with its owning blueprint.
-templ compiledTypesTable(title string, types []CompiledType, endpoints bool, linkPrefix string, provenance map[string]*ProvenanceInfo) {
-	@cardList(title, cardListProps{
-		Margin:    "mb-8",
-		Empty:     len(types) == 0,
-		EmptyIcon: "lucide--box", EmptyTitle: "No " + title, EmptyDesc: "None compiled yet.",
-	}) {
-		for _, t := range types {
-			if endpoints {
-				<div class="px-4 py-3">
-					<div class="flex flex-wrap items-center gap-2">
-						<p class="text-sm font-medium">{ compiledTypeLabel(t) }</p>
-						if t.SourceType != "" || t.TargetType != "" {
-							@ui.Badge(ui.BadgeProps{Label: t.SourceType + " → " + t.TargetType, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--git-branch"})
-						}
-					</div>
-					if t.Description != "" {
-						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
-							{ t.Description }
-						}
-					}
-					<p class="text-muted mt-1 font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
-				</div>
-			} else {
-				@objectTypeRow(t.Name, t.Label, t.Description, compiledProperties(t.Properties), linkPrefix+url.PathEscape(t.Name), compiledTypeSchemaLabel(t), compiledTypeIcon(t), compiledTypeColor(t), t.BoardEnabled, t.AllowedStatuses)
-				if p := provenance[t.Name]; p != nil {
-					<div class="flex flex-wrap items-center gap-2 px-4 pb-3">
-						@provenanceBadge(ui.BadgeSizeXS)
-						<a class="text-xs font-medium text-primary hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(p.BlueprintID)) }>{ typeProvenanceLabel(p) }</a>
-					</div>
-				}
-			}
+// typeCardList renders compiled types as the collapsible card sequence shared
+// by the Schema page (inside origin groups) and the pack detail page (one flat
+// list). endpoints switches to the relationship form; object types link to their
+// detail page via linkPrefix.
+templ typeCardList(types []CompiledType, endpoints bool, linkPrefix string) {
+	for _, t := range types {
+		if endpoints {
+			@relationshipTypeCard(t)
+		} else {
+			@objectTypeCard(t, linkPrefix+url.PathEscape(t.Name))
 		}
 	}
+}
+
+// typeCardSection is one titled, ungrouped card list — the pack detail's view of
+// the types a single pack declares, in the same collapsed-card style as the
+// Schema page's groups.
+templ typeCardSection(title string, types []CompiledType, endpoints bool, linkPrefix string) {
+	@ui.Section(title, ui.SectionProps{
+		Margin:     "mb-8",
+		Raw:        true,
+		Empty:      len(types) == 0,
+		EmptyIcon:  "lucide--box",
+		EmptyTitle: "No " + title,
+		EmptyDesc:  "None compiled yet.",
+	}) {
+		<div class="flex flex-col gap-2" data-testid="schema-type-cards">
+			@typeCardList(types, endpoints, linkPrefix)
+		</div>
+	}
+}
+
+// originHeading renders one origin group's heading row: blue and linked to the
+// blueprint when a blueprint owns the listed entities, yellow and linked to the
+// schema pack when they come straight from a pack, muted when neither applies.
+// noun selects the counted entity's singular/plural ("type", "pack").
+templ originHeading(label, blueprintID, packID string, count int, singular, plural string) {
+	<div class="flex flex-wrap items-center gap-2">
+		if blueprintID != "" {
+			@ui.IconSpan("lucide--library", "text-info size-3.5 shrink-0")
+			<a class="text-info text-sm font-semibold hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(blueprintID)) }>{ label }</a>
+			<span class="text-muted-faint text-[11px]">{ countLabel(count, singular, plural) }</span>
+			<span class="text-muted-faint text-[11px]">· blueprint</span>
+		} else if packID != "" {
+			@ui.IconSpan("lucide--package", "text-warning size-3.5 shrink-0")
+			<a class="text-warning text-sm font-semibold hover:underline" href={ templ.URL("/schema/packs/" + url.PathEscape(packID)) }>{ label }</a>
+			<span class="text-muted-faint text-[11px]">{ countLabel(count, singular, plural) }</span>
+			<span class="text-muted-faint text-[11px]">· pack</span>
+		} else {
+			@ui.IconSpan("lucide--package", "text-muted-faint size-3.5 shrink-0")
+			<span class="text-muted-bright text-sm font-semibold">{ label }</span>
+			<span class="text-muted-faint text-[11px]">{ countLabel(count, singular, plural) }</span>
+		}
+	</div>
+}
+
+// compiledTypeCards is the Schema page's type list: types are grouped by the
+// blueprint or schema pack they come from, and each type is one collapsible
+// card inside its group. Grouping keeps the origin as a single heading instead
+// of a provenance chip repeated on every row; cards stay collapsed by default
+// so the page reads as a scannable index. Expanding a card reveals the
+// properties, work-status config and source-schema line. The card markup
+// mirrors the MCP servers list (<details> per entry, a chevron that flips on
+// open). endpoints switches the card body to the relationship form (a source →
+// target chip instead of a properties table); object types link to their detail
+// page.
+templ compiledTypeCards(title string, types []CompiledType, endpoints bool, linkPrefix string, provenance map[string]*ProvenanceInfo) {
+	@ui.Section(title, ui.SectionProps{
+		Margin:     "mb-8",
+		Raw:        true,
+		Empty:      len(types) == 0,
+		EmptyIcon:  "lucide--box",
+		EmptyTitle: "No " + title,
+		EmptyDesc:  "None compiled yet.",
+	}) {
+		<div class="flex flex-col gap-5" data-testid="schema-type-cards">
+			for _, g := range groupCompiledTypes(types, provenance) {
+				<div class="flex flex-col gap-2" data-testid="schema-type-group" data-schema-group={ g.Key }>
+					@originHeading(g.Label, g.BlueprintID, g.PackID, len(g.Types), "type", "types")
+					@typeCardList(g.Types, endpoints, linkPrefix)
+				</div>
+			}
+		</div>
+	}
+}
+
+// objectTypeCard is one collapsed object type: the declared icon, the label
+// (linked to the type's detail page), its description, property count and a
+// chevron. Where it comes from is the group heading above it, so the card does
+// not repeat a provenance chip. The property table only renders when the card
+// is opened, which is what keeps a 26-type project scannable.
+templ objectTypeCard(t CompiledType, href string) {
+	{{ properties := compiledProperties(t.Properties) }}
+	<details
+		class="group rounded-box border border-line bg-base-100"
+		data-testid="schema-object-type"
+		data-schema-type={ t.Name }
+	>
+		<summary class="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
+			@typeIconTile(compiledTypeIcon(t), compiledTypeColor(t))
+			<div class="min-w-0 flex-1">
+				<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+					<a class="truncate text-sm font-medium text-primary hover:underline" href={ templ.URL(href) }>{ compiledTypeLabel(t) }</a>
+					if compiledTypeLabel(t) != t.Name {
+						<span class="text-muted-faint truncate font-mono text-[11px]">{ t.Name }</span>
+					}
+					if t.Label != "" && t.Label != t.Name {
+						@components.HelpTip("Label: "+t.Label+" · Key: "+t.Name, components.HelpTipProps{Position: "bottom"})
+					}
+				</div>
+				if t.Description != "" {
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 truncate"}) {
+						{ t.Description }
+					}
+				}
+			</div>
+			<div class="flex shrink-0 items-center gap-2">
+				if len(properties) > 0 {
+					@ui.Badge(ui.BadgeProps{
+						Label:   countLabel(len(properties), "property", "properties"),
+						Variant: ui.BadgeGhost,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--list",
+					})
+				}
+				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
+			</div>
+		</summary>
+		<div class="border-t border-line px-3 py-3">
+			if len(properties) > 0 {
+				@objectTypeProperties(properties, true)
+			} else {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					No properties declared.
+				}
+			}
+			@objectTypeWorkStatuses(t.BoardEnabled, t.AllowedStatuses)
+			<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+				<p class="text-muted font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
+				<a class="text-xs font-medium text-primary hover:underline" href={ templ.URL(href) }>Open type page</a>
+			</div>
+		</div>
+	</details>
+}
+
+// relationshipTypeCard is one collapsed relationship type: label, the
+// source → target endpoints, and the source schema. Relationship types have no
+// detail page and no blueprint provenance index, so the body carries the
+// description and the endpoint pair.
+templ relationshipTypeCard(t CompiledType) {
+	<details
+		class="group rounded-box border border-line bg-base-100"
+		data-testid="schema-relationship-type"
+		data-schema-type={ t.Name }
+	>
+		<summary class="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
+			@ui.IconTile("lucide--git-branch", ui.IconTileProps{Tone: "primary"})
+			<div class="min-w-0 flex-1">
+				<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+					<p class="truncate text-sm font-medium">{ compiledTypeLabel(t) }</p>
+					if compiledTypeLabel(t) != t.Name {
+						<span class="text-muted-faint truncate font-mono text-[11px]">{ t.Name }</span>
+					}
+				</div>
+				if t.SourceType != "" || t.TargetType != "" {
+					<div class="mt-1 flex min-w-0 items-center gap-1.5">
+						@ui.Badge(ui.BadgeProps{Label: t.SourceType + " → " + t.TargetType, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-right"})
+					</div>
+				}
+			</div>
+			<div class="flex shrink-0 items-center gap-2">
+				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
+			</div>
+		</summary>
+		<div class="border-t border-line px-3 py-3">
+			if t.Description != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+					{ t.Description }
+				}
+			}
+			<p class="text-muted mt-2 font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
+		</div>
+	</details>
 }
 
 // provenanceBadge is the shared "Blueprint-derived" marker (list rows and the

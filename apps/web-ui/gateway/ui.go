@@ -121,6 +121,7 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 			Items: []layout.SidebarItem{
 				{Label: "Agents", Href: base + "/agents", Icon: "lucide--bot"},
 				{Label: "Schedules", Href: base + "/schedules", Icon: "lucide--calendar-clock"},
+				{Label: "Skills", Href: base + "/skills", Icon: "lucide--sparkles"},
 			},
 		},
 		{
@@ -136,7 +137,6 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 				{Label: "MCP Servers", Href: base + "/settings/mcp-servers", Icon: "lucide--server"},
 				{Label: "MCP Registry", Href: base + "/settings/mcp-registry", Icon: "lucide--globe"},
 				{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
-				{Label: "Skills", Href: base + "/skills", Icon: "lucide--sparkles"},
 			},
 		},
 	}
