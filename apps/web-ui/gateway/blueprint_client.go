@@ -31,12 +31,69 @@ type BlueprintRecord struct {
 // /api/blueprints/import/preview: the blueprint's metadata plus its raw
 // manifest, without creating or publishing a row. The gateway renders the
 // model-mapping page from this before committing to an import.
+//
+// TypeConflicts is populated when the preview runs in project scope: the
+// object-type name collisions an apply would hit unless it is confirmed with
+// mergeTypeConflicts.
 type BlueprintPreview struct {
-	Name        string          `json:"name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description"`
-	Author      string          `json:"author"`
-	Manifest    json.RawMessage `json:"manifest"`
+	Name          string                  `json:"name"`
+	Version       string                  `json:"version"`
+	Description   string                  `json:"description"`
+	Author        string                  `json:"author"`
+	Manifest      json.RawMessage         `json:"manifest"`
+	TypeConflicts []BlueprintTypeConflict `json:"typeConflicts,omitempty"`
+}
+
+// BlueprintPropertyConflict is one property whose definition differs between
+// the project's existing object type and the incoming pack. Existing
+// definitions always win: Resolution is "existing_wins".
+type BlueprintPropertyConflict struct {
+	Property    string          `json:"property"`
+	ExistingDef json.RawMessage `json:"existing_def"`
+	IncomingDef json.RawMessage `json:"incoming_def"`
+	Resolution  string          `json:"resolution"`
+}
+
+// BlueprintTypeConflict mirrors memory's schemas.MergePreviewConflict: one
+// object-type name collision between the project and an incoming pack, with
+// property-level detail used by the conflict review page.
+type BlueprintTypeConflict struct {
+	TypeName              string                      `json:"typeName"`
+	IncomingPackName      string                      `json:"incomingPackName"`
+	ExistingSchemaID      string                      `json:"existingSchemaId,omitempty"`
+	ExistingSchemaName    string                      `json:"existingSchemaName,omitempty"`
+	ExistingSchemaVersion string                      `json:"existingSchemaVersion,omitempty"`
+	ExistingSchema        json.RawMessage             `json:"existingSchema,omitempty"`
+	IncomingSchema        json.RawMessage             `json:"incomingSchema,omitempty"`
+	MergedSchema          json.RawMessage             `json:"mergedSchema,omitempty"`
+	AddedProperties       []string                    `json:"addedProperties,omitempty"`
+	ConflictingProperties []BlueprintPropertyConflict `json:"conflictingProperties,omitempty"`
+}
+
+// BlueprintApplyPreview mirrors memory's ApplyPreview returned by POST
+// /api/blueprints/:id/apply/preview.
+type BlueprintApplyPreview struct {
+	RequiresMerge bool                    `json:"requiresMerge"`
+	Conflicts     []BlueprintTypeConflict `json:"conflicts"`
+}
+
+// BlueprintApplyOptions controls an apply: optional per-agent model overrides
+// and whether object-type collisions were explicitly accepted. The zero value
+// is a plain apply.
+type BlueprintApplyOptions struct {
+	ModelOverrides     map[string]string
+	MergeTypeConflicts bool
+}
+
+// BlueprintUpdatePreview mirrors memory's BlueprintUpdatePreview returned by
+// POST /api/blueprints/:name/updates/preview: the versions involved and the
+// object-type collisions an update apply would hit, without changing anything.
+type BlueprintUpdatePreview struct {
+	BlueprintName  string                  `json:"blueprintName"`
+	CurrentVersion string                  `json:"currentVersion"`
+	LatestVersion  string                  `json:"latestVersion"`
+	RequiresMerge  bool                    `json:"requiresMerge"`
+	Conflicts      []BlueprintTypeConflict `json:"conflicts"`
 }
 
 // BlueprintApplyResult mirrors memory's ApplyResult: per-entity-type
@@ -185,6 +242,9 @@ type importBlueprintRequest struct {
 	// Apply makes the import create+publish AND apply in one step; on an apply
 	// failure memory deletes the created row so a retry is clean.
 	Apply bool `json:"apply,omitempty"`
+	// MergeTypeConflicts allows an apply=true import to proceed when an
+	// incoming pack declares an object type already registered in the project.
+	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
 }
 
 // setGithubCredentialRequest is the body for
@@ -258,7 +318,16 @@ func (m *MemoryClient) PreviewImportBlueprint(ctx context.Context, url, ref, tok
 // overrides. The optional token is a private-repo credential; it is never
 // logged.
 func (m *MemoryClient) ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error) {
-	req := importBlueprintRequest{URL: url, Ref: ref, Token: token, Apply: true, ModelOverrides: overrides}
+	return m.ImportAndApplyBlueprintWithOptions(ctx, url, ref, token, overrides, false)
+}
+
+// ImportAndApplyBlueprintWithOptions imports and applies a blueprint in one step
+// with explicit model overrides and, when merge is true, permission to proceed
+// through object-type name collisions (POST /api/blueprints/import with
+// apply:true). The optional token is a private-repo credential; it is never
+// logged.
+func (m *MemoryClient) ImportAndApplyBlueprintWithOptions(ctx context.Context, url, ref, token string, overrides map[string]string, merge bool) (*BlueprintRecord, error) {
+	req := importBlueprintRequest{URL: url, Ref: ref, Token: token, Apply: true, ModelOverrides: overrides, MergeTypeConflicts: merge}
 	var out BlueprintRecord
 	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/import", req, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
@@ -298,9 +367,38 @@ func (m *MemoryClient) ApplyBlueprint(ctx context.Context, id string) (*Blueprin
 // X-Project-ID. The overrides map an agent name to a "provider/model" reference
 // (empty value = project default); the server persists them per-project after a
 // successful apply.
+//
+// Deprecated: the handlers now use ApplyBlueprintWithOptions, which carries the
+// model overrides and the merge flag in one call. Retained for compatibility
+// with any remaining callers; new code should use ApplyBlueprintWithOptions.
 func (m *MemoryClient) ApplyBlueprintWithOverrides(ctx context.Context, id string, overrides map[string]string) (*BlueprintApplyResult, error) {
+	return m.ApplyBlueprintWithOptions(ctx, id, BlueprintApplyOptions{ModelOverrides: overrides})
+}
+
+// PreviewApplyBlueprint reports the object-type collisions an apply would hit
+// WITHOUT materializing anything (POST /api/blueprints/:id/apply/preview).
+// Project-scoped via X-Project-ID.
+func (m *MemoryClient) PreviewApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyPreview, error) {
+	var out BlueprintApplyPreview
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(id)+"/apply/preview", map[string]any{}, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApplyBlueprintWithOptions materializes a blueprint with model overrides and,
+// when opts.MergeTypeConflicts is set, permission to proceed through object-type
+// name collisions (POST /api/blueprints/:id/apply). Project-scoped via
+// X-Project-ID.
+func (m *MemoryClient) ApplyBlueprintWithOptions(ctx context.Context, id string, opts BlueprintApplyOptions) (*BlueprintApplyResult, error) {
 	var out BlueprintApplyResult
-	body := map[string]any{"modelOverrides": overrides}
+	body := map[string]any{}
+	if opts.ModelOverrides != nil {
+		body["modelOverrides"] = opts.ModelOverrides
+	}
+	if opts.MergeTypeConflicts {
+		body["mergeTypeConflicts"] = true
+	}
 	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(id)+"/apply", body, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
@@ -376,10 +474,31 @@ func (m *MemoryClient) CheckBlueprintUpdates(ctx context.Context, name string) (
 // while one is pending/running is rejected with 409. Project-scoped via
 // X-Project-ID.
 func (m *MemoryClient) ApplyBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdateJob, error) {
+	return m.ApplyBlueprintUpdateWithMerge(ctx, name, false)
+}
+
+// ApplyBlueprintUpdateWithMerge enqueues an asynchronous apply of a detected
+// upstream update and, when merge is true, permits the job to proceed through
+// object-type name collisions (POST /api/blueprints/:name/updates/apply).
+// Project-scoped via X-Project-ID.
+func (m *MemoryClient) ApplyBlueprintUpdateWithMerge(ctx context.Context, name string, merge bool) (*BlueprintUpdateJob, error) {
 	var out BlueprintUpdateJob
-	// Empty object body — apply has no required fields; an empty body would
-	// fail echo's JSON binding.
-	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(name)+"/updates/apply", map[string]any{}, m.documentHeaders(ctx), &out); err != nil {
+	body := map[string]any{}
+	if merge {
+		body["mergeTypeConflicts"] = true
+	}
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(name)+"/updates/apply", body, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PreviewBlueprintUpdate reports the object-type collisions an upstream update
+// would hit WITHOUT creating, publishing, or applying anything (POST
+// /api/blueprints/:name/updates/preview). Project-scoped via X-Project-ID.
+func (m *MemoryClient) PreviewBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdatePreview, error) {
+	var out BlueprintUpdatePreview
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(name)+"/updates/preview", map[string]any{}, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -25,6 +25,7 @@ type Blueprinter struct {
 	skills        *sdkskills.Client
 	dryRun        bool
 	upgrade       bool
+	mergeTypes    bool
 	out           io.Writer
 
 	// packsByName is populated at the start of Run so printResult can show type counts.
@@ -58,6 +59,13 @@ func NewBlueprintsApplier(
 		upgrade:       upgrade,
 		out:           out,
 	}
+}
+
+// SetMergeTypes controls whether pack assignment merges incoming object types
+// into existing registered types (AssignPackRequest.Merge). It must only be set
+// after the user has confirmed the merge (or passed --merge-types).
+func (b *Blueprinter) SetMergeTypes(merge bool) {
+	b.mergeTypes = merge
 }
 
 // Run applies the given project config, packs, agents, and skills, returning one BlueprintsResult per resource.
@@ -236,6 +244,7 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 	// Assign to current project.
 	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
 		SchemaID: created.ID,
+		Merge:    b.mergeTypes,
 	}); err != nil {
 		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
@@ -278,6 +287,20 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 	if _, err := b.packs.UpdatePack(ctx, packID, req); err != nil {
 		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("update pack: %w", err)}
+	}
+
+	// A merge-confirmed upgrade also re-assigns the updated pack so its type
+	// definitions land in the project registry (Merge=true keeps existing
+	// property definitions and adds new ones). Without merge confirmation the
+	// historical upgrade path is unchanged.
+	if b.mergeTypes {
+		if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+			SchemaID: packID,
+			Merge:    true,
+		}); err != nil {
+			return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+				Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
+		}
 	}
 
 	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionUpdated}

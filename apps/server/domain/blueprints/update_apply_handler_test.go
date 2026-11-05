@@ -97,3 +97,32 @@ func TestHandler_GetBlueprintUpdates_IncludesLatestJob(t *testing.T) {
 	assert.Equal(t, UpdateActionUpdate, status.LatestJob.Action)
 	assert.Equal(t, UpdateJobStatusPending, status.LatestJob.Status)
 }
+
+func TestHandler_ApplyBlueprintUpdates_MergeFlag(t *testing.T) {
+	h, _ := newAuthzHandler(t)
+	proj := uuid.NewString()
+	body := []byte(`{"mergeTypeConflicts":true}`)
+	c, rec := newAuthzCtx(t, http.MethodPost, "/api/blueprints/foo/updates/apply", body,
+		&auth.AuthUser{ID: uuid.NewString(), ProjectID: proj})
+	c.SetParamNames("name")
+	c.SetParamValues("foo")
+
+	require.NoError(t, h.ApplyBlueprintUpdates(c))
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+
+	var job BlueprintUpdateJob
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &job))
+	assert.True(t, job.MergeTypeConflicts)
+}
+
+func TestHandler_ApplyBlueprintUpdates_RejectsInvalidBody(t *testing.T) {
+	h, _ := newAuthzHandler(t)
+	proj := uuid.NewString()
+	c, _ := newAuthzCtx(t, http.MethodPost, "/api/blueprints/foo/updates/apply", []byte(`not-json`),
+		&auth.AuthUser{ID: uuid.NewString(), ProjectID: proj})
+	c.SetParamNames("name")
+	c.SetParamValues("foo")
+
+	err := h.ApplyBlueprintUpdates(c)
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+}

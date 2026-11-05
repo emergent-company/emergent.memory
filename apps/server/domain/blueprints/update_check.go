@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -228,6 +229,12 @@ func (s *Service) GetUpdateCheck(ctx context.Context, projectID, blueprintName s
 // pending/running for the same (project, name), so the caller cannot stack
 // duplicate applies.
 func (s *Service) EnqueueBlueprintUpdate(ctx context.Context, projectID, blueprintName string) (*BlueprintUpdateJob, error) {
+	return s.EnqueueBlueprintUpdateWithOptions(ctx, projectID, blueprintName, UpdateJobOptions{})
+}
+
+// EnqueueBlueprintUpdateWithOptions is EnqueueBlueprintUpdate with explicit job
+// policy (e.g. merge confirmation for object-type collisions).
+func (s *Service) EnqueueBlueprintUpdateWithOptions(ctx context.Context, projectID, blueprintName string, opts UpdateJobOptions) (*BlueprintUpdateJob, error) {
 	existing, err := s.repo.findPendingUpdateJob(ctx, projectID, blueprintName, UpdateActionUpdate)
 	if err != nil {
 		return nil, err
@@ -235,7 +242,7 @@ func (s *Service) EnqueueBlueprintUpdate(ctx context.Context, projectID, bluepri
 	if existing != nil {
 		return nil, apperror.NewConflict("an update for this blueprint is already pending or running")
 	}
-	return s.repo.EnqueueUpdateJob(ctx, projectID, blueprintName, UpdateActionUpdate)
+	return s.repo.EnqueueUpdateJobWithOptions(ctx, projectID, blueprintName, UpdateActionUpdate, opts)
 }
 
 // GetUpdateStatus returns the latest check result plus the latest update job
@@ -368,11 +375,18 @@ func (s *Service) executeCheckJob(ctx context.Context, job *BlueprintUpdateJob) 
 // attempts/backoff budget as check; an applied-or-noop outcome records its
 // result verbatim.
 func (s *Service) executeUpdateJob(ctx context.Context, job *BlueprintUpdateJob) {
-	outcome, err := s.applyBlueprintUpdate(ctx, job.ProjectID, job.BlueprintName)
+	outcome, err := s.applyBlueprintUpdate(ctx, job.ProjectID, job.BlueprintName, job.MergeTypeConflicts)
 	if err != nil {
 		if isNotFound(err) {
 			// No longer applied / not a GitHub blueprint: nothing to update.
 			_ = s.repo.CompleteUpdateJob(ctx, job.ID, json.RawMessage(`{"skipped":"no applied github blueprint"}`))
+			return
+		}
+		// An object-type collision is a user decision, not a transient failure:
+		// fail immediately (no retry budget) and persist the conflict details so
+		// the caller can preview/merge explicitly.
+		if isConflict(err) {
+			_ = s.repo.FailUpdateJobWithResult(ctx, job.ID, err.Error(), updateConflictResult(err))
 			return
 		}
 		if job.Attempts >= updateJobMaxAttempts {
@@ -393,42 +407,15 @@ func (s *Service) executeUpdateJob(ctx context.Context, job *BlueprintUpdateJob)
 // (merges) it into the project. It returns a descriptive outcome map recorded
 // verbatim in the job result. ErrNotFound signals the blueprint is no longer an
 // applied GitHub blueprint.
-func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprintName string) (map[string]any, error) {
+func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprintName string, mergeTypeConflicts bool) (map[string]any, error) {
 	src, err := s.repo.GetAppliedBlueprintSource(ctx, projectID, blueprintName)
 	if err != nil {
 		return nil, err
 	}
 
-	org, repo, ref, err := parseGitHubURL(src.SourceURL, src.SourceRef)
-	if err != nil {
-		return nil, fmt.Errorf("invalid source URL: %v", err)
-	}
-
-	token, err := s.decryptGithubToken(ctx, projectID)
+	desc, manifest, err := s.fetchUpstreamManifest(ctx, projectID, src)
 	if err != nil {
 		return nil, err
-	}
-
-	fetcher := s.fetcher
-	if fetcher == nil {
-		fetcher = newGitHubFetcher()
-	}
-	root, cleanup, err := fetcher.Fetch(ctx, org, repo, ref, token)
-	if err != nil {
-		if token == "" && isRepoNotFound(err) {
-			err = fmt.Errorf("no GitHub credential configured (repository may be private): %w", err)
-		}
-		return nil, err
-	}
-	defer cleanup()
-
-	desc, err := loadBlueprintDir(os.DirFS(root), ".", repo)
-	if err != nil {
-		return nil, err
-	}
-	manifest, err := json.Marshal(desc.BlueprintManifest)
-	if err != nil {
-		return nil, fmt.Errorf("manifest not serializable: %v", err)
 	}
 
 	newer := updateAvailable(
@@ -453,6 +440,22 @@ func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprint
 			"appliedVersion": src.AppliedVersion,
 			"latestVersion":  desc.Version,
 		}, nil
+	}
+
+	// Object-type collision gate BEFORE creating/publishing the new version. A
+	// blocked update must be a true no-op: without this pre-check the new
+	// blueprint row would be created and published, then Apply would refuse —
+	// leaving version state behind despite a conflict failure. Apply keeps its
+	// own gate as defense in depth for every other apply entrypoint.
+	if !mergeTypeConflicts {
+		conflicts, err := s.PreviewManifestConflicts(ctx, projectID, manifest)
+		if err != nil {
+			return nil, err
+		}
+		if len(conflicts) > 0 {
+			return nil, apperror.NewConflict("object type name conflicts require merge confirmation").
+				WithDetails(map[string]any{"conflicts": conflicts})
+		}
 	}
 
 	var scope *string
@@ -488,7 +491,7 @@ func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprint
 		}
 	}
 
-	if _, err := s.Apply(ctx, bp.ID, projectID, "", ApplyOptions{}); err != nil {
+	if _, err := s.Apply(ctx, bp.ID, projectID, "", ApplyOptions{MergeTypeConflicts: mergeTypeConflicts}); err != nil {
 		return nil, err
 	}
 
@@ -499,6 +502,104 @@ func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprint
 		"version":         desc.Version,
 		"previousVersion": src.AppliedVersion,
 	}, nil
+}
+
+// BlueprintUpdatePreview is the read-only result of previewing an upstream
+// blueprint update: the versions involved and the object-type collisions an
+// apply would hit. It creates/publishes nothing.
+type BlueprintUpdatePreview struct {
+	BlueprintName  string                         `json:"blueprintName"`
+	CurrentVersion string                         `json:"currentVersion"`
+	LatestVersion  string                         `json:"latestVersion"`
+	RequiresMerge  bool                           `json:"requiresMerge"`
+	Conflicts      []schemas.MergePreviewConflict `json:"conflicts"`
+}
+
+// PreviewBlueprintUpdate fetches the upstream manifest for one applied GitHub
+// blueprint and reports its object-type conflicts against the project WITHOUT
+// creating, publishing, or applying a new version.
+func (s *Service) PreviewBlueprintUpdate(ctx context.Context, projectID, blueprintName string) (*BlueprintUpdatePreview, error) {
+	src, err := s.repo.GetAppliedBlueprintSource(ctx, projectID, blueprintName)
+	if err != nil {
+		return nil, err
+	}
+
+	desc, manifest, err := s.fetchUpstreamManifest(ctx, projectID, src)
+	if err != nil {
+		return nil, err
+	}
+
+	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, manifest)
+	if err != nil {
+		return nil, err
+	}
+	return &BlueprintUpdatePreview{
+		BlueprintName:  blueprintName,
+		CurrentVersion: src.AppliedVersion,
+		LatestVersion:  desc.Version,
+		RequiresMerge:  len(conflicts) > 0,
+		Conflicts:      conflicts,
+	}, nil
+}
+
+// fetchUpstreamManifest downloads and parses the upstream blueprint for one
+// applied GitHub blueprint, returning its descriptor and manifest. Shared by
+// applyBlueprintUpdate and PreviewBlueprintUpdate so the fetch/load path cannot
+// drift. The token is used only for the outbound fetch and never logged.
+func (s *Service) fetchUpstreamManifest(ctx context.Context, projectID string, src *appliedBlueprintSource) (*blueprintDescriptor, json.RawMessage, error) {
+	org, repo, ref, err := parseGitHubURL(src.SourceURL, src.SourceRef)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid source URL: %v", err)
+	}
+
+	token, err := s.decryptGithubToken(ctx, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fetcher := s.fetcher
+	if fetcher == nil {
+		fetcher = newGitHubFetcher()
+	}
+	root, cleanup, err := fetcher.Fetch(ctx, org, repo, ref, token)
+	if err != nil {
+		if token == "" && isRepoNotFound(err) {
+			err = fmt.Errorf("no GitHub credential configured (repository may be private): %w", err)
+		}
+		return nil, nil, err
+	}
+	defer cleanup()
+
+	desc, err := loadBlueprintDir(os.DirFS(root), ".", repo)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifest, err := json.Marshal(desc.BlueprintManifest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("manifest not serializable: %v", err)
+	}
+	return desc, manifest, nil
+}
+
+// updateConflictResult builds the job Result JSON for a terminal object-type
+// conflict, preserving the structured conflict details returned by Apply.
+func updateConflictResult(err error) json.RawMessage {
+	payload := map[string]any{
+		"conflict":      true,
+		"requiresMerge": true,
+		"message":       err.Error(),
+	}
+	var apErr *apperror.Error
+	if errors.As(err, &apErr) {
+		payload["message"] = apErr.Message
+		if apErr.Details != nil {
+			if conflicts, ok := apErr.Details["conflicts"]; ok {
+				payload["conflicts"] = conflicts
+			}
+		}
+	}
+	out, _ := json.Marshal(payload)
+	return out
 }
 
 // checkBlueprint fetches the upstream manifest for one applied GitHub blueprint,

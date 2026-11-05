@@ -239,16 +239,23 @@ type MemoryBackend interface {
 	ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error)
 	PreviewImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintPreview, error)
 	ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error)
+	ImportAndApplyBlueprintWithOptions(ctx context.Context, url, ref, token string, overrides map[string]string, merge bool) (*BlueprintRecord, error)
 	GetBlueprint(ctx context.Context, id string) (*BlueprintRecord, error)
 	PublishBlueprint(ctx context.Context, id string) error
 	ApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyResult, error)
+	// ApplyBlueprintWithOverrides is kept for compatibility; new code uses
+	// ApplyBlueprintWithOptions so overrides and the merge flag travel together.
 	ApplyBlueprintWithOverrides(ctx context.Context, id string, overrides map[string]string) (*BlueprintApplyResult, error)
+	ApplyBlueprintWithOptions(ctx context.Context, id string, opts BlueprintApplyOptions) (*BlueprintApplyResult, error)
+	PreviewApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyPreview, error)
 	GetModelOverrides(ctx context.Context, name string) (map[string]string, error)
 	ListAppliedBlueprints(ctx context.Context) ([]AppliedBlueprint, error)
 	UnapplyBlueprint(ctx context.Context, id string) (*BlueprintUnapplyResult, error)
 	GetBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateCheck, error)
 	CheckBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateJob, error)
 	ApplyBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdateJob, error)
+	ApplyBlueprintUpdateWithMerge(ctx context.Context, name string, merge bool) (*BlueprintUpdateJob, error)
+	PreviewBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdatePreview, error)
 	SetGithubCredential(ctx context.Context, token string) error
 	DeleteBlueprint(ctx context.Context, id string) error
 	CreateBlueprintVersion(ctx context.Context, id string, req *CreateBlueprintVersionRequest) (*BlueprintRecord, error)

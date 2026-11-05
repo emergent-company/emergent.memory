@@ -390,6 +390,14 @@ type fakeMemory struct {
 	appliedBlueprint    []string                // ids passed to ApplyBlueprint
 	applyBlueprintRes   *BlueprintApplyResult   // returned by ApplyBlueprint
 	applyOverrides      map[string]string       // last overrides passed to ApplyBlueprintWithOverrides
+	applyOptions        []BlueprintApplyOptions // every options apply, in order
+	previewApplyRes     *BlueprintApplyPreview  // returned by PreviewApplyBlueprint, when set
+	previewApplyErr     error                   // PreviewApplyBlueprint failure
+	previewApplyCalls   int                     // PreviewApplyBlueprint call count
+	previewUpdateRes    *BlueprintUpdatePreview // returned by PreviewBlueprintUpdate, when set
+	previewUpdateErr    error                   // PreviewBlueprintUpdate failure
+	previewUpdateCalls  int                     // PreviewBlueprintUpdate call count
+	appliedUpdatesMerge []bool                  // merge flag per ApplyBlueprintUpdateWithMerge call
 	modelOverrides      map[string]string       // returned by GetModelOverrides, when set
 	modelOverridesErr   error                   // GetModelOverrides failure
 	modelOverridesName  string                  // last name passed to GetModelOverrides
@@ -1887,10 +1895,14 @@ func (f *fakeMemory) PreviewImportBlueprint(ctx context.Context, url, ref, token
 }
 
 func (f *fakeMemory) ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error) {
+	return f.ImportAndApplyBlueprintWithOptions(ctx, url, ref, token, overrides, false)
+}
+
+func (f *fakeMemory) ImportAndApplyBlueprintWithOptions(ctx context.Context, url, ref, token string, overrides map[string]string, merge bool) (*BlueprintRecord, error) {
 	if f.importBlueprintErr != nil {
 		return nil, f.importBlueprintErr
 	}
-	f.importAndApplyReq = &importBlueprintRequest{URL: url, Ref: ref, Token: token, Apply: true, ModelOverrides: overrides}
+	f.importAndApplyReq = &importBlueprintRequest{URL: url, Ref: ref, Token: token, Apply: true, ModelOverrides: overrides, MergeTypeConflicts: merge}
 	f.importAndApplyCalls++
 	if f.importAndApplyRes != nil {
 		return f.importAndApplyRes, nil
@@ -1929,6 +1941,30 @@ func (f *fakeMemory) ApplyBlueprintWithOverrides(ctx context.Context, id string,
 		return f.applyBlueprintRes, nil
 	}
 	return &BlueprintApplyResult{BlueprintID: id}, nil
+}
+
+func (f *fakeMemory) ApplyBlueprintWithOptions(ctx context.Context, id string, opts BlueprintApplyOptions) (*BlueprintApplyResult, error) {
+	if f.blueprintErr != nil {
+		return nil, f.blueprintErr
+	}
+	f.appliedBlueprint = append(f.appliedBlueprint, id)
+	f.applyOverrides = opts.ModelOverrides
+	f.applyOptions = append(f.applyOptions, opts)
+	if f.applyBlueprintRes != nil {
+		return f.applyBlueprintRes, nil
+	}
+	return &BlueprintApplyResult{BlueprintID: id}, nil
+}
+
+func (f *fakeMemory) PreviewApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyPreview, error) {
+	f.previewApplyCalls++
+	if f.previewApplyErr != nil {
+		return nil, f.previewApplyErr
+	}
+	if f.previewApplyRes != nil {
+		return f.previewApplyRes, nil
+	}
+	return &BlueprintApplyPreview{}, nil
 }
 
 func (f *fakeMemory) GetModelOverrides(ctx context.Context, name string) (map[string]string, error) {
@@ -1979,11 +2015,27 @@ func (f *fakeMemory) CheckBlueprintUpdates(ctx context.Context, name string) (*B
 }
 
 func (f *fakeMemory) ApplyBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdateJob, error) {
+	return f.ApplyBlueprintUpdateWithMerge(ctx, name, false)
+}
+
+func (f *fakeMemory) ApplyBlueprintUpdateWithMerge(ctx context.Context, name string, merge bool) (*BlueprintUpdateJob, error) {
 	if f.blueprintErr != nil {
 		return nil, f.blueprintErr
 	}
 	f.appliedUpdates = append(f.appliedUpdates, name)
+	f.appliedUpdatesMerge = append(f.appliedUpdatesMerge, merge)
 	return &BlueprintUpdateJob{ID: "job-2", Action: "update", Status: "pending"}, nil
+}
+
+func (f *fakeMemory) PreviewBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdatePreview, error) {
+	f.previewUpdateCalls++
+	if f.previewUpdateErr != nil {
+		return nil, f.previewUpdateErr
+	}
+	if f.previewUpdateRes != nil {
+		return f.previewUpdateRes, nil
+	}
+	return &BlueprintUpdatePreview{BlueprintName: name}, nil
 }
 
 func (f *fakeMemory) SetGithubCredential(ctx context.Context, token string) error {

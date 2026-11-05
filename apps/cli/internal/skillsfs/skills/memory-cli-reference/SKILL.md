@@ -1716,6 +1716,7 @@ memory blueprints [flags]
       --dry-run                 Preview actions without making any API calls
   -h, --help                    help for blueprints
       --map-model stringArray   Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)
+      --merge-types             Merge incoming object types into existing registered types (required non-interactively on a type-name collision)
       --no-map                  Skip install-time model mapping and use the blueprint's pinned models as-is
       --project string          Project ID or name (overrides config/env)
       --token string            GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
@@ -1877,6 +1878,13 @@ SKILL.md file containing YAML frontmatter (name, description) and Markdown conte
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
 
+Before applying packs, install previews object type names already registered in
+the project. A collision with a type owned by a different pack prints the
+property-level diff (added properties and conflicting properties, where the
+existing definition wins) and requires confirmation. Interactive terminals are
+prompted; non-interactive callers must pass --merge-types. Re-applying or
+upgrading the same pack name is not a conflict.
+
 The blueprint is validated offline before anything is applied, and agent model
 references are normalized to "provider/model" form. A validation error aborts
 the install with nothing applied.
@@ -1887,6 +1895,7 @@ Examples:
   memory blueprints install https://github.com/acme/memory-blueprints
   memory blueprints install https://github.com/acme/memory-blueprints#v1.2.0 --upgrade
   memory blueprints install ./my-config --dry-run
+  memory blueprints install ./my-config --merge-types
 
 ```
 memory blueprints install <source> [flags]
@@ -1898,6 +1907,7 @@ memory blueprints install <source> [flags]
       --dry-run                 Preview actions without making any API calls
   -h, --help                    help for install
       --map-model stringArray   Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)
+      --merge-types             Merge incoming object types into existing registered types (required non-interactively on a type-name collision)
       --no-map                  Skip install-time model mapping and use the blueprint's pinned models as-is
       --token string            GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
       --upgrade                 Update existing resources instead of skipping them
@@ -1910,15 +1920,17 @@ Apply an available update for a GitHub-imported blueprint
 ### Synopsis
 
 Enqueue an asynchronous update (apply) for the current project's
-GitHub-imported blueprint. The server fetches the upstream source and, when a
-newer version is available, creates, publishes, and applies it. With --wait, the
-command blocks until the update job reaches a terminal state and prints the
-outcome.
+GitHub-imported blueprint. Before enqueuing, the command previews the upstream
+object types against the project registry. A collision with a type owned by a
+different pack prints the property-level conflicts and requires confirmation.
+With --wait, the command blocks until the update job reaches a terminal state
+and prints the outcome.
 
 Examples:
 
   memory blueprints update crm
   memory blueprints update crm --wait
+  memory blueprints update crm --merge-types
   memory blueprints update crm --project my-project
 
 ```
@@ -1928,8 +1940,9 @@ memory blueprints update <name> [flags]
 ### Options
 
 ```
-  -h, --help   help for update
-      --wait   Block until the update job reaches a terminal state
+  -h, --help        help for update
+      --merge-types Merge incoming object types into existing registered types (required non-interactively on a type-name collision)
+      --wait         Block until the update job reaches a terminal state
 ```
 
 ## memory blueprints validate

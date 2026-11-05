@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"github.com/spf13/cobra"
 )
 
@@ -22,10 +24,11 @@ import (
 // ─────────────────────────────────────────────
 
 var (
-	blueprintsProjectFlag string
-	blueprintsUpgradeFlag bool
-	blueprintsDryRunFlag  bool
-	blueprintsTokenFlag   string
+	blueprintsProjectFlag    string
+	blueprintsUpgradeFlag    bool
+	blueprintsDryRunFlag     bool
+	blueprintsTokenFlag      string
+	blueprintsMergeTypesFlag bool
 
 	// dump subcommand flags
 	blueprintsDumpTypesFlag string
@@ -127,6 +130,28 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "  warning  %s\n", issue)
 	}
 
+	// ── Object-type merge preflight ────────────────────────────────
+	// Read-only check against the project registry BEFORE any materialization.
+	// A same-pack re-apply/upgrade is ignored server-side; any other type-name
+	// collision needs an explicit merge confirmation. Dry-run is strictly
+	// offline: it must not make any API calls, including this preview.
+	mergeTypes := blueprintsMergeTypesFlag
+	if !blueprintsDryRunFlag && len(packs) > 0 {
+		conflicts, err := blueprints.PreviewPackConflicts(context.Background(), c.SDK.Schemas, packs)
+		if err != nil {
+			return err
+		}
+		if len(conflicts) > 0 {
+			blueprints.PrintMergeConflicts(out, conflicts)
+			if !mergeTypes {
+				if err := confirmMergeTypeConflicts(cmd, conflicts); err != nil {
+					return err
+				}
+				mergeTypes = true
+			}
+		}
+	}
+
 	// ── Model mapping ──────────────────────────────────────────────
 	// After preflight passes (so a malformed model still aborts before any API
 	// call), resolve install-time model choices: compare each agent's pinned
@@ -152,6 +177,7 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 		blueprintsUpgradeFlag,
 		out,
 	)
+	applier.SetMergeTypes(mergeTypes)
 
 	results, err := applier.Run(context.Background(), projectFile, packs, agents, skills)
 	if err != nil {
@@ -217,6 +243,34 @@ func projectObjectTypeNames(ctx context.Context, c *client.Client) []string {
 	return names
 }
 
+// confirmMergeTypeConflicts enforces explicit confirmation when object type
+// names already exist. Interactive terminals get a y/N prompt; non-interactive
+// callers must pass --merge-types, and the error names the conflicting types.
+func confirmMergeTypeConflicts(cmd *cobra.Command, conflicts []sdkschemas.MergePreviewConflict) error {
+	if isNonInteractive() {
+		return fmt.Errorf("object type name conflicts require --merge-types: %s", blueprints.FormatMergeConflictNames(conflicts))
+	}
+	if err := promptMergeConfirmation(cmd); err != nil {
+		return err
+	}
+	return nil
+}
+
+// promptMergeConfirmation asks the y/N question on the command's input/output.
+// EOF or anything other than y/yes aborts.
+func promptMergeConfirmation(cmd *cobra.Command) error {
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), "Existing object type names will be merged. Continue? [y/N]: ")
+	scanner := bufio.NewScanner(cmd.InOrStdin())
+	if !scanner.Scan() {
+		return fmt.Errorf("merge cancelled — no changes applied")
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	if answer != "y" && answer != "yes" {
+		return fmt.Errorf("merge cancelled — no changes applied")
+	}
+	return nil
+}
+
 // ─────────────────────────────────────────────
 // blueprintsCmd — namespace + deprecated fallback
 // ─────────────────────────────────────────────
@@ -277,6 +331,14 @@ SKILL.md file containing YAML frontmatter (name, description) and Markdown conte
 
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
+
+Before applying packs, the command previews object type names already registered
+in the project. If any incoming type name collides with an existing type from a
+different pack, the property-level conflicts are printed and an interactive
+confirmation (or --merge-types for non-interactive use) is required. With
+confirmation, incoming types are additively merged: new properties are added and
+existing property definitions win. Re-applying the same pack name is not a
+conflict.
 
 The blueprint is validated offline before anything is applied, and agent model
 references are normalized to "provider/model" form. A validation error aborts
@@ -599,10 +661,16 @@ newer version is available, creates, publishes, and applies it. With --wait, the
 command blocks until the update job reaches a terminal state and prints the
 outcome.
 
+Before enqueuing, the command previews object type names already registered in
+the project. If the upstream pack collides with types from a different pack, the
+property-level conflicts are printed and an interactive confirmation (or
+--merge-types for non-interactive use) is required.
+
 Examples:
 
   memory blueprints update crm
   memory blueprints update crm --wait
+  memory blueprints update crm --merge-types
   memory blueprints update crm --project my-project`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBlueprintsUpdate,
@@ -630,6 +698,15 @@ type blueprintUpdateStatus struct {
 	LatestJob       *blueprintUpdateJobStatus `json:"latestJob"`
 }
 
+// blueprintUpdatePreview is the response of POST .../updates/preview.
+type blueprintUpdatePreview struct {
+	BlueprintName  string                            `json:"blueprintName"`
+	CurrentVersion string                            `json:"currentVersion"`
+	LatestVersion  string                            `json:"latestVersion"`
+	RequiresMerge  bool                              `json:"requiresMerge"`
+	Conflicts      []sdkschemas.MergePreviewConflict `json:"conflicts"`
+}
+
 func runBlueprintsUpdate(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
 	if err != nil {
@@ -644,8 +721,38 @@ func runBlueprintsUpdate(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	out := cmd.OutOrStdout()
 
+	// Read-only preflight before enqueuing: report object-type collisions and
+	// require explicit merge confirmation.
+	previewPath := c.BaseURL() + "/api/blueprints/" + url.PathEscape(name) + "/updates/preview"
+	data, err := blueprintRequest(c, http.MethodPost, previewPath, nil)
+	if err != nil {
+		return err
+	}
+	var preview blueprintUpdatePreview
+	if err := json.Unmarshal(data, &preview); err != nil {
+		return fmt.Errorf("decode update preview: %w", err)
+	}
+
+	mergeTypes := blueprintsMergeTypesFlag
+	if len(preview.Conflicts) > 0 {
+		blueprints.PrintMergeConflicts(out, preview.Conflicts)
+		if !mergeTypes {
+			if err := confirmMergeTypeConflicts(cmd, preview.Conflicts); err != nil {
+				return err
+			}
+			mergeTypes = true
+		}
+	}
+
+	var applyBody []byte
+	if mergeTypes {
+		applyBody, err = json.Marshal(map[string]bool{"mergeTypeConflicts": true})
+		if err != nil {
+			return fmt.Errorf("marshal update request: %w", err)
+		}
+	}
 	applyPath := c.BaseURL() + "/api/blueprints/" + url.PathEscape(name) + "/updates/apply"
-	if _, err := blueprintRequest(c, http.MethodPost, applyPath, nil); err != nil {
+	if _, err := blueprintRequest(c, http.MethodPost, applyPath, applyBody); err != nil {
 		return err
 	}
 
@@ -675,11 +782,30 @@ func runBlueprintsUpdate(cmd *cobra.Command, args []string) error {
 			printUpdateJobOutcome(out, name, status.LatestJob)
 			return nil
 		case "failed":
+			printUpdateJobConflicts(out, status.LatestJob)
 			fmt.Fprintf(out, "%s: update failed: %s\n", name, status.LatestJob.LastError)
 			return fmt.Errorf("blueprint update failed: %s", status.LatestJob.LastError)
 		default:
 			<-ticker.C
 		}
+	}
+}
+
+// printUpdateJobConflicts surfaces object-type conflict details persisted on a
+// failed update job result.
+func printUpdateJobConflicts(out io.Writer, job *blueprintUpdateJobStatus) {
+	if job == nil || len(job.Result) == 0 {
+		return
+	}
+	var result struct {
+		Conflicts []sdkschemas.MergePreviewConflict `json:"conflicts"`
+	}
+	if err := json.Unmarshal(job.Result, &result); err != nil {
+		return
+	}
+	if len(result.Conflicts) > 0 {
+		blueprints.PrintMergeConflicts(out, result.Conflicts)
+		_, _ = fmt.Fprintln(out, "Re-run with --merge-types to confirm the merge.")
 	}
 }
 
@@ -898,6 +1024,7 @@ func init() {
 	// install subcommand flags
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsUpgradeFlag, "upgrade", false, "Update existing resources instead of skipping them")
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
+	blueprintsInstallCmd.Flags().BoolVar(&blueprintsMergeTypesFlag, "merge-types", false, "Merge incoming object types into existing registered types (required non-interactively on a type-name collision)")
 	blueprintsInstallCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
 	blueprintsInstallCmd.Flags().StringArrayVar(&blueprintsMapModelFlag, "map-model", nil, "Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)")
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsNoMapFlag, "no-map", false, "Skip install-time model mapping and use the blueprint's pinned models as-is")
@@ -905,6 +1032,7 @@ func init() {
 	// deprecated bare form also needs these flags
 	blueprintsCmd.Flags().BoolVar(&blueprintsUpgradeFlag, "upgrade", false, "Update existing resources instead of skipping them")
 	blueprintsCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
+	blueprintsCmd.Flags().BoolVar(&blueprintsMergeTypesFlag, "merge-types", false, "Merge incoming object types into existing registered types (required non-interactively on a type-name collision)")
 	blueprintsCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
 	blueprintsCmd.Flags().StringArrayVar(&blueprintsMapModelFlag, "map-model", nil, "Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)")
 	blueprintsCmd.Flags().BoolVar(&blueprintsNoMapFlag, "no-map", false, "Skip install-time model mapping and use the blueprint's pinned models as-is")
@@ -932,6 +1060,7 @@ func init() {
 
 	// update subcommand flags
 	blueprintsUpdateCmd.Flags().BoolVar(&blueprintsUpdateWaitFlag, "wait", false, "Block until the update job reaches a terminal state")
+	blueprintsUpdateCmd.Flags().BoolVar(&blueprintsMergeTypesFlag, "merge-types", false, "Merge incoming object types into existing registered types (required non-interactively on a type-name collision)")
 
 	rootCmd.AddCommand(blueprintsCmd)
 }

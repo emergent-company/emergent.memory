@@ -165,9 +165,21 @@ func (r *Repository) findPendingUpdateJob(ctx context.Context, projectID, bluepr
 	return &job, nil
 }
 
+// UpdateJobOptions carries per-job policy for a queued update job.
+type UpdateJobOptions struct {
+	// MergeTypeConflicts allows the async apply to proceed through object-type
+	// name collisions. Check jobs always store false.
+	MergeTypeConflicts bool
+}
+
 // EnqueueUpdateJob inserts a pending job for (project, name, action), unless one
 // is already pending/running, in which case it returns that existing job.
 func (r *Repository) EnqueueUpdateJob(ctx context.Context, projectID, blueprintName, action string) (*BlueprintUpdateJob, error) {
+	return r.EnqueueUpdateJobWithOptions(ctx, projectID, blueprintName, action, UpdateJobOptions{})
+}
+
+// EnqueueUpdateJobWithOptions is EnqueueUpdateJob with explicit job policy.
+func (r *Repository) EnqueueUpdateJobWithOptions(ctx context.Context, projectID, blueprintName, action string, opts UpdateJobOptions) (*BlueprintUpdateJob, error) {
 	if existing, err := r.findPendingUpdateJob(ctx, projectID, blueprintName, action); err != nil {
 		return nil, err
 	} else if existing != nil {
@@ -175,11 +187,12 @@ func (r *Repository) EnqueueUpdateJob(ctx context.Context, projectID, blueprintN
 	}
 
 	job := &BlueprintUpdateJob{
-		ProjectID:     projectID,
-		BlueprintName: blueprintName,
-		Action:        action,
-		Status:        UpdateJobStatusPending,
-		Result:        json.RawMessage(`{}`),
+		ProjectID:          projectID,
+		BlueprintName:      blueprintName,
+		Action:             action,
+		Status:             UpdateJobStatusPending,
+		MergeTypeConflicts: action == UpdateActionUpdate && opts.MergeTypeConflicts,
+		Result:             json.RawMessage(`{}`),
 	}
 	if _, err := r.db.NewInsert().Model(job).Exec(ctx); err != nil {
 		r.log.Error("failed to enqueue update job", logger.Error(err))
@@ -225,7 +238,8 @@ func (r *Repository) ClaimUpdateJobs(ctx context.Context, limit int) ([]Blueprin
 		FROM claimed
 		WHERE j.id = claimed.id
 		RETURNING j.id, j.project_id, j.blueprint_name, j.action, j.status, j.attempts,
-		          j.last_error, j.result, j.created_at, j.started_at, j.finished_at
+		          j.merge_type_conflicts, j.last_error, j.result, j.created_at,
+		          j.started_at, j.finished_at
 	`, limit).Scan(ctx, &jobs)
 	if err != nil {
 		r.log.Error("failed to claim update jobs", logger.Error(err))
@@ -262,6 +276,27 @@ func (r *Repository) FailUpdateJob(ctx context.Context, jobID, errMsg string) er
 		Set("finished_at = ?", now).
 		Exec(ctx); err != nil {
 		r.log.Error("failed to fail update job", logger.Error(err))
+		return apperror.NewDatabase("blueprint update-check database error", err)
+	}
+	return nil
+}
+
+// FailUpdateJobWithResult marks a claimed job terminally failed and persists a
+// result payload (e.g. object-type conflict details) alongside the error.
+func (r *Repository) FailUpdateJobWithResult(ctx context.Context, jobID, errMsg string, result json.RawMessage) error {
+	if len(result) == 0 {
+		result = json.RawMessage(`{}`)
+	}
+	now := time.Now()
+	if _, err := r.db.NewUpdate().
+		Model((*BlueprintUpdateJob)(nil)).
+		Where("id = ?", jobID).
+		Set("status = ?", UpdateJobStatusFailed).
+		Set("last_error = ?", errMsg).
+		Set("result = ?", result).
+		Set("finished_at = ?", now).
+		Exec(ctx); err != nil {
+		r.log.Error("failed to fail update job with result", logger.Error(err))
 		return apperror.NewDatabase("blueprint update-check database error", err)
 	}
 	return nil
