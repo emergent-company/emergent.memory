@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -65,6 +66,77 @@ func TestSchemaDiscoveryCardStopsPollingWhenTerminal(t *testing.T) {
 				t.Errorf("%s card lost its anchor id\n%s", status, html)
 			}
 		})
+	}
+}
+
+// discoveryJobsFlakyMemory fails the first failures ListDiscoveryJobs calls and
+// then serves the fake's jobs. It models a transient read failure: the first
+// card render has no state at all, the next read recovers it.
+type discoveryJobsFlakyMemory struct {
+	*fakeMemory
+	failures int
+}
+
+func (f *discoveryJobsFlakyMemory) ListDiscoveryJobs(ctx context.Context) ([]discoveryJob, error) {
+	if f.failures > 0 {
+		f.failures--
+		return nil, errors.New("backend unavailable")
+	}
+	return f.fakeMemory.ListDiscoveryJobs(ctx)
+}
+
+// TestSchemaDiscoveryCardPollsThroughALoadError pins the recovery path: when
+// ListDiscoveryJobs fails, the card's state is unknown rather than terminal, so
+// it must keep its interval and ask again. Without it one transient blip
+// freezes the card forever — the run continues server-side, but the reader
+// never sees it advance. The recovered read is a terminal job, which is the
+// only state allowed to stop the interval.
+func TestSchemaDiscoveryCardPollsThroughALoadError(t *testing.T) {
+	f := &fakeMemory{
+		discoveryJobs:  []discoveryJob{{ID: "job-1", Status: "completed"}},
+		documentsTotal: 8,
+	}
+	memory := &discoveryJobsFlakyMemory{fakeMemory: f, failures: 1}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: memory}
+	e := echo.New()
+	e.GET("/schema/discovery/card", s.uiSchemaDiscoveryCard)
+
+	// First read: the list fails, so the card says the state is unknown and
+	// carries the interval to ask again.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/discovery/card", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("error card status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Could not load the latest discovery state") {
+		t.Fatalf("load error not surfaced:\n%s", body)
+	}
+	for _, want := range []string{
+		`hx-trigger="every 5s"`,
+		`hx-get="/schema/discovery/card"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("error card missing %q, so a transient failure would freeze it:\n%s", want, body)
+		}
+	}
+
+	// Second read: the job is known to be terminal, so the recovered card
+	// stops asking.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/discovery/card", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovered card status = %d, want 200", rec.Code)
+	}
+	body = rec.Body.String()
+	if strings.Contains(body, "Could not load the latest discovery state") {
+		t.Fatalf("recovered card still reports the load error:\n%s", body)
+	}
+	if !strings.Contains(body, "Completed") {
+		t.Fatalf("recovered card missing the terminal job:\n%s", body)
+	}
+	if strings.Contains(body, "hx-trigger") {
+		t.Fatalf("terminal card still polls:\n%s", body)
 	}
 }
 

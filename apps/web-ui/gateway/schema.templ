@@ -82,11 +82,15 @@ templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
 		}
 	}}
 	{{ cardAttrs := templ.Attributes{"id": "discovery", "class": "mb-8", "data-testid": "schema-discovery-card"}
-	if latest != nil && latest.isRunning() {
+	// Poll while a job is running, and while the state is unknown because the
+	// job list could not be read: a transient failure must not freeze the card
+	// with no interval left to pick the run back up. A known terminal job is
+	// the only state that stops the interval (same pattern as
+	// extractionRunBody).
+	if loadErr != nil || (latest != nil && latest.isRunning()) {
 		// A run is a server-side goroutine and this card is the only place it
 		// reports progress, so without an interval it reads as frozen until the
-		// page is reloaded. A terminal job renders no attributes at all, which
-		// is what stops the interval (same pattern as extractionRunBody).
+		// page is reloaded.
 		cardAttrs["hx-get"] = "/schema/discovery/card"
 		cardAttrs["hx-trigger"] = "every 5s"
 		cardAttrs["hx-swap"] = "outerHTML"
