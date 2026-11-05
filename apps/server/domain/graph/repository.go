@@ -964,6 +964,9 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 
 // CreateVersion creates a new version of an existing graph object.
 // The previous HEAD's supersedes_id is set to the new version's ID.
+//
+// The new version also inherits the previous version's live contribution rows
+// (#112): an ordinary edit changes the data, not which sources supplied it.
 func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *GraphObject, newVersion *GraphObject) error {
 	// New version setup
 	newVersion.ID = uuid.New()
@@ -1053,6 +1056,19 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 				newVersion.Type, keyStr))
 		}
 		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// A new version inherits the previous version's live contributions (#112):
+	// an ordinary edit changes the data, not which sources supplied it. This
+	// lives here rather than at each write site because every version write
+	// comes through this function — patch, upsert, bulk, tombstone, restore,
+	// branch merge and the source changeset apply — and the one that forgot
+	// would leave the version readers actually read with no provenance, while
+	// the other sources' rows stayed `present` on the superseded version,
+	// orphaned for good.
+	if _, err := r.copyContributions(ctx, tx, newVersion.ProjectID, ContributionSubjectObject,
+		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
+		return fmt.Errorf("carry forward object contributions: %w", err)
 	}
 
 	return nil
@@ -2020,6 +2036,9 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 }
 
 // CreateRelationshipVersion creates a new version of an existing relationship.
+//
+// Like CreateVersion, the new version inherits the previous version's live
+// contribution rows (#112).
 func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, prevHead *GraphRelationship, newVersion *GraphRelationship) error {
 	// The new version inherits the prev-head's branch, because a version chain
 	// cannot span branches: the write supersedes prevHead in place, so writing
@@ -2072,6 +2091,13 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 		Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Same rule as an object version (#112): the new version carries the
+	// previous version's live contributions forward instead of starting empty.
+	if _, err := r.copyContributions(ctx, tx, newVersion.ProjectID, ContributionSubjectRelationship,
+		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
+		return fmt.Errorf("carry forward relationship contributions: %w", err)
 	}
 
 	return nil

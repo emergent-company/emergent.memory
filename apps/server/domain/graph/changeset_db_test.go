@@ -1092,3 +1092,143 @@ func TestWithdrawalIsIdempotent(t *testing.T) {
 	require.NoError(t, db.NewRaw(`SELECT withdrawn_at::text FROM kb.provenance_contributions WHERE project_id = ? AND external_id = 'double-1'`, projectID).Scan(ctx, &withdrawnAtAfter))
 	assert.Equal(t, withdrawnAt, withdrawnAtAfter, "a repeat withdrawal must not move the recorded time")
 }
+
+// TestPatchKeepsContributions is #112: an ordinary edit of a contributed object
+// mints a version that inherits the object's live contributions. Before this,
+// PATCH went through Repository.CreateVersion, which carried data_class and
+// owner_source_id forward but not the contribution rows — so HEAD reported zero
+// contributors and the other sources' rows stayed `present` on the superseded
+// version, orphaned for good (the next source push versions from the
+// contribution-less HEAD and carries nothing forward).
+func TestPatchKeepsContributions(t *testing.T) {
+	ctx, db, repo, svc, projectID := setupProvenanceTest(t)
+	sourceA := createTestSource(t, ctx, db, projectID, "patch-a")
+	sourceB := createTestSource(t, ctx, db, projectID, "patch-b")
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceA,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Ada"},
+			ExternalID:          "patch-1",
+			ExternalRevisionSeq: seq(3),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	v1 := *applied.Results[0].SubjectID
+	canonicalID := *applied.Results[0].CanonicalID
+
+	// A second source backs the same version — the shape a merge union leaves
+	// behind, without needing a branch to produce it here.
+	require.NoError(t, repo.InsertContribution(ctx, db, &graph.ProvenanceContribution{
+		ProjectID:           projectID,
+		SubjectKind:         graph.ContributionSubjectObject,
+		SubjectVersionID:    v1,
+		SourceID:            sourceB,
+		ExternalID:          "patch-1-b",
+		ExternalRevisionSeq: 5,
+	}))
+
+	patched, err := svc.Patch(ctx, projectID, canonicalID, &graph.PatchGraphObjectRequest{
+		Properties: map[string]any{"name": "Ada Lovelace"},
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, patched.Version)
+	v2 := patched.ID
+
+	var rows []contributionRow
+	require.NoError(t, db.NewRaw(`
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
+		FROM kb.provenance_contributions
+		WHERE project_id = ? AND subject_kind = 'object'`, projectID).Scan(ctx, &rows))
+
+	present := map[uuid.UUID]contributionRow{}
+	for _, row := range rows {
+		if row.State == graph.ContributionStatePresent {
+			present[row.SourceID] = row
+		}
+	}
+	require.Len(t, present, 2, "an ordinary edit must not empty the object's provenance")
+	assert.Equal(t, v2, present[sourceA].SubjectVersionID)
+	assert.Equal(t, v2, present[sourceB].SubjectVersionID)
+	assert.Equal(t, int64(3), present[sourceA].ExternalRevisionSeq, "the inherited row keeps its own revision")
+	assert.Equal(t, int64(5), present[sourceB].ExternalRevisionSeq, "the other source's record is carried, not rewritten")
+
+	var superseded int
+	require.NoError(t, db.NewRaw(`
+		SELECT count(*) FROM kb.provenance_contributions
+		WHERE subject_version_id = ? AND state = 'superseded'`, v1).Scan(ctx, &superseded))
+	assert.Equal(t, 2, superseded, "the superseded version keeps its rows as history")
+
+	// The HEAD read a client gets agrees with the table.
+	read, err := svc.GetObjectContributions(ctx, projectID, v2, true)
+	require.NoError(t, err)
+	require.Len(t, read.Contributions, 2)
+
+	// A later revision by source A replaces its own inherited row and leaves
+	// source B's alone: one present row per (version, source), no duplicate.
+	revised, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceA,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Ada L."},
+			ExternalID:          "patch-1",
+			ExternalRevisionSeq: seq(4),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, graph.ChangesetOutcomeUpdated, revised.Results[0].Outcome)
+	v3 := *revised.Results[0].SubjectID
+
+	var onV3 []contributionRow
+	require.NoError(t, db.NewRaw(`
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
+		FROM kb.provenance_contributions
+		WHERE subject_version_id = ? AND state = 'present'`, v3).Scan(ctx, &onV3))
+	require.Len(t, onV3, 2, "one present row per source on the new version")
+	seqBySource := map[uuid.UUID]int64{}
+	for _, row := range onV3 {
+		seqBySource[row.SourceID] = row.ExternalRevisionSeq
+	}
+	assert.Equal(t, map[uuid.UUID]int64{sourceA: 4, sourceB: 5}, seqBySource)
+}
+
+// TestPatchRelationshipKeepsContributions is the relationship half of #112: a
+// relationship patched after a source pushed it keeps its contribution on the
+// new version, and the version it arrived on stays superseded rather than
+// disappearing.
+func TestPatchRelationshipKeepsContributions(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "patch-rel")
+
+	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{
+			{Ref: "a", Type: "Person", ExternalID: "patch-rel-a", ExternalRevisionSeq: seq(1)},
+			{Ref: "b", Type: "Person", ExternalID: "patch-rel-b", ExternalRevisionSeq: seq(1)},
+		},
+		Relationships: []graph.ChangesetRelationshipItem{{
+			Type:                "KNOWS",
+			SrcRef:              "a",
+			DstRef:              "b",
+			ExternalID:          "patch-rel-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	relID := *resultFor(t, applied, "patch-rel-1").SubjectID
+
+	weight := float32(0.75)
+	patched, err := svc.PatchRelationship(ctx, projectID, relID, &graph.PatchGraphRelationshipRequest{
+		Weight: &weight,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, patched.Version)
+
+	contribs := contributionsFor(t, ctx, db, sourceID, "patch-rel-1")
+	require.Len(t, contribs, 2)
+	assert.Equal(t, graph.ContributionStateSuperseded, contribs[0].State)
+	assert.Equal(t, relID, contribs[0].SubjectVersionID)
+	assert.Equal(t, graph.ContributionStatePresent, contribs[1].State)
+	assert.Equal(t, patched.ID, contribs[1].SubjectVersionID, "the relationship edit must keep its contribution")
+}
