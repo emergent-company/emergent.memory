@@ -325,7 +325,7 @@ Schemas are versioned bundles of object type schemas, relationship type schemas,
 | `repository_url` | string | |
 | `documentation_url` | string | |
 | `object_type_schemas` | jsonb | map of type name → JSON Schema |
-| `relationship_type_schemas` | jsonb | map of rel type → schema |
+| `relationship_type_schemas` | jsonb | array of `{"name","sourceType","targetType"}`; legacy map of rel type → schema is read-compatible |
 | `ui_configs` | jsonb | map of type name → UI config |
 | `extraction_prompts` | jsonb | map of type name → prompt config |
 | `checksum` | string | SHA256 of canonical content |
@@ -334,6 +334,26 @@ Schemas are versioned bundles of object type schemas, relationship type schemas,
 | `deprecated_at` | time.Time | nullable |
 | `created_at` | time.Time | |
 | `updated_at` | time.Time | |
+
+**`relationship_type_schemas`: request shape vs stored shape.** These are not
+interchangeable, and the distinction is deliberate:
+
+- **HTTP request** (`POST /api/schemas`, `PUT /api/schemas/:schemaId`): a JSON
+  **array** of `{"name","sourceType","targetType"}` objects, for example
+  `[{"name":"annotates","sourceType":"Note","targetType":"Note"}]`. This is the
+  only form the `validateSchemaDefinitions` validator accepts; sending the map
+  form returns `400` with a message that names the array shape.
+- **Stored** (`kb.graph_schemas.relationship_type_schemas`): jsonb. `CreatePack`
+  persists the array it was given, and the blueprint apply/seeder path
+  (`blueprints.packSchemaJSON`) also writes the array form — one entry per
+  `(sourceType, targetType)` pair, which is why a pack whose relationship type
+  is expanded across several pairs is representable. Rows written by other
+  producers (the discovery path, the MCP create-schema tool, older seeds) may
+  still carry the **legacy map** of rel type → schema; readers
+  (`parseRelationshipTypeSchemas`) normalise both. A map cannot hold more than
+  one source/target pair for the same relationship name, so new writers must
+  use the array. Do not "simplify" the request helper by sending the stored map
+  shape.
 
 **`ProjectSchema`** — table `kb.project_template_packs` (assignment join table)
 

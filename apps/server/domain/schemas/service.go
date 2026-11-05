@@ -1,6 +1,7 @@
 package schemas
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -315,7 +316,7 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 			TargetType string `json:"targetType"`
 		}
 		if err := json.Unmarshal(relationshipTypeSchemas, &entries); err != nil {
-			errs = append(errs, fmt.Sprintf("relationshipTypeSchemas is not a valid JSON array: %v", err))
+			errs = append(errs, relationshipTypeSchemasShapeError(relationshipTypeSchemas))
 		} else {
 			for i, e := range entries {
 				if e.Name == "" {
@@ -332,6 +333,35 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 	}
 
 	return errs
+}
+
+// relationshipTypeSchemasExpectedShape is the request shape the API accepts.
+// It is spelled out in the error so a caller never has to read the validator
+// (or a "[]struct { Name ... }" Go type) to learn what to send.
+const relationshipTypeSchemasExpectedShape = `[{"name":"annotates","sourceType":"Note","targetType":"Note"}]`
+
+// relationshipTypeSchemasShapeError turns a relationship-type decoding failure
+// into an actionable message that names the expected array shape. The request
+// shape and the stored shape differ: kb.graph_schemas.relationship_type_schemas
+// also accepts the legacy map-of-rel-type → schema form on read, but the API
+// request is always the array form. The raw json decoder error is deliberately
+// not included — it leaks a Go type name that tells the caller nothing.
+func relationshipTypeSchemasShapeError(raw json.RawMessage) string {
+	got := "unparseable JSON"
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 {
+		switch trimmed[0] {
+		case '{':
+			got = "a JSON object (the stored map form, not the request shape)"
+		case '[':
+			got = "a JSON array whose entries are not all {name, sourceType, targetType} objects"
+		default:
+			got = "a JSON scalar"
+		}
+	}
+	return fmt.Sprintf(
+		"relationshipTypeSchemas must be a JSON array of {\"name\",\"sourceType\",\"targetType\"} objects, for example %s; got %s",
+		relationshipTypeSchemasExpectedShape, got,
+	)
 }
 
 // GetPack returns a schema by ID if the caller owns it (same project)
