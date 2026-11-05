@@ -764,9 +764,7 @@ func (h *Handler) ApplyBlueprintUpdates(c echo.Context) error {
 		}
 	}
 
-	job, err := h.svc.EnqueueBlueprintUpdateWithOptions(c.Request().Context(), projectID, name, UpdateJobOptions{
-		MergeTypeConflicts: req.MergeTypeConflicts,
-	})
+	job, err := h.svc.EnqueueBlueprintUpdateWithOptions(c.Request().Context(), projectID, name, UpdateJobOptions(req))
 	if err != nil {
 		return err
 	}
