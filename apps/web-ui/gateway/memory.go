@@ -579,6 +579,8 @@ type AgentObjectRule struct {
 	Fields      []string               `json:"fields,omitempty"`
 	Triggers    []AgentWorkTrigger     `json:"triggers,omitempty"`
 	Transitions []AgentTransition      `json:"transitions,omitempty"`
+	// ClearAssigneeOnComplete nulls the assignee when the item completes.
+	ClearAssigneeOnComplete bool `json:"clearAssigneeOnComplete,omitempty"`
 }
 
 // AgentWorkConfig mirrors the server's full agent workConfig. The board consumes

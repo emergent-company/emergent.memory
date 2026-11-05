@@ -66,11 +66,14 @@ func TestValidateWorkRules(t *testing.T) {
 
 func TestPermitsTransition(t *testing.T) {
 	st := AgentWorkStatusConfig{}.withDefaults()
-	if !(*AgentObjectRule)(nil).PermitsTransition(st.InProgress, st.Done, st) {
-		t.Fatal("standard terminator edge should be allowed with an empty matrix")
+	if !(*AgentObjectRule)(nil).PermitsTransition(st.Ready, st.Done, st) {
+		t.Fatal("terminal edge should be allowed from a pickup status with an empty matrix")
 	}
-	if (*AgentObjectRule)(nil).PermitsTransition(st.Ready, st.Done, st) {
-		t.Fatal("non-terminator edge should be rejected with an empty matrix")
+	if !(*AgentObjectRule)(nil).PermitsTransition(st.Blocked, st.Review, st) {
+		t.Fatal("review edge should be allowed with an empty matrix")
+	}
+	if (*AgentObjectRule)(nil).PermitsTransition(st.Ready, st.Revision, st) {
+		t.Fatal("non-terminal edge should be rejected with an empty matrix")
 	}
 	r := &AgentObjectRule{Transitions: []AgentTransition{{From: st.InProgress, To: st.Revision}}}
 	if !r.PermitsTransition(st.InProgress, st.Revision, st) {

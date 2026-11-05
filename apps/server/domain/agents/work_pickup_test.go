@@ -195,45 +195,57 @@ func TestClaimWorkObject_PickupSources(t *testing.T) {
 	agent := makeTestAgent("a1", "researcher", "p1", nil)
 	def := &AgentDefinition{WorkConfig: AgentWorkConfig{TriggerStatuses: []string{"todo"}}}
 
-	t.Run("status_changed CASes from matched status", func(t *testing.T) {
+	t.Run("status_changed asserts the matched status", func(t *testing.T) {
 		store := &recordingWorkObjectStore{}
 		pool := newClaimPool(store)
 		claimed, err := pool.claimWorkObject(context.Background(), runWithMetadata(EventTypeStatusChanged, "todo"), agent, def)
 		require.NoError(t, err)
 		assert.True(t, claimed)
-		require.Len(t, store.transitionCalls, 1)
-		assert.Equal(t, claimTransition{from: "todo", to: "in_progress"}, store.transitionCalls[0])
+		assert.Empty(t, store.transitionCalls)
 		assert.Empty(t, store.readyClaims)
 	})
 
-	t.Run("assigned CASes from HEAD current status", func(t *testing.T) {
+	t.Run("status_changed off the matched status is skipped", func(t *testing.T) {
+		store := &recordingWorkObjectStore{head: &graph.WorkObjectHead{Status: "done"}}
+		pool := newClaimPool(store)
+		claimed, err := pool.claimWorkObject(context.Background(), runWithMetadata(EventTypeStatusChanged, "todo"), agent, def)
+		require.NoError(t, err)
+		assert.False(t, claimed)
+	})
+
+	t.Run("assigned claims the current status", func(t *testing.T) {
 		store := &recordingWorkObjectStore{}
 		pool := newClaimPool(store)
 		claimed, err := pool.claimWorkObject(context.Background(), runWithMetadata(EventTypeAssigned, ""), agent, def)
 		require.NoError(t, err)
 		assert.True(t, claimed)
-		require.Len(t, store.transitionCalls, 1)
-		assert.Equal(t, claimTransition{from: "todo", to: "in_progress"}, store.transitionCalls[0])
+		assert.Empty(t, store.transitionCalls)
 	})
 
 	t.Run("created claims from ready", func(t *testing.T) {
-		store := &recordingWorkObjectStore{}
+		store := &recordingWorkObjectStore{head: &graph.WorkObjectHead{Status: "ready"}}
 		pool := newClaimPool(store)
 		claimed, err := pool.claimWorkObject(context.Background(), runWithMetadata(EventTypeCreated, ""), agent, def)
 		require.NoError(t, err)
 		assert.True(t, claimed)
-		require.Len(t, store.readyClaims, 1)
-		assert.Equal(t, claimReady{ready: "ready", inProgress: "in_progress"}, store.readyClaims[0])
 		assert.Empty(t, store.transitionCalls)
 	})
 
+	t.Run("claim-status-only metadata asserts that status", func(t *testing.T) {
+		store := &recordingWorkObjectStore{head: &graph.WorkObjectHead{Status: "todo"}}
+		pool := newClaimPool(store)
+		run := &AgentRun{SubjectObjectID: strPtr("obj-1"), TriggerMetadata: map[string]any{"work_claim_status": "todo"}}
+		claimed, err := pool.claimWorkObject(context.Background(), run, agent, def)
+		require.NoError(t, err)
+		assert.True(t, claimed)
+	})
+
 	t.Run("legacy dispatch without metadata claims from ready", func(t *testing.T) {
-		store := &recordingWorkObjectStore{}
+		store := &recordingWorkObjectStore{head: &graph.WorkObjectHead{Status: "ready"}}
 		pool := newClaimPool(store)
 		claimed, err := pool.claimWorkObject(context.Background(), runWithMetadata("", ""), agent, def)
 		require.NoError(t, err)
 		assert.True(t, claimed)
-		require.Len(t, store.readyClaims, 1)
 	})
 }
 

@@ -295,65 +295,6 @@ func buildBoardSwimlanes(items []WorkItem, compiled *CompiledSchemaTypes) []boar
 	return out
 }
 
-// boardStatusMapForType resolves the phase map for one object type from the
-// per-type rules, falling back to the legacy agent-level map and then built-ins.
-func boardStatusMapForType(defs []AgentDefinitionSummary, typeName string) boardStatusMap {
-	ready := map[string]struct{}{}
-	inProgress := map[string]struct{}{}
-	review := map[string]struct{}{}
-	revision := map[string]struct{}{}
-	blocked := map[string]struct{}{}
-	done := map[string]struct{}{}
-	add := func(set map[string]struct{}, v string) {
-		if v != "" {
-			set[v] = struct{}{}
-		}
-	}
-	for _, d := range defs {
-		if d.WorkConfig == nil {
-			continue
-		}
-		if r := d.WorkConfig.RuleFor(typeName); r != nil && r.Status != nil {
-			add(ready, r.Status.Ready)
-			add(inProgress, r.Status.InProgress)
-			add(review, r.Status.Review)
-			add(revision, r.Status.Revision)
-			add(blocked, r.Status.Blocked)
-			add(done, r.Status.Done)
-			continue
-		}
-		if len(d.WorkConfig.ObjectRules) == 0 {
-			s := d.WorkConfig.Status
-			add(ready, s.Ready)
-			add(inProgress, s.InProgress)
-			add(review, s.Review)
-			add(revision, s.Revision)
-			add(blocked, s.Blocked)
-			add(done, s.Done)
-		}
-	}
-	m := defaultBoardStatusMap()
-	if v, ok := soleValue(ready); ok {
-		m.Ready = v
-	}
-	if v, ok := soleValue(inProgress); ok {
-		m.InProgress = v
-	}
-	if v, ok := soleValue(review); ok {
-		m.Review = v
-	}
-	if v, ok := soleValue(revision); ok {
-		m.Revision = v
-	}
-	if v, ok := soleValue(blocked); ok {
-		m.Blocked = v
-	}
-	if v, ok := soleValue(done); ok {
-		m.Done = v
-	}
-	return m
-}
-
 // RuleFor returns the definition's rule for an object type, or nil.
 func (w *AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
 	if w == nil {
@@ -365,43 +306,6 @@ func (w *AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
 		}
 	}
 	return nil
-}
-
-// boardView is the rendered board's data: one swimlane per type plus the
-// resolved phase map for each.
-type boardView struct {
-	Swimlanes  []boardSwimlane
-	StatusMaps map[string]boardStatusMap
-}
-
-// buildBoardView assembles the swimlanes and per-type phase maps.
-func buildBoardView(items []WorkItem, compiled *CompiledSchemaTypes, defs []AgentDefinitionSummary) boardView {
-	v := boardView{Swimlanes: buildBoardSwimlanes(items, compiled), StatusMaps: map[string]boardStatusMap{}}
-	for _, sl := range v.Swimlanes {
-		v.StatusMaps[sl.Type] = boardStatusMapForType(defs, sl.Type)
-	}
-	return v
-}
-
-// filterWorkItemsForAgent keeps items assigned to the agent, plus unassigned
-// items whose type the agent declares a rule/trigger for.
-func filterWorkItemsForAgent(items []WorkItem, def *AgentDefinition) []WorkItem {
-	if def == nil {
-		return items
-	}
-	types := map[string]bool{}
-	if def.WorkConfig != nil {
-		for _, r := range def.WorkConfig.ObjectRules {
-			types[r.ObjectType] = true
-		}
-	}
-	out := make([]WorkItem, 0, len(items))
-	for _, it := range items {
-		if it.Assignee == def.Name || (it.Assignee == "" && types[it.Type]) {
-			out = append(out, it)
-		}
-	}
-	return out
 }
 
 // buildBoardColumns groups items into columns by status in the schema-declared
@@ -554,6 +458,11 @@ func (s *Server) boardSchema(ctx context.Context) ([]string, boardAllowances) {
 		return nil, nil
 	}
 	return boardStatusesFromCompiled(compiled), boardAllowancesFromCompiled(compiled)
+}
+
+// uiBoardRedirect sends the legacy /board route to the global Work board.
+func (s *Server) uiBoardRedirect(c echo.Context) error {
+	return c.Redirect(308, "/work/board")
 }
 
 // uiBoard renders the Kanban board page. A failed fetch renders the whole-page

@@ -485,8 +485,11 @@ type AgentObjectRule struct {
 	// Triggers are the (status, prompt) pickup rows for this type.
 	Triggers []AgentWorkTrigger `json:"triggers,omitempty"`
 	// Transitions are the status edges this agent may perform for this type.
-	// Empty means only the standard terminator edges are allowed.
+	// Empty means the standard terminal edges (any pickup status → done/review/
+	// blocked) are allowed.
 	Transitions []AgentTransition `json:"transitions,omitempty"`
+	// ClearAssigneeOnComplete nulls the assignee when the item completes.
+	ClearAssigneeOnComplete bool `json:"clearAssigneeOnComplete,omitempty"`
 }
 
 // AllowsCreate/AllowsUpdate/AllowsDelete resolve the tri-state action flags:
@@ -523,9 +526,6 @@ func (r *AgentObjectRule) PermitsTransition(from, to string, s AgentWorkStatusCo
 		return false
 	}
 	if r == nil || len(r.Transitions) == 0 {
-		if from != s.InProgress {
-			return false
-		}
 		return to == s.Done || to == s.Review || to == s.Blocked
 	}
 	for _, t := range r.Transitions {

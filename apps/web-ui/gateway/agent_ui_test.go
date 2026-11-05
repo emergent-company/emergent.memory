@@ -602,7 +602,6 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	// rail items (Dashboard / Settings / Sandbox / Sessions).
 	settingsNavHrefs := []string{
 		`href="/agents/a1"`, `href="/agents/a1/settings"`,
-		`href="/agents/a1/work/board"`, `href="/agents/a1/work/settings"`,
 		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
 		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
 		`href="/agents/a1/settings/mcp"`,
@@ -855,7 +854,7 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 		{"mcp", settingsParent + "/mcp"},
 	}
 	// Every agent section must expose the Settings parent plus all eight children.
-	allSettingsHrefs := []string{settingsParent, "/agents/a1/work/board", "/agents/a1/work/settings"}
+	allSettingsHrefs := []string{settingsParent}
 	for _, c := range children {
 		allSettingsHrefs = append(allSettingsHrefs, c.href)
 	}

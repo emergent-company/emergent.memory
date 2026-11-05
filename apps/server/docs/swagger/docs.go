@@ -16455,6 +16455,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/work-items/{canonicalId}/unblock": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Clears the durable block, resets the failure budget, and re-enqueues from the current status with an optional note",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Unblock a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Unblocked",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Not blocked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/schema-registry/projects/{projectId}": {
             "get": {
                 "security": [
@@ -28650,6 +28700,10 @@ const docTemplate = `{
                 "canUpdate": {
                     "type": "boolean"
                 },
+                "clearAssigneeOnComplete": {
+                    "description": "ClearAssigneeOnComplete nulls the assignee when the item completes.",
+                    "type": "boolean"
+                },
                 "fields": {
                     "description": "Fields is the writable-property allowlist for this type. Empty means all\ndeclared properties are writable.",
                     "type": "array",
@@ -28669,7 +28723,7 @@ const docTemplate = `{
                     ]
                 },
                 "transitions": {
-                    "description": "Transitions are the status edges this agent may perform for this type.\nEmpty means only the standard terminator edges are allowed.",
+                    "description": "Transitions are the status edges this agent may perform for this type.\nEmpty means the standard terminal edges (any pickup status → done/review/\nblocked) are allowed.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/domain_agents.AgentTransition"
@@ -29784,10 +29838,25 @@ const docTemplate = `{
                 "assignee": {
                     "type": "string"
                 },
+                "blockReason": {
+                    "type": "string"
+                },
+                "blocked": {
+                    "type": "boolean"
+                },
+                "blockedAt": {
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
+                "isWorking": {
+                    "type": "boolean"
+                },
                 "key": {
+                    "type": "string"
+                },
+                "latestRunAgentName": {
                     "type": "string"
                 },
                 "latestRunFailureClass": {
@@ -29801,6 +29870,9 @@ const docTemplate = `{
                 },
                 "needsReview": {
                     "type": "boolean"
+                },
+                "nextRunAt": {
+                    "type": "string"
                 },
                 "projectId": {
                     "type": "string"

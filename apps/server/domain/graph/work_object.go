@@ -66,7 +66,17 @@ type WorkItem struct {
 	LatestRunStatus       string
 	LatestRunFailureClass string
 	LatestRunID           string
-	RunCount              int
+	LatestRunAgentName    string
+	// IsWorking is true while the latest run is live (queued/running/paused).
+	IsWorking bool
+	// NextRunAt is the scheduled retry time for a queued run.
+	NextRunAt *time.Time
+	RunCount  int
+
+	// Blocked is a durable execution state; the workflow status is preserved.
+	Blocked     bool
+	BlockReason string
+	BlockedAt   *time.Time
 
 	Unroutable bool
 }
@@ -644,6 +654,10 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 	if err != nil {
 		return nil, err
 	}
+	blocks, err := s.repo.listWorkBlocksForSubjects(ctx, canonicalIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]*WorkItem, 0, len(objs))
 	for _, o := range objs {
@@ -669,10 +683,18 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 		if run := runs[o.CanonicalID]; run != nil {
 			item.LatestRunStatus = run.Status
 			item.LatestRunID = run.RunID
+			item.LatestRunAgentName = run.AgentName
+			item.NextRunAt = run.NextRunAt
 			item.RunCount = run.RunCount
+			item.IsWorking = run.Status == "queued" || run.Status == "running" || run.Status == "paused"
 			if run.FailureClass != nil {
 				item.LatestRunFailureClass = *run.FailureClass
 			}
+		}
+		if block := blocks[o.CanonicalID]; block != nil {
+			item.Blocked = true
+			item.BlockReason = block.Reason
+			item.BlockedAt = block.BlockedAt
 		}
 		items = append(items, item)
 	}

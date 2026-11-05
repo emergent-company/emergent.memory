@@ -77,17 +77,3 @@ func TestBuildBoardSwimlanesPerType(t *testing.T) {
 		t.Fatalf("Task lanes = %#v", lanes[1].Lanes)
 	}
 }
-
-func TestFilterWorkItemsForAgent(t *testing.T) {
-	def := &AgentDefinition{Name: "worker", WorkConfig: &AgentWorkConfig{ObjectRules: []AgentObjectRule{{ObjectType: "Task"}}}}
-	items := []WorkItem{
-		{Type: "Task", Assignee: "worker"},
-		{Type: "Task", Assignee: ""},
-		{Type: "Bug", Assignee: ""},
-		{Type: "Task", Assignee: "other"},
-	}
-	got := filterWorkItemsForAgent(items, def)
-	if len(got) != 2 {
-		t.Fatalf("filtered items = %d, want 2", len(got))
-	}
-}

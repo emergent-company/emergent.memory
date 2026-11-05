@@ -106,8 +106,14 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
 				{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
-				{Label: "Board", Href: base + "/board", Icon: "lucide--kanban-square"},
 				{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
+			},
+		},
+		{
+			Label: "Work",
+			Items: []layout.SidebarItem{
+				{Label: "Board", Href: base + "/work/board", Icon: "lucide--kanban-square"},
+				{Label: "Settings", Href: base + "/work/settings", Icon: "lucide--list-checks"},
 			},
 		},
 		{

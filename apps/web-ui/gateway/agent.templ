@@ -41,7 +41,6 @@ templ agentSubNav(agentID string, active string, section string) {
 	@components.SettingsRail("Agent sections", active, []components.RailItem{
 		{Key: "dashboard", Href: base, Icon: "lucide--layout-dashboard", Label: "Dashboard"},
 		{Custom: agentSettingsNavGroup(agentID, section)},
-		{Custom: agentWorkNavGroup(agentID, section)},
 		{Key: "sandbox", Href: base + "/sandbox", Icon: "lucide--box", Label: "Sandbox"},
 		{Key: "sessions", Href: base + "/sessions", Icon: "lucide--messages-square", Label: "Sessions"},
 		{Key: "share", Href: base + "/share", Icon: "lucide--share-2", Label: "Share"},
@@ -65,18 +64,6 @@ templ agentSettingsNavGroup(agentID string, section string) {
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/delegation", section == "delegation", "lucide--users", "Delegation")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/mcp", section == "mcp", "lucide--plug", "MCP sharing")
-		</div>
-	</div>
-}
-
-// agentWorkNavGroup renders the top-level Work entry with its Board and
-// Settings children.
-templ agentWorkNavGroup(agentID string, section string) {
-	<div class="flex shrink-0 flex-row gap-1 lg:flex-col lg:gap-1">
-		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/work/board", false, "lucide--kanban-square", "Work")
-		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
-			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/work/board", section == "board", "lucide--columns-3", "Board")
-			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/work/settings", section == "settings", "lucide--list-checks", "Settings")
 		</div>
 	</div>
 }

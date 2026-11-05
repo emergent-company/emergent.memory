@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,159 +16,14 @@ const (
 	workSectionSettings = "settings"
 )
 
-var agentWorkSections = []string{workSectionBoard, workSectionSettings}
-
-// agentWorkData is the payload for the Work section pages.
-type agentWorkData struct {
-	Agent             *AgentDefinition
-	Section           string
-	ObjectTypes       []CompiledType
-	RelationshipTypes []CompiledType
-	BoardTypes        []CompiledType
-	View              boardView
-	Items             []WorkItem
-	Agents            []ScheduledAgent
-	Allowances        boardAllowances
-	FlashMsg          string
-	FlashErr          error
-	LoadErr           error
-}
-
 // uiAgentWork redirects the bare Work route to its Board subpage.
 func (s *Server) uiAgentWork(c echo.Context) error {
-	return c.Redirect(http.StatusSeeOther, "/agents/"+url.PathEscape(c.Param("id"))+"/work/"+workSectionBoard)
+	return c.Redirect(308, "/work/settings?agent="+url.QueryEscape(c.Param("id")))
 }
 
-// uiAgentWorkSection renders Work → Board or Work → Settings.
+// uiAgentWorkSection redirects agent Work routes into the global Work settings.
 func (s *Server) uiAgentWorkSection(c echo.Context) error {
-	section := c.Param("section")
-	if !containsString(agentWorkSections, section) {
-		return c.NoContent(http.StatusNotFound)
-	}
-	data := agentWorkData{Section: section}
-	if c.QueryParam("updated") != "" {
-		data.FlashMsg = "Agent work settings updated."
-	}
-	data.FlashErr = flashError(c)
-	if err := s.loadAgentWorkData(c.Request().Context(), c.Param("id"), &data); err != nil {
-		data.LoadErr = userFacingError(err)
-	}
-	return s.page(c, pageTitle(data.AgentName(), "Work"), AgentWorkPage(data))
-}
-
-// AgentName returns the agent name or a fallback for the page title.
-func (d agentWorkData) AgentName() string {
-	if d.Agent != nil && d.Agent.Name != "" {
-		return d.Agent.Name
-	}
-	return "Agent"
-}
-
-// loadAgentWorkData loads the definition, compiled types, and (for Board) the
-// agent-scoped work items plus the per-type swimlanes.
-func (s *Server) loadAgentWorkData(ctx context.Context, id string, data *agentWorkData) error {
-	agent, err := s.memory.GetAgentDefinition(ctx, id)
-	if err != nil {
-		return err
-	}
-	deriveDelegation(agent)
-	data.Agent = agent
-
-	var compiled *CompiledSchemaTypes
-	if c, err := s.memory.GetCompiledTypes(ctx); err != nil {
-		captureError(err)
-	} else {
-		compiled = c
-	}
-	if compiled != nil {
-		data.ObjectTypes = compiled.ObjectTypes
-		data.RelationshipTypes = compiled.RelationshipTypes
-	}
-	data.BoardTypes = agentRuleTypes(agent, compiled)
-	data.Allowances = boardAllowancesFromCompiled(compiled)
-
-	if data.Section != workSectionBoard {
-		return nil
-	}
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit)
-	if err != nil {
-		return err
-	}
-	items = filterWorkItemsForAgent(items, agent)
-	data.Items = items
-	defs, derr := s.memory.ListAgentDefinitions(ctx)
-	if derr != nil {
-		captureError(derr)
-	}
-	view := buildBoardView(items, compiled, defs)
-	data.View = filterBoardViewForTypes(view, agentRuleTypes(agent, compiled))
-	agents, aerr := s.memory.ListScheduledAgents(ctx)
-	if aerr != nil {
-		captureError(aerr)
-	}
-	data.Agents = agents
-	return nil
-}
-
-// agentRuleTypes returns the object types the Settings editor should render:
-// board-enabled types plus any type already carrying a rule, sorted by name.
-func agentRuleTypes(def *AgentDefinition, compiled *CompiledSchemaTypes) []CompiledType {
-	byName := map[string]CompiledType{}
-	if compiled != nil {
-		for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
-			if t.BoardEnabled {
-				byName[t.Name] = t
-			}
-		}
-	}
-	if def != nil && def.WorkConfig != nil {
-		for _, r := range def.WorkConfig.ObjectRules {
-			if _, ok := byName[r.ObjectType]; ok {
-				continue
-			}
-			var found *CompiledType
-			if compiled != nil {
-				for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
-					if t.Name == r.ObjectType {
-						tt := t
-						found = &tt
-						break
-					}
-				}
-			}
-			if found != nil {
-				byName[r.ObjectType] = *found
-			} else {
-				byName[r.ObjectType] = CompiledType{Name: r.ObjectType}
-			}
-		}
-	}
-	out := make([]CompiledType, 0, len(byName))
-	for _, t := range byName {
-		out = append(out, t)
-	}
-	sortCompiledTypesByName(out)
-	return out
-}
-
-// filterBoardViewForTypes narrows swimlanes to the given types, preserving the
-// view's order.
-func filterBoardViewForTypes(v boardView, types []CompiledType) boardView {
-	if len(types) == 0 {
-		return v
-	}
-	allow := map[string]bool{}
-	for _, t := range types {
-		allow[t.Name] = true
-	}
-	out := boardView{StatusMaps: map[string]boardStatusMap{}}
-	for _, sl := range v.Swimlanes {
-		if allow[sl.Type] {
-			out.Swimlanes = append(out.Swimlanes, sl)
-			out.StatusMaps[sl.Type] = v.StatusMaps[sl.Type]
-		}
-	}
-	return out
+	return c.Redirect(308, "/work/settings?agent="+url.QueryEscape(c.Param("id")))
 }
 
 // EffectiveStatusForType resolves the phase map for an object type from the
@@ -471,55 +325,12 @@ func compiledTypePropertyNames(t CompiledType) map[string]bool {
 	return out
 }
 
-// effectiveStatusForType is a nil-safe prefill wrapper.
-func effectiveStatusForType(def *AgentDefinition, typeName string) AgentWorkStatusConfig {
-	if def == nil || def.WorkConfig == nil {
-		return (&AgentWorkConfig{}).EffectiveStatusForType(typeName)
-	}
-	return def.WorkConfig.EffectiveStatusForType(typeName)
-}
-
 // workConfigOf returns the definition's work config, or a zero value.
 func workConfigOf(def *AgentDefinition) AgentWorkConfig {
 	if def == nil || def.WorkConfig == nil {
 		return AgentWorkConfig{}
 	}
 	return *def.WorkConfig
-}
-
-// --- form prefill helpers (used by the templ templates) ---
-
-// ruleFor returns the prefill rule row for a type, or a zero value.
-func ruleFor(def *AgentDefinition, objectType string) AgentObjectRule {
-	if def == nil || def.WorkConfig == nil {
-		return AgentObjectRule{ObjectType: objectType}
-	}
-	if r := def.WorkConfig.RuleFor(objectType); r != nil {
-		return *r
-	}
-	return AgentObjectRule{ObjectType: objectType}
-}
-
-// ruleStatusValue returns the per-type override value, or "" when inherited.
-func ruleStatusValue(r AgentObjectRule, phase string) string {
-	if r.Status == nil {
-		return ""
-	}
-	switch phase {
-	case "ready":
-		return r.Status.Ready
-	case "inProgress":
-		return r.Status.InProgress
-	case "review":
-		return r.Status.Review
-	case "revision":
-		return r.Status.Revision
-	case "blocked":
-		return r.Status.Blocked
-	case "done":
-		return r.Status.Done
-	}
-	return ""
 }
 
 // ruleAllows resolves the tri-state action flag for the form: nil reads as
@@ -553,12 +364,4 @@ func ruleTransitionsText(r AgentObjectRule) string {
 // ruleFieldsText renders the writable-field allowlist as a comma list.
 func ruleFieldsText(r AgentObjectRule) string {
 	return strings.Join(r.Fields, ", ")
-}
-
-// compiledTypeStatusesText renders a type's lane vocabulary for the UI hint.
-func compiledTypeStatusesText(t CompiledType) string {
-	if len(t.AllowedStatuses) == 0 {
-		return strings.Join(boardStatusOrder, ", ")
-	}
-	return strings.Join(t.AllowedStatuses, ", ")
 }

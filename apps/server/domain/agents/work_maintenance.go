@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -565,6 +566,9 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 
 // enqueue wakes the listening agent(s) for a ready object.
 func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) {
+	if blocked, err := rc.repo.IsWorkBlocked(ctx, h.CanonicalID); err == nil && blocked {
+		return
+	}
 	agents, err := rc.repo.FindReactionAgentsForType(ctx, h.ProjectID, h.Type, h.Assignee)
 	if err != nil {
 		rc.log.Warn("failed to resolve listening agents", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
@@ -597,6 +601,9 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 				"work_claim_status":  h.Status,
 			},
 		}); err != nil {
+			if errors.Is(err, ErrWorkItemBusy) {
+				continue
+			}
 			rc.log.Warn("failed to enqueue reconciled work run", slog.String("canonical_id", h.CanonicalID), slog.String("agent_id", agent.ID), slog.String("error", err.Error()))
 			continue
 		}

@@ -1,0 +1,396 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// WorkPage renders the global Work section: Board (matrix) and Settings
+// (aggregated rules + agent defaults).
+templ WorkPage(data workData) {
+	if data.LoadErr != nil {
+		@layout.Container(layout.ContainerLG, nil) {
+			@pageError("Work unavailable", data.LoadErr)
+		}
+	} else {
+		@layout.Container(layout.ContainerFull, nil) {
+			@nav.PageHeading(nav.PageHeadingProps{
+				Kicker:          "Control plane",
+				Title:           "Work",
+				Subtitle:        "How agents pick up and move work items across every object type.",
+				Margin:          "mb-4",
+				Dashboard:       true,
+				HideBreadcrumbs: true,
+				NoTopMargin:     true,
+				Flat:            true,
+			})
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			<div class="mb-6 flex gap-1 rounded-box border border-base-content/10 p-1">
+				<a href="/work/board" class={ workTabClass(data.Section, workBoardSection) }>Board</a>
+				<a href="/work/settings" class={ workTabClass(data.Section, workSettingsSection) }>Settings</a>
+			</div>
+			if data.Section == workBoardSection {
+				@workBoardView(data)
+			} else {
+				@workSettingsView(data)
+			}
+		}
+	}
+}
+
+// workBoardView renders type tabs, the status × execution matrix, and a simple
+// status-lane fallback for narrow screens.
+templ workBoardView(data workData) {
+	if len(data.BoardTypes) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--kanban-square",
+			Title:       "No board-enabled types",
+			Description: "Install or enable a board-enabled object type to use Work.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		<div class="mb-4 flex flex-wrap gap-1">
+			for _, t := range data.BoardTypes {
+				<a href={ templ.SafeURL("/work/board?type=" + url.QueryEscape(t.Name)) } class={ workTypeTabClass(t.Name, data.SelectedType) }>{ t.Name }</a>
+			}
+		</div>
+		if data.Matrix.Total == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--inbox",
+				Title:       "No items",
+				Description: "Work items of this type will appear here.",
+				Bordered:    true,
+				Class:       "py-12",
+			})
+		} else {
+			@workMatrixView(data)
+			<div class="md:hidden">
+				@workSimpleLanes(data)
+			</div>
+		}
+	}
+}
+
+// workMatrixView is the desktop status × execution matrix.
+templ workMatrixView(data workData) {
+	{{ cols := data.Matrix.Columns }}
+	{{ template := "grid gap-px" }}
+	<div class="hidden overflow-auto rounded-box border border-base-content/10 md:block">
+		<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(10rem, 1fr))" }>
+			<div class="sticky left-0 z-10 bg-base-200 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Execution</div>
+			for _, col := range cols {
+				<div class="bg-base-200 px-3 py-2">
+					<span class="text-[10px] font-semibold uppercase tracking-wide text-muted">{ boardStatusLabel(col.Status) }</span>
+					<span class="ml-1 font-mono text-[10px] text-muted-faint">{ strconv.Itoa(col.Count) }</span>
+				</div>
+			}
+		</div>
+		for _, g := range data.Matrix.Groups {
+			<details open?={ g.Key != "idle" } class="border-t border-base-content/10">
+				<summary class="cursor-pointer bg-base-200 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+					{ g.Label }
+					<span class="ml-1 font-mono text-[10px] text-muted-faint">{ strconv.Itoa(workGroupCount(g)) }</span>
+				</summary>
+				for _, row := range g.Rows {
+					if row.Count > 0 || row.Key == "working" || row.Key == "blocked" || row.Key == "review" {
+						<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(10rem, 1fr))" }>
+							<div class="sticky left-0 z-10 flex items-center gap-1.5 bg-base-100 px-3 py-2">
+								<span class="text-[11px] font-medium text-muted">{ row.Label }</span>
+								<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(row.Count) }</span>
+							</div>
+							for _, col := range cols {
+								<div class="min-h-12 bg-base-100 px-2 py-2 align-top">
+									for _, it := range row.Cells[col.Status] {
+										@workCard(it)
+									}
+								</div>
+							}
+						</div>
+					}
+				}
+			</details>
+		}
+	</div>
+}
+
+// workSimpleLanes is the narrow-screen fallback: status lanes only.
+templ workSimpleLanes(data workData) {
+	<div class="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-3 overflow-x-auto pb-3">
+		for _, col := range data.Matrix.Columns {
+			@boardLaneView(boardLane{Status: col.Status, Items: workColumnItems(data.Matrix, col.Status)}, data.Allowances)
+		}
+	</div>
+}
+
+// workCard is the matrix card with execution and attention badges.
+templ workCard(it WorkItem) {
+	<div class="mb-1.5 rounded-field border border-base-content/10 bg-base-100 p-2 shadow-sm" data-testid={ "work-card-" + it.CanonicalID }>
+		<div class="flex items-center gap-1.5">
+			<span class="min-w-0 truncate text-xs font-medium">{ it.Key }</span>
+			if it.NeedsReview {
+				@ui.Badge(ui.BadgeProps{Label: "review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+			}
+			if it.Blocked {
+				@ui.Badge(ui.BadgeProps{Label: "blocked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
+			}
+		</div>
+		<div class="mt-1 flex flex-wrap items-center gap-1">
+			if it.IsWorking {
+				@ui.Badge(ui.BadgeProps{Label: agentOr(it, "agent") + " · " + it.LatestRunStatus, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Dot: true})
+			}
+			if it.NextRunAt != "" && it.LatestRunStatus == "queued" {
+				@ui.Badge(ui.BadgeProps{Label: "retry scheduled", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
+			}
+			if it.Assignee != "" {
+				@ui.Badge(ui.BadgeProps{Label: it.Assignee, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			}
+		</div>
+		if it.Blocked {
+			<span class="mt-1 block text-[11px] text-muted">{ it.BlockReason }</span>
+			<form method="post" action={ templ.SafeURL("/work/items/" + url.PathEscape(it.CanonicalID) + "/unblock?type=" + url.QueryEscape(it.Type)) } class="mt-1 flex gap-1">
+				<input name="note" type="text" placeholder="optional note" class="input input-xs w-full"/>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Unblock }
+			</form>
+		}
+	</div>
+}
+
+// agentOr returns the run agent name or a fallback.
+func agentOr(it WorkItem, fallback string) string {
+	if it.LatestRunAgentName != "" {
+		return it.LatestRunAgentName
+	}
+	return fallback
+}
+
+// workSettingsView renders the aggregated rules table and agent defaults.
+templ workSettingsView(data workData) {
+	@ui.Section("Rules", ui.SectionProps{Margin: "mt-2", BodyClass: "memory-density-comfortable"}) {
+		<form method="post" action="/work/settings/rules" class="mb-4 flex flex-wrap items-end gap-2 rounded-box border border-base-content/10 p-3">
+			<div>
+				<label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Agent</label>
+				<select name="agentId" class="select select-sm" required>
+					for _, a := range data.Agents {
+						<option value={ a.ID }>{ a.Name }</option>
+					}
+				</select>
+			</div>
+			<div>
+				<label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Object type</label>
+				<select name="ruleObjectType" class="select select-sm" required>
+					for _, t := range data.ObjectTypes {
+						<option value={ t.Name }>{ t.Name }</option>
+					}
+				</select>
+			</div>
+			<input type="hidden" name="ruleCreate" value="true"/>
+			<input type="hidden" name="ruleUpdate" value="true"/>
+			<input type="hidden" name="ruleDelete" value="true"/>
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { New rule }
+		</form>
+
+		if len(data.Rules) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { No rules yet. Pick an agent and an object type to create one. }
+		} else {
+			<div class="overflow-x-auto rounded-box border border-base-content/10">
+				<table class="table table-sm">
+					<thead>
+						<tr>
+							<th>Agent</th>
+							<th>Object type</th>
+							<th>Triggers</th>
+							<th>Transitions</th>
+							<th>Actions</th>
+							<th>Fields</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, r := range data.Rules {
+							<tr>
+								<td class="font-medium">{ r.AgentName }</td>
+								<td class="font-mono text-xs">{ r.ObjectType }</td>
+								<td class="text-xs">{ triggersSummary(r.Rule) }</td>
+								<td class="text-xs">{ transitionsSummary(r.Rule) }</td>
+								<td class="text-xs">{ actionsSummary(r.Rule) }</td>
+								<td class="text-xs">{ fieldsSummary(r.Rule) }</td>
+								<td>
+									<details>
+										<summary class="cursor-pointer text-xs text-primary">Edit</summary>
+										@workRuleEditForm(r)
+									</details>
+									<form method="post" action="/work/settings/rules/delete" class="mt-1">
+										<input type="hidden" name="agentId" value={ r.AgentID }/>
+										<input type="hidden" name="objectType" value={ r.ObjectType }/>
+										@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Delete }
+									</form>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	}
+
+	@ui.Section("Agent defaults", ui.SectionProps{Margin: "mt-6", BodyClass: "memory-density-comfortable"}) {
+		<div class="flex flex-col gap-2">
+			for _, a := range data.Agents {
+				{{ def := data.Definitions[a.ID] }}
+				<details class="rounded-box border border-base-content/10 p-3">
+					<summary class="cursor-pointer text-sm font-medium">{ a.Name }</summary>
+					@workAgentDefaultsForm(a, def, data)
+				</details>
+			}
+		</div>
+	}
+}
+
+// workRuleEditForm edits one rule row.
+templ workRuleEditForm(r workRuleRow) {
+	<form method="post" action="/work/settings/rules" class="mt-2 flex w-80 flex-col gap-2 rounded-box border border-base-content/10 p-2">
+		<input type="hidden" name="agentId" value={ r.AgentID }/>
+		<input type="hidden" name="ruleObjectType" value={ r.ObjectType }/>
+		<label class="flex items-center gap-1.5 text-xs">
+			<input type="hidden" name="ruleCreate" value="false"/>
+			<input type="checkbox" name="ruleCreate" value="true" checked?={ ruleAllows(r.Rule.CanCreate) } class="checkbox checkbox-xs"/> Create
+		</label>
+		<label class="flex items-center gap-1.5 text-xs">
+			<input type="hidden" name="ruleUpdate" value="false"/>
+			<input type="checkbox" name="ruleUpdate" value="true" checked?={ ruleAllows(r.Rule.CanUpdate) } class="checkbox checkbox-xs"/> Update
+		</label>
+		<label class="flex items-center gap-1.5 text-xs">
+			<input type="hidden" name="ruleDelete" value="false"/>
+			<input type="checkbox" name="ruleDelete" value="true" checked?={ ruleAllows(r.Rule.CanDelete) } class="checkbox checkbox-xs"/> Delete
+		</label>
+		<label class="flex items-center gap-1.5 text-xs">
+			<input type="hidden" name="ruleClearAssignee" value="false"/>
+			<input type="checkbox" name="ruleClearAssignee" value="true" checked?={ r.Rule.ClearAssigneeOnComplete } class="checkbox checkbox-xs"/> Clear assignee on complete
+		</label>
+		<input name="ruleFields" type="text" value={ ruleFieldsText(r.Rule) } placeholder="writable fields (comma)" class="input input-xs"/>
+		<textarea name="ruleTriggers" rows="3" placeholder="status | prompt" class="textarea textarea-xs">{ ruleTriggersText(r.Rule) }</textarea>
+		<textarea name="ruleTransitions" rows="3" placeholder="from -> to" class="textarea textarea-xs">{ ruleTransitionsText(r.Rule) }</textarea>
+		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Save rule }
+	</form>
+}
+
+// workAgentDefaultsForm edits scope + guardrails, preserving rules.
+templ workAgentDefaultsForm(a AgentDefinitionSummary, def *AgentDefinition, data workData) {
+	<form method="post" action={ templ.SafeURL("/work/settings/agents/" + url.PathEscape(a.ID)) } class="mt-3 flex flex-col gap-3">
+		{{ wc := workConfigOf(def) }}
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+			@form.FormControl("work-def-"+a.ID+"-review", "Require review", form.LabelAbove, "Route completions through a human review.", "", nil) {
+				<input type="hidden" name="workRequiresReview" value="false"/>
+				<input type="checkbox" name="workRequiresReview" value="true" checked?={ wc.RequiresReview } class="checkbox checkbox-sm"/>
+			}
+			@form.FormControl("work-def-"+a.ID+"-failure", "Failure limit", form.LabelAbove, "Zero inherits the default (3).", "", nil) {
+				<input name="failureLimit" type="number" min="0" value={ workIntStr(wc.FailureLimit) } class="input input-sm"/>
+			}
+			@form.FormControl("work-def-"+a.ID+"-revision", "Revision limit", form.LabelAbove, "Zero inherits the default (3).", "", nil) {
+				<input name="revisionLimit" type="number" min="0" value={ workIntStr(wc.RevisionLimit) } class="input input-sm"/>
+			}
+			@form.FormControl("work-def-"+a.ID+"-attempts", "Max attempts", form.LabelAbove, "Per queued run.", "", nil) {
+				<input name="maxAttempts" type="number" min="1" value={ workIntStr(wc.RetryPolicy.MaxAttempts) } class="input input-sm"/>
+			}
+			@form.FormControl("work-def-"+a.ID+"-artifacts", "Require artifacts", form.LabelAbove, "Require a summary or artifacts to complete.", "", nil) {
+				<input type="hidden" name="workRequireArtifacts" value="false"/>
+				<input type="checkbox" name="workRequireArtifacts" value="true" checked?={ wc.WorkContract.RequireArtifacts } class="checkbox checkbox-sm"/>
+			}
+			@form.FormControl("work-def-"+a.ID+"-deliverables", "Required deliverable types", form.LabelAbove, "Comma-separated object types.", "", nil) {
+				<input name="requiredDeliverableType" type="text" value={ workListValue(wc.WorkContract.RequiredDeliverableTypes) } class="input input-sm"/>
+			}
+		</div>
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+			@form.FormControl("work-def-"+a.ID+"-objtypes", "Visible object types", form.LabelAbove, "Leave unchecked for all.", "", nil) {
+				<input type="hidden" name="objectType" value=""/>
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "objectType",
+					EmptyContent:  objectTypeEmptyContent(),
+					LabelClass:    "items-start gap-2 py-1",
+					CheckboxClass: "checkbox checkbox-xs mt-0.5",
+					TitleClass:    "block text-xs font-medium",
+					DescClass:     "text-muted block text-[10px]",
+					WrapTitle:     true,
+					Items:         compiledTypePickerItems(data.ObjectTypes, func(name string) bool { return containsString(agentObjectTypesValue(def), name) }),
+				})
+			}
+			@form.FormControl("work-def-"+a.ID+"-reltypes", "Visible relationship types", form.LabelAbove, "Leave unchecked for all.", "", nil) {
+				<input type="hidden" name="relationshipType" value=""/>
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "relationshipType",
+					EmptyContent:  relationshipTypeEmptyContent(),
+					LabelClass:    "items-start gap-2 py-1",
+					CheckboxClass: "checkbox checkbox-xs mt-0.5",
+					TitleClass:    "block text-xs font-medium",
+					DescClass:     "text-muted block text-[10px]",
+					WrapTitle:     true,
+					Items:         compiledTypePickerItems(data.RelationshipTypes, func(name string) bool { return containsString(agentRelationshipTypesValue(def), name) }),
+				})
+			}
+		</div>
+		<div class="self-start">@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Save defaults }</div>
+	</form>
+}
+
+func triggersSummary(r AgentObjectRule) string {
+	if len(r.Triggers) == 0 {
+		return "—"
+	}
+	parts := make([]string, 0, len(r.Triggers))
+	for _, t := range r.Triggers {
+		parts = append(parts, t.Status)
+	}
+	return joinComma(parts)
+}
+
+func transitionsSummary(r AgentObjectRule) string {
+	if len(r.Transitions) == 0 {
+		return "default"
+	}
+	parts := make([]string, 0, len(r.Transitions))
+	for _, t := range r.Transitions {
+		parts = append(parts, t.From+"→"+t.To)
+	}
+	return joinComma(parts)
+}
+
+func actionsSummary(r AgentObjectRule) string {
+	out := ""
+	if ruleAllows(r.CanCreate) {
+		out += "C"
+	}
+	if ruleAllows(r.CanUpdate) {
+		out += "U"
+	}
+	if ruleAllows(r.CanDelete) {
+		out += "D"
+	}
+	if out == "" {
+		return "none"
+	}
+	return out
+}
+
+func fieldsSummary(r AgentObjectRule) string {
+	if len(r.Fields) == 0 {
+		return "all"
+	}
+	return joinComma(r.Fields)
+}
+
+func joinComma(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += ", "
+		}
+		out += p
+	}
+	return out
+}

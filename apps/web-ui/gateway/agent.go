@@ -214,7 +214,7 @@ func (s *Server) uiAgentSettingsSection(c echo.Context) error {
 	section := c.Param("section")
 	// Graph and Work moved to the top-level Work section.
 	if section == sectionGraph || section == sectionWork {
-		return c.Redirect(http.StatusPermanentRedirect, "/agents/"+url.PathEscape(c.Param("id"))+"/work/"+workSectionSettings)
+		return c.Redirect(http.StatusPermanentRedirect, "/work/settings?agent="+url.QueryEscape(c.Param("id")))
 	}
 	if !containsString(agentSettingsSections, section) {
 		return c.NoContent(http.StatusNotFound)
