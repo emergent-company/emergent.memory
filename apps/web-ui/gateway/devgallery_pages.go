@@ -243,8 +243,12 @@ func objectsBrowserSampleData(order string) objectsPageData {
 		},
 		// Render the picker in its active state so the preview shows an actor's
 		// avatar in the closed control and the provenance toggle beside it.
-		ActorType: "agent",
-		ActorID:   "a-1",
-		Preview:   true,
+		// Provenance carries the same default a live handler normalizes to: an
+		// empty mode left the toggle with no selected segment, so the preview
+		// showed a radio group that looked like three unrelated buttons (#121).
+		ActorType:  "agent",
+		ActorID:    "a-1",
+		Provenance: defaultObjectProvenance,
+		Preview:    true,
 	}
 }

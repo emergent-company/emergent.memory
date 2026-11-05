@@ -112,6 +112,13 @@ func objectsTargetURL(data objectsPageData) string {
 	return "/objects"
 }
 
+// objectsFilterSelectClass is the chrome every control in the objects filter row
+// shares. The branch and type <select>s use it directly; the actor picker's
+// closed trigger wears it too (see objectsActorFilter), so the picker is the
+// menu variant of the same control rather than an input that happens to sit next
+// to two selects — same height, border, horizontal padding and chevron.
+const objectsFilterSelectClass = "select select-sm"
+
 // objectsFilterControls holds the filter form's controls: the branch and type
 // dropdowns, the provenance toggle, and the actor picker. Every control applies
 // itself — the selects and radios on change, the actor picker on pick — so there
@@ -139,7 +146,7 @@ templ objectsFilterControls(data objectsPageData) {
 	}
 	if len(data.Branches) > 0 {
 		@fm.FormControl("objects-filter-branch", "Branch", fm.LabelAbove, "", "", nil) {
-			<select id="objects-filter-branch" name="branch" class="select select-bordered select-sm" aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
+			<select id="objects-filter-branch" name="branch" class={ objectsFilterSelectClass } aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
 				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
 				for _, b := range data.Branches {
 					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
@@ -149,7 +156,7 @@ templ objectsFilterControls(data objectsPageData) {
 	}
 	if len(data.Types) > 0 {
 		@fm.FormControl("objects-filter-type", "Type", fm.LabelAbove, "", "", nil) {
-			<select id="objects-filter-type" name="type" class="select select-bordered select-sm" aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
+			<select id="objects-filter-type" name="type" class={ objectsFilterSelectClass } aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
 				<option value="">All types</option>
 				for _, t := range data.Types {
 					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
@@ -179,13 +186,23 @@ templ objectsFilterControls(data objectsPageData) {
 // on change so the list re-narrows without extra chrome. The labels are plain
 // (Any / Created by / Updated by) and never name a memory concept. The group's
 // accessible name comes from the FormControl legend that wraps it.
+//
+// The rendered mode is normalized first, so the group always has exactly one
+// selected segment: an absent or unrecognised `provenance` renders as Any — the
+// same value the list query dispatches with — instead of a join of three buttons
+// with nothing chosen (#121).
 templ objectsProvenanceFilter(data objectsPageData) {
+	{{ provenance := normalizeObjectProvenance(data.Provenance) }}
 	<div class="join">
 		for _, m := range objectProvenanceModes() {
 			{{
+				// The chosen mode fills with the primary colour. `btn-active`
+				// alone is a 7%-darkened button — on a joined group of three it
+				// is invisible next to its neighbours, which is exactly what made
+				// the toggle read as three unrelated buttons with nothing picked.
 				extra := "join-item"
-				if data.Provenance == m.Value {
-					extra += " btn-active"
+				if provenance == m.Value {
+					extra += " btn-primary"
 				}
 			}}
 			@ui.Button(ui.ButtonProps{
@@ -197,7 +214,7 @@ templ objectsProvenanceFilter(data objectsPageData) {
 					type="radio"
 					name="provenance"
 					value={ m.Value }
-					checked?={ data.Provenance == m.Value }
+					checked?={ provenance == m.Value }
 					{ objectsFilterAutoApply(data.Preview)... }
 					class="sr-only"
 				/>
@@ -219,6 +236,12 @@ templ objectsProvenanceFilter(data objectsPageData) {
 // in the loaded lists (a former member, or a filter passed by URL) still renders
 // in the closed state so the control reflects the active filter.
 //
+// The closed trigger wears objectsFilterSelectClass — the same chrome as the
+// branch and type selects — so the picker is that control's menu variant, not a
+// look-alike. It draws its chevron from the select chrome itself rather than
+// adding an icon of its own: a hand-rolled chevron at a different size, weight
+// and inset is what made the row read as two components (#123).
+//
 // "Any actor" sits above a divider instead of inside either group: it is not an
 // identity, it clears the filter, and listing it among the people would read as
 // one more of them.
@@ -235,7 +258,7 @@ templ objectsActorFilter(data objectsPageData) {
 			role="button"
 			aria-haspopup="menu"
 			aria-label={ "Actor: " + actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }
-			class="input input-bordered input-sm flex w-64 cursor-pointer items-center gap-2 text-left"
+			class={ objectsFilterSelectClass + " flex w-64 cursor-pointer items-center gap-2 text-left" }
 		>
 			if selected != "" && known {
 				@objectsActorAvatar(current)
@@ -244,8 +267,7 @@ templ objectsActorFilter(data objectsPageData) {
 					@ui.IconSpan("lucide--users", "size-3.5")
 				</span>
 			}
-			<span class="truncate">{ actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }</span>
-			@ui.IconSpan("lucide--chevron-down", "ml-auto size-3.5 shrink-0 opacity-60")
+			<span class="min-w-0 truncate">{ actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }</span>
 		</div>
 		@ui.DropdownMenu(templ.Attributes{"aria-label": "Actor", "class": "w-72"}) {
 			<li role="none">
