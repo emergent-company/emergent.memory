@@ -200,7 +200,10 @@ struct SessionLogClient: SessionLogFetching {
         GatewayServiceMessages(
             httpPrefix: "Session log",
             noResponsePrefix: "Session log",
-            reachTarget: "the session log at \(config.tokenEndpoint)"
+            // The sessions live at the gateway root, not at the token route the
+            // URL is derived from: naming `/api/token` here made a session-log
+            // failure read as a token failure.
+            reachTarget: "the session log at \(config.gatewayBaseURL?.absoluteString ?? config.tokenEndpoint)"
         )
     }
 
