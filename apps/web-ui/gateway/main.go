@@ -180,6 +180,8 @@ func main() {
 	api.PATCH("/mcp-shares/:id", s.updateMCPShare)
 	api.DELETE("/mcp-shares/:id", s.deleteMCPShare)
 	api.POST("/mcp-shares/:id/rotate", s.rotateMCPShare)
+	// Ad-hoc invite: emails the share's existing key instead of minting one.
+	api.POST("/mcp-shares/:id/invite", s.inviteMCPShare)
 	// Agent-owned MCP endpoint + labeled keys + sessions
 	// (agent-scoped-mcp-endpoint; see agent_mcp_endpoint_handlers.go). The raw
 	// key secret is returned by create-key and rotate-key only.
@@ -600,6 +602,7 @@ func main() {
 	e.POST("/settings/mcp-servers/shares/:id/update", s.uiMCPShareUpdate)
 	e.POST("/settings/mcp-servers/shares/:id/revoke", s.uiMCPShareRevoke)
 	e.POST("/settings/mcp-servers/shares/:id/rotate", s.uiMCPShareRotate)
+	e.POST("/settings/mcp-servers/shares/:id/invite", s.uiMCPShareInvite)
 	e.GET("/settings/mcp-servers/:id/edit", s.uiMCPEditPage)
 	e.POST("/settings/mcp-servers/:id/update", s.uiMCPUpdate)
 	e.POST("/settings/mcp-servers/:id/delete", s.uiMCPDelete)

@@ -73,6 +73,15 @@ type MCPShareCreated struct {
 	EmailError string   `json:"emailError,omitempty"`
 }
 
+// MCPShareInvite is the ad-hoc invite result: the recipients the share's
+// EXISTING key and setup instructions were queued to, plus that key's prefix so
+// the caller can confirm the key was re-sent rather than replaced.
+type MCPShareInvite struct {
+	TokenPrefix string   `json:"tokenPrefix"`
+	EmailsSent  []string `json:"emailsSent,omitempty"`
+	EmailError  string   `json:"emailError,omitempty"`
+}
+
 // MCPShareTool is one entry in the memory tool catalog: the tools a share may
 // expose. Category groups the picker; RequiredScope is the memory scope that
 // protects the tool.
@@ -282,6 +291,22 @@ func (m *MemoryClient) RotateMCPShareInstance(ctx context.Context, id string, em
 		return nil, err
 	}
 	return decodeMCPShareCreated(raw)
+}
+
+// InviteMCPShareInstance emails an existing share's CURRENT key and client
+// setup instructions to the given recipients. Unlike rotate it mints nothing,
+// so everyone already using the share keeps working; the backend reports
+// not_recoverable when the key predates token encryption.
+func (m *MemoryClient) InviteMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareInvite, error) {
+	raw, err := m.shareRaw(ctx, http.MethodPost, m.mcpSharePath(ctx, "shares", id, "invite"), map[string][]string{"emails": emails})
+	if err != nil {
+		return nil, err
+	}
+	var out MCPShareInvite
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode mcp share invite: %w", err)
+	}
+	return &out, nil
 }
 
 // ListMCPShareTools fetches the memory tool catalog a share may expose.
