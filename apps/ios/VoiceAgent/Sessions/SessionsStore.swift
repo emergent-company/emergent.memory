@@ -50,6 +50,12 @@ final class SessionsStore: ObservableObject {
             Log.net.info("listSessions ok \(fetched.count)")
             loadState = .loaded
         } catch {
+            // A cancelled list fetch is not a failure; the view's task re-runs
+            // when it appears again.
+            guard !Cancellation.isCancellation(error), !Cancellation.isCurrentTaskCancelled else {
+                loadState = .idle
+                return
+            }
             Log.net.error("listSessions failed: \(error.localizedDescription)")
             loadState = .failed(error.localizedDescription)
         }

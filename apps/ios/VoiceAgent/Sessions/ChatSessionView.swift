@@ -12,9 +12,10 @@ import SwiftUI
 /// project with voice disabled. Voice mints a token and joins the room for the
 /// same conversation; switching back leaves the room and keeps the transcript.
 ///
-/// History comes from `GET /api/session` (``ChatSessionTranscriptStore``), live
-/// text turns from ``HTTPChatTransport``, live voice turns from the room
-/// (`session.messages` plus ``ChatActivityStore``). All share the same bubbles.
+/// History comes from `GET /api/session` (``ChatSessionHistoryLoader`` into
+/// ``ChatSessionTranscriptStore``), live text turns from ``HTTPChatTransport``,
+/// live voice turns from the room (`session.messages` plus
+/// ``ChatActivityStore``). All share the same bubbles.
 ///
 /// Interrupting is a room feature: text has no stop control because a device
 /// credential cannot cancel a run yet (`emergent.memory#81`), and a closed
@@ -33,10 +34,11 @@ struct ChatSessionView: View {
     @State var transcript = ChatSessionTranscriptStore()
     /// Text turns: the HTTP transport the web chat uses (no LiveKit at all).
     @State var transport = HTTPChatTransport()
+    /// Recorded-history fetches for this chat. It owns "already loaded" so a
+    /// cancelled request cannot mark a conversation as loaded and leave its
+    /// failure banner with no retry.
+    @State private var history = ChatSessionHistoryLoader()
     @State private var messageText = ""
-    /// The conversation id whose history is loaded, so a re-render (or a
-    /// controller rebuild for the same room) never fetches twice.
-    @State private var loadedConversationID: String?
     @FocusState private var keyboardFocus: Bool
 
     var body: some View {
@@ -304,9 +306,12 @@ extension ChatSessionView {
             resetTranscript()
             await loadHistoryIfNeeded()
         case .rebuiltController:
-            // The root rebuilds the controller for the new launch key; this
-            // view's task re-runs with that controller and takes `.unchanged`.
-            await loadHistoryIfNeeded()
+            // Adopting the route changed `launchKey`, so the app root is
+            // replacing the controller and this `.task` is about to be
+            // cancelled and re-run against it. Loading here would only start a
+            // request that cancellation kills; the re-run (which takes
+            // `.unchanged`) is what fetches.
+            return
         }
         if activeSession.mode == .voice {
             await connectVoiceIfNeeded()
@@ -356,7 +361,7 @@ extension ChatSessionView {
     private func resetTranscript() {
         transcript.reset()
         transport.reset()
-        loadedConversationID = nil
+        history.reset()
     }
 
     /// Loads the recorded transcript. A brand-new chat has no id until its
@@ -371,26 +376,11 @@ extension ChatSessionView {
             ?? activeSession.launchConversationID
             ?? activeSession.liveConversationID
         else { return }
-        if !force, loadedConversationID == conversationID {
-            return
-        }
-        loadedConversationID = conversationID
-        transcript.beginHistoryLoad()
-        do {
-            let detail = try await SessionLogClient(config: MemoryConfig()).detail(room: conversationID)
-            // A new route may have reset the transcript while this fetch was in
-            // flight; never apply a stale conversation's history.
-            guard loadedConversationID == conversationID else { return }
-            transcript.loadHistory(from: detail)
-        } catch {
-            guard loadedConversationID == conversationID else { return }
-            transcript.historyLoadFailed(error.localizedDescription)
-        }
+        await history.load(conversationID: conversationID, force: force, into: transcript)
     }
 
     private func retryHistory() {
-        loadedConversationID = nil
-        Task { await loadHistoryIfNeeded() }
+        Task { await loadHistoryIfNeeded(force: true) }
     }
 
     private func hangUp() async {

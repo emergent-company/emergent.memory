@@ -63,6 +63,14 @@ enum GatewayHTTP {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            // Cancellation is not a transport failure: the caller (or the view
+            // that started the request) no longer wants the result. Rethrowing
+            // the standard error keeps it recognisable downstream, where a
+            // `GatewayError.transport` message would read like a network problem
+            // and get shown as one.
+            if Cancellation.isCancellation(error) || Cancellation.isCurrentTaskCancelled {
+                throw CancellationError()
+            }
             let underlying = error.localizedDescription
             throw TransportError(
                 message: "Could not reach \(request.url?.absoluteString ?? "unknown"): \(underlying)",

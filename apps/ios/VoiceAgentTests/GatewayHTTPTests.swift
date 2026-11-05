@@ -113,4 +113,26 @@ final nonisolated class GatewayHTTPStubProtocol: URLProtocol {
             Issue.record("Unexpected error: \(error)")
         }
     }
+
+    /// A cancelled `.task` reaches the transport as `URLError.cancelled`. It is
+    /// not a network failure, and callers must be able to tell the difference —
+    /// `GatewayError.transport` would show it as one.
+    @Test func cancelledRequestThrowsCancellationError() async throws {
+        GatewayHTTPStubProtocol.handler = { _ in throw URLError(.cancelled) }
+        defer { GatewayHTTPStubProtocol.handler = nil }
+
+        do {
+            _ = try await GatewayHTTP.send(
+                method: "GET",
+                url: #require(URL(string: "http://example.test/api")),
+                apiKey: "secret",
+                session: makeSession()
+            )
+            Issue.record("Expected CancellationError")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
 }
