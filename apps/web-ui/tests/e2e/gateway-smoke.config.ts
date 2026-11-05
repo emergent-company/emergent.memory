@@ -14,6 +14,11 @@ import { defineConfig } from '@playwright/test';
 // so these defaults only have to be free when it is this suite's turn.
 const port = process.env.MEMORY_PORT ?? '8096';
 const mockPort = process.env.MOCK_PORT ?? '5304';
+// The webServer below boots the mock on this port, but its env does not flow
+// back to the test process. Export the resolved value so fixture-contract specs
+// that read the mock directly (the discovery start/cancel shapes) agree with a
+// default-port run and a `MOCK_PORT=…` one alike.
+process.env.MOCK_PORT ??= mockPort;
 const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({

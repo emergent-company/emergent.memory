@@ -47,6 +47,21 @@ templ typeIconTile(icon string, color string) {
 	}
 }
 
+// typeIconTileSmall is the compact (size-6) variant of typeIconTile, for menu
+// rows and filter option lists.
+templ typeIconTileSmall(icon string, color string) {
+	if icon == "" && color == "" {
+		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "primary", Size: "size-6"})
+	} else {
+		{{ cls := typeIconClass(icon)
+			glyph := ""
+			if cls == "" {
+				glyph = icon
+			} }}
+		@ui.IconTile(cls, ui.IconTileProps{Color: color, Glyph: glyph, Size: "size-6"})
+	}
+}
+
 // typeNameChip renders the type-name chip used on object/type detail headers:
 // the type's name with its declared icon prefix and color accent. Without a
 // declaration it is the same badge with the generic box icon as before

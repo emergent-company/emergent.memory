@@ -24,10 +24,52 @@ func TestResolveAvatar(t *testing.T) {
 		{"override wins when both set", "/api/user/avatar?v=k1", "https://idp/x.png", "/api/user/avatar?v=k1"},
 		{"override wins over empty picture", "/api/user/avatar?v=k1", "", "/api/user/avatar?v=k1"},
 		{"picture used when no override", "", "https://idp/x.png", "https://idp/x.png"},
+		{"bare picture key falls back to initials", "", "avatars/abc.png", ""},
 		{"neither set", "", "", ""},
 	} {
 		if got := resolveAvatar(c.override, c.picture); got != c.want {
 			t.Errorf("resolveAvatar(%q, %q) = %q, want %q", c.override, c.picture, got, c.want)
+		}
+	}
+}
+
+// --- resolveSelfAvatar ---
+
+func TestResolveSelfAvatar(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		override string
+		picture  string
+		want     string
+	}{
+		{"override wins when both set", "/api/user/avatar?v=k1", "https://idp/x.png", "/api/user/avatar?v=k1"},
+		{"relative picture key routes through the avatar proxy", "", "avatars/abc.png", "/api/user/avatar?v=avatars%2Fabc.png"},
+		{"absolute picture used when no override", "", "https://idp/x.png", "https://idp/x.png"},
+		{"neither set", "", "", ""},
+	} {
+		if got := resolveSelfAvatar(c.override, c.picture); got != c.want {
+			t.Errorf("resolveSelfAvatar(%q, %q) = %q, want %q", c.override, c.picture, got, c.want)
+		}
+	}
+}
+
+// --- avatarSrc ---
+
+func TestAvatarSrc(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"absolute URL", "https://idp/x.png", "https://idp/x.png"},
+		{"protocol-relative URL", "//cdn/x.png", "//cdn/x.png"},
+		{"root-relative path", "/api/user/avatar?v=k1", "/api/user/avatar?v=k1"},
+		{"data URI", "data:image/png;base64,AAA", "data:image/png;base64,AAA"},
+		{"bare object key is not a URL", "avatars/abc.png", ""},
+		{"empty", "", ""},
+	} {
+		if got := avatarSrc(c.in); got != c.want {
+			t.Errorf("avatarSrc(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
