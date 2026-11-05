@@ -1194,6 +1194,9 @@ func TestMCPShareJSONInvite(t *testing.T) {
 	bad := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares/sh-1/invite", `{"emails":[]}`)
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("empty invite = %d, want 400", bad.Code)
+	}
+}
+
 // --- share templates ---
 
 // mcpShareTemplateFixture is a two-preset catalog: a default read-only preset

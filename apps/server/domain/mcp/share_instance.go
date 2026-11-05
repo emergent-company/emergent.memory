@@ -1114,8 +1114,11 @@ func (s *Service) RevokeShareInstance(ctx context.Context, projectID, userID, id
 	return store.Update(ctx, inst)
 }
 
-// RotateShareInstance issues a replacement token whose scopes are re-derived
-// from the allowlist, invalidates the old one, and keeps the allowlist intact.
+// RotateShareInstance issues a replacement token, invalidates the old one, and
+// keeps the allowlist intact. The replacement's scopes are re-derived from the
+// allowlist on a best-effort basis (see the refresh block below): names that no
+// longer resolve, or a legacy non-shareable entry, fall back to the old scopes
+// rather than blocking rotation.
 func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id, baseURL string) (*CreateShareInstanceResponse, error) {
 	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
 		return nil, err

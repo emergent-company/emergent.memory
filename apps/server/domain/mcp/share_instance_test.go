@@ -852,6 +852,25 @@ func TestRotateShareInstanceToleratesAllStaleAllowlist(t *testing.T) {
 	assert.True(t, tok.regenerateCalled)
 }
 
+// TestRotateShareInstanceToleratesPolicyRefusal: a share that predates the
+// shareability guard may name a tool whose scope a share must never carry.
+// Rotation keeps the old scopes and still issues a key; the allowlist guard
+// refuses the call itself.
+func TestRotateShareInstanceToleratesPolicyRefusal(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"project-create", "entity-search"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "a policy refusal keeps the existing scopes")
+	assert.True(t, tok.regenerateCalled)
+}
+
 // TestRotateShareInstanceLeavesUnrestrictedScopesAlone: a nil allowlist means
 // unrestricted, which is not the same thing as the legacy read-only scope set.
 // Rotate must not silently narrow such a share.
