@@ -190,6 +190,59 @@ func (h *Handler) HandleRotateShareInstance(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
+// HandleInviteShareInstance handles POST /api/projects/:projectId/mcp/shares/:id/invite.
+//
+// @Summary      Email an existing MCP share key
+// @Description  Emails the share instance's CURRENT key and client setup snippets to the listed recipients. The key is recovered from encrypted storage, never rotated, so existing clients keep working. Returns a 422 not_recoverable when the key was stored without encryption — rotate the share instead.
+// @Tags         mcp
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        id path string true "Share instance ID"
+// @Param        request body InviteShareInstanceHTTPRequest true "Invite recipients"
+// @Success      200 {object} InviteShareInstanceResponse
+// @Failure      400 {object} apperror.Error "No recipients supplied"
+// @Failure      403 {object} apperror.Error "Project admin required"
+// @Failure      404 {object} apperror.Error "Unknown share"
+// @Failure      409 {object} apperror.Error "Share is revoked"
+// @Failure      422 {object} apperror.Error "Invalid email address, or the key is not recoverable"
+// @Router       /api/projects/{projectId}/mcp/shares/{id}/invite [post]
+// @Security     bearerAuth
+func (h *Handler) HandleInviteShareInstance(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	projectID := c.Param("projectId")
+	id := c.Param("id")
+	if projectID == "" || id == "" {
+		return apperror.NewBadRequest("projectId and id are required")
+	}
+
+	var req InviteShareInstanceHTTPRequest
+	if err := c.Bind(&req); err != nil && !errors.Is(err, io.EOF) {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	// Reject a malformed address before recovering anything.
+	emails, err := normalizeInviteEmails(req.Emails)
+	if err != nil {
+		return err
+	}
+	if len(emails) == 0 {
+		return apperror.NewBadRequest("at least one recipient email address is required")
+	}
+
+	ctx := c.Request().Context()
+	key, err := h.svc.RevealShareInstanceKey(ctx, projectID, user.ID, id)
+	if err != nil {
+		return err
+	}
+	senderName := h.senderDisplayName(ctx, user.ID, user.Email)
+	sent, problem := h.svc.SendShareInviteEmails(ctx, projectID, senderName, requestBaseURL(c), key, emails)
+	return c.JSON(http.StatusOK, InviteShareInstanceResponse{
+		TokenPrefix: shareKeyPrefix(key),
+		EmailsSent:  sent,
+		EmailError:  problem,
+	})
+}
+
 // HandleListToolCatalog handles GET /api/projects/:projectId/mcp/tools.
 //
 // @Summary      List includable MCP tools
