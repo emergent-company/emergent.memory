@@ -4,9 +4,11 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -30,10 +32,6 @@ templ WorkPage(data workData) {
 				Flat:            true,
 			})
 			@flashToasts(data.FlashMsg, data.FlashErr)
-			<div class="mb-6 flex gap-1 rounded-box border border-base-content/10 p-1">
-				<a href="/work/board" class={ workTabClass(data.Section, workBoardSection) }>Board</a>
-				<a href="/work/settings" class={ workTabClass(data.Section, workSettingsSection) }>Settings</a>
-			</div>
 			if data.Section == workBoardSection {
 				@workBoardView(data)
 			} else {
@@ -43,8 +41,8 @@ templ WorkPage(data workData) {
 	}
 }
 
-// workBoardView renders type tabs, the status × execution matrix, and a simple
-// status-lane fallback for narrow screens.
+// workBoardView renders the type filter, one status × execution matrix per
+// selected type, and a status-lane fallback for narrow screens.
 templ workBoardView(data workData) {
 	if len(data.BoardTypes) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
@@ -55,44 +53,134 @@ templ workBoardView(data workData) {
 			Class:       "py-12",
 		})
 	} else {
-		<div class="mb-4 flex flex-wrap gap-1">
-			for _, t := range data.BoardTypes {
-				<a href={ templ.SafeURL("/work/board?type=" + url.QueryEscape(t.Name)) } class={ workTypeTabClass(t.Name, data.SelectedType) }>{ t.Name }</a>
-			}
+		<div class="mb-4 flex items-center justify-between gap-2">
+			<span class="text-[11px] font-semibold tracking-wide text-muted-faint uppercase">
+				{ strconv.Itoa(len(data.Matrices)) } of { strconv.Itoa(len(data.BoardTypes)) } types
+			</span>
+			@workTypeFilter(data)
 		</div>
-		if data.Matrix.Total == 0 {
+		if data.FilterExplicit && len(data.SelectedTypes) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--filter-x",
+				Title:       "No types selected",
+				Description: "Pick one or more object types in the filter, or reset to all types.",
+				Bordered:    true,
+				Class:       "py-12",
+			})
+		} else if len(data.Matrices) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--inbox",
 				Title:       "No items",
-				Description: "Work items of this type will appear here.",
+				Description: "Work items of the selected types will appear here.",
 				Bordered:    true,
 				Class:       "py-12",
 			})
 		} else {
-			@workMatrixView(data)
-			<div class="md:hidden">
-				@workSimpleLanes(data)
+			<div class="flex flex-col gap-8" data-work-board>
+				for _, m := range data.Matrices {
+					@workTypeBlock(m, data)
+				}
 			</div>
 		}
 	}
 }
 
-// workMatrixView is the desktop status × execution matrix.
-templ workMatrixView(data workData) {
-	{{ cols := data.Matrix.Columns }}
+// workTypeFilter is the multi-select object-type filter. Each checkbox change
+// submits the GET form (auto-apply), so the board reloads with the new set.
+templ workTypeFilter(data workData) {
+	@ui.Dropdown(ui.DropdownEnd, templ.Attributes{"data-testid": "work-type-filter"}) {
+		<div
+			tabindex="0"
+			role="button"
+			class="input input-sm flex min-w-44 cursor-pointer items-center gap-2"
+			aria-haspopup="menu"
+			aria-label="Filter object types"
+		>
+			@workTypeFilterTrigger(data)
+			@ui.IconSpan("lucide--chevron-down", "ml-auto size-3.5 shrink-0 opacity-60")
+		</div>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter object types", "class": "w-72"}) {
+			<li role="none">
+				<form method="get" action="/work/board" class="flex flex-col">
+					<input type="hidden" name="filter" value="1"/>
+					<div class="max-h-80 overflow-y-auto">
+						for _, t := range data.BoardTypes {
+							<label class="flex cursor-pointer items-center gap-2 rounded-field px-2 py-1.5 hover:bg-base-200">
+								<input
+									type="checkbox"
+									name="type"
+									value={ t.Name }
+									checked?={ workTypeChecked(data, t.Name) }
+									onchange="this.form.submit()"
+									class="checkbox checkbox-xs"
+								/>
+								@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+								<span class="min-w-0 grow truncate text-sm">{ workTypeLabel(t, t.Name) }</span>
+								<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(data.TypeCounts[t.Name]) }</span>
+							</label>
+						}
+					</div>
+					<div class="mt-2 border-t border-base-content/10 pt-2">
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/work/board", Variant: ui.ButtonGhost, Size: ui.ButtonSM, ExtraClass: "w-full justify-start"}) { All types }
+					</div>
+				</form>
+			</li>
+		}
+	}
+}
+
+// workTypeFilterTrigger summarises the current selection.
+templ workTypeFilterTrigger(data workData) {
+	if len(data.SelectedTypes) == 0 && data.FilterExplicit {
+		@ui.IconSpan("lucide--filter-x", "size-4 shrink-0")
+		<span class="truncate">No types</span>
+	} else if !data.FilterExplicit || len(data.SelectedTypes) == len(data.BoardTypes) {
+		@ui.IconSpan("lucide--filter", "size-4 shrink-0")
+		<span class="truncate">All types</span>
+	} else if len(data.SelectedTypes) == 1 {
+		{{ t := workTypeByName(data.BoardTypes, data.SelectedTypes[0]) }}
+		@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+		<span class="truncate">{ workTypeLabel(t, data.SelectedTypes[0]) }</span>
+	} else {
+		{{ t := workTypeByName(data.BoardTypes, data.SelectedTypes[0]) }}
+		@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+		<span class="truncate">{ strconv.Itoa(len(data.SelectedTypes)) } types</span>
+	}
+}
+
+// workTypeBlock renders one type's matrix with a coloured type header.
+templ workTypeBlock(m workMatrix, data workData) {
+	{{ t := workTypeByName(data.BoardTypes, m.Type) }}
+	<section data-testid={ "work-type-" + m.Type }>
+		<header class="mb-2 flex items-center gap-2">
+			@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+			<span class="text-sm font-semibold">{ workTypeLabel(t, m.Type) }</span>
+			<span class="font-mono text-[11px] text-muted-faint">{ strconv.Itoa(m.Total) }</span>
+		</header>
+		@workMatrixView(m, data)
+		<div class="md:hidden">
+			@workSimpleLanes(m, workFilterTypes(data))
+		</div>
+	</section>
+}
+
+// workMatrixView is the desktop status × execution matrix for one type.
+templ workMatrixView(m workMatrix, data workData) {
+	{{ cols := m.Columns }}
 	{{ template := "grid gap-px" }}
 	<div class="hidden overflow-auto rounded-box border border-base-content/10 md:block">
 		<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(10rem, 1fr))" }>
 			<div class="sticky left-0 z-10 bg-base-200 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Execution</div>
 			for _, col := range cols {
-				<div class="bg-base-200 px-3 py-2">
-					<span class="text-[10px] font-semibold uppercase tracking-wide text-muted">{ boardStatusLabel(col.Status) }</span>
-					<span class="ml-1 font-mono text-[10px] text-muted-faint">{ strconv.Itoa(col.Count) }</span>
+				<div class="flex items-center gap-1.5 bg-base-200 px-3 py-2">
+					<span class={ "size-2 shrink-0 rounded-full " + workStatusDotClass(col.Status) } aria-hidden="true"></span>
+					<span class="text-[10px] font-semibold tracking-wide text-muted">{ col.Label }</span>
+					<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(col.Count) }</span>
 				</div>
 			}
 		</div>
-		for _, g := range data.Matrix.Groups {
-			<details open?={ g.Key != "idle" } class="border-t border-base-content/10">
+		for _, g := range m.Groups {
+			<details open?={ workLaneOpen(data, m.Type, g.Key) } data-work-lane-key={ workLaneKey(data, m.Type, g.Key) } class="border-t border-base-content/10">
 				<summary class="cursor-pointer bg-base-200 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
 					{ g.Label }
 					<span class="ml-1 font-mono text-[10px] text-muted-faint">{ strconv.Itoa(workGroupCount(g)) }</span>
@@ -105,9 +193,9 @@ templ workMatrixView(data workData) {
 								<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(row.Count) }</span>
 							</div>
 							for _, col := range cols {
-								<div class="min-h-12 bg-base-100 px-2 py-2 align-top">
+								<div class="memory-board__lane min-h-12 bg-base-100 px-2 py-2 align-top" data-board-column={ col.Status }>
 									for _, it := range row.Cells[col.Status] {
-										@workCard(it)
+										@workCard(it, workFilterTypes(data))
 									}
 								</div>
 							}
@@ -119,46 +207,103 @@ templ workMatrixView(data workData) {
 	</div>
 }
 
-// workSimpleLanes is the narrow-screen fallback: status lanes only.
-templ workSimpleLanes(data workData) {
+// workSimpleLanes is the narrow-screen fallback: status lanes only, with the
+// schema status name verbatim.
+templ workSimpleLanes(m workMatrix, filterTypes []string) {
 	<div class="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-3 overflow-x-auto pb-3">
-		for _, col := range data.Matrix.Columns {
-			@boardLaneView(boardLane{Status: col.Status, Items: workColumnItems(data.Matrix, col.Status)}, data.Allowances)
+		for _, col := range m.Columns {
+			@workLaneView(col, workColumnItems(m, col.Status), filterTypes)
 		}
 	</div>
 }
 
-// workCard is the matrix card with execution and attention badges.
-templ workCard(it WorkItem) {
-	<div class="mb-1.5 rounded-field border border-base-content/10 bg-base-100 p-2 shadow-sm" data-testid={ "work-card-" + it.CanonicalID }>
+// workLaneView is the mobile status lane: raw status name + colored dot.
+templ workLaneView(col workColumn, items []WorkItem, filterTypes []string) {
+	<section class="memory-board__lane flex min-w-0 flex-col rounded-box border border-base-content/10 bg-base-200" data-board-column={ col.Status } aria-label={ col.Label }>
+		<header class="flex items-center gap-2 border-base-content/10 border-b px-3 py-2.5">
+			<span class={ "size-2 shrink-0 rounded-full " + workStatusDotClass(col.Status) } aria-hidden="true"></span>
+			<span class="text-[10px] font-semibold tracking-wide text-muted">{ col.Label }</span>
+			<span class="ml-auto font-mono text-[11px] text-muted-faint">{ strconv.Itoa(len(items)) }</span>
+		</header>
+		<div class="flex min-h-12 grow flex-col gap-2 p-2">
+			for _, it := range items {
+				@workCard(it, filterTypes)
+			}
+			if len(items) == 0 {
+				<div class="grid place-items-center rounded-field border border-dashed border-base-content/10 py-6 text-[11px] text-muted-faint">Empty</div>
+			}
+		</div>
+	</section>
+}
+
+// workCard is the matrix card with execution, attention, and person chips.
+templ workCard(it WorkItem, filterTypes []string) {
+	{{ runAgent := ""
+	if it.IsWorking {
+		runAgent = it.LatestRunAgentName
+	} }}
+	<div
+		class={ "mb-1.5 rounded-field border border-l-4 border-base-content/10 bg-base-100 p-2 shadow-sm " + workStatusAccentClass(it.Status) }
+		data-testid={ "work-card-" + it.CanonicalID }
+		data-board-card=""
+		data-board-open-preview=""
+		data-canonical-id={ it.CanonicalID }
+		data-board-status={ it.Status }
+		draggable="true"
+		role="button"
+		tabindex="0"
+		aria-haspopup="dialog"
+	>
 		<div class="flex items-center gap-1.5">
 			<span class="min-w-0 truncate text-xs font-medium">{ it.Key }</span>
-			if it.NeedsReview {
-				@ui.Badge(ui.BadgeProps{Label: "review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
-			}
 			if it.Blocked {
 				@ui.Badge(ui.BadgeProps{Label: "blocked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
 			}
 		</div>
-		<div class="mt-1 flex flex-wrap items-center gap-1">
-			if it.IsWorking {
-				@ui.Badge(ui.BadgeProps{Label: agentOr(it, "agent") + " · " + it.LatestRunStatus, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Dot: true})
+		<div class="mt-1.5 flex flex-wrap items-center gap-2">
+			if runAgent != "" {
+				@workPersonChip(runAgent)
+				@ui.Badge(ui.BadgeProps{Label: it.LatestRunStatus, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Dot: true})
+			}
+			if it.Assignee != "" && it.Assignee != runAgent {
+				@workPersonChip(it.Assignee)
+			}
+			if it.Assignee == "" {
+				@workUnassignedChip()
 			}
 			if it.NextRunAt != "" && it.LatestRunStatus == "queued" {
 				@ui.Badge(ui.BadgeProps{Label: "retry scheduled", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
 			}
-			if it.Assignee != "" {
-				@ui.Badge(ui.BadgeProps{Label: it.Assignee, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
-			}
 		</div>
 		if it.Blocked {
 			<span class="mt-1 block text-[11px] text-muted">{ it.BlockReason }</span>
-			<form method="post" action={ templ.SafeURL("/work/items/" + url.PathEscape(it.CanonicalID) + "/unblock?type=" + url.QueryEscape(it.Type)) } class="mt-1 flex gap-1">
+			<form method="post" action={ templ.SafeURL("/work/items/" + url.PathEscape(it.CanonicalID) + "/unblock") } class="mt-1 flex gap-1" onclick="event.stopPropagation()">
+				for _, t := range filterTypes {
+					<input type="hidden" name="type" value={ t }/>
+				}
 				<input name="note" type="text" placeholder="optional note" class="input input-xs w-full"/>
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Unblock }
 			</form>
 		}
 	</div>
+}
+
+// workUnassignedChip renders the empty assignee state, mirroring the task
+// preview / assignee picker.
+templ workUnassignedChip() {
+	<span class="flex min-w-0 items-center gap-1.5">
+		@ui.AvatarFull(ui.AvatarProps{Name: "Unassigned", Icon: "lucide--user", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+		<span class="truncate text-[11px] text-muted-faint">Unassigned</span>
+	</span>
+}
+
+// workPersonChip renders one agent/person as an avatar + name, matching the
+// shared assignee picker treatment.
+templ workPersonChip(name string) {
+	<span class="flex min-w-0 max-w-40 items-center gap-1.5">
+		@ui.AvatarFull(ui.AvatarProps{Name: name, Size: ui.AvatarSize6, Fallback: ui.AvatarFallbackInitials, TextClass: "text-[10px]"})
+		<span class="truncate text-[11px] font-medium">{ name }</span>
+	</span>
 }
 
 // agentOr returns the run agent name or a fallback.
@@ -172,69 +317,36 @@ func agentOr(it WorkItem, fallback string) string {
 // workSettingsView renders the aggregated rules table and agent defaults.
 templ workSettingsView(data workData) {
 	@ui.Section("Rules", ui.SectionProps{Margin: "mt-2", BodyClass: "memory-density-comfortable"}) {
-		<form method="post" action="/work/settings/rules" class="mb-4 flex flex-wrap items-end gap-2 rounded-box border border-base-content/10 p-3">
-			<div>
-				<label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Agent</label>
-				<select name="agentId" class="select select-sm" required>
-					for _, a := range data.Agents {
-						<option value={ a.ID }>{ a.Name }</option>
-					}
-				</select>
-			</div>
-			<div>
-				<label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Object type</label>
-				<select name="ruleObjectType" class="select select-sm" required>
-					for _, t := range data.ObjectTypes {
-						<option value={ t.Name }>{ t.Name }</option>
-					}
-				</select>
-			</div>
-			<input type="hidden" name="ruleCreate" value="true"/>
-			<input type="hidden" name="ruleUpdate" value="true"/>
-			<input type="hidden" name="ruleDelete" value="true"/>
-			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { New rule }
-		</form>
-
+		<div class="mb-3 flex justify-end">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/work/settings/rules/new",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+			}) {
+				New rule
+			}
+		</div>
 		if len(data.Rules) == 0 {
-			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { No rules yet. Pick an agent and an object type to create one. }
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--list-checks",
+				Title:       "No rules yet",
+				Description: "Create the first rule by choosing an agent and an object type.",
+				Bordered:    true,
+				Class:       "py-10",
+				ActionHref:  "/work/settings/rules/new",
+				ActionLabel: "New rule",
+				ActionIcon:  "lucide--plus",
+			})
 		} else {
-			<div class="overflow-x-auto rounded-box border border-base-content/10">
-				<table class="table table-sm">
-					<thead>
-						<tr>
-							<th>Agent</th>
-							<th>Object type</th>
-							<th>Triggers</th>
-							<th>Transitions</th>
-							<th>Actions</th>
-							<th>Fields</th>
-							<th></th>
-						</tr>
-					</thead>
-					<tbody>
-						for _, r := range data.Rules {
-							<tr>
-								<td class="font-medium">{ r.AgentName }</td>
-								<td class="font-mono text-xs">{ r.ObjectType }</td>
-								<td class="text-xs">{ triggersSummary(r.Rule) }</td>
-								<td class="text-xs">{ transitionsSummary(r.Rule) }</td>
-								<td class="text-xs">{ actionsSummary(r.Rule) }</td>
-								<td class="text-xs">{ fieldsSummary(r.Rule) }</td>
-								<td>
-									<details>
-										<summary class="cursor-pointer text-xs text-primary">Edit</summary>
-										@workRuleEditForm(r)
-									</details>
-									<form method="post" action="/work/settings/rules/delete" class="mt-1">
-										<input type="hidden" name="agentId" value={ r.AgentID }/>
-										<input type="hidden" name="objectType" value={ r.ObjectType }/>
-										@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Delete }
-									</form>
-								</td>
-							</tr>
-						}
-					</tbody>
-				</table>
+			<div class="hidden md:block">
+				@workRulesTable(data.Rules)
+			</div>
+			<div class="flex flex-col gap-2 md:hidden">
+				for _, r := range data.Rules {
+					@workRuleMobileCard(r)
+				}
 			</div>
 		}
 	}
@@ -252,32 +364,230 @@ templ workSettingsView(data workData) {
 	}
 }
 
-// workRuleEditForm edits one rule row.
-templ workRuleEditForm(r workRuleRow) {
-	<form method="post" action="/work/settings/rules" class="mt-2 flex w-80 flex-col gap-2 rounded-box border border-base-content/10 p-2">
+// workRulesTable is the desktop rules table, using the shared table components.
+templ workRulesTable(rules []workRuleRow) {
+	@components.TableCard(nil) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Agent")
+					@table.TableHeadCell("Object type")
+					@table.TableHeadCell("Triggers")
+					@table.TableHeadCell("Transitions")
+					@table.TableHeadCell("Actions")
+					@table.TableHeadCell("Fields")
+					@table.TableHeadCell("")
+				}
+			}
+			@table.TableBody() {
+				for _, r := range rules {
+					@workRuleTableRow(r)
+				}
+			}
+		}
+	}
+}
+
+// workRuleTableRow is one desktop rule row; edit/delete are icon actions in the
+// trailing cell, mirroring the agents table.
+templ workRuleTableRow(r workRuleRow) {
+	@table.TableRow(r.AgentID+"|"+r.ObjectType, true, templ.Attributes{"class": "memory-rise"}) {
+		@table.TableCell("", nil) {
+			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL(workRuleEditHref(r)) }>
+				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ r.AgentName }</p>
+					@monoMeta(shortID(r.AgentID), "text-muted-faint")
+				</div>
+			</a>
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{Label: r.ObjectType, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+		}
+		@table.TableCell("", nil) {
+			if len(r.Rule.Triggers) == 0 {
+				@components.EmptyDash()
+			} else {
+				<div class="flex flex-wrap gap-1">
+					for _, t := range r.Rule.Triggers {
+						@ui.Badge(ui.BadgeProps{Label: t.Status, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+					}
+				</div>
+			}
+		}
+		@table.TableCell("", nil) {
+			@ruleTransitionsCell(r.Rule)
+		}
+		@table.TableCell("", nil) {
+			<div class="flex flex-wrap gap-1">
+				@ruleActionsBadges(r.Rule)
+			</div>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-xs text-muted">{ fieldsSummary(r.Rule) }</span>
+		}
+		@table.TableCell("text-right", nil) {
+			<div class="flex justify-end gap-1">
+				@ruleEditIconButton(r)
+				@ruleDeleteIconForm(r)
+			</div>
+		}
+	}
+}
+
+// workRuleMobileCard is the narrow-screen rule row.
+templ workRuleMobileCard(r workRuleRow) {
+	<div class="rounded-box border border-base-content/10 p-3" data-testid={ "work-rule-card-" + r.AgentID + "-" + r.ObjectType }>
+		<div class="flex items-start justify-between gap-2">
+			<div class="min-w-0">
+				<p class="truncate text-sm font-medium">{ r.AgentName }</p>
+				@ui.Badge(ui.BadgeProps{Label: r.ObjectType, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			</div>
+			<div class="flex shrink-0 gap-1">
+				@ruleEditIconButton(r)
+				@ruleDeleteIconForm(r)
+			</div>
+		</div>
+		<div class="mt-2 flex flex-wrap gap-1">
+			@ruleActionsBadges(r.Rule)
+			for _, t := range r.Rule.Triggers {
+				@ui.Badge(ui.BadgeProps{Label: t.Status, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+			}
+		</div>
+	</div>
+}
+
+templ ruleTransitionsCell(r AgentObjectRule) {
+	if len(r.Transitions) == 0 {
+		@ui.Badge(ui.BadgeProps{Label: "default", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+	} else {
+		<span class="font-mono text-[11px]">{ transitionsSummary(r) }</span>
+	}
+}
+
+templ ruleActionsBadges(r AgentObjectRule) {
+	if ruleAllows(r.CanCreate) {
+		@ui.Badge(ui.BadgeProps{Label: "C", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS})
+	}
+	if ruleAllows(r.CanUpdate) {
+		@ui.Badge(ui.BadgeProps{Label: "U", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+	}
+	if ruleAllows(r.CanDelete) {
+		@ui.Badge(ui.BadgeProps{Label: "D", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
+	}
+}
+
+templ ruleEditIconButton(r workRuleRow) {
+	@ui.Button(ui.ButtonProps{
+		Type:      ui.ButtonTypeLink,
+		Href:      workRuleEditHref(r),
+		Variant:   ui.ButtonGhost,
+		Size:      ui.ButtonSM,
+		Shape:     ui.ButtonShapeSquare,
+		Icon:      "lucide--pencil",
+		AriaLabel: "Edit rule for " + r.AgentName + " / " + r.ObjectType,
+	})
+}
+
+templ ruleDeleteIconForm(r workRuleRow) {
+	<form method="post" action="/work/settings/rules/delete" hx-confirm="Delete this rule?" class="inline-flex">
 		<input type="hidden" name="agentId" value={ r.AgentID }/>
-		<input type="hidden" name="ruleObjectType" value={ r.ObjectType }/>
-		<label class="flex items-center gap-1.5 text-xs">
-			<input type="hidden" name="ruleCreate" value="false"/>
-			<input type="checkbox" name="ruleCreate" value="true" checked?={ ruleAllows(r.Rule.CanCreate) } class="checkbox checkbox-xs"/> Create
-		</label>
-		<label class="flex items-center gap-1.5 text-xs">
-			<input type="hidden" name="ruleUpdate" value="false"/>
-			<input type="checkbox" name="ruleUpdate" value="true" checked?={ ruleAllows(r.Rule.CanUpdate) } class="checkbox checkbox-xs"/> Update
-		</label>
-		<label class="flex items-center gap-1.5 text-xs">
-			<input type="hidden" name="ruleDelete" value="false"/>
-			<input type="checkbox" name="ruleDelete" value="true" checked?={ ruleAllows(r.Rule.CanDelete) } class="checkbox checkbox-xs"/> Delete
-		</label>
-		<label class="flex items-center gap-1.5 text-xs">
-			<input type="hidden" name="ruleClearAssignee" value="false"/>
-			<input type="checkbox" name="ruleClearAssignee" value="true" checked?={ r.Rule.ClearAssigneeOnComplete } class="checkbox checkbox-xs"/> Clear assignee on complete
-		</label>
-		<input name="ruleFields" type="text" value={ ruleFieldsText(r.Rule) } placeholder="writable fields (comma)" class="input input-xs"/>
-		<textarea name="ruleTriggers" rows="3" placeholder="status | prompt" class="textarea textarea-xs">{ ruleTriggersText(r.Rule) }</textarea>
-		<textarea name="ruleTransitions" rows="3" placeholder="from -> to" class="textarea textarea-xs">{ ruleTransitionsText(r.Rule) }</textarea>
-		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Save rule }
+		<input type="hidden" name="objectType" value={ r.ObjectType }/>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeSubmit,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			Shape:      ui.ButtonShapeSquare,
+			Icon:       "lucide--trash-2",
+			ExtraClass: "text-error hover:text-error",
+			AriaLabel:  "Delete rule for " + r.AgentName + " / " + r.ObjectType,
+		})
 	</form>
+}
+
+// WorkRulePage is the shared New/Edit rule form page.
+templ WorkRulePage(data workRuleFormData) {
+	{{ title := "New rule"
+	action := "Create rule"
+	subtitle := "Choose an agent and an object type, then describe how the agent may pick up and move items."
+	if data.Mode == "edit" {
+		title = "Edit rule"
+		action = "Save rule"
+		subtitle = "The agent and object type identify the rule and cannot be changed here."
+	} }}
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Work", "/work/board", "Settings", "/work/settings", title)), "", title, subtitle, detailHeaderOpts{Margin: "mb-6"}) {}
+		@flashToasts("", data.FlashErr)
+		@components.PanelCard("", nil) {
+			<form method="post" action="/work/settings/rules" hx-boost="false" class="flex flex-col gap-4">
+				<input type="hidden" name="mode" value={ data.Mode }/>
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					@form.FormControl("work-rule-agent", "Agent", form.LabelAbove, "The agent this rule belongs to.", "", nil) {
+						if data.Mode == "edit" {
+							<input type="hidden" name="agentId" value={ data.SelectedAgentID }/>
+							<input class="input w-full" value={ workAgentNameByID(data.Agents, data.SelectedAgentID) } disabled/>
+						} else {
+							<select id="work-rule-agent" name="agentId" class="select w-full" required>
+								for _, a := range data.Agents {
+									<option value={ a.ID } selected?={ a.ID == data.SelectedAgentID }>{ a.Name }</option>
+								}
+							</select>
+						}
+					}
+					@form.FormControl("work-rule-type", "Object type", form.LabelAbove, "The object type this rule applies to.", "", nil) {
+						if data.Mode == "edit" {
+							<input type="hidden" name="ruleObjectType" value={ data.SelectedType }/>
+							<input class="input w-full" value={ data.SelectedType } disabled/>
+						} else {
+							<select id="work-rule-type" name="ruleObjectType" class="select w-full" required>
+								for _, t := range data.ObjectTypes {
+									<option value={ t.Name } selected?={ t.Name == data.SelectedType }>{ t.Name }</option>
+								}
+							</select>
+						}
+					}
+				</div>
+
+				<div class="flex flex-wrap gap-4">
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="hidden" name="ruleCreate" value="false"/>
+						<input type="checkbox" name="ruleCreate" value="true" checked?={ ruleAllows(data.Rule.CanCreate) } class="checkbox checkbox-sm"/> Create
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="hidden" name="ruleUpdate" value="false"/>
+						<input type="checkbox" name="ruleUpdate" value="true" checked?={ ruleAllows(data.Rule.CanUpdate) } class="checkbox checkbox-sm"/> Update
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="hidden" name="ruleDelete" value="false"/>
+						<input type="checkbox" name="ruleDelete" value="true" checked?={ ruleAllows(data.Rule.CanDelete) } class="checkbox checkbox-sm"/> Delete
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="hidden" name="ruleClearAssignee" value="false"/>
+						<input type="checkbox" name="ruleClearAssignee" value="true" checked?={ data.Rule.ClearAssigneeOnComplete } class="checkbox checkbox-sm"/> Clear assignee on complete
+					</label>
+				</div>
+
+				@form.FormControl("work-rule-fields", "Writable fields", form.LabelAbove, "Comma-separated property names. Empty allows every field.", "", nil) {
+					<input id="work-rule-fields" name="ruleFields" type="text" value={ ruleFieldsText(data.Rule) } placeholder="title, description" class="input w-full"/>
+				}
+				@form.FormControl("work-rule-triggers", "Triggers", form.LabelAbove, "One per line: status | prompt. The prompt becomes the run's user message.", "", nil) {
+					<textarea id="work-rule-triggers" name="ruleTriggers" rows="4" placeholder="ready | Claim this item and do the work." class="textarea w-full">{ ruleTriggersText(data.Rule) }</textarea>
+				}
+				@form.FormControl("work-rule-transitions", "Transitions", form.LabelAbove, "One per line: from -> to. Empty allows the standard complete/block edges.", "", nil) {
+					<textarea id="work-rule-transitions" name="ruleTransitions" rows="4" placeholder="draft -> review" class="textarea w-full">{ ruleTransitionsText(data.Rule) }</textarea>
+				}
+
+				@form.FormActions("", "") {
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--check"}) {
+						{ action }
+					}
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/work/settings", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
+						Cancel
+					}
+				}
+			</form>
+		}
+	}
 }
 
 // workAgentDefaultsForm edits scope + guardrails, preserving rules.
