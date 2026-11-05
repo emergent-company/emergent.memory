@@ -28,9 +28,10 @@ import (
 // aria-haspopup; the selected option is announced via role="menuitemradio" +
 // aria-checked instead.
 //
-// It also carries the hidden filter inputs, so searching keeps the active
-// type/branch/actor filter instead of dropping it. Rendered by
-// objectsBrowserToolbar inside the search form.
+// The hidden filter inputs it renders are swapped out of band on every filter
+// response (#objects-search-hidden), so a search always resends the branch and
+// type the filter row currently shows instead of the ones the page loaded with.
+// Rendered by objectsBrowserToolbar inside the search form.
 templ objectsSearchControls(data objectsPageData) {
 	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
 	<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -91,12 +92,9 @@ templ objectsSearchControls(data objectsPageData) {
 			}
 		</div>
 	</div>
-	if data.TypeFilter != "" {
-		<input type="hidden" name="type" value={ data.TypeFilter }/>
-	}
-	if data.BranchID != "" {
-		<input type="hidden" name="branch" value={ data.BranchID }/>
-	}
+	<div id="objects-search-hidden" class="contents">
+		@objectsSearchHiddenFilters(data)
+	</div>
 }
 
 // objectsTargetURL is the URL the objects filter form submits to: the agent's
@@ -135,15 +133,22 @@ const objectsFilterSelectClass = "select w-56"
 //
 // The overlay is a child of the visible box, so daisyUI's `.select:focus-within`
 // outline lands on the control the user is keyboard-tabbing through.
-templ objectsFilterSelect(id string, name string, ariaLabel string, label string, preview bool) {
+//
+// Because the visible copy is not the control, it does not repaint when the
+// select changes: a filter response replaces only the list, so the visible layer
+// would keep the previous value until a full reload. app.js mirrors the chosen
+// option's text into `[data-mirror-label]` on change (the labels and the option
+// text are the same strings — see objectBranchOptionLabel).
+templ objectsFilterSelect(id string, name string, ariaLabel string, label string, extraAttrs templ.Attributes) {
 	<div class={ objectsFilterSelectClass + " relative flex items-center" }>
-		<span class="min-w-0 truncate" aria-hidden="true">{ label }</span>
+		<span class="min-w-0 truncate" aria-hidden="true" data-mirror-label>{ label }</span>
 		<select
 			id={ id }
 			name={ name }
 			aria-label={ ariaLabel }
 			class="absolute inset-0 size-full cursor-pointer opacity-0"
-			{ objectsFilterAutoApply(preview)... }
+			data-mirror-select
+			{ extraAttrs... }
 		>
 			{ children... }
 		</select>
@@ -153,23 +158,23 @@ templ objectsFilterSelect(id string, name string, ariaLabel string, label string
 // objectsFilterControls holds the filter form's controls: the branch and type
 // dropdowns, the provenance toggle, and the actor picker. Every control applies
 // itself — the selects and radios on change, the actor picker on pick — so there
-// is no Apply button: a control that reloads the list anyway makes a second
+// is no Apply button: a control that refreshes the list in place makes a second
 // "confirm" step pure ceremony. Rendered by objectsBrowserToolbar inside the
 // filter form.
+//
+// The actor pair is submitted as hidden inputs on every filter change, not only
+// on the scoped view: without them, changing the branch (or the type, or the
+// provenance mode) silently dropped the actor filter, because `actor` is carried
+// by the picker's submit buttons and nothing else in the form knew about it
+// (#131). The picker's own button still wins when it submits, because the server
+// prefers `actor` over the pair.
 //
 // Every control sits under a form.FormControl legend. The named fields are what
 // make a filter row readable at a glance; a leading "Filter" caption cannot say
 // which control narrows what.
 templ objectsFilterControls(data objectsPageData) {
 	{{ scoped := data.AgentID != "" }}
-	if data.Query != "" {
-		<input type="hidden" name="q" value={ data.Query }/>
-		<input type="hidden" name="mode" value={ data.Mode }/>
-	}
-	if data.Order != "" {
-		<input type="hidden" name="order" value={ data.Order }/>
-	}
-	if scoped {
+	if data.ActorType != "" || scoped {
 		<input type="hidden" name="actor_type" value={ data.ActorType }/>
 		if data.ActorID != "" {
 			<input type="hidden" name="actor_id" value={ data.ActorID }/>
@@ -177,7 +182,7 @@ templ objectsFilterControls(data objectsPageData) {
 	}
 	if len(data.Branches) > 0 {
 		@fm.FormControl("objects-filter-branch", "Branch", fm.LabelAbove, "", "", nil) {
-			@objectsFilterSelect("objects-filter-branch", "branch", "Branch", objectBranchOptionLabel(data.Branches, data.BranchID), data.Preview) {
+			@objectsFilterSelect("objects-filter-branch", "branch", "Branch", objectBranchOptionLabel(data.Branches, data.BranchID), templ.Attributes{"data-stats-refresh": "true"}) {
 				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
 				for _, b := range data.Branches {
 					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
@@ -187,7 +192,7 @@ templ objectsFilterControls(data objectsPageData) {
 	}
 	if len(data.Types) > 0 {
 		@fm.FormControl("objects-filter-type", "Type", fm.LabelAbove, "", "", nil) {
-			@objectsFilterSelect("objects-filter-type", "type", "Object type", objectTypeOptionLabel(data.TypeFilter), data.Preview) {
+			@objectsFilterSelect("objects-filter-type", "type", "Object type", objectTypeOptionLabel(data.TypeFilter), nil) {
 				<option value="">All types</option>
 				for _, t := range data.Types {
 					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
@@ -213,8 +218,8 @@ templ objectsFilterControls(data objectsPageData) {
 }
 
 // objectsProvenanceFilter is the "Created by / Updated by / Any" provenance
-// toggle: a joined group of radio buttons, each auto-submitting the filter form
-// on change so the list re-narrows without extra chrome. The labels are plain
+// toggle: a joined group of radio buttons, each applying the filter as it is
+// picked so the list re-narrows without extra chrome. The labels are plain
 // (Any / Created by / Updated by) and never name a memory concept. The group's
 // accessible name comes from the FormControl legend that wraps it.
 //
@@ -222,30 +227,27 @@ templ objectsFilterControls(data objectsPageData) {
 // selected segment: an absent or unrecognised `provenance` renders as Any — the
 // same value the list query dispatches with — instead of a join of three buttons
 // with nothing chosen (#121).
+//
+// The chosen segment is painted by CSS from the radio itself
+// (.memory-provenance-segment:has(> input:checked), webui/css/app.css) rather
+// than by a server-rendered `btn-primary`. A filter response replaces only the
+// list, so a server-painted segment would stay on the previous mode until a
+// reload — and painting both would light two segments at once. Painting from the
+// radio is exact for the first paint, for the click, and after a back/forward
+// history restore, with no request.
 templ objectsProvenanceFilter(data objectsPageData) {
 	{{ provenance := normalizeObjectProvenance(data.Provenance) }}
 	<div class="join">
 		for _, m := range objectProvenanceModes() {
-			{{
-				// The chosen mode fills with the primary colour. `btn-active`
-				// alone is a 7%-darkened button — on a joined group of three it
-				// is invisible next to its neighbours, which is exactly what made
-				// the toggle read as three unrelated buttons with nothing picked.
-				extra := "join-item"
-				if provenance == m.Value {
-					extra += " btn-primary"
-				}
-			}}
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLabel,
-				ExtraClass: extra,
+				ExtraClass: "join-item memory-provenance-segment",
 			}) {
 				<input
 					type="radio"
 					name="provenance"
 					value={ m.Value }
 					checked?={ provenance == m.Value }
-					{ objectsFilterAutoApply(data.Preview)... }
 					class="sr-only"
 				/>
 				{ m.Label }
@@ -274,7 +276,10 @@ templ objectsProvenanceFilter(data objectsPageData) {
 //
 // "Any actor" sits above a divider instead of inside either group: it is not an
 // identity, it clears the filter, and listing it among the people would read as
-// one more of them.
+// one more of them. It submits `actor=clear` rather than an empty value: the
+// form always carries the active actor as hidden inputs (so a branch or type
+// change does not drop it, #131), and an empty submit value would be
+// indistinguishable from that hidden pair.
 templ objectsActorFilter(data objectsPageData) {
 	{{
 		selected := actorKey(data.ActorType, data.ActorID)
@@ -304,7 +309,7 @@ templ objectsActorFilter(data objectsPageData) {
 				<button
 					type="submit"
 					name="actor"
-					value=""
+					value="clear"
 					role="menuitemradio"
 					aria-checked={ strconv.FormatBool(selected == "") }
 					class={ "min-w-0 text-left", templ.KV("menu-active", selected == "") }
@@ -492,7 +497,10 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 		<div class={ pageFormChromeClass }>
 			@detailHeader(crumbsActive(nav.Crumbs("Objects", "/objects", "New object")), "", "New object", "Manually add an entity to the knowledge graph.", detailHeaderOpts{Margin: "mb-6"})
 			<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects/new">
-				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
+				// requestSubmit, not submit: submit() dispatches no `submit`
+				// event, so the boosted form never sees it and the browser
+				// reloads the document (docs/ui-patterns.md §3).
+				<select name="type" class="select select-bordered select-sm" onchange="this.form.requestSubmit()">
 					<option value="" disabled selected?={ form.Type == "" }>Pick a type…</option>
 					for _, t := range objectTypes {
 						<option value={ t.Name } selected?={ t.Name == form.Type }>{ objectTypeDisplayName(t) }</option>

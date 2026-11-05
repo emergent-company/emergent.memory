@@ -88,9 +88,43 @@ Desktop rows: `components.TableCard` → go-daisy `table.*`; mobile rows:
 **Contract:** main root carries `data-testid="page-<title-slug>"` (`pageTestID`,
 `ui.go:48`); a create button routes to `…/new`; empty state names the collection.
 
+**Filter contract (required for a list with filters):** a filter applies by
+replacing the results region — never by reloading the document. Wrap the rows
+(and the empty state) in `<div id="<entity>-results">`, point the filter form at
+the page URL with an explicit region target, and let the handler choose page vs
+region from `HX-Target` (`list_filters.go`; full rules in
+`docs/ui-patterns.md` §3 "List filters refresh a region"):
+
+```go
+templ documentsToolbar(data documentPageData) {
+	<form method="get" action="/documents"
+		{ filterFormAttrs("/documents", documentsResultsRegion)... }>
+		<div id="documents-filter-hidden" class="contents">
+			@documentsFilterHiddenFilters(data)  // the other form's state
+		</div>
+		@fm.FormControl("documents-filter-status", "Status", fm.LabelAbove, "", "", nil) {
+			<select id="documents-filter-status" name="status" class="select select-sm">…</select>
+		}
+		<span id="documents-results-loading" class="htmx-indicator loading loading-spinner loading-xs"></span>
+	</form>
+}
+
+templ documentsResults(data documentPageData) {
+	<div id="documents-results" data-testid="documents-results">…rows / empty state…</div>
+}
+```
+
+`filterFormAttrs` supplies `hx-get` + `hx-target` + `hx-swap="outerHTML"` +
+`hx-push-url` + `hx-trigger="change, submit"` (`selectFilterFormAttrs` for a form
+that also has a text field, `submitFilterFormAttrs` for a query form). Never wire
+a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
+page.
+
 **Source:** `ui.templ:249` (`AgentsPage`), `ui.templ:629` (`pageHeader`),
 `ui.templ:224` (`pageError`), `components/table.templ:10`,
-`components/list.templ:10`, `ui.templ:385` (`agentsTable`).
+`components/list.templ:10`, `ui.templ:385` (`agentsTable`),
+`gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
+`documentsResults`, `documentsResultsFragment`).
 
 ---
 

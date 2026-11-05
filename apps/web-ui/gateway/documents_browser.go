@@ -577,6 +577,13 @@ func (s *Server) uiDocuments(c echo.Context) error {
 	} else {
 		data.Problems = report
 	}
+	// A filter/form request replaces the listing region only; the page around it
+	// (header, stats, upload form) stays put. Both forms push the URL, so a
+	// reload or bookmark still lands on the filtered page.
+	if targetsResultsRegion(c.Request(), documentsResultsRegion) {
+		renderPartial(c.Response().Writer, c.Request(), documentsResultsFragment(data))
+		return nil
+	}
 	return s.page(c, pageTitle("Documents"), DocumentsPage(data))
 }
 

@@ -622,7 +622,7 @@ templ blueprintDiffCard(d *BlueprintDetail) {
 			</h2>
 			<form method="get" action={ templ.URL("/blueprints/" + url.PathEscape(d.ID)) } class="flex items-center gap-2">
 				<label for="compare-version" class="sr-only">Compare with version</label>
-				<select id="compare-version" name="compare" class="select select-sm w-44" onchange="this.form.submit()">
+				<select id="compare-version" name="compare" class="select select-sm w-44" onchange="this.form.requestSubmit()">
 					for _, o := range d.CompareOptions {
 						<option value={ o.ID } if o.Version == d.CompareVersion { selected }>{ versionOptionLabel(o) }</option>
 					}

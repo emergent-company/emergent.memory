@@ -138,28 +138,21 @@ templ documentUploadDialog() {
 
 // documentsToolbar puts the search box and the status/source/sort controls in
 // one card. Search and filters stay two forms: the search form submits a query
-// while the filter form applies each control on change, and a single form
-// cannot do both without dropping one of them.
+// while the filter form applies each control on change, and a single form cannot
+// do both without dropping one of them — so each form carries the other's state
+// as hidden inputs, and a filter response refreshes both blocks out of band
+// (documentsSearchHiddenFilters / documentsFilterHiddenFilters).
+//
+// Both forms refresh #documents-results in place: a filter change narrows the
+// list, it does not reload the page (docs/ui-patterns.md §3).
 templ documentsToolbar(data documentPageData) {
 	<div class="mb-4">
 		@components.PanelCard("", nil, "p-3 sm:p-4") {
 			<div class="flex flex-col gap-3">
-				<form method="get" action="/documents" class="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="documents-search-form">
-					if data.Status != "" {
-						<input type="hidden" name="status" value={ data.Status }/>
-					}
-					if data.SourceID != "" {
-						<input type="hidden" name="sourceId" value={ data.SourceID }/>
-					}
-					if data.Attention != "" {
-						<input type="hidden" name="attention" value={ data.Attention }/>
-					}
-					if data.Sort != "" && data.Sort != documentSortCreated {
-						<input type="hidden" name="sort" value={ data.Sort }/>
-					}
-					if data.Order != "" && data.Order != documentOrderDesc {
-						<input type="hidden" name="order" value={ data.Order }/>
-					}
+				<form method="get" action="/documents" class="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="documents-search-form" { submitFilterFormAttrs("/documents", documentsResultsRegion)... }>
+					<div id="documents-search-hidden" class="contents">
+						@documentsSearchHiddenFilters(data)
+					</div>
 					<label class="input flex w-full min-w-0 flex-1 items-center gap-2">
 						@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
 						<input type="search" name="q" value={ data.Query } placeholder="Search documents by name or source URL…" class="grow" autocomplete="off" aria-label="Search documents"/>
@@ -175,41 +168,39 @@ templ documentsToolbar(data documentPageData) {
 						}
 					</div>
 				</form>
-				<form method="get" action="/documents" class="flex flex-wrap items-end gap-x-3 gap-y-2 border-base-content/10 border-t pt-3" data-testid="documents-filter-form">
-					if data.Query != "" {
-						<input type="hidden" name="q" value={ data.Query }/>
-					}
-					if data.Attention != "" {
-						<input type="hidden" name="attention" value={ data.Attention }/>
-					}
+				<form method="get" action="/documents" class="flex flex-wrap items-end gap-x-3 gap-y-2 border-base-content/10 border-t pt-3" data-testid="documents-filter-form" { filterFormAttrs("/documents", documentsResultsRegion)... }>
+					<div id="documents-filter-hidden" class="contents">
+						@documentsFilterHiddenFilters(data)
+					</div>
 					@fm.FormControl("documents-filter-status", "Status", fm.LabelAbove, "", "", nil) {
-						<select id="documents-filter-status" name="status" class="select select-sm" aria-label="Filter by status" data-testid="documents-status-filter" onchange="this.form.submit()">
+						<select id="documents-filter-status" name="status" class="select select-sm" aria-label="Filter by status" data-testid="documents-status-filter">
 							for _, opt := range documentStatusOptions(data) {
 								<option value={ opt.Value } selected?={ opt.Value == data.Status }>{ documentStatusOptionLabel(opt) }</option>
 							}
 						</select>
 					}
 					@fm.FormControl("documents-filter-source", "Source", fm.LabelAbove, "", "", nil) {
-						<select id="documents-filter-source" name="sourceId" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
+						<select id="documents-filter-source" name="sourceId" class="select select-sm" aria-label="Source">
 							for _, opt := range documentSourceSelectOptions(data) {
 								<option value={ opt.Value } selected?={ opt.Value == data.SourceID }>{ opt.Label }</option>
 							}
 						</select>
 					}
 					@fm.FormControl("documents-filter-sort", "Sort", fm.LabelAbove, "", "", nil) {
-						<select id="documents-filter-sort" name="sort" class="select select-sm" aria-label="Sort by" onchange="this.form.submit()">
+						<select id="documents-filter-sort" name="sort" class="select select-sm" aria-label="Sort by">
 							for _, opt := range documentSortSelectOptions() {
 								<option value={ opt.Value } selected?={ opt.Value == data.Sort }>{ opt.Label }</option>
 							}
 						</select>
 					}
 					@fm.FormControl("documents-filter-order", "Direction", fm.LabelAbove, "", "", nil) {
-						<select id="documents-filter-order" name="order" class="select select-sm" aria-label="Sort direction" onchange="this.form.submit()">
+						<select id="documents-filter-order" name="order" class="select select-sm" aria-label="Sort direction">
 							for _, opt := range documentOrderSelectOptions() {
 								<option value={ opt.Value } selected?={ opt.Value == data.Order }>{ opt.Label }</option>
 							}
 						</select>
 					}
+					<span id="documents-results-loading" class="htmx-indicator loading loading-spinner loading-xs mb-2" aria-hidden="true"></span>
 					<noscript>
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeSubmit,
@@ -225,18 +216,57 @@ templ documentsToolbar(data documentPageData) {
 	</div>
 }
 
-// documentsResults renders one page of the listing: the table at md and up, the
-// card list below md (the table is hidden there, so both are rendered), and the
-// footer with the order note and the load-more control. An empty result renders
-// "nothing stored" or "nothing matched" depending on whether a filter is active.
+// documentsSearchHiddenFilters carries the filter state the search form cannot
+// see on its own: status, source, attention, and sort live in the sibling filter
+// form, and a search must resend them or it would drop the applied filters.
+templ documentsSearchHiddenFilters(data documentPageData) {
+	if data.Status != "" {
+		<input type="hidden" name="status" value={ data.Status }/>
+	}
+	if data.SourceID != "" {
+		<input type="hidden" name="sourceId" value={ data.SourceID }/>
+	}
+	if data.Attention != "" {
+		<input type="hidden" name="attention" value={ data.Attention }/>
+	}
+	if data.Sort != "" && data.Sort != documentSortCreated {
+		<input type="hidden" name="sort" value={ data.Sort }/>
+	}
+	if data.Order != "" && data.Order != documentOrderDesc {
+		<input type="hidden" name="order" value={ data.Order }/>
+	}
+}
+
+// documentsFilterHiddenFilters is the mirror of the block above: a filter change
+// must resend the query and attention area the search row currently shows.
+templ documentsFilterHiddenFilters(data documentPageData) {
+	if data.Query != "" {
+		<input type="hidden" name="q" value={ data.Query }/>
+	}
+	if data.Attention != "" {
+		<input type="hidden" name="attention" value={ data.Attention }/>
+	}
+}
+
+// documentsResults is the swap region for every documents filter: the listing
+// table/cards (or the empty state) and the footer. Its id is the HX-Target both
+// toolbar forms and the sortable column headers request
+// (documentsResultsRegion), so filtering narrows the list without reloading the
+// page.
 templ documentsResults(data documentPageData) {
-	if len(data.Rows) == 0 {
-		if data.filtered() {
-			@documentsNoMatches(data)
+	<div id="documents-results" data-testid="documents-results">
+		if data.LoadErr != nil {
+			// A filter request that failed to load keeps the page: the error
+			// replaces the list instead of the whole surface (the page path
+			// renders pageError above the toolbar and never reaches here).
+			@pageError("Failed to load documents", data.LoadErr)
+		} else if len(data.Rows) == 0 {
+			if data.filtered() {
+				@documentsNoMatches(data)
+			} else {
+				@documentsEmpty()
+			}
 		} else {
-			@documentsEmpty()
-		}
-	} else {
 		<div class="hidden md:block">
 			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
 				@table.TableWithProps(table.TableProps{Size: "sm", Attrs: templ.Attributes{"data-testid": "documents-table"}}) {
@@ -257,7 +287,22 @@ templ documentsResults(data documentPageData) {
 			}
 		</div>
 		@documentsFooter(data)
-	}
+		}
+	</div>
+}
+
+// documentsResultsFragment is the response body for a filter request: the region
+// above plus the out-of-band refresh of the filter state the *other* form holds
+// as hidden inputs, so a search after a filter change (or the reverse) keeps
+// every applied filter.
+templ documentsResultsFragment(data documentPageData) {
+	@documentsResults(data)
+	<div id="documents-search-hidden" class="contents" hx-swap-oob="innerHTML">
+		@documentsSearchHiddenFilters(data)
+	</div>
+	<div id="documents-filter-hidden" class="contents" hx-swap-oob="innerHTML">
+		@documentsFilterHiddenFilters(data)
+	</div>
 }
 
 // documentsTableHead renders the column headers. Created and Updated are the
@@ -280,7 +325,9 @@ templ documentsTableHead(data documentPageData) {
 
 // documentsSortHead renders one sortable column header with its state in
 // aria-sort. The glyph is always present (dimmed when inactive) so the header
-// advertises that the column sorts at all.
+// advertises that the column sorts at all. Sorting refreshes the results region
+// in place, like the toolbar's filters: the href stays for no-JS and
+// middle-click.
 templ documentsSortHead(label, href, dir string) {
 	{{
 		ariaSort := "none"
@@ -292,9 +339,11 @@ templ documentsSortHead(label, href, dir string) {
 		case "desc":
 			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
 		}
+		sortAttrs := regionFilterAttrs(href, documentsResultsRegion)
+		sortAttrs["hx-indicator"] = "#documents-results-loading"
 	}}
 	<th scope="col" aria-sort={ ariaSort } class="text-right text-xs font-semibold text-base-content/60 uppercase">
-		<a href={ href } class="inline-flex items-center justify-end gap-1 hover:text-base-content">
+		<a href={ href } class="inline-flex items-center justify-end gap-1 hover:text-base-content" { sortAttrs... }>
 			@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
 			<span>{ label }</span>
 		</a>

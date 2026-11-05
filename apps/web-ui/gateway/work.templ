@@ -111,7 +111,7 @@ templ workTypeFilter(data workData) {
 									name="type"
 									value={ t.Name }
 									checked?={ workTypeChecked(data, t.Name) }
-									onchange="this.form.submit()"
+									onchange="this.form.requestSubmit()"
 									class="checkbox checkbox-xs"
 								/>
 								@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))

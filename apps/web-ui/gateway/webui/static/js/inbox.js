@@ -131,7 +131,12 @@
     if (!page) return;
     var scope = page.getAttribute("data-scope") || "all";
     var tab = page.getAttribute("data-tab") || "all";
-    var project = page.getAttribute("data-project-filter") || "";
+    /* The project filter changes without a page load: its form swaps the list in
+       place and pushes the URL. Read it from the URL when it is there, so a live
+       refresh after a filter change keeps the filter instead of reverting to the
+       value the page was first rendered with. */
+    var project = new URLSearchParams(window.location.search).get("project");
+    if (project === null) project = page.getAttribute("data-project-filter") || "";
     var base = "/partial/inbox-list";
     var path = window.MemoryScope ? MemoryScope.path(base) : base;
     var url =
