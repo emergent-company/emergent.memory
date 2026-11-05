@@ -577,7 +577,7 @@ func (h *Handler) CountObjects(c echo.Context) error {
 // @Param        id path string true "Object ID (UUID)"
 // @Param        resolveHead query boolean false "Return latest version if ID is old version"
 // @Param        X-Project-ID header string true "Project ID"
-// @Success      200 {object} GraphObject
+// @Success      200 {object} GraphObjectResponse "Object with its version's contributions"
 // @Failure      400 {object} apperror.Error "Invalid ID"
 // @Failure      404 {object} apperror.Error "Object not found"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -904,7 +904,7 @@ func (h *Handler) RestoreObject(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Object ID (UUID)"
 // @Param        X-Project-ID header string true "Project ID"
-// @Success      200 {array} GraphObject "Version history"
+// @Success      200 {object} ObjectHistoryResponse "Version history, each version with its own contributions"
 // @Failure      400 {object} apperror.Error "Invalid ID"
 // @Failure      404 {object} apperror.Error "Object not found"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -1082,7 +1082,7 @@ func (h *Handler) CountRelationships(c echo.Context) error {
 // @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
 // @Param        provenance query string false "Which version row must carry the write-stamp filter: created|updated|any (default: updated)"
 // @Param        X-Project-ID header string true "Project ID"
-// @Success      200 {object} map[string]interface{} "Paginated list with cursor"
+// @Success      200 {object} SearchRelationshipsResponse "Paginated list with cursor; each item carries its version's contributions"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Router       /api/graph/relationships/search [get]
@@ -1170,7 +1170,7 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Relationship ID (UUID)"
 // @Param        X-Project-ID header string true "Project ID"
-// @Success      200 {object} GraphRelationship
+// @Success      200 {object} GraphRelationshipResponse "Relationship with its version's contributions"
 // @Failure      400 {object} apperror.Error "Invalid ID"
 // @Failure      404 {object} apperror.Error "Relationship not found"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -1429,7 +1429,7 @@ func (h *Handler) RestoreRelationship(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Relationship ID (UUID)"
 // @Param        X-Project-ID header string true "Project ID"
-// @Success      200 {array} GraphRelationship "Version history"
+// @Success      200 {array} GraphRelationshipResponse "Version history, each version with its own contributions"
 // @Failure      400 {object} apperror.Error "Invalid ID"
 // @Failure      404 {object} apperror.Error "Relationship not found"
 // @Failure      401 {object} apperror.Error "Unauthorized"

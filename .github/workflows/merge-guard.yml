@@ -1,9 +1,15 @@
 name: Merge guard
 run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
 
-# Required status check that binds the merged commit to the reviewed commit.
+# Check that binds the merged commit to the reviewed commit. It still runs on
+# every PR, but it is NOT a required status check.
 #
-# `main` requires `ci` plus `merge-guard`. Reviews are comment-based (three
+# Branch protection on `main` requires exactly `["ci"]`. `merge-guard` cannot be
+# a required context: a required context is pinned to the app that reports it,
+# and this guard publishes through the Checks API, which a pinned context never
+# credits (#843). The `Reviewed-SHA` marker is enforced by
+# `scripts/merge-reviewed-pr.sh` in the infra repo (and by hand on paths that
+# skip it), not by branch protection. Reviews are comment-based (three
 # independent agents share one GitHub identity, so GitHub-native approvals are
 # unusable), and nothing else prevents a push after review from merging an
 # unreviewed tree. A reviewer records the reviewed revision as a PR comment:

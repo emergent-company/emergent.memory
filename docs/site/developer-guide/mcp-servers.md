@@ -122,9 +122,15 @@ email.
 
 The key is shown to *you* exactly once, on the creation screen. If you also
 entered recipients, they have their own copy; otherwise copy it before closing
-the dialog. Later, **Rotate** issues a new key (the old one stops working
-immediately) and its dialog offers the same optional email field, which is the
-recovery path when a recipient loses theirs.
+the dialog.
+
+To send the key to someone **after** the share exists, open the share's **⋯**
+menu → **Invite by email**. That emails the *current* key and the same
+ready-to-paste client configs, so anyone already using the share keeps working.
+**Issue a new key** in the same menu is the destructive alternative: the old key
+stops working immediately and its dialog offers the same optional email field.
+A share whose key was stored before the deployment enabled key encryption cannot
+be re-sent — the invite dialog says so and offers **Issue a new key instead**.
 
 **From the CLI:** `memory projects share-mcp --project my-project
 --email alice@example.com` does the same through the legacy share endpoint and

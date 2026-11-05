@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -96,6 +97,11 @@ func (s *Server) uiMCPShares(c echo.Context) error {
 		}),
 	}
 	data.FlashErr = flashError(c)
+	// The invite flow carries its recipient count, so its flash is built here
+	// rather than from the static flashFromQuery table.
+	if n, convErr := strconv.Atoi(c.QueryParam("invited")); convErr == nil && n > 0 {
+		data.FlashMsg = fmt.Sprintf("Invite emailed to %s.", countLabel(n, "recipient", "recipients"))
+	}
 	shares, err := s.memory.ListMCPShareInstances(ctx)
 	if err != nil {
 		data.LoadErr = userFacingError(err)
@@ -308,6 +314,46 @@ func (s *Server) uiMCPShareRotate(c echo.Context) error {
 	return s.renderMCPShareListWithReveal(c, mcpShareRevealPtr(s.mcpShareRevealFromCreated("Share key rotated", created)))
 }
 
+// --- invite flow (ad-hoc, no rotation) ---
+
+// uiMCPShareInvite handles POST .../shares/:id/invite (PRG). It emails the
+// share's EXISTING key and setup instructions to the listed recipients: the key
+// is not rotated, so everyone already using the share keeps working. When the
+// deployment cannot recover the key, the flash points at "Issue a new key
+// instead" rather than leaving the user at a dead end.
+func (s *Server) uiMCPShareInvite(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, mcpShareSettingsBase, errShareIDRequired())
+	}
+	if inst, err := s.memory.GetMCPShareInstance(ctx, id); err == nil && inst != nil && inst.IsLegacy {
+		return redirectWithError(c, mcpShareSettingsBase, legacyShareInviteErr())
+	}
+	rawEmails := strings.TrimSpace(c.FormValue("emails"))
+	if invalid := mcpShareInvalidEmails(rawEmails); len(invalid) > 0 {
+		return redirectWithError(c, mcpShareSettingsBase, fmt.Errorf("not a valid email address: %s", invalid[0]))
+	}
+	emails := mcpShareParseEmails(rawEmails)
+	if len(emails) == 0 {
+		return redirectWithError(c, mcpShareSettingsBase, errShareInviteNeedsRecipients())
+	}
+	res, err := s.memory.InviteMCPShareInstance(ctx, id, emails)
+	if err != nil {
+		if mcpShareIsNotRecoverable(err) {
+			return redirectWithError(c, mcpShareSettingsBase, errShareKeyNotRecoverable())
+		}
+		return redirectWithError(c, mcpShareSettingsBase, err)
+	}
+	if res.EmailError != "" {
+		// The key is still the share's key and it did not change; only the
+		// queue failed. Say both so the user knows nothing was broken.
+		return redirectWithError(c, mcpShareSettingsBase,
+			fmt.Errorf("the share's key was not changed, but the invite could not be queued: %s", res.EmailError))
+	}
+	return c.Redirect(http.StatusSeeOther, fmt.Sprintf("%s?invited=%d", mcpShareSettingsBase, len(res.EmailsSent)))
+}
+
 // --- JSON echo surface ---
 
 // listMCPShares handles GET /api/mcp-shares.
@@ -394,6 +440,29 @@ func (s *Server) rotateMCPShare(c echo.Context) error {
 		return mcpShareJSONErr(c, err)
 	}
 	return c.JSON(http.StatusOK, s.mcpShareCreatedJSON(created))
+}
+
+// inviteMCPShare handles POST /api/mcp-shares/:id/invite: it emails the share's
+// existing key to the listed recipients and reports the queued addresses.
+func (s *Server) inviteMCPShare(c echo.Context) error {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": errShareIDRequired().Error()})
+	}
+	var in struct {
+		Emails []string `json:"emails,omitempty"`
+	}
+	if err := c.Bind(&in); err != nil && !errors.Is(err, io.EOF) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+	}
+	if len(in.Emails) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": errShareInviteNeedsRecipients().Error()})
+	}
+	res, err := s.memory.InviteMCPShareInstance(c.Request().Context(), id, in.Emails)
+	if err != nil {
+		return mcpShareJSONErr(c, err)
+	}
+	return c.JSON(http.StatusOK, res)
 }
 
 // listMCPShareTools handles GET /api/mcp-shares/tools (the tool catalog).
@@ -662,6 +731,33 @@ func mcpShareUpstreamStatus(err error) int {
 }
 
 func errShareIDRequired() error { return errors.New("share id is required") }
+
+func errShareInviteNeedsRecipients() error {
+	return errors.New("add at least one recipient email address")
+}
+
+// errShareKeyNotRecoverable explains the one dead end of the ad-hoc invite: a
+// key stored before token encryption was enabled cannot be read back, so the
+// only way to email it is to issue a new one.
+func errShareKeyNotRecoverable() error {
+	return errors.New("this share's key was stored before key encryption was enabled, so it cannot be emailed. Use “Issue a new key instead”, or rotate the share to issue a new one")
+}
+
+func legacyShareInviteErr() error {
+	return errors.New("legacy shares cannot be emailed from this UI — create a named share instead")
+}
+
+// mcpShareIsNotRecoverable reports whether a backend error means the share key
+// has no stored ciphertext (422 not_recoverable).
+func mcpShareIsNotRecoverable(err error) bool {
+	var he *memoryHTTPError
+	if !errors.As(err, &he) {
+		return false
+	}
+	return he.Code == "not_recoverable" ||
+		strings.Contains(strings.ToLower(he.Message), "cannot be recovered") ||
+		strings.Contains(strings.ToLower(he.Message), "not_recoverable")
+}
 
 func legacyShareEditErr() error {
 	return errors.New("legacy shares cannot be edited — recreate the share to change its tools")

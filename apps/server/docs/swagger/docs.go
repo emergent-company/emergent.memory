@@ -7386,9 +7386,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Object with its version's contributions",
                         "schema": {
-                            "$ref": "#/definitions/domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                         }
                     },
                     "400": {
@@ -7721,12 +7721,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Version history",
+                        "description": "Version history, each version with its own contributions",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_graph.GraphObject"
-                            }
+                            "$ref": "#/definitions/domain_graph.ObjectHistoryResponse"
                         }
                     },
                     "400": {
@@ -8411,10 +8408,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Paginated list with cursor",
+                        "description": "Paginated list with cursor; each item carries its version's contributions",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/domain_graph.SearchRelationshipsResponse"
                         }
                     },
                     "400": {
@@ -8529,9 +8525,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Relationship with its version's contributions",
                         "schema": {
-                            "$ref": "#/definitions/domain_graph.GraphRelationship"
+                            "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                         }
                     },
                     "400": {
@@ -8721,11 +8717,11 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Version history",
+                        "description": "Version history, each version with its own contributions",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/domain_graph.GraphRelationship"
+                                "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                             }
                         }
                     },
@@ -15037,6 +15033,89 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Invalid allowlist or email address",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/shares/{id}/invite": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Emails the share instance's CURRENT key and client setup snippets to the listed recipients. The key is recovered from encrypted storage, never rotated, so existing clients keep working. Returns a 422 not_recoverable when the key was stored without encryption — rotate the share instead.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Email an existing MCP share key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Share instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Invite recipients",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.InviteShareInstanceHTTPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.InviteShareInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "No recipients supplied",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown share",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Share is revoked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid email address, or the key is not recoverable",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -34015,6 +34094,13 @@ const docTemplate = `{
                 "content_hash": {
                     "type": "string"
                 },
+                "contributions": {
+                    "description": "Contributions are the sources backing this version, each with its own\nexternal id, revision and state. They are keyed to the version row the\nresponse describes (never to canonical_id + version, which is not unique\nacross branches) and are populated on the read paths — object detail and\nversion history — from one batched query per request. Absent on write\nresponses, which do not pay for the read-back.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ProvenanceContribution"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -34237,6 +34323,13 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "contributions": {
+                    "description": "Contributions are the sources backing this relationship version, keyed to\nthe version row (subject_kind = relationship). Populated on the read paths\n— relationship detail and list — from one batched query per request.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ProvenanceContribution"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -34447,6 +34540,17 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ObjectHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.GraphObjectResponse"
+                    }
+                }
+            }
+        },
         "domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
@@ -34565,6 +34669,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "merged_from_version_id": {
+                    "description": "MergedFromVersionID is the version this contribution was carried from,\nwhen it was not written onto the row it describes: a merge union, a fork\ncopy, or a new version that inherits its predecessor's contributors. It is\nnull when the source's record arrived on this row.",
                     "type": "string"
                 },
                 "project_id": {
@@ -34596,6 +34701,23 @@ const docTemplate = `{
                 },
                 "relationships_enqueued": {
                     "description": "RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.",
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_graph.SearchRelationshipsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                },
+                "total": {
                     "type": "integer"
                 }
             }
@@ -35648,6 +35770,34 @@ const docTemplate = `{
                 },
                 "data": {},
                 "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcp.InviteShareInstanceHTTPRequest": {
+            "type": "object",
+            "properties": {
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_mcp.InviteShareInstanceResponse": {
+            "type": "object",
+            "properties": {
+                "emailError": {
+                    "type": "string"
+                },
+                "emailsSent": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tokenPrefix": {
                     "type": "string"
                 }
             }
@@ -43659,7 +43809,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.90.0",
+	Version:          "0.90.1",
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

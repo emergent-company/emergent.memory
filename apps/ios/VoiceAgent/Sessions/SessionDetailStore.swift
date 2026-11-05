@@ -34,6 +34,12 @@ final class SessionDetailStore: ObservableObject {
             failureMessage = nil
             loadState = .loaded
         } catch {
+            // A cancelled fetch (the view went away, or a refresh was
+            // superseded) is not a failure: the next appearance reloads.
+            guard !Cancellation.isCancellation(error), !Cancellation.isCurrentTaskCancelled else {
+                loadState = .idle
+                return
+            }
             // Unknown session → empty timeline, not an error page.
             records = []
             failureMessage = error.localizedDescription

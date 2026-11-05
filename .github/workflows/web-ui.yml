@@ -49,8 +49,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  GO_VERSION: '1.26'
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only
 # behind the fork guard; keep the checkout token read-only as defense-in-depth.
@@ -100,7 +98,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: apps/web-ui/gateway/go.mod
           # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
           # with no hosted fallback, and the runner is persistent:
           # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
@@ -190,7 +188,7 @@ jobs:
           # Per-job cache dir: the self-hosted runner shares HOME across
           # concurrent jobs, which makes the default golangci-lint lock collide.
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
-        run: golangci-lint run ./...
+        run: golangci-lint run --allow-parallel-runners ./...
 
       # ── Browser install: once, for all four Playwright suites ──────────────
       # This restore cost 51–101 s per job and was paid four times in parallel
@@ -242,6 +240,31 @@ jobs:
         continue-on-error: true
         run: npx playwright test --config=js-dom.config.ts
 
+      # A red run otherwise leaves only a log line: the Playwright configs write
+      # reports and per-test traces under the e2e directory, but nothing ever
+      # uploaded them (#63). The suite steps are `continue-on-error: true` and
+      # the job verdict comes from the final `Report` step, so a plain
+      # `if: failure()` here would never fire (the softened conclusion is
+      # `success`). `steps.<id>.outcome` keeps the real result, `always()` lets
+      # the step run after an earlier hard failure, and `if-no-files-found:
+      # ignore` keeps a suite that wrote nothing (port collision, webServer
+      # timeout) from adding a second, confusing failure.
+      #
+      # `defaults.run.working-directory` does not apply to `uses:` steps, so the
+      # paths are workspace-relative. The per-config output dirs differ:
+      # `test-results-js/` here, `test-results-share/` for the share suite.
+      - name: Upload the Playwright report (js)
+        if: ${{ always() && steps.js.outcome != 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-wiring-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+            apps/web-ui/tests/e2e/test-results-js/
+          retention-days: 7
+          if-no-files-found: ignore
+
       # ── Suite 2: hermetic Data Sources (Google Drive) e2e ──────────────────
       # The specs drive the gateway against the dev-mode mock harness
       # (`datasources.config.ts` boots `bash run-e2e.sh`, which starts
@@ -252,6 +275,19 @@ jobs:
         working-directory: apps/web-ui/tests/e2e
         continue-on-error: true
         run: npx playwright test --config=datasources.config.ts
+
+      # See the `js` suite above for why this is upload-on-failure by outcome (#63).
+      # The HTML report and traces both land under `test-results/` here.
+      - name: Upload the Playwright report (datasources)
+        if: ${{ always() && steps.datasources.outcome != 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-sources-e2e-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
       # ── Suite 3: per-PR gateway browser smoke (#564) ───────────────────────
       # The `*-ui.spec.ts` mutations specs are the only real gateway-UI coverage
@@ -266,6 +302,19 @@ jobs:
         continue-on-error: true
         run: npx playwright test --config=gateway-smoke.config.ts
 
+      # See the `js` suite above for why this is upload-on-failure by outcome (#63).
+      # The HTML report and traces both land under `test-results/` here.
+      - name: Upload the Playwright report (smoke)
+        if: ${{ always() && steps.smoke.outcome != 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-ui-smoke-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
       # ── Suite 4: hermetic agent-public-share e2e ───────────────────────────
       # `share.config.ts` boots the same dev-mode mock harness, and its spec is
       # anonymous — no OIDC session, no live memory backend. Until #1911 it was
@@ -275,6 +324,21 @@ jobs:
         working-directory: apps/web-ui/tests/e2e
         continue-on-error: true
         run: npx playwright test --config=share.config.ts
+
+      # See the `js` suite above for why this is upload-on-failure by outcome (#63).
+      # This config writes the HTML report and the traces to
+      # `test-results-share/`, not the default `playwright-report/`.
+      - name: Upload the Playwright report (share)
+        if: ${{ always() && steps.share.outcome != 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-share-e2e-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+            apps/web-ui/tests/e2e/test-results-share/
+          retention-days: 7
+          if-no-files-found: ignore
 
       # ── The verdict ────────────────────────────────────────────────────────
       # Turns the run red when any check or suite above did not succeed, and

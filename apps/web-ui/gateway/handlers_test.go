@@ -1119,6 +1119,10 @@ func (f *fakeMemory) RotateMCPShareInstance(ctx context.Context, id string, emai
 	return &MCPShareCreated{}, nil
 }
 
+func (f *fakeMemory) InviteMCPShareInstance(ctx context.Context, id string, emails []string) (*MCPShareInvite, error) {
+	return &MCPShareInvite{}, nil
+}
+
 func (f *fakeMemory) ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error) { return nil, nil }
 
 // Agent-owned MCP endpoint: stateful fake used by the MCP handler tests
