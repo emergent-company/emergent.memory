@@ -4,6 +4,18 @@
 
 ### BREAKING CHANGES
 
+**MCP share creation requires an explicit tool allowlist** (2026-11-05)
+
+`POST /api/projects/{projectId}/mcp/shares` now rejects a request that omits
+`tools`, or sends an empty array, with HTTP 422. Previously an omitted list
+created an "unrestricted" instance whose token still carried only the legacy
+read-only scopes, so tools that write failed at call time. Send the explicit
+list — the presets in `GET /api/projects/{projectId}/mcp/tools` (the default
+read-only set included) are ready-made values. Existing shares with a NULL
+allowlist are unchanged and remain usable, and the legacy
+`POST /api/projects/{projectId}/mcp/share` endpoint still mints a read-only
+share without a tool list.
+
 **`memory projects create-token` no longer writes `.env.local` by default** (2026-10-22)
 
 The command used to merge the freshly minted plaintext token into `.env.local` in

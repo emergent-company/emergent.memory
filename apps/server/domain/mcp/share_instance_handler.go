@@ -27,7 +27,7 @@ func requestBaseURL(c echo.Context) string {
 // HandleCreateShareInstance handles POST /api/projects/:projectId/mcp/shares.
 //
 // @Summary      Create an MCP share instance
-// @Description  Creates a named MCP share instance bound to a new project API token with the selected tool allowlist, and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.
+// @Description  Creates a named MCP share instance bound to a new project API token with the selected tool allowlist (tools is required and must be non-empty), and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.
 // @Tags         mcp
 // @Accept       json
 // @Produce      json

@@ -1094,8 +1094,13 @@ key whose token scopes are derived from an explicit tool allowlist
 `/api/projects/:projectId/mcp/shares` and in the gateway at
 `/settings/mcp-servers/shares`.
 
-A null allowlist means *unrestricted*; the UI requires a selection, and the
-catalog endpoint is what it draws from:
+Creating a share requires an explicit, non-empty tool allowlist; the catalog
+endpoint is what the UI draws its choices from. A NULL allowlist survives only
+on legacy rows (the `/mcp/share` flow and instances created before allowlists),
+where it means *unrestricted within the minted token's scopes* — for a legacy
+row that is the read-only scope set. `CreateShareInstance` rejects a nil
+allowlist so a new share can never be labelled unrestricted while carrying
+read-only scopes:
 
 ```
 GET /api/projects/:projectId/mcp/tools
