@@ -316,6 +316,16 @@ jobs:
       - name: Tree hygiene tests
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/tree-hygiene.test.sh
+      # The deploy/self-hosted helpers are shell and run inside image builds,
+      # where their failure modes are silent: sleeping after the last attempt
+      # only slows a build, a swallowed status reports success after a real
+      # failure, and a missing command would skip a build step (#83). There is
+      # no deploy-specific CI job, so pin them here with the other hermetic
+      # shell self-tests. Runs under dash on this runner; the test also runs
+      # under busybox ash (see its header).
+      - name: Deploy retry helper tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: sh deploy/self-hosted/scripts/retry_test.sh
       - name: Meta checks
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: 'echo "Meta CI: no meta checks remain in this repository."'
