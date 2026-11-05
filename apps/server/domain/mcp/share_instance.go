@@ -384,12 +384,31 @@ func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, e
 }
 
 // shareToolAdditionalScopes lists scopes a tool needs at runtime but does not
-// declare as its transport-level RequiredScope. search-knowledge calls the
-// /query loopback with the caller's own token, and that route requires
-// chat:use; without this a share that includes the tool would 403 on every
-// call. The legacy read-only share token carried chat:use for the same reason.
+// declare as its transport-level RequiredScope. search-knowledge, remember and
+// forget call the /query, /remember and /forget loopbacks with the caller's own
+// token, and those routes require chat:use; without this a share that includes
+// one of them would 403 on every call. The legacy read-only share token carried
+// chat:use for the same reason.
+//
+// This map is maintained by hand: a new tool that forwards the caller token to a
+// chat route must be added here (TestShareLoopbackToolsDeriveChatUse guards the
+// tools known today).
 var shareToolAdditionalScopes = map[string][]string{
 	"search-knowledge": {"chat:use"},
+	"remember":         {"chat:use"},
+	"forget":           {"chat:use"},
+}
+
+// addShareToolScopes merges a tool's runtime-only scopes into seen, refusing any
+// scope a share must never carry.
+func addShareToolScopes(seen map[string]bool, name string, scopes []string) error {
+	for _, scope := range scopes {
+		if isNonShareableScope(scope) {
+			return apperror.NewValidation("tool requires an administrative or project-management scope: " + name)
+		}
+		seen[scope] = true
+	}
+	return nil
 }
 
 // deriveScopesForToolNames returns the union of the required scopes of the
@@ -411,11 +430,8 @@ func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, 
 		if def.RequiredScope != "" {
 			seen[def.RequiredScope] = true
 		}
-		for _, scope := range shareToolAdditionalScopes[name] {
-			if isNonShareableScope(scope) {
-				return nil, apperror.NewValidation("tool requires an administrative or project-management scope: " + name)
-			}
-			seen[scope] = true
+		if err := addShareToolScopes(seen, name, shareToolAdditionalScopes[name]); err != nil {
+			return nil, err
 		}
 	}
 	out := make([]string, 0, len(seen))

@@ -1118,13 +1118,14 @@ Ids are frozen — the gateway renders them as `data-share-template` values:
 | `knowledge-writer` | read-only plus `graph:write`, `documents:write`, `journal:write` |
 | `schema-admin` | `graph:read`, `schema:read`, `schema:write`, `schema:migrate`, `skills:read` |
 | `agent-observer` | `agents:read`, `search`, `graph:read` |
-| `documents-only` | `documents:read`, `documents:write` plus `classify-document`, `search-hybrid`, `search-knowledge` |
+| `documents-only` | `documents:read`, `documents:write` plus `classify-document`, `search-hybrid`, `search-semantic` |
 | `full-access` | every tool in the shareable catalog |
 
 Tool scopes are derived from the selected tool names, not from the preset's
-declaration. A tool may also need a runtime-only scope: `search-knowledge` calls
-the `/query` loopback with the caller's token and that route requires `chat:use`,
-so a share that includes it derives `chat:use` too
+declaration. A tool may also need a runtime-only scope: `search-knowledge`, `remember` and
+`forget` call chat-route loopbacks (`/query`, `/remember`, `/forget`) with the
+caller's token, and those routes require `chat:use`, so a share that includes
+one derives `chat:use` too
 (`shareToolAdditionalScopes` in `share_instance.go`) — the same scope the legacy
 read-only share token carried.
 

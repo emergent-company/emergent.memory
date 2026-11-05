@@ -440,8 +440,10 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 					<span class="text-muted-faint text-[10px]">replaces the current selection</span>
 				</div>
 				<div class="flex flex-wrap gap-1.5" data-mcp-share-templates>
+					{{ activeTaken := false }}
 					for _, t := range data.Templates {
-						{{ active := mcpShareSameToolSet(data.Tools, t.Tools) }}
+						{{ active := !activeTaken && mcpShareSameToolSet(data.Tools, t.Tools) }}
+						{{ if active { activeTaken = true } }}
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeButton,
 							Variant:    ui.ButtonOutline,

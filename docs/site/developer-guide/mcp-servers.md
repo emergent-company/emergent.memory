@@ -126,12 +126,18 @@ afterwards:
 
 | Preset | What it grants |
 |---|---|
-| **Read-only** (default) | Search, graph reads, document and journal reads, schema reads, skill reads, and agent/run reads. Nothing can be changed. |
-| **Knowledge writer** | Read-only plus creating and editing objects, relationships, documents, and journal notes. |
-| **Schema & blueprints** | Graph reads, then schema read/write, schema migrations, and blueprints. Does not write knowledge objects. |
+| **Read-only** (default) | Search, graph reads, document and journal reads, schema reads, skill reads, and agent/run reads. No MCP tool in this set writes. |
+| **Knowledge writer** | Read-only plus creating, editing, and deleting objects, relationships, documents, and journal notes. |
+| **Schema & blueprints** | Graph reads, then schema read/write, schema migrations, and blueprints. |
 | **Agent observer** | Agent, run, question, and session reads, plus search and graph reads. |
-| **Documents** | Upload, list, retrieve, and delete documents, plus document classification and search. |
+| **Documents** | Upload, list, retrieve, and delete documents, plus document classification, keyword search, and semantic search. |
 | **Full access** | Every tool a share key can carry. |
+
+A share key is also an ordinary project API token, so the scopes behind the
+selected tools are honoured by the REST API as well as the MCP tools. Presets
+keep that set as narrow as the tools allow — the Documents preset, for
+example, grants document read/write and search but no knowledge or chat
+writes.
 
 Presets never exceed what a share may grant: platform administration, project
 settings, credential minting, and agent execution/management are not shareable,

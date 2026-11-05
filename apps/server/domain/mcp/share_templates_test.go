@@ -138,20 +138,82 @@ func TestReadOnlyTemplateCoversLegacyScopes(t *testing.T) {
 	}
 }
 
-// TestSearchKnowledgeShareDerivesChatUse guards the runtime-only scope: the tool
-// calls the /query loopback with the caller's token, and that route requires
+// TestShareLoopbackToolsDeriveChatUse guards the runtime-only scope: these tools
+// call a chat route loopback with the caller's token, and those routes require
 // chat:use. A share without it would advertise the tool and then 403 every call.
 // The legacy read-only token carried chat:use for exactly this reason.
-func TestSearchKnowledgeShareDerivesChatUse(t *testing.T) {
+func TestShareLoopbackToolsDeriveChatUse(t *testing.T) {
 	svc := &Service{}
+	for _, tool := range []string{"search-knowledge", "remember", "forget"} {
+		scopes, err := deriveScopesForToolNames([]string{tool}, svc.GetToolByName)
+		require.NoError(t, err)
+		assert.Contains(t, scopes, "chat:use", "%s must derive the runtime loopback scope", tool)
+	}
+	// The transport scope is still derived alongside the runtime one.
 	scopes, err := deriveScopesForToolNames([]string{"search-knowledge"}, svc.GetToolByName)
 	require.NoError(t, err)
-	assert.Contains(t, scopes, "search", "transport scope is still derived")
-	assert.Contains(t, scopes, "chat:use", "runtime loopback scope must be derived")
+	assert.Contains(t, scopes, "search")
 
 	plain, err := deriveScopesForToolNames([]string{"entity-search"}, svc.GetToolByName)
 	require.NoError(t, err)
 	assert.NotContains(t, plain, "chat:use", "a graph-only tool must not widen the token to chat")
+}
+
+// TestAddShareToolScopesRejectsNonShareable is the guard on the hand-maintained
+// additional-scope map: a future entry must not slip an admin scope onto a
+// share token.
+func TestAddShareToolScopesRejectsNonShareable(t *testing.T) {
+	seen := map[string]bool{}
+	require.NoError(t, addShareToolScopes(seen, "search-knowledge", []string{"chat:use"}))
+	assert.True(t, seen["chat:use"])
+
+	for _, scope := range []string{"admin", "admin:all", "projects:write", "account:billing"} {
+		err := addShareToolScopes(map[string]bool{}, "some-tool", []string{scope})
+		require.Error(t, err, "scope %q must be refused", scope)
+		assert.Contains(t, err.Error(), "administrative or project-management")
+	}
+}
+
+// TestShareTemplateDerivedScopesPerPreset pins the exact token scopes each
+// preset grants. A share token is an ordinary API token, so its scopes are
+// honoured by REST routes too — a narrow preset silently acquiring a broad
+// scope is a security regression, not just a naming problem. Adding a tool with
+// a new scope to a preset must be a deliberate edit here as well.
+func TestShareTemplateDerivedScopesPerPreset(t *testing.T) {
+	want := map[string][]string{
+		"read-only": {
+			"agents:read", "chat:use", "documents:read", "graph:read",
+			"journal:read", "projects:read", "schema:read", "search", "skills:read",
+		},
+		"knowledge-writer": {
+			"agents:read", "chat:use", "documents:read", "documents:write",
+			"graph:read", "graph:write", "journal:read", "journal:write",
+			"projects:read", "schema:read", "search", "skills:read",
+		},
+		"schema-admin": {
+			"graph:read", "projects:read", "schema:migrate", "schema:read",
+			"schema:write", "skills:read",
+		},
+		"agent-observer": {"agents:read", "chat:use", "graph:read", "projects:read", "search"},
+		"documents-only": {"documents:read", "documents:write", "projects:read", "schema:read", "search"},
+	}
+	svc := &Service{}
+	for _, tmpl := range ResolveShareTemplates(testShareCatalog(t)) {
+		expected, ok := want[tmpl.ID]
+		if !ok {
+			continue // full-access is pinned by the ceiling test above.
+		}
+		scopes, err := deriveScopesForToolNames(tmpl.Tools, svc.GetToolByName)
+		require.NoError(t, err, "template %q", tmpl.ID)
+		assert.Equal(t, expected, scopes, "template %q changed the scopes it grants", tmpl.ID)
+	}
+
+	// A Documents share must not be able to write knowledge or touch chat over
+	// REST: no chat:use, no graph:write.
+	documents, ok := want["documents-only"]
+	require.True(t, ok)
+	assert.NotContains(t, documents, "chat:use")
+	assert.NotContains(t, documents, "graph:write")
 }
 
 // TestShareTemplateDerivedScopesStayWithinDocumentedSet pins the scopes a preset

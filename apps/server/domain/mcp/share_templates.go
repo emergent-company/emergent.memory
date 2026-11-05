@@ -117,7 +117,7 @@ var shareTemplates = []ShareTemplate{
 		Tools: []string{
 			"classify-document",
 			"search-hybrid",
-			"search-knowledge",
+			"search-semantic",
 		},
 	},
 	{

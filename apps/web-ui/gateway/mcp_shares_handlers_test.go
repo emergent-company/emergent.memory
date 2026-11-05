@@ -1233,12 +1233,58 @@ func TestMCPShareNewPageRendersPresetRow(t *testing.T) {
 	}
 	// The default preset is what the form starts on, so its chip must render
 	// pressed rather than looking like no preset was chosen.
-	if strings.Count(body, `aria-pressed="true"`) != 1 {
-		t.Errorf("exactly the default preset chip must be pressed")
+	if got := pressedShareTemplateIDs(body); len(got) != 1 || got[0] != "read-only" {
+		t.Errorf("pressed preset chips = %v, want [read-only]", got)
 	}
-	if !strings.Contains(body, "gap-1.5 btn-active") {
+	if !strings.Contains(shareTemplateTag(body, "read-only"), "btn-active") {
 		t.Error("the default preset chip must carry btn-active")
 	}
+	if strings.Contains(shareTemplateTag(body, "knowledge-writer"), "btn-active") {
+		t.Error("a non-default preset must not render pressed")
+	}
+}
+
+// shareTemplateTag returns the opening <button ...> tag for a preset id.
+// Attribute order is not stable (ui.Button spreads a map), so this locates the
+// id and walks out to the enclosing tag instead of matching a fixed string.
+func shareTemplateTag(body, id string) string {
+	idx := strings.Index(body, `data-share-template="`+id+`"`)
+	if idx < 0 {
+		return ""
+	}
+	start := strings.LastIndex(body[:idx], "<button")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(body[idx:], ">")
+	if end < 0 {
+		return ""
+	}
+	return body[start : idx+end]
+}
+
+// pressedShareTemplateIDs lists the presets rendered with aria-pressed="true".
+func pressedShareTemplateIDs(body string) []string {
+	var ids []string
+	for _, chunk := range strings.Split(body, "<button")[1:] {
+		tag := chunk
+		if end := strings.Index(tag, ">"); end >= 0 {
+			tag = tag[:end]
+		}
+		if !strings.Contains(tag, `aria-pressed="true"`) {
+			continue
+		}
+		const marker = `data-share-template="`
+		i := strings.Index(tag, marker)
+		if i < 0 {
+			continue
+		}
+		rest := tag[i+len(marker):]
+		if j := strings.Index(rest, `"`); j >= 0 {
+			ids = append(ids, rest[:j])
+		}
+	}
+	return ids
 }
 
 func TestMCPShareNewPagePreselectsDefaultTemplate(t *testing.T) {
