@@ -18,10 +18,16 @@
 #   the later file — renumbering it is therefore safe. The exception applies to
 #   removing/renaming a base-branch file F with version V only when BOTH hold:
 #
-#     * V is duplicated among the base-branch migrations (>=2 base files share V), and
+#     * V is duplicated among the merge-base migrations (>=2 files at the merge
+#       base share V), and
 #     * the PR adds a contiguous replacement migration whose versions run
 #       max(base)+1 .. max(base)+N with no gaps and no duplicates (the renumbered
 #       successor is contiguous with the base sequence).
+#
+#   The duplicate test is deliberately evaluated at the merge base, the same view
+#   as the removal candidate it excuses: if the base tip gains a duplicate of V
+#   after the branch point, that duplicate must not license deleting the original
+#   (already applied) V. max(base) stays anchored to the base tip.
 #
 #   When both hold, a REPAIR notice is printed and the rule does not fail for
 #   that file. Everything else is unchanged: a plain rename/modify/delete of a
@@ -52,7 +58,9 @@ mig_dir="apps/server/migrations"
 
 # Refresh the base ref. A stale local ref is exactly the hazard this guard
 # exists to catch. Tolerate no-network gracefully: fall back to a cached ref, or
-# skip when none exists.
+# skip when none exists. A single-branch clone's default refspec can update only
+# FETCH_HEAD, leaving <remote>/<branch> unborn, so materialise that tracking ref
+# explicitly before giving up; otherwise a shallow PR clone skips the guard.
 branch="${base#origin/}"
 if ! git fetch --quiet --no-tags origin "$branch" 2>/dev/null; then
   if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
@@ -60,6 +68,11 @@ if ! git fetch --quiet --no-tags origin "$branch" 2>/dev/null; then
   else
     echo "migration-immutability: WARNING could not reach origin and no cached $base; skipping" >&2
     exit 0
+  fi
+fi
+if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+  if [ "$base" = "origin/$branch" ]; then
+    git fetch --quiet --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null || true
   fi
 fi
 if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
@@ -138,10 +151,10 @@ while IFS= read -r f; do
     while IFS= read -r bf; do
       [ -z "$bf" ] && continue
       [ "$(version_of "$bf")" = "$v" ] && dup_count=$((dup_count + 1))
-    done <<< "$base_files"
+    done <<< "$mb_files"
 
     if [ -n "$v" ] && [ "$dup_count" -ge 2 ] && added_contiguous; then
-      echo "migration-immutability: REPAIR duplicate base migration version $v: removing/renaming $f is permitted because $dup_count base migrations share version $v and the PR adds the contiguous replacement version(s) ${added_versions// /,} above max($base) ($max_base)" >&2
+      echo "migration-immutability: REPAIR duplicate base migration version $v: removing/renaming $f is permitted because $dup_count merge-base migrations share version $v and the PR adds the contiguous replacement version(s) ${added_versions// /,} above max($base) ($max_base)" >&2
       continue
     fi
 
