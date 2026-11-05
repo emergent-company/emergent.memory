@@ -815,9 +815,10 @@ func TestRotateShareInstanceAbortsWhenScopeRefreshFails(t *testing.T) {
 	assert.Equal(t, "old", store.byID["i1"].TokenID)
 }
 
-// TestRotateShareInstanceToleratesStaleAllowlist: a tool renamed or removed
-// since the share was minted must not make the key impossible to rotate.
-func TestRotateShareInstanceToleratesStaleAllowlist(t *testing.T) {
+// TestRotateShareInstanceHealsMixedStaleAllowlist: a tool renamed or removed
+// since the share was minted must not make the key impossible to rotate, and the
+// names that still resolve must still heal the scopes they can.
+func TestRotateShareInstanceHealsMixedStaleAllowlist(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{
 		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
@@ -828,7 +829,26 @@ func TestRotateShareInstanceToleratesStaleAllowlist(t *testing.T) {
 
 	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
 	require.NoError(t, err)
-	assert.Nil(t, tok.updateScopes, "a stale allowlist keeps the existing scopes")
+	assert.ElementsMatch(t, []string{"graph:read", "projects:read"}, tok.updateScopes,
+		"the surviving tool must still heal the token")
+	assert.True(t, tok.regenerateCalled)
+}
+
+// TestRotateShareInstanceToleratesAllStaleAllowlist: with nothing left to
+// resolve, rotation keeps the existing scopes instead of narrowing the token to
+// the bare baseline.
+func TestRotateShareInstanceToleratesAllStaleAllowlist(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"tool-renamed-away"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "an all-stale allowlist keeps the existing scopes")
 	assert.True(t, tok.regenerateCalled)
 }
 

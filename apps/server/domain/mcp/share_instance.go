@@ -1139,20 +1139,33 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 	// Scopes are a function of the allowlist, and that derivation can widen as a
 	// tool gains a runtime-only scope (shareToolAdditionalScopes). Refresh the
 	// bound token before the replacement copies its scopes, so a share created by
-	// an older build heals on rotate. Fail here and the old token is untouched; a
-	// failure after this point leaves a valid, correctly-scoped old token. A
-	// zero-length allowlist is unrestricted and keeps whatever scopes it has.
+	// an older build heals on rotate. A zero-length allowlist is unrestricted and
+	// keeps whatever scopes it has.
 	if len(inst.AllowedTools) > 0 {
 		s.GetToolDefinitionsForProject(ctx, projectID)
-		scopes, serr := s.scopesForAllowlist(inst.AllowedTools)
-		if serr == nil {
-			if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
-				return nil, uerr
+		// Derive from the names that still exist. A tool renamed or removed since
+		// the share was minted must not brick the only key the recipient can be
+		// given, and the surviving names can still heal (so a mixed allowlist of
+		// stale and current entries heals as far as it can).
+		resolvable := make([]string, 0, len(inst.AllowedTools))
+		for _, name := range inst.AllowedTools {
+			if s.GetToolByName(name) != nil {
+				resolvable = append(resolvable, name)
 			}
 		}
-		// A stale allowlist (a tool renamed or removed since the share was minted)
-		// must not brick rotation: keeping the existing scopes is worse for that
-		// one tool but keeps the only key the recipient can be given working.
+		if len(resolvable) > 0 {
+			scopes, serr := s.scopesForAllowlist(resolvable)
+			// A policy refusal (a legacy non-shareable or operator-only tool) is
+			// also not allowed to brick rotation: the replacement keeps the old
+			// scopes, and the allowlist guard still refuses those calls.
+			if serr == nil {
+				if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
+					return nil, uerr
+				}
+			}
+		}
+		// Fail before this point and the old token is untouched; a failure after
+		// it leaves a valid, correctly-scoped old token.
 	}
 
 	// Rotate atomically: the token service revokes the old token, inserts the
