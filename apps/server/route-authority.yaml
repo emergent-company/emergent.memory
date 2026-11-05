@@ -713,6 +713,10 @@ routes:
       path: /api/graph/branches/:targetBranchId/merge
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/graph/changesets
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/graph/embedding-policies
       level: auth
@@ -759,6 +763,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: PATCH
       path: /api/graph/objects/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/graph/objects/:id/contributions
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET

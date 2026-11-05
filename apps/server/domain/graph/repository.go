@@ -3740,6 +3740,8 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 
 	// Insert copies in batches of 100
 	batch := make([]*GraphObject, 0, 100)
+	// from version row → its fork copy, for the contribution copy after each batch.
+	pairs := make(map[uuid.UUID]uuid.UUID, 100)
 	for _, obj := range objects {
 		newObj := &GraphObject{
 			ID:              uuid.New(),
@@ -3770,18 +3772,26 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			InputHash:      obj.InputHash,
 		}
 		batch = append(batch, newObj)
+		pairs[obj.ID] = newObj.ID
 		copiedCanonicals[obj.CanonicalID] = true
 
 		if len(batch) >= 100 {
 			if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
 				return nil, 0, apperror.ErrDatabase.WithInternal(err)
 			}
+			if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectObject, pairs); err != nil {
+				return nil, 0, err
+			}
 			batch = batch[:0]
+			pairs = make(map[uuid.UUID]uuid.UUID, 100)
 		}
 	}
 	if len(batch) > 0 {
 		if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
 			return nil, 0, apperror.ErrDatabase.WithInternal(err)
+		}
+		if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectObject, pairs); err != nil {
+			return nil, 0, err
 		}
 	}
 
@@ -3821,6 +3831,7 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 	skipped := 0
 
 	batch := make([]*GraphRelationship, 0, 100)
+	pairs := make(map[uuid.UUID]uuid.UUID, 100)
 	for _, rel := range rels {
 		// Only copy relationships where both endpoints were copied
 		if !copiedCanonicals[rel.SrcID] || !copiedCanonicals[rel.DstID] {
@@ -3851,18 +3862,26 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			RootRunID:      rel.RootRunID,
 		}
 		batch = append(batch, newRel)
+		pairs[rel.ID] = newRel.ID
 		copied++
 
 		if len(batch) >= 100 {
 			if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
 				return 0, 0, apperror.ErrDatabase.WithInternal(err)
 			}
+			if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectRelationship, pairs); err != nil {
+				return 0, 0, err
+			}
 			batch = batch[:0]
+			pairs = make(map[uuid.UUID]uuid.UUID, 100)
 		}
 	}
 	if len(batch) > 0 {
 		if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
 			return 0, 0, apperror.ErrDatabase.WithInternal(err)
+		}
+		if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectRelationship, pairs); err != nil {
+			return 0, 0, err
 		}
 	}
 

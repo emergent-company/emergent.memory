@@ -2172,6 +2172,30 @@ Table "kb"."projects" {
   }
 }
 
+Table "kb"."provenance_contributions" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "branch_id" uuid
+  "subject_kind" text [not null]
+  "subject_version_id" uuid [not null]
+  "source_id" uuid [not null]
+  "external_id" text [not null]
+  "external_revision" text [not null, default: '']
+  "external_revision_seq" bigint [not null, default: 0]
+  "merged_from_version_id" uuid
+  "state" text [not null, default: 'present']
+  "first_seen_at" timestamptz [not null, default: `now()`]
+  "last_seen_at" timestamptz [not null, default: `now()`]
+  "withdrawn_at" timestamptz
+
+  Indexes {
+    (subject_version_id) [name: "idx_provenance_contributions_version"]
+    (project_id, branch_id, subject_kind, source_id, external_id) [name: "uq_provenance_contributions_present_branch", unique, note: '((state = \'present\'::text) AND (branch_id IS NOT NULL))']
+    (project_id, subject_kind, source_id, external_id) [name: "uq_provenance_contributions_present_main", unique, note: '((state = \'present\'::text) AND (branch_id IS NULL))']
+    (subject_kind, subject_version_id, source_id) [name: "uq_provenance_contributions_version_source", unique, note: '(state = \'present\'::text)']
+  }
+}
+
 Table "kb"."provider_pricing" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "provider" varchar(50) [not null]
@@ -2485,6 +2509,19 @@ Table "kb"."source_credentials" {
   }
 }
 
+Table "kb"."source_generations" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "generation" bigint [not null]
+  "item_count" integer [not null, default: 0]
+  "applied_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (source_id, generation) [name: "uq_source_generations_source_generation", unique]
+  }
+}
+
 Table "kb"."source_sync_jobs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "status" text [not null, default: 'pending']
@@ -2792,6 +2829,7 @@ Ref: "kb"."project_schemas"."schema_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."project_settings"."project_id" > "kb"."projects"."id"
 Ref: "kb"."projects"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."projects"."deleted_by" > "core"."user_profiles"."id"
+Ref: "kb"."provenance_contributions"."source_id" > "kb"."sources"."id"
 Ref: "kb"."release_notification_recipients"."email_job_id" > "kb"."email_jobs"."id"
 Ref: "kb"."release_notification_recipients"."in_app_notification_id" > "kb"."notifications"."id"
 Ref: "kb"."release_notification_recipients"."release_notification_id" > "kb"."release_notifications"."id"
@@ -2808,6 +2846,7 @@ Ref: "kb"."schema_studio_sessions"."pack_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"
