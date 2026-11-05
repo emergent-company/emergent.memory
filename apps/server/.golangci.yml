@@ -1,4 +1,12 @@
 version: "2"
+
+run:
+  # The lock is host-wide (/tmp/golangci-lint.lock), not per cache dir, so
+  # concurrent jobs on the same host collide with "parallel golangci-lint is
+  # running". Every CI lint job uses a per-job cache, so skipping the lock is
+  # safe wherever this config is used.
+  allow-parallel-runners: true
+
 linters:
   default: none
   enable:

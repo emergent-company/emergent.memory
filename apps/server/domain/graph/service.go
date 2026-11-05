@@ -875,12 +875,16 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 			s.log.Warn("could not find HEAD version for resolveHead",
 				slog.String("canonical_id", obj.CanonicalID.String()),
 				slog.String("requested_id", id.String()))
-			return obj.ToResponse(), nil
+		} else {
+			obj = headObj
 		}
-		return headObj.ToResponse(), nil
 	}
 
-	return obj.ToResponse(), nil
+	resp := obj.ToResponse()
+	if err := s.fillObjectContributions(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // GetByIDIncludingDeleted returns an object by physical id or canonical id,
@@ -1740,6 +1744,13 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 		data[i] = v.ToResponse()
 	}
 
+	// Each version reports its own contributors, in one query for the whole
+	// history — the version row is what the contributions are keyed to, so a
+	// superseded version keeps the rows it arrived with.
+	if err := s.fillObjectContributions(ctx, projectID, data); err != nil {
+		return nil, err
+	}
+
 	return &ObjectHistoryResponse{Versions: data}, nil
 }
 
@@ -1767,6 +1778,14 @@ func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID, p
 		outgoingResp[i] = r.ToResponse()
 	}
 
+	// One contributions query covers both directions.
+	edges := make([]*GraphRelationshipResponse, 0, len(incomingResp)+len(outgoingResp))
+	edges = append(edges, incomingResp...)
+	edges = append(edges, outgoingResp...)
+	if err := s.fillRelationshipContributions(ctx, projectID, edges); err != nil {
+		return nil, err
+	}
+
 	return &GetObjectEdgesResponse{
 		Incoming: incomingResp,
 		Outgoing: outgoingResp,
@@ -1783,6 +1802,7 @@ func (s *Service) GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canoni
 	}
 
 	resp := make(map[uuid.UUID]*GetObjectEdgesResponse, len(edgesByObject))
+	all := make([]*GraphRelationshipResponse, 0)
 	for canonicalID, edges := range edgesByObject {
 		incoming := make([]*GraphRelationshipResponse, len(edges.Incoming))
 		for i, r := range edges.Incoming {
@@ -1792,10 +1812,17 @@ func (s *Service) GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canoni
 		for i, r := range edges.Outgoing {
 			outgoing[i] = r.ToResponse()
 		}
+		all = append(all, incoming...)
+		all = append(all, outgoing...)
 		resp[canonicalID] = &GetObjectEdgesResponse{
 			Incoming: incoming,
 			Outgoing: outgoing,
 		}
+	}
+
+	// Every edge in the batch shares one contributions query.
+	if err := s.fillRelationshipContributions(ctx, projectID, all); err != nil {
+		return nil, err
 	}
 
 	return resp, nil
@@ -2078,6 +2105,11 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 		items[i] = rel.ToResponse()
 	}
 
+	// One query for the whole page, so a list response is not N+1.
+	if err := s.fillRelationshipContributions(ctx, params.ProjectID, items); err != nil {
+		return nil, err
+	}
+
 	var nextCursor *string
 	if hasMore && len(rels) > 0 {
 		last := rels[len(rels)-1]
@@ -2104,7 +2136,11 @@ func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) 
 		return nil, apperror.ErrNotFound
 	}
 
-	return rel.ToResponse(), nil
+	resp := rel.ToResponse()
+	if err := s.fillRelationshipContributions(ctx, projectID, []*GraphRelationshipResponse{resp}); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // createRelationship creates a new relationship or returns existing if properties match.
@@ -2742,6 +2778,11 @@ func (s *Service) GetRelationshipHistory(ctx context.Context, projectID, id uuid
 	data := make([]*GraphRelationshipResponse, len(versions))
 	for i, v := range versions {
 		data[i] = v.ToResponse()
+	}
+
+	// Each relationship version reports its own contributors, in one query.
+	if err := s.fillRelationshipContributions(ctx, projectID, data); err != nil {
+		return nil, err
 	}
 
 	return data, nil

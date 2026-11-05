@@ -73,6 +73,14 @@ type GraphObjectResponse struct {
 	OwnerSourceID  *uuid.UUID `json:"owner_source_id,omitempty"`
 	InputHash      *string    `json:"input_hash,omitempty"`
 
+	// Contributions are the sources backing this version, each with its own
+	// external id, revision and state. They are keyed to the version row the
+	// response describes (never to canonical_id + version, which is not unique
+	// across branches) and are populated on the read paths — object detail and
+	// version history — from one batched query per request. Absent on write
+	// responses, which do not pay for the read-back.
+	Contributions []*ProvenanceContribution `json:"contributions,omitempty"`
+
 	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
 	DeleteReason  *string        `json:"delete_reason,omitempty"`
 	ChangeSummary map[string]any `json:"change_summary,omitempty"`
@@ -301,6 +309,11 @@ type GraphRelationshipResponse struct {
 	CredentialID   *uuid.UUID `json:"credential_id,omitempty"`
 	RunID          *uuid.UUID `json:"run_id,omitempty"`
 	RootRunID      *uuid.UUID `json:"root_run_id,omitempty"`
+
+	// Contributions are the sources backing this relationship version, keyed to
+	// the version row (subject_kind = relationship). Populated on the read paths
+	// — relationship detail and list — from one batched query per request.
+	Contributions []*ProvenanceContribution `json:"contributions,omitempty"`
 
 	// InverseRelationship is populated when an inverse relationship was auto-created
 	// based on the template pack's inverseType declaration.

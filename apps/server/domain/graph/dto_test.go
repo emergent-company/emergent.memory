@@ -301,4 +301,68 @@ func TestSimilarObjectResult_MarshalJSON(t *testing.T) {
 	assert.Equal(t, canID.String(), entStr, "entity_id should equal canonical_id")
 }
 
+// TestContributionReachesTheResponseJSON guards the read contract of slice 12.1:
+// a response that names a version carries that version's contributors under
+// `contributions`, and an entry keeps its state so a withdrawn one is reported
+// as no longer present rather than disappearing.
+func TestContributionReachesTheResponseJSON(t *testing.T) {
+	objID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	canID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	srcID := uuid.MustParse("66666666-6666-6666-6666-666666666666")
+
+	obj := GraphObjectResponse{
+		ID:          objID,
+		CanonicalID: canID,
+		Version:     3,
+		Type:        "Person",
+		Contributions: []*ProvenanceContribution{{
+			ID:                  uuid.MustParse("77777777-7777-7777-7777-777777777777"),
+			SubjectKind:         ContributionSubjectObject,
+			SubjectVersionID:    objID,
+			SourceID:            srcID,
+			ExternalID:          "person-1",
+			ExternalRevisionSeq: 4,
+			State:               ContributionStatePresent,
+		}},
+	}
+
+	data, err := json.Marshal(obj)
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Contains(t, raw, "contributions", "the response must expose the version's contributors")
+
+	var contribs []map[string]any
+	require.NoError(t, json.Unmarshal(raw["contributions"], &contribs))
+	require.Len(t, contribs, 1)
+	assert.Equal(t, srcID.String(), contribs[0]["source_id"])
+	assert.Equal(t, "person-1", contribs[0]["external_id"])
+	assert.Equal(t, float64(4), contribs[0]["external_revision_seq"])
+	assert.Equal(t, ContributionStatePresent, contribs[0]["state"])
+
+	// A relationship response carries the same shape, keyed to its own kind.
+	rel := GraphRelationshipResponse{
+		ID:            objID,
+		CanonicalID:   canID,
+		Contributions: obj.Contributions,
+	}
+	data, err = json.Marshal(rel)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.Contains(t, raw, "contributions")
+}
+
+// TestEmptyContributionsAreOmitted keeps the field off every response that did
+// not run the read path: a write response must not claim "no contributors" for
+// a version that has them.
+func TestEmptyContributionsAreOmitted(t *testing.T) {
+	data, err := json.Marshal(GraphObjectResponse{ID: uuid.New(), Type: "Person"})
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.NotContains(t, raw, "contributions")
+}
+
 func strPtr(s string) *string { return &s }

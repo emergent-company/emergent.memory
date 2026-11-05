@@ -4556,6 +4556,17 @@ definitions:
         type: object
       content_hash:
         type: string
+      contributions:
+        description: |-
+          Contributions are the sources backing this version, each with its own
+          external id, revision and state. They are keyed to the version row the
+          response describes (never to canonical_id + version, which is not unique
+          across branches) and are populated on the read paths — object detail and
+          version history — from one batched query per request. Absent on write
+          responses, which do not pay for the read-back.
+        items:
+          $ref: '#/definitions/domain_graph.ProvenanceContribution'
+        type: array
       created_at:
         type: string
       credential_id:
@@ -4714,6 +4725,14 @@ definitions:
       change_summary:
         additionalProperties: {}
         type: object
+      contributions:
+        description: |-
+          Contributions are the sources backing this relationship version, keyed to
+          the version row (subject_kind = relationship). Populated on the read paths
+          — relationship detail and list — from one batched query per request.
+        items:
+          $ref: '#/definitions/domain_graph.ProvenanceContribution'
+        type: array
       created_at:
         type: string
       credential_id:
@@ -4861,6 +4880,13 @@ definitions:
       version:
         type: integer
     type: object
+  domain_graph.ObjectHistoryResponse:
+    properties:
+      versions:
+        items:
+          $ref: '#/definitions/domain_graph.GraphObjectResponse'
+        type: array
+    type: object
   domain_graph.PatchGraphObjectRequest:
     properties:
       assignee:
@@ -4973,6 +4999,17 @@ definitions:
       relationships_enqueued:
         description: RelationshipsEnqueued is the number of relationship embedding
           jobs newly inserted.
+        type: integer
+    type: object
+  domain_graph.SearchRelationshipsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
+        type: array
+      next_cursor:
+        type: string
+      total:
         type: integer
     type: object
   domain_graph.SearchWithNeighborsRequest:
@@ -11306,7 +11343,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.90.0
+  version: 0.90.1
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -15528,9 +15565,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Object with its version's contributions
           schema:
-            $ref: '#/definitions/domain_graph.GraphObject'
+            $ref: '#/definitions/domain_graph.GraphObjectResponse'
         "400":
           description: Invalid ID
           schema:
@@ -15708,11 +15745,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: Version history
+          description: Version history, each version with its own contributions
           schema:
-            items:
-              $ref: '#/definitions/domain_graph.GraphObject'
-            type: array
+            $ref: '#/definitions/domain_graph.ObjectHistoryResponse'
         "400":
           description: Invalid ID
           schema:
@@ -16693,9 +16728,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Relationship with its version's contributions
           schema:
-            $ref: '#/definitions/domain_graph.GraphRelationship'
+            $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
         "400":
           description: Invalid ID
           schema:
@@ -16777,10 +16812,10 @@ paths:
       - application/json
       responses:
         "200":
-          description: Version history
+          description: Version history, each version with its own contributions
           schema:
             items:
-              $ref: '#/definitions/domain_graph.GraphRelationship'
+              $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
             type: array
         "400":
           description: Invalid ID
@@ -17044,10 +17079,10 @@ paths:
       - application/json
       responses:
         "200":
-          description: Paginated list with cursor
+          description: Paginated list with cursor; each item carries its version's
+            contributions
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/domain_graph.SearchRelationshipsResponse'
         "400":
           description: Invalid parameters
           schema:

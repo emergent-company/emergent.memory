@@ -548,3 +548,69 @@ func (r *Repository) GetRelationshipVersionByID(ctx context.Context, db bun.IDB,
 	}
 	return &rel, nil
 }
+
+// fillObjectContributions attaches the contributions of each response's version
+// row. One query serves the whole slice, so a history or list of N versions
+// costs one contribution read rather than N.
+//
+// A version with no contribution keeps a nil slice and the field is omitted: no
+// source backs it, which is every row Memory synthesized itself.
+func (s *Service) fillObjectContributions(ctx context.Context, projectID uuid.UUID, items []*GraphObjectResponse) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(items))
+	seen := make(map[uuid.UUID]struct{}, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if _, dup := seen[item.ID]; dup {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		ids = append(ids, item.ID)
+	}
+	byVersion, err := s.repo.GetContributions(ctx, projectID, ContributionSubjectObject, ids)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.Contributions = byVersion[item.ID]
+	}
+	return nil
+}
+
+// fillRelationshipContributions is the relationship half of
+// fillObjectContributions, reading subject_kind = relationship.
+func (s *Service) fillRelationshipContributions(ctx context.Context, projectID uuid.UUID, items []*GraphRelationshipResponse) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(items))
+	seen := make(map[uuid.UUID]struct{}, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if _, dup := seen[item.ID]; dup {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		ids = append(ids, item.ID)
+	}
+	byVersion, err := s.repo.GetContributions(ctx, projectID, ContributionSubjectRelationship, ids)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.Contributions = byVersion[item.ID]
+	}
+	return nil
+}
