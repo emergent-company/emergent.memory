@@ -234,6 +234,9 @@ func (s *Server) uiMCPShareUpdate(c echo.Context) error {
 	}
 	draft := mcpShareFormDataFromRequest(c)
 	draft.ID = id
+	// The invite list only exists where a key is minted; the edit form never
+	// renders it, so a stray value must not fail validation on an edit.
+	draft.Emails = ""
 	if err := s.loadMCPShareFormData(ctx, &draft); err != nil {
 		draft.LoadErr = userFacingError(err)
 		return s.renderMCPShareEditPage(c, draft)
@@ -481,7 +484,8 @@ func (s *Server) mcpShareRevealFromCreated(heading string, created *MCPShareCrea
 func mcpShareRevealPtr(r mcpShareReveal) *mcpShareReveal { return &r }
 
 // mcpShareDeliveryNote renders the reveal's invite confirmation for the
-// recipients the key was queued to.
+// recipients the key was queued to. Long lists are truncated so the alert stays
+// readable.
 func mcpShareDeliveryNote(emails []string) string {
 	switch len(emails) {
 	case 0:
@@ -489,7 +493,12 @@ func mcpShareDeliveryNote(emails []string) string {
 	case 1:
 		return "Key emailed to " + emails[0] + "."
 	default:
-		return fmt.Sprintf("Key emailed to %d recipients: %s.", len(emails), strings.Join(emails, ", "))
+		const inlineMax = 3
+		if len(emails) <= inlineMax {
+			return fmt.Sprintf("Key emailed to %d recipients: %s.", len(emails), strings.Join(emails, ", "))
+		}
+		return fmt.Sprintf("Key emailed to %d recipients: %s and %d more.",
+			len(emails), strings.Join(emails[:inlineMax], ", "), len(emails)-inlineMax)
 	}
 }
 
@@ -606,16 +615,22 @@ func mcpShareIsNameConflict(err error) bool {
 // rejection, so the create form can point at the email field instead of showing
 // a generic failure.
 func mcpShareIsInvalidEmail(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "invalid_email")
+	var he *memoryHTTPError
+	if !errors.As(err, &he) {
+		return false
+	}
+	return he.Code == "invalid_email" ||
+		strings.Contains(strings.ToLower(he.Message), "invalid email address")
 }
 
 // mcpShareInvalidEmailMessage extracts the offending address from a backend
-// rejection into a form-field message.
+// rejection into a form-field message, using the backend's own copy rather than
+// the "memory <status> <code>:" rendering.
 func mcpShareInvalidEmailMessage(err error) string {
 	const marker = "invalid email address:"
-	if msg := err.Error(); strings.Contains(msg, marker) {
-		addr := strings.TrimSpace(msg[strings.Index(msg, marker)+len(marker):])
-		if addr != "" {
+	var he *memoryHTTPError
+	if errors.As(err, &he) && strings.Contains(he.Message, marker) {
+		if addr := strings.TrimSpace(he.Message[strings.Index(he.Message, marker)+len(marker):]); addr != "" {
 			return "Not a valid email address: " + addr
 		}
 	}

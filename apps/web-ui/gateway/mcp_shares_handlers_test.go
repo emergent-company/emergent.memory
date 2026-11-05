@@ -743,6 +743,29 @@ func TestMCPShareJSONCreateReturnsTokenOnce(t *testing.T) {
 	if !strings.Contains(body, "Bearer emt_new_secret") {
 		t.Error("create response snippets must include the key")
 	}
+	// no invite list ⇒ no delivery fields, so a client cannot mistake "email
+	// unavailable" for "asked and failed"
+	for _, absent := range []string{`"emailsSent"`, `"emailError"`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("create without recipients must omit %s: %s", absent, body)
+		}
+	}
+}
+
+func TestMCPShareJSONCreateReportsInviteDelivery(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares",
+		`{"name":"api share","tools":["search_memory"],"emails":["alice@example.com"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/mcp-shares = %d, want 201", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"emailsSent":["alice@example.com"]`) {
+		t.Errorf("create response must report the invite recipients: %s", body)
+	}
 }
 
 func TestMCPShareJSONGetNeverExposesToken(t *testing.T) {

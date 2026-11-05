@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -166,12 +168,12 @@ func (h *Handler) HandleRotateShareInstance(c echo.Context) error {
 		return apperror.NewBadRequest("projectId and id are required")
 	}
 
-	// The body is optional: a bare rotate (no invite) is the common case.
+	// The body is optional: a bare rotate (no invite) is the common case. Echo
+	// skips body binding for ContentLength 0, and a chunked request with no body
+	// decodes to io.EOF — both mean "no recipients".
 	var req RotateShareInstanceHTTPRequest
-	if c.Request().ContentLength > 0 {
-		if err := c.Bind(&req); err != nil {
-			return apperror.NewBadRequest("invalid request body")
-		}
+	if err := c.Bind(&req); err != nil && !errors.Is(err, io.EOF) {
+		return apperror.NewBadRequest("invalid request body")
 	}
 	emails, err := normalizeInviteEmails(req.Emails)
 	if err != nil {
