@@ -311,6 +311,13 @@ func (m *MemoryClient) ListMembers(ctx context.Context) ([]ProjectMemberDto, err
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
+	// Memory returns the raw avatar object key for members, which is not a URL:
+	// leaving it as-is makes the browser resolve it under the current page path
+	// (e.g. /objects/avatars/<uuid>.jpg -> 404). Keep real URLs, drop bare keys
+	// so the initials fallback renders (no cross-user avatar serve route).
+	for i := range out {
+		out[i].AvatarURL = avatarSrc(out[i].AvatarURL)
+	}
 	return out, nil
 }
 
@@ -519,6 +526,9 @@ func (m *MemoryClient) SearchUsers(ctx context.Context, email string) ([]UserSea
 	var out UserSearchResponseDto
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
+	}
+	for i := range out.Users {
+		out.Users[i].AvatarURL = avatarSrc(out.Users[i].AvatarURL)
 	}
 	return out.Users, nil
 }

@@ -910,6 +910,91 @@
     return document.querySelectorAll("#board [data-board-column]");
   }
 
+  /* Work board (global Work → Board) uses status × execution cells instead of
+     the single-lane rows the legacy #board uses. Cards are still draggable but
+     a drop performs an exact-status move through the Work endpoint, then
+     reloads the matrix (keeping the type filter in the URL). */
+  function workBoardRoot(el) {
+    return el && el.closest ? el.closest("[data-work-board]") : null;
+  }
+
+  function workBoardColumns(root) {
+    return (root || document).querySelectorAll("[data-work-board] [data-board-column]");
+  }
+
+  function markWorkDropTargets(root, from) {
+    var cols = workBoardColumns(root);
+    for (var i = 0; i < cols.length; i++) {
+      if (cols[i].getAttribute("data-board-column") === from) continue;
+      cols[i].setAttribute("data-drop-eligible", "");
+    }
+  }
+
+  function clearWorkDropTargets() {
+    var cols = workBoardColumns();
+    for (var i = 0; i < cols.length; i++) {
+      cols[i].classList.remove("memory-board__lane--drop");
+      cols[i].removeAttribute("data-drop-eligible");
+    }
+  }
+
+  /* Work matrix lane preferences (Active / Attention / Idle open-closed).
+     The server renders the initial open state from this cookie; a toggle
+     writes the new state back so it survives reloads and navigation. */
+  var WORK_LANES_COOKIE = "memory_work_lanes";
+
+  function workLanePrefs() {
+    try {
+      var parts = document.cookie ? document.cookie.split("; ") : [];
+      for (var i = 0; i < parts.length; i++) {
+        var eq = parts[i].indexOf("=");
+        if (eq === -1) continue;
+        if (parts[i].slice(0, eq) !== WORK_LANES_COOKIE) continue;
+        var raw = decodeURIComponent(parts[i].slice(eq + 1));
+        var parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+      }
+    } catch (e) {
+      return {};
+    }
+    return {};
+  }
+
+  function saveWorkLanePref(key, open) {
+    if (!key) return;
+    var prefs = workLanePrefs();
+    prefs[key] = !!open;
+    try {
+      document.cookie =
+        WORK_LANES_COOKIE + "=" + encodeURIComponent(JSON.stringify(prefs)) +
+        "; path=/; max-age=31536000; SameSite=Lax";
+    } catch (e) {
+      /* preference is best-effort */
+    }
+  }
+
+  document.addEventListener("toggle", function (ev) {
+    var el = ev.target;
+    if (!el || !el.matches || !el.matches("[data-work-lane-key]")) return;
+    saveWorkLanePref(el.getAttribute("data-work-lane-key"), el.open);
+  }, true);
+
+  function submitWorkMove(id, to) {
+    if (!id || !to) return;
+    fetch(MemoryScope.path("/work/items/" + encodeURIComponent(id) + "/status"), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ status: to }).toString()
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) throw new Error(body.error || "Move failed");
+        window.location.reload();
+      });
+    }).catch(function (err) {
+      window.alert(err && err.message ? err.message : "Move failed");
+    });
+  }
+
   /* boardAllowedStatuses reads the card's own type's accepted statuses from
      data-board-allowed (a JSON array, like the status map). It returns null for a
      card whose type declares no set — an unconstrained type accepts any status,
@@ -1000,21 +1085,38 @@
     var card = ev.target.closest("[data-board-card]");
     if (!card) return;
     var id = card.getAttribute("data-canonical-id");
+    var root = workBoardRoot(card);
     boardDrag = {
       id: id,
       fromStatus: card.getAttribute("data-board-status"),
-      allowed: boardAllowedStatuses(card)
+      allowed: root ? null : boardAllowedStatuses(card),
+      work: !!root,
+      root: root
     };
     if (ev.dataTransfer) {
       ev.dataTransfer.setData("text/plain", id || "");
       ev.dataTransfer.effectAllowed = "move";
     }
     card.classList.add("memory-board__card--dragging");
-    markBoardDropTargets(boardDrag.fromStatus, boardDrag.allowed);
+    if (root) markWorkDropTargets(root, boardDrag.fromStatus);
+    else markBoardDropTargets(boardDrag.fromStatus, boardDrag.allowed);
   });
   document.addEventListener("dragover", function (ev) {
     var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
     if (!col) return;
+    if (boardDrag && boardDrag.work) {
+      if (boardDrag.root && !boardDrag.root.contains(col)) return;
+      var workTo = col.getAttribute("data-board-column");
+      if (!workTo || workTo === boardDrag.fromStatus) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      var workCols = workBoardColumns(boardDrag.root);
+      for (var wi = 0; wi < workCols.length; wi++) {
+        workCols[wi].classList.remove("memory-board__lane--drop");
+      }
+      col.classList.add("memory-board__lane--drop");
+      return;
+    }
     var lanes = boardLanes();
     for (var i = 0; i < lanes.length; i++) lanes[i].classList.remove("memory-board__lane--drop");
     var action = boardDrag && boardLaneAccepts(boardDrag.fromStatus, col.getAttribute("data-board-column"), boardStatusMap(), boardDrag.allowed);
@@ -1027,6 +1129,16 @@
     var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
     if (!col || !boardDrag) return;
     var to = col.getAttribute("data-board-column");
+    if (boardDrag.work) {
+      if (boardDrag.root && !boardDrag.root.contains(col)) return;
+      if (!to || to === boardDrag.fromStatus) return;
+      ev.preventDefault();
+      var workID = boardDrag.id;
+      boardDrag = null;
+      clearWorkDropTargets();
+      submitWorkMove(workID, to);
+      return;
+    }
     var action = boardLaneAccepts(boardDrag.fromStatus, to, boardStatusMap(), boardDrag.allowed);
     if (!action) return; // invalid pair: reject the drop, no request
     ev.preventDefault();
@@ -1059,6 +1171,7 @@
   });
   document.addEventListener("dragend", function (ev) {
     clearBoardDropTargets();
+    clearWorkDropTargets();
     var card = ev.target.closest ? ev.target.closest("[data-board-card]") : null;
     if (card) card.classList.remove("memory-board__card--dragging");
     boardDrag = null;
@@ -1101,8 +1214,9 @@
   document.addEventListener("click", function (ev) {
     if (ev.defaultPrevented) return;
     if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    if (ev.target.closest && ev.target.closest("a, button, input, textarea, select, label, form, [data-board-open-drawer]")) return;
     var card = ev.target.closest ? ev.target.closest("[data-board-open-preview]") : null;
-    if (!card || (ev.target.closest && ev.target.closest("[data-board-open-drawer]"))) return;
+    if (!card) return;
     ev.preventDefault();
     openBoardCardPreview(card);
   });

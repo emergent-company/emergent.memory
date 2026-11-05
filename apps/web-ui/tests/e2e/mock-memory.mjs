@@ -734,26 +734,89 @@ const providerDefinitions = [
 const projectProviderConfigs = [];
 let providerConfigSeq = 0;
 
-// Discovery runs for the Schema page card (GET
-// /api/discovery-jobs/projects/:id). One run in flight: the card is the only
-// surface that reports a discovery run, so the polling behaviour (#90) is only
-// exercisable with a non-terminal job, and a terminal one would render without
-// an interval. The panel's own discovery row (mockProcessingProblems, below) is
-// a separate fixture — a failed run — and is what the retry test drives.
-const mockDiscoveryJobs = [
-  {
-    id: "discovery-job-2",
-    status: "running",
-    progress: { current_step: 1, total_steps: 4, message: "Analysing batch 1 of 2" },
-    created_at: "2026-10-27T09:00:00Z",
-    discovered_types: [],
-    discovered_relationships: [],
-    trigger: "manual",
-    document_count: 8,
-    total_documents: 8,
-    cancellable: true,
-  },
-];
+// Discovery-run fixtures for the Schema page card (GET
+// /api/discovery-jobs/projects/:id). The statuses are the server's
+// (apps/server/domain/discoveryjobs/entity.go): a run is pending,
+// analyzing_documents, extracting_types, refining_schemas or creating_pack
+// while it advances, and completed / failed / cancelled once it is terminal.
+// "running" is not one of them — the card's isRunning() is "not terminal", so a
+// fake status passed every assertion while describing a state memory can never
+// emit.
+//
+// The seed is selected by project id, so a spec asks for the state it needs
+// instead of mutating one shared job. The gateway-smoke harness pins p1
+// (MEMORY_PROJECT_ID in run-e2e.sh) to the in-flight seed; a spec that needs
+// the card's terminal branch selects DISCOVERY_TERMINAL_PROJECT. Start, retry
+// and cancel transition only the live copy for their own project, never a
+// seed, so selecting one state cannot leak into another spec.
+const DISCOVERY_TERMINAL_PROJECT = "p-discovery-terminal";
+
+const DISCOVERY_IN_FLIGHT = {
+  id: "discovery-job-2",
+  status: "analyzing_documents",
+  progress: { current_step: 1, total_steps: 4, message: "Analysing batch 1 of 2" },
+  created_at: "2026-10-27T09:00:00Z",
+  discovered_types: [],
+  discovered_relationships: [],
+  trigger: "manual",
+  document_count: 8,
+  total_documents: 8,
+  cancellable: true,
+};
+
+const DISCOVERY_CANCELLED = {
+  id: "discovery-job-3",
+  status: "cancelled",
+  progress: { current_step: 1, total_steps: 4, message: "Analysing batch 1 of 2" },
+  created_at: "2026-10-27T08:00:00Z",
+  completed_at: "2026-10-27T08:05:00Z",
+  discovered_types: [],
+  discovered_relationships: [],
+  trigger: "manual",
+  document_count: 8,
+  total_documents: 8,
+  cancellable: false,
+};
+
+// projectId -> that project's current job list, newest first. The first read
+// for a project copies its seed, so a route can transition the copy without
+// changing the fixture another spec selects.
+const discoveryJobsByProject = new Map();
+
+function discoveryJobsFor(projectId) {
+  let jobs = discoveryJobsByProject.get(projectId);
+  if (!jobs) {
+    const seed =
+      projectId === DISCOVERY_TERMINAL_PROJECT ? DISCOVERY_CANCELLED : DISCOVERY_IN_FLIGHT;
+    jobs = [structuredClone(seed)];
+    discoveryJobsByProject.set(projectId, jobs);
+  }
+  return jobs;
+}
+
+let discoveryJobSeq = 3;
+
+// startDiscovery mimics the server's StartDiscovery: it creates a non-terminal
+// job for the project and returns StartDiscoveryResponse (the gateway's
+// DiscoveryStartResult). The project's previous run is superseded, which is
+// what the card's one-run-per-project view renders.
+function startDiscovery(projectId) {
+  const job = structuredClone(DISCOVERY_IN_FLIGHT);
+  job.id = `discovery-job-${++discoveryJobSeq}`;
+  job.created_at = nowISO();
+  discoveryJobsByProject.set(projectId, [job]);
+  return job;
+}
+
+// discoveryResult is the wire shape the gateway decodes: DiscoveryStartResult
+// in gateway/memory_discovery.go, mirroring StartDiscoveryResponse server-side.
+function discoveryResult(job) {
+  return {
+    job_id: job.id,
+    document_count: job.document_count,
+    total_documents: job.total_documents,
+  };
+}
 
 // Needs-attention report (gateway/processing_problems.templ). The documents
 // area is deliberately made of chunk_embedding runs, not documents whose derived
@@ -1982,19 +2045,75 @@ const server = http.createServer((req, res) => {
     return json(res, mockProcessingProblems);
   }
 
-  // Discovery runs for the Schema page card. Served for any project id, like
-  // the report above, so both the dev-mode harness (MEMORY_PROJECT_ID=p1) and a
-  // per-test project render the card.
-  if (/^\/api\/discovery-jobs\/projects\/[^/]+$/.test(path) && req.method === "GET") {
-    return json(res, mockDiscoveryJobs);
+  // Discovery runs for the Schema page card. Keyed by project id, like the
+  // report above: the dev-mode harness (MEMORY_PROJECT_ID=p1) and a per-test
+  // project each read their own state, and a spec can select the terminal seed
+  // without touching p1.
+  const discoveryProjectMatch = path.match(/^\/api\/discovery-jobs\/projects\/([^/]+)$/);
+  if (discoveryProjectMatch && req.method === "GET") {
+    return json(res, discoveryJobsFor(decodeURIComponent(discoveryProjectMatch[1])));
   }
 
-  // Retry, posted by both the panel row and the card. Without this route a spec
-  // that clicks the row's Retry gets a 404 from the gateway's Memory call, which
-  // is the coverage gap #88 recorded.
-  if (/^\/api\/discovery-jobs\/[^/]+\/retry$/.test(path) && req.method === "POST") {
-    res.statusCode = 202;
-    return json(res, { job_id: "discovery-job-2", document_count: 8, total_documents: 8 });
+  // Start, posted by the card's "Discover entity types" action through
+  // StartProjectDiscovery. The gateway posts to /projects/:id/start and decodes
+  // StartDiscoveryResponse as DiscoveryStartResult, so the mock answers 200
+  // with job_id / document_count / total_documents and leaves a non-terminal
+  // run on the card.
+  const discoveryStartMatch = path.match(/^\/api\/discovery-jobs\/projects\/([^/]+)\/start$/);
+  if (discoveryStartMatch && req.method === "POST") {
+    const projectId = decodeURIComponent(discoveryStartMatch[1]);
+    // Drain the request body before answering (scope=project carries no ids the
+    // mock needs, but an unread body can reset the connection).
+    return readBody(req, () => {
+      const job = startDiscovery(projectId);
+      return json(res, discoveryResult(job));
+    });
+  }
+
+  // Retry, posted by both the panel row and the card. A retry re-runs a
+  // terminal job, so the mock puts a fresh non-terminal run back on the card —
+  // otherwise a spec that retried after a cancel would still see the terminal
+  // state it was replacing. Without this route a spec that clicks the row's
+  // Retry gets a 404 from the gateway's Memory call, which is the coverage gap
+  // #88 recorded.
+  const discoveryRetryMatch = path.match(/^\/api\/discovery-jobs\/([^/]+)\/retry$/);
+  if (discoveryRetryMatch && req.method === "POST") {
+    const jobID = decodeURIComponent(discoveryRetryMatch[1]);
+    let projectId = null;
+    for (const [candidate, jobs] of discoveryJobsByProject) {
+      if (jobs.some((job) => job.id === jobID)) {
+        projectId = candidate;
+        break;
+      }
+    }
+    // The panel's failed row (discovery-job-1) is not the card's job, so a
+    // retry for an unknown id still starts the harness project's run.
+    const job = startDiscovery(projectId ?? "p1");
+    return json(res, discoveryResult(job));
+  }
+
+  // Cancel, posted by the card's "Cancel run" action through
+  // CancelDiscoveryJob (DELETE /api/discovery-jobs/:jobId). Only a cancellable
+  // (non-terminal) run transitions; the server answers 409 for a terminal one.
+  const discoveryJobMatch = path.match(/^\/api\/discovery-jobs\/([^/]+)$/);
+  if (discoveryJobMatch && req.method === "DELETE") {
+    const jobID = decodeURIComponent(discoveryJobMatch[1]);
+    for (const jobs of discoveryJobsByProject.values()) {
+      const job = jobs.find((candidate) => candidate.id === jobID);
+      if (!job) continue;
+      if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
+        res.statusCode = 409;
+        return json(res, {
+          error: { code: "conflict", message: "discovery job is already terminal" },
+        });
+      }
+      job.status = "cancelled";
+      job.cancellable = false;
+      job.completed_at = nowISO();
+      return json(res, { message: "Discovery job cancelled" });
+    }
+    res.statusCode = 404;
+    return json(res, { error: { code: "not_found", message: "discovery job not found" } });
   }
 
   // Listing: enough seeded documents for the documents page (and its upload
