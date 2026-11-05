@@ -2,11 +2,17 @@ name: Connector Release
 
 # Stable channel: tag vX.Y.Z → build the memory-connector binary for all
 # platforms and upload to the shared monorepo release.
+#
+# `workflow_dispatch` exists so auto-tag can start this run on the tag ref when
+# no PAT is available to make the tag push trigger workflows (#116). It takes no
+# inputs: everything comes from the ref, which is why it must be dispatched with
+# `--ref vX.Y.Z` and never on a branch.
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write

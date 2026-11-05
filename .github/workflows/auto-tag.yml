@@ -33,6 +33,13 @@ jobs:
           # GITHUB_TOKEN do not create workflow runs, so a GITHUB_TOKEN tag
           # push silently starts no release pipeline. RELEASE_TOKEN must be a
           # classic PAT with `repo` + `workflow` scopes.
+          #
+          # The fallback is not "give up": with no RELEASE_TOKEN the tag is
+          # still created, and `Dispatch release workflows` below starts the
+          # fan-out explicitly through the Actions API (which is what the
+          # `actions: write` permission on this job is for). Do not remove one
+          # path without the other — a tag that exists on origin while nothing
+          # runs is the failure mode this file exists to avoid (#116).
           token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Verify GitHub CLI
@@ -78,6 +85,22 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      # One credential decision, made once and then referenced by every later
+      # step, so the log names the path that actually ran.
+      - name: Resolve release credential
+        id: cred
+        if: steps.check.outputs.exists == 'false'
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -n "${RELEASE_TOKEN:-}" ]; then
+            echo "mode=token" >> "$GITHUB_OUTPUT"
+            echo "RELEASE_TOKEN is set — the tag push itself triggers the release workflows."
+          else
+            echo "mode=dispatch" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_TOKEN is not set — a GITHUB_TOKEN tag push starts no runs, so the release fan-out is dispatched explicitly."
+          fi
+
       - name: Configure git
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -94,26 +117,76 @@ jobs:
           git push origin "$TAG"
           echo "Created and pushed tag: $TAG"
 
-      - name: Verify tag push triggered release workflows
+      # Starts the release fan-out when the tag push could not (#116). Equivalent
+      # in effect to the push-triggered runs: each workflow is dispatched **on
+      # the tag ref**, because they derive the version and the changelog base
+      # from `github.ref_name` — dispatching on `main` would build the wrong tree
+      # or no-op. Keep the list in sync with every workflow declaring
+      # `on: push: tags: v*`; each one must accept `workflow_dispatch` (that is
+      # why docs.yml and connector-release.yml declare it).
+      #
+      # python-sdk-release.yml is deliberately absent: it triggers on
+      # `python-sdk/v*`, not on a release tag.
+      - name: Dispatch release workflows
+        if: steps.check.outputs.exists == 'false' && steps.cred.outputs.mode == 'dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          dispatch() {
+            wf="$1"; shift
+            echo "::group::dispatch ${wf} on ${TAG}"
+            gh workflow run "${wf}" --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" "$@"
+            echo "::endgroup::"
+          }
+          dispatch publish-self-hosted-images.yml
+          dispatch build-publish.yml
+          dispatch cli.yml
+          dispatch publish-workspace-image.yml
+          dispatch server-sdk.yml
+          # `tag` is required here: the workflow cannot read it off the ref
+          # because a run may be dispatched for a past release.
+          dispatch release-versions.yml --field "tag=${TAG}"
+          dispatch docs.yml
+          dispatch connector-release.yml
+          dispatch ios-release.yml
+          dispatch mac-release.yml
+          echo "Dispatched the release fan-out for ${TAG}."
+
+      - name: Verify release workflows started
         if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          MODE: ${{ steps.cred.outputs.mode }}
         run: |
           TAG="v${VERSION}"
-          # The tag push should fan out to every `on: push: tags: v*` workflow.
-          # Give the events a moment, then confirm runs appeared for this ref.
+          # Whichever path ran — the tag push (mode=token) or the explicit
+          # dispatch (mode=dispatch) — runs must now exist for this ref. Give the
+          # API a moment, then confirm.
           for i in 1 2 3 4 5 6; do
             COUNT=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=50" \
               --jq "[.workflow_runs[] | select(.head_branch == \"$TAG\")] | length")
             echo "attempt $i: $COUNT run(s) found for $TAG"
             if [ "$COUNT" -gt 0 ]; then
-              echo "Release workflows triggered by tag push: $COUNT"
+              echo "Release workflows for $TAG: $COUNT run(s) (credential mode: $MODE)."
               exit 0
             fi
             sleep 10
           done
-          echo "ERROR: no workflow runs appeared for tag $TAG." >&2
-          echo "This means the tag push did not trigger any release workflow." >&2
-          echo "Check that RELEASE_TOKEN is set (a GITHUB_TOKEN push cannot trigger runs)." >&2
+          echo "ERROR: no workflow runs appeared for tag $TAG (credential mode: $MODE)." >&2
+          if [ "$MODE" = "token" ]; then
+            echo "The tag was pushed with RELEASE_TOKEN, so the push itself should have" >&2
+            echo "started the release workflows. Check that RELEASE_TOKEN is a user/App" >&2
+            echo "token and not a GITHUB_TOKEN: events caused by GITHUB_TOKEN never start runs." >&2
+          else
+            echo "No RELEASE_TOKEN was set, so the fan-out was dispatched explicitly and" >&2
+            echo "the dispatch step reported success. Re-run this job once the Actions API" >&2
+            echo "settles; if runs still do not appear, check the dispatch step's names against" >&2
+            echo ".github/workflows (a renamed workflow file silently stops being dispatched)." >&2
+          fi
+          echo "Do not leave the tag in place: a tag that exists on origin with no runs is" >&2
+          echo "the half-state that only a manual delete + re-push repairs." >&2
           exit 1
