@@ -4,34 +4,59 @@
 ``auto-tag.yml`` creates the release tag and, when ``RELEASE_TOKEN`` is absent,
 starts the release fan-out itself with ``gh workflow run``: a ``GITHUB_TOKEN``
 tag push starts no workflow runs (#116). That fallback is only complete if its
-workflow list equals the set of workflows declaring a ``push`` trigger on the
-tag being released. A renamed or newly added workflow would otherwise be
-skipped silently -- the tag would exist and one release workflow would never
-run.
+workflow list equals the set of workflows declaring a ``push`` trigger that
+fires for the tag being released. A renamed or newly added workflow would
+otherwise be skipped silently -- the tag would exist and one release workflow
+would never run.
 
 This check runs *before* the tag is created and compares:
 
-  * every workflow whose ``on.push.tags`` matches the new tag, with
+  * every workflow whose ``on.push`` fires for the new tag, with
   * every entry in ``.github/release-workflows.txt``,
 
 and additionally requires every one of those workflows to declare
 ``workflow_dispatch`` (without it the fallback cannot start it at all).
 
+GitHub's push-filter semantics matter here, so the parser implements them
+rather than looking for a literal ``tags:`` key:
+
+  * ``tags`` present  -> only matching tags (negations supported);
+  * ``tags-ignore``   -> all tags except the ignored patterns;
+  * neither tag key, but ``branches``/``branches-ignore`` present -> branch
+    pushes only, no tag runs;
+  * neither tag nor branch key (bare ``push:``, or ``paths`` only) -> every
+    tag, because ``paths`` is not evaluated for tag pushes.
+
 Stdlib only, like ``check-injection.py``: no PyYAML is assumed on the runner.
-The parser understands the block and flow spellings of ``on.push.tags`` used
-in this repository. It fails closed when it cannot find an ``on:`` block
-rather than guessing.
+Anything the parser cannot classify fails closed instead of guessing.
 
 Usage:
   check-release-fanout.py <workflow-dir> <manifest> <tag>
+  check-release-fanout.py --self-test
 """
 
+import contextlib
 import fnmatch
+import io
 import os
 import re
 import sys
+import tempfile
 
-KEY_RE = re.compile(r"^( *)([A-Za-z_][A-Za-z0-9_-]*)\s*:(.*)$")
+KEY_RE = re.compile(r"^( *)['\"]?([A-Za-z_][A-Za-z0-9_-]*)['\"]?\s*:(.*)$")
+
+PUSH_FILTERS = (
+    "tags",
+    "tags-ignore",
+    "branches",
+    "branches-ignore",
+    "paths",
+    "paths-ignore",
+)
+
+
+class FanoutError(Exception):
+    """The workflow tree cannot be classified confidently."""
 
 
 def indent_of(line):
@@ -58,6 +83,36 @@ def unquote(value):
     return value
 
 
+def split_top_level(value, separator):
+    """Split on `separator`, ignoring separators inside quotes/brackets."""
+    parts = []
+    current = []
+    depth = 0
+    quote = None
+    for ch in value:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+        elif ch in "[{(":
+            depth += 1
+            current.append(ch)
+        elif ch in "]})":
+            depth -= 1
+            current.append(ch)
+        elif ch == separator and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current))
+    return parts
+
+
 def key_of(line):
     """Return (indent, key, inline-value) or None for a non-key line."""
     match = KEY_RE.match(line)
@@ -76,12 +131,85 @@ def block(lines, start, parent_indent):
     return start + 1, end
 
 
-def parse_on(path):
-    """Return (event names, tag patterns) from a workflow's top-level ``on:``.
+def parse_list_value(text):
+    """Parse a scalar or flow list, or return None when a block list follows."""
+    text = strip_inline_comment(text).strip()
+    if not text:
+        return None
+    if text.startswith("["):
+        inner = text[1 : text.rfind("]")] if "]" in text else text[1:]
+        return [unquote(item.strip()) for item in split_top_level(inner, ",") if item.strip()]
+    return [unquote(text)]
 
-    Returns None when no top-level ``on:`` block can be found, so the caller
-    can fail closed instead of treating the workflow as untriggered.
-    """
+
+def block_list(lines, key_index, end, key_indent):
+    items = []
+    for i in range(key_index + 1, end):
+        if indent_of(lines[i]) <= key_indent:
+            break
+        item = lines[i].lstrip()
+        if item.startswith("-"):
+            items.append(unquote(strip_inline_comment(item[1:]).strip()))
+        elif item:
+            raise FanoutError(f"cannot parse list item {lines[i]!r}")
+    return items
+
+
+def parse_block_push(lines, start, end):
+    """Classify a block-style ``push:`` body into filter -> pattern list."""
+    child_indent = None
+    for i in range(start, end):
+        indent = indent_of(lines[i])
+        if indent > 0 and (child_indent is None or indent < child_indent):
+            child_indent = indent
+    if child_indent is None:
+        return {}
+
+    spec = {}
+    for i in range(start, end):
+        if indent_of(lines[i]) != child_indent:
+            continue
+        key = key_of(lines[i])
+        if not key:
+            raise FanoutError(f"cannot parse push filter {lines[i]!r}")
+        name = key[1]
+        if name not in PUSH_FILTERS:
+            continue
+        values = parse_list_value(key[2])
+        if values is None:
+            values = block_list(lines, i, end, child_indent)
+        if name in ("tags", "tags-ignore", "branches", "branches-ignore"):
+            spec[name] = values
+    return spec
+
+
+def parse_flow_push(text, lines, index, end):
+    """Classify a flow-style ``push: { ... }`` body, including multi-line."""
+    parts = [text]
+    depth = text.count("{") - text.count("}")
+    while depth > 0 and index + 1 < end:
+        index += 1
+        parts.append(lines[index])
+        depth += lines[index].count("{") - lines[index].count("}")
+    flow = " ".join(parts)
+    if "{" not in flow or "}" not in flow:
+        raise FanoutError("unbalanced flow-style push map")
+    body = flow[flow.index("{") + 1 : flow.rindex("}")]
+    spec = {}
+    for entry in split_top_level(body, ","):
+        if not entry.strip():
+            continue
+        if ":" not in entry:
+            raise FanoutError(f"cannot parse flow-style push filter {entry!r}")
+        name, value = entry.split(":", 1)
+        name = unquote(name.strip())
+        if name in ("tags", "tags-ignore", "branches", "branches-ignore"):
+            spec[name] = parse_list_value(value) or []
+    return spec
+
+
+def parse_on(path):
+    """Return (event names, push spec or None) from a workflow's ``on:`` block."""
     with open(path, encoding="utf-8") as handle:
         lines = [
             line.rstrip()
@@ -100,18 +228,20 @@ def parse_on(path):
 
     rest = key_of(lines[on_index])[2]
     if rest:
-        # Flow form such as `on: [push, pull_request]`: event names only, no
-        # per-event tag block, so nothing can match a tag here.
+        if rest.startswith("{"):
+            raise FanoutError(
+                f"{path}: flow-style `on:` map is not supported; use the block form"
+            )
         events = {unquote(item) for item in rest.strip("[]").split(",") if item.strip()}
-        return events, []
+        return events, ({} if "push" in events else None)
 
     start, end = block(lines, on_index, 0)
     if start == end:
-        return set(), []
+        return set(), None
 
     event_indent = min(indent_of(lines[i]) for i in range(start, end))
     events = set()
-    tags = []
+    push_spec = None
 
     for i in range(start, end):
         if indent_of(lines[i]) != event_indent:
@@ -124,54 +254,35 @@ def parse_on(path):
             continue
 
         push_rest = key[2]
-        if push_rest:
-            # `push: {tags: ['v*'], ...}`
-            match = re.search(r"\btags\s*:\s*\[([^\]]*)\]", push_rest)
-            if match:
-                tags.extend(
-                    unquote(item.strip())
-                    for item in match.group(1).split(",")
-                    if item.strip()
-                )
-            continue
+        if not push_rest:
+            push_start, push_end = block(lines, i, event_indent)
+            push_spec = parse_block_push(lines, push_start, push_end)
+        elif push_rest.startswith("{"):
+            push_spec = parse_flow_push(push_rest, lines, i, end)
+        else:
+            raise FanoutError(f"{path}: cannot classify `push: {push_rest}`")
 
-        push_start, push_end = block(lines, i, event_indent)
-        for j in range(push_start, push_end):
-            tags_key = key_of(lines[j])
-            if not tags_key or tags_key[1] != "tags":
-                continue
-            tags_rest = tags_key[2]
-            if tags_rest:
-                if tags_rest.startswith("["):
-                    inner = tags_rest[1:tags_rest.rfind("]")]
-                    tags.extend(
-                        unquote(item.strip())
-                        for item in inner.split(",")
-                        if item.strip()
-                    )
-                else:
-                    tags.append(unquote(tags_rest))
-            else:
-                tags_indent = indent_of(lines[j])
-                for k in range(j + 1, push_end):
-                    if indent_of(lines[k]) <= tags_indent:
-                        break
-                    item = lines[k].lstrip()
-                    if item.startswith("-"):
-                        tags.append(unquote(strip_inline_comment(item[1:]).strip()))
-            break
-
-    return events, tags
+    return events, push_spec
 
 
-def tag_matches(pattern, tag):
-    pattern = unquote(pattern)
-    if pattern.startswith("!"):
-        # Negated patterns are rare in this repo; ignore them when deciding
-        # membership. A workflow that is excluded by a negation would show up
-        # as a false "missing manifest entry", which fails safe (no tag).
+def tag_triggers(tag, spec):
+    """Apply GitHub's push-filter rules for a tag ref."""
+    if "tags" in spec:
+        positives = [p for p in spec["tags"] if not p.startswith("!")]
+        negatives = [p[1:] for p in spec["tags"] if p.startswith("!")]
+        if not positives or not any(fnmatch.fnmatchcase(tag, p) for p in positives):
+            return False
+        return not any(fnmatch.fnmatchcase(tag, p) for p in negatives)
+
+    if "tags-ignore" in spec:
+        return not any(fnmatch.fnmatchcase(tag, p) for p in spec["tags-ignore"])
+
+    # No tag filter at all: a push restricted to branches does not run on tags,
+    # while a bare push (or one filtered only by paths) does, because `paths`
+    # is not evaluated for tag pushes.
+    if "branches" in spec or "branches-ignore" in spec:
         return False
-    return fnmatch.fnmatchcase(tag, pattern)
+    return True
 
 
 def discover(workflow_dir, tag):
@@ -182,12 +293,12 @@ def discover(workflow_dir, tag):
         path = os.path.join(workflow_dir, name)
         parsed = parse_on(path)
         if parsed is None:
-            raise SystemExit(
-                f"ERROR: {path}: no top-level `on:` block; refusing to guess "
-                "whether it is tag-triggered"
+            raise FanoutError(
+                f"{path}: no top-level `on:` block; refusing to guess whether "
+                "it is tag-triggered"
             )
-        events, tags = parsed
-        if any(tag_matches(pattern, tag) for pattern in tags):
+        events, push_spec = parsed
+        if push_spec is not None and tag_triggers(tag, push_spec):
             found[name] = events
     return found
 
@@ -196,24 +307,20 @@ def read_manifest(path):
     entries = []
     with open(path, encoding="utf-8") as handle:
         for lineno, raw in enumerate(handle, 1):
-            line = raw.strip()
+            line = strip_inline_comment(raw).strip()
             if not line or line.startswith("#"):
                 continue
             name = line.split("|", 1)[0].strip()
             if not name.endswith((".yml", ".yaml")):
-                raise SystemExit(
-                    f"ERROR: {path}:{lineno}: expected a workflow file, got {line!r}"
+                raise FanoutError(
+                    f"{path}:{lineno}: expected a workflow file, got {line!r}"
                 )
             entries.append(name)
     return entries
 
 
-def main(argv):
-    if len(argv) != 4:
-        sys.stderr.write(__doc__)
-        return 2
-
-    workflow_dir, manifest, tag = argv[1:4]
+def verify(workflow_dir, manifest, tag):
+    """Return (errors, discovered, entries); raise FanoutError when unsure."""
     found = discover(workflow_dir, tag)
     entries = read_manifest(manifest)
     errors = []
@@ -231,14 +338,26 @@ def main(argv):
 
     for name in entries:
         if name not in found:
-            errors.append(
-                f"{manifest} lists {name}, but it does not trigger on tag {tag}"
-            )
+            errors.append(f"{manifest} lists {name}, but it does not trigger on tag {tag}")
         elif "workflow_dispatch" not in found[name]:
             errors.append(
                 f"{name} triggers on tag {tag} but has no workflow_dispatch:, so "
                 "the dispatch fallback cannot start it"
             )
+
+    return errors, found, entries
+
+
+def report(workflow_dir, manifest, tag):
+    try:
+        errors, found, entries = verify(workflow_dir, manifest, tag)
+    except FanoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print(
+            "Refusing to create a release tag: classify the workflow explicitly.",
+            file=sys.stderr,
+        )
+        return 1
 
     print(f"release tag: {tag}")
     print(f"tag-triggered workflows ({len(found)}): {', '.join(sorted(found)) or '(none)'}")
@@ -257,6 +376,147 @@ def main(argv):
 
     print("MATCH: every tag-triggered workflow is dispatchable and in the manifest.")
     return 0
+
+
+def run_self_test():
+    cases = [
+        # (workflow yaml, manifest lines, tag, expected rc, description)
+        (
+            "name: A\non:\n  push:\n    tags:\n      - 'v*'\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "block tags list is discovered and matched",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags: ['v*']\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "flow tags list is discovered and matched",
+        ),
+        (
+            "name: A\non:\n  'push': { tags: ['v*'] }\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "quoted push key and single-line flow map",
+        ),
+        (
+            "name: A\non:\n  push: {\n    tags: ['v*']\n  }\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "multi-line flow map",
+        ),
+        (
+            "name: A\non:\n  push:\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "bare push runs on tags",
+        ),
+        (
+            "name: A\non:\n  push:\n    paths: ['docs/**']\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "paths-only push runs on tags (paths is not evaluated for tags)",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags-ignore: ['python-sdk/**']\n  workflow_dispatch:\n",
+            ["a.yml"],
+            "v1.2.3",
+            0,
+            "tags-ignore-only push runs on non-ignored tags",
+        ),
+        (
+            "name: A\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+            [],
+            "v1.2.3",
+            0,
+            "branch-only push does not run on tags",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags: ['v*']\n  workflow_dispatch:\n",
+            [],
+            "v1.2.3",
+            1,
+            "tag-triggered workflow missing from the manifest fails",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags: ['v*']\n",
+            ["a.yml"],
+            "v1.2.3",
+            1,
+            "tag-triggered workflow without workflow_dispatch fails",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags: ['python-sdk/v*']\n  workflow_dispatch:\n",
+            [],
+            "v1.2.3",
+            0,
+            "different tag series is not treated as a release tag",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags: ['v*', '!v0.*']\n  workflow_dispatch:\n",
+            [],
+            "v0.1.2",
+            0,
+            "negated tag pattern excludes the tag",
+        ),
+    ]
+
+    with tempfile.TemporaryDirectory() as workdir:
+        for index, (yaml_text, manifest, tag, expected, description) in enumerate(cases):
+            case_dir = os.path.join(workdir, f"case-{index}")
+            workflow_dir = os.path.join(case_dir, "workflows")
+            os.makedirs(workflow_dir)
+            with open(os.path.join(workflow_dir, "a.yml"), "w", encoding="utf-8") as handle:
+                handle.write(yaml_text)
+            manifest_path = os.path.join(case_dir, "release-workflows.txt")
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(manifest) + ("\n" if manifest else ""))
+
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                actual = report(workflow_dir, manifest_path, tag)
+            if actual != expected:
+                print(
+                    f"FAIL: {description}: expected rc={expected}, got rc={actual}",
+                    file=sys.stderr,
+                )
+                return 1
+
+        # Unclassifiable push body must fail closed, not be treated as inert.
+        case_dir = os.path.join(workdir, "case-unclassifiable")
+        os.makedirs(case_dir)
+        workflow_dir = os.path.join(case_dir, "workflows")
+        os.makedirs(workflow_dir)
+        with open(os.path.join(workflow_dir, "a.yml"), "w", encoding="utf-8") as handle:
+            handle.write("name: A\non:\n  push: sometimes\n  workflow_dispatch:\n")
+        manifest_path = os.path.join(case_dir, "release-workflows.txt")
+        open(manifest_path, "w", encoding="utf-8").close()
+        try:
+            verify(workflow_dir, manifest_path, "v1.2.3")
+        except FanoutError:
+            pass
+        else:
+            print("FAIL: unclassifiable push body did not fail closed", file=sys.stderr)
+            return 1
+
+    print(f"self-test: {len(cases) + 1} cases passed")
+    return 0
+
+
+def main(argv):
+    if len(argv) == 2 and argv[1] == "--self-test":
+        return run_self_test()
+    if len(argv) != 4:
+        sys.stderr.write(__doc__)
+        return 2
+    return report(argv[1], argv[2], argv[3])
 
 
 if __name__ == "__main__":

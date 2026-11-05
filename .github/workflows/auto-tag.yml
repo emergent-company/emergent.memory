@@ -153,7 +153,9 @@ jobs:
           TAG="v${VERSION}"
           MANIFEST=".github/release-workflows.txt"
 
-          mapfile -t ENTRIES < <(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST")
+          mapfile -t ENTRIES < <(
+            sed -e 's/[[:space:]]#.*$//' "$MANIFEST" | grep -vE '^[[:space:]]*(#|$)'
+          )
           if [ "${#ENTRIES[@]}" -eq 0 ]; then
             echo "ERROR: $MANIFEST has no entries; refusing to skip the fan-out." >&2
             exit 1
@@ -205,7 +207,8 @@ jobs:
           MANIFEST=".github/release-workflows.txt"
 
           mapfile -t EXPECTED < <(
-            grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | cut -d'|' -f1
+            sed -e 's/[[:space:]]#.*$//' "$MANIFEST" \
+              | grep -vE '^[[:space:]]*(#|$)' | cut -d'|' -f1
           )
           if [ "${#EXPECTED[@]}" -eq 0 ]; then
             echo "ERROR: $MANIFEST has no entries; there is nothing to verify." >&2
