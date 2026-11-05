@@ -26,18 +26,88 @@ enum ChatEvent: Equatable {
 
 /// A live tool invocation (`{"type":"tool_call",...}`). `id` is worker-assigned
 /// (`t1`, `t2`, ...) and correlates with its `tool_result`.
+///
+/// `category` and `subject` are the gateway's answer for this call (the same
+/// `tool_category`/`tool_subject` the web console's chip reads), so the row
+/// describes the call the way the web does. They are optional: a gateway that
+/// predates the enrichment, or a worker that never had it, leaves the app to
+/// classify the call from its own table.
 struct ChatToolCallEvent: Equatable, Decodable {
     let id: String
     let tool: String
     let arguments: String
+    let category: ChatToolCategory?
+    let subject: String?
+
+    init(
+        id: String,
+        tool: String,
+        arguments: String,
+        category: ChatToolCategory? = nil,
+        subject: String? = nil
+    ) {
+        self.id = id
+        self.tool = tool
+        self.arguments = arguments
+        self.category = category
+        self.subject = subject
+    }
 }
 
 /// The completion of a previously announced `tool_call` with the same `id`.
+///
+/// `view` is the gateway's readable presentation of the result
+/// (`toolView`/`tool_view`) — the same structure the web console renders — so
+/// both surfaces read one payload the same way.
 struct ChatToolResultEvent: Equatable, Decodable {
     let id: String
     let tool: String
     let result: String
     let isError: Bool
+    let category: ChatToolCategory?
+    let view: ServerToolView?
+    /// The wire size of the output payload, measured on the result field alone.
+    /// Nil when the frame carried no output, so an error message (or a bare
+    /// status) is never reported as the response size.
+    let outputSize: Int?
+
+    init(
+        id: String,
+        tool: String,
+        result: String,
+        isError: Bool,
+        category: ChatToolCategory? = nil,
+        view: ServerToolView? = nil,
+        outputSize: Int? = nil
+    ) {
+        self.id = id
+        self.tool = tool
+        self.result = result
+        self.isError = isError
+        self.category = category
+        self.view = view
+        self.outputSize = outputSize
+    }
+
+    /// The worker path (`lk.chat.events`) carries the output in `result`, so the
+    /// size is measured there; the HTTP path supplies it from the envelope.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        tool = try container.decode(String.self, forKey: .tool)
+        result = try container.decode(String.self, forKey: .result)
+        isError = try container.decode(Bool.self, forKey: .isError)
+        category = try? container.decodeIfPresent(ChatToolCategory.self, forKey: .category)
+        view = try? container.decodeIfPresent(ServerToolView.self, forKey: .view)
+        // A failed worker result carries the error message in `result`, which is
+        // not an output: reporting its size would describe the failure as the
+        // response. The HTTP path measures the envelope's result field instead.
+        outputSize = isError ? nil : ToolResultSize.byteCount(of: result)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, tool, result, isError, category, view
+    }
 }
 
 /// A live subagent run (`{"type":"subagent",...}`). Every field is optional so

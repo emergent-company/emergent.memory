@@ -198,7 +198,7 @@ struct ChatEventDecodingTests {
             Issue.record("expected a tool_result event")
             return
         }
-        #expect(event == .toolResult(ChatToolResultEvent(id: "t1", tool: "web_search", result: "3 hits", isError: false)))
+        #expect(event == .toolResult(ChatToolResultEvent(id: "t1", tool: "web_search", result: "3 hits", isError: false, outputSize: 6)))
     }
 
     @Test func decodesErrorToolResult() {

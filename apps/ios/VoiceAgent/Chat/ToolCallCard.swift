@@ -18,10 +18,28 @@ struct ToolCallInfo: Identifiable, Equatable {
     var startedAt: Date?
     /// How long the call ran, once its result settled. Nil while running.
     var duration: TimeInterval?
-    /// What the result says, in readable form, parsed once when the call is
-    /// built — never while the chat scrolls. Nil for a running call, an empty
-    /// result, or a payload with no shape worth reading.
-    let presentation: ToolResultPresentation?
+    /// The size of the call's output payload on the wire, measured where it
+    /// arrives: the raw result field, never a display fallback. Nil when the
+    /// call produced no output (or has not settled).
+    var responseSize: Int?
+    /// Whether the expanded step names the call's id. Recorded timeline rows
+    /// carry a synthetic index for `id`, which is not an identity the step had,
+    /// so they hide it.
+    var showsID: Bool
+    /// The gateway's category for this call, when it sent one. It outranks the
+    /// app's own name table so a call is described the way the web console
+    /// describes it, verb included.
+    let serverCategory: ChatToolCategory?
+    /// What the gateway says the call was asked to do, in one line, from the
+    /// arguments it saw. Outranks the app's own reading of the arguments.
+    let serverSubject: String?
+    /// The gateway's readable presentation of the result, when it sent one: the
+    /// same structure the web console draws. Nil for a running call or an
+    /// older gateway, which leaves `parsedPresentation` to answer.
+    let serverPresentation: ToolResultPresentation?
+    /// The app's own reading, computed only when the server sent no view, so a
+    /// result is never parsed twice.
+    private let parsedPresentation: ToolResultPresentation?
 
     init(
         id: String,
@@ -31,7 +49,12 @@ struct ToolCallInfo: Identifiable, Equatable {
         isError: Bool,
         isRunning: Bool = false,
         startedAt: Date? = nil,
-        duration: TimeInterval? = nil
+        duration: TimeInterval? = nil,
+        responseSize: Int? = nil,
+        showsID: Bool = true,
+        category: ChatToolCategory? = nil,
+        subject: String? = nil,
+        presentation: ToolResultPresentation? = nil
     ) {
         self.id = id
         self.name = name
@@ -41,22 +64,83 @@ struct ToolCallInfo: Identifiable, Equatable {
         self.isRunning = isRunning
         self.startedAt = startedAt
         self.duration = duration
-        presentation = ToolResultPresentation.parse(result)
+        self.responseSize = responseSize
+        self.showsID = showsID
+        serverCategory = category
+        serverSubject = subject
+        serverPresentation = presentation
+        parsedPresentation = presentation == nil ? ToolResultPresentation.parse(result) : nil
     }
 
-    /// The category that decides this row's verb and icon.
+    /// The category that decides this row's icon: the gateway's family when it
+    /// sent one, the app's name table otherwise.
     var category: MemoryToolCategory {
-        MemoryToolCategory(toolName: name)
+        serverCategory?.category ?? MemoryToolCategory(toolName: name)
     }
 
-    /// What the step was about, one line, from its arguments.
+    /// What the step was about, one line: the gateway's subject when it sent
+    /// one, else the app's reading of the arguments.
     var subject: String? {
-        ToolActivitySubject.line(from: arguments)
+        if let serverSubject {
+            let trimmed = serverSubject.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return ToolActivitySubject.line(from: arguments)
     }
 
-    /// The step's finished duration in short form ("2s"), when known.
-    var durationText: String? {
-        ToolActivityTiming.text(duration)
+    /// What the opened step reads: the gateway's presentation when it sent one,
+    /// else the app's own reading. Nil for a running call, an empty result, or
+    /// a payload with no shape worth reading.
+    var presentation: ToolResultPresentation? {
+        serverPresentation ?? parsedPresentation
+    }
+
+    /// The step's verb in the words the web console shows: the gateway's when it
+    /// sent a category, the app's catalogue entry for the family otherwise (an
+    /// older gateway). Nil is impossible — the fallback table always answers.
+    var verbText: String {
+        isRunning ? runningVerbText : doneVerbText
+    }
+
+    /// What an in-flight step says, e.g. "Searching memory".
+    var runningVerbText: String {
+        serverVerb { $0.runningVerb } ?? category.runningText
+    }
+
+    /// What a settled step says, e.g. "Searched memory".
+    var doneVerbText: String {
+        serverVerb { $0.verb } ?? category.doneText
+    }
+
+    /// The gateway's verb, when this build decoded one that is not blank. A
+    /// category missing its wording degrades to the catalogue entry instead of
+    /// drawing an empty line.
+    private func serverVerb(_ pick: (ChatToolCategory) -> String) -> String? {
+        guard let category = serverCategory else { return nil }
+        let text = pick(category).trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// The call's own id, as the expanded step names it ("#call-a"), when it has
+    /// one and it identifies the call — the same identity line the web console
+    /// shows. A recorded row's index is not an id and is hidden.
+    var idText: String? {
+        guard showsID, !id.isEmpty else { return nil }
+        return "#\(id)"
+    }
+
+    /// The response's wire size ("1.2 KB"), measured on the output payload the
+    /// server sent rather than on a display fallback such as an error message.
+    var responseSizeText: String? {
+        ToolResultSize.text(bytes: responseSize)
+    }
+
+    /// The step's duration in the compact form the meta line uses ("850ms",
+    /// "1.2s"), matching the web console's formatter.
+    var metaDurationText: String? {
+        ToolActivityTiming.metaText(duration)
     }
 }
 
@@ -102,36 +186,16 @@ struct ToolCallRow: View {
                         )
                     )
 
-                    VStack(alignment: .leading, spacing: 0) {
-                        HStack(spacing: 1 * .grid) {
-                            Text(tool.isRunning ? tool.category.runningPhrase : tool.category.donePhrase)
-                                .font(MemoryFont.bodySmall)
-                                .foregroundStyle(tool.isRunning ? Color.fgAccent : Color.fg1)
-                                .lineLimit(1)
-
-                            if let duration = tool.durationText {
-                                Text(duration)
-                                    .font(MemoryFont.meta)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.fg3)
-                                    .accessibilityLabel(
-                                        Text(ToolActivityTiming.spoken(tool.duration) ?? duration)
-                                    )
-                            }
-                        }
-
-                        // The subject is what the expanded body shows as its
-                        // real input, so the collapsed row alone carries it.
-                        if !expanded, let subject = tool.subject {
-                            Text(subject)
-                                .font(MemoryFont.meta)
-                                .foregroundStyle(.fg2)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                    }
-
-                    Spacer(minLength: 2 * .grid)
+                    // One line, as the web chip draws it: the category's verb,
+                    // then the subject the call was asked to work on. The
+                    // duration and the response size belong to the opened step,
+                    // where the web console puts them.
+                    label
+                        .font(MemoryFont.bodySmall)
+                        .foregroundStyle(tool.isRunning ? Color.fgAccent : Color.fg1)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     if tool.isRunning {
                         ProgressView()
@@ -161,16 +225,20 @@ struct ToolCallRow: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 2 * .grid) {
-                    if !tool.name.isEmpty {
-                        Text(tool.name)
-                            .font(MemoryFont.metaMono)
-                            .foregroundStyle(.fg3)
-                    }
-                    if let arguments = tool.arguments, !arguments.isEmpty {
-                        detailBlock("sessions.detail.arguments", text: arguments)
-                    }
+                    // The web console leads an opened step with its identity,
+                    // execution time and response size, then the readable
+                    // result, then the call's input.
+                    metaLine
                     if let presentation = tool.presentation {
-                        ToolResultBody(presentation: presentation)
+                        // The arguments travel into the body so they sit before
+                        // the raw payload, as the web console orders them.
+                        ToolResultBody(
+                            presentation: presentation,
+                            toolName: tool.name,
+                            arguments: tool.arguments
+                        )
+                    } else if let arguments = tool.arguments, !arguments.isEmpty {
+                        ToolDetailBlock(label: "sessions.detail.arguments", text: arguments)
                     }
                 }
                 .padding(.leading, 4 * .grid)
@@ -179,19 +247,39 @@ struct ToolCallRow: View {
         }
     }
 
-    private func detailBlock(_ label: LocalizedStringKey, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 1 * .grid) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.fg3)
-            Text(text)
+    /// What the row calls itself: the verb, then the subject in the same line —
+    /// the label the web chip draws, so a call reads identically on both
+    /// surfaces. Both come from the gateway when it described the call.
+    private var label: Text {
+        let verb = Text(verbatim: tool.verbText)
+        guard let subject = tool.subject, !subject.isEmpty else { return verb }
+        return verb + Text(verbatim: " · \(subject)")
+    }
+
+    /// The opened step's identity line: "Duration 1.2s · 3.4 KB response · #id",
+    /// the parts that exist, joined the way the web console joins them.
+    @ViewBuilder private var metaLine: some View {
+        if let text = metaText {
+            Text(verbatim: text)
                 .font(MemoryFont.metaMono)
-                .foregroundStyle(.fg1)
+                .foregroundStyle(.fg3)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(2 * .grid)
-                .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
         }
+    }
+
+    private var metaText: String? {
+        var parts: [String] = []
+        if let duration = tool.metaDurationText {
+            parts.append(String(localized: "chat.tool.meta.duration \(duration)"))
+        }
+        if let size = tool.responseSizeText {
+            parts.append(String(localized: "chat.tool.meta.response \(size)"))
+        }
+        if let id = tool.idText {
+            parts.append(id)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 

@@ -18,7 +18,7 @@ struct ChatActivityViewTests {
         let first = ToolCallInfo(id: "t1", name: "web_search", arguments: "{}", result: "ok", isError: false)
         let second = ToolCallInfo(id: "t2", name: "read_file", arguments: "{}", result: nil, isError: false, isRunning: true)
         _ = LiveToolChip(tool: first)
-        _ = ToolCallGroupView(group: ToolCallGroup(id: "g1", tools: [first, second]))
+        _ = ToolActivityGroup(tools: [first, second], turnID: UUID())
     }
 
     @MainActor

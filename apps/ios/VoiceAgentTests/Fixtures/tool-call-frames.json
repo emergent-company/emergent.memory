@@ -1,0 +1,64 @@
+{
+  "description": "The two live frames of one tool call: `upstream` is what the worker sends, and `expected` is the enrichment the gateway adds in place. The frame a client receives is `upstream` overlaid with `expected` (the gateway also adds a highlighted `resultHtml`, which neither test reads). apps/web-ui/gateway/tool_frame_fixture_test.go proves the gateway emits `expected` for `upstream`; apps/ios/VoiceAgentTests/ToolFrameFixtureTests.swift merges the same pair and decodes it as the frame it would receive. The started frame's subject is deliberately one the app's own argument reading would word differently (it prefers `url`; the gateway prefers `name`), so the client test fails if it stops reading `toolSubject` and falls back to its own table.",
+  "frames": [
+    {
+      "upstream": {
+        "type": "mcp_tool",
+        "tool": "search_entities",
+        "status": "started",
+        "id": "call-1",
+        "result": {
+          "name": "Retrieval guide",
+          "url": "https://example.com/guide"
+        }
+      },
+      "expected": {
+        "toolCategory": {
+          "family": "search",
+          "verb": "Searched memory",
+          "runningVerb": "Searching memory",
+          "icon": "lucide--search"
+        },
+        "toolSubject": "Retrieval guide"
+      }
+    },
+    {
+      "upstream": {
+        "type": "mcp_tool",
+        "tool": "search_entities",
+        "status": "completed",
+        "id": "call-1",
+        "result": {
+          "results": [
+            {
+              "id": "d1",
+              "title": "Retrieval guide",
+              "kind": "document",
+              "url": "https://example.com/guide"
+            }
+          ],
+          "total": 1
+        }
+      },
+      "expected": {
+        "toolCategory": {
+          "family": "search",
+          "verb": "Searched memory",
+          "runningVerb": "Searching memory",
+          "icon": "lucide--search"
+        },
+        "toolView": {
+          "kind": "records",
+          "items": [
+            {
+              "title": "Retrieval guide",
+              "link": "https://example.com/guide"
+            }
+          ],
+          "outcome": "1 record",
+          "raw": "{\n  \"results\": [\n    {\n      \"id\": \"d1\",\n      \"kind\": \"document\",\n      \"title\": \"Retrieval guide\",\n      \"url\": \"https://example.com/guide\"\n    }\n  ],\n  \"total\": 1\n}"
+        }
+      }
+    }
+  ]
+}

@@ -189,13 +189,7 @@ struct ChatView: View {
                 ThinkingBlockView(text: block.text, isLive: block.isLive)
             }
             ForEach(turn.toolGroups) { group in
-                if ToolActivityGrouping.isGrouped(group.tools) {
-                    ToolCallGroupView(group: group)
-                } else {
-                    ForEach(group.tools) { tool in
-                        LiveToolChip(tool: tool)
-                    }
-                }
+                ToolActivityGroup(tools: group.tools, turnID: turn.id)
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in

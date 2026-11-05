@@ -46,6 +46,17 @@ struct ToolResultPresentation: Equatable {
         let created: Int
         let failed: Int
         let similar: Int
+        /// The gateway's wording of the counts, when it sent one. The two web
+        /// surfaces print this line, so the app prints it too; a locally parsed
+        /// batch falls back to the localized copy below.
+        let serverText: String?
+
+        init(created: Int, failed: Int, similar: Int, serverText: String? = nil) {
+            self.created = created
+            self.failed = failed
+            self.similar = similar
+            self.serverText = serverText
+        }
 
         /// A failed item makes the batch read as a failure, however clean the
         /// list of created records looks.
@@ -53,8 +64,12 @@ struct ToolResultPresentation: Equatable {
             failed > 0
         }
 
-        /// The counts in the caller's locale, as the body's one-line summary.
+        /// The server's line when it sent one, else the counts in the caller's
+        /// locale, as the body's one-line summary.
         func text(locale: Locale = .current) -> String {
+            if let serverText, !serverText.isEmpty {
+                return serverText
+            }
             var line = String(localized: "sessions.detail.result.batch.created \(created)", locale: locale)
             line += ", " + String(localized: "sessions.detail.result.batch.failed \(failed)", locale: locale)
             if similar > 0 {
@@ -67,6 +82,9 @@ struct ToolResultPresentation: Equatable {
     /// Nil when the payload has no shape worth reading; the row then shows the
     /// raw text alone.
     let body: Body?
+    /// The gateway's copy for an empty result ("No results"), when it sent one,
+    /// so both surfaces print the same words for the same empty list.
+    let emptyText: String?
     /// The counts of a batch create, when the payload is one.
     let batch: BatchTally?
     /// The result, pretty-printed and bounded: what the raw disclosure reveals.
@@ -75,6 +93,22 @@ struct ToolResultPresentation: Equatable {
     let rawMoreLines: Int
     /// Characters cut from the lines that were kept, for the same reason.
     let rawMoreCharacters: Int
+
+    init(
+        body: Body?,
+        emptyText: String? = nil,
+        batch: BatchTally?,
+        raw: String,
+        rawMoreLines: Int,
+        rawMoreCharacters: Int
+    ) {
+        self.body = body
+        self.emptyText = emptyText
+        self.batch = batch
+        self.raw = raw
+        self.rawMoreLines = rawMoreLines
+        self.rawMoreCharacters = rawMoreCharacters
+    }
 
     /// How many records a list shows before it summarizes the rest.
     static let itemLimit = 5

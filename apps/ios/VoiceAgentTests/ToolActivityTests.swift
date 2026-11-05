@@ -251,7 +251,6 @@ struct ToolActivityStoreTimingTests {
 
         let call = try #require(store.liveTurn?.tools.first)
         #expect(call.duration == nil)
-        #expect(call.durationText == nil)
     }
 
     @MainActor

@@ -133,17 +133,24 @@ extension SessionRecord {
                     name: String(format: String(localized: "sessions.detail.tool"), index + 1),
                     arguments: nil,
                     result: output,
-                    isError: self.isError ?? false
+                    isError: self.isError ?? false,
+                    responseSize: ToolResultSize.byteCount(of: output),
+                    // The index is this row's position, not an identity the
+                    // call ever had, so the opened step must not print it.
+                    showsID: false
                 )
             }
         }
         return calls.enumerated().map { index, call in
-            ToolCallInfo(
+            let output = call.result ?? (index < outputs.count ? outputs[index] : nil)
+            return ToolCallInfo(
                 id: String(index),
                 name: call.name,
                 arguments: call.arguments,
-                result: call.result ?? (index < outputs.count ? outputs[index] : nil),
-                isError: call.isError ?? (self.isError ?? false)
+                result: output,
+                isError: call.isError ?? (self.isError ?? false),
+                responseSize: ToolResultSize.byteCount(of: output),
+                showsID: false
             )
         }
     }

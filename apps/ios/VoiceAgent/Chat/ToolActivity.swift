@@ -169,12 +169,25 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         }
     }
 
-    var runningPhrase: LocalizedStringKey {
-        LocalizedStringKey(runningKey)
+    /// The settled step's verb, resolved from the app's string catalogue.
+    ///
+    /// A row prefers the gateway's own verb (`ChatToolCategory.verb`) and only
+    /// falls back to this when the gateway sent no category, so the two
+    /// surfaces cannot word the same call differently.
+    var doneText: String {
+        localised(doneKey)
     }
 
-    var donePhrase: LocalizedStringKey {
-        LocalizedStringKey(doneKey)
+    /// The in-flight step's verb, same rule.
+    var runningText: String {
+        localised(runningKey)
+    }
+
+    /// The catalogue value for a key built at runtime: a family's key is
+    /// assembled from its raw value, so it cannot be a `LocalizedStringKey`
+    /// literal.
+    private func localised(_ key: String) -> String {
+        Bundle.main.localizedString(forKey: key, value: nil, table: nil)
     }
 }
 
@@ -292,26 +305,32 @@ enum ToolActivityTiming {
         formatted(seconds, width: .narrow, locale: locale)
     }
 
+    /// The expanded step's compact duration, worded as the web console words it:
+    /// sub-second in milliseconds ("850ms"), then "1.2s", "5m", "2h 15m".
+    ///
+    /// The two surfaces print the same number the same way, so a step's meta
+    /// line reads identically wherever it is opened.
+    static func metaText(_ seconds: TimeInterval?) -> String? {
+        guard let seconds, seconds.isFinite, seconds >= 0 else { return nil }
+        if seconds < 1 {
+            return "\(Int((seconds * 1000).rounded()))ms"
+        }
+        if seconds < 60 {
+            let tenths = (seconds * 10).rounded() / 10
+            return tenths == tenths.rounded()
+                ? "\(Int(tenths))s"
+                : String(format: "%.1fs", tenths)
+        }
+        let minutes = Int(seconds / 60)
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        return "\(minutes / 60)h \(minutes % 60)m"
+    }
+
     /// The same span in words ("2 seconds"), for VoiceOver.
     static func spoken(_ seconds: TimeInterval?, locale: Locale = .current) -> String? {
         formatted(seconds, width: .wide, locale: locale)
-    }
-
-    /// From the first step's start to the last one's end: how long a run of
-    /// steps occupied the turn. Nil unless every step is timed, so a run never
-    /// reports a length it cannot account for.
-    static func span(of tools: [ToolCallInfo]) -> TimeInterval? {
-        guard !tools.isEmpty else { return nil }
-        var earliest: Date?
-        var latest: Date?
-        for tool in tools {
-            guard let start = tool.startedAt, let duration = tool.duration else { return nil }
-            let end = start.addingTimeInterval(duration)
-            earliest = min(earliest ?? start, start)
-            latest = max(latest ?? end, end)
-        }
-        guard let earliest, let latest else { return nil }
-        return latest.timeIntervalSince(earliest)
     }
 
     private static func formatted(

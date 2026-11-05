@@ -180,19 +180,26 @@ enum ChatStreamFrameDecoder {
             return .activity(.toolCall(ChatToolCallEvent(
                 id: id,
                 tool: tool,
-                arguments: envelope.result?.displayText ?? ""
+                arguments: envelope.result?.displayText ?? "",
+                category: envelope.toolCategory,
+                subject: envelope.toolSubject
             )))
         }
         let failed = envelope.status == "error" || envelope.status == "failed"
-        let output = envelope.error?.nonEmpty
-            ?? envelope.result?.displayText
-            ?? envelope.status
-            ?? ""
+        // The size is the output payload's, measured before the error/status
+        // fallback and in the form the web console measures (a string as-is,
+        // anything else as JSON): "129 B response" must describe what the tool
+        // returned, not the message explaining that it returned nothing.
+        let outputValue = envelope.result
+        let output = outputValue?.displayText
         return .activity(.toolResult(ChatToolResultEvent(
             id: id,
             tool: tool,
-            result: output,
-            isError: failed
+            result: envelope.error?.nonEmpty ?? output ?? envelope.status ?? "",
+            isError: failed,
+            category: envelope.toolCategory,
+            view: envelope.toolView,
+            outputSize: ToolResultSize.byteCount(of: outputValue?.wireText)
         )))
     }
 
@@ -303,6 +310,13 @@ private struct ChatStreamEnvelope: Decodable {
     let surfaceId: String?
     let messages: [ChatUIMessage]?
     let citations: [ChatUIPropValue]?
+    /// The gateway's presentation of a tool call: its category (verb per tense,
+    /// family, glyph), the one-line subject of what it was asked to do, and the
+    /// readable view of its result. Sent on `mcp_tool` frames so the app renders
+    /// the call the way the web console does rather than re-deriving it.
+    let toolCategory: ChatToolCategory?
+    let toolSubject: String?
+    let toolView: ServerToolView?
 }
 
 private extension String {

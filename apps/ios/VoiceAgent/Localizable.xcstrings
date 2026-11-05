@@ -1319,12 +1319,13 @@
       }
     },
     "sessions.detail.arguments": {
+      "comment": "The tool call's input, worded as the web console words it.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arguments"
+            "value": "Input"
           }
         }
       }
@@ -2441,17 +2442,6 @@
         }
       }
     },
-    "chat.tool.group.steps %lld": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld steps"
-          }
-        }
-      }
-    },
     "chat.tool.group.a11y.expanded": {
       "extractionState": "manual",
       "localizations": {
@@ -2470,17 +2460,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Collapsed"
-          }
-        }
-      }
-    },
-    "chat.tool.group.a11y.failed": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a step failed"
           }
         }
       }
@@ -2852,9 +2831,54 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld tool call"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld tool calls"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "chat.tool.group.failed %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld tool calls"
+            "value": "%lld failed"
+          }
+        }
+      }
+    },
+    "chat.tool.meta.duration %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Duration %@"
+          }
+        }
+      }
+    },
+    "chat.tool.meta.response %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ response"
           }
         }
       }
