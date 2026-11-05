@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ type mcpShareTestBackend struct {
 	*fakeMemory
 	shares    []MCPShareInstance
 	catalog   []MCPShareTool
+	templates []MCPShareTemplate
 	listErr   error
 	toolsErr  error
 	createErr error
@@ -200,11 +202,11 @@ func (b *mcpShareTestBackend) InviteMCPShareInstance(ctx context.Context, id str
 	return &MCPShareInvite{TokenPrefix: "emt_existing", EmailsSent: emails}, nil
 }
 
-func (b *mcpShareTestBackend) ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error) {
+func (b *mcpShareTestBackend) ListMCPShareCatalog(ctx context.Context) (*MCPShareCatalog, error) {
 	if b.toolsErr != nil {
 		return nil, b.toolsErr
 	}
-	return b.catalog, nil
+	return &MCPShareCatalog{Tools: b.catalog, Templates: b.templates}, nil
 }
 
 // --- fixtures + wiring ---
@@ -820,6 +822,7 @@ func TestMCPShareJSONRotateReturnsToken(t *testing.T) {
 
 func TestMCPShareJSONToolsCatalog(t *testing.T) {
 	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	f.templates = []MCPShareTemplate{{ID: "read-only", Label: "Read-only", Tools: []string{"search_memory"}, ToolCount: 1, Default: true}}
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpShareTestServer(s)
 
@@ -827,9 +830,15 @@ func TestMCPShareJSONToolsCatalog(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET tools = %d, want 200", rec.Code)
 	}
-	var out []MCPShareTool
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out) != 3 {
+	var out struct {
+		Tools     []MCPShareTool     `json:"tools"`
+		Templates []MCPShareTemplate `json:"templates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Tools) != 3 {
 		t.Fatalf("tools body = %s", rec.Body.String())
+	}
+	if len(out.Templates) != 1 || out.Templates[0].ID != "read-only" || !out.Templates[0].Default {
+		t.Fatalf("templates body = %s", rec.Body.String())
 	}
 }
 
@@ -1166,5 +1175,134 @@ func TestMCPShareJSONInvite(t *testing.T) {
 	bad := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares/sh-1/invite", `{"emails":[]}`)
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("empty invite = %d, want 400", bad.Code)
+// --- share templates ---
+
+// mcpShareTemplateFixture is a two-preset catalog: a default read-only preset
+// and a non-default writer preset.
+func mcpShareTemplateFixture() []MCPShareTemplate {
+	return []MCPShareTemplate{
+		{ID: "read-only", Label: "Read-only", Description: "Read only tools.", Default: true,
+			Tools: []string{"search_memory"}, ToolCount: 1},
+		{ID: "knowledge-writer", Label: "Knowledge writer", Description: "Write tools.",
+			Tools: []string{"search_memory", "create_agent"}, ToolCount: 2},
+	}
+}
+
+func TestMCPShareNewPageRendersPresetRow(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	f.templates = mcpShareTemplateFixture()
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/new")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET new = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Start from a preset",
+		`data-share-template="read-only"`,
+		`data-share-template="knowledge-writer"`,
+		`data-share-template-tools="[&#34;search_memory&#34;]"`,
+		`data-share-template-tools="[&#34;search_memory&#34;,&#34;create_agent&#34;]"`,
+		"Read-only", "Knowledge writer", "1 tool", "2 tools",
+		`data-mcp-tool-count`, "0 selected",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("new share page missing %q", want)
+		}
+	}
+}
+
+func TestMCPShareNewPagePreselectsDefaultTemplate(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	f.templates = mcpShareTemplateFixture()
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/new")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET new = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="search_memory" class="checkbox checkbox-sm mt-0.5" checked`) {
+		t.Errorf("default preset tool must be preselected on the create form: %s", body)
+	}
+	// A non-default preset must not leak its extra tools into the initial state.
+	if strings.Contains(body, `value="create_agent" class="checkbox checkbox-sm mt-0.5" checked`) {
+		t.Error("the writer preset's tool must not be preselected")
+	}
+}
+
+func TestMCPShareEditPageDoesNotApplyDefaultTemplate(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	f.templates = mcpShareTemplateFixture()
+	// Keep the share's own selection away from the default preset's tool so the
+	// assertion cannot pass by accident.
+	f.shares[0].Tools = []string{"get_object"}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/sh-1/edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET edit = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `value="search_memory" class="checkbox checkbox-sm mt-0.5" checked`) {
+		t.Error("editing a share must never apply a preset to its existing grant")
+	}
+	if !strings.Contains(body, `data-share-template="read-only"`) {
+		t.Error("edit page must still offer the presets")
+	}
+}
+
+func TestMCPShareNewPageWithoutTemplatesHidesPresetRow(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/new")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET new = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Start from a preset") || strings.Contains(body, `data-share-template="`) {
+		t.Error("a backend without presets must render the picker with no preset row")
+	}
+	if strings.Contains(body, `class="checkbox checkbox-sm mt-0.5" checked`) {
+		t.Error("no preset means no preselected tool")
+	}
+}
+
+func TestMCPShareApplyDefaultTemplate(t *testing.T) {
+	catalog := &MCPShareCatalog{Templates: mcpShareTemplateFixture()}
+	if got := mcpShareApplyDefaultTemplate(catalog, nil); !reflect.DeepEqual(got, []string{"search_memory"}) {
+		t.Errorf("empty draft = %v, want the default preset's tools", got)
+	}
+	if got := mcpShareApplyDefaultTemplate(catalog, []string{"get_object"}); !reflect.DeepEqual(got, []string{"get_object"}) {
+		t.Errorf("existing selection = %v, must be preserved", got)
+	}
+	if got := mcpShareApplyDefaultTemplate(&MCPShareCatalog{}, nil); got != nil {
+		t.Errorf("no presets = %v, want nil", got)
+	}
+	if got := mcpShareApplyDefaultTemplate(nil, nil); got != nil {
+		t.Errorf("nil catalog = %v, want nil", got)
+	}
+}
+
+func TestMCPShareTemplateToolsAttr(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"empty", nil, "[]"},
+		{"one", []string{"a"}, `["a"]`},
+		{"many", []string{"a", "b"}, `["a","b"]`},
+	}
+	for _, tc := range cases {
+		if got := mcpShareTemplateToolsAttr(MCPShareTemplate{Tools: tc.in}); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

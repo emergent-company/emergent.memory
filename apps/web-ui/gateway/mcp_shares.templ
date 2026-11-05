@@ -429,13 +429,40 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 }
 
 // mcpShareToolPicker is the searchable, category-grouped multi-select of memory
-// tools. At least one tool is required; the inline error renders under the
-// header.
+// tools, preceded by the share preset row. At least one tool is required; the
+// inline error renders under the header.
 templ mcpShareToolPicker(data mcpShareFormData) {
 	<div class="flex flex-col gap-2" data-mcp-tool-picker>
+		if len(data.Templates) > 0 {
+			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col gap-1.5"}) {
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					@ui.Eyebrow("Start from a preset", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+					<span class="text-muted-faint text-[10px]">replaces the current selection</span>
+				</div>
+				<div class="flex flex-wrap gap-1.5" data-mcp-share-templates>
+					for _, t := range data.Templates {
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonOutline,
+							Size:       ui.ButtonXS,
+							ExtraClass: "gap-1.5",
+							Attrs: templ.Attributes{
+								"data-share-template":       t.ID,
+								"data-share-template-tools": mcpShareTemplateToolsAttr(t),
+								"title":                     t.Description,
+							},
+						}) {
+							{ t.Label }
+							@ui.Badge(ui.BadgeProps{Label: countLabel(t.ToolCount, "tool", "tools"), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+						}
+					}
+				</div>
+			}
+		}
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			@ui.Eyebrow("Memory tools", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
 			<div class="flex items-center gap-1">
+				<span class="text-muted text-[11px]" data-mcp-tool-count aria-live="polite">0 selected</span>
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-mcp-tool-select-all": ""}}) {
 					Select all
 				}
@@ -521,9 +548,27 @@ templ mcpShareSnippetBlocks(snippets []mcpShareSnippet) {
 templ mcpShareScripts() {
 	<script type="text/javascript">
 		(function () {
-			if (window.__mcpShareUIWired) return;
+			function clearMcpShareTemplateActive(picker) {
+				var tpls = picker.querySelectorAll('[data-share-template]');
+				for (var t = 0; t < tpls.length; t++) { tpls[t].classList.remove('btn-active'); }
+			}
+
+			function syncMcpShareToolCount(picker) {
+				var label = picker.querySelector('[data-mcp-tool-count]');
+				if (!label) return;
+				var boxes = picker.querySelectorAll('[data-mcp-tool-option] input[type="checkbox"]');
+				var count = 0;
+				for (var i = 0; i < boxes.length; i++) { if (boxes[i].checked) count++; }
+				label.textContent = count + ' selected';
+			}
+
 			var root = document.querySelector('[data-mcp-shares-root], [data-mcp-share-form], [data-mcp-share-reveal]');
 			if (!root) return;
+			// Render-time sync must run on every page swap (hx-boost re-renders the
+			// markup but the listeners below are already attached once).
+			var renderedPicker = document.querySelector('[data-mcp-tool-picker]');
+			if (renderedPicker) syncMcpShareToolCount(renderedPicker);
+			if (window.__mcpShareUIWired) return;
 			window.__mcpShareUIWired = true;
 
 			document.addEventListener('input', function (e) {
@@ -547,6 +592,25 @@ templ mcpShareScripts() {
 			});
 
 			document.addEventListener('click', function (e) {
+				var tpl = e.target && e.target.closest ? e.target.closest('[data-share-template]') : null;
+				if (tpl) {
+					e.preventDefault();
+					var picker = tpl.closest('[data-mcp-tool-picker]');
+					if (!picker) return;
+					var wanted = {};
+					try {
+						var names = JSON.parse(tpl.getAttribute('data-share-template-tools') || '[]');
+						for (var n = 0; n < names.length; n++) { wanted[names[n]] = true; }
+					} catch (err) { return; }
+					var boxes = picker.querySelectorAll('[data-mcp-tool-option] input[type="checkbox"]');
+					for (var b = 0; b < boxes.length; b++) { boxes[b].checked = !!wanted[boxes[b].value]; }
+					var siblings = picker.querySelectorAll('[data-share-template]');
+					for (var s = 0; s < siblings.length; s++) { siblings[s].classList.remove('btn-active'); }
+					tpl.classList.add('btn-active');
+					syncMcpShareToolCount(picker);
+					return;
+				}
+
 				var btn = e.target && e.target.closest ? e.target.closest('[data-mcp-tool-select-all], [data-mcp-tool-clear]') : null;
 				if (!btn) return;
 				e.preventDefault();
@@ -555,6 +619,16 @@ templ mcpShareScripts() {
 				var check = btn.hasAttribute('data-mcp-tool-select-all');
 				var boxes = picker.querySelectorAll('[data-mcp-tool-option] input[type="checkbox"]');
 				for (var i = 0; i < boxes.length; i++) { boxes[i].checked = check; }
+				clearMcpShareTemplateActive(picker);
+				syncMcpShareToolCount(picker);
+			});
+
+			document.addEventListener('change', function (e) {
+				var box = e.target && e.target.closest ? e.target.closest('[data-mcp-tool-picker] input[type="checkbox"]') : null;
+				if (!box) return;
+				var picker = box.closest('[data-mcp-tool-picker]');
+				clearMcpShareTemplateActive(picker);
+				syncMcpShareToolCount(picker);
 			});
 		})();
 	</script>

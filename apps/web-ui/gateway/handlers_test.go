@@ -1123,7 +1123,9 @@ func (f *fakeMemory) InviteMCPShareInstance(ctx context.Context, id string, emai
 	return &MCPShareInvite{}, nil
 }
 
-func (f *fakeMemory) ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error) { return nil, nil }
+func (f *fakeMemory) ListMCPShareCatalog(ctx context.Context) (*MCPShareCatalog, error) {
+	return &MCPShareCatalog{}, nil
+}
 
 // Agent-owned MCP endpoint: stateful fake used by the MCP handler tests
 // (agent_mcp_endpoint_handlers_test.go). Get returns the seeded endpoint (or

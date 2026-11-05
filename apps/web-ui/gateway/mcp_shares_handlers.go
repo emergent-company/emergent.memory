@@ -61,6 +61,7 @@ type mcpShareFormData struct {
 	Tools       []string
 	Emails      string
 	Catalog     []MCPShareTool
+	Templates   []MCPShareTemplate
 
 	Legacy     bool
 	NotFound   bool
@@ -465,26 +466,34 @@ func (s *Server) inviteMCPShare(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-// listMCPShareTools handles GET /api/mcp-shares/tools (the tool catalog).
+// listMCPShareTools handles GET /api/mcp-shares/tools (the tool catalog). The
+// presets are served alongside it as `templates`; this endpoint keeps returning
+// the catalog object so both arrive in one call.
 func (s *Server) listMCPShareTools(c echo.Context) error {
-	tools, err := s.memory.ListMCPShareTools(c.Request().Context())
+	catalog, err := s.memory.ListMCPShareCatalog(c.Request().Context())
 	if err != nil {
 		return mcpShareJSONErr(c, err)
 	}
-	return c.JSON(http.StatusOK, tools)
+	return c.JSON(http.StatusOK, catalog)
 }
 
 // --- shared helpers ---
 
-// loadMCPShareFormData fills the tool catalog on a form payload, preserving any
-// draft/instance fields already set. A catalog failure is returned so the page
-// renders its error state.
+// loadMCPShareFormData fills the tool catalog and presets on a form payload,
+// preserving any draft/instance fields already set. A catalog failure is
+// returned so the page renders its error state.
 func (s *Server) loadMCPShareFormData(ctx context.Context, data *mcpShareFormData) error {
-	catalog, err := s.memory.ListMCPShareTools(ctx)
+	catalog, err := s.memory.ListMCPShareCatalog(ctx)
 	if err != nil {
 		return err
 	}
-	data.Catalog = catalog
+	data.Catalog = catalog.Tools
+	data.Templates = catalog.Templates
+	// Create form only: preselect the default preset when the draft is empty.
+	// An edit always carries data.ID and keeps the share's existing grant.
+	if data.ID == "" {
+		data.Tools = mcpShareApplyDefaultTemplate(catalog, data.Tools)
+	}
 	return nil
 }
 

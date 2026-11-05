@@ -120,6 +120,31 @@ one or more email addresses under **Email the key**. Each recipient receives the
 endpoint, the key, and ready-to-paste client configs; the sender is named in the
 email.
 
+**Presets.** The create form offers a preset row that ticks a curated tool set in
+one click — it replaces the current selection, and you can adjust the ticks
+afterwards:
+
+| Preset | What it grants |
+|---|---|
+| **Read-only** (default) | Search, graph reads, document and journal reads, schema reads, skill reads, and agent/run reads. Nothing can be changed. |
+| **Knowledge writer** | Read-only plus creating and editing objects, relationships, documents, and journal notes. |
+| **Schema & blueprints** | Graph reads, then schema read/write, schema migrations, and blueprints. Does not write knowledge objects. |
+| **Agent observer** | Agent, run, question, and session reads, plus search and graph reads. |
+| **Documents** | Upload, list, retrieve, and delete documents, plus document classification/reextraction and search. |
+| **Full access** | Every tool a share key can carry. |
+
+Presets never exceed what a share may grant: platform administration, project
+settings, credential minting, and agent execution/management are not shareable,
+so **Full access** is the ceiling rather than "admin". Each preset's tool count
+is resolved against your project's catalog when the page loads, so it always
+matches the tools the backend currently offers.
+
+The same data is available to API clients: `GET /api/projects/{projectId}/mcp/tools`
+returns `tools` plus a `templates` array (id, label, description, `tools`,
+`toolCount`, and `default` on the preselected one). Creating a share still sends
+an explicit `tools` list — a template is a UI convenience, not a new request
+field.
+
 The key is shown to *you* exactly once, on the creation screen. If you also
 entered recipients, they have their own copy; otherwise copy it before closing
 the dialog.

@@ -319,7 +319,7 @@ func TestMemoryClientMCPSharePaths(t *testing.T) {
 	if _, err := m.RotateMCPShareInstance(ctx, "s1", nil); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	if _, err := m.ListMCPShareTools(ctx); err != nil {
+	if _, err := m.ListMCPShareCatalog(ctx); err != nil {
 		t.Fatalf("tools: %v", err)
 	}
 
@@ -379,19 +379,39 @@ func TestMemoryClientMCPShareInviteEmail(t *testing.T) {
 	}
 }
 
-// TestMemoryClientListMCPShareTools decodes the catalog.
-func TestMemoryClientListMCPShareTools(t *testing.T) {
+// TestMemoryClientListMCPShareCatalog decodes the catalog plus its presets.
+func TestMemoryClientListMCPShareCatalog(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"success":true,"data":[{"name":"search_memory","description":"d","requiredScope":"memory:read","category":"Memory"}]}`)
+		_, _ = io.WriteString(w, `{"success":true,"data":{"tools":[{"name":"search_memory","description":"d","requiredScope":"memory:read","category":"Memory"}],"templates":[{"id":"read-only","label":"Read-only","tools":["search_memory"],"toolCount":1,"default":true}]}}`)
 	}))
 	defer ts.Close()
 	m := NewMemoryClient(ts.URL, "proj-1")
-	tools, err := m.ListMCPShareTools(t.Context())
+	catalog, err := m.ListMCPShareCatalog(t.Context())
 	if err != nil {
-		t.Fatalf("tools: %v", err)
+		t.Fatalf("catalog: %v", err)
 	}
-	if len(tools) != 1 || tools[0].Name != "search_memory" || tools[0].Category != "Memory" || tools[0].RequiredScope != "memory:read" {
-		t.Errorf("tools = %+v", tools)
+	if len(catalog.Tools) != 1 || catalog.Tools[0].Name != "search_memory" || catalog.Tools[0].Category != "Memory" || catalog.Tools[0].RequiredScope != "memory:read" {
+		t.Errorf("tools = %+v", catalog.Tools)
+	}
+	if len(catalog.Templates) != 1 || catalog.Templates[0].ID != "read-only" || !catalog.Templates[0].Default || catalog.Templates[0].ToolCount != 1 {
+		t.Errorf("templates = %+v", catalog.Templates)
+	}
+}
+
+// TestMemoryClientListMCPShareCatalogBareArray keeps a pre-template backend
+// working: a bare tools array decodes with no presets.
+func TestMemoryClientListMCPShareCatalogBareArray(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[{"name":"search_memory","category":"Memory"}]`)
+	}))
+	defer ts.Close()
+	m := NewMemoryClient(ts.URL, "proj-1")
+	catalog, err := m.ListMCPShareCatalog(t.Context())
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	if len(catalog.Tools) != 1 || len(catalog.Templates) != 0 {
+		t.Errorf("catalog = %+v", catalog)
 	}
 }
 

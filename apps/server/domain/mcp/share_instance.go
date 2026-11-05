@@ -285,10 +285,13 @@ type CatalogToolDTO struct {
 	Category      string `json:"category"`
 }
 
-// CatalogResponse is the response for GET .../mcp/tools.
+// CatalogResponse is the response for GET .../mcp/tools. Templates carries the
+// named presets resolved against Tools (see share_templates.go); it is additive
+// so a client that only reads tools/total is unaffected.
 type CatalogResponse struct {
-	Tools []CatalogToolDTO `json:"tools"`
-	Total int              `json:"total"`
+	Tools     []CatalogToolDTO   `json:"tools"`
+	Total     int                `json:"total"`
+	Templates []ShareTemplateDTO `json:"templates,omitempty"`
 }
 
 // ============================================================================
@@ -1191,7 +1194,7 @@ func (s *Service) ListToolCatalog(ctx context.Context, projectID, userID string)
 		return nil, err
 	}
 	tools := BuildToolCatalog(ctx, s, projectID)
-	return &CatalogResponse{Tools: tools, Total: len(tools)}, nil
+	return &CatalogResponse{Tools: tools, Total: len(tools), Templates: ResolveShareTemplates(tools)}, nil
 }
 
 // BuildToolCatalog returns includable tools (AgentOnly excluded) ordered by
