@@ -174,7 +174,6 @@
     get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
-    currentAgentName: currentAgentName,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,

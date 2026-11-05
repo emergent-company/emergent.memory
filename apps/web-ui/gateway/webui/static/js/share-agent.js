@@ -66,8 +66,9 @@
     bubble: null,
     bubbleHTML: "",
     bubbleText: "",
-    // agentName labels the shared assistant's header. The avatar is applied to
-    // the page header by applyAvatar, not carried on the transcript rows.
+    // agentName labels the shared page header and the run-transcript turn
+    // headers. The avatar is applied to the page header by applyAvatar, not
+    // carried on the transcript rows.
     agentName: "",
     // email holds the visitor-supplied address for this page session only.
     // It is never persisted or written to the URL/DOM.
@@ -590,7 +591,6 @@
     get bubbleHTML() { return state.bubbleHTML; }, set bubbleHTML(v) { state.bubbleHTML = v; },
     get bubbleText() { return state.bubbleText; }, set bubbleText(v) { state.bubbleText = v; },
     get conversationId() { return state.sessionId; },
-    currentAgentName: currentAgentName,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,

@@ -8,10 +8,12 @@ import path from 'node:path';
 //      bubble/avatar/name header), user turns keep a right-aligned bubble
 //      without a "You" label, copy lives in the assistant action row, and
 //      Sources mount inside the assistant turn after the markdown.
-//   2. One left edge — every left-side row (assistant reply, tool step,
-//      question/approval card, A2UI card) starts at the transcript's content
-//      edge. No row carries an avatar gutter or a name header, and no row
-//      places its content in a chat-grid column.
+//   2. One left edge — assistant replies, tool steps, question and approval
+//      cards (and, through the same shared shells, thinking badges,
+//      agent-prompt/stage cards and A2UI cards) start at the transcript's
+//      content edge. No row carries an avatar gutter or a name header, no row
+//      places its content in a chat-grid column, and the row itself is a plain
+//      block — not the daisyUI two-column chat grid.
 const core = (name: string) =>
   path.resolve(__dirname, '../../../../gateway/webui/static/js', name);
 const appCss = path.resolve(__dirname, '../../../../gateway/webui/css/app.css');
@@ -67,12 +69,12 @@ async function render(page: Page): Promise<void> {
       onStreamFinish() {},
       onStreamFail() {},
       answerQuestion() {},
-      currentAgentName: () => 'Memory',
     }) as unknown as {
       addUserMessage: (t: string) => void;
       addAssistantMessage: (h: string, n: string) => HTMLElement;
       toolChip: (tool: string, status: string, detail: string, payload: unknown) => unknown;
       renderQuestion: (evt: unknown) => void;
+      renderApproval: (evt: unknown) => void;
     };
     stream.addUserMessage('hello');
     const reply = stream.addAssistantMessage('<p>plain <strong>markdown</strong></p>', 'Memory');
@@ -86,6 +88,20 @@ async function render(page: Page): Promise<void> {
       interactionType: 'buttons',
       options: [{ label: 'First', value: 'first' }],
     });
+    stream.renderApproval({
+      questionId: 'a-1',
+      tool: 'create_object',
+      input: { type: 'Task', name: 'Follow up' },
+    });
+    // Mirrors voice.js voiceAddLine(isUser=false): an interim agent
+    // transcription line, which is a plain left-side row (voice.js itself
+    // needs LiveKit and is not loaded here).
+    const voice = document.createElement('div');
+    voice.className = 'chat chat-start memory-rise memory-voice';
+    const voiceText = document.createElement('p');
+    voiceText.textContent = 'interim voice line';
+    voice.appendChild(voiceText);
+    messages.appendChild(voice);
   });
 }
 
@@ -126,32 +142,42 @@ test('every left-side row starts at the same content edge (no avatar gutter)', a
   await render(page);
 
   const toolRow = page.locator('#d > .memory-aux');
-  const questionRow = page.locator('#d > .memory-card');
+  const questionRow = page.locator('#d > .memory-card:has([data-testid="chat-question-card"])');
+  const approvalRow = page.locator('#d > .memory-card:has([data-testid="chat-approval-card"])');
+  const voiceRow = page.locator('#d > .memory-voice');
   const assistant = page.locator('#d .chat-start.memory-assistant').last();
 
-  // Tool steps and question/approval cards are left-side rows, not agent
-  // "bubbles": no avatar, no name header, no chat-grid column placement.
+  // Tool steps, voice transcription lines and question/approval cards are
+  // left-side rows, not agent "bubbles": no avatar, no name header, no
+  // chat-grid column placement, and no daisyUI grid on the row itself.
   await expect(toolRow).toHaveCount(1);
   await expect(toolRow.locator('[data-tool="web_search"]')).toBeVisible();
   await expect(questionRow).toHaveCount(1);
   await expect(questionRow.locator('[data-testid="chat-question-card"]')).toBeVisible();
+  await expect(approvalRow).toHaveCount(1);
+  await expect(approvalRow.locator('[data-testid="chat-approval-card"]')).toBeVisible();
+  await expect(voiceRow).toHaveCount(1);
 
-  for (const row of [assistant, toolRow, questionRow]) {
+  for (const row of [assistant, voiceRow, toolRow, questionRow, approvalRow]) {
     await expect(row.locator('.chat-image')).toHaveCount(0);
     await expect(row.locator('.chat-header')).toHaveCount(0);
+    // The row is a plain block. Without this, daisyUI's `chat-start` grid is
+    // still in charge and content can be placed — and indented — in a column.
+    expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe('block');
   }
   for (const node of [
     toolRow.locator('.memory-tool-chip'),
     questionRow.locator('[data-testid="chat-question-card"]'),
+    approvalRow.locator('[data-testid="chat-approval-card"]'),
   ]) {
     const cls = (await node.getAttribute('class')) || '';
     expect(cls).not.toMatch(/\bcol-start-|\brow-start-/);
   }
 
-  // The alignment itself: the assistant's markdown, the tool chip and the
-  // question card all begin at the same x. The daisyUI grid stand-in above is
-  // what a row would fall back onto if its content were placed in the avatar
-  // column, so this fails on a reintroduced gutter.
+  // The alignment itself: the assistant's markdown, the voice line, the tool
+  // chip and both cards begin at the same x. The daisyUI grid stand-in above
+  // is what a row would fall back onto if its content were placed in the
+  // avatar column, so this fails on a reintroduced gutter.
   const lefts = await page.evaluate(() => {
     const pick = (sel: string) => {
       const el = document.querySelector(sel);
@@ -159,15 +185,17 @@ test('every left-side row starts at the same content edge (no avatar gutter)', a
     };
     return {
       assistant: pick('#d > .memory-assistant > .memory-md'),
+      voice: pick('#d > .memory-voice > p'),
       tool: pick('#d > .memory-aux .memory-tool-chip'),
       question: pick('#d > .memory-card > [data-testid="chat-question-card"]'),
+      approval: pick('#d > .memory-card > [data-testid="chat-approval-card"]'),
     };
   });
-  expect(lefts.assistant).not.toBeNull();
-  expect(lefts.tool).not.toBeNull();
-  expect(lefts.question).not.toBeNull();
-  // The chip and the card carry a 1px border; allow that and sub-pixel rounding.
-  expect(Math.abs((lefts.tool as number) - (lefts.assistant as number))).toBeLessThanOrEqual(2);
-  expect(Math.abs((lefts.question as number) - (lefts.assistant as number))).toBeLessThanOrEqual(2);
+  for (const [name, left] of Object.entries(lefts)) {
+    expect(left, `${name} left edge`).not.toBeNull();
+    // The chip and the cards carry a 1px border; allow that and sub-pixel
+    // rounding.
+    expect(Math.abs((left as number) - (lefts.assistant as number)), `${name} left edge`).toBeLessThanOrEqual(2);
+  }
   expect(errors).toEqual([]);
 });
