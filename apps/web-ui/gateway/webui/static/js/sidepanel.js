@@ -174,8 +174,6 @@
     get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
-    currentAgentName: currentAgentName,
-    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
@@ -645,13 +643,6 @@
 
   function currentAgentName() {
     return "Assistant";
-  }
-
-  // The side panel's assistant is the project assistant, not a listed agent
-  // definition, so it declares no appearance — the shared bubbles always fall
-  // back to the default bot avatar here.
-  function currentAgentUI() {
-    return { icon: "", color: "" };
   }
 
   /* ---------- localStorage persistence ---------- */
