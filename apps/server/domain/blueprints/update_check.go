@@ -453,8 +453,7 @@ func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprint
 			return nil, err
 		}
 		if len(conflicts) > 0 {
-			return nil, apperror.ErrConflict.
-				WithMessage("object type name conflicts require merge confirmation").
+			return nil, apperror.NewConflict("object type name conflicts require merge confirmation").
 				WithDetails(map[string]any{"conflicts": conflicts})
 		}
 	}

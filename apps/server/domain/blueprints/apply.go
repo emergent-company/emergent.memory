@@ -89,12 +89,12 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+		return nil, apperror.NewBadRequest("invalid projectId")
 	}
 
 	var manifest BlueprintManifest
 	if err := json.Unmarshal(bp.Manifest, &manifest); err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
+		return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
 	}
 
 	// Resolve effective model overrides BEFORE validation/materialization:
@@ -133,8 +133,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		return nil, err
 	}
 	if len(typeConflicts) > 0 && !opts.MergeTypeConflicts {
-		return nil, apperror.ErrConflict.
-			WithMessage("object type name conflicts require merge confirmation").
+		return nil, apperror.NewConflict("object type name conflicts require merge confirmation").
 			WithDetails(map[string]any{"conflicts": typeConflicts})
 	}
 
@@ -217,7 +216,7 @@ func (s *Service) PreviewApply(ctx context.Context, blueprintID, projectID strin
 func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string, manifest json.RawMessage) ([]schemas.MergePreviewConflict, error) {
 	var m BlueprintManifest
 	if err := json.Unmarshal(manifest, &m); err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
+		return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
 	}
 	if len(m.Packs) == 0 {
 		return nil, nil
@@ -227,7 +226,7 @@ func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string
 	for _, p := range m.Packs {
 		objectTypes, err := json.Marshal(p.ObjectTypes)
 		if err != nil {
-			return nil, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
+			return nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
 		}
 		packs = append(packs, schemas.MergePreviewPack{Name: p.Name, ObjectTypes: objectTypes})
 	}
@@ -319,7 +318,7 @@ func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID
 	var counts ApplyCounts
 	for _, p := range packs {
 		if p.Name == "" || p.Version == "" {
-			return counts, apperror.ErrBadRequest.WithMessage("pack name and version are required")
+			return counts, apperror.NewBadRequest("pack name and version are required")
 		}
 
 		pack, created, err := s.resolvePack(ctx, projectID, origin, p)
@@ -410,7 +409,7 @@ func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p P
 func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMessage, err error) {
 	objectTypes, err = json.Marshal(p.ObjectTypes)
 	if err != nil {
-		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
+		return nil, nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
 	}
 	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
 	if err != nil {
@@ -418,7 +417,7 @@ func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMess
 	}
 	relationshipTypes, err = json.Marshal(expandedRels)
 	if err != nil {
-		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
+		return nil, nil, apperror.NewBadRequest("invalid relationshipTypes in pack " + p.Name)
 	}
 	return objectTypes, relationshipTypes, nil
 }
@@ -583,7 +582,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 
 	for _, am := range agentManifests {
 		if am.Name == "" {
-			return counts, apperror.ErrBadRequest.WithMessage("agent name is required")
+			return counts, apperror.NewBadRequest("agent name is required")
 		}
 		if am.Visibility != "" {
 			v, ok := agents.NormalizeVisibility(agents.AgentVisibility(am.Visibility))
@@ -1054,10 +1053,10 @@ func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
 	}
 	raw, err := json.Marshal(m.WorkConfig)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name)
+		return apperror.NewBadRequest("invalid workConfig for agent " + m.Name)
 	}
 	if err := json.Unmarshal(raw, &def.WorkConfig); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name + ": " + err.Error())
+		return apperror.NewBadRequest("invalid workConfig for agent " + m.Name + ": " + err.Error())
 	}
 	return nil
 }

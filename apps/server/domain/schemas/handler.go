@@ -37,7 +37,7 @@ func (h *Handler) GetCompiledTypes(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	compiledTypes, err := h.svc.GetCompiledTypes(c.Request().Context(), projectID)
@@ -65,7 +65,7 @@ func (h *Handler) GetAvailablePacks(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	packs, err := h.svc.GetAvailablePacks(c.Request().Context(), projectID)
@@ -166,7 +166,7 @@ func (h *Handler) GetInstalledPacks(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	packs, err := h.svc.GetInstalledPacks(c.Request().Context(), projectID)
@@ -200,16 +200,16 @@ func (h *Handler) AssignPack(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req AssignPackRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if req.SchemaID == "" {
-		return apperror.ErrBadRequest.WithMessage("schema_id is required")
+		return apperror.NewBadRequest("schema_id is required")
 	}
 
 	result, err := h.svc.AssignVisiblePack(c.Request().Context(), projectID, user.ID, &req)
@@ -240,15 +240,15 @@ func (h *Handler) AssignPack(c echo.Context) error {
 func (h *Handler) PreviewMerge(c echo.Context) error {
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req MergePreviewRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 	if len(req.Packs) == 0 {
-		return apperror.ErrBadRequest.WithMessage("at least one pack is required")
+		return apperror.NewBadRequest("at least one pack is required")
 	}
 
 	result, err := h.svc.PreviewMerge(c.Request().Context(), projectID, req.Packs)
@@ -280,12 +280,12 @@ func (h *Handler) UpdateAssignment(c echo.Context) error {
 	projectID := c.Param("projectId")
 	assignmentID := c.Param("assignmentId")
 	if projectID == "" || assignmentID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and assignmentId are required")
+		return apperror.NewBadRequest("projectId and assignmentId are required")
 	}
 
 	var req UpdateAssignmentRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if err := h.svc.UpdateAssignment(c.Request().Context(), projectID, assignmentID, &req); err != nil {
@@ -315,7 +315,7 @@ func (h *Handler) DeleteAssignment(c echo.Context) error {
 	projectID := c.Param("projectId")
 	assignmentID := c.Param("assignmentId")
 	if projectID == "" || assignmentID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and assignmentId are required")
+		return apperror.NewBadRequest("projectId and assignmentId are required")
 	}
 
 	if err := h.svc.DeleteAssignment(c.Request().Context(), projectID, assignmentID); err != nil {
@@ -347,22 +347,22 @@ func (h *Handler) CreatePack(c echo.Context) error {
 		projectID = user.ProjectID
 	}
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
 	var req CreatePackRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if req.Name == "" {
-		return apperror.ErrBadRequest.WithMessage("name is required")
+		return apperror.NewBadRequest("name is required")
 	}
 	if req.Version == "" {
-		return apperror.ErrBadRequest.WithMessage("version is required")
+		return apperror.NewBadRequest("version is required")
 	}
 	if len(req.GetObjectTypeSchemas()) == 0 {
-		return apperror.ErrBadRequest.WithMessage("object_type_schemas is required")
+		return apperror.NewBadRequest("object_type_schemas is required")
 	}
 
 	pack, err := h.svc.CreatePack(c.Request().Context(), projectID, &req)
@@ -392,7 +392,7 @@ func (h *Handler) GetPack(c echo.Context) error {
 
 	packID := c.Param("packId")
 	if packID == "" {
-		return apperror.ErrBadRequest.WithMessage("packId is required")
+		return apperror.NewBadRequest("packId is required")
 	}
 
 	projectID := user.APITokenProjectID
@@ -428,7 +428,7 @@ func (h *Handler) UpdatePack(c echo.Context) error {
 
 	packID := c.Param("packId")
 	if packID == "" {
-		return apperror.ErrBadRequest.WithMessage("packId is required")
+		return apperror.NewBadRequest("packId is required")
 	}
 
 	projectID := user.APITokenProjectID
@@ -438,7 +438,7 @@ func (h *Handler) UpdatePack(c echo.Context) error {
 
 	var req UpdatePackRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	pack, err := h.svc.UpdatePack(c.Request().Context(), packID, projectID, &req)
@@ -468,7 +468,7 @@ func (h *Handler) DeletePack(c echo.Context) error {
 
 	packID := c.Param("packId")
 	if packID == "" {
-		return apperror.ErrBadRequest.WithMessage("packId is required")
+		return apperror.NewBadRequest("packId is required")
 	}
 
 	projectID := user.APITokenProjectID
@@ -500,7 +500,7 @@ func (h *Handler) GetSchemaHistory(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	history, err := h.svc.GetSchemaHistory(c.Request().Context(), projectID)
@@ -528,7 +528,7 @@ func (h *Handler) GetPackClaims(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	claims, err := h.svc.ListPackClaims(c.Request().Context(), projectID)
@@ -556,7 +556,7 @@ func (h *Handler) ValidateObjects(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	resp, err := h.svc.ValidateObjects(c.Request().Context(), projectID)
@@ -585,16 +585,16 @@ func (h *Handler) MigrateTypes(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req MigrateRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if len(req.TypeRenames) == 0 && len(req.PropertyRenames) == 0 {
-		return apperror.ErrBadRequest.WithMessage("at least one type_rename or property_rename is required")
+		return apperror.NewBadRequest("at least one type_rename or property_rename is required")
 	}
 
 	result, err := h.svc.MigrateTypes(c.Request().Context(), projectID, &req)
@@ -623,16 +623,16 @@ func (h *Handler) PreviewMigration(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req SchemaMigrationPreviewRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if req.FromSchemaID == "" || req.ToSchemaID == "" {
-		return apperror.ErrBadRequest.WithMessage("from_schema_id and to_schema_id are required")
+		return apperror.NewBadRequest("from_schema_id and to_schema_id are required")
 	}
 
 	result, err := h.svc.PreviewSchemaMigration(c.Request().Context(), projectID, &req)
@@ -661,16 +661,16 @@ func (h *Handler) ExecuteMigration(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req SchemaMigrationExecuteRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if req.FromSchemaID == "" || req.ToSchemaID == "" {
-		return apperror.ErrBadRequest.WithMessage("from_schema_id and to_schema_id are required")
+		return apperror.NewBadRequest("from_schema_id and to_schema_id are required")
 	}
 
 	result, err := h.svc.ExecuteSchemaMigration(c.Request().Context(), projectID, &req)
@@ -705,16 +705,16 @@ func (h *Handler) RollbackMigration(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req SchemaMigrationRollbackRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if req.ToVersion == "" {
-		return apperror.ErrBadRequest.WithMessage("to_version is required")
+		return apperror.NewBadRequest("to_version is required")
 	}
 
 	result, err := h.svc.RollbackSchemaMigration(c.Request().Context(), projectID, &req)
@@ -743,16 +743,16 @@ func (h *Handler) CommitMigrationArchive(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req CommitMigrationArchiveRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	if req.ThroughVersion == "" {
-		return apperror.ErrBadRequest.WithMessage("through_version is required")
+		return apperror.NewBadRequest("through_version is required")
 	}
 
 	result, err := h.svc.CommitMigrationArchive(c.Request().Context(), projectID, &req)
@@ -782,12 +782,12 @@ func (h *Handler) GetMigrationJobStatus(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	jobID := c.Param("jobId")
 	if jobID == "" {
-		return apperror.ErrBadRequest.WithMessage("jobId is required")
+		return apperror.NewBadRequest("jobId is required")
 	}
 
 	job, err := h.svc.GetMigrationJobStatus(c.Request().Context(), projectID, jobID)

@@ -424,7 +424,7 @@ func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs [
 			}
 			if err != nil {
 				r.log.Error("failed to read registry row for merge preview", logger.Error(err))
-				return nil, apperror.ErrDatabase.WithInternal(err)
+				return nil, apperror.NewDatabase("preview merge: read schema registry", err)
 			}
 
 			// Same pack re-applied (possibly a new version): not a collision.

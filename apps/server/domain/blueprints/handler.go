@@ -39,7 +39,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 
 	var req CreateBlueprintRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	// Private by default: when the caller has a project context and did not
@@ -206,7 +206,7 @@ func (h *Handler) GetBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	bp, err := h.svc.GetBlueprint(c.Request().Context(), user.ProjectID, id)
@@ -238,12 +238,12 @@ func (h *Handler) UpdateBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	var req UpdateBlueprintRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	bp, err := h.svc.UpdateBlueprint(c.Request().Context(), user.ProjectID, id, &req)
@@ -273,7 +273,7 @@ func (h *Handler) PublishBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	// Publishing a global blueprint is a platform-global catalogue write
@@ -315,7 +315,7 @@ func (h *Handler) DeprecateBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	// Deprecating a global blueprint is a platform-global catalogue write
@@ -360,12 +360,12 @@ func (h *Handler) NewVersion(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	var req NewVersionRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	// Forking a blueprint with no project context clones it as a NEW global
@@ -408,17 +408,17 @@ func (h *Handler) ApplyBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	projectID := user.ProjectID
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
 	var req ApplyOptions
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	result, err := h.svc.Apply(c.Request().Context(), id, projectID, user.ID, req)
@@ -448,12 +448,12 @@ func (h *Handler) PreviewApplyBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	projectID := user.ProjectID
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
 	preview, err := h.svc.PreviewApply(c.Request().Context(), id, projectID)
@@ -482,7 +482,7 @@ func (h *Handler) DeleteBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	if err := h.svc.DeleteBlueprint(c.Request().Context(), user.ProjectID, id); err != nil {
@@ -509,7 +509,7 @@ func (h *Handler) ListVersionsByName(c echo.Context) error {
 
 	name := c.Param("name")
 	if name == "" {
-		return apperror.ErrBadRequest.WithMessage("name is required")
+		return apperror.NewBadRequest("name is required")
 	}
 
 	blueprints, err := h.svc.ListVersions(c.Request().Context(), user.ProjectID, name)
@@ -536,7 +536,7 @@ func (h *Handler) ListAppliedBlueprints(c echo.Context) error {
 
 	projectID := user.ProjectID
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
 	out, err := h.svc.ListApplied(c.Request().Context(), projectID)
@@ -566,12 +566,12 @@ func (h *Handler) UnapplyBlueprint(c echo.Context) error {
 
 	id := c.Param("id")
 	if id == "" {
-		return apperror.ErrBadRequest.WithMessage("id is required")
+		return apperror.NewBadRequest("id is required")
 	}
 
 	projectID := user.ProjectID
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
 	result, err := h.svc.Unapply(c.Request().Context(), id, projectID)
