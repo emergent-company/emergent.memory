@@ -34,9 +34,14 @@ run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
 # (MEMBER alone is org membership, not write access). Fork contributors and bots
 # cannot mint one.
 #
-# A push changes the head and turns the guard red until a reviewer posts a new
-# marker for the new head and re-runs this workflow for that head. See the
-# control-repository runbook `docs/merge-guard.md`.
+# A push changes the head, so the automatic run has no marker that can name it.
+# That state is published as a **neutral** `merge-guard` check ("awaiting
+# review"), not a failure: red on every push put a red check on every in-flight
+# PR and taught lanes to ignore the guard. A trusted marker that rejects the head
+# still publishes a failure. The binding evaluation is the `workflow_dispatch`
+# run the merge wrapper dispatches, which stays red until a trusted marker names
+# the head and says `MERGE`. See the control-repository runbook
+# `docs/merge-guard.md`.
 #
 # Runs from the base branch (`pull_request_target`) so a PR cannot rewrite the
 # verification logic, and publishes an explicit check run on the PR head (the
@@ -74,6 +79,9 @@ jobs:
           PR: ${{ github.event.pull_request.number || inputs.pr }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           TRUSTED_IDS: ${{ vars.MERGE_GUARD_TRUSTED_USER_IDS }}
+          # `pull_request_target` is the automatic evaluation a push triggers;
+          # `workflow_dispatch` is the binding one the merge wrapper runs.
+          MODE: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
@@ -83,6 +91,16 @@ jobs:
           SUMMARY="${RUNNER_TEMP}/merge-guard-summary.md"
           : >"${SUMMARY}"
           echo "summary_path=${SUMMARY}" >>"${GITHUB_OUTPUT}"
+
+          # "No marker yet" and "the marker names an older head" are what a push
+          # looks like, not defects. On the automatic run they publish a neutral
+          # check; on the dispatched run they stay failures, because that run
+          # only happens when someone is trying to merge.
+          awaiting_review() {
+            [[ "${MODE}" == "pull_request_target" ]] || return 1
+            echo "awaiting=true" >>"${GITHUB_OUTPUT}"
+            return 0
+          }
 
           if [[ -z "${HEAD}" ]]; then
             HEAD=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.head.sha')
@@ -182,6 +200,10 @@ jobs:
               echo
               echo "then re-run this workflow for the current head."
             } >>"${SUMMARY}"
+            if awaiting_review; then
+              echo "merge-guard: no marker for ${HEAD} yet; awaiting review"
+              exit 0
+            fi
             echo "::error::No trusted Reviewed-SHA marker for PR #${PR}."
             exit 1
           fi
@@ -209,6 +231,10 @@ jobs:
               echo
               echo "and re-run this workflow for the current head."
             } >>"${SUMMARY}"
+            if awaiting_review; then
+              echo "merge-guard: marker ${marker_sha} predates head ${HEAD}; awaiting re-review"
+              exit 0
+            fi
             echo "::error::Marker ${marker_sha} does not match head ${HEAD}."
             exit 1
           fi
@@ -287,6 +313,7 @@ jobs:
           PR: ${{ github.event.pull_request.number || inputs.pr }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           OUTCOME: ${{ steps.verify.outcome }}
+          AWAITING: ${{ steps.verify.outputs.awaiting }}
           SUMMARY_PATH: ${{ steps.verify.outputs.summary_path }}
         run: |
           set -euo pipefail
@@ -308,7 +335,12 @@ jobs:
 
           conclusion=success
           title="merge-guard: pass"
-          if [[ "${OUTCOME}" != "success" ]]; then
+          if [[ "${AWAITING:-}" == "true" ]]; then
+            # Neutral, not skipped: the check has an opinion ("nothing to
+            # enforce yet"), and `skipped` reads as "never ran".
+            conclusion=neutral
+            title="merge-guard: awaiting review"
+          elif [[ "${OUTCOME}" != "success" ]]; then
             conclusion=failure
             title="merge-guard: ${OUTCOME}"
           fi
