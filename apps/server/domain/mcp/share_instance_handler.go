@@ -246,7 +246,7 @@ func (h *Handler) HandleInviteShareInstance(c echo.Context) error {
 // HandleListToolCatalog handles GET /api/projects/:projectId/mcp/tools.
 //
 // @Summary      List includable MCP tools
-// @Description  Returns the memory tools that can be granted to an MCP share instance (name, description, required scope, category), excluding agent-only tools. Admin only.
+// @Description  Returns the memory tools that can be granted to an MCP share instance (name, description, required scope, category), excluding agent-only tools, plus the named share templates resolved against that catalog. Admin only.
 // @Tags         mcp
 // @Produce      json
 // @Param        projectId path string true "Project ID (UUID)"

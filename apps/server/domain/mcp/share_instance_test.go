@@ -778,6 +778,114 @@ func TestRotateShareInstance(t *testing.T) {
 	assert.Equal(t, []string{"entity-search"}, store.byID["i1"].AllowedTools)
 }
 
+// TestRotateShareInstanceRefreshesDerivedScopes: scopes are a function of the
+// allowlist, so a share minted before a runtime-only scope existed must heal on
+// rotate rather than staying permanently 403 on that tool.
+func TestRotateShareInstanceRefreshesDerivedScopes(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"search-knowledge"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"chat:use", "projects:read", "search"}, tok.updateScopes,
+		"rotation must refresh exactly the scopes the allowlist derives")
+	assert.True(t, tok.regenerateCalled)
+}
+
+// TestRotateShareInstanceAbortsWhenScopeRefreshFails: the scope write happens
+// before the regeneration, so a failure leaves the old token untouched rather
+// than revoking it without a usable replacement.
+func TestRotateShareInstanceAbortsWhenScopeRefreshFails(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"search-knowledge"},
+	}
+	tok := &fakeTokenSvc{updateErr: errors.New("boom"), regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.Error(t, err)
+	assert.False(t, tok.regenerateCalled, "the old token must not be revoked when the refresh failed")
+	assert.Equal(t, "old", store.byID["i1"].TokenID)
+}
+
+// TestRotateShareInstanceHealsMixedStaleAllowlist: a tool renamed or removed
+// since the share was minted must not make the key impossible to rotate, and the
+// names that still resolve must still heal the scopes they can.
+func TestRotateShareInstanceHealsMixedStaleAllowlist(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"entity-search", "tool-renamed-away"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"graph:read", "projects:read"}, tok.updateScopes,
+		"the surviving tool must still heal the token")
+	assert.True(t, tok.regenerateCalled)
+}
+
+// TestRotateShareInstanceToleratesAllStaleAllowlist: with nothing left to
+// resolve, rotation keeps the existing scopes instead of narrowing the token to
+// the bare baseline.
+func TestRotateShareInstanceToleratesAllStaleAllowlist(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"tool-renamed-away"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "an all-stale allowlist keeps the existing scopes")
+	assert.True(t, tok.regenerateCalled)
+}
+
+// TestRotateShareInstanceToleratesPolicyRefusal: a share that predates the
+// shareability guard may name a tool whose scope a share must never carry.
+// Rotation keeps the old scopes and still issues a key; the allowlist guard
+// refuses the call itself.
+func TestRotateShareInstanceToleratesPolicyRefusal(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"project-create", "entity-search"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "a policy refusal keeps the existing scopes")
+	assert.True(t, tok.regenerateCalled)
+}
+
+// TestRotateShareInstanceLeavesUnrestrictedScopesAlone: a nil allowlist means
+// unrestricted, which is not the same thing as the legacy read-only scope set.
+// Rotate must not silently narrow such a share.
+func TestRotateShareInstanceLeavesUnrestrictedScopesAlone(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old"}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "an unrestricted share keeps its existing scopes")
+	assert.True(t, tok.regenerateCalled)
+}
+
 func TestListShareInstancesIncludesLegacy(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1"}
