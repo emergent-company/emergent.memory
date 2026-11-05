@@ -7386,9 +7386,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Object with its version's contributions",
                         "schema": {
-                            "$ref": "#/definitions/domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                         }
                     },
                     "400": {
@@ -7721,12 +7721,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Version history",
+                        "description": "Version history, each version with its own contributions",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_graph.GraphObject"
-                            }
+                            "$ref": "#/definitions/domain_graph.ObjectHistoryResponse"
                         }
                     },
                     "400": {
@@ -8411,10 +8408,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Paginated list with cursor",
+                        "description": "Paginated list with cursor; each item carries its version's contributions",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/domain_graph.SearchRelationshipsResponse"
                         }
                     },
                     "400": {
@@ -8529,9 +8525,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Relationship with its version's contributions",
                         "schema": {
-                            "$ref": "#/definitions/domain_graph.GraphRelationship"
+                            "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                         }
                     },
                     "400": {
@@ -8721,11 +8717,11 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Version history",
+                        "description": "Version history, each version with its own contributions",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/domain_graph.GraphRelationship"
+                                "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                             }
                         }
                     },
@@ -34015,6 +34011,13 @@ const docTemplate = `{
                 "content_hash": {
                     "type": "string"
                 },
+                "contributions": {
+                    "description": "Contributions are the sources backing this version, each with its own\nexternal id, revision and state. They are keyed to the version row the\nresponse describes (never to canonical_id + version, which is not unique\nacross branches) and are populated on the read paths — object detail and\nversion history — from one batched query per request. Absent on write\nresponses, which do not pay for the read-back.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ProvenanceContribution"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -34237,6 +34240,13 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "contributions": {
+                    "description": "Contributions are the sources backing this relationship version, keyed to\nthe version row (subject_kind = relationship). Populated on the read paths\n— relationship detail and list — from one batched query per request.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ProvenanceContribution"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -34447,6 +34457,17 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ObjectHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.GraphObjectResponse"
+                    }
+                }
+            }
+        },
         "domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
@@ -34597,6 +34618,23 @@ const docTemplate = `{
                 },
                 "relationships_enqueued": {
                     "description": "RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.",
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_graph.SearchRelationshipsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                },
+                "total": {
                     "type": "integer"
                 }
             }
