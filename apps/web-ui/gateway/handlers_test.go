@@ -599,6 +599,7 @@ type fakeMemory struct {
 	createInviteID    int                   // id counter for created invites
 	createInviteErr   error                 // failure for CreateInvite
 	acceptedTokens    []string              // tokens passed to AcceptInvite
+	acceptInviteErr   error                 // AcceptInvite failure (e.g. 403 for another account)
 	pendingInvites    []PendingInviteDto    // returned by ListPendingInvites
 	declinedInvite    string                // last invite id passed to DeclineInvite
 	declineInviteErr  error                 // failure for DeclineInvite
@@ -3901,7 +3902,7 @@ func (f *fakeMemory) CreateInvite(ctx context.Context, in CreateInviteDto) (*Inv
 
 func (f *fakeMemory) AcceptInvite(ctx context.Context, token string) error {
 	f.acceptedTokens = append(f.acceptedTokens, token)
-	return nil
+	return f.acceptInviteErr
 }
 
 func (f *fakeMemory) ListPendingInvites(ctx context.Context) ([]PendingInviteDto, error) {

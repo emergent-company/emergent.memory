@@ -28276,8 +28276,9 @@ paths:
       - health
   /invites/accept:
     get:
-      description: Accepts a pending invitation using a token passed as a query parameter.
-        Designed for email invite links. Redirects to login if not authenticated.
+      description: 'Accepts a pending invitation using a token passed as a query parameter.
+        Designed for email invite links: an unauthenticated browser is redirected
+        to the web UI accept page.'
       parameters:
       - description: Invitation token
         in: query
@@ -28294,13 +28295,21 @@ paths:
               type: string
             type: object
         "302":
-          description: Redirect to login
+          description: Redirect to the web UI accept page
         "400":
           description: Missing token
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Invitation is for another account
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Invitation not found or expired
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "503":
+          description: No web UI host configured
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       summary: Accept invitation via link

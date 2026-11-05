@@ -23,6 +23,7 @@ import (
 // form lives on its own page at /orgs/new).
 type orgsPageData struct {
 	Orgs     []OrgWithProjectsDto
+	Pending  []PendingInviteDto // invitations addressed to this account, accept-before-open
 	LoadErr  error
 	FlashMsg string
 	FlashErr error
@@ -185,12 +186,31 @@ func (s *Server) uiOrgs(c echo.Context) error {
 	if c.QueryParam("ok") != "" {
 		data.FlashMsg = "Organization created."
 	}
+	// The pending-invitation rows here accept/decline in place; both land back
+	// on this page, so both get a confirmation (accept also lands in the project
+	// when the invitation is project-scoped, which is where its flash shows).
+	switch {
+	case c.QueryParam("accepted") != "":
+		data.FlashMsg = "Invitation accepted."
+	case c.QueryParam("declined") != "":
+		data.FlashMsg = "Invitation declined."
+	}
 	data.FlashErr = flashError(c)
 	orgs, err := s.orgAccessTree(c)
 	if err != nil {
 		data.LoadErr = userFacingError(err)
 	} else {
 		data.Orgs = orgs
+	}
+	// Invitations addressed to this account, with an Accept action of their own.
+	// The org list is where an invitee lands after signing in, so it must make
+	// the invitation visible (and acceptable) before they pick a project — the
+	// missing step that left an invited user looking at an empty workspace.
+	// Best-effort: a fetch failure hides the section, not the page.
+	if invites, err := s.memory.ListPendingInvites(c.Request().Context()); err != nil {
+		captureError(err)
+	} else {
+		data.Pending = invites
 	}
 	return s.page(c, pageTitle("Organizations"), OrgsPage(data))
 }
@@ -579,31 +599,56 @@ func (s *Server) uiResendInvite(c echo.Context) error {
 }
 
 // uiAcceptInvite handles one accept form (POST /invites/:id/accept) on the
-// invitations page (/profile/invitations): it accepts a pending invite via its
-// token (the form carries the token, not the id — accepting is token-bound).
+// invitations page (/profile/invitations) and in the project switcher: it
+// accepts a pending invite via its token (the form carries the token, not the
+// id — accepting is token-bound) and then lands on return_to when that is a
+// safe local path (the switcher passes the target project), else on the
+// invitations page.
 func (s *Server) uiAcceptInvite(c echo.Context) error {
 	token := strings.TrimSpace(c.FormValue("token"))
+	back := safeLocalPath(c.FormValue("return_to"))
+	if back == "" {
+		back = "/profile/invitations"
+	}
 	if token == "" {
-		return redirectWithError(c, "/profile/invitations", fmt.Errorf("invite token is required"))
+		return redirectWithError(c, back, fmt.Errorf("invite token is required"))
 	}
 	if err := s.memory.AcceptInvite(c.Request().Context(), token); err != nil {
-		return redirectWithError(c, "/profile/invitations", err)
+		// Send the two refusal cases to the invitation landing page, which
+		// explains them instead of flashing a generic failure: 403 means the
+		// invitation belongs to a different email (the page offers an
+		// account switch), 404/410 means expired or already accepted.
+		switch {
+		case isMemoryStatus(err, http.StatusForbidden):
+			return c.Redirect(http.StatusSeeOther, invitationReturnTo(token)+"&denied=1")
+		case isMemoryStatus(err, http.StatusNotFound), isMemoryStatus(err, http.StatusGone):
+			return c.Redirect(http.StatusSeeOther, invitationReturnTo(token))
+		}
+		return redirectWithError(c, back, userFacingError(err))
 	}
-	return c.Redirect(http.StatusSeeOther, "/profile/invitations?accepted=1")
+	return c.Redirect(http.StatusSeeOther, acceptedFlashPath(back))
 }
 
 // uiDeclineInvite handles one decline form (POST /invites/:id/decline) on the
-// invitations page (/profile/invitations) for a pending invite addressed to
-// the signed-in user.
+// invitations page (/profile/invitations) or the invitation landing page for a
+// pending invite addressed to the signed-in user.
 func (s *Server) uiDeclineInvite(c echo.Context) error {
 	id := strings.TrimSpace(c.Param("id"))
+	back := safeLocalPath(c.FormValue("return_to"))
+	if back == "" {
+		back = "/profile/invitations"
+	}
 	if id == "" {
-		return redirectWithError(c, "/profile/invitations", fmt.Errorf("invite id is required"))
+		return redirectWithError(c, back, fmt.Errorf("invite id is required"))
 	}
 	if err := s.memory.DeclineInvite(c.Request().Context(), id); err != nil {
-		return redirectWithError(c, "/profile/invitations", err)
+		return redirectWithError(c, back, userFacingError(err))
 	}
-	return c.Redirect(http.StatusSeeOther, "/profile/invitations?declined=1")
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	return c.Redirect(http.StatusSeeOther, back+sep+"declined=1")
 }
 
 // uiUpdateProfile handles the profile edit form (POST /profile; form fields

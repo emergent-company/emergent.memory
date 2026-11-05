@@ -1,0 +1,114 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// InviteAcceptPage is the browser landing for an email invitation link
+// (/invites/accept?token=…). It is the page the invite email and the
+// invite.received notification point at — the API host has no session, so the
+// link must land here, where the signed-in identity exists.
+//
+// Three states:
+//   - the token is one of the caller's pending invites → the invitation card
+//     with Accept/Decline;
+//   - the token is not (expired, already accepted, or another account's) → the
+//     unavailable card with links to the caller's own invitations and to switch
+//     account;
+//   - the pending-invite fetch failed → the whole-page error state.
+templ InviteAcceptPage(data inviteAcceptPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Invitation", "You're invited", "Join a project or organization on emergent.memory.") {}
+		if data.LoadErr != nil {
+			@pageError("Invitation unavailable", data.LoadErr)
+		} else if data.Invite != nil {
+			@ui.Section("", ui.SectionProps{Margin: "mb-6", Titleless: true}) {
+				<div class="flex flex-col gap-4">
+					<div class="flex items-start gap-3">
+						@ui.IconTile("lucide--mail-plus", ui.IconTileProps{Tone: "secondary", Size: "size-10"})
+						<div class="min-w-0">
+							<p class="truncate text-base font-medium">{ inviteTargetLabel(data.Invite) }</p>
+							@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+								{ pendingInviteMeta(*data.Invite) }
+							}
+						</div>
+					</div>
+					<div class="flex flex-wrap items-center gap-2">
+						@roleBadge(data.Invite.Role)
+						if data.SignedInEmail != "" {
+							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+								Signed in as { data.SignedInEmail }
+							}
+						}
+					</div>
+					<div class="flex flex-wrap items-center gap-2">
+						<form method="post" action="/invites/accept">
+							<input type="hidden" name="token" value={ data.Invite.Token }/>
+							<input type="hidden" name="orgId" value={ data.Invite.OrganizationID }/>
+							<input type="hidden" name="projectId" value={ data.Invite.ProjectID }/>
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeSubmit,
+								Variant: ui.ButtonPrimary,
+								Size:    ui.ButtonMD,
+								Icon:    "lucide--check",
+							}) {
+								Accept invitation
+							}
+						</form>
+						<form method="post" action={ templ.URL("/invites/" + url.PathEscape(data.Invite.ID) + "/decline") }>
+							<input type="hidden" name="return_to" value="/orgs"/>
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeSubmit,
+								Variant: ui.ButtonGhost,
+								Style:   ui.ButtonStyleOutline,
+								Size:    ui.ButtonMD,
+							}) {
+								Decline
+							}
+						</form>
+					</div>
+				</div>
+			}
+		} else {
+			@ui.Section("", ui.SectionProps{Margin: "mb-6", Titleless: true}) {
+				<div class="flex flex-col gap-3">
+					<div class="flex items-start gap-3">
+						@ui.IconTile("lucide--mail-x", ui.IconTileProps{Tone: "warning", Size: "size-10"})
+						<div class="min-w-0">
+							<p class="text-base font-medium">{ inviteUnavailableTitle(data) }</p>
+							@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+								{ inviteUnavailableCopy(data) }
+							}
+						</div>
+					</div>
+					<div class="flex flex-wrap items-center gap-2">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/profile/invitations",
+							Variant: ui.ButtonPrimary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+						}) {
+							My invitations
+						}
+						if data.WrongAccount || data.SignedInEmail != "" {
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeLink,
+								Href:    "/auth/add?return_to=" + url.QueryEscape(invitationReturnTo(data.Token)),
+								Variant: ui.ButtonGhost,
+								Style:   ui.ButtonStyleOutline,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--user-round-plus",
+							}) {
+								Sign in with a different account
+							}
+						}
+					</div>
+				</div>
+			}
+		}
+	}
+}

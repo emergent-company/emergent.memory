@@ -98,6 +98,7 @@ func TestAppShellEmbedsObjectTypeMap(t *testing.T) {
 	html := renderHTML(t, appShell(
 		"Chat", []layout.SidebarGroup{}, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
+		nil,
 		nil, nil, templ.NopComponent, m,
 		"", "", 0, 0, 0, "",
 	))
@@ -115,6 +116,7 @@ func TestAppShellObjectTypeMapEmpty(t *testing.T) {
 	html := renderHTML(t, appShell(
 		"Chat", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
+		nil,
 		nil, nil, templ.NopComponent, nil,
 		"", "", 0, 0, 0, "",
 	))

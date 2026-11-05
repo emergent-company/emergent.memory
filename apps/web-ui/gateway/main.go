@@ -658,6 +658,12 @@ func main() {
 	e.POST("/members/:userId/role", s.uiChangeMemberRole)
 	e.POST("/invites/:id/revoke", s.uiRevokeInvite)
 	e.POST("/invites/:id/resend", s.uiResendInvite)
+	// Email invite links land here on the web UI host (WEB_UI_URL): the API
+	// host has no session, so the link is handed to the page that does. The
+	// token is resolved against the caller's OWN pending invites, which is what
+	// makes the accept form safe and the wrong-account case visible.
+	e.GET("/invites/accept", s.uiInviteAccept)
+	e.POST("/invites/accept", s.uiInviteAcceptSubmit)
 	e.POST("/invites/:id/accept", s.uiAcceptInvite)
 	e.POST("/invites/:id/decline", s.uiDeclineInvite)
 	e.GET("/profile", s.uiProfile)

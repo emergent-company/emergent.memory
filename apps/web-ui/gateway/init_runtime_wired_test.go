@@ -31,6 +31,7 @@ func TestGoDaisyInitRuntimeWired(t *testing.T) {
 	shell := renderHTML(t, appShell(
 		"Inbox", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
+		nil,
 		&currentUser{Name: "Ada", Sub: "sub-a"}, nil, content, nil,
 		"", "", 0, 0, 0, "",
 	))

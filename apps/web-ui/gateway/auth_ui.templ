@@ -191,7 +191,7 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 // the navbar, so on a 390px viewport the menu starts at x = -52px and every
 // label is clipped. projectSwitcherLabel, projectPickerItems and
 // projectPickerActions are shared by both presentations, so they cannot drift.
-templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool) {
+templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, pendingInvites []PendingInviteDto) {
 	<div class="hidden min-w-0 md:block">
 		@ui.Dropdown(ui.DropdownEnd, nil) {
 			@ui.Button(ui.ButtonProps{
@@ -206,10 +206,10 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 					"data-testid":   "project-switcher",
 				},
 			}) {
-				@projectSwitcherLabel(current, currentOrgName, activeOrg)
+				@projectSwitcherLabel(current, currentOrgName, activeOrg, len(pendingInvites))
 			}
 			@ui.DropdownMenu(templ.Attributes{"aria-label": "Projects", "class": "min-w-80 border-base-content/10 z-50 max-h-96 flex-nowrap overflow-x-hidden overflow-y-auto"}) {
-				@projectPickerItems(current, projectGroups, recentProjects, showRecent)
+				@projectPickerItems(current, projectGroups, recentProjects, showRecent, pendingInvites)
 				<li class="menu-title sticky bottom-0 mt-1.5 border-t border-base-content/10 bg-base-100 px-1 py-1.5">
 					@projectPickerActions()
 				</li>
@@ -231,10 +231,10 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 				"onclick":       "openProjectPicker()",
 			},
 		}) {
-			@projectSwitcherLabel(current, currentOrgName, activeOrg)
+			@projectSwitcherLabel(current, currentOrgName, activeOrg, len(pendingInvites))
 		}
 	</div>
-	@projectPickerDialog(current, currentOrgName, activeOrg, projectGroups, recentProjects, showRecent)
+	@projectPickerDialog(current, currentOrgName, activeOrg, projectGroups, recentProjects, showRecent, pendingInvites)
 	@newProjectModal(orgs, activeOrg)
 	<script>
 	function openNewProjectModal() {
@@ -337,7 +337,7 @@ templ projectSwitchRow(p ProjectRef, active bool) {
 // are known, the active org with a "Select project" hint when no project is
 // selected, and a bare placeholder otherwise. Shared so the two breakpoints
 // cannot drift.
-templ projectSwitcherLabel(current *ProjectRef, currentOrgName string, activeOrg *Org) {
+templ projectSwitcherLabel(current *ProjectRef, currentOrgName string, activeOrg *Org, pendingCount int) {
 	if current != nil {
 		if currentOrgName != "" {
 			<div class="flex min-w-0 flex-col text-left leading-tight">
@@ -355,6 +355,19 @@ templ projectSwitcherLabel(current *ProjectRef, currentOrgName string, activeOrg
 	} else {
 		<span class="text-sm text-muted-strong">Select project</span>
 	}
+	if pendingCount > 0 {
+		@ui.Badge(ui.BadgeProps{
+			Label:       inviteCountLabel(pendingCount),
+			Variant:     ui.BadgePrimary,
+			Size:        ui.BadgeSizeXS,
+			DirectLabel: true,
+			Attrs: templ.Attributes{
+				"data-testid": "pending-invites-badge",
+				"title":       pendingInviteBadgeTitle(pendingCount),
+				"aria-label":  pendingInviteBadgeTitle(pendingCount),
+			},
+		})
+	}
 	@ui.IconSpan("lucide--chevron-down", "size-3.5 text-muted-faint")
 }
 
@@ -365,7 +378,13 @@ templ projectSwitcherLabel(current *ProjectRef, currentOrgName string, activeOrg
 // projects keeps its header and gets an italic "No projects" line instead of
 // rows, so the org stays visible (and switchable) rather than reading like a
 // broken header. It emits <li> rows only, so each caller supplies its own <ul>.
-templ projectPickerItems(current *ProjectRef, projectGroups []projectGroup, recentProjects []ProjectRef, showRecent bool) {
+templ projectPickerItems(current *ProjectRef, projectGroups []projectGroup, recentProjects []ProjectRef, showRecent bool, pendingInvites []PendingInviteDto) {
+	if len(pendingInvites) > 0 {
+		@pickerSectionHeader(pendingInviteSectionLabel(len(pendingInvites)))
+		for _, inv := range pendingInvites {
+			@pendingInvitePickerRow(inv)
+		}
+	}
 	if showRecent && len(recentProjects) > 0 {
 		@pickerSectionHeader("Recent")
 		for _, p := range recentProjects {
@@ -394,6 +413,37 @@ templ projectPickerItems(current *ProjectRef, projectGroups []projectGroup, rece
 			}
 		}
 	}
+}
+
+// pendingInvitePickerRow is one invitation addressed to the signed-in account,
+// shown at the top of the project switcher and the mobile picker. Accept is a
+// one-click token-bound form that lands on the invitation's target project (or
+// the org list for an org-only invite); the full page — with Decline, the
+// "signed in as" line and the wrong-account explanation — lives at
+// /invites/accept and /profile/invitations.
+templ pendingInvitePickerRow(inv PendingInviteDto) {
+	<li class="px-2.5 py-1.5">
+		<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/accept") } class="flex w-full items-center gap-2">
+			<input type="hidden" name="token" value={ inv.Token }/>
+			<input type="hidden" name="return_to" value={ inviteAcceptPath(inv.OrganizationID, inv.ProjectID) }/>
+			<div class="min-w-0 flex-1">
+				<p class="truncate text-sm">{ inviteTargetLabel(&inv) }</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSize2XS, Class: "truncate"}) {
+					{ pendingInvitePickerMeta(inv) }
+				}
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeSubmit,
+				Variant:    ui.ButtonSuccess,
+				Style:      ui.ButtonStyleOutline,
+				Size:       ui.ButtonXS,
+				Icon:       "lucide--check",
+				ExtraClass: "shrink-0",
+			}) {
+				Accept
+			}
+		</form>
+	</li>
 }
 
 // projectPickerActions is the "New project" / "New org" footer pair shared by
@@ -432,7 +482,7 @@ templ projectPickerActions() {
 // means something.
 // The list keeps role="menu" to match the desktop dropdown's semantics for the
 // same rows.
-templ projectPickerDialog(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, recentProjects []ProjectRef, showRecent bool) {
+templ projectPickerDialog(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, recentProjects []ProjectRef, showRecent bool, pendingInvites []PendingInviteDto) {
 	{{
 		context := currentOrgName
 		if context == "" && activeOrg != nil {
@@ -480,7 +530,7 @@ templ projectPickerDialog(current *ProjectRef, currentOrgName string, activeOrg 
 		</header>
 		<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 			<ul role="menu" aria-label="Projects" class="menu menu-sm w-full p-1">
-				@projectPickerItems(current, projectGroups, recentProjects, showRecent)
+				@projectPickerItems(current, projectGroups, recentProjects, showRecent, pendingInvites)
 			</ul>
 		</div>
 		<footer class="shrink-0 border-t border-base-content/10 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">

@@ -226,7 +226,7 @@ func TestOrgNameFor(t *testing.T) {
 // affordance, create-modal org options).
 func TestRenderProjectSwitcherGroups(t *testing.T) {
 	current, currentOrgName, groups, orgs := switcherTestData()
-	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false, nil))
 
 	// trigger shows org on the first line, project on the second, never the placeholder
 	trigger := switcherTrigger(html)
@@ -303,7 +303,7 @@ func TestRenderProjectSwitcherGroups(t *testing.T) {
 // trigger, muted empty line, the New-project affordance still present, and the
 // create form hinting at the missing-org case instead of an org dropdown.
 func TestRenderProjectSwitcherEmpty(t *testing.T) {
-	html := renderHTML(t, projectSwitcher(nil, "", nil, nil, nil, nil, false))
+	html := renderHTML(t, projectSwitcher(nil, "", nil, nil, nil, nil, false, nil))
 
 	for _, want := range []string{
 		"Select project",
@@ -334,7 +334,7 @@ func TestRenderProjectSwitcherNoCurrent(t *testing.T) {
 	projects := []ProjectRef{{ID: "p1", Name: "Main", OrgID: "o1"}}
 	orgs := []Org{{ID: "o1", Name: "Acme"}}
 	groups := groupProjectsByOrg(projects, orgs)
-	html := renderHTML(t, projectSwitcher(nil, "", nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(nil, "", nil, groups, orgs, nil, false, nil))
 	if !strings.Contains(switcherTrigger(html), "Select project") {
 		t.Error("placeholder trigger should render when no project is active")
 	}
@@ -358,7 +358,7 @@ func TestRenderProjectSwitcherTriggerOrgKnown(t *testing.T) {
 	}
 	orgs := []Org{{ID: "o1", Name: "Acme"}, {ID: "o2", Name: "Globex"}}
 	groups := groupProjectsByOrg(projects, orgs)
-	html := renderHTML(t, projectSwitcher(&projects[1], orgNameFor(orgs, "o2"), nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(&projects[1], orgNameFor(orgs, "o2"), nil, groups, orgs, nil, false, nil))
 	trigger := switcherTrigger(html)
 	if !strings.Contains(trigger, "Globex") || !strings.Contains(trigger, "Home") {
 		t.Errorf("trigger should show org %q and project %q, got %q", "Globex", "Home", trigger)
@@ -374,7 +374,7 @@ func TestRenderProjectSwitcherTriggerOrgUnknown(t *testing.T) {
 	projects := []ProjectRef{{ID: "p1", Name: "Lone", OrgID: "o9"}}
 	orgs := []Org{{ID: "o1", Name: "Acme"}}
 	groups := groupProjectsByOrg(projects, orgs)
-	html := renderHTML(t, projectSwitcher(&projects[0], orgNameFor(orgs, "o9"), nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(&projects[0], orgNameFor(orgs, "o9"), nil, groups, orgs, nil, false, nil))
 	trigger := switcherTrigger(html)
 	if !strings.Contains(trigger, ">Lone<") {
 		t.Errorf("trigger should show the bare project name, got %q", trigger)
@@ -395,7 +395,7 @@ func TestRenderProjectSwitcherTriggerOrgUnknown(t *testing.T) {
 // they cannot drift).
 func TestRenderProjectSwitcherMobilePicker(t *testing.T) {
 	current, currentOrgName, groups, orgs := switcherTestData()
-	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false, nil))
 
 	// desktop keeps the dropdown, but only from md up
 	if !strings.Contains(html, "md:block") {
@@ -454,7 +454,7 @@ func TestRenderProjectSwitcherEmptyOrgRow(t *testing.T) {
 	orgs := []Org{{ID: "o1", Name: "Acme"}, {ID: "o2", Name: "Empty Org"}}
 	projects := []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}
 	groups := groupProjectsByOrg(projects, orgs)
-	html := renderHTML(t, projectSwitcher(&projects[0], "Acme", nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(&projects[0], "Acme", nil, groups, orgs, nil, false, nil))
 
 	dialog := pickerDialogHTML(html)
 	if dialog == "" {
@@ -484,7 +484,7 @@ func TestRenderProjectSwitcherEmptyOrgRow(t *testing.T) {
 // — never inside the <ul role="menu">.
 func TestRenderProjectSwitcherScriptNotInMenu(t *testing.T) {
 	current, currentOrgName, groups, orgs := switcherTestData()
-	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false))
+	html := renderHTML(t, projectSwitcher(current, currentOrgName, nil, groups, orgs, nil, false, nil))
 
 	// no <script> anywhere inside the dropdown menu markup
 	menu := switcherMenu(html)
