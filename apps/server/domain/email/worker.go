@@ -374,7 +374,7 @@ func (w *Worker) generateFallbackHTML(job *EmailJob, ctx TemplateContext) string
   <title>` + job.Subject + `</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #374151; margin: 0; padding: 20px; background-color: #f3f4f6;">
-  <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; padding: 32px;">
+  <div style="max-width: 720px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; padding: 32px;">
     <p style="font-size: 16px; margin-bottom: 16px;">` + greeting + `,</p>
     <p style="margin-bottom: 16px;">` + message + `</p>`
 
