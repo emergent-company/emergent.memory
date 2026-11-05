@@ -4642,6 +4642,10 @@ func TestObjectSubpages(t *testing.T) {
 			`data-testid="object-relationships-count"`,
 			`data-testid="object-similar-count-slot"`,
 			`hx-get="/objects/o1/similar/count"`,
+			// The slot must target itself: the page shell's <main> carries
+			// hx-target="#main-content", inherited by htmx (implicitInheritance),
+			// so without this the count swap would replace the whole content area.
+			`hx-target="this"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("overview rail missing %q:\n%s", want, body)
