@@ -370,7 +370,7 @@ func (s *Service) applyChangesetObject(
 				"object is owned by another source; a source may only revise the records it owns")
 		}
 
-		version := buildChangesetObjectVersion(head, item, sourceID, schemas, s)
+		version := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, s)
 		if err := s.repo.CreateVersion(ctx, tx, head, version); err != nil {
 			return result, nil, err
 		}
@@ -470,6 +470,14 @@ func (s *Service) applyChangesetRelationship(
 		version.ID = uuid.Nil
 		version.SupersedesID = nil
 		version.ContentHash = nil
+		// Same rule as the object path: the caller writing this version owns
+		// its stamp and actor, not the superseded row.
+		version.CredentialKind = ""
+		version.CredentialID = nil
+		version.RunID = nil
+		version.RootRunID = nil
+		version.ActorType = &actorType
+		version.ActorID = actorID
 		if item.Type != "" {
 			version.Type = item.Type
 		}
@@ -625,11 +633,24 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 // push is authoritative for the content it owns, but never rewrites the
 // `_sources` array: that array belongs to the document-extraction path and this
 // capability leaves it alone.
-func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, s *Service) *GraphObject {
+func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, s *Service) *GraphObject {
 	version := *head
 	version.ID = uuid.Nil
 	version.SupersedesID = nil
 	version.ContentHash = nil
+
+	// The new version is written by *this* caller, never by whoever wrote the
+	// version it supersedes. Clearing the inherited write stamp and actor lets
+	// the insert resolve both from this request's context, exactly as a create
+	// does — otherwise version 2 of a record pushed by a second key would still
+	// name the first key and its run (#2376).
+	version.CredentialKind = ""
+	version.CredentialID = nil
+	version.RunID = nil
+	version.RootRunID = nil
+	version.InputHash = nil
+	version.ActorType = &actorType
+	version.ActorID = actorID
 
 	if item.Type != "" {
 		version.Type = item.Type

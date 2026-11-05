@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // changeset_db_test.go covers the source write path: a changeset of upserts and
@@ -52,6 +53,7 @@ type contributionRow struct {
 	ExternalRevisionSeq int64      `bun:"external_revision_seq"`
 	BranchID            *uuid.UUID `bun:"branch_id"`
 	WithdrawnAt         *string    `bun:"withdrawn_at"`
+	MergedFrom          *uuid.UUID `bun:"merged_from_version_id"`
 }
 
 func contributionsFor(t *testing.T, ctx context.Context, db bun.IDB, sourceID uuid.UUID, externalID string) []contributionRow {
@@ -554,7 +556,7 @@ func TestForkAndMergeCarryContributions(t *testing.T) {
 
 	var onMerged []contributionRow
 	require.NoError(t, db.NewRaw(`
-		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id::text AS withdrawn_at
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
 		FROM kb.provenance_contributions
 		WHERE subject_version_id = ? AND state = 'present'`,
 		mergedVersion).Scan(ctx, &onMerged))
@@ -562,7 +564,7 @@ func TestForkAndMergeCarryContributions(t *testing.T) {
 	bySource := map[uuid.UUID]int64{}
 	for _, c := range onMerged {
 		bySource[c.SourceID] = c.ExternalRevisionSeq
-		require.NotNil(t, c.WithdrawnAt, "a merged contribution records the version it arrived on")
+		require.NotNil(t, c.MergedFrom, "a merged contribution records the version it arrived on")
 	}
 	assert.Equal(t, map[uuid.UUID]int64{sourceA: 2, sourceB: 1}, bySource)
 
@@ -656,13 +658,14 @@ func TestConflictResolvedMergeUnionsContributions(t *testing.T) {
 
 	var onMerged []contributionRow
 	require.NoError(t, db.NewRaw(`
-		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
 		FROM kb.provenance_contributions
 		WHERE subject_version_id = ? AND state = 'present'`, mergedVersion).Scan(ctx, &onMerged))
 	require.Len(t, onMerged, 2, "the resolved version must report both sources")
 	bySource := map[uuid.UUID]bool{}
 	for _, c := range onMerged {
 		bySource[c.SourceID] = true
+		require.NotNil(t, c.MergedFrom, "a merged contribution records the version it arrived on")
 	}
 	assert.True(t, bySource[sourceA] && bySource[sourceB], "both sources must survive the conflict resolution")
 }
@@ -752,7 +755,7 @@ func TestSimilarityAbsorbedMergeUnionsContributions(t *testing.T) {
 
 	var onMerged []contributionRow
 	require.NoError(t, db.NewRaw(`
-		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id
+		SELECT source_id, subject_version_id, state, external_revision_seq, branch_id, merged_from_version_id
 		FROM kb.provenance_contributions
 		WHERE subject_version_id = ? AND state = 'present'`, mergedVersion).Scan(ctx, &onMerged))
 	// One row per source, as the version row allows.
@@ -760,6 +763,7 @@ func TestSimilarityAbsorbedMergeUnionsContributions(t *testing.T) {
 	bySource := map[uuid.UUID]bool{}
 	for _, c := range onMerged {
 		bySource[c.SourceID] = true
+		require.NotNil(t, c.MergedFrom, "a merged contribution records the version it arrived on")
 	}
 	assert.True(t, bySource[sourceA] && bySource[sourceB], "both sources must survive the absorb")
 }
@@ -825,4 +829,266 @@ func TestMergeOfDifferentSourceOwnersIsRefused(t *testing.T) {
 	var head uuid.UUID
 	require.NoError(t, db.NewRaw(`SELECT id FROM kb.graph_objects WHERE id = ?`, targetVersion).Scan(ctx, &head))
 	assert.Equal(t, targetVersion, head, "the target must be unchanged")
+}
+
+// TestRePushRecordsTheSecondWritersStamp is the regression for a version that
+// inherited the superseded row's write stamp: version 2 of a record pushed with
+// a second key must name that key and its run, not the first writer's.
+func TestRePushRecordsTheSecondWritersStamp(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "stamp")
+
+	keyA, keyB := uuid.New(), uuid.New()
+	runA, runB := uuid.New(), uuid.New()
+	agentA, agentB := uuid.New(), uuid.New()
+
+	ctxA := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &keyA)
+	ctxA = auth.ContextWithRunIDs(ctxA, &runA, &runA)
+	ctxA = auth.WithActor(ctxA, graph.ActorAgent, &agentA)
+
+	first, err := svc.ApplyChangeset(ctxA, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "First"},
+			ExternalID:          "stamp-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	firstVersion := *first.Results[0].SubjectID
+
+	ctxB := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &keyB)
+	ctxB = auth.ContextWithRunIDs(ctxB, &runB, &runB)
+	ctxB = auth.WithActor(ctxB, graph.ActorAgent, &agentB)
+
+	second, err := svc.ApplyChangeset(ctxB, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Second"},
+			ExternalID:          "stamp-1",
+			ExternalRevisionSeq: seq(2),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	secondVersion := *second.Results[0].SubjectID
+
+	type stamp struct {
+		CredentialKind string     `bun:"credential_kind"`
+		CredentialID   *uuid.UUID `bun:"credential_id"`
+		RunID          *uuid.UUID `bun:"run_id"`
+		RootRunID      *uuid.UUID `bun:"root_run_id"`
+		ActorType      *string    `bun:"actor_type"`
+		ActorID        *uuid.UUID `bun:"actor_id"`
+	}
+	readStamp := func(id uuid.UUID) stamp {
+		var s stamp
+		require.NoError(t, db.NewRaw(`
+			SELECT credential_kind, credential_id, run_id, root_run_id, actor_type, actor_id
+			FROM kb.graph_objects WHERE id = ?`, id).Scan(ctx, &s.CredentialKind, &s.CredentialID, &s.RunID, &s.RootRunID, &s.ActorType, &s.ActorID))
+		return s
+	}
+
+	v1 := readStamp(firstVersion)
+	require.NotNil(t, v1.CredentialID)
+	assert.Equal(t, keyA, *v1.CredentialID)
+	require.NotNil(t, v1.RunID)
+	assert.Equal(t, runA, *v1.RunID)
+
+	v2 := readStamp(secondVersion)
+	assert.Equal(t, auth.CredentialAPIKey, v2.CredentialKind)
+	require.NotNil(t, v2.CredentialID)
+	assert.Equal(t, keyB, *v2.CredentialID, "version 2 must name the key that pushed it")
+	require.NotNil(t, v2.RunID)
+	assert.Equal(t, runB, *v2.RunID, "version 2 must name the run it was pushed in")
+	require.NotNil(t, v2.RootRunID)
+	assert.Equal(t, runB, *v2.RootRunID)
+	require.NotNil(t, v2.ActorID)
+	assert.Equal(t, agentB, *v2.ActorID)
+}
+
+// TestPushAfterMergeAddressesTheBranchCopy: a merge must not take the branch's
+// contribution away from it, or the next push on that branch would fail to find
+// its anchor and create a duplicate object.
+func TestPushAfterMergeAddressesTheBranchCopy(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "post-merge")
+
+	created, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "One"},
+			ExternalID:          "post-merge-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	canonicalID := *created.Results[0].CanonicalID
+
+	forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "post-merge"})
+	require.NoError(t, err)
+	branchID := uuid.MustParse(forkResp.BranchID)
+
+	onBranch, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		BranchID: &branchID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Two"},
+			ExternalID:          "post-merge-1",
+			ExternalRevisionSeq: seq(2),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, graph.ChangesetOutcomeUpdated, onBranch.Results[0].Outcome)
+
+	_, err = svc.MergeBranch(ctx, projectID, nil, &graph.BranchMergeRequest{
+		SourceBranchID: branchID,
+		Execute:        true,
+		Policy:         "enrich_no_sim",
+	})
+	require.NoError(t, err)
+
+	// The branch still owns its record: a further push addresses the copy.
+	after, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		BranchID: &branchID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Three"},
+			ExternalID:          "post-merge-1",
+			ExternalRevisionSeq: seq(3),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, graph.ChangesetOutcomeUpdated, after.Results[0].Outcome, "the branch push must version its copy, not create a second object")
+
+	var branchObjects int
+	require.NoError(t, db.NewRaw(`
+		SELECT count(*) FROM kb.graph_objects
+		WHERE project_id = ? AND canonical_id = ? AND branch_id = ? AND supersedes_id IS NULL`,
+		projectID, canonicalID, branchID).Scan(ctx, &branchObjects))
+	assert.Equal(t, 1, branchObjects, "one branch object, not a duplicate")
+	assert.Equal(t, 3, *after.Results[0].Version)
+}
+
+// TestCrossBranchRelationshipEndpointIsRejected: a relationship item that
+// resolves an existing endpoint on another branch fails the changeset.
+func TestCrossBranchRelationshipEndpointIsRejected(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "cross-branch")
+
+	mainObj, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type: "Person", ExternalID: "main-endpoint", ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	mainID := *mainObj.Results[0].SubjectID
+
+	forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "cross-branch"})
+	require.NoError(t, err)
+	branchID := uuid.MustParse(forkResp.BranchID)
+
+	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		BranchID: &branchID,
+		Objects: []graph.ChangesetObjectItem{{
+			Ref: "local", Type: "Person", ExternalID: "branch-endpoint", ExternalRevisionSeq: seq(1),
+		}},
+		Relationships: []graph.ChangesetRelationshipItem{{
+			Type: "KNOWS", SrcRef: "local", DstID: &mainID, ExternalID: "cross-rel", ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "changeset's branch")
+
+	var leaked int
+	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.provenance_contributions WHERE project_id = ? AND external_id IN ('branch-endpoint', 'cross-rel')`, projectID).Scan(ctx, &leaked))
+	assert.Equal(t, 0, leaked, "the rejected changeset must write nothing")
+}
+
+// TestApplyLeavesSourcesArrayIntact: the apply path never rewrites `_sources`,
+// so a document-extracted object keeps the array it arrived with.
+func TestApplyLeavesSourcesArrayIntact(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "sources-array")
+
+	created, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Alice"},
+			ExternalID:          "src-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	objectID := *created.Results[0].SubjectID
+
+	sources := `[{"document_id":"11111111-1111-1111-1111-111111111111","title":"original.txt"}]`
+	_, err = db.NewRaw(`UPDATE kb.graph_objects SET properties = properties || jsonb_build_object('_sources', ?::jsonb) WHERE id = ?`, sources, objectID).Exec(ctx)
+	require.NoError(t, err)
+
+	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			Properties:          map[string]any{"name": "Alicia"},
+			ExternalID:          "src-1",
+			ExternalRevisionSeq: seq(2),
+		}},
+	}, nil)
+	require.NoError(t, err)
+
+	var kept string
+	require.NoError(t, db.NewRaw(`
+		SELECT properties->'_sources'::text FROM kb.graph_objects
+		WHERE project_id = ? AND canonical_id = (
+			SELECT canonical_id FROM kb.graph_objects WHERE id = ?
+		) AND supersedes_id IS NULL`, projectID, objectID).Scan(ctx, &kept))
+	assert.JSONEq(t, sources, kept, "the apply path must leave _sources exactly as it found it")
+
+	var contributionsFromSources int
+	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.provenance_contributions WHERE project_id = ?`, projectID).Scan(ctx, &contributionsFromSources))
+	assert.Equal(t, 2, contributionsFromSources, "one contribution per version, none derived from _sources")
+}
+
+// TestWithdrawalIsIdempotent: withdrawing twice reports the second attempt as
+// not found and leaves the recorded withdrawal time alone.
+func TestWithdrawalIsIdempotent(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "double-withdraw")
+
+	_, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type: "Person", ExternalID: "double-1", ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+
+	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID:    sourceID,
+		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "double-1"}},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, graph.ChangesetOutcomeWithdrawn, first.Results[0].Outcome)
+
+	var withdrawnAt string
+	require.NoError(t, db.NewRaw(`SELECT withdrawn_at::text FROM kb.provenance_contributions WHERE project_id = ? AND external_id = 'double-1'`, projectID).Scan(ctx, &withdrawnAt))
+
+	second, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID:    sourceID,
+		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "double-1"}},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, graph.ChangesetOutcomeNotFound, second.Results[0].Outcome)
+
+	var withdrawnAtAfter string
+	require.NoError(t, db.NewRaw(`SELECT withdrawn_at::text FROM kb.provenance_contributions WHERE project_id = ? AND external_id = 'double-1'`, projectID).Scan(ctx, &withdrawnAtAfter))
+	assert.Equal(t, withdrawnAt, withdrawnAtAfter, "a repeat withdrawal must not move the recorded time")
 }

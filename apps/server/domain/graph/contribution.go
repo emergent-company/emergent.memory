@@ -282,12 +282,17 @@ func (r *Repository) copyContributions(
 		}
 	}
 
+	// Only rows on the destination branch are superseded. The source branch
+	// keeps its own contributions: a merge must not take a branch's record away
+	// from it, or the next push on that branch would find no anchor and create
+	// a duplicate object instead of versioning the copy it already has.
 	if _, err := db.NewUpdate().
 		Model((*ProvenanceContribution)(nil)).
 		Set("state = ?", ContributionStateSuperseded).
 		Set("last_seen_at = ?", time.Now()).
 		Where("id IN (?)", bun.In(ids)).
 		Where("state = ?", ContributionStatePresent).
+		Where("branch_id IS NOT DISTINCT FROM ?", toBranchID).
 		Exec(ctx); err != nil {
 		return 0, apperror.ErrDatabase.WithInternal(err)
 	}
