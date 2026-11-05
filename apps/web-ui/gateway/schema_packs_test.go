@@ -107,10 +107,44 @@ func TestUISchemaPacksRoute(t *testing.T) {
 		"Schema packs", "personal-memory", "v1.0.0", "a pack",
 		"Project", "1 object type", "1 relationship type",
 		`href="/schema/packs/pack-1"`, "Add schema", "1 pack",
+		`data-testid="schema-pack-card"`, `data-schema-pack-group="none"`, "No blueprint",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("packs list missing %q", want)
 		}
+	}
+}
+
+// TestGroupSchemaPacks pins the packs list's grouping rules: packs whose
+// blueprint declares them group under that blueprint (blueprint groups first,
+// ordered case-insensitively by label), and packs no blueprint declares land in
+// one trailing "No blueprint" group.
+func TestGroupSchemaPacks(t *testing.T) {
+	groups := groupSchemaPacks([]schemaPackSummary{
+		{ID: "cars", Name: "cars", Version: "1.0.0"},
+		{ID: "memory", Name: "personal-memory", Version: "3.0.0", Provenance: &ProvenanceInfo{BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "3.0.0"}},
+		{ID: "notes", Name: "agent-notes", Version: "2.0.0", Provenance: &ProvenanceInfo{BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"}},
+		{ID: "overrides", Name: "project-schema-overrides", Version: "1.0.0"},
+	})
+	var keys []string
+	for _, g := range groups {
+		keys = append(keys, g.Key)
+	}
+	if want := []string{"blueprint:bp2", "blueprint:bp1", "none"}; strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("group order = %v, want %v", keys, want)
+	}
+	if groups[0].BlueprintID() != "bp2" || groups[2].BlueprintID() != "" {
+		t.Errorf("blueprint ids = %q / %q, want bp2 / empty", groups[0].BlueprintID(), groups[2].BlueprintID())
+	}
+	if groups[2].Label != "No blueprint" {
+		t.Errorf("unowned group label = %q, want %q", groups[2].Label, "No blueprint")
+	}
+	var unowned []string
+	for _, p := range groups[2].Packs {
+		unowned = append(unowned, p.ID)
+	}
+	if strings.Join(unowned, ",") != "cars,overrides" {
+		t.Errorf("unowned group packs = %v, want cars,overrides", unowned)
 	}
 }
 

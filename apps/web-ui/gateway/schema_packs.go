@@ -162,8 +162,61 @@ func buildSchemaPackSummaries(compiled *CompiledSchemaTypes, metas []SchemaInfo,
 	return out
 }
 
-// --- handlers ---
+// schemaPackGroup is the Schema packs list's grouping unit: every active pack
+// that the same applied blueprint declares. Blueprint is nil for packs no
+// blueprint declares (global/built-in and project-authored packs).
+type schemaPackGroup struct {
+	// Key is the group's stable identity ("blueprint:<id>" or "none"), exposed
+	// as a data attribute for tests.
+	Key string
+	// Label is the blueprint's display name + version, or "No blueprint".
+	Label     string
+	Blueprint *ProvenanceInfo
+	Packs     []schemaPackSummary
+}
 
+// BlueprintID returns the owning blueprint's id, or "" when the group holds
+// packs no blueprint declares.
+func (g schemaPackGroup) BlueprintID() string {
+	if g.Blueprint == nil {
+		return ""
+	}
+	return g.Blueprint.BlueprintID
+}
+
+// groupSchemaPacks buckets packs by owning blueprint so the list renders the
+// blueprint once as a group heading instead of a provenance chip on every row —
+// the same treatment the compiled-schema page gives its type groups. Blueprint
+// groups come first, ordered case-insensitively by label, with unowned packs
+// last; packs inside a group keep the order buildSchemaPackSummaries produced
+// (name, then version).
+func groupSchemaPacks(packs []schemaPackSummary) []schemaPackGroup {
+	index := make(map[string]int, len(packs))
+	groups := make([]schemaPackGroup, 0, len(packs))
+	for _, p := range packs {
+		key, label := "none", "No blueprint"
+		if p.Provenance != nil {
+			key, label = "blueprint:"+p.Provenance.BlueprintID, typeProvenanceLabel(p.Provenance)
+		}
+		i, ok := index[key]
+		if !ok {
+			i = len(groups)
+			index[key] = i
+			groups = append(groups, schemaPackGroup{Key: key, Label: label, Blueprint: p.Provenance})
+		}
+		groups[i].Packs = append(groups[i].Packs, p)
+	}
+	sort.SliceStable(groups, func(a, b int) bool {
+		leftOwned, rightOwned := groups[a].Blueprint != nil, groups[b].Blueprint != nil
+		if leftOwned != rightOwned {
+			return leftOwned
+		}
+		return strings.ToLower(groups[a].Label) < strings.ToLower(groups[b].Label)
+	})
+	return groups
+}
+
+// --- handlers ---
 // uiSchemaPacks renders the Schema-area "Schema packs" list: the project's
 // active packs derived from the compiled types, with metadata joined from the
 // schema catalog. A compiled-types failure renders the whole-page error state.
