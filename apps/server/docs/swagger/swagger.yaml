@@ -8582,21 +8582,29 @@ definitions:
         description: defaults to true
         type: boolean
       extraction_config:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionConfig is one type's extraction config object, e.g.
+          {"extractRelationships":true,"confidenceThreshold":0.7}. The repository
+          stores it verbatim as the registry row's extraction_config.
+        type: object
       json_schema:
-        items:
-          type: integer
-        type: array
+        description: |-
+          JSONSchema is the JSON Schema object for the new type. The handler
+          requires it and the repository stores it verbatim in the registry row;
+          readers unmarshal that column as an object, so an array is not a valid
+          shape.
+        type: object
       namespace:
         type: string
       type_name:
         type: string
       ui_config:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfig is one type's presentation config object, e.g.
+          {"icon":"building","color":"#4f46e5"} (not a map keyed by control name
+          or by type name). The repository stores it verbatim as the registry
+          row's ui_config.
+        type: object
     type: object
   domain_schemaregistry.GraphMemorySchema:
     properties:
@@ -8649,13 +8657,19 @@ definitions:
       enabled:
         type: boolean
       extraction_config:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionConfig is the snapshot of the registry's extraction_config:
+          one type's extraction config object copied from the pack's
+          extraction_prompts[typeName] ({"system_prompt":"...","field_hints":{...}})
+          or supplied verbatim by the HTTP CreateType/UpdateType handlers.
+        type: object
       json_schema:
-        items:
-          type: integer
-        type: array
+        description: |-
+          JSONSchema is the snapshot of the registry's json_schema at this version.
+          The version trigger copies it from kb.project_object_schema_registry, so
+          it has the same writers as SchemaRegistryEntryDTO.JSONSchema and is an
+          object.
+        type: object
       namespace:
         type: string
       registry_id:
@@ -8663,9 +8677,13 @@ definitions:
       schema_version:
         type: integer
       ui_config:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfig is the snapshot of the registry's ui_config: one type's
+          presentation config object copied from the pack's ui_configs[typeName]
+          ({"icon":"...","color":"..."}) or supplied verbatim by the HTTP
+          CreateType/UpdateType handlers. It is not a map keyed by control name or
+          by type name.
+        type: object
     type: object
   domain_schemaregistry.ProjectObjectSchemaRegistry:
     properties:
@@ -8680,15 +8698,23 @@ definitions:
       enabled:
         type: boolean
       extractionConfig:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionConfig is one type's extraction config object, e.g.
+          {"system_prompt":"...","field_hints":{...}}. HTTP CreateType/UpdateType
+          store it verbatim; pack install/restore copy the type's
+          extraction_prompts[typeName] entry.
+        type: object
       id:
         type: string
       jsonSchema:
-        items:
-          type: integer
-        type: array
+        description: |-
+          JSONSchema is the registered type's JSON Schema object. Writers: the
+          HTTP CreateType/UpdateType handlers (verbatim), template pack
+          install/merge/restore (each pack object-type schema is an object), the
+          MCP create-schema tool (json.Marshal of the type map) and the
+          Session/Message migration backfill (pack array elements). No in-tree
+          writer stores an array.
+        type: object
       memorySchema:
         allOf:
         - $ref: '#/definitions/domain_schemaregistry.GraphMemorySchema'
@@ -8707,9 +8733,12 @@ definitions:
       typeName:
         type: string
       uiConfig:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfig is one type's presentation config object, e.g.
+          {"icon":"building","color":"#4f46e5"}. HTTP CreateType/UpdateType store
+          it verbatim; pack install/restore copy the type's ui_configs[typeName]
+          entry. It is not a map keyed by control name or by type name.
+        type: object
       updatedAt:
         type: string
     type: object
@@ -8757,9 +8786,15 @@ definitions:
           $ref: '#/definitions/domain_schemaregistry.RelationshipTypeInfo'
         type: array
       json_schema:
-        items:
-          type: integer
-        type: array
+        description: |-
+          JSONSchema is the registered type's JSON Schema object, populated from
+          kb.project_object_schema_registry.json_schema. Every in-tree writer of
+          that column stores an object: the HTTP CreateType/UpdateType handlers
+          store the request verbatim, template pack install/merge/restore copy each
+          pack object-type schema (an object), and the MCP create-schema tool
+          marshals the type map. The pack-listing fallback also builds
+          {"type":"object","properties":...}. No in-tree writer stores an array.
+        type: object
       namespace:
         type: string
       object_count:
@@ -8809,19 +8844,26 @@ definitions:
       enabled:
         type: boolean
       extraction_config:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionConfig is one type's extraction config object, e.g.
+          {"extractRelationships":true,"confidenceThreshold":0.7}, applied
+          verbatim to the registry row's extraction_config when non-empty.
+        type: object
       json_schema:
-        items:
-          type: integer
-        type: array
+        description: |-
+          JSONSchema is the partial update's JSON Schema object, applied verbatim
+          to the registry row (and bumping schema_version) when non-empty. Readers
+          unmarshal that column as an object, so an array is not a valid shape.
+        type: object
       namespace:
         type: string
       ui_config:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfig is one type's presentation config object, e.g.
+          {"icon":"building","color":"#4f46e5"} (not a map keyed by control name
+          or by type name), applied verbatim to the registry row's ui_config when
+          non-empty.
+        type: object
     type: object
   domain_schemas.AddedProperty:
     properties:

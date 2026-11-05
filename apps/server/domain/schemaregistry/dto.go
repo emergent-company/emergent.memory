@@ -7,13 +7,20 @@ import (
 
 // SchemaRegistryEntryDTO is the API response for a schema registry entry
 type SchemaRegistryEntryDTO struct {
-	ID                    string                 `json:"id"`
-	Type                  string                 `json:"type"`
-	Source                string                 `json:"source"` // 'template', 'custom', 'discovered'
-	SchemaID              *string                `json:"schema_id,omitempty"`
-	SchemaName            *string                `json:"schema_name,omitempty"`
-	SchemaVersion         int                    `json:"schema_version"`
-	JSONSchema            json.RawMessage        `json:"json_schema"`
+	ID            string  `json:"id"`
+	Type          string  `json:"type"`
+	Source        string  `json:"source"` // 'template', 'custom', 'discovered'
+	SchemaID      *string `json:"schema_id,omitempty"`
+	SchemaName    *string `json:"schema_name,omitempty"`
+	SchemaVersion int     `json:"schema_version"`
+	// JSONSchema is the registered type's JSON Schema object, populated from
+	// kb.project_object_schema_registry.json_schema. Every in-tree writer of
+	// that column stores an object: the HTTP CreateType/UpdateType handlers
+	// store the request verbatim, template pack install/merge/restore copy each
+	// pack object-type schema (an object), and the MCP create-schema tool
+	// marshals the type map. The pack-listing fallback also builds
+	// {"type":"object","properties":...}. No in-tree writer stores an array.
+	JSONSchema            json.RawMessage        `json:"json_schema" swaggertype:"object"`
 	UIConfig              map[string]interface{} `json:"ui_config"`
 	ExtractionConfig      map[string]interface{} `json:"extraction_config"`
 	Enabled               bool                   `json:"enabled"`
@@ -51,11 +58,24 @@ type SchemaRegistryStats struct {
 
 // ObjectTypeVersionDTO is one historical snapshot of a registered object type.
 type ObjectTypeVersionDTO struct {
-	RegistryID       string          `bun:"registry_id" json:"registry_id"`
-	SchemaVersion    int             `bun:"schema_version" json:"schema_version"`
-	JSONSchema       json.RawMessage `bun:"json_schema" json:"json_schema"`
-	UIConfig         json.RawMessage `bun:"ui_config" json:"ui_config"`
-	ExtractionConfig json.RawMessage `bun:"extraction_config" json:"extraction_config"`
+	RegistryID    string `bun:"registry_id" json:"registry_id"`
+	SchemaVersion int    `bun:"schema_version" json:"schema_version"`
+	// JSONSchema is the snapshot of the registry's json_schema at this version.
+	// The version trigger copies it from kb.project_object_schema_registry, so
+	// it has the same writers as SchemaRegistryEntryDTO.JSONSchema and is an
+	// object.
+	JSONSchema json.RawMessage `bun:"json_schema" json:"json_schema" swaggertype:"object"`
+	// UIConfig is the snapshot of the registry's ui_config: one type's
+	// presentation config object copied from the pack's ui_configs[typeName]
+	// ({"icon":"...","color":"..."}) or supplied verbatim by the HTTP
+	// CreateType/UpdateType handlers. It is not a map keyed by control name or
+	// by type name.
+	UIConfig json.RawMessage `bun:"ui_config" json:"ui_config" swaggertype:"object"`
+	// ExtractionConfig is the snapshot of the registry's extraction_config:
+	// one type's extraction config object copied from the pack's
+	// extraction_prompts[typeName] ({"system_prompt":"...","field_hints":{...}})
+	// or supplied verbatim by the HTTP CreateType/UpdateType handlers.
+	ExtractionConfig json.RawMessage `bun:"extraction_config" json:"extraction_config" swaggertype:"object"`
 	Enabled          bool            `bun:"enabled" json:"enabled"`
 	Description      *string         `bun:"description" json:"description"`
 	Namespace        *string         `bun:"namespace" json:"namespace"`
@@ -206,22 +226,43 @@ func (rs *RelationshipSchema) GetTargetTypes() []string {
 
 // CreateTypeRequest is the request to register a custom object type for a project
 type CreateTypeRequest struct {
-	TypeName         string          `json:"type_name"`
-	Description      *string         `json:"description,omitempty"`
-	Namespace        *string         `json:"namespace,omitempty"`
-	JSONSchema       json.RawMessage `json:"json_schema"`
-	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
-	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
+	TypeName    string  `json:"type_name"`
+	Description *string `json:"description,omitempty"`
+	Namespace   *string `json:"namespace,omitempty"`
+	// JSONSchema is the JSON Schema object for the new type. The handler
+	// requires it and the repository stores it verbatim in the registry row;
+	// readers unmarshal that column as an object, so an array is not a valid
+	// shape.
+	JSONSchema json.RawMessage `json:"json_schema" swaggertype:"object"`
+	// UIConfig is one type's presentation config object, e.g.
+	// {"icon":"building","color":"#4f46e5"} (not a map keyed by control name
+	// or by type name). The repository stores it verbatim as the registry
+	// row's ui_config.
+	UIConfig json.RawMessage `json:"ui_config,omitempty" swaggertype:"object"`
+	// ExtractionConfig is one type's extraction config object, e.g.
+	// {"extractRelationships":true,"confidenceThreshold":0.7}. The repository
+	// stores it verbatim as the registry row's extraction_config.
+	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty" swaggertype:"object"`
 	Enabled          *bool           `json:"enabled,omitempty"` // defaults to true
 }
 
 // UpdateTypeRequest is the request to update a registered type
 type UpdateTypeRequest struct {
-	Description      *string         `json:"description,omitempty"`
-	Namespace        *string         `json:"namespace,omitempty"`
-	JSONSchema       json.RawMessage `json:"json_schema,omitempty"`
-	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
-	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Namespace   *string `json:"namespace,omitempty"`
+	// JSONSchema is the partial update's JSON Schema object, applied verbatim
+	// to the registry row (and bumping schema_version) when non-empty. Readers
+	// unmarshal that column as an object, so an array is not a valid shape.
+	JSONSchema json.RawMessage `json:"json_schema,omitempty" swaggertype:"object"`
+	// UIConfig is one type's presentation config object, e.g.
+	// {"icon":"building","color":"#4f46e5"} (not a map keyed by control name
+	// or by type name), applied verbatim to the registry row's ui_config when
+	// non-empty.
+	UIConfig json.RawMessage `json:"ui_config,omitempty" swaggertype:"object"`
+	// ExtractionConfig is one type's extraction config object, e.g.
+	// {"extractRelationships":true,"confidenceThreshold":0.7}, applied
+	// verbatim to the registry row's extraction_config when non-empty.
+	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty" swaggertype:"object"`
 	Enabled          *bool           `json:"enabled,omitempty"`
 }
 
