@@ -100,8 +100,21 @@ func (s *Server) uiSearch(c echo.Context) error {
 		Type:  normalizeSearchType(c.QueryParam("type")),
 		Limit: normalizeSearchLimit(c.QueryParam("limit")),
 	}
-	if data.Query == "" {
+	// A search request refreshes the results region only (and the header count
+	// out of band); the page around it, including the query form the request
+	// came from, stays put. The URL is pushed by the form, so a reload or
+	// bookmark still lands on this query.
+	fragment := targetsResultsRegion(c.Request(), searchResultsRegion)
+	renderSearch := func() error {
+		if fragment {
+			renderPartial(c.Response().Writer, c.Request(), searchResultsFragment(data))
+			return nil
+		}
 		return s.page(c, pageTitle("Search"), SearchPage(data))
+	}
+
+	if data.Query == "" {
+		return renderSearch()
 	}
 
 	resp, err := s.memory.SearchUnified(ctx, UnifiedSearchParams{
@@ -111,7 +124,7 @@ func (s *Server) uiSearch(c echo.Context) error {
 	})
 	if err != nil {
 		data.LoadErr = userFacingError(err)
-		return s.page(c, pageTitle("Search"), SearchPage(data))
+		return renderSearch()
 	}
 
 	data.Meta = resp.Metadata
@@ -128,7 +141,7 @@ func (s *Server) uiSearch(c echo.Context) error {
 		}
 	}
 
-	return s.page(c, pageTitle("Search"), SearchPage(data))
+	return renderSearch()
 }
 
 // splitSearchHits normalizes the unified endpoint's union items into the two

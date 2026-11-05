@@ -440,10 +440,10 @@ func (s *Server) uiObjects(c echo.Context) error {
 		}
 		if err != nil {
 			data.LoadErr = userFacingError(err)
-			return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+			return s.renderObjects(c, pageTitle("Objects"), data)
 		}
 		data.Results = results
-		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+		return s.renderObjects(c, pageTitle("Objects"), data)
 	}
 
 	// Browse mode: one page of 25 (most-recent-first). The object count and
@@ -457,9 +457,9 @@ func (s *Server) uiObjects(c echo.Context) error {
 	s.loadObjectActorOptions(ctx, &data)
 	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
 		data.LoadErr = userFacingError(err)
-		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+		return s.renderObjects(c, pageTitle("Objects"), data)
 	}
-	return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+	return s.renderObjects(c, pageTitle("Objects"), data)
 }
 
 // objectActorFilter reads and normalizes the actor provenance pair from the
@@ -516,7 +516,7 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
 	}
-	return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
+	return s.renderObjects(c, pageTitle(agent.Name, "Objects"), data)
 }
 
 // uiObjectsPartial returns the next page of object rows plus a replacement
@@ -598,15 +598,23 @@ func objectsPartialURL(data objectsPageData) string {
 	return "/objects/partial?" + q.Encode()
 }
 
-// objectsStatsURL builds the deferred stats-partial URL, carrying the active
-// branch so the object count stays branch-scoped (the synchronous pre-deferral
-// path passed branchID to CountObjects; the deferred request must too, issue
-// #1098).
-func objectsStatsURL(branchID string) string {
-	if branchID == "" {
-		return "/objects/stats"
+// renderObjects renders the objects surface — or only its results region, when
+// the request came from one of the toolbar's forms or the sort header
+// (targetsResultsRegion). Both entry points (the generic browser and the
+// agent-scoped route) go through it so a filter behaves identically in both:
+// the list is replaced in place and the page around it never moves.
+func (s *Server) renderObjects(c echo.Context, title string, data objectsPageData) error {
+	if targetsResultsRegion(c.Request(), objectsResultsRegion) {
+		// Picking an actor is the one filter change that rewrites the filter row
+		// itself: the closed trigger's label and avatar, the menu's checks, and
+		// whether the provenance toggle exists at all follow it. It is also the
+		// one control that closes its own menu on pick, so replacing the row
+		// cannot steal focus from something still in use.
+		actorPicked := strings.TrimSpace(c.QueryParam("actor")) != ""
+		renderPartial(c.Response().Writer, c.Request(), objectsResultsFragment(data, actorPicked))
+		return nil
 	}
-	return "/objects/stats?branch=" + url.QueryEscape(branchID)
+	return s.page(c, title, ObjectsPage(data))
 }
 
 // optionalFetchTimeout bounds the deferred HTMX partial calls (object count,

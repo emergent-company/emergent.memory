@@ -100,21 +100,26 @@ templ inboxScopeSwitch(d inboxView) {
 // span several projects (Everything and Account). It is omitted for the project
 // inbox — that scope already narrows to one project via the scope switch and
 // must not repeat the label.
+//
+// The form refreshes #inbox-list in place and pushes the URL, so changing the
+// project filter is a list refresh rather than a page load (the scope switch
+// above it stays put, as does the tab strip).
 templ inboxProjectFilterControl(d inboxView) {
 	if d.Scope != inboxScopeProject {
-		<form class="mb-4 flex flex-wrap items-center gap-2" method="get" action={ templ.URL("/inbox") } data-inbox-project-filter>
+		<form class="mb-4 flex flex-wrap items-center gap-2" method="get" action={ templ.URL("/inbox") } data-inbox-project-filter { filterFormAttrs("/inbox", inboxResultsRegion)... }>
 			<input type="hidden" name="scope" value={ d.Scope }/>
 			<input type="hidden" name="tab" value={ d.Tab }/>
 			<span class="text-muted-faint flex items-center gap-1.5">
 				@ui.IconSpan("lucide--folder", "size-3.5 shrink-0")
 				<span class="text-xs font-medium">Project</span>
 			</span>
-			<select name="project" class="select select-bordered select-sm" aria-label="Filter by project" onchange="this.form.submit()">
+			<select name="project" class="select select-bordered select-sm" aria-label="Filter by project">
 				<option value="" selected?={ d.ProjectFilter == "" }>All projects</option>
 				for _, p := range d.ProjectOptions {
 					<option value={ p.ID } selected?={ p.ID == d.ProjectFilter }>{ p.Name }</option>
 				}
 			</select>
+			<span id="inbox-list-loading" class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
 		</form>
 	}
 }

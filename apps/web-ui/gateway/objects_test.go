@@ -136,11 +136,17 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	if got := strings.Count(html, `name="provenance" value="created" checked`); got != 1 {
 		t.Errorf("active provenance mode not checked: %d", got)
 	}
-	// The chosen mode is filled with the primary colour. A `btn-active` shade is
-	// a 7% darkening that disappears beside its two neighbours, which is what
-	// made the toggle read as three unrelated buttons (#121).
-	if got := strings.Count(html, "btn join-item btn-primary"); got != 1 {
-		t.Errorf("active provenance mode should be the only filled segment: %d", got)
+	// Exactly one segment is filled, and the fill is CSS keyed on the checked
+	// radio (`:has(> input:checked)`) rather than a server-painted class: a
+	// filter response replaces only the list, so a server-painted segment would
+	// stay on the previous mode — or, mid-swap, light two at once. A `btn-active`
+	// shade is a 7% darkening that disappears beside its two neighbours, which is
+	// what made the toggle read as three unrelated buttons (#121).
+	if got := strings.Count(html, `class="btn join-item memory-provenance-segment"`); got != 3 {
+		t.Errorf("provenance segments = %d, want 3 with no server-painted fill class", got)
+	}
+	if got := countCheckedProvenance(html); got != 1 {
+		t.Errorf("checked provenance segments = %d, want exactly 1", got)
 	}
 
 	// Branch, type and actor are one control family: the actor picker's closed
@@ -166,7 +172,7 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	if !strings.Contains(noActor, `aria-label="Actor: Any actor"`) {
 		t.Error("actor picker should always render in the browse filter")
 	}
-	if !strings.Contains(noActor, `name="actor" value=""`) {
+	if !strings.Contains(noActor, `name="actor" value="clear"`) {
 		t.Error("empty actor picker must offer the Any actor row")
 	}
 	if !strings.Contains(noActor, `aria-checked="true"`) {
@@ -193,8 +199,8 @@ func TestObjectsFilterSelectsTruncateTheirValue(t *testing.T) {
 
 	// The chosen value is rendered in the visible layer, where CSS can truncate it.
 	for _, want := range []string{
-		`<span class="min-w-0 truncate" aria-hidden="true">plan/next-gen</span>`,
-		`<span class="min-w-0 truncate" aria-hidden="true">All types</span>`,
+		`<span class="min-w-0 truncate" aria-hidden="true" data-mirror-label>plan/next-gen</span>`,
+		`<span class="min-w-0 truncate" aria-hidden="true" data-mirror-label>All types</span>`,
 	} {
 		if !strings.Contains(form, want) {
 			t.Errorf("filter row should render the selected value in the truncating layer; missing %s", want)
@@ -258,7 +264,7 @@ func TestRenderObjectsActorFilterFallbackOption(t *testing.T) {
 		"User · deadbeef",
 		`aria-label="Actor: User · deadbeef`,
 		// …and clearing the filter stays available.
-		`name="actor" value=""`,
+		`name="actor" value="clear"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("fallback actor state missing %q", want)
@@ -286,10 +292,10 @@ func TestRenderObjectsProvenanceDefaultsToAny(t *testing.T) {
 				{Type: "agent", ID: "11111111-1111-1111-1111-111111111111", Label: "diane"},
 			},
 		}))
-		if got := strings.Count(html, "btn join-item btn-primary"); got != 1 {
-			t.Errorf("provenance %q: filled segments = %d, want 1", raw, got)
+		if got := countCheckedProvenance(html); got != 1 {
+			t.Errorf("provenance %q: checked segments = %d, want exactly 1", raw, got)
 		}
-		if want := `name="provenance" value="any" checked`; !strings.Contains(html, want) {
+		if want := `value="any" checked`; !strings.Contains(html, want) {
 			t.Errorf("provenance %q: Any should be the selected segment", raw)
 		}
 	}
@@ -408,6 +414,47 @@ func TestUIObjectsProvenanceParams(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_type=agent", nil))
 	if f.lastPageActorType != "" || f.lastPageActorID != "" {
 		t.Errorf("actor_type without actor_id must be dropped, got %q/%q", f.lastPageActorType, f.lastPageActorID)
+	}
+}
+
+// TestUIObjectsFilterChangeKeepsActor is the #131 regression: the provenance,
+// branch, type and sort controls all submit the filter form, so the selected
+// actor has to ride along as hidden inputs — otherwise every other filter change
+// silently drops it (and with it the provenance control, which only renders
+// while an actor is picked).
+func TestUIObjectsFilterChangeKeepsActor(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	// The provenance click the issue reported, with the pair carried along.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/objects?branch=&type=&provenance=created&actor_type=agent&actor_id=a-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.lastPageActorType != "agent" || f.lastPageActorID != "a-1" || f.lastPageProvenance != "created" {
+		t.Errorf("filter change parsed = %q/%q/%q, want agent/a-1/created",
+			f.lastPageActorType, f.lastPageActorID, f.lastPageProvenance)
+	}
+
+	// "Any actor" submits the clear sentinel. It must beat the stale hidden
+	// pair: falling through to it would keep the actor the user just cleared.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/objects?actor=clear&actor_type=agent&actor_id=a-1", nil))
+	if f.lastPageActorType != "" || f.lastPageActorID != "" {
+		t.Errorf("actor=clear must clear the pair, got %q/%q", f.lastPageActorType, f.lastPageActorID)
+	}
+
+	// A fresh pick still wins over the pair the form was rendered with.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/objects?actor=user:u-9&actor_type=agent&actor_id=a-1", nil))
+	if f.lastPageActorType != "user" || f.lastPageActorID != "u-9" {
+		t.Errorf("fresh pick = %q/%q, want user/u-9", f.lastPageActorType, f.lastPageActorID)
 	}
 }
 
@@ -1628,16 +1675,26 @@ func TestObjectsStatsDeferredCarriesBranch(t *testing.T) {
 		Objects:  []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
 		BranchID: "b1",
 	}))
-	if !strings.Contains(html, `hx-get="/objects/stats?branch=b1"`) {
-		t.Errorf("deferred stats URL must carry the branch, got:\n%s", html)
+	// The branch stays scoped (#1098) but now rides on hx-include from the
+	// filter form rather than on the URL, so the strip can also refetch itself
+	// when the branch changes without a page load.
+	for _, want := range []string{
+		`id="objects-stats"`,
+		`hx-get="/objects/stats"`,
+		`hx-include="#objects-filters-form"`,
+		`hx-trigger="load, objects-stats-refresh"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("deferred stats strip missing %q, got:\n%s", want, html)
+		}
 	}
-
-	// Without a branch the URL is bare.
-	htmlMain := renderHTML(t, ObjectsPage(objectsPageData{
+	// The loaded strip replaces the element, so it must carry the same wiring.
+	loaded := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+		Stats:   &objectsStats{TotalObjects: 2},
 	}))
-	if !strings.Contains(htmlMain, `hx-get="/objects/stats"`) {
-		t.Errorf("deferred stats URL should omit an empty branch, got:\n%s", htmlMain)
+	if !strings.Contains(loaded, `hx-trigger="load, objects-stats-refresh"`) {
+		t.Errorf("loaded stats strip lost its refresh wiring:\n%s", loaded)
 	}
 }
 
@@ -4793,4 +4850,16 @@ func TestObjectSubpages(t *testing.T) {
 			t.Errorf("saturated similar count should carry +: %s", body)
 		}
 	})
+}
+
+// countCheckedProvenance counts the toggle's selected segments. The fill is CSS
+// (:has(> input:checked)), so the checked radio is the state the paint follows.
+func countCheckedProvenance(html string) int {
+	n := 0
+	for _, v := range []string{"any", "created", "updated"} {
+		if strings.Contains(html, `name="provenance" value="`+v+`" checked`) {
+			n++
+		}
+	}
+	return n
 }

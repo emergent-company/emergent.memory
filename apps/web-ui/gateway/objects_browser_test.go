@@ -397,17 +397,23 @@ func TestObjectsBrowserSampleDataHonoursOrder(t *testing.T) {
 	}
 }
 
-// TestObjectsFiltersApplyOnChange pins the filter interaction: every control
-// applies itself, so no Apply button is needed (or left behind as the only way
-// to submit), and the active sort survives a narrowing.
-func TestObjectsFiltersApplyOnChange(t *testing.T) {
+// TestObjectsFiltersApplyInPlace pins the filter interaction: every control
+// applies itself — so no Apply button is needed (or left behind as the only way
+// to submit) — and applies it by refreshing the results region, not by loading
+// the document.
+//
+// The regression this guards: a control that calls form.submit() never fires a
+// `submit` event, so htmx's boosted form never sees it and the browser performs
+// a full page load. The form's own hx-get is what keeps the page (header, stats,
+// controls) in place while hx-push-url keeps the address bar truthful.
+func TestObjectsFiltersApplyInPlace(t *testing.T) {
 	live := objectsBrowserSampleData("asc")
 	live.Preview = false
 	html := renderHTML(t, ObjectsPage(live))
 	form := formBlock(t, html, "objects-filters-form")
 
 	// No Apply button: the only submit controls are the actor menu's options,
-	// which carry the value they set. Branch/type/provenance apply on change.
+	// which carry the value they set.
 	if strings.Contains(strings.Replace(form, actorFilterBlock(t, html), "", 1), `type="submit"`) {
 		t.Error("filter form must not carry a submit button; every control applies itself")
 	}
@@ -416,19 +422,36 @@ func TestObjectsFiltersApplyOnChange(t *testing.T) {
 	if !strings.Contains(form, `name="actor" value="user:u-1"`) {
 		t.Error("the actor picker must submit its actor as one value")
 	}
-	if got := strings.Count(form, `onchange="this.form.submit()"`); got < 3 {
-		t.Errorf("want every filter select to apply on change, got %d auto-submits", got)
+	for _, want := range []string{
+		`hx-get="/objects"`,
+		`hx-target="#objects-results"`,
+		`hx-swap="outerHTML"`,
+		`hx-push-url="true"`,
+		`hx-trigger="change, submit"`,
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("filter form missing %q:\n%s", want, form)
+		}
+	}
+	if strings.Contains(form, `this.form.submit()`) {
+		t.Error("a filter control must not call form.submit(); it bypasses htmx and reloads the page")
+	}
+	// The active actor travels as hidden inputs, so narrowing by branch, type, or
+	// provenance cannot silently drop it (#131).
+	for _, want := range []string{`name="actor_type" value="agent"`, `name="actor_id" value="a-1"`} {
+		if !strings.Contains(form, want) {
+			t.Errorf("filter form missing the active actor (%q):\n%s", want, form)
+		}
 	}
 	if !strings.Contains(form, `name="order" value="asc"`) {
 		t.Error("filter form must carry the active sort so narrowing keeps it")
 	}
 
 	// The gallery preview keeps every control live but must not navigate its
-	// iframe: form.submit() bypasses the preview's onsubmit guard, so the
-	// handler is not rendered there at all.
+	// iframe: no request wiring at all, and the inert submit guard stays.
 	previewForm := formBlock(t, renderHTML(t, ObjectsPage(objectsBrowserSampleData("asc"))), "objects-filters-form")
-	if strings.Contains(previewForm, `onchange="this.form.submit()"`) {
-		t.Error("preview filters must not auto-submit; a submit would navigate the iframe")
+	if strings.Contains(previewForm, "hx-get=") || strings.Contains(previewForm, "hx-target=") {
+		t.Error("preview filters must not carry request wiring; a request would navigate the iframe")
 	}
 	if !strings.Contains(previewForm, `onsubmit="return false"`) {
 		t.Error("preview filters must keep the inert submit guard")
@@ -477,7 +500,10 @@ func TestObjectsActorFilterListsIdentities(t *testing.T) {
 	for _, want := range []string{
 		`name="actor" value="agent:a-1"`,
 		`name="actor" value="user:u-1"`,
-		`name="actor" value=""`,
+		// "Any actor" submits the sentinel rather than an empty value: the form
+		// always carries the active actor as hidden inputs (#131), so an empty
+		// submit value could not be told apart from that pair.
+		`name="actor" value="clear"`,
 	} {
 		if !strings.Contains(picker, want) {
 			t.Errorf("actor picker missing option %q", want)

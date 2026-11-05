@@ -34,7 +34,7 @@ import (
 // lets htmx-appended rows work without re-registering anything.
 templ ObjectsPage(data objectsPageData) {
 	@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
-		<div x-data={ objectsBrowserSelectionJS } data-status-options={ data.StatusOptionsJSON }>
+		<div x-data={ objectsBrowserSelectionJS } data-status-options={ data.StatusOptionsJSON } data-object-select-root>
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			if data.AgentID != "" {
 				@objectsAgentHeader(data)
@@ -48,10 +48,7 @@ templ ObjectsPage(data objectsPageData) {
 					@objectsBrowserStats(data)
 				}
 				@objectsBrowserToolbar(data)
-				if data.Query != "" {
-					@objectsBrowserResultsNote(data)
-				}
-				@objectsBrowserTable(data)
+				@objectsBrowserResults(data)
 				@objectsBrowserBulkBar()
 				@objectsBrowserBulkDialogs(data)
 				if data.AgentID == "" {
@@ -92,63 +89,73 @@ templ objectsBrowserHeader(data objectsPageData) {
 // objectsBrowserStats renders the browse overview as one daisyUI stats strip.
 // The three separate stat cards it replaces read as three equally loud panels;
 // the strip keeps the same three numbers in one quiet band.
+//
+// The strip is deferred (the count and the embedding-queue aggregates are slow,
+// issues #1096/#1098) and it is branch-scoped, so it refetches itself when the
+// branch filter changes: #objects-stats listens for objects-stats-refresh,
+// which app.js fires from the branch <select>, and hx-include carries the
+// filter form's current values so the request is scoped to the new branch
+// instead of the one in the page's own URL.
+//
+// Both the placeholder and the loaded strip carry the same wiring, because the
+// loaded strip replaces this element (swap: outerHTML) and must stay
+// refreshable. Preview mode renders it without the fetch: the gallery has no
+// project behind it.
 templ objectsBrowserStats(data objectsPageData) {
-	if data.Stats == nil {
-		@objectsBrowserStatsDeferred(data)
-	} else {
-		{{
-			s := *data.Stats
-			total := groupDigits(int64(s.TotalObjects))
-			pending := strconv.FormatInt(s.PendingEmbed, 10)
-			failed := strconv.FormatInt(s.FailedEmbed, 10)
-			totalDesc := ""
-			embedDesc := ""
-			failedColor := "text-error"
-			if s.TotalErr != nil {
-				total = "—"
-				totalDesc = "unavailable"
-			}
-			if s.EmbedErr != nil {
-				pending = "—"
-				failed = "—"
-				embedDesc = "unavailable"
-				failedColor = ""
-			}
-		}}
-		<div class="mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]">
+	{{
+		statsAttrs := templ.Attributes{
+			"id":           "objects-stats",
+			"class":        "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
+			"aria-live":    "polite",
+			"hx-target":    "this",
+			"hx-swap":      "outerHTML",
+			"hx-trigger":   "load, objects-stats-refresh",
+			"hx-include":   "#objects-filters-form",
+			"hx-get":       "/objects/stats",
+		}
+		if data.Preview {
+			// The gallery has no project behind it: keep the strip's chrome and
+			// drop the fetch.
+			delete(statsAttrs, "hx-get")
+			delete(statsAttrs, "hx-trigger")
+			delete(statsAttrs, "hx-target")
+			delete(statsAttrs, "hx-swap")
+			delete(statsAttrs, "hx-include")
+		}
+	}}
+	<div { statsAttrs... }>
+		if data.Stats == nil {
+			@ui.StatsGroup([]ui.StatsGroupItem{
+				{Title: "objects", Value: "…"},
+				{Title: "pending embeddings", Value: "…"},
+				{Title: "failed embeddings", Value: "…"},
+			})
+		} else {
+			{{
+				s := *data.Stats
+				total := groupDigits(int64(s.TotalObjects))
+				pending := strconv.FormatInt(s.PendingEmbed, 10)
+				failed := strconv.FormatInt(s.FailedEmbed, 10)
+				totalDesc := ""
+				embedDesc := ""
+				failedColor := "text-error"
+				if s.TotalErr != nil {
+					total = "—"
+					totalDesc = "unavailable"
+				}
+				if s.EmbedErr != nil {
+					pending = "—"
+					failed = "—"
+					embedDesc = "unavailable"
+					failedColor = ""
+				}
+			}}
 			@ui.StatsGroup([]ui.StatsGroupItem{
 				{Title: "objects", Value: total, Desc: totalDesc},
 				{Title: "pending embeddings", Value: pending, Desc: embedDesc, Color: "text-warning"},
 				{Title: "failed embeddings", Value: failed, Desc: embedDesc, Color: failedColor},
 			})
-		</div>
-	}
-}
-
-// objectsBrowserStatsDeferred is the first-paint placeholder for the stats
-// strip. It keeps the deferred /objects/stats fetch (and its branch scoping and
-// explicit hx-target="this" — the page shell's <main> otherwise lends the fetch
-// its #main-content target). Preview mode renders the placeholder without the
-// fetch: the gallery has no project behind it.
-templ objectsBrowserStatsDeferred(data objectsPageData) {
-	{{
-		statsAttrs := templ.Attributes{
-			"id":    "objects-stats",
-			"class": "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
 		}
-		if !data.Preview {
-			statsAttrs["hx-get"] = objectsStatsURL(data.BranchID)
-			statsAttrs["hx-trigger"] = "load"
-			statsAttrs["hx-target"] = "this"
-			statsAttrs["hx-swap"] = "outerHTML"
-		}
-	}}
-	<div { statsAttrs... }>
-		@ui.StatsGroup([]ui.StatsGroupItem{
-			{Title: "objects", Value: "…"},
-			{Title: "pending embeddings", Value: "…"},
-			{Title: "failed embeddings", Value: "…"},
-		})
 	</div>
 }
 
@@ -156,7 +163,12 @@ templ objectsBrowserStatsDeferred(data objectsPageData) {
 // keeps the split mode button (mode rides on the submit button), and the filter
 // form applies each control on change (the actor picker applies on pick). They
 // stay two forms because a single form cannot carry both a submitted search mode
-// and a filter change without dropping one of them.
+// and a filter change without dropping one of them — so each form carries the
+// other's state as hidden inputs, and the results fragment refreshes both sets
+// (see objectsSearchHiddenFilters / objectsFilterHiddenFilters).
+//
+// Both forms refresh #objects-results in place (see objectsFormAttrs): a filter
+// click changes the rows, not the page.
 //
 // The agent-scoped view has no search form (the server's search endpoints cannot
 // be provenance-scoped), so its card is the filter line alone and the divider
@@ -181,12 +193,18 @@ templ objectsBrowserToolbar(data objectsPageData) {
 		@components.PanelCard("", nil, "p-3 sm:p-4") {
 			<div class="flex flex-col gap-3">
 				if searching {
-					<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsPreviewGuards(data.Preview)... }>
+					<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsFormAttrs(data, false, searchAction)... } { objectsPreviewGuards(data.Preview)... }>
 						@objectsSearchControls(data)
 					</form>
 				}
-				<form id="objects-filters-form" class={ filterClass } method="get" action={ templ.URL(filterAction) } { objectsPreviewGuards(data.Preview)... }>
-					@objectsFilterControls(data)
+				<form id="objects-filters-form" class={ filterClass } method="get" action={ templ.URL(filterAction) } { objectsFormAttrs(data, true, filterAction)... } { objectsPreviewGuards(data.Preview)... }>
+					<div id="objects-filter-hidden" class="contents">
+						@objectsFilterHiddenFilters(data)
+					</div>
+					<div id="objects-filter-controls" class="contents">
+						@objectsFilterControls(data)
+					</div>
+					<span id="objects-results-loading" class="htmx-indicator loading loading-spinner loading-xs mb-2" aria-hidden="true"></span>
 				</form>
 			</div>
 		}
@@ -202,6 +220,75 @@ templ objectsBrowserResultsNote(data objectsPageData) {
 		}
 		<span class="text-muted-faint shrink-0 text-xs">Ranked by relevance</span>
 	</div>
+}
+
+// objectsBrowserResults is the swap region for every objects filter: the results
+// note, the table (or its empty state), and the footer. Its id is the HX-Target
+// the toolbar's forms request (objectsResultsRegion) and the region a filter
+// response replaces — the page around it never moves.
+templ objectsBrowserResults(data objectsPageData) {
+	<div id="objects-results" data-testid="objects-results">
+		if data.LoadErr != nil {
+			// A filter request that failed to load keeps the page: the error
+			// replaces the list instead of the whole surface (the page path
+			// renders pageError above the toolbar and never reaches here).
+			@pageError("Failed to load objects", data.LoadErr)
+		} else {
+			if data.Query != "" {
+				@objectsBrowserResultsNote(data)
+			}
+			@objectsBrowserTable(data)
+		}
+	</div>
+}
+
+// objectsResultsFragment is the response body for a filter request: the region
+// above plus the out-of-band refreshes a region swap cannot carry itself.
+//
+// The toolbar's two forms each hold the other's state as hidden inputs, so both
+// blocks are refreshed from the applied filters (otherwise a search after a
+// branch change would silently drop the branch, which is exactly the class of
+// bug the actor filter had, #131). The filter *row* is replaced only when the
+// actor changed: that is the one control whose label, menu checks, and the
+// provenance toggle's presence are server-rendered, and replacing the row on
+// every change would drop focus out of the select the user just used.
+templ objectsResultsFragment(data objectsPageData, actorChanged bool) {
+	@objectsBrowserResults(data)
+	<div id="objects-search-hidden" class="contents" hx-swap-oob="innerHTML">
+		@objectsSearchHiddenFilters(data)
+	</div>
+	<div id="objects-filter-hidden" class="contents" hx-swap-oob="innerHTML">
+		@objectsFilterHiddenFilters(data)
+	</div>
+	if actorChanged {
+		<div id="objects-filter-controls" class="contents" hx-swap-oob="innerHTML">
+			@objectsFilterControls(data)
+		</div>
+	}
+}
+
+// objectsSearchHiddenFilters carries the filter state the search form cannot see
+// on its own: branch and type live in the sibling filter form, and a search must
+// resend them or it would drop the applied filters.
+templ objectsSearchHiddenFilters(data objectsPageData) {
+	if data.TypeFilter != "" {
+		<input type="hidden" name="type" value={ data.TypeFilter }/>
+	}
+	if data.BranchID != "" {
+		<input type="hidden" name="branch" value={ data.BranchID }/>
+	}
+}
+
+// objectsFilterHiddenFilters is the mirror of the block above: a filter change
+// must resend the query, mode, and sort order the search row currently shows.
+templ objectsFilterHiddenFilters(data objectsPageData) {
+	if data.Query != "" {
+		<input type="hidden" name="q" value={ data.Query }/>
+		<input type="hidden" name="mode" value={ data.Mode }/>
+	}
+	if data.Order != "" {
+		<input type="hidden" name="order" value={ data.Order }/>
+	}
 }
 
 // objectsBrowserTable is the unified results surface: browse rows and search
@@ -282,7 +369,7 @@ templ objectsBrowserTableHead(data objectsPageData, search, unified bool) {
 					// flips its (created_at, id) keyset and the cursor keeps working.
 					// Name/type/status would need a server-side sort whitelist — the
 					// endpoint only orders JSONB properties, which breaks the cursor.
-					@objectsBrowserSortHead("Created", objectsSortHref(data, objectsNextSortDir(data)), true, objectsSortDir(data))
+					@objectsBrowserSortHead(data, "Created", objectsSortHref(data, objectsNextSortDir(data)), true, objectsSortDir(data))
 				}
 			}
 			<th class="w-10"></th>
@@ -300,7 +387,12 @@ templ objectsBrowserTableHead(data objectsPageData, search, unified bool) {
 // This is page-local rather than table.TableHeader because the library header
 // hardcodes left alignment and a trailing indicator — exactly backwards for a
 // right-aligned column (see the go-daisy sortable-header alignment issue).
-templ objectsBrowserSortHead(label, href string, alignRight bool, dir string) {
+//
+// Sorting is a filter like any other: the header link refreshes the results
+// region in place and pushes the URL, so it does not reload the page. The href
+// stays (no-JS, middle-click, open-in-new-tab), and the preview renders it
+// without the htmx wiring because the gallery has no backend.
+templ objectsBrowserSortHead(data objectsPageData, label, href string, alignRight bool, dir string) {
 	{{
 		thClass := "text-xs font-semibold text-base-content/60 uppercase"
 		linkClass := "inline-flex items-center gap-1 hover:text-base-content"
@@ -317,9 +409,15 @@ templ objectsBrowserSortHead(label, href string, alignRight bool, dir string) {
 		case "desc":
 			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
 		}
+		var sortAttrs templ.Attributes
+		if !data.Preview {
+			sortAttrs = regionFilterAttrs(href, objectsResultsRegion)
+			sortAttrs["hx-indicator"] = "#objects-results-loading"
+			sortAttrs["data-objects-list-refresh"] = "true"
+		}
 	}}
 	<th scope="col" aria-sort={ ariaSort } class={ thClass }>
-		<a href={ href } class={ linkClass }>
+		<a href={ href } class={ linkClass } { sortAttrs... }>
 			if alignRight {
 				@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
 				<span>{ label }</span>

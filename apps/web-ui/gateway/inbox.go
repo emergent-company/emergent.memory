@@ -138,8 +138,18 @@ func inboxListParams(scope, projectID, tab string) NotificationListParams {
 }
 
 // uiInbox renders the inbox page: scope switch, tabs, list, and empty states.
+//
+// A request from the project filter form refreshes only the list region (plus
+// the out-of-band tab strip, so counts stay current); the form pushes the URL,
+// so the page around the list — and a reload — keep the filter. This reuses the
+// same fragment the live inbox uses, so the two can never disagree.
 func (s *Server) uiInbox(c echo.Context) error {
-	return s.page(c, pageTitle("Inbox"), InboxPage(s.inboxViewFor(c)))
+	view := s.inboxViewFor(c)
+	if targetsResultsRegion(c.Request(), inboxResultsRegion) {
+		renderPartial(c.Response().Writer, c.Request(), inboxListPartial(view))
+		return nil
+	}
+	return s.page(c, pageTitle("Inbox"), InboxPage(view))
 }
 
 // uiInboxList renders /partial/inbox-list: the fragment the inbox JS swaps into
