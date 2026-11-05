@@ -21,15 +21,13 @@
 # established that the swag CLI must match the compiled github.com/swaggo/swag
 # library, so a go.mod bump moves both and there is no second pin to rot.
 #
-# Cost: ~5 s warm, measured 13.9 s with an empty Go build cache (the generator
-# is built once; the server module cache is already warm because the earlier
-# `go run` guards in this job compile the module). The ~1m40s worst case needs
-# both the module cache and the build cache empty — it was measured once on a
-# cold workstation and never happens on the self-hosted runner, whose first run
-# of this step took 4.1 s. That is affordable in the
-# branch-protection-required `ci` job, which is the only place the guard can
-# actually gate: server.yml is path-filtered and advisory, so the same step
-# there would surface after merge instead of blocking the PR.
+# Cost: ~5 s warm; the cold-cache case is now every run of the required `ci`
+# job, which runs on `ubuntu-latest` with no `actions/cache`, so the generator
+# build adds ~14-20 s to that check. That is why the step is not cached: a cache
+# round-trip for the module/build state costs more than the rebuild. It is still
+# affordable in the branch-protection-required `ci` job, which is the only place
+# the guard can actually gate: server.yml is path-filtered and advisory, so the
+# same step there would surface after merge instead of blocking the PR.
 #
 # Quiet on success (the generator prints one line per type). Run from anywhere;
 # resolves the repo root itself. Wired into CI as its own step in the required
