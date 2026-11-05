@@ -36,10 +36,10 @@ final class AudioOptions {
     /// The last error from applying the selection, if any.
     private(set) var applyError: Swift.Error?
 
-    @ObservationIgnored private let localMedia: LocalMedia
+    @ObservationIgnored private let localMedia: LocalMediaModel
     @ObservationIgnored private var cancellable: AnyCancellable?
 
-    init(localMedia: LocalMedia) {
+    init(localMedia: LocalMediaModel) {
         self.localMedia = localMedia
         // Apply the stored selection whenever a new microphone track appears,
         // e.g. when pre-connect audio starts capturing.
