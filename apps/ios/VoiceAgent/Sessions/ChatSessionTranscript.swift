@@ -63,6 +63,18 @@ final class ChatSessionTranscriptStore {
     /// matching the session-detail timeline; a `tools_executed` record between
     /// turns breaks the run.
     func loadHistory(from detail: SessionDetail) {
+        // This is the success exit of a fetch that `beginHistoryLoad()` opened,
+        // but it is also called directly by the recovery and resumed-approval
+        // reloads, which never set the flag. Settle the loading state on every
+        // exit, including a detail with no records: a loaded-but-empty
+        // conversation otherwise keeps `isLoadingHistory` set, so the view shows
+        // "Loading earlier messages" forever and its empty state — which requires
+        // `!isLoadingHistory` — can never appear.
+        defer {
+            isLoadingHistory = false
+            historyError = nil
+        }
+
         var entries: [HistoryEntry] = []
         for record in detail.records {
             switch record.kind {
@@ -100,7 +112,6 @@ final class ChatSessionTranscriptStore {
         pendingApprovals = detail.pendingApprovals.map {
             ApprovalRequest(questionId: $0.questionID, tool: $0.tool, arguments: $0.arguments)
         }
-        historyError = nil
     }
 
     /// Replaces the live transcript from the room's message list.
