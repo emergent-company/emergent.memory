@@ -821,6 +821,7 @@ templ pendingInviteRow(inv PendingInviteDto) {
 					}
 				</form>
 				<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/decline") }>
+					<input type="hidden" name="return_to" value="/orgs"/>
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeSubmit,
 						Variant: ui.ButtonGhost,

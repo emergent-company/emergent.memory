@@ -337,3 +337,43 @@ func TestAgentsPageConfirmsInvitationAcceptance(t *testing.T) {
 		t.Errorf("agents page without ?accepted=1 must not claim an invitation was accepted")
 	}
 }
+
+// TestOrgLandingConfirmsInvitationAcceptance covers the organization-only
+// invite landing: /o/{org} rewrites to /orgs/{org}, so uiOrg is where the
+// invitee arrives and therefore where the confirmation has to be rendered.
+func TestOrgLandingConfirmsInvitationAcceptance(t *testing.T) {
+	f := &fakeMemory{orgs: []Org{{ID: "org-1", Name: "Huma"}}}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := echo.New()
+	e.Use(s.authDispatch)
+	e.GET("/orgs/:id", s.uiOrg)
+
+	read := func(query string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/orgs/org-1"+query, nil)
+		addSessionCookie(t, req, "test-secret", testSessionClaims())
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /orgs/org-1%s = %d, want 200 (%s)", query, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	if body := read("?accepted=1"); !strings.Contains(body, "Invitation accepted.") {
+		t.Errorf("org landing with ?accepted=1 must confirm the acceptance")
+	}
+	if body := read(""); strings.Contains(body, "Invitation accepted.") {
+		t.Errorf("org landing without ?accepted=1 must not claim an invitation was accepted")
+	}
+}
+
+// TestOrgsPendingRowDeclineReturnsToOrgs pins the return path of the decline
+// form on /orgs: without return_to the user is bounced to the profile
+// invitations page and the /orgs decline flash can never be seen.
+func TestOrgsPendingRowDeclineReturnsToOrgs(t *testing.T) {
+	html := renderHTML(t, OrgsPage(orgsPageData{Pending: []PendingInviteDto{pendingInviteAcceptFixture()}}))
+	if !strings.Contains(html, `name="return_to" value="/orgs"`) {
+		t.Error("decline form on /orgs must carry return_to=/orgs")
+	}
+}
