@@ -105,16 +105,17 @@ var internalToolNames = map[string]struct{}{
 	"skill-delete": {},
 
 	// ── Blueprints ──────────────────────────────────────────────────────────
-	"blueprint-list":         {},
-	"blueprint-get":          {},
-	"blueprint-create":       {},
-	"blueprint-update":       {},
-	"blueprint-versions":     {},
-	"blueprint-new-version":  {},
-	"blueprint-publish":      {},
-	"blueprint-apply":        {},
-	"blueprint-unapply":      {},
-	"blueprint-list-applied": {},
+	"blueprint-list":          {},
+	"blueprint-get":           {},
+	"blueprint-create":        {},
+	"blueprint-update":        {},
+	"blueprint-versions":      {},
+	"blueprint-new-version":   {},
+	"blueprint-publish":       {},
+	"blueprint-apply":         {},
+	"blueprint-apply-preview": {},
+	"blueprint-unapply":       {},
+	"blueprint-list-applied":  {},
 
 	// ── Agents ──────────────────────────────────────────────────────────────
 	"agent-def-list":              {},

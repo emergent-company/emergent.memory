@@ -17,9 +17,53 @@ export const PERSONAL_MEMORY_BLUEPRINT_VERSION = '3.0.0';
 const IMPORT_TIMEOUT_MS = 90_000;
 
 /** Scope ids for a navigation (setup navigates before the bootstrap is written). */
-interface ScopeIds {
+export interface ScopeIds {
   orgId?: string;
   projectId?: string;
+}
+
+/** How an install/import should resolve an object-type conflict review. */
+export type TypeConflictChoice = 'merge' | 'cancel';
+
+/** The merge review page shown when object-type names already exist. */
+export function typeConflictPage(page: Page) {
+  return page.locator('[data-testid="blueprint-type-conflict-page"]');
+}
+
+/** Whether the merge review page is currently on screen. */
+export async function isTypeConflictPageVisible(page: Page): Promise<boolean> {
+  return typeConflictPage(page)
+    .isVisible()
+    .catch(() => false);
+}
+
+/** Confirm the merge on the review page (applies/updates with merge permission). */
+export async function confirmTypeConflictMerge(page: Page): Promise<void> {
+  await page.locator('[data-testid="blueprint-type-conflict-merge"]').click();
+}
+
+/** Cancel the merge review page (returns to /blueprints with no side effects). */
+export async function cancelTypeConflict(page: Page): Promise<void> {
+  await page.locator('[data-testid="blueprint-type-conflict-cancel"]').click();
+}
+
+/**
+ * Resolve the merge review page if it is showing. Returns true when a conflict
+ * page was handled, false when none was present. `choice: 'cancel'` clicks
+ * Cancel (the caller is responsible for asserting the landing); the default
+ * merges and lets the caller wait for the normal landing.
+ */
+export async function resolveTypeConflictIfPresent(
+  page: Page,
+  choice: TypeConflictChoice = 'merge',
+): Promise<boolean> {
+  if (!(await isTypeConflictPageVisible(page))) return false;
+  if (choice === 'cancel') {
+    await cancelTypeConflict(page);
+  } else {
+    await confirmTypeConflictMerge(page);
+  }
+  return true;
 }
 
 /**
@@ -57,7 +101,13 @@ async function visibleErrorText(page: Page): Promise<string> {
 export async function importGitHubBlueprint(
   page: Page,
   url: string,
-  opts?: { ref?: string; token?: string; scope?: ScopeIds },
+  opts?: {
+    ref?: string;
+    token?: string;
+    scope?: ScopeIds;
+    /** How to resolve an object-type conflict review (default: merge). */
+    onTypeConflict?: TypeConflictChoice;
+  },
 ): Promise<void> {
   const target = blueprintsPath(opts?.scope);
   await page.goto(target);
@@ -103,20 +153,41 @@ export async function importGitHubBlueprint(
 
   // A blueprint whose manifest pins models does not apply directly: the gateway
   // renders the model-review step in place (same /blueprints/import URL) and only
-  // applies on confirm. Wait for whichever arrives first — the direct landing or
-  // the review step's submit — then confirm the review (project defaults) if it
-  // appeared.
+  // applies on confirm. A blueprint whose object types already exist renders the
+  // merge review instead. Wait for whichever arrives first — the direct landing,
+  // the model review, or the type-conflict review — and clear each review step.
   const reviewSubmit = page.locator('[data-testid="blueprint-model-map-submit"]');
-  const reviewShown = reviewSubmit
-    .waitFor({ state: 'visible', timeout: IMPORT_TIMEOUT_MS })
-    .then(() => true)
-    .catch(() => false);
-  const directLanding = page
-    .waitForURL((u) => finalLanding(u), { timeout: IMPORT_TIMEOUT_MS })
-    .then(() => false)
-    .catch(() => false);
-  if (await Promise.race([reviewShown, directLanding])) {
-    await reviewSubmit.click();
+  const conflictPage = typeConflictPage(page);
+  const nextImportState = (): Promise<'landing' | 'review' | 'conflict' | null> =>
+    Promise.race([
+      page
+        .waitForURL((u) => finalLanding(u), { timeout: IMPORT_TIMEOUT_MS })
+        .then(() => 'landing' as const)
+        .catch(() => null),
+      reviewSubmit
+        .waitFor({ state: 'visible', timeout: IMPORT_TIMEOUT_MS })
+        .then(() => 'review' as const)
+        .catch(() => null),
+      conflictPage
+        .waitFor({ state: 'visible', timeout: IMPORT_TIMEOUT_MS })
+        .then(() => 'conflict' as const)
+        .catch(() => null),
+    ]);
+
+  const conflictChoice = opts?.onTypeConflict ?? 'merge';
+  for (let step = 0; step < 3; step++) {
+    const state = await nextImportState();
+    if (state === 'landing' || state === null) break;
+    if (state === 'review') {
+      await reviewSubmit.click();
+      continue;
+    }
+    // state === 'conflict'
+    if (conflictChoice === 'cancel') {
+      await cancelTypeConflict(page);
+      return;
+    }
+    await confirmTypeConflictMerge(page);
   }
 
   try {
@@ -149,8 +220,17 @@ export async function importGitHubBlueprint(
  * /blueprints?installed=1, or /blueprints/migrations?migrateMsg=… when a
  * migration drift is detected.
  */
-export async function installBlueprint(page: Page, name: string): Promise<void> {
-  await page.goto(blueprintsPath());
+export async function installBlueprint(
+  page: Page,
+  name: string,
+  opts?: {
+    /** How to resolve an object-type conflict review (default: merge). */
+    onTypeConflict?: TypeConflictChoice;
+    /** Explicit org/project scope for the gallery navigation (scratch projects). */
+    scope?: ScopeIds;
+  },
+): Promise<void> {
+  await page.goto(blueprintsPath(opts?.scope));
 
   const row = page.locator(`[data-testid="available-blueprint-${name}"]`);
   try {
@@ -167,6 +247,32 @@ export async function installBlueprint(page: Page, name: string): Promise<void> 
   const success = (url: URL) =>
     url.pathname.endsWith('/blueprints/migrations') ||
     (url.pathname.endsWith('/blueprints') && url.searchParams.get('installed') === '1');
+
+  // Object types that already exist in the project render the merge review
+  // instead of applying. Wait for either the landing or that review, then clear
+  // it (merge by default) before waiting for the final landing.
+  const conflictPage = typeConflictPage(page);
+  const conflictChoice = opts?.onTypeConflict ?? 'merge';
+  const nextInstallState = (): Promise<'landing' | 'conflict' | null> =>
+    Promise.race([
+      page
+        .waitForURL(success, { timeout: 15_000 })
+        .then(() => 'landing' as const)
+        .catch(() => null),
+      conflictPage
+        .waitFor({ state: 'visible', timeout: 15_000 })
+        .then(() => 'conflict' as const)
+        .catch(() => null),
+    ]);
+  for (let step = 0; step < 2; step++) {
+    const state = await nextInstallState();
+    if (state === 'landing' || state === null) break;
+    if (conflictChoice === 'cancel') {
+      await cancelTypeConflict(page);
+      return;
+    }
+    await confirmTypeConflictMerge(page);
+  }
 
   try {
     await page.waitForURL(success, { timeout: 10_000 });

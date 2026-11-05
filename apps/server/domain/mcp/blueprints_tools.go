@@ -13,6 +13,7 @@ type BlueprintToolHandler interface {
 	ExecuteBlueprintGet(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintPublish(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintApply(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintApplyPreview(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintUnapply(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintVersions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintListApplied(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
@@ -110,13 +111,33 @@ func blueprintsToolDefinitions() []ToolDefinition {
 			Name:          "blueprint-apply",
 			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
-			Description:   "Apply a blueprint to the current project, materializing its manifest: schema packs (create-or-skip, always assigned), agent definitions (create-or-update by name), global skills (create-or-update by name), and seed graph objects/relationships. Idempotent — re-applying converges. Returns per-type created/updated/skipped counts.",
+			Description:   "Apply a blueprint to the current project, materializing its manifest: schema packs (create-or-skip, always assigned), agent definitions (create-or-update by name), global skills (create-or-update by name), and seed graph objects/relationships. Idempotent — re-applying converges. Blocks with a conflict when an incoming pack declares an object type name already registered in the project; call blueprint-apply-preview first and retry with mergeTypes=true to confirm the merge. Returns per-type created/updated/skipped counts and accepted typeConflicts.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"id": {
 						Type:        "string",
 						Description: "UUID of the blueprint to apply",
+					},
+					"mergeTypes": {
+						Type:        "boolean",
+						Description: "Allow apply to merge incoming object types into existing registered types. Defaults to false, in which case a type-name collision blocks apply.",
+					},
+				},
+				Required: []string{"id"},
+			},
+		},
+		{
+			Name:          "blueprint-apply-preview",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Preview applying a blueprint to the current project WITHOUT materializing anything. Returns requiresMerge plus the object-type name collisions and their property-level diff detail. Use the result to decide whether to call blueprint-apply with mergeTypes=true.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"id": {
+						Type:        "string",
+						Description: "UUID of the blueprint to preview",
 					},
 				},
 				Required: []string{"id"},

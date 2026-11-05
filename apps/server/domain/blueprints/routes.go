@@ -25,6 +25,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.PUT("/model-overrides", h.UpsertModelOverrides, authMiddleware.RequireProjectID())
 	g.POST("/:name/updates/check", h.CheckBlueprintUpdates, authMiddleware.RequireProjectID())
 	g.POST("/:name/updates/apply", h.ApplyBlueprintUpdates, authMiddleware.RequireProjectID())
+	g.POST("/:name/updates/preview", h.PreviewBlueprintUpdates, authMiddleware.RequireProjectID())
 	g.GET("/:name/updates", h.GetBlueprintUpdates, authMiddleware.RequireProjectID())
 
 	g.POST("", h.CreateBlueprint)
@@ -40,6 +41,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("/:id/versions", h.NewVersion)
 	// Apply is project-scoped: RequireProjectID enforces the X-Project-ID
 	// header which populates user.ProjectID (the target project).
+	g.POST("/:id/apply/preview", h.PreviewApplyBlueprint, authMiddleware.RequireProjectID())
 	g.POST("/:id/apply", h.ApplyBlueprint, authMiddleware.RequireProjectID())
 	g.POST("/:id/unapply", h.UnapplyBlueprint, authMiddleware.RequireProjectID())
 	g.DELETE("/:id", h.DeleteBlueprint)

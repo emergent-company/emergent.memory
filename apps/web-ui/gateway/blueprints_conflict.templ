@@ -1,0 +1,178 @@
+package main
+
+import (
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// BlueprintTypeConflictPage is the merge review shown when a blueprint install,
+// import, or update would collide with object type names already registered in
+// the project. Nothing is applied from here: the user reviews the property-level
+// impact and explicitly confirms the merge, or cancels without side effects.
+templ BlueprintTypeConflictPage(d BlueprintTypeConflictData) {
+	<div class={ pageFormChromeClass }>
+		@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", d.Title)), "", d.Title, d.Subtitle, detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Badge(ui.BadgeProps{Label: "Merge required", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeSM, Icon: "lucide--shield-alert"})
+		}
+	</div>
+	<form method="post" action={ d.Action } data-testid="blueprint-type-conflict-page">
+		<div class={ pageFormFieldsClass, "flex flex-col gap-5" }>
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--shield-alert",
+				Message: blueprintConflictSummary(len(d.Conflicts)),
+			})
+
+			if d.CurrentVersion != "" || d.LatestVersion != "" {
+				@blueprintConflictUpdateContext(d)
+			}
+
+			@blueprintConflictHiddenFields(d)
+
+			<div class="flex flex-col gap-4">
+				for _, conflict := range d.Conflicts {
+					@blueprintTypeConflictCard(conflict)
+				}
+			</div>
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/blueprints",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-testid": "blueprint-type-conflict-cancel"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--merge",
+				Attrs:   templ.Attributes{"data-testid": "blueprint-type-conflict-merge"},
+			}) {
+				{ d.SubmitLabel }
+			}
+		}
+	</form>
+}
+
+// blueprintConflictUpdateContext names the versions involved in an update merge.
+templ blueprintConflictUpdateContext(d BlueprintTypeConflictData) {
+	<div class="flex flex-wrap items-center gap-2 text-sm" data-testid="blueprint-type-conflict-versions">
+		<span class="text-muted">Updating</span>
+		if d.CurrentVersion != "" {
+			@ui.Badge(ui.BadgeProps{Label: d.CurrentVersion, Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+		}
+		<span class="text-muted">→</span>
+		if d.LatestVersion != "" {
+			@ui.Badge(ui.BadgeProps{Label: d.LatestVersion, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+		}
+	</div>
+}
+
+// blueprintConflictHiddenFields carries the source through the merge confirm:
+// the blueprint id, the GitHub import coordinates, the update name, any model
+// overrides already chosen, and the explicit merge flag.
+templ blueprintConflictHiddenFields(d BlueprintTypeConflictData) {
+	if d.BlueprintID != "" {
+		<input type="hidden" name="id" value={ d.BlueprintID }/>
+	}
+	if d.URL != "" {
+		<input type="hidden" name="url" value={ d.URL }/>
+	}
+	if d.Ref != "" {
+		<input type="hidden" name="ref" value={ d.Ref }/>
+	}
+	if d.Token != "" {
+		<input type="hidden" name="token" value={ d.Token }/>
+	}
+	if d.Name != "" {
+		<input type="hidden" name="name" value={ d.Name }/>
+	}
+	for _, o := range blueprintConflictOverrides(d.ModelOverrides) {
+		<input type="hidden" name={ "model." + o.Name } value={ o.Value }/>
+	}
+	<input type="hidden" name="mergeTypeConflicts" value="1"/>
+}
+
+// blueprintTypeConflictCard is one object type's merge review: what collides,
+// which properties are new, and which keep the project's existing definition.
+templ blueprintTypeConflictCard(conflict BlueprintTypeConflict) {
+	{{ typeSlug := blueprintConflictSlug(conflict.TypeName)
+		headingID := "blueprint-type-conflict-heading-" + typeSlug }}
+	@components.PanelCard("border-warning/40 shadow-sm", templ.Attributes{"role": "group", "aria-labelledby": headingID, "data-testid": "blueprint-type-conflict-" + typeSlug}, "gap-4") {
+		<div class="flex flex-wrap items-start justify-between gap-3">
+			<div class="flex flex-col gap-1">
+				<h2 id={ headingID } class="text-lg font-bold tracking-tight">{ conflict.TypeName }</h2>
+				<p class="text-base-content/70 text-sm">
+					This type already exists in your project. Incoming definitions never replace what you have.
+				</p>
+			</div>
+			if conflict.IncomingPackName != "" {
+				@ui.Badge(ui.BadgeProps{Label: "Incoming: " + conflict.IncomingPackName, Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
+			}
+		</div>
+
+		<div class="flex flex-wrap gap-2">
+			@ui.Badge(ui.BadgeProps{Label: "Existing: " + blueprintConflictExistingLabel(conflict), Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--database"})
+		</div>
+
+		<div class="grid gap-4 lg:grid-cols-2">
+			<div class="rounded-box border border-base-content/10 p-4" data-testid={ "blueprint-conflict-added-group-" + typeSlug }>
+				<h3 class="text-sm font-semibold">Added to your type</h3>
+				<p class="text-base-content/70 mt-1 text-xs">{ blueprintConflictAddedSummary(len(conflict.AddedProperties)) }</p>
+				if len(conflict.AddedProperties) == 0 {
+					<p class="text-base-content/70 mt-3 text-sm">No new properties.</p>
+				} else {
+					<ul class="mt-3 flex flex-wrap gap-2">
+						for _, prop := range conflict.AddedProperties {
+							<li data-testid={ "blueprint-conflict-added-" + typeSlug + "-" + blueprintConflictSlug(prop) }>
+								@ui.Badge(ui.BadgeProps{Label: prop, Variant: ui.BadgeSuccess, Style: ui.BadgeStyleOutline, Size: ui.BadgeSizeXS, Icon: "lucide--plus"})
+							</li>
+						}
+					</ul>
+				}
+			</div>
+
+			<div class="rounded-box border border-warning/30 bg-warning/5 p-4" data-testid={ "blueprint-conflict-overridden-group-" + typeSlug }>
+				<h3 class="text-sm font-semibold">Kept from your project</h3>
+				<p class="text-base-content/70 mt-1 text-xs">{ blueprintConflictOverriddenSummary(len(conflict.ConflictingProperties)) }</p>
+				if len(conflict.ConflictingProperties) == 0 {
+					<p class="text-base-content/70 mt-3 text-sm">No conflicting definitions.</p>
+				} else {
+					<div class="mt-3 flex flex-col gap-3">
+						for _, pc := range conflict.ConflictingProperties {
+							@blueprintPropertyConflictRow(typeSlug, pc)
+						}
+					</div>
+				}
+			</div>
+		</div>
+	}
+}
+
+// blueprintPropertyConflictRow renders one property whose definition differs:
+// the property name, the "existing wins" resolution, and both definitions side
+// by side so the user can see exactly what is kept and what is ignored.
+templ blueprintPropertyConflictRow(typeSlug string, conflict BlueprintPropertyConflict) {
+	<div class="flex flex-col gap-2" data-testid={ "blueprint-conflict-overridden-" + typeSlug + "-" + blueprintConflictSlug(conflict.Property) }>
+		<div class="flex flex-wrap items-center gap-2">
+			<code class="rounded bg-base-200 px-1.5 py-0.5 text-xs font-semibold">{ conflict.Property }</code>
+			@ui.Badge(ui.BadgeProps{Label: blueprintConflictResolutionLabel(conflict.Resolution), Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--lock"})
+		</div>
+		<div class="grid gap-2 sm:grid-cols-2">
+			<div>
+				<p class="text-base-content/70 text-xs font-medium">Your project</p>
+				<pre class="mt-1 overflow-x-auto rounded border border-base-content/10 bg-base-100 p-2 text-xs">{ blueprintConflictDef(conflict.ExistingDef) }</pre>
+			</div>
+			<div>
+				<p class="text-base-content/70 text-xs font-medium">Incoming (ignored)</p>
+				<pre class="text-base-content/70 mt-1 overflow-x-auto rounded border border-base-content/10 bg-base-100 p-2 text-xs">{ blueprintConflictDef(conflict.IncomingDef) }</pre>
+			</div>
+		</div>
+	</div>
+}

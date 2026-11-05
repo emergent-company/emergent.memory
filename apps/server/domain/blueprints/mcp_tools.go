@@ -173,11 +173,28 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintApply(ctx context.Context, pro
 		return errResult("id is required")
 	}
 
-	result, err := h.svc.Apply(ctx, id, projectID, "", ApplyOptions{})
+	mergeTypes, _ := args["mergeTypes"].(bool)
+	result, err := h.svc.Apply(ctx, id, projectID, "", ApplyOptions{MergeTypeConflicts: mergeTypes})
 	if err != nil {
 		return errResult("failed to apply blueprint: " + err.Error())
 	}
 	return h.wrapResult(result)
+}
+
+// ExecuteBlueprintApplyPreview previews applying a blueprint to the current
+// project without materializing anything, exposing type-name collisions and
+// their property-level diff detail.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintApplyPreview(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["id"].(string)
+	if id == "" {
+		return errResult("id is required")
+	}
+
+	preview, err := h.svc.PreviewApply(ctx, id, projectID)
+	if err != nil {
+		return errResult("failed to preview blueprint apply: " + err.Error())
+	}
+	return h.wrapResult(preview)
 }
 
 // ExecuteBlueprintUnapply reverses a previous blueprint apply for the project.

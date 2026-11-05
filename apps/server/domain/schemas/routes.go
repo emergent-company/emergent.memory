@@ -48,6 +48,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Assign a pack to a project
 	projects.POST("/assign", h.AssignPack)
 
+	// Read-only merge preview for incoming packs (type-name collisions and
+	// property-level conflicts) before assigning/creating a pack.
+	projects.POST("/merge-preview", h.PreviewMerge)
+
 	// Update an assignment (e.g., toggle active)
 	projects.PATCH("/assignments/:assignmentId", h.UpdateAssignment)
 

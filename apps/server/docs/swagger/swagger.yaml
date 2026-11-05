@@ -2083,6 +2083,12 @@ definitions:
       force:
         description: Force is accepted for API compatibility; currently unused.
         type: boolean
+      mergeTypeConflicts:
+        description: |-
+          MergeTypeConflicts allows apply to proceed when an incoming pack declares
+          an object type name already registered in the project. Without it, apply
+          blocks with 409 before materializing anything.
+        type: boolean
       modelOverrides:
         additionalProperties:
           type: string
@@ -2092,6 +2098,15 @@ definitions:
           memory, over the stored manifest; when non-empty it is also persisted
           per-project (keyed by blueprint name) after a successful apply.
         type: object
+    type: object
+  domain_blueprints.ApplyPreview:
+    properties:
+      conflicts:
+        items:
+          $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict'
+        type: array
+      requiresMerge:
+        type: boolean
     type: object
   domain_blueprints.ApplyResult:
     properties:
@@ -2109,6 +2124,13 @@ definitions:
         $ref: '#/definitions/domain_blueprints.ApplyCounts'
       skills:
         $ref: '#/definitions/domain_blueprints.ApplyCounts'
+      typeConflicts:
+        description: |-
+          TypeConflicts lists the object-type collisions that were accepted via
+          MergeTypeConflicts. Empty on a conflict-free apply.
+        items:
+          $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict'
+        type: array
       version:
         type: string
     type: object
@@ -2159,6 +2181,13 @@ definitions:
         type: array
       name:
         type: string
+      typeConflicts:
+        description: |-
+          TypeConflicts is populated when the preview runs in project scope: the
+          object-type collisions an apply would hit, with property-level detail.
+        items:
+          $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict'
+        type: array
       version:
         type: string
     type: object
@@ -2178,6 +2207,11 @@ definitions:
         type: string
       lastError:
         type: string
+      mergeTypeConflicts:
+        description: |-
+          MergeTypeConflicts records the caller's explicit merge confirmation so
+          the async update executor may proceed through object-type collisions.
+        type: boolean
       projectId:
         type: string
       result:
@@ -2188,6 +2222,21 @@ definitions:
         type: string
       status:
         type: string
+    type: object
+  domain_blueprints.BlueprintUpdatePreview:
+    properties:
+      blueprintName:
+        type: string
+      conflicts:
+        items:
+          $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict'
+        type: array
+      currentVersion:
+        type: string
+      latestVersion:
+        type: string
+      requiresMerge:
+        type: boolean
     type: object
   domain_blueprints.BlueprintUpdateStatus:
     properties:
@@ -2244,6 +2293,11 @@ definitions:
   domain_blueprints.ImportGitHubRequest:
     properties:
       apply:
+        type: boolean
+      mergeTypeConflicts:
+        description: |-
+          MergeTypeConflicts allows an apply=true import to proceed when a pack
+          declares an object type name already registered in the project.
         type: boolean
       modelOverrides:
         additionalProperties:
@@ -9063,6 +9117,64 @@ definitions:
       version:
         type: string
     type: object
+  domain_schemas.MergePreviewConflict:
+    properties:
+      addedProperties:
+        items:
+          type: string
+        type: array
+      conflictingProperties:
+        items:
+          $ref: '#/definitions/domain_schemas.PropertyConflict'
+        type: array
+      existingSchema:
+        items:
+          type: integer
+        type: array
+      existingSchemaId:
+        type: string
+      existingSchemaName:
+        type: string
+      existingSchemaVersion:
+        type: string
+      incomingPackName:
+        type: string
+      incomingSchema:
+        items:
+          type: integer
+        type: array
+      mergedSchema:
+        items:
+          type: integer
+        type: array
+      typeName:
+        type: string
+    type: object
+  domain_schemas.MergePreviewPack:
+    properties:
+      name:
+        type: string
+      objectTypes:
+        items:
+          type: integer
+        type: array
+    type: object
+  domain_schemas.MergePreviewRequest:
+    properties:
+      packs:
+        items:
+          $ref: '#/definitions/domain_schemas.MergePreviewPack'
+        type: array
+    type: object
+  domain_schemas.MergePreviewResult:
+    properties:
+      conflicts:
+        items:
+          $ref: '#/definitions/domain_schemas.MergePreviewConflict'
+        type: array
+      requiresMerge:
+        type: boolean
+    type: object
   domain_schemas.MigrateRequest:
     properties:
       dry_run:
@@ -11347,6 +11459,56 @@ definitions:
         description: e.g. "4G"
         type: string
     type: object
+  github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict:
+    properties:
+      addedProperties:
+        items:
+          type: string
+        type: array
+      conflictingProperties:
+        items:
+          $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.PropertyConflict'
+        type: array
+      existingSchema:
+        items:
+          type: integer
+        type: array
+      existingSchemaId:
+        type: string
+      existingSchemaName:
+        type: string
+      existingSchemaVersion:
+        type: string
+      incomingPackName:
+        type: string
+      incomingSchema:
+        items:
+          type: integer
+        type: array
+      mergedSchema:
+        items:
+          type: integer
+        type: array
+      typeName:
+        type: string
+    type: object
+  github_com_emergent-company_emergent_memory_domain_schemas.PropertyConflict:
+    properties:
+      existing_def:
+        items:
+          type: integer
+        type: array
+      incoming_def:
+        items:
+          type: integer
+        type: array
+      property:
+        type: string
+      resolution:
+        description: Resolution is always "existing_wins" — existing properties are
+          never overwritten.
+        type: string
+    type: object
   github_com_emergent-company_emergent_memory_pkg_apperror.Error:
     properties:
       code:
@@ -12896,6 +13058,47 @@ paths:
       summary: Apply blueprint
       tags:
       - blueprints
+  /api/blueprints/{id}/apply/preview:
+    post:
+      consumes:
+      - application/json
+      description: Read-only preview of the object-type name collisions that would
+        block (or require merge confirmation for) applying this blueprint to the caller's
+        project, including property-level diff detail. Materializes nothing.
+      parameters:
+      - description: Blueprint ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Apply preview
+          schema:
+            $ref: '#/definitions/domain_blueprints.ApplyPreview'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Blueprint not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Preview blueprint apply
+      tags:
+      - blueprints
   /api/blueprints/{id}/deprecate:
     post:
       consumes:
@@ -13178,6 +13381,49 @@ paths:
       security:
       - bearerAuth: []
       summary: Check blueprint for updates
+      tags:
+      - blueprints
+  /api/blueprints/{name}/updates/preview:
+    post:
+      description: Fetches the upstream manifest for the caller's applied GitHub blueprint
+        and reports the object-type collisions an update apply would hit, WITHOUT
+        creating, publishing, or applying a new version.
+      parameters:
+      - description: Blueprint name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Update preview
+          schema:
+            $ref: '#/definitions/domain_blueprints.BlueprintUpdatePreview'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Applied GitHub blueprint not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "502":
+          description: Fetch failed
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Preview a blueprint update
       tags:
       - blueprints
   /api/blueprints/applied:
@@ -23155,6 +23401,49 @@ paths:
       security:
       - bearerAuth: []
       summary: List installed schemas
+      tags:
+      - schemas
+  /api/schemas/projects/{projectId}/merge-preview:
+    post:
+      consumes:
+      - application/json
+      description: Read-only preview of the type-name collisions and property-level
+        conflicts that would occur if the supplied packs were assigned or created.
+        Makes no database changes.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Packs to preview
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_schemas.MergePreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Merge preview
+          schema:
+            $ref: '#/definitions/domain_schemas.MergePreviewResult'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Preview pack merge
       tags:
       - schemas
   /api/schemas/projects/{projectId}/migrate:

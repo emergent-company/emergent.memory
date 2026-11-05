@@ -2643,8 +2643,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 
 	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
-		"blueprint-apply", "blueprint-unapply", "blueprint-versions", "blueprint-list-applied",
-		"blueprint-new-version", "blueprint-update":
+		"blueprint-apply", "blueprint-apply-preview", "blueprint-unapply", "blueprint-versions",
+		"blueprint-list-applied", "blueprint-new-version", "blueprint-update":
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
@@ -6326,6 +6326,8 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 		return s.blueprintToolHandler.ExecuteBlueprintPublish(ctx, projectID, args)
 	case "blueprint-apply":
 		return s.blueprintToolHandler.ExecuteBlueprintApply(ctx, projectID, args)
+	case "blueprint-apply-preview":
+		return s.blueprintToolHandler.ExecuteBlueprintApplyPreview(ctx, projectID, args)
 	case "blueprint-unapply":
 		return s.blueprintToolHandler.ExecuteBlueprintUnapply(ctx, projectID, args)
 	case "blueprint-versions":

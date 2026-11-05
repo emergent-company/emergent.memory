@@ -28,14 +28,19 @@ type BlueprintModelMapRow struct {
 // forwarded through a hidden input so a private-repo import that hits the review
 // step still authenticates on confirm; it is never placed in a redirect target
 // or flash.
+//
+// MergeTypeConflicts is set when this review follows a confirmed object-type
+// conflict merge: the form still carries mergeTypeConflicts=1 so the final
+// apply proceeds through the merge instead of being blocked again.
 type BlueprintModelMapData struct {
-	Action      string
-	BlueprintID string
-	URL         string
-	Ref         string
-	Token       string
-	Rows        []BlueprintModelMapRow
-	Models      []Model
+	Action             string
+	BlueprintID        string
+	URL                string
+	Ref                string
+	Token              string
+	Rows               []BlueprintModelMapRow
+	Models             []Model
+	MergeTypeConflicts bool
 }
 
 // BlueprintImportModelMapPage is the standalone review step shown before
@@ -67,6 +72,12 @@ templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
 			}
 			if d.Token != "" {
 				<input type="hidden" name="token" value={ d.Token }/>
+			}
+			// Marks this submission as coming from the model-review step, so the
+			// confirm handler applies directly instead of re-rendering the page.
+			<input type="hidden" name="modelReviewed" value="1"/>
+			if d.MergeTypeConflicts {
+				<input type="hidden" name="mergeTypeConflicts" value="1"/>
 			}
 			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden"}) {
 				for _, row := range d.Rows {

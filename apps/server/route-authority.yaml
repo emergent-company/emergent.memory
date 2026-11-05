@@ -258,6 +258,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: POST
+      path: /api/blueprints/:id/apply/preview
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: POST
       path: /api/blueprints/:id/deprecate
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
@@ -283,6 +287,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: POST
       path: /api/blueprints/:name/updates/check
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: POST
+      path: /api/blueprints/:name/updates/preview
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: GET
@@ -1791,6 +1799,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/schemas/projects/:projectId/installed
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/schemas/projects/:projectId/merge-preview
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST

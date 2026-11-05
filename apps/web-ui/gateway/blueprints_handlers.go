@@ -167,6 +167,22 @@ func buildModelMapRows(manifest blueprintManifest, providerNames []string, saved
 	return rows
 }
 
+// applyModelOverridesToRows overlays posted per-agent model choices onto the
+// review rows. It carries the values a conflict-page confirm received through
+// the hidden `model.<agent>` inputs into the model review, so confirming the
+// merge does not silently drop a mapping the user already chose.
+func applyModelOverridesToRows(rows []BlueprintModelMapRow, overrides map[string]string) []BlueprintModelMapRow {
+	if len(overrides) == 0 {
+		return rows
+	}
+	for i := range rows {
+		if selected, ok := overrides[rows[i].AgentName]; ok {
+			rows[i].Selected = selected
+		}
+	}
+	return rows
+}
+
 // blueprintModelMapContext resolves the review-page state for a manifest: the
 // project's configured generative models plus the per-agent rows, pre-filled
 // from the saved per-project overrides for the blueprint name (best effort). A
@@ -191,8 +207,9 @@ func (s *Server) blueprintModelMapContext(ctx context.Context, manifest blueprin
 
 // loadInstallManifest resolves a blueprint id's manifest and name for the
 // review step. ok is false when the blueprint can't be resolved (e.g. a legacy
-// registry schema, where install proceeds directly) or its manifest can't be
-// parsed — either way the caller falls back to a direct apply.
+// registry schema) or its manifest can't be parsed. The caller has already run
+// the conflict preview, so an unreadable manifest falls back to the direct
+// apply path (with any confirmed merge flag) rather than blocking the install.
 func (s *Server) loadInstallManifest(ctx context.Context, id string) (manifest blueprintManifest, name string, ok bool) {
 	rec, err := s.memory.GetBlueprint(ctx, id)
 	if err != nil {
@@ -224,17 +241,41 @@ func modelOverridesFromForm(form url.Values) map[string]string {
 	return overrides
 }
 
-// applyBlueprintPRG applies a blueprint (optionally with model overrides) and
-// redirects to the appropriate flash. Apply does not surface migration status,
-// so fall back to the drift scan around the apply: redirect to migrations only
-// when this install increased the stale-object count.
-func (s *Server) applyBlueprintPRG(c echo.Context, id string, overrides map[string]string) error {
+// isMergeConfirmed reports whether a form posted the explicit merge
+// confirmation. The conflict page posts mergeTypeConflicts=1; a few common
+// truthy spellings are accepted so a hand-rolled form still works.
+func isMergeConfirmed(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// renderTypeConflictPage renders the merge review page for one blocked install,
+// import, or update. Nothing is applied; the page posts the same hidden source
+// fields back with mergeTypeConflicts=1 so the confirm path can proceed.
+func (s *Server) renderTypeConflictPage(c echo.Context, d BlueprintTypeConflictData) error {
+	return s.page(c, pageTitle(d.Title), BlueprintTypeConflictPage(d))
+}
+
+// applyBlueprintPRG applies a blueprint (optionally with model overrides and
+// with permission to merge object-type name collisions) and redirects to the
+// appropriate flash. Apply does not surface migration status, so fall back to
+// the drift scan around the apply: redirect to migrations only when this
+// install increased the stale-object count.
+func (s *Server) applyBlueprintPRG(c echo.Context, id string, overrides map[string]string, merge bool) error {
 	ctx := c.Request().Context()
 	before := s.checkMigrationAfterApply(ctx)
 	var err error
-	if len(overrides) > 0 {
-		_, err = s.memory.ApplyBlueprintWithOverrides(ctx, id, overrides)
-	} else {
+	switch {
+	case merge || len(overrides) > 0:
+		_, err = s.memory.ApplyBlueprintWithOptions(ctx, id, BlueprintApplyOptions{
+			ModelOverrides:     overrides,
+			MergeTypeConflicts: merge,
+		})
+	default:
 		_, err = s.memory.ApplyBlueprint(ctx, id)
 	}
 	if err != nil {
@@ -247,51 +288,71 @@ func (s *Server) applyBlueprintPRG(c echo.Context, id string, overrides map[stri
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 }
 
-// uiInstallBlueprint handles the install form on the blueprints page. When the
-// blueprint pins models it renders the review step first; otherwise it applies
-// directly. A missing schemaId short-circuits to the generic error flash.
+// uiInstallBlueprint handles the install form on the blueprints page. It checks
+// for object-type name collisions first, then shows the model-review step when
+// the blueprint pins models, and otherwise applies directly. A missing schemaId
+// short-circuits to the generic error flash.
 func (s *Server) uiInstallBlueprint(c echo.Context) error {
 	schemaID := c.FormValue("schemaId")
-	ctx := c.Request().Context()
 	if schemaID == "" {
 		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
 	}
-	manifest, name, ok := s.loadInstallManifest(ctx, schemaID)
-	if !ok || len(pinnedAgentsFromManifest(manifest)) == 0 {
-		return s.applyBlueprintPRG(c, schemaID, nil)
-	}
-	rows, models := s.blueprintModelMapContext(ctx, manifest, name)
-	return s.page(c, pageTitle("Review blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
-		Action:      "/blueprints/install/confirm",
-		BlueprintID: schemaID,
-		Rows:        rows,
-		Models:      models,
-	}))
+	return s.startInstallFlow(c, schemaID, nil, false)
 }
 
-// uiInstallBlueprintById applies an already-seeded blueprint, showing the
-// review step first when it pins models (PRG).
+// uiInstallBlueprintById applies an already-seeded blueprint through the same
+// conflict/model review flow as the list install (PRG).
 func (s *Server) uiInstallBlueprintById(c echo.Context) error {
-	id := c.Param("id")
+	return s.startInstallFlow(c, c.Param("id"), nil, false)
+}
+
+// startInstallFlow is the shared install entry point. Unless the user has
+// already confirmed a merge, it previews the apply for object-type name
+// collisions. Conflicts render the merge review page instead of applying. Once
+// past the conflict gate, a blueprint that pins models always passes through
+// the model-review step (carrying the confirmed merge flag) and otherwise
+// applies directly with the requested merge state.
+func (s *Server) startInstallFlow(c echo.Context, id string, overrides map[string]string, merge bool) error {
 	ctx := c.Request().Context()
+	if !merge {
+		preview, err := s.memory.PreviewApplyBlueprint(ctx, id)
+		if err != nil {
+			return redirectWithError(c, "/blueprints", err)
+		}
+		if preview != nil && preview.RequiresMerge {
+			return s.renderTypeConflictPage(c, BlueprintTypeConflictData{
+				Action:         "/blueprints/install/confirm",
+				BlueprintID:    id,
+				ModelOverrides: overrides,
+				Conflicts:      preview.Conflicts,
+				Title:          "Merge blueprint types",
+				Subtitle:       "This blueprint introduces object types that already exist in this project. Nothing is installed until you confirm the merge.",
+				SubmitLabel:    "Merge types and install",
+			})
+		}
+	}
+
 	manifest, name, ok := s.loadInstallManifest(ctx, id)
 	if !ok || len(pinnedAgentsFromManifest(manifest)) == 0 {
-		return s.applyBlueprintPRG(c, id, nil)
+		return s.applyBlueprintPRG(c, id, overrides, merge)
 	}
 	rows, models := s.blueprintModelMapContext(ctx, manifest, name)
 	return s.page(c, pageTitle("Review blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
-		Action:      "/blueprints/install/confirm",
-		BlueprintID: id,
-		Rows:        rows,
-		Models:      models,
+		Action:             "/blueprints/install/confirm",
+		BlueprintID:        id,
+		Rows:               applyModelOverridesToRows(rows, overrides),
+		Models:             models,
+		MergeTypeConflicts: merge,
 	}))
 }
 
-// uiInstallBlueprintConfirm handles the review-step form submission for an
-// install: it reads the hidden id plus the per-agent `model.<agentName>`
-// overrides and applies them (an empty value clears the model → project
-// default). Success redirects to the installed flash; failure redirects with
-// the mapped error.
+// uiInstallBlueprintConfirm handles both review steps for an install: the
+// conflict page's merge confirmation and the model-review submission. It reads
+// the hidden id, the per-agent `model.<agentName>` overrides, the merge flag,
+// and the modelReviewed marker. A merged install still routes through the model
+// review when the blueprint pins models; the final model submission applies with
+// mergeTypeConflicts. Without a confirmed merge it re-checks the apply preview
+// so a newly discovered collision goes back through the conflict page.
 func (s *Server) uiInstallBlueprintConfirm(c echo.Context) error {
 	id := c.FormValue("id")
 	if id == "" {
@@ -300,14 +361,43 @@ func (s *Server) uiInstallBlueprintConfirm(c echo.Context) error {
 	if err := c.Request().ParseForm(); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
-	return s.applyBlueprintPRG(c, id, modelOverridesFromForm(c.Request().PostForm))
+	overrides := modelOverridesFromForm(c.Request().PostForm)
+	merge := isMergeConfirmed(c.FormValue("mergeTypeConflicts"))
+	modelReviewed := isMergeConfirmed(c.FormValue("modelReviewed"))
+
+	if merge {
+		if modelReviewed {
+			return s.applyBlueprintPRG(c, id, overrides, true)
+		}
+		// The conflict page confirmed the merge; continue through the model
+		// review (if any) with the merge flag preserved.
+		return s.startInstallFlow(c, id, overrides, true)
+	}
+
+	preview, err := s.memory.PreviewApplyBlueprint(c.Request().Context(), id)
+	if err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	if preview != nil && preview.RequiresMerge {
+		return s.renderTypeConflictPage(c, BlueprintTypeConflictData{
+			Action:         "/blueprints/install/confirm",
+			BlueprintID:    id,
+			ModelOverrides: overrides,
+			Conflicts:      preview.Conflicts,
+			Title:          "Merge blueprint types",
+			Subtitle:       "This blueprint introduces object types that already exist in this project. Nothing is installed until you confirm the merge.",
+			SubmitLabel:    "Merge types and install",
+		})
+	}
+	return s.applyBlueprintPRG(c, id, overrides, false)
 }
 
 // uiImportGitHubBlueprint previews a blueprint import from a GitHub repository
-// URL (side-effect free), then either imports+applies it directly when no agent
-// pins a model, or renders the model-review page so the user can confirm the
-// pinned models first. The optional token is a private-repo credential: it is
-// forwarded only to memory and is never placed in the redirect target or flash.
+// URL (side-effect free), then runs the shared import review flow: object-type
+// collisions go to the merge page, a pinned-model blueprint goes to the model
+// review, and anything else imports+applies directly. The optional token is a
+// private-repo credential: it is forwarded only to memory and is never placed
+// in the redirect target or flash.
 func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 	repoURL := c.FormValue("url")
 	ref := c.FormValue("ref")
@@ -315,11 +405,36 @@ func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 	if repoURL == "" {
 		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
 	}
+	return s.startImportFlow(c, repoURL, ref, token, nil, false)
+}
+
+// startImportFlow is the shared import entry point after a (re)preview. Unless
+// the merge was already confirmed, object-type collisions render the conflict
+// page. Once past the gate, a pinned-model manifest renders the model-review
+// page with the merge flag and source fields preserved; otherwise the import
+// applies directly with the requested merge state.
+func (s *Server) startImportFlow(c echo.Context, repoURL, ref, token string, overrides map[string]string, merge bool) error {
 	ctx := c.Request().Context()
 
 	prev, err := s.memory.PreviewImportBlueprint(ctx, repoURL, ref, token)
 	if err != nil {
 		return redirectWithError(c, "/blueprints", err)
+	}
+
+	// Object-type collisions block the import: review them before anything is
+	// created, published, or applied.
+	if !merge && len(prev.TypeConflicts) > 0 {
+		return s.renderTypeConflictPage(c, BlueprintTypeConflictData{
+			Action:         "/blueprints/import/confirm",
+			URL:            repoURL,
+			Ref:            ref,
+			Token:          token,
+			ModelOverrides: overrides,
+			Conflicts:      prev.TypeConflicts,
+			Title:          "Merge blueprint types",
+			Subtitle:       "This blueprint introduces object types that already exist in this project. Nothing is imported until you confirm the merge.",
+			SubmitLabel:    "Merge types and install",
+		})
 	}
 
 	var manifest blueprintManifest
@@ -330,26 +445,30 @@ func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 	rows, models := s.blueprintModelMapContext(ctx, manifest, prev.Name)
 
 	if len(rows) == 0 {
-		if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, nil); err != nil {
+		if _, err := s.memory.ImportAndApplyBlueprintWithOptions(ctx, repoURL, ref, token, overrides, merge); err != nil {
 			return redirectWithError(c, "/blueprints", err)
 		}
 		return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 	}
 
 	return s.page(c, pageTitle("Review blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
-		Action: "/blueprints/import/confirm",
-		URL:    repoURL,
-		Ref:    ref,
-		Token:  token,
-		Rows:   rows,
-		Models: models,
+		Action:             "/blueprints/import/confirm",
+		URL:                repoURL,
+		Ref:                ref,
+		Token:              token,
+		Rows:               applyModelOverridesToRows(rows, overrides),
+		Models:             models,
+		MergeTypeConflicts: merge,
 	}))
 }
 
-// uiImportGitHubBlueprintConfirm handles the review-step form submission: it
-// reads the per-agent `model.<agentName>` overrides and applies the import with
-// them (an empty value clears the model → project default). Success redirects
-// to the installed flash; failure redirects with the mapped error.
+// uiImportGitHubBlueprintConfirm handles both review steps for an import: the
+// conflict page's merge confirmation and the model-review submission. It reads
+// the source fields, the per-agent `model.<agentName>` overrides, the merge flag,
+// and the modelReviewed marker. A merged import still routes through the model
+// review when the blueprint pins models; the final model submission applies with
+// mergeTypeConflicts. Without a confirmed merge it re-previews so a newly
+// discovered collision goes back through the conflict page.
 func (s *Server) uiImportGitHubBlueprintConfirm(c echo.Context) error {
 	repoURL := c.FormValue("url")
 	ref := c.FormValue("ref")
@@ -362,8 +481,41 @@ func (s *Server) uiImportGitHubBlueprintConfirm(c echo.Context) error {
 	if err := c.Request().ParseForm(); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
+	overrides := modelOverridesFromForm(c.Request().PostForm)
+	merge := isMergeConfirmed(c.FormValue("mergeTypeConflicts"))
+	modelReviewed := isMergeConfirmed(c.FormValue("modelReviewed"))
 
-	if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, modelOverridesFromForm(c.Request().PostForm)); err != nil {
+	if merge {
+		if modelReviewed {
+			if _, err := s.memory.ImportAndApplyBlueprintWithOptions(ctx, repoURL, ref, token, overrides, true); err != nil {
+				return redirectWithError(c, "/blueprints", err)
+			}
+			return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
+		}
+		// The conflict page confirmed the merge; continue through the model
+		// review (if any) with the merge flag preserved.
+		return s.startImportFlow(c, repoURL, ref, token, overrides, true)
+	}
+
+	prev, err := s.memory.PreviewImportBlueprint(ctx, repoURL, ref, token)
+	if err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	if prev != nil && len(prev.TypeConflicts) > 0 {
+		return s.renderTypeConflictPage(c, BlueprintTypeConflictData{
+			Action:         "/blueprints/import/confirm",
+			URL:            repoURL,
+			Ref:            ref,
+			Token:          token,
+			ModelOverrides: overrides,
+			Conflicts:      prev.TypeConflicts,
+			Title:          "Merge blueprint types",
+			Subtitle:       "This blueprint introduces object types that already exist in this project. Nothing is imported until you confirm the merge.",
+			SubmitLabel:    "Merge types and install",
+		})
+	}
+
+	if _, err := s.memory.ImportAndApplyBlueprintWithOptions(ctx, repoURL, ref, token, overrides, false); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
@@ -423,15 +575,39 @@ func (s *Server) uiCheckBlueprintUpdates(c echo.Context) error {
 }
 
 // uiApplyBlueprintUpdate enqueues the asynchronous apply of a detected upstream
-// update for one applied blueprint and redirects back to the list (PRG). A
-// duplicate enqueue while an update is already pending/running is surfaced as a
-// clear flash error (the reload then shows the running job).
+// update for one applied blueprint and redirects back to the list (PRG). Unless
+// the merge flag is already set, it first previews the update: object-type
+// collisions render the merge review page instead of enqueuing. A duplicate
+// enqueue while an update is already pending/running is surfaced as a clear
+// flash error (the reload then shows the running job).
 func (s *Server) uiApplyBlueprintUpdate(c echo.Context) error {
 	name := c.Param("name")
 	if name == "" {
 		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
 	}
-	if _, err := s.memory.ApplyBlueprintUpdate(c.Request().Context(), name); err != nil {
+	ctx := c.Request().Context()
+	merge := isMergeConfirmed(c.FormValue("mergeTypeConflicts"))
+
+	if !merge {
+		preview, err := s.memory.PreviewBlueprintUpdate(ctx, name)
+		if err != nil {
+			return redirectWithError(c, "/blueprints", err)
+		}
+		if preview != nil && preview.RequiresMerge {
+			return s.renderTypeConflictPage(c, BlueprintTypeConflictData{
+				Action:         "/blueprints/" + url.PathEscape(name) + "/updates/apply",
+				Name:           name,
+				Conflicts:      preview.Conflicts,
+				Title:          "Merge blueprint types",
+				Subtitle:       "This update introduces object types that already exist in this project. Nothing is updated until you confirm the merge.",
+				SubmitLabel:    "Merge types and update",
+				CurrentVersion: preview.CurrentVersion,
+				LatestVersion:  preview.LatestVersion,
+			})
+		}
+	}
+
+	if _, err := s.memory.ApplyBlueprintUpdateWithMerge(ctx, name, merge); err != nil {
 		if isMemoryStatus(err, http.StatusConflict) {
 			return redirectWithError(c, "/blueprints", errors.New("an update for this blueprint is already pending or running"))
 		}

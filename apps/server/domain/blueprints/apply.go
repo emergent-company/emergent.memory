@@ -28,6 +28,18 @@ type ApplyOptions struct {
 	// memory, over the stored manifest; when non-empty it is also persisted
 	// per-project (keyed by blueprint name) after a successful apply.
 	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
+	// MergeTypeConflicts allows apply to proceed when an incoming pack declares
+	// an object type name already registered in the project. Without it, apply
+	// blocks with 409 before materializing anything.
+	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
+}
+
+// ApplyPreview is the read-only result of previewing a blueprint apply: the
+// object-type collisions that would block (or require merge confirmation), with
+// property-level detail.
+type ApplyPreview struct {
+	RequiresMerge bool                           `json:"requiresMerge"`
+	Conflicts     []schemas.MergePreviewConflict `json:"conflicts"`
 }
 
 // ApplyCounts reports per-entity-type materialization counts.
@@ -53,6 +65,9 @@ type ApplyResult struct {
 	Agents        ApplyCounts `json:"agents"`
 	Skills        ApplyCounts `json:"skills"`
 	Seed          ApplyCounts `json:"seed"`
+	// TypeConflicts lists the object-type collisions that were accepted via
+	// MergeTypeConflicts. Empty on a conflict-free apply.
+	TypeConflicts []schemas.MergePreviewConflict `json:"typeConflicts,omitempty"`
 }
 
 // Apply materializes a blueprint's manifest into concrete memory entities:
@@ -74,12 +89,12 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+		return nil, apperror.NewBadRequest("invalid projectId")
 	}
 
 	var manifest BlueprintManifest
 	if err := json.Unmarshal(bp.Manifest, &manifest); err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
+		return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
 	}
 
 	// Resolve effective model overrides BEFORE validation/materialization:
@@ -110,6 +125,18 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		return nil, err
 	}
 
+	// Object-type collision gate: computed read-only BEFORE any materialization.
+	// A same-pack re-apply/update is ignored by schemas.PreviewMerge; anything
+	// else needs an explicit merge confirmation.
+	typeConflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest)
+	if err != nil {
+		return nil, err
+	}
+	if len(typeConflicts) > 0 && !opts.MergeTypeConflicts {
+		return nil, apperror.NewConflict("object type name conflicts require merge confirmation").
+			WithDetails(map[string]any{"conflicts": typeConflicts})
+	}
+
 	var actorID *uuid.UUID
 	if uid, err := uuid.Parse(userID); err == nil {
 		actorID = &uid
@@ -120,6 +147,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		BlueprintName: bp.Name,
 		Version:       bp.Version,
 		Checksum:      bp.Checksum,
+		TypeConflicts: typeConflicts,
 	}
 
 	// Packs: create-or-skip by (name, version); assign runs on EVERY apply so
@@ -161,6 +189,56 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	}
 
 	return result, nil
+}
+
+// PreviewApply computes the read-only object-type merge preview for a
+// blueprint's stored manifest. It never materializes anything.
+func (s *Service) PreviewApply(ctx context.Context, blueprintID, projectID string) (*ApplyPreview, error) {
+	bp, err := s.repo.GetByID(ctx, projectID, blueprintID)
+	if err != nil {
+		return nil, err
+	}
+
+	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest)
+	if err != nil {
+		return nil, err
+	}
+	return &ApplyPreview{
+		RequiresMerge: len(conflicts) > 0,
+		Conflicts:     conflicts,
+	}, nil
+}
+
+// PreviewManifestConflicts returns the object-type collisions between a
+// blueprint manifest's packs and the project's registered types. Shared by
+// apply, import preview, update preview, and the MCP preview tool. Same-pack
+// names are already ignored by schemas.PreviewMerge.
+func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string, manifest json.RawMessage) ([]schemas.MergePreviewConflict, error) {
+	var m BlueprintManifest
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
+	}
+	if len(m.Packs) == 0 {
+		return nil, nil
+	}
+
+	packs := make([]schemas.MergePreviewPack, 0, len(m.Packs))
+	for _, p := range m.Packs {
+		objectTypes, err := json.Marshal(p.ObjectTypes)
+		if err != nil {
+			return nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
+		}
+		packs = append(packs, schemas.MergePreviewPack{Name: p.Name, ObjectTypes: objectTypes})
+	}
+
+	if s.schemasSvc == nil {
+		return nil, apperror.NewInternal("schema service is not configured", nil)
+	}
+	preview, err := s.schemasSvc.PreviewMerge(ctx, projectID, packs)
+	if err != nil {
+		return nil, err
+	}
+	return preview.Conflicts, nil
 }
 
 // applyModelOverrides rewrites each manifest agent whose Name is a key in
@@ -240,7 +318,7 @@ func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID
 	var counts ApplyCounts
 	for _, p := range packs {
 		if p.Name == "" || p.Version == "" {
-			return counts, apperror.ErrBadRequest.WithMessage("pack name and version are required")
+			return counts, apperror.NewBadRequest("pack name and version are required")
 		}
 
 		pack, created, err := s.resolvePack(ctx, projectID, origin, p)
@@ -331,7 +409,7 @@ func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p P
 func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMessage, err error) {
 	objectTypes, err = json.Marshal(p.ObjectTypes)
 	if err != nil {
-		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
+		return nil, nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
 	}
 	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
 	if err != nil {
@@ -339,7 +417,7 @@ func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMess
 	}
 	relationshipTypes, err = json.Marshal(expandedRels)
 	if err != nil {
-		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
+		return nil, nil, apperror.NewBadRequest("invalid relationshipTypes in pack " + p.Name)
 	}
 	return objectTypes, relationshipTypes, nil
 }
@@ -504,7 +582,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 
 	for _, am := range agentManifests {
 		if am.Name == "" {
-			return counts, apperror.ErrBadRequest.WithMessage("agent name is required")
+			return counts, apperror.NewBadRequest("agent name is required")
 		}
 		if am.Visibility != "" {
 			v, ok := agents.NormalizeVisibility(agents.AgentVisibility(am.Visibility))
@@ -975,10 +1053,10 @@ func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
 	}
 	raw, err := json.Marshal(m.WorkConfig)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name)
+		return apperror.NewBadRequest("invalid workConfig for agent " + m.Name)
 	}
 	if err := json.Unmarshal(raw, &def.WorkConfig); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name + ": " + err.Error())
+		return apperror.NewBadRequest("invalid workConfig for agent " + m.Name + ": " + err.Error())
 	}
 	return nil
 }

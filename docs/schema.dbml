@@ -811,6 +811,7 @@ Table "kb"."blueprint_update_jobs" {
   "created_at" timestamptz [not null, default: `now()`]
   "started_at" timestamptz
   "finished_at" timestamptz
+  "merge_type_conflicts" boolean [not null, default: false]
 
   Indexes {
     (status, created_at) [name: "idx_blueprint_update_jobs_status_created"]

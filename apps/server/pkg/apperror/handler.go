@@ -69,6 +69,9 @@ func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 			code = appErr.HTTPStatus
 			errorObj["code"] = appErr.Code
 			errorObj["message"] = appErr.Message
+			if len(appErr.Details) > 0 {
+				errorObj["details"] = appErr.Details
+			}
 		} else if pgErr := pgError(err); pgErr != nil {
 			// Map Postgres error codes to HTTP status codes so DB constraint
 			// violations never surface as opaque 500s.
