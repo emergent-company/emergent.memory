@@ -2745,6 +2745,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/blueprints/{id}/apply/preview": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Read-only preview of the object-type name collisions that would block (or require merge confirmation for) applying this blueprint to the caller's project, including property-level diff detail. Materializes nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Preview blueprint apply",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Blueprint ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Apply preview",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.ApplyPreview"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / project context required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Blueprint not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/blueprints/{id}/deprecate": {
             "post": {
                 "security": [
@@ -3168,6 +3229,70 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/blueprints/{name}/updates/preview": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Fetches the upstream manifest for the caller's applied GitHub blueprint and reports the object-type collisions an update apply would hit, WITHOUT creating, publishing, or applying a new version.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Preview a blueprint update",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Blueprint name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Update preview",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.BlueprintUpdatePreview"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / project context required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Applied GitHub blueprint not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Fetch failed",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -17656,6 +17781,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/schemas/projects/{projectId}/merge-preview": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Preview pack merge",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Packs to preview",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.MergePreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Merge preview",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.MergePreviewResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/schemas/projects/{projectId}/migrate": {
             "post": {
                 "security": [
@@ -30622,12 +30811,30 @@ const docTemplate = `{
                     "description": "Force is accepted for API compatibility; currently unused.",
                     "type": "boolean"
                 },
+                "mergeTypeConflicts": {
+                    "description": "MergeTypeConflicts allows apply to proceed when an incoming pack declares\nan object type name already registered in the project. Without it, apply\nblocks with 409 before materializing anything.",
+                    "type": "boolean"
+                },
                 "modelOverrides": {
                     "description": "ModelOverrides maps an agent name to a ` + "`" + `provider/model` + "`" + ` reference (or an\nempty string to select the project default). Applied at apply time, in\nmemory, over the stored manifest; when non-empty it is also persisted\nper-project (keyed by blueprint name) after a successful apply.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_blueprints.ApplyPreview": {
+            "type": "object",
+            "properties": {
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict"
+                    }
+                },
+                "requiresMerge": {
+                    "type": "boolean"
                 }
             }
         },
@@ -30654,6 +30861,13 @@ const docTemplate = `{
                 },
                 "skills": {
                     "$ref": "#/definitions/domain_blueprints.ApplyCounts"
+                },
+                "typeConflicts": {
+                    "description": "TypeConflicts lists the object-type collisions that were accepted via\nMergeTypeConflicts. Empty on a conflict-free apply.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict"
+                    }
                 },
                 "version": {
                     "type": "string"
@@ -30731,6 +30945,13 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "typeConflicts": {
+                    "description": "TypeConflicts is populated when the preview runs in project scope: the\nobject-type collisions an apply would hit, with property-level detail.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict"
+                    }
+                },
                 "version": {
                     "type": "string"
                 }
@@ -30760,6 +30981,10 @@ const docTemplate = `{
                 "lastError": {
                     "type": "string"
                 },
+                "mergeTypeConflicts": {
+                    "description": "MergeTypeConflicts records the caller's explicit merge confirmation so\nthe async update executor may proceed through object-type collisions.",
+                    "type": "boolean"
+                },
                 "projectId": {
                     "type": "string"
                 },
@@ -30774,6 +30999,29 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_blueprints.BlueprintUpdatePreview": {
+            "type": "object",
+            "properties": {
+                "blueprintName": {
+                    "type": "string"
+                },
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict"
+                    }
+                },
+                "currentVersion": {
+                    "type": "string"
+                },
+                "latestVersion": {
+                    "type": "string"
+                },
+                "requiresMerge": {
+                    "type": "boolean"
                 }
             }
         },
@@ -30860,6 +31108,10 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "apply": {
+                    "type": "boolean"
+                },
+                "mergeTypeConflicts": {
+                    "description": "MergeTypeConflicts allows an apply=true import to proceed when a pack\ndeclares an object type name already registered in the project.",
                     "type": "boolean"
                 },
                 "modelOverrides": {
@@ -40488,6 +40740,95 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_schemas.MergePreviewConflict": {
+            "type": "object",
+            "properties": {
+                "addedProperties": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "conflictingProperties": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.PropertyConflict"
+                    }
+                },
+                "existingSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "existingSchemaId": {
+                    "type": "string"
+                },
+                "existingSchemaName": {
+                    "type": "string"
+                },
+                "existingSchemaVersion": {
+                    "type": "string"
+                },
+                "incomingPackName": {
+                    "type": "string"
+                },
+                "incomingSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "mergedSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "typeName": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.MergePreviewPack": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "objectTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "domain_schemas.MergePreviewRequest": {
+            "type": "object",
+            "properties": {
+                "packs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.MergePreviewPack"
+                    }
+                }
+            }
+        },
+        "domain_schemas.MergePreviewResult": {
+            "type": "object",
+            "properties": {
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.MergePreviewConflict"
+                    }
+                },
+                "requiresMerge": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_schemas.MigrateRequest": {
             "type": "object",
             "properties": {
@@ -43799,6 +44140,80 @@ const docTemplate = `{
                 },
                 "memory": {
                     "description": "e.g. \"4G\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_schemas.MergePreviewConflict": {
+            "type": "object",
+            "properties": {
+                "addedProperties": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "conflictingProperties": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.PropertyConflict"
+                    }
+                },
+                "existingSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "existingSchemaId": {
+                    "type": "string"
+                },
+                "existingSchemaName": {
+                    "type": "string"
+                },
+                "existingSchemaVersion": {
+                    "type": "string"
+                },
+                "incomingPackName": {
+                    "type": "string"
+                },
+                "incomingSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "mergedSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "typeName": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_schemas.PropertyConflict": {
+            "type": "object",
+            "properties": {
+                "existing_def": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "incoming_def": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "property": {
+                    "type": "string"
+                },
+                "resolution": {
+                    "description": "Resolution is always \"existing_wins\" — existing properties are never overwritten.",
                     "type": "string"
                 }
             }
