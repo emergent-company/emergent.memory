@@ -202,6 +202,15 @@ ARG TARGETARCH
 ARG GITHUB_MCP_SERVER_VERSION
 
 RUN apk add --no-cache curl tar coreutils
+# Same bounded retry as the Go module fetches in the stages below. This download
+# is the one network fetch in the image that is not a module: it comes from
+# release-assets.githubusercontent.com, which returned back-to-back 504s and
+# failed two whole image builds on 2026-11-05 (#117) while the same asset
+# answered 200 from elsewhere. curl's own retries are 2 s apart, which is not
+# enough for an edge that misbehaves for minutes; the checksum step below still
+# decides whether what arrived is what we asked for.
+COPY deploy/self-hosted/scripts/retry.sh /usr/local/bin/retry
+
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) asset_arch=x86_64 ;; \
@@ -210,8 +219,11 @@ RUN set -eux; \
     esac; \
     base="https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_SERVER_VERSION}"; \
     asset="github-mcp-server_Linux_${asset_arch}.tar.gz"; \
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "/tmp/${asset}" "${base}/${asset}"; \
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
+    echo "github-mcp-server ${GITHUB_MCP_SERVER_VERSION}: fetching ${base}/${asset} for ${TARGETARCH}"; \
+    sh /usr/local/bin/retry 3 20 "github-mcp-server binary (${TARGETARCH})" -- \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "/tmp/${asset}" "${base}/${asset}"; \
+    sh /usr/local/bin/retry 3 20 "github-mcp-server checksums (${TARGETARCH})" -- \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
     expected="$(awk -v a="${asset}" '$2==a || $2=="*"a {print $1}' /tmp/github-mcp-checksums.txt)"; \
     test -n "${expected}"; \
     echo "${expected}  /tmp/${asset}" | sha256sum -c -; \

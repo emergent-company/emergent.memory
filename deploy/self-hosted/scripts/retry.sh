@@ -5,11 +5,13 @@
 #
 #   go.opentelemetry.io/otel@v1.46.0: stream error: stream ID 3; INTERNAL_ERROR
 #
-# a transport fault with nothing wrong in this tree. Only the steps that resolve
-# modules over the network use this: `go mod download`, `go mod tidy -diff` (it
-# resolves the test dependencies of dependencies) and `go install <tool>@<ver>`.
-# A plain compile or a test does not fetch, so it is left to fail on its own
-# rather than retried into a slower failure.
+# a transport fault with nothing wrong in this tree. Only the steps whose failure
+# mode is fetching something over the network use this: `go mod download`,
+# `go mod tidy -diff` (it resolves the test dependencies of dependencies),
+# `go install <tool>@<ver>`, and the pinned release-asset download in the
+# github-mcp-builder stage (release-assets.githubusercontent.com answered 504
+# for minutes on 2026-11-05, #117). A plain compile or a test does not fetch, so
+# it is left to fail on its own rather than retried into a slower failure.
 #
 # Usage:
 #   retry.sh <attempts> <delay-seconds> <label> -- <command> [args...]
