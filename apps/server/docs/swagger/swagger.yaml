@@ -8907,14 +8907,16 @@ definitions:
       documentation_url:
         type: string
       extraction_prompts:
-        description: ExtractionPrompts accepts both snake_case and camelCase keys.
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionPrompts is a JSON object keyed by object type name, each value
+          a prompt config such as {"system_prompt":"...","field_hints":{...}}.
+          This map form is what the docs and blueprint seeds write; no array form
+          is read.
+          Accepts both snake_case and camelCase keys.
+          Use GetExtractionPrompts() to retrieve the resolved value.
+        type: object
       extractionPrompts:
-        items:
-          type: integer
-        type: array
+        type: object
       license:
         type: string
       migrations:
@@ -8926,14 +8928,20 @@ definitions:
         type: string
       object_type_schemas:
         description: |-
-          ObjectTypeSchemas accepts both snake_case and camelCase keys.
+          ObjectTypeSchemas is the object-type definitions in the request shape: a
+          JSON array of {"name","label","properties",...} objects, e.g.
+          [{"name":"Note","properties":{...}}]. The map-of-type-name → schema form
+          stored in kb.graph_schemas.object_type_schemas (written by some blueprint
+          seeds) is read-compatible on later reads, but validateSchemaDefinitions
+          does NOT accept it on this request.
+          Accepts both snake_case and camelCase keys.
           Use GetObjectTypeSchemas() to retrieve the resolved value.
         items:
-          type: integer
+          type: object
         type: array
       objectTypeSchemas:
         items:
-          type: integer
+          type: object
         type: array
       relationship_type_schemas:
         description: |-
@@ -8955,14 +8963,17 @@ definitions:
       repository_url:
         type: string
       ui_configs:
-        description: UIConfigs accepts both snake_case and camelCase keys.
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfigs is a JSON object keyed by object type name, each value a UI
+          config such as {"icon":"file-text","color":"#3B82F6"}. This map form is
+          what the docs and blueprint seeds write; the compiled-types reader
+          unmarshals it as map[string]json.RawMessage, so an array is not a
+          supported shape.
+          Accepts both snake_case and camelCase keys.
+          Use GetUIConfigs() to retrieve the resolved value.
+        type: object
       uiConfigs:
-        items:
-          type: integer
-        type: array
+        type: object
       version:
         type: string
     type: object
@@ -9557,9 +9568,10 @@ definitions:
       documentation_url:
         type: string
       extraction_prompts:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionPrompts is a JSON object keyed by object type name (type name →
+          prompt config); an array is not a supported shape.
+        type: object
       license:
         type: string
       migrations:
@@ -9570,8 +9582,12 @@ definitions:
       name:
         type: string
       object_type_schemas:
+        description: |-
+          ObjectTypeSchemas is the request shape only: a JSON array of
+          {"name","label","properties",...} objects. The map-of-type-name → schema
+          stored form is read-compatible elsewhere but is not accepted on update.
         items:
-          type: integer
+          type: object
         type: array
       relationship_type_schemas:
         description: |-
@@ -9584,9 +9600,10 @@ definitions:
       repository_url:
         type: string
       ui_configs:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfigs is a JSON object keyed by object type name (type name → UI
+          config); an array is not a supported shape.
+        type: object
       version:
         type: string
     type: object

@@ -40274,17 +40274,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "extraction_prompts": {
-                    "description": "ExtractionPrompts accepts both snake_case and camelCase keys.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name, each value\na prompt config such as {\"system_prompt\":\"...\",\"field_hints\":{...}}.\nThis map form is what the docs and blueprint seeds write; no array form\nis read.\nAccepts both snake_case and camelCase keys.\nUse GetExtractionPrompts() to retrieve the resolved value.",
+                    "type": "object"
                 },
                 "license": {
                     "type": "string"
@@ -40303,14 +40297,14 @@ const docTemplate = `{
                 "objectTypeSchemas": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "object_type_schemas": {
-                    "description": "ObjectTypeSchemas accepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
+                    "description": "ObjectTypeSchemas is the object-type definitions in the request shape: a\nJSON array of {\"name\",\"label\",\"properties\",...} objects, e.g.\n[{\"name\":\"Note\",\"properties\":{...}}]. The map-of-type-name → schema form\nstored in kb.graph_schemas.object_type_schemas (written by some blueprint\nseeds) is read-compatible on later reads, but validateSchemaDefinitions\ndoes NOT accept it on this request.\nAccepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "relationshipTypeSchemas": {
@@ -40330,17 +40324,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "uiConfigs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "ui_configs": {
-                    "description": "UIConfigs accepts both snake_case and camelCase keys.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfigs is a JSON object keyed by object type name, each value a UI\nconfig such as {\"icon\":\"file-text\",\"color\":\"#3B82F6\"}. This map form is\nwhat the docs and blueprint seeds write; the compiled-types reader\nunmarshals it as map[string]json.RawMessage, so an array is not a\nsupported shape.\nAccepts both snake_case and camelCase keys.\nUse GetUIConfigs() to retrieve the resolved value.",
+                    "type": "object"
                 },
                 "version": {
                     "type": "string"
@@ -41207,10 +41195,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "extraction_prompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name (type name →\nprompt config); an array is not a supported shape.",
+                    "type": "object"
                 },
                 "license": {
                     "type": "string"
@@ -41227,9 +41213,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "object_type_schemas": {
+                    "description": "ObjectTypeSchemas is the request shape only: a JSON array of\n{\"name\",\"label\",\"properties\",...} objects. The map-of-type-name → schema\nstored form is read-compatible elsewhere but is not accepted on update.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "relationship_type_schemas": {
@@ -41243,10 +41230,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "ui_configs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfigs is a JSON object keyed by object type name (type name → UI\nconfig); an array is not a supported shape.",
+                    "type": "object"
                 },
                 "version": {
                     "type": "string"

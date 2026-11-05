@@ -328,7 +328,7 @@ Schemas are versioned bundles of object type schemas, relationship type schemas,
 | `relationship_type_schemas` | jsonb | array of `{"name","sourceType","targetType"}`; legacy map of rel type → schema is read-compatible |
 | `ui_configs` | jsonb | map of type name → UI config |
 | `extraction_prompts` | jsonb | map of type name → prompt config |
-| `checksum` | string | SHA256 of canonical content |
+| `checksum` | string | md5 of canonical content (32 hex characters) |
 | `draft` | bool | drafts are not visible to projects |
 | `published_at` | time.Time | nullable |
 | `deprecated_at` | time.Time | nullable |
