@@ -59,11 +59,18 @@ type ProjectObjectSchemaRegistryVersion struct {
 type GraphMemorySchema struct {
 	bun.BaseModel `bun:"table:kb.graph_schemas,alias:tp"`
 
-	ID                      string          `bun:"id,pk,type:uuid" json:"id"`
-	Name                    string          `bun:"name,notnull" json:"name"`
-	Version                 string          `bun:"version,notnull" json:"version"`
-	Description             *string         `bun:"description" json:"description,omitempty"`
-	RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb" json:"relationshipTypeSchemas,omitempty"`
+	ID          string  `bun:"id,pk,type:uuid" json:"id"`
+	Name        string  `bun:"name,notnull" json:"name"`
+	Version     string  `bun:"version,notnull" json:"version"`
+	Description *string `bun:"description" json:"description,omitempty"`
+	// RelationshipTypeSchemas is the stored relationship-type definitions. Two
+	// live writer shapes exist: a JSON array of {"name","sourceType",
+	// "targetType"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder
+	// and the builtin seeder) and a map of relationship type name → schema (the
+	// MCP create-schema tool and the discovery job; older stored rows are also
+	// maps). Readers normalise both, so no single Swagger 2.0 item type is
+	// declared for it.
+	RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb" json:"relationshipTypeSchemas,omitempty" swaggertype:"object"`
 	CreatedAt               time.Time       `bun:"created_at" json:"createdAt"`
 	UpdatedAt               time.Time       `bun:"updated_at" json:"updatedAt"`
 }

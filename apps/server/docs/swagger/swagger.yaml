@@ -8609,9 +8609,15 @@ definitions:
       name:
         type: string
       relationshipTypeSchemas:
-        items:
-          type: integer
-        type: array
+        description: |-
+          RelationshipTypeSchemas is the stored relationship-type definitions. Two
+          live writer shapes exist: a JSON array of {"name","sourceType",
+          "targetType"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder
+          and the builtin seeder) and a map of relationship type name → schema (the
+          MCP create-schema tool and the discovery job; older stored rows are also
+          maps). Readers normalise both, so no single Swagger 2.0 item type is
+          declared for it.
+        type: object
       updatedAt:
         type: string
       version:
@@ -9055,9 +9061,13 @@ definitions:
       draft:
         type: boolean
       extractionPrompts:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionPrompts is a JSON object keyed by object type name, each value
+          a prompt config such as {"system_prompt":"...","field_hints":{...}}.
+          Every writer produces that map (HTTP CreatePack/UpdatePack, the MCP
+          create-schema tool and the discovery job). The column is opaque jsonb,
+          so reads are best-effort for anything else stored there.
+        type: object
       id:
         type: string
       license:
@@ -9067,9 +9077,14 @@ definitions:
       name:
         type: string
       objectTypeSchemas:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ObjectTypeSchemas is the stored object-type definitions. Two live writer
+          shapes exist: a JSON array of {"name","label","properties",...} objects
+          (HTTP CreatePack/UpdatePack, blueprint apply/seeder and the builtin
+          seeder) and a map of type name → schema (the MCP create-schema tool and
+          the discovery job; older stored rows are also maps). Readers normalise
+          both, so no single Swagger 2.0 item type is declared for it.
+        type: object
       pendingReview:
         description: |-
           PendingReview marks discovery output that is awaiting an explicit
@@ -9081,17 +9096,27 @@ definitions:
       publishedAt:
         type: string
       relationshipTypeSchemas:
-        items:
-          type: integer
-        type: array
+        description: |-
+          RelationshipTypeSchemas is the stored relationship-type definitions. Two
+          live writer shapes exist: a JSON array of {"name","sourceType",
+          "targetType"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder
+          and the builtin seeder) and a map of relationship type name → schema (the
+          MCP create-schema tool and the discovery job; older stored rows are also
+          maps). Readers normalise both, so no single Swagger 2.0 item type is
+          declared for it.
+        type: object
       repositoryUrl:
         type: string
       source:
         type: string
       uiConfigs:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfigs is a JSON object keyed by object type name, each value a UI
+          config such as {"icon":"file-text","color":"#3B82F6"}. Every writer
+          produces that map (HTTP CreatePack/UpdatePack, the MCP create-schema tool
+          and the discovery job). The column is opaque jsonb, so reads are
+          best-effort for anything else stored there.
+        type: object
       updatedAt:
         type: string
       version:
@@ -9107,9 +9132,14 @@ definitions:
       description:
         type: string
       extractionPrompts:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionPrompts is the installed pack's extraction_prompts: a JSON
+          object keyed by object type name, each value a prompt config such as
+          {"system_prompt":"...","field_hints":{...}}. Every writer produces that
+          map (HTTP CreatePack/UpdatePack, the MCP create-schema tool and the
+          discovery job); the column is opaque jsonb, so reads are best-effort for
+          anything else stored there.
+        type: object
       id:
         description: assignment ID
         type: string
