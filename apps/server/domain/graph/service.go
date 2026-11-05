@@ -4796,6 +4796,10 @@ func (s *Service) applyMerge(
 				// Collect for batch embedding enqueue after commit (use physical version ID,
 				// not canonical ID — graph_embedding_jobs.object_id FK references graph_objects.id).
 				embeddingIDs = append(embeddingIDs, clone.ID.String())
+				if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
+					[]uuid.UUID{src.ID}, clone.ID, clone.BranchID); err != nil {
+					return 0, fmt.Errorf("clone object %s: %w", cid, err)
+				}
 
 				// Stamp the merge ledger on the source object so future merges/diffs
 				// recognize it as already merged instead of "added".
@@ -4859,6 +4863,10 @@ func (s *Service) applyMerge(
 				OwnerSourceID: mergedOwner,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+			}
+			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
+				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
 			}
 			appliedCount++
@@ -4952,6 +4960,10 @@ func (s *Service) applyMerge(
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
 			}
+			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
+				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
+				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
+			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
 			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
@@ -5042,6 +5054,10 @@ func (s *Service) applyMerge(
 				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
 				}
+				if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
+					[]uuid.UUID{src.ID, existingTarget.ID}, newVersion.ID, newVersion.BranchID); err != nil {
+					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
+				}
 				appliedCount++
 				embeddingIDs = append(embeddingIDs, newVersion.ID.String())
 			}
@@ -5108,9 +5124,14 @@ func (s *Service) applyMerge(
 							if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, similarRel, newRelVersion); err != nil {
 								s.log.Warn("similar rel: failed to merge, will create new", logger.Error(err))
 							} else {
-								appliedCount++
-								relEmbeddingIDs = append(relEmbeddingIDs, newRelVersion.ID.String())
-								continue // absorbed — skip create below
+								if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectRelationship,
+									[]uuid.UUID{src.ID, similarRel.ID}, newRelVersion.ID, newRelVersion.BranchID); err != nil {
+									s.log.Warn("similar rel: failed to copy contributions", logger.Error(err))
+								} else {
+									appliedCount++
+									relEmbeddingIDs = append(relEmbeddingIDs, newRelVersion.ID.String())
+									continue // absorbed — skip create below
+								}
 							}
 						} else {
 							continue // identical — no-op
@@ -5142,6 +5163,10 @@ func (s *Service) applyMerge(
 			if _, err := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx); err != nil {
 				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
 			}
+			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectRelationship,
+				[]uuid.UUID{src.ID}, rel.ID, rel.BranchID); err != nil {
+				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
+			}
 			appliedCount++
 			relEmbeddingIDs = append(relEmbeddingIDs, rel.ID.String())
 
@@ -5170,6 +5195,10 @@ func (s *Service) applyMerge(
 				ActorID:   src.ActorID,
 			}
 			if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
+			}
+			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectRelationship,
+				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
 			}
 			appliedCount++

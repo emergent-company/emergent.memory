@@ -5723,6 +5723,76 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/changesets": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Apply a source changeset",
+                "parameters": [
+                    {
+                        "description": "Changeset to apply (max 500 objects, 500 relationships, 500 withdrawals)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ApplyChangesetRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Applied changeset with one outcome per item",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ApplyChangesetResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request, over the per-call cap, or an unresolved reference",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source or branch not found in this project",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Replayed generation or an ownership conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/embedding-policies": {
             "get": {
                 "security": [
@@ -7458,6 +7528,71 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Object not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/objects/{id}/contributions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the contributions of the object's HEAD version in one call, or of a specific historical version with resolveHead=false. Withdrawn contributions are reported as no longer present.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "List an object's contributions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Object ID or canonical ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Resolve to the current HEAD (default true)",
+                        "name": "resolveHead",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Contributions of the requested version",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ObjectContributionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid object id",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -32414,6 +32549,63 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ApplyChangesetRequest": {
+            "type": "object",
+            "required": [
+                "source_id"
+            ],
+            "properties": {
+                "branch_id": {
+                    "description": "BranchID is the branch every item lands on; absent means the main line.\nOne branch for the whole changeset keeps addressing unambiguous: the same\nexternal id legitimately exists once per branch.",
+                    "type": "string"
+                },
+                "generation": {
+                    "description": "Generation is optional. When absent the server allocates the next one for\nthe source; when present it must be greater than the last applied\ngeneration, which makes a retried push idempotent at the changeset level.",
+                    "type": "integer"
+                },
+                "objects": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetObjectItem"
+                    }
+                },
+                "relationships": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetRelationshipItem"
+                    }
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "withdrawals": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetWithdrawalItem"
+                    }
+                }
+            }
+        },
+        "domain_graph.ApplyChangesetResponse": {
+            "type": "object",
+            "properties": {
+                "generation": {
+                    "type": "integer"
+                },
+                "generation_id": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ChangesetItemResult"
+                    }
+                }
+            }
+        },
         "domain_graph.BranchMergeObjectSummary": {
             "type": "object",
             "properties": {
@@ -33076,6 +33268,145 @@ const docTemplate = `{
                 },
                 "success": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_graph.ChangesetItemResult": {
+            "type": "object",
+            "properties": {
+                "canonical_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "subject_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_graph.ChangesetObjectItem": {
+            "type": "object",
+            "required": [
+                "external_id",
+                "type"
+            ],
+            "properties": {
+                "_ref": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "external_id": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision_seq": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "key": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "labels": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "status": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "type": {
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "domain_graph.ChangesetRelationshipItem": {
+            "type": "object",
+            "required": [
+                "external_id",
+                "type"
+            ],
+            "properties": {
+                "dst_id": {
+                    "type": "string"
+                },
+                "dst_ref": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "external_id": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "external_revision_seq": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "src_id": {
+                    "type": "string"
+                },
+                "src_ref": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "type": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "weight": {
+                    "type": "number"
+                }
+            }
+        },
+        "domain_graph.ChangesetWithdrawalItem": {
+            "type": "object",
+            "required": [
+                "external_id"
+            ],
+            "properties": {
+                "external_id": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "subject_kind": {
+                    "type": "string",
+                    "enum": [
+                        "object",
+                        "relationship"
+                    ]
                 }
             }
         },
@@ -33975,6 +34306,26 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ObjectContributionsResponse": {
+            "type": "object",
+            "properties": {
+                "canonical_id": {
+                    "type": "string"
+                },
+                "contributions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ProvenanceContribution"
+                    }
+                },
+                "object_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
@@ -34065,6 +34416,53 @@ const docTemplate = `{
                 },
                 "value": {
                     "description": "Filter value (omitted for \"exists\" operator)"
+                }
+            }
+        },
+        "domain_graph.ProvenanceContribution": {
+            "type": "object",
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "external_revision": {
+                    "type": "string"
+                },
+                "external_revision_seq": {
+                    "type": "integer"
+                },
+                "first_seen_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "merged_from_version_id": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "subject_kind": {
+                    "type": "string"
+                },
+                "subject_version_id": {
+                    "type": "string"
+                },
+                "withdrawn_at": {
+                    "type": "string"
                 }
             }
         },

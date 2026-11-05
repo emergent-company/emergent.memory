@@ -1,0 +1,811 @@
+package graph
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// Per-call caps for a changeset. They mirror CreateSubgraphRequest's object and
+// relationship limits so a source that can batch a subgraph can also batch a
+// changeset, and an over-limit push is refused rather than truncated.
+const (
+	changesetMaxObjectItems       = 500
+	changesetMaxRelationshipItems = 500
+	changesetMaxWithdrawalItems   = 500
+)
+
+// Outcomes reported per item. A source reconciles a push from the response
+// alone, so "skipped" has to be distinguishable from "not sent".
+const (
+	ChangesetOutcomeCreated   = "created"
+	ChangesetOutcomeUpdated   = "updated"
+	ChangesetOutcomeSkipped   = "skipped"
+	ChangesetOutcomeWithdrawn = "withdrawn"
+	ChangesetOutcomeNotFound  = "not_found"
+)
+
+// ChangesetObjectItem is one object upsert in a changeset. The payload fields
+// mirror SubgraphObjectRequest; the external fields are the source's own
+// identity for the record and are never derived from the graph.
+//
+// DataClass and OwnerSourceID are deliberately absent: they are derived from the
+// changeset's source, not accepted from the client.
+type ChangesetObjectItem struct {
+	Ref                 string         `json:"_ref,omitempty" validate:"omitempty,max=128"`
+	Type                string         `json:"type" validate:"required,max=64"`
+	Key                 *string        `json:"key,omitempty" validate:"omitempty,max=128"`
+	Status              *string        `json:"status,omitempty" validate:"omitempty,max=64"`
+	Properties          map[string]any `json:"properties,omitempty"`
+	Labels              []string       `json:"labels,omitempty" validate:"omitempty,max=32,dive,max=64"`
+	ExternalID          string         `json:"external_id" validate:"required,max=512"`
+	ExternalRevision    *string        `json:"external_revision,omitempty" validate:"omitempty,max=512"`
+	ExternalRevisionSeq *int64         `json:"external_revision_seq,omitempty" validate:"omitempty,gte=0"`
+}
+
+// ChangesetRelationshipItem is one relationship upsert in a changeset. Endpoints
+// follow the subgraph convention: a _ref defined by an object item in the same
+// changeset, or an existing UUID.
+type ChangesetRelationshipItem struct {
+	Type       string         `json:"type" validate:"required,max=64"`
+	SrcRef     string         `json:"src_ref,omitempty" validate:"omitempty,max=128"`
+	DstRef     string         `json:"dst_ref,omitempty" validate:"omitempty,max=128"`
+	SrcID      *uuid.UUID     `json:"src_id,omitempty"`
+	DstID      *uuid.UUID     `json:"dst_id,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Weight     *float32       `json:"weight,omitempty"`
+
+	ExternalID          string  `json:"external_id" validate:"required,max=512"`
+	ExternalRevision    *string `json:"external_revision,omitempty" validate:"omitempty,max=512"`
+	ExternalRevisionSeq *int64  `json:"external_revision_seq,omitempty" validate:"omitempty,gte=0"`
+}
+
+// ChangesetWithdrawalItem withdraws one source record. Withdrawal is a state
+// change on the contribution: the object stays readable for every other
+// contributor.
+type ChangesetWithdrawalItem struct {
+	SubjectKind string `json:"subject_kind,omitempty" validate:"omitempty,oneof=object relationship"`
+	ExternalID  string `json:"external_id" validate:"required,max=512"`
+}
+
+// ApplyChangesetRequest is the body of POST /api/graph/changesets.
+type ApplyChangesetRequest struct {
+	SourceID uuid.UUID `json:"source_id" validate:"required"`
+	// BranchID is the branch every item lands on; absent means the main line.
+	// One branch for the whole changeset keeps addressing unambiguous: the same
+	// external id legitimately exists once per branch.
+	BranchID *uuid.UUID `json:"branch_id,omitempty"`
+	// Generation is optional. When absent the server allocates the next one for
+	// the source; when present it must be greater than the last applied
+	// generation, which makes a retried push idempotent at the changeset level.
+	Generation    *int64                      `json:"generation,omitempty" validate:"omitempty,gt=0"`
+	Objects       []ChangesetObjectItem       `json:"objects,omitempty" validate:"omitempty,max=500,dive"`
+	Relationships []ChangesetRelationshipItem `json:"relationships,omitempty" validate:"omitempty,max=500,dive"`
+	Withdrawals   []ChangesetWithdrawalItem   `json:"withdrawals,omitempty" validate:"omitempty,max=500,dive"`
+}
+
+// ChangesetItemResult reports the fate of one item, in request order.
+type ChangesetItemResult struct {
+	Kind        string     `json:"kind"`
+	ExternalID  string     `json:"external_id"`
+	Outcome     string     `json:"outcome"`
+	SubjectID   *uuid.UUID `json:"subject_id,omitempty"`
+	CanonicalID *uuid.UUID `json:"canonical_id,omitempty"`
+	Version     *int       `json:"version,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+}
+
+// ApplyChangesetResponse is the result of one apply.
+type ApplyChangesetResponse struct {
+	GenerationID uuid.UUID             `json:"generation_id"`
+	Generation   int64                 `json:"generation"`
+	Results      []ChangesetItemResult `json:"results"`
+}
+
+// ApplyChangeset applies a source's changeset in a single transaction.
+//
+// The record is addressed by the source's own external id and revision
+// sequence, not by graph ids: a source does not know them. A present
+// contribution for (project, branch, source, external_id) is the lookup that
+// turns an external record into a graph version; a hit updates that object, a
+// miss creates one.
+//
+// Staleness is decided from the numeric sequence only. The opaque
+// external_revision string cannot answer "is this push older than what I have",
+// so it is recorded and never compared.
+func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *ApplyChangesetRequest, actorID *uuid.UUID) (*ApplyChangesetResponse, error) {
+	if req.SourceID == uuid.Nil {
+		return nil, apperror.ErrBadRequest.WithMessage("source_id is required")
+	}
+	if len(req.Objects) > changesetMaxObjectItems {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects must not exceed %d", changesetMaxObjectItems))
+	}
+	if len(req.Relationships) > changesetMaxRelationshipItems {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships must not exceed %d", changesetMaxRelationshipItems))
+	}
+	if len(req.Withdrawals) > changesetMaxWithdrawalItems {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("withdrawals must not exceed %d", changesetMaxWithdrawalItems))
+	}
+	if len(req.Objects)+len(req.Relationships)+len(req.Withdrawals) == 0 {
+		return nil, apperror.ErrBadRequest.WithMessage("changeset is empty")
+	}
+
+	// An external id may appear once per changeset. Two items for the same record
+	// would race each other inside one transaction, and "the last one wins" is not
+	// something a source can reason about.
+	if err := checkDuplicateExternalIDs(req.Objects, req.Relationships); err != nil {
+		return nil, err
+	}
+
+	// Relationship endpoints resolve either inside this changeset (_ref) or to an
+	// existing id, exactly like CreateSubgraph; validate before the transaction so
+	// a bad reference rejects the whole push with nothing written.
+	refSet := make(map[string]bool, len(req.Objects))
+	for i, obj := range req.Objects {
+		if obj.Ref == "" {
+			continue
+		}
+		if refSet[obj.Ref] {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate _ref %q", i, obj.Ref))
+		}
+		refSet[obj.Ref] = true
+	}
+	for i, rel := range req.Relationships {
+		if rel.SrcRef != "" {
+			if !refSet[rel.SrcRef] {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
+			}
+		} else if rel.SrcID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either src_ref or src_id", i))
+		}
+		if rel.DstRef != "" {
+			if !refSet[rel.DstRef] {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
+			}
+		} else if rel.DstID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either src_ref or dst_id", i))
+		}
+		if rel.SrcRef != "" && rel.SrcRef == rel.DstRef {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed", i))
+		}
+		if rel.SrcID != nil && rel.DstID != nil && *rel.SrcID == *rel.DstID {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed", i))
+		}
+	}
+
+	// The source must belong to the caller's project. Ownership *enforcement* is
+	// a later slice; this only stops a changeset naming another project's source.
+	ok, err := s.repo.SourceExistsInProject(ctx, s.repo.DB(), projectID, req.SourceID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, apperror.ErrNotFound.WithMessage("source not found in this project")
+	}
+	if req.BranchID != nil {
+		if _, err := s.repo.GetBranchByID(ctx, projectID, *req.BranchID); err != nil {
+			if errors.Is(err, apperror.ErrNotFound) {
+				return nil, apperror.ErrNotFound.WithMessage("branch not found in this project")
+			}
+			return nil, err
+		}
+	}
+
+	// Load schemas once, exactly like the subgraph path, so a source push cannot
+	// write properties the object's schema rejects.
+	var schemas *ExtractionSchemas
+	if s.schemaProvider != nil {
+		schemas, err = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas for changeset apply, skipping validation",
+				logger.Error(err))
+		}
+	}
+	if err := validateSubgraphObjectKeys(schemas, changesetValidationView(req.Objects)); err != nil {
+		return nil, err
+	}
+	actorType, actorUUID := actorFromContext(ctx, actorID)
+	if err := validateSubgraphWorkStatus(actorType, schemas, changesetValidationView(req.Objects)); err != nil {
+		return nil, err
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	results := make([]ChangesetItemResult, 0, len(req.Objects)+len(req.Relationships)+len(req.Withdrawals))
+	objByRef := make(map[string]*GraphObject, len(req.Objects))
+	objectEmbedIDs := make([]string, 0, len(req.Objects))
+	relEmbedIDs := make([]string, 0, len(req.Relationships))
+
+	for i, objItem := range req.Objects {
+		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID)
+		if err != nil {
+			return nil, fmt.Errorf("objects[%d] (%s): %w", i, objItem.ExternalID, err)
+		}
+		results = append(results, res)
+		if objItem.Ref != "" && obj != nil {
+			objByRef[objItem.Ref] = obj
+		}
+		if obj != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
+			objectEmbedIDs = append(objectEmbedIDs, obj.ID.String())
+		}
+	}
+
+	for i, relItem := range req.Relationships {
+		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, actorType, actorUUID)
+		if err != nil {
+			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
+		}
+		results = append(results, res)
+		if relID != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
+			relEmbedIDs = append(relEmbedIDs, relID.String())
+		}
+	}
+
+	now := time.Now()
+	for i, w := range req.Withdrawals {
+		kind := w.SubjectKind
+		if kind == "" {
+			kind = ContributionSubjectObject
+		}
+		res, err := s.applyChangesetWithdrawal(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, kind, w.ExternalID, now)
+		if err != nil {
+			return nil, fmt.Errorf("withdrawals[%d] (%s): %w", i, w.ExternalID, err)
+		}
+		results = append(results, res)
+	}
+
+	generation := int64(0)
+	if req.Generation != nil && *req.Generation > 0 {
+		var last int64
+		if err := tx.NewRaw(
+			`SELECT COALESCE(MAX(generation), 0) FROM kb.source_generations WHERE source_id = ?`,
+			req.SourceID,
+		).Scan(ctx, &last); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		if *req.Generation <= last {
+			return nil, apperror.New(409, "conflict", fmt.Sprintf("generation %d has already been applied for this source (last applied: %d)", *req.Generation, last))
+		}
+		generation = *req.Generation
+	} else {
+		generation, err = s.repo.NextSourceGeneration(ctx, tx.Tx, req.SourceID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	gen := &SourceGeneration{
+		ProjectID:  projectID,
+		SourceID:   req.SourceID,
+		Generation: generation,
+		ItemCount:  len(req.Objects) + len(req.Relationships) + len(req.Withdrawals),
+	}
+	if err := s.repo.InsertSourceGeneration(ctx, tx.Tx, gen); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if s.embeddingEnqueuer != nil {
+		if len(objectEmbedIDs) > 0 {
+			if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objectEmbedIDs); err != nil {
+				s.log.Warn("failed to enqueue object embeddings after changeset apply", logger.Error(err))
+			}
+		}
+		if len(relEmbedIDs) > 0 {
+			if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, relEmbedIDs); err != nil {
+				s.log.Warn("failed to enqueue relationship embeddings after changeset apply", logger.Error(err))
+			}
+		}
+	}
+
+	return &ApplyChangesetResponse{
+		GenerationID: gen.ID,
+		Generation:   gen.Generation,
+		Results:      results,
+	}, nil
+}
+
+// applyChangesetObject creates or updates the object a source record maps to and
+// moves the contribution onto the version it wrote.
+func (s *Service) applyChangesetObject(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	sourceID uuid.UUID,
+	item *ChangesetObjectItem,
+	schemas *ExtractionSchemas,
+	actorType string,
+	actorID *uuid.UUID,
+) (ChangesetItemResult, *GraphObject, error) {
+	result := ChangesetItemResult{Kind: ContributionSubjectObject, ExternalID: item.ExternalID}
+	seq := revisionSeq(item.ExternalRevisionSeq)
+
+	contrib, err := s.repo.GetPresentContribution(ctx, tx, projectID, sourceID, branchID, ContributionSubjectObject, item.ExternalID)
+	if err != nil {
+		return result, nil, err
+	}
+
+	if contrib != nil {
+		if seq <= contrib.ExternalRevisionSeq {
+			subjectID := contrib.SubjectVersionID
+			result.Outcome = ChangesetOutcomeSkipped
+			result.SubjectID = &subjectID
+			result.Reason = fmt.Sprintf("stored revision sequence %d is not older than %d", contrib.ExternalRevisionSeq, seq)
+			return result, nil, nil
+		}
+
+		prevRow, err := s.repo.GetObjectVersionByID(ctx, tx, projectID, contrib.SubjectVersionID)
+		if err != nil {
+			return result, nil, err
+		}
+		head, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, prevRow.CanonicalID, prevRow.BranchID)
+		if err != nil {
+			if !errors.Is(err, apperror.ErrNotFound) {
+				return result, nil, err
+			}
+			// The version the contribution arrived on is gone from the head
+			// chain (soft-deleted): supersede what is there rather than writing a
+			// second head.
+			head = prevRow
+		}
+		if head.OwnerSourceID != nil && *head.OwnerSourceID != sourceID {
+			return result, nil, apperror.New(409, "owner_conflict",
+				"object is owned by another source; a source may only revise the records it owns")
+		}
+
+		version := buildChangesetObjectVersion(head, item, sourceID, schemas, s)
+		if err := s.repo.CreateVersion(ctx, tx, head, version); err != nil {
+			return result, nil, err
+		}
+		if err := s.repo.SupersedeContribution(ctx, tx, contrib.ID); err != nil {
+			return result, nil, err
+		}
+		// Every other source backing the version being superseded follows the
+		// object onto the new one, so a revision by one source does not evict
+		// the rest from the live contribution set.
+		if _, err := s.repo.CarryForwardContributions(ctx, tx, projectID, ContributionSubjectObject, head.ID, version.ID, version.BranchID, sourceID); err != nil {
+			return result, nil, err
+		}
+		c := newContribution(projectID, branchID, ContributionSubjectObject, version.ID, sourceID, item.ExternalID, item.ExternalRevision, seq)
+		if err := s.repo.InsertContribution(ctx, tx, c); err != nil {
+			return result, nil, err
+		}
+
+		result.Outcome = ChangesetOutcomeUpdated
+		subjectID, canonicalID, v := version.ID, version.CanonicalID, version.Version
+		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+		return result, version, nil
+	}
+
+	obj, err := buildChangesetObject(projectID, branchID, sourceID, item, schemas, actorType, actorID)
+	if err != nil {
+		return result, nil, err
+	}
+	if err := s.repo.CreateInTx(ctx, tx, obj); err != nil {
+		return result, nil, err
+	}
+	c := newContribution(projectID, branchID, ContributionSubjectObject, obj.ID, sourceID, item.ExternalID, item.ExternalRevision, seq)
+	if err := s.repo.InsertContribution(ctx, tx, c); err != nil {
+		return result, nil, err
+	}
+
+	result.Outcome = ChangesetOutcomeCreated
+	subjectID, canonicalID, v := obj.ID, obj.CanonicalID, obj.Version
+	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+	return result, obj, nil
+}
+
+func (s *Service) applyChangesetRelationship(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	sourceID uuid.UUID,
+	item *ChangesetRelationshipItem,
+	objByRef map[string]*GraphObject,
+	actorType string,
+	actorID *uuid.UUID,
+) (ChangesetItemResult, *uuid.UUID, error) {
+	result := ChangesetItemResult{Kind: ContributionSubjectRelationship, ExternalID: item.ExternalID}
+	seq := revisionSeq(item.ExternalRevisionSeq)
+
+	contrib, err := s.repo.GetPresentContribution(ctx, tx, projectID, sourceID, branchID, ContributionSubjectRelationship, item.ExternalID)
+	if err != nil {
+		return result, nil, err
+	}
+	if contrib != nil && seq <= contrib.ExternalRevisionSeq {
+		subjectID := contrib.SubjectVersionID
+		result.Outcome = ChangesetOutcomeSkipped
+		result.SubjectID = &subjectID
+		result.Reason = fmt.Sprintf("stored revision sequence %d is not older than %d", contrib.ExternalRevisionSeq, seq)
+		return result, nil, nil
+	}
+
+	srcObj, err := resolveChangesetEndpoint(ctx, s, projectID, item.SrcRef, item.SrcID, objByRef, "src")
+	if err != nil {
+		return result, nil, err
+	}
+	dstObj, err := resolveChangesetEndpoint(ctx, s, projectID, item.DstRef, item.DstID, objByRef, "dst")
+	if err != nil {
+		return result, nil, err
+	}
+	if !branchIDsEqual(srcObj.BranchID, branchID) || !branchIDsEqual(dstObj.BranchID, branchID) {
+		return result, nil, apperror.ErrBadRequest.WithMessage("relationship endpoints must live on the changeset's branch")
+	}
+	if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
+		return result, nil, apperror.ErrBadRequest.WithMessage("relationship endpoints are on different branches")
+	}
+
+	if contrib != nil {
+		prevRow, err := s.repo.GetRelationshipVersionByID(ctx, tx, projectID, contrib.SubjectVersionID)
+		if err != nil {
+			return result, nil, err
+		}
+		head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, prevRow.CanonicalID, prevRow.BranchID)
+		if err != nil {
+			if !errors.Is(err, apperror.ErrNotFound) {
+				return result, nil, err
+			}
+			head = prevRow
+		}
+
+		version := *head
+		version.ID = uuid.Nil
+		version.SupersedesID = nil
+		version.ContentHash = nil
+		if item.Type != "" {
+			version.Type = item.Type
+		}
+		if item.Properties != nil {
+			version.Properties = item.Properties
+		}
+		if item.Weight != nil {
+			version.Weight = item.Weight
+		}
+		version.ChangeSummary = computeChangeSummary(head.Properties, version.Properties)
+
+		if err := s.repo.CreateRelationshipVersion(ctx, tx, head, &version); err != nil {
+			return result, nil, err
+		}
+		if err := s.repo.SupersedeContribution(ctx, tx, contrib.ID); err != nil {
+			return result, nil, err
+		}
+		if _, err := s.repo.CarryForwardContributions(ctx, tx, projectID, ContributionSubjectRelationship, head.ID, version.ID, version.BranchID, sourceID); err != nil {
+			return result, nil, err
+		}
+		c := newContribution(projectID, branchID, ContributionSubjectRelationship, version.ID, sourceID, item.ExternalID, item.ExternalRevision, seq)
+		if err := s.repo.InsertContribution(ctx, tx, c); err != nil {
+			return result, nil, err
+		}
+
+		result.Outcome = ChangesetOutcomeUpdated
+		subjectID, canonicalID, v := version.ID, version.CanonicalID, version.Version
+		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+		return result, &version.ID, nil
+	}
+
+	props := item.Properties
+	if props == nil {
+		props = map[string]any{}
+	}
+	rel := &GraphRelationship{
+		ProjectID:     projectID,
+		BranchID:      srcObj.BranchID,
+		Type:          item.Type,
+		SrcID:         srcObj.CanonicalID,
+		DstID:         dstObj.CanonicalID,
+		Properties:    props,
+		Weight:        item.Weight,
+		Namespace:     srcObj.Namespace,
+		ChangeSummary: computeChangeSummary(nil, props),
+		ActorType:     &actorType,
+		ActorID:       actorID,
+	}
+	created, err := s.repo.CreateRelationship(ctx, tx, rel)
+	if err != nil {
+		return result, nil, err
+	}
+	if !created {
+		return result, nil, apperror.New(409, "conflict",
+			"a relationship of this type already exists between these objects")
+	}
+	c := newContribution(projectID, branchID, ContributionSubjectRelationship, rel.ID, sourceID, item.ExternalID, item.ExternalRevision, seq)
+	if err := s.repo.InsertContribution(ctx, tx, c); err != nil {
+		return result, nil, err
+	}
+
+	result.Outcome = ChangesetOutcomeCreated
+	subjectID, canonicalID, v := rel.ID, rel.CanonicalID, rel.Version
+	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+	return result, &rel.ID, nil
+}
+
+func (s *Service) applyChangesetWithdrawal(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	sourceID uuid.UUID,
+	kind, externalID string,
+	at time.Time,
+) (ChangesetItemResult, error) {
+	result := ChangesetItemResult{Kind: kind, ExternalID: externalID}
+
+	contrib, err := s.repo.GetPresentContribution(ctx, tx, projectID, sourceID, branchID, kind, externalID)
+	if err != nil {
+		return result, err
+	}
+	if contrib == nil {
+		result.Outcome = ChangesetOutcomeNotFound
+		result.Reason = "no present contribution for this external id"
+		return result, nil
+	}
+	if err := s.repo.WithdrawContribution(ctx, tx, contrib.ID, at); err != nil {
+		return result, err
+	}
+
+	result.Outcome = ChangesetOutcomeWithdrawn
+	subjectID := contrib.SubjectVersionID
+	result.SubjectID = &subjectID
+	return result, nil
+}
+
+// resolveChangesetEndpoint resolves a relationship endpoint by _ref (an object
+// in this changeset) or by id (an existing object).
+func resolveChangesetEndpoint(ctx context.Context, s *Service, projectID uuid.UUID, ref string, id *uuid.UUID, objByRef map[string]*GraphObject, side string) (*GraphObject, error) {
+	if ref != "" {
+		obj, ok := objByRef[ref]
+		if !ok {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("%s_ref %q not found in objects", side, ref))
+		}
+		return obj, nil
+	}
+	if id == nil {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("must specify either %s_ref or %s_id", side, side))
+	}
+	obj, err := s.repo.GetByID(ctx, projectID, *id)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("%s_id %q not found", side, id.String()))
+	}
+	return obj, nil
+}
+
+// buildChangesetObject builds a brand-new source-owned object.
+func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uuid.UUID, item *ChangesetObjectItem, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID) (*GraphObject, error) {
+	props := item.Properties
+	if props == nil {
+		props = map[string]any{}
+	}
+
+	schemaVersion := ""
+	if schema, ok := objectSchema(schemas, item.Type); ok {
+		schemaVersion = schema.Version
+		if err := checkSchemaProperties(props, schema); err != nil {
+			return nil, err
+		}
+	}
+
+	obj := &GraphObject{
+		ProjectID:     projectID,
+		BranchID:      branchID,
+		Type:          item.Type,
+		Key:           item.Key,
+		Status:        statusForWrite(props, item.Status),
+		Properties:    props,
+		Labels:        item.Labels,
+		ActorType:     &actorType,
+		ActorID:       actorID,
+		DataClass:     DataClassSource,
+		OwnerSourceID: &sourceID,
+	}
+	if schemaVersion != "" {
+		obj.SchemaVersion = &schemaVersion
+	}
+	return obj, nil
+}
+
+// buildChangesetObjectVersion overlays a source push onto the previous head. The
+// push is authoritative for the content it owns, but never rewrites the
+// `_sources` array: that array belongs to the document-extraction path and this
+// capability leaves it alone.
+func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, s *Service) *GraphObject {
+	version := *head
+	version.ID = uuid.Nil
+	version.SupersedesID = nil
+	version.ContentHash = nil
+
+	if item.Type != "" {
+		version.Type = item.Type
+	}
+	if item.Key != nil {
+		version.Key = item.Key
+	}
+	if item.Status != nil {
+		version.Status = item.Status
+	}
+	if item.Labels != nil {
+		version.Labels = item.Labels
+	}
+	if item.Properties != nil {
+		props := make(map[string]any, len(item.Properties)+1)
+		for k, v := range item.Properties {
+			props[k] = v
+		}
+		if sources, ok := head.Properties[provenanceSourcesKey]; ok {
+			props[provenanceSourcesKey] = sources
+		}
+		version.Properties = props
+	}
+
+	if schema, ok := objectSchema(schemas, version.Type); ok {
+		schemaVersion := schema.Version
+		version.SchemaVersion = &schemaVersion
+	}
+
+	// A source push is authoritative for its own record, so the row stays
+	// source-classified and keeps the owner it already had (the owner check
+	// above refuses a different one).
+	version.DataClass = DataClassSource
+	version.OwnerSourceID = &sourceID
+	return &version
+}
+
+func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectSchema, bool) {
+	if schemas == nil || schemas.ObjectSchemas == nil {
+		return agents.ObjectSchema{}, false
+	}
+	schema, ok := schemas.ObjectSchemas[objectType]
+	return schema, ok
+}
+
+func checkSchemaProperties(props map[string]any, schema agents.ObjectSchema) error {
+	_, err := validateProperties(props, schema)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+	}
+	return nil
+}
+
+func newContribution(projectID uuid.UUID, branchID *uuid.UUID, kind string, versionID, sourceID uuid.UUID, externalID string, revision *string, seq int64) *ProvenanceContribution {
+	rev := ""
+	if revision != nil {
+		rev = *revision
+	}
+	return &ProvenanceContribution{
+		ProjectID:           projectID,
+		BranchID:            branchID,
+		SubjectKind:         kind,
+		SubjectVersionID:    versionID,
+		SourceID:            sourceID,
+		ExternalID:          externalID,
+		ExternalRevision:    rev,
+		ExternalRevisionSeq: seq,
+		State:               ContributionStatePresent,
+	}
+}
+
+func revisionSeq(seq *int64) int64 {
+	if seq == nil {
+		return 0
+	}
+	return *seq
+}
+
+// changesetValidationView adapts object items to the shapes the shared subgraph
+// guards take, so the board-key and work-status rules apply to a source push
+// exactly as they do to a subgraph create.
+func changesetValidationView(items []ChangesetObjectItem) []SubgraphObjectRequest {
+	out := make([]SubgraphObjectRequest, 0, len(items))
+	for _, it := range items {
+		out = append(out, SubgraphObjectRequest{
+			Ref:        it.Ref,
+			Type:       it.Type,
+			Key:        it.Key,
+			Status:     it.Status,
+			Properties: it.Properties,
+			Labels:     it.Labels,
+			BranchID:   nil,
+		})
+	}
+	return out
+}
+
+func checkDuplicateExternalIDs(objects []ChangesetObjectItem, relationships []ChangesetRelationshipItem) error {
+	seen := make(map[string]string, len(objects)+len(relationships))
+	for i, it := range objects {
+		key := ContributionSubjectObject + "/" + it.ExternalID
+		if prev, ok := seen[key]; ok {
+			return apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate external_id %q (already used by %s)", i, it.ExternalID, prev))
+		}
+		seen[key] = fmt.Sprintf("objects[%d]", i)
+	}
+	for i, it := range relationships {
+		key := ContributionSubjectRelationship + "/" + it.ExternalID
+		if prev, ok := seen[key]; ok {
+			return apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: duplicate external_id %q (already used by %s)", i, it.ExternalID, prev))
+		}
+		seen[key] = fmt.Sprintf("relationships[%d]", i)
+	}
+	return nil
+}
+
+// ObjectContributionsResponse is the read shape of an object version's
+// contributions. The HEAD read does not walk history: the version row the
+// response names is the row the contributions are keyed to.
+type ObjectContributionsResponse struct {
+	ObjectID      uuid.UUID                 `json:"object_id"`
+	CanonicalID   uuid.UUID                 `json:"canonical_id"`
+	Version       int                       `json:"version"`
+	Contributions []*ProvenanceContribution `json:"contributions"`
+}
+
+// GetObjectContributions returns the contributions recorded on one object
+// version. resolveHead follows GET /objects/:id semantics: the current HEAD when
+// true, a specific historical version when false.
+func (s *Service) GetObjectContributions(ctx context.Context, projectID, id uuid.UUID, resolveHead bool) (*ObjectContributionsResponse, error) {
+	var (
+		obj *GraphObject
+		err error
+	)
+	if resolveHead {
+		obj, err = s.repo.GetByID(ctx, projectID, id)
+	} else {
+		obj, err = s.repo.GetObjectVersionByID(ctx, s.repo.DB(), projectID, id)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	byVersion, err := s.repo.GetContributions(ctx, projectID, ContributionSubjectObject, []uuid.UUID{obj.ID})
+	if err != nil {
+		return nil, err
+	}
+	contributions := byVersion[obj.ID]
+	if contributions == nil {
+		contributions = []*ProvenanceContribution{}
+	}
+
+	return &ObjectContributionsResponse{
+		ObjectID:      obj.ID,
+		CanonicalID:   obj.CanonicalID,
+		Version:       obj.Version,
+		Contributions: contributions,
+	}, nil
+}
+
+// unionMergeContributions carries both sides' present contributions onto the
+// version a merge just wrote. The merge's own write stamp stays the merging
+// actor's — a contributing source never becomes the writer of the merged row —
+// while the contribution rows record which sources back the content and
+// merged_from_version_id keeps the version each one arrived on recoverable.
+func (s *Service) unionMergeContributions(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID uuid.UUID,
+	kind string,
+	fromVersionIDs []uuid.UUID,
+	toVersionID uuid.UUID,
+	toBranchID *uuid.UUID,
+) error {
+	if _, err := s.repo.CopyContributionsToVersion(ctx, tx, projectID, kind, fromVersionIDs, toVersionID, toBranchID); err != nil {
+		return fmt.Errorf("copy %s contributions: %w", kind, err)
+	}
+	return nil
+}

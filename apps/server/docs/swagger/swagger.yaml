@@ -3559,6 +3559,51 @@ definitions:
       type:
         type: string
     type: object
+  domain_graph.ApplyChangesetRequest:
+    properties:
+      branch_id:
+        description: |-
+          BranchID is the branch every item lands on; absent means the main line.
+          One branch for the whole changeset keeps addressing unambiguous: the same
+          external id legitimately exists once per branch.
+        type: string
+      generation:
+        description: |-
+          Generation is optional. When absent the server allocates the next one for
+          the source; when present it must be greater than the last applied
+          generation, which makes a retried push idempotent at the changeset level.
+        type: integer
+      objects:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetObjectItem'
+        maxItems: 500
+        type: array
+      relationships:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetRelationshipItem'
+        maxItems: 500
+        type: array
+      source_id:
+        type: string
+      withdrawals:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetWithdrawalItem'
+        maxItems: 500
+        type: array
+    required:
+    - source_id
+    type: object
+  domain_graph.ApplyChangesetResponse:
+    properties:
+      generation:
+        type: integer
+      generation_id:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.ChangesetItemResult'
+        type: array
+    type: object
   domain_graph.BranchMergeObjectSummary:
     properties:
       canonical_id:
@@ -4025,6 +4070,104 @@ definitions:
         type: array
       success:
         type: integer
+    type: object
+  domain_graph.ChangesetItemResult:
+    properties:
+      canonical_id:
+        type: string
+      external_id:
+        type: string
+      kind:
+        type: string
+      outcome:
+        type: string
+      reason:
+        type: string
+      subject_id:
+        type: string
+      version:
+        type: integer
+    type: object
+  domain_graph.ChangesetObjectItem:
+    properties:
+      _ref:
+        maxLength: 128
+        type: string
+      external_id:
+        maxLength: 512
+        type: string
+      external_revision:
+        maxLength: 512
+        type: string
+      external_revision_seq:
+        minimum: 0
+        type: integer
+      key:
+        maxLength: 128
+        type: string
+      labels:
+        items:
+          type: string
+        maxItems: 32
+        type: array
+      properties:
+        additionalProperties: {}
+        type: object
+      status:
+        maxLength: 64
+        type: string
+      type:
+        maxLength: 64
+        type: string
+    required:
+    - external_id
+    - type
+    type: object
+  domain_graph.ChangesetRelationshipItem:
+    properties:
+      dst_id:
+        type: string
+      dst_ref:
+        maxLength: 128
+        type: string
+      external_id:
+        maxLength: 512
+        type: string
+      external_revision:
+        maxLength: 512
+        type: string
+      external_revision_seq:
+        minimum: 0
+        type: integer
+      properties:
+        additionalProperties: {}
+        type: object
+      src_id:
+        type: string
+      src_ref:
+        maxLength: 128
+        type: string
+      type:
+        maxLength: 64
+        type: string
+      weight:
+        type: number
+    required:
+    - external_id
+    - type
+    type: object
+  domain_graph.ChangesetWithdrawalItem:
+    properties:
+      external_id:
+        maxLength: 512
+        type: string
+      subject_kind:
+        enum:
+        - object
+        - relationship
+        type: string
+    required:
+    - external_id
     type: object
   domain_graph.CreateGraphObjectRequest:
     properties:
@@ -4689,6 +4832,19 @@ definitions:
       target_branch_id:
         type: string
     type: object
+  domain_graph.ObjectContributionsResponse:
+    properties:
+      canonical_id:
+        type: string
+      contributions:
+        items:
+          $ref: '#/definitions/domain_graph.ProvenanceContribution'
+        type: array
+      object_id:
+        type: string
+      version:
+        type: integer
+    type: object
   domain_graph.PatchGraphObjectRequest:
     properties:
       assignee:
@@ -4755,6 +4911,37 @@ definitions:
         type: string
       value:
         description: Filter value (omitted for "exists" operator)
+    type: object
+  domain_graph.ProvenanceContribution:
+    properties:
+      branch_id:
+        type: string
+      external_id:
+        type: string
+      external_revision:
+        type: string
+      external_revision_seq:
+        type: integer
+      first_seen_at:
+        type: string
+      id:
+        type: string
+      last_seen_at:
+        type: string
+      merged_from_version_id:
+        type: string
+      project_id:
+        type: string
+      source_id:
+        type: string
+      state:
+        type: string
+      subject_kind:
+        type: string
+      subject_version_id:
+        type: string
+      withdrawn_at:
+        type: string
     type: object
   domain_graph.ReindexEmbeddingsResponse:
     properties:
@@ -14814,6 +15001,53 @@ paths:
       summary: Merge graph branches
       tags:
       - graph
+  /api/graph/changesets:
+    post:
+      consumes:
+      - application/json
+      description: Apply a batch of upserts and withdrawals for one source in a single
+        transaction. Items are addressed by the source's external_id and external_revision_seq;
+        a stale revision is skipped, never applied.
+      parameters:
+      - description: Changeset to apply (max 500 objects, 500 relationships, 500 withdrawals)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.ApplyChangesetRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Applied changeset with one outcome per item
+          schema:
+            $ref: '#/definitions/domain_graph.ApplyChangesetResponse'
+        "400":
+          description: Invalid request, over the per-call cap, or an unresolved reference
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source or branch not found in this project
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Replayed generation or an ownership conflict
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Apply a source changeset
+      tags:
+      - graph
   /api/graph/embedding-policies:
     get:
       consumes:
@@ -15302,6 +15536,50 @@ paths:
       security:
       - bearerAuth: []
       summary: Update graph object
+      tags:
+      - graph
+  /api/graph/objects/{id}/contributions:
+    get:
+      description: Returns the contributions of the object's HEAD version in one call,
+        or of a specific historical version with resolveHead=false. Withdrawn contributions
+        are reported as no longer present.
+      parameters:
+      - description: Object ID or canonical ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Resolve to the current HEAD (default true)
+        in: query
+        name: resolveHead
+        type: string
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Contributions of the requested version
+          schema:
+            $ref: '#/definitions/domain_graph.ObjectContributionsResponse'
+        "400":
+          description: Invalid object id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Object not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List an object's contributions
       tags:
       - graph
   /api/graph/objects/{id}/edges:

@@ -2548,3 +2548,76 @@ func (h *Handler) ReindexEmbeddings(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, result)
 }
+
+// ApplyChangeset applies a source's changeset atomically: upserts and
+// withdrawals addressed by the source's own external ids and revisions.
+// @Summary      Apply a source changeset
+// @Description  Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body ApplyChangesetRequest true "Changeset to apply (max 500 objects, 500 relationships, 500 withdrawals)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} ApplyChangesetResponse "Applied changeset with one outcome per item"
+// @Failure      400 {object} apperror.Error "Invalid request, over the per-call cap, or an unresolved reference"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Source or branch not found in this project"
+// @Failure      409 {object} apperror.Error "Replayed generation or an ownership conflict"
+// @Router       /api/graph/changesets [post]
+// @Security     bearerAuth
+func (h *Handler) ApplyChangeset(c echo.Context) error {
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req ApplyChangesetRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.ApplyChangeset(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// GetObjectContributions returns the contributions recorded on an object
+// version — which sources back it, at which of their revisions.
+// @Summary      List an object's contributions
+// @Description  Returns the contributions of the object's HEAD version in one call, or of a specific historical version with resolveHead=false. Withdrawn contributions are reported as no longer present.
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID or canonical ID"
+// @Param        resolveHead query string false "Resolve to the current HEAD (default true)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} ObjectContributionsResponse "Contributions of the requested version"
+// @Failure      400 {object} apperror.Error "Invalid object id"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Router       /api/graph/objects/{id}/contributions [get]
+// @Security     bearerAuth
+func (h *Handler) GetObjectContributions(c echo.Context) error {
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	resolveHead := c.QueryParam("resolveHead")
+	shouldResolveHead := resolveHead != "false" && resolveHead != "0" && resolveHead != "no"
+
+	result, err := h.svc.GetObjectContributions(c.Request().Context(), projectID, id, shouldResolveHead)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
