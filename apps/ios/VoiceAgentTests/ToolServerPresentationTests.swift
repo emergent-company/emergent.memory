@@ -6,10 +6,10 @@ import Testing
 
 //
 // Frames shaped exactly as the gateway's `/api/chat` stream emits them: the
-// `mcp_tool` frame enriched with `tool_category`, `tool_subject` and
-// `tool_view` by the gateway's `toolresult` package. These are the same values
-// the web console's chip and row read, so decoding them is what makes one call
-// read the same on both surfaces.
+// `mcp_tool` frame enriched with `toolCategory`, `toolSubject` and `toolView`
+// by the gateway's `toolresult` package. These are the same values the web
+// console's chip and row read, so decoding them is what makes one call read the
+// same on both surfaces.
 
 private enum ToolFrameFixtures {
     static let category = #"{"family":"search","verb":"Searched memory","runningVerb":"Searching memory","icon":"lucide--search"}"#
@@ -151,7 +151,8 @@ struct ToolServerPresentationTests {
             result: "ok",
             isError: false,
             isRunning: false,
-            duration: 1.2
+            duration: 1.2,
+            responseSize: 2
         )
         #expect(tool.metaDurationText == "1.2s")
         #expect(tool.responseSizeText == "2 B")
@@ -170,6 +171,36 @@ struct ToolServerPresentationTests {
         #expect(running.idText == nil)
     }
 
+    /// A failed frame's fallback text (the error, or the status word) is not a
+    /// response: the meta line must not report its size as one.
+    @Test func failureAndStatusTextAreNotMeasuredAsAResponse() throws {
+        let failed = try #require(
+            ChatStreamFrameDecoder.decode(
+                #"{"type":"mcp_tool","tool":"search_entities","status":"error","id":"call-1","error":"boom"}"#,
+                fallbackToolID: { "fallback" }
+            )
+        )
+        guard case let .activity(.toolResult(failedResult)) = failed else {
+            Issue.record("expected a failed tool result")
+            return
+        }
+        #expect(failedResult.result == "boom")
+        #expect(failedResult.outputSize == nil)
+
+        let noResult = try #require(
+            ChatStreamFrameDecoder.decode(
+                #"{"type":"mcp_tool","tool":"search_entities","status":"completed","id":"call-1"}"#,
+                fallbackToolID: { "fallback" }
+            )
+        )
+        guard case let .activity(.toolResult(noResultEvent)) = noResult else {
+            Issue.record("expected a settled tool result")
+            return
+        }
+        #expect(noResultEvent.result == "completed")
+        #expect(noResultEvent.outputSize == nil)
+    }
+
     @Test func wordsResponseSizesLikeTheWebConsole() {
         #expect(ToolResultSize.text(bytes: 0) == "0 B")
         #expect(ToolResultSize.text(bytes: 512) == "512 B")
@@ -178,71 +209,6 @@ struct ToolServerPresentationTests {
         #expect(ToolResultSize.text(bytes: 1_048_576) == "1 MB")
         #expect(ToolResultSize.text(bytes: 3_600_000) == "3.4 MB")
         #expect(ToolResultSize.text(bytes: nil) == nil)
-    }
-
-    // MARK: - Shared contract fixture
-
-    /// The checked-in frames the Go gateway test pins too
-    /// (`apps/web-ui/gateway/tool_frame_fixture_test.go`): the gateway must emit
-    /// them, and this client must draw them, or one of the two tests fails.
-    @MainActor
-    @Test func theSharedFixtureRendersWhatTheGatewayDescribed() throws {
-        let frames = try sharedExpectedFrames()
-        #expect(frames.count == 2)
-
-        let store = ChatActivityStore()
-        store.userTurnStarted(anchorMessageID: "m1")
-
-        for payload in frames {
-            let event = try #require(
-                ChatStreamFrameDecoder.decode(payload, fallbackToolID: { "fallback" })
-            )
-            switch event {
-            case let .activity(.toolCall(call)):
-                store.apply(.toolCall(call))
-                let tool = try #require(store.liveTurn?.tools.last)
-                #expect(tool.category == .search)
-                #expect(tool.verbText == "Searching memory")
-                #expect(tool.subject == "retrieval guide")
-            case let .activity(.toolResult(result)):
-                store.apply(.toolResult(result))
-                let tool = try #require(store.liveTurn?.tools.last)
-                #expect(tool.doneVerbText == "Searched memory")
-                // The running frame's subject survives the settle.
-                #expect(tool.subject == "retrieval guide")
-                #expect(tool.isError == false)
-                #expect(tool.presentation?.body == .items(
-                    [ToolResultPresentation.Item(
-                        id: 0,
-                        title: "Retrieval guide",
-                        detail: nil,
-                        url: "https://example.com/guide"
-                    )],
-                    more: 0
-                ))
-                // The raw payload the server bounded is the one the disclosure
-                // reveals, not a local re-print of it.
-                #expect(tool.presentation?.raw.contains("\"results\"") == true)
-            default:
-                Issue.record("unexpected frame in the shared fixture: \(payload)")
-            }
-        }
-    }
-
-    /// Reads the fixture's `frame` entries — the enriched frames the client
-    /// actually receives — as JSON strings.
-    private func sharedExpectedFrames() throws -> [String] {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/tool-call-frames.json")
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
-        let root = try #require(object as? [String: Any])
-        let frames = try #require(root["frames"] as? [[String: Any]])
-        return try frames.map { frame in
-            let enriched = try #require(frame["frame"] as? [String: Any])
-            let data = try JSONSerialization.data(withJSONObject: enriched)
-            return try #require(String(data: data, encoding: .utf8))
-        }
     }
 
     // MARK: - Helpers

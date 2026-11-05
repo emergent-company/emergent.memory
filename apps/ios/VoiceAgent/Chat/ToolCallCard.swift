@@ -18,6 +18,14 @@ struct ToolCallInfo: Identifiable, Equatable {
     var startedAt: Date?
     /// How long the call ran, once its result settled. Nil while running.
     var duration: TimeInterval?
+    /// The size of the call's output payload on the wire, measured where it
+    /// arrives: the raw result field, never a display fallback. Nil when the
+    /// call produced no output (or has not settled).
+    var responseSize: Int?
+    /// Whether the expanded step names the call's id. Recorded timeline rows
+    /// carry a synthetic index for `id`, which is not an identity the step had,
+    /// so they hide it.
+    var showsID: Bool
     /// The gateway's category for this call, when it sent one. It outranks the
     /// app's own name table so a call is described the way the web console
     /// describes it, verb included.
@@ -42,6 +50,8 @@ struct ToolCallInfo: Identifiable, Equatable {
         isRunning: Bool = false,
         startedAt: Date? = nil,
         duration: TimeInterval? = nil,
+        responseSize: Int? = nil,
+        showsID: Bool = true,
         category: ChatToolCategory? = nil,
         subject: String? = nil,
         presentation: ToolResultPresentation? = nil
@@ -54,6 +64,8 @@ struct ToolCallInfo: Identifiable, Equatable {
         self.isRunning = isRunning
         self.startedAt = startedAt
         self.duration = duration
+        self.responseSize = responseSize
+        self.showsID = showsID
         serverCategory = category
         serverSubject = subject
         serverPresentation = presentation
@@ -69,8 +81,11 @@ struct ToolCallInfo: Identifiable, Equatable {
     /// What the step was about, one line: the gateway's subject when it sent
     /// one, else the app's reading of the arguments.
     var subject: String? {
-        if let serverSubject, !serverSubject.isEmpty {
-            return serverSubject
+        if let serverSubject {
+            let trimmed = serverSubject.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
         }
         return ToolActivitySubject.line(from: arguments)
     }
@@ -91,29 +106,35 @@ struct ToolCallInfo: Identifiable, Equatable {
 
     /// What an in-flight step says, e.g. "Searching memory".
     var runningVerbText: String {
-        serverCategory?.runningVerb ?? category.runningText
+        serverVerb { $0.runningVerb } ?? category.runningText
     }
 
     /// What a settled step says, e.g. "Searched memory".
     var doneVerbText: String {
-        serverCategory?.verb ?? category.doneText
+        serverVerb { $0.verb } ?? category.doneText
+    }
+
+    /// The gateway's verb, when this build decoded one that is not blank. A
+    /// category missing its wording degrades to the catalogue entry instead of
+    /// drawing an empty line.
+    private func serverVerb(_ pick: (ChatToolCategory) -> String) -> String? {
+        guard let category = serverCategory else { return nil }
+        let text = pick(category).trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     /// The call's own id, as the expanded step names it ("#call-a"), when it has
-    /// one — the same identity line the web console shows.
+    /// one and it identifies the call — the same identity line the web console
+    /// shows. A recorded row's index is not an id and is hidden.
     var idText: String? {
-        id.isEmpty ? nil : "#\(id)"
+        guard showsID, !id.isEmpty else { return nil }
+        return "#\(id)"
     }
 
-    /// The response's wire size ("1.2 KB"), measured on the payload the server
-    /// sent rather than on anything the app added.
+    /// The response's wire size ("1.2 KB"), measured on the output payload the
+    /// server sent rather than on a display fallback such as an error message.
     var responseSizeText: String? {
-        ToolResultSize.text(bytes: ToolResultSize.byteCount(of: result))
-    }
-
-    /// The step's finished duration in short form ("2s"), when known.
-    var durationText: String? {
-        ToolActivityTiming.text(duration)
+        ToolResultSize.text(bytes: responseSize)
     }
 
     /// The step's duration in the compact form the meta line uses ("850ms",
@@ -209,10 +230,15 @@ struct ToolCallRow: View {
                     // result, then the call's input.
                     metaLine
                     if let presentation = tool.presentation {
-                        ToolResultBody(presentation: presentation, toolName: tool.name)
-                    }
-                    if let arguments = tool.arguments, !arguments.isEmpty {
-                        detailBlock("sessions.detail.arguments", text: arguments)
+                        // The arguments travel into the body so they sit before
+                        // the raw payload, as the web console orders them.
+                        ToolResultBody(
+                            presentation: presentation,
+                            toolName: tool.name,
+                            arguments: tool.arguments
+                        )
+                    } else if let arguments = tool.arguments, !arguments.isEmpty {
+                        ToolDetailBlock(label: "sessions.detail.arguments", text: arguments)
                     }
                 }
                 .padding(.leading, 4 * .grid)
@@ -254,21 +280,6 @@ struct ToolCallRow: View {
             parts.append(id)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func detailBlock(_ label: LocalizedStringKey, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 1 * .grid) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.fg3)
-            Text(text)
-                .font(MemoryFont.metaMono)
-                .foregroundStyle(.fg1)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(2 * .grid)
-                .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-        }
     }
 }
 

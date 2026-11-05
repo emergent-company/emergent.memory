@@ -10,10 +10,9 @@ import UIKit
 /// summary line says lives on the model, where it can be asserted.
 ///
 /// The pieces are the web console's, in the same order: the call count, the
-/// names of the tools involved, and how many steps failed. Nothing on the line
-/// depends on the text size any more, because nothing can wrap: the count and
-/// the failure stay whole, and only the names, which are the least essential,
-/// truncate.
+/// names of the tools involved, and how many steps failed. At accessibility
+/// text sizes the names give way so the count and the failure stay whole —
+/// the same reason the old summary dropped its decorative glyph strip there.
 struct ToolActivityLinePieceTests {
     private let base = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -40,12 +39,15 @@ struct ToolActivityLinePieceTests {
         #expect(unnamed.linePieces(at: .accessibility5) == [.calls])
     }
 
-    /// The same three things are drawn at every supported size: the view
-    /// truncates the names rather than dropping a piece (#2192).
-    @Test func drawsTheSamePiecesAtEveryTypeSize() {
+    /// At accessibility sizes the names are the piece that gives way: the count
+    /// and the failure are what a closed run has to keep legible (#2192).
+    @Test func dropsTheNamesAtAccessibilitySizes() {
         for size in DynamicTypeSize.allCases {
+            let expected: [ToolActivityRun.LinePiece] = size.isAccessibilitySize
+                ? [.calls, .failed]
+                : [.calls, .breakdown, .failed]
             #expect(
-                failedRun.linePieces(at: size) == [.calls, .breakdown, .failed],
+                failedRun.linePieces(at: size) == expected,
                 Comment(rawValue: "unexpected pieces at \(size)")
             )
         }
@@ -89,10 +91,10 @@ struct ToolActivityMetaTextTests {
         #expect(ToolActivityTiming.metaText(.nan) == nil)
     }
 
-    /// The span decision stays numeric and locale-independent, and the
-    /// formatter uses the same predicate: no locale can make the timed text
-    /// disagree with the predicate that gates it (#2192).
-    @Test func decidesTheSpanIndependentlyOfLocale() {
+    /// The readability decision stays numeric and locale-independent, and the
+    /// formatter uses the same predicate: no locale can make the working line's
+    /// text disagree with the predicate that gates it (#2192).
+    @Test func decidesReadabilityIndependentlyOfLocale() {
         #expect(!ToolActivityTiming.isReadable(nil))
         #expect(!ToolActivityTiming.isReadable(0))
         #expect(!ToolActivityTiming.isReadable(0.999))
@@ -109,14 +111,10 @@ struct ToolActivityMetaTextTests {
             Locale(identifier: "ja_JP"),
         ]
         for duration in [0.2, 0.999, 1, 12] {
-            let run = ToolActivityRun(tools: [
-                tool("entity-search", start: base, duration: duration),
-                tool("web-fetch", start: base.addingTimeInterval(duration), duration: duration),
-            ])
             for locale in locales {
-                let formats = ToolActivityTiming.text(run.span, locale: locale) != nil
+                let formats = ToolActivityTiming.text(duration, locale: locale) != nil
                 #expect(
-                    formats == ToolActivityTiming.isReadable(run.span),
+                    formats == ToolActivityTiming.isReadable(duration),
                     Comment(rawValue: "formatter and predicate disagree in \(locale) for \(duration)s")
                 )
             }

@@ -333,23 +333,6 @@ enum ToolActivityTiming {
         formatted(seconds, width: .wide, locale: locale)
     }
 
-    /// From the first step's start to the last one's end: how long a run of
-    /// steps occupied the turn. Nil unless every step is timed, so a run never
-    /// reports a length it cannot account for.
-    static func span(of tools: [ToolCallInfo]) -> TimeInterval? {
-        guard !tools.isEmpty else { return nil }
-        var earliest: Date?
-        var latest: Date?
-        for tool in tools {
-            guard let start = tool.startedAt, let duration = tool.duration else { return nil }
-            let end = start.addingTimeInterval(duration)
-            earliest = min(earliest ?? start, start)
-            latest = max(latest ?? end, end)
-        }
-        guard let earliest, let latest else { return nil }
-        return latest.timeIntervalSince(earliest)
-    }
-
     private static func formatted(
         _ seconds: TimeInterval?,
         width: Duration.UnitsFormatStyle.UnitWidth,

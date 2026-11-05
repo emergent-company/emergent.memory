@@ -10,8 +10,9 @@ import (
 )
 
 // The shared presentation contract for one live tool call. The fixture holds a
-// worker frame and the enrichment the gateway adds to it; the same file is read
-// by the iOS test (VoiceAgentTests/ToolServerPresentationTests.swift), so a
+// worker frame (`upstream`) and the enrichment the gateway adds in place
+// (`expected`); the frame a client receives is the two merged. The same file is
+// read by the iOS test (VoiceAgentTests/ToolServerPresentationTests.swift), so a
 // change to the wording, the casing or the shape of `toolCategory`,
 // `toolSubject` or `toolView` breaks one of the two surfaces instead of
 // silently making them describe the same call differently.
@@ -72,6 +73,22 @@ func TestChatToolFramesMatchTheSharedFixture(t *testing.T) {
 			t.Fatalf("frame %d: decode emitted frame: %v", i, err)
 		}
 
+		// The original fields survive the re-emit verbatim, so the client sees
+		// exactly the upstream frame plus the enrichment.
+		for key, want := range upstream {
+			got, ok := emitted[key]
+			if !ok {
+				t.Errorf("frame %d: upstream field %s missing from the emitted frame", i, key)
+				continue
+			}
+			if !sameJSON(got, want) {
+				t.Errorf("frame %d: upstream %s = %s, want %s", i, key, got, want)
+			}
+		}
+
+		// The enrichment is exactly what the fixture says it is: same keys, same
+		// values, so the iOS half of the fixture cannot drift into testing a
+		// frame the gateway never emits.
 		for key, want := range frame.Expected {
 			gotRaw, ok := emitted[key]
 			if !ok {
@@ -87,5 +104,34 @@ func TestChatToolFramesMatchTheSharedFixture(t *testing.T) {
 				t.Errorf("frame %d: %s = %#v, want %#v (update the fixture and the iOS test together)", i, key, got, want)
 			}
 		}
+
+		// `resultHtml` is the one addition the fixture does not describe (the
+		// clients parse the payload, not the highlighted fragment). Anything
+		// else is an enrichment the fixture failed to record.
+		for key := range emitted {
+			if _, ok := upstream[key]; ok {
+				continue
+			}
+			if _, ok := frame.Expected[key]; ok {
+				continue
+			}
+			if key == "resultHtml" {
+				continue
+			}
+			t.Errorf("frame %d: emitted field %s is not described by the fixture", i, key)
+		}
 	}
+}
+
+// sameJSON compares two raw JSON values by value, so key order and whitespace
+// do not matter but a changed number, string or shape does.
+func sameJSON(a, b json.RawMessage) bool {
+	var left, right interface{}
+	if err := json.Unmarshal(a, &left); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &right); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
 }

@@ -2442,17 +2442,6 @@
         }
       }
     },
-    "chat.tool.group.steps %lld": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld steps"
-          }
-        }
-      }
-    },
     "chat.tool.group.a11y.expanded": {
       "extractionState": "manual",
       "localizations": {
@@ -2471,17 +2460,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Collapsed"
-          }
-        }
-      }
-    },
-    "chat.tool.group.a11y.failed": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a step failed"
           }
         }
       }

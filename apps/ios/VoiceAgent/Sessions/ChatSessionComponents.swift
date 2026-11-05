@@ -20,6 +20,10 @@ struct ChatTranscriptView: View {
 
     @Environment(ChatActivityStore.self) private var activity
 
+    /// Which step runs the reader has opened or closed, kept here so it outlives
+    /// the rows (they are rebuilt as steps settle). The chat route keeps its own.
+    @State private var toolDisclosure = ToolActivityDisclosure()
+
     private static let bottomAnchorID = "chat-session.bottom"
 
     var body: some View {
@@ -49,12 +53,18 @@ struct ChatTranscriptView: View {
             // relying on `onAppear` racing the LazyVStack's layout (which could
             // leave the view at a stale offset inherited from another chat).
             .defaultScrollAnchor(.bottom)
+            .environment(\.toolActivityDisclosure, toolDisclosure)
             .onAppear { scrollToBottom(proxy, animated: false) }
             // Recorded history replaces the empty view in one shot: snap rather
             // than animate from a position that no longer exists.
             .onChange(of: transcript.history.count) { _, _ in scrollToBottom(proxy, animated: false) }
             .onChange(of: transcript.liveMessages) { _, _ in scrollToBottom(proxy, animated: true) }
             .onChange(of: activity.turns) { _, _ in scrollToBottom(proxy, animated: true) }
+            .onChange(of: activity.turns.isEmpty) { _, empty in
+                if empty {
+                    toolDisclosure.clear()
+                }
+            }
             .onChange(of: transcript.isLoadingHistory) { _, loading in
                 if !loading {
                     scrollToBottom(proxy, animated: false)
@@ -239,13 +249,7 @@ struct ChatTurnActivityView: View {
                 ThinkingBlockView(text: block.text, isLive: block.isLive)
             }
             ForEach(turn.toolGroups) { group in
-                if ToolActivityGrouping.isGrouped(group.tools) {
-                    ToolCallGroupView(group: group)
-                } else {
-                    ForEach(group.tools) { tool in
-                        LiveToolChip(tool: tool)
-                    }
-                }
+                ToolActivityGroup(tools: group.tools, turnID: turn.id)
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in

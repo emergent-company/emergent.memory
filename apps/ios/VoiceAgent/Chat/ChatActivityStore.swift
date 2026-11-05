@@ -212,6 +212,7 @@ final class ChatActivityStore {
             isRunning: false,
             startedAt: existing.startedAt,
             duration: existing.startedAt.map { max(0, now().timeIntervalSince($0)) },
+            responseSize: result.outputSize,
             category: result.category ?? existing.serverCategory,
             subject: existing.serverSubject,
             presentation: result.view?.presentation

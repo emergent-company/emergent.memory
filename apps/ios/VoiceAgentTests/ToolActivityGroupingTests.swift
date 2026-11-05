@@ -123,43 +123,6 @@ struct ToolActivitySpokenLineTests {
     }
 }
 
-// MARK: - Run span
-
-struct ToolActivitySpanTests {
-    @Test func spansFirstStartToLastEnd() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        let tools = [
-            tool("entity-search", start: start, duration: 4),
-            tool("web-fetch", start: start.addingTimeInterval(10), duration: 2),
-        ]
-        #expect(ToolActivityTiming.span(of: tools) == 12)
-    }
-
-    @Test func measuresTheOverlapNotTheSum() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        let tools = [
-            tool("entity-search", start: start, duration: 6),
-            tool("web-fetch", start: start.addingTimeInterval(1), duration: 1),
-        ]
-        // Ends at 6, not 7: the run occupied six seconds, not seven.
-        #expect(ToolActivityTiming.span(of: tools) == 6)
-    }
-
-    @Test func noSpanWhileAStepIsStillRunning() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        let tools = [
-            tool("entity-search", start: start, duration: 4),
-            tool("web-fetch", running: true, start: start.addingTimeInterval(5)),
-        ]
-        #expect(ToolActivityTiming.span(of: tools) == nil)
-    }
-
-    @Test func noSpanWithoutTiming() {
-        #expect(ToolActivityTiming.span(of: []) == nil)
-        #expect(ToolActivityTiming.span(of: [tool("entity-search"), tool("web-fetch")]) == nil)
-    }
-}
-
 // MARK: - Disclosure
 
 @MainActor

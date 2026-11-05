@@ -12,6 +12,9 @@ struct ToolResultBody: View {
     /// The tool's wire name, shown inside the raw-payload disclosure the way the
     /// web console's disclosure names it. Nil for a row that has no name to show.
     var toolName: String?
+    /// The call's arguments, drawn between the readable body and the raw
+    /// payload, which is where the web console puts its input block.
+    var arguments: String?
 
     @Environment(\.locale) private var locale
     /// The payload behind the disclosure, closed by default: the readable body
@@ -20,25 +23,36 @@ struct ToolResultBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
-            Text("sessions.detail.result")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.fg3)
-
-            // A batch's counts belong above its records: the list shows only
-            // created entities, and a failed item would otherwise vanish (#2277).
-            if let batch = presentation.batch {
-                tallyLine(batch)
-            }
-
             if let body = presentation.body {
+                sectionHeader
+                // A batch's counts belong above its records: the list shows only
+                // created entities, and a failed item would otherwise vanish (#2277).
+                if let batch = presentation.batch {
+                    tallyLine(batch)
+                }
                 readable(body)
+                inputBlock
                 disclosure
             } else {
-                // Nothing readable to show first: the payload is the body, and
-                // it is already capped.
-                rawBlock
+                // Nothing readable to show first: the payload is the body. The
+                // web console puts the input before it and labels the payload
+                // itself, so the header travels with the raw block.
+                if let batch = presentation.batch {
+                    tallyLine(batch)
+                }
+                inputBlock
+                if !presentation.raw.isEmpty {
+                    sectionHeader
+                    rawBlock
+                }
             }
         }
+    }
+
+    private var sectionHeader: some View {
+        Text("sessions.detail.result")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.fg3)
     }
 
     // MARK: - Bodies
@@ -65,7 +79,9 @@ struct ToolResultBody: View {
                 }
             }
         case .empty:
-            Text("sessions.detail.result.empty")
+            // The gateway's copy is the one the web console prints; the app's
+            // string is the fallback for a locally parsed result.
+            Text(verbatim: presentation.emptyText ?? String(localized: "sessions.detail.result.empty"))
                 .font(MemoryFont.bodySmall)
                 .foregroundStyle(.fg2)
         case let .text(text, moreLines, moreCharacters):
@@ -147,6 +163,13 @@ struct ToolResultBody: View {
             .foregroundStyle(.fg3)
     }
 
+    /// The call's input, when the row was given it.
+    @ViewBuilder private var inputBlock: some View {
+        if let arguments, !arguments.isEmpty {
+            ToolDetailBlock(label: "sessions.detail.arguments", text: arguments)
+        }
+    }
+
     // MARK: - Raw
 
     @ViewBuilder
@@ -194,6 +217,31 @@ struct ToolResultBody: View {
             if presentation.rawMoreCharacters > 0 {
                 moreLine("sessions.detail.result.characters \(presentation.rawMoreCharacters)")
             }
+        }
+    }
+}
+
+// MARK: - Labelled text block
+
+/// A labelled block of raw text — the call's input, or another payload the
+/// reader may want to select. Shared by the result body and the plain-input
+/// fallback so both draw the same quiet mono block.
+struct ToolDetailBlock: View {
+    let label: LocalizedStringKey
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1 * .grid) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.fg3)
+            Text(text)
+                .font(MemoryFont.metaMono)
+                .foregroundStyle(.fg1)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(2 * .grid)
+                .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
         }
     }
 }

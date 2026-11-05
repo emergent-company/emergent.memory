@@ -40,11 +40,6 @@ struct ToolActivityRun {
         failedCount > 0
     }
 
-    /// The run's span, not the sum of its steps: parallel calls overlap.
-    var span: TimeInterval? {
-        ToolActivityTiming.span(of: tools)
-    }
-
     /// How many distinct names the breakdown names before it summarizes the
     /// tail, matching the web console.
     static let maxBreakdownNames = 3
@@ -83,12 +78,15 @@ struct ToolActivityRun {
     static func humanized(_ name: String) -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return name }
+        // The same three mutations the web console makes, in the same order, so
+        // the two surfaces name a run's tools identically — including the
+        // punctuation-only name that collapses to nothing.
         let collapsed = trimmed
             .replacingOccurrences(of: #"[._\-]+"#, with: " ", options: .regularExpression)
-            .split(separator: " ")
-            .joined(separator: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard !collapsed.isEmpty else { return name }
+        guard !collapsed.isEmpty else { return "" }
         return collapsed.prefix(1).uppercased() + collapsed.dropFirst()
     }
 
@@ -157,9 +155,14 @@ extension ToolActivityRun {
     /// The names, when the run has any, and the failure count follow it. The
     /// web console draws the same three things in the same order, so one run
     /// reads the same on both surfaces.
-    func linePieces(at _: DynamicTypeSize = .large) -> [LinePiece] {
+    ///
+    /// At accessibility text sizes the names give way: the count and the failure
+    /// still fit one readable line, where a breakdown would leave neither room
+    /// to read. The old summary dropped its decorative glyph strip there for the
+    /// same reason (#2192).
+    func linePieces(at size: DynamicTypeSize = .large) -> [LinePiece] {
         var pieces: [LinePiece] = [.calls]
-        if breakdown != nil {
+        if breakdown != nil, !size.isAccessibilitySize {
             pieces.append(.breakdown)
         }
         if failedCount > 0 {
@@ -284,6 +287,14 @@ struct ToolActivityGroup: View {
                     case .failed:
                         failedText
                     }
+                }
+
+                // A run in flight spins, as the web console's summary does, so
+                // a folded run still says it is working.
+                if isRunning {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityHidden(true)
                 }
 
                 Spacer(minLength: 2 * .grid)

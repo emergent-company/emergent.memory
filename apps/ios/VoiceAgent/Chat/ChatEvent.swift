@@ -66,6 +66,10 @@ struct ChatToolResultEvent: Equatable, Decodable {
     let isError: Bool
     let category: ChatToolCategory?
     let view: ServerToolView?
+    /// The wire size of the output payload, measured on the result field alone.
+    /// Nil when the frame carried no output, so an error message (or a bare
+    /// status) is never reported as the response size.
+    let outputSize: Int?
 
     init(
         id: String,
@@ -73,7 +77,8 @@ struct ChatToolResultEvent: Equatable, Decodable {
         result: String,
         isError: Bool,
         category: ChatToolCategory? = nil,
-        view: ServerToolView? = nil
+        view: ServerToolView? = nil,
+        outputSize: Int? = nil
     ) {
         self.id = id
         self.tool = tool
@@ -81,6 +86,24 @@ struct ChatToolResultEvent: Equatable, Decodable {
         self.isError = isError
         self.category = category
         self.view = view
+        self.outputSize = outputSize
+    }
+
+    /// The worker path (`lk.chat.events`) carries the output in `result`, so the
+    /// size is measured there; the HTTP path supplies it from the envelope.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        tool = try container.decode(String.self, forKey: .tool)
+        result = try container.decode(String.self, forKey: .result)
+        isError = try container.decode(Bool.self, forKey: .isError)
+        category = try? container.decodeIfPresent(ChatToolCategory.self, forKey: .category)
+        view = try? container.decodeIfPresent(ServerToolView.self, forKey: .view)
+        outputSize = ToolResultSize.byteCount(of: result)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, tool, result, isError, category, view
     }
 }
 
