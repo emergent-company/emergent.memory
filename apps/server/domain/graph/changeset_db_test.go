@@ -68,6 +68,24 @@ func contributionsFor(t *testing.T, ctx context.Context, db bun.IDB, sourceID uu
 	return rows
 }
 
+// contributionsByVersion keys a contribution set by the version it sits on.
+// contributionsFor orders by first_seen_at, but an inherited row keeps the
+// first_seen_at of the version it came from, so the old and new rows tie and
+// the id tiebreak is a random UUID. Tests that care which version a row is on
+// must match on identity rather than slice position.
+func contributionsByVersion(t *testing.T, rows []contributionRow, versionIDs ...uuid.UUID) map[uuid.UUID]contributionRow {
+	t.Helper()
+	byVersion := make(map[uuid.UUID]contributionRow, len(rows))
+	for _, row := range rows {
+		byVersion[row.SubjectVersionID] = row
+	}
+	require.Len(t, byVersion, len(versionIDs), "contributions must cover each expected version exactly once")
+	for _, id := range versionIDs {
+		require.Contains(t, byVersion, id, "no contribution row on version %s", id)
+	}
+	return byVersion
+}
+
 // TestApplyChangesetCreatesSourceOwnedObject is the create half: a first push
 // makes an object the source owns and a present contribution pointing at the
 // version it arrived on.
@@ -163,11 +181,11 @@ func TestApplyChangesetRePushVersionsAndMovesContribution(t *testing.T) {
 
 	contribs := contributionsFor(t, ctx, db, sourceID, "person-2")
 	require.Len(t, contribs, 2)
-	assert.Equal(t, graph.ContributionStateSuperseded, contribs[0].State)
-	assert.Equal(t, objectID, contribs[0].SubjectVersionID)
-	assert.Equal(t, graph.ContributionStatePresent, contribs[1].State)
-	assert.Equal(t, *second.Results[0].SubjectID, contribs[1].SubjectVersionID)
-	assert.Equal(t, int64(2), contribs[1].ExternalRevisionSeq)
+	newVersionID := *second.Results[0].SubjectID
+	byVersion := contributionsByVersion(t, contribs, objectID, newVersionID)
+	assert.Equal(t, graph.ContributionStateSuperseded, byVersion[objectID].State)
+	assert.Equal(t, graph.ContributionStatePresent, byVersion[newVersionID].State)
+	assert.Equal(t, int64(2), byVersion[newVersionID].ExternalRevisionSeq)
 }
 
 // TestApplyChangesetStaleRevisionIsSkipped: the opaque revision string never
@@ -1227,8 +1245,7 @@ func TestPatchRelationshipKeepsContributions(t *testing.T) {
 
 	contribs := contributionsFor(t, ctx, db, sourceID, "patch-rel-1")
 	require.Len(t, contribs, 2)
-	assert.Equal(t, graph.ContributionStateSuperseded, contribs[0].State)
-	assert.Equal(t, relID, contribs[0].SubjectVersionID)
-	assert.Equal(t, graph.ContributionStatePresent, contribs[1].State)
-	assert.Equal(t, patched.ID, contribs[1].SubjectVersionID, "the relationship edit must keep its contribution")
+	byVersion := contributionsByVersion(t, contribs, relID, patched.ID)
+	assert.Equal(t, graph.ContributionStateSuperseded, byVersion[relID].State, "the version it arrived on keeps its row as history")
+	assert.Equal(t, graph.ContributionStatePresent, byVersion[patched.ID].State, "the relationship edit must keep its contribution")
 }
