@@ -21,6 +21,11 @@ on:
       - '.github/workflows/docs.yml'
     tags:
       - 'v*'
+  # Started by auto-tag.yml's dispatch fallback when no PAT is available to make
+  # the tag push trigger workflows (#116). The version-publish job below runs on
+  # `workflow_dispatch` **on a tag ref** as well as on a tag push; dispatching on
+  # a branch stays inert, which is what makes this safe to trigger by hand.
+  workflow_dispatch:
   pull_request:
     paths:
       - 'docs/**'
@@ -140,7 +145,9 @@ jobs:
     name: Deploy versioned release
     runs-on: [self-hosted, linux, x64, memory]
     needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # A tag push *or* auto-tag's dispatch on a tag ref (#116). The ref test is
+    # what keeps a hand-dispatch on a branch inert.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
