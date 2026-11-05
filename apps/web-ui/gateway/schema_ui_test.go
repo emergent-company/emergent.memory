@@ -158,12 +158,21 @@ func TestRenderSchemaEditorDerivedGate(t *testing.T) {
 // the owning blueprint is rendered once as the type group's heading (a link to
 // the blueprint) instead of a "Blueprint-derived" chip repeated on every row.
 func TestRenderSchemaListProvenanceLink(t *testing.T) {
-	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{
-		{Name: "person", SchemaName: "personal-memory", SchemaVersion: "1.0.0"},
-		{Name: "note", SchemaName: "agent-notes", SchemaVersion: "2.0.0", SchemaID: "pack-notes"},
-	}}
+	compiled := &CompiledSchemaTypes{
+		ObjectTypes: []CompiledType{
+			{Name: "person", SchemaName: "personal-memory", SchemaVersion: "1.0.0"},
+			{Name: "note", SchemaName: "agent-notes", SchemaVersion: "2.0.0", SchemaID: "pack-notes"},
+		},
+		// Same name as the object type above, different namespace: the
+		// kind-qualified provenance keys must keep the two apart, so this
+		// relationship stays in its own pack group while the object type
+		// groups under bp1.
+		RelationshipTypes: []CompiledType{
+			{Name: "note", SchemaName: "agent-notes", SchemaVersion: "2.0.0", SchemaID: "pack-notes"},
+		},
+	}
 	prov := map[string]*ProvenanceInfo{
-		"person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
+		"object:person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
 	}
 	html := renderHTML(t, SchemaPage(&SchemaListView{Compiled: compiled, Provenance: prov}, nil))
 	for _, want := range []string{
@@ -177,6 +186,9 @@ func TestRenderSchemaListProvenanceLink(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("schema list groups missing %q", want)
 		}
+	}
+	if got := strings.Count(html, `data-schema-group="blueprint:bp1"`); got != 1 {
+		t.Errorf("blueprint group rendered %d times, want 1 (a relationship sharing the object type's name must not inherit its blueprint)", got)
 	}
 	if strings.Contains(html, "Blueprint-derived") {
 		t.Error("provenance must be a group heading, not a per-row badge")
@@ -195,11 +207,11 @@ func TestGroupCompiledTypes(t *testing.T) {
 		{Name: "task", Label: "Task", SchemaName: "agent-notes", SchemaVersion: "2.0.0"},
 	}
 	prov := map[string]*ProvenanceInfo{
-		"person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
-		"note":   {BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"},
-		"task":   {BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"},
+		"object:person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
+		"object:note":   {BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"},
+		"object:task":   {BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"},
 	}
-	groups := groupCompiledTypes(types, prov)
+	groups := groupCompiledTypes(types, prov, provenanceKindObject)
 	var keys []string
 	for _, g := range groups {
 		keys = append(keys, g.Key)

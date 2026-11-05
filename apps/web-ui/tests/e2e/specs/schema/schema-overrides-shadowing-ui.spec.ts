@@ -18,7 +18,10 @@ import { expectAppPage, goto } from '../../helpers/page';
 const TYPE = 'Person';
 const BLUEPRINT = 'personal-memory'; // seeded pack (GitHub-imported) that defines Person
 const OVERRIDE_PACK = 'project-schema-overrides';
-const OBJECT_TYPE_LINK = `a[href$="/schema/object-types/${TYPE}"]`;
+// The card, not one of its links: a card carries the type name on its detail
+// anchor and again on the "Open type page" affordance inside the disclosure, so
+// a link locator counts twice.
+const OBJECT_TYPE_CARD = `[data-testid="schema-object-type"][data-schema-type="${TYPE}"]`;
 
 /** Open the object-type editor and wait for it to prefill (mirrors the edit spec). */
 async function openEditor(page: Page): Promise<void> {
@@ -76,7 +79,7 @@ test('project schema override pack does not duplicate, shadow-install, or leak',
     //    shadowed (losing) duplicate must be gone.
     await goto(page, '/schema');
     await expectAppPage(page, /Schema/);
-    await expect(page.locator(OBJECT_TYPE_LINK)).toHaveCount(1);
+    await expect(page.locator(OBJECT_TYPE_CARD)).toHaveCount(1);
 
     // 3. The effective owner is the project override pack (correct by design:
     //    the override was assigned after the blueprint, so it wins the merge).

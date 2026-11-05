@@ -282,7 +282,7 @@ templ typeCardSection(title string, types []CompiledType, endpoints bool, linkPr
 		EmptyTitle: "No " + title,
 		EmptyDesc:  "None compiled yet.",
 	}) {
-		<div class="flex flex-col gap-2" data-testid="schema-type-cards">
+		<div class="flex flex-col gap-2" data-testid="schema-type-cards-flat">
 			@typeCardList(types, endpoints, linkPrefix)
 		</div>
 	}
@@ -332,7 +332,7 @@ templ compiledTypeCards(title string, types []CompiledType, endpoints bool, link
 		EmptyDesc:  "None compiled yet.",
 	}) {
 		<div class="flex flex-col gap-5" data-testid="schema-type-cards">
-			for _, g := range groupCompiledTypes(types, provenance) {
+			for _, g := range groupCompiledTypes(types, provenance, provenanceKindForList(endpoints)) {
 				<div class="flex flex-col gap-2" data-testid="schema-type-group" data-schema-group={ g.Key }>
 					@originHeading(g.Label, g.BlueprintID, g.PackID, len(g.Types), "type", "types")
 					@typeCardList(g.Types, endpoints, linkPrefix)
@@ -403,8 +403,7 @@ templ objectTypeCard(t CompiledType, href string) {
 
 // relationshipTypeCard is one collapsed relationship type: label, the
 // source → target endpoints, and the source schema. Relationship types have no
-// detail page and no blueprint provenance index, so the body carries the
-// description and the endpoint pair.
+// detail page, so the body carries the description and the source-schema line.
 templ relationshipTypeCard(t CompiledType) {
 	<details
 		class="group rounded-box border border-line bg-base-100"
