@@ -8937,14 +8937,20 @@ definitions:
         type: array
       relationship_type_schemas:
         description: |-
-          RelationshipTypeSchemas accepts both snake_case and camelCase keys.
+          RelationshipTypeSchemas is the optional relationship-type definitions in
+          the request shape: a JSON array of {"name","sourceType","targetType"}
+          objects, e.g. [{"name":"annotates","sourceType":"Note","targetType":"Note"}].
+          The map-of-rel-type → schema form stored in
+          kb.graph_schemas.relationship_type_schemas is the legacy storage shape and
+          is NOT accepted here.
+          Accepts both snake_case and camelCase keys.
           Use GetRelationshipTypeSchemas() to retrieve the resolved value.
         items:
-          type: integer
+          type: object
         type: array
       relationshipTypeSchemas:
         items:
-          type: integer
+          type: object
         type: array
       repository_url:
         type: string
@@ -9568,8 +9574,12 @@ definitions:
           type: integer
         type: array
       relationship_type_schemas:
+        description: |-
+          RelationshipTypeSchemas is the request shape only: a JSON array of
+          {"name","sourceType","targetType"} objects. The stored map form is not
+          accepted on update.
         items:
-          type: integer
+          type: object
         type: array
       repository_url:
         type: string

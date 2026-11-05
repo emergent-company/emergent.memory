@@ -42,15 +42,19 @@ export async function createBoardEnabledSchema(
   }
   const headers = await memoryAuthHeaders(page);
   const stamp = Date.now();
+  // POST /api/schemas takes the *request* shape: a JSON array of
+  // {name, sourceType, targetType}. The map-of-rel-type → schema form is the
+  // legacy stored shape and is rejected by the request validator.
   const relationshipSchemas = relationshipType
-    ? {
-        [relationshipType]: {
+    ? [
+        {
+          name: relationshipType,
           description: `${type} related to ${type}`,
-          sourceTypes: [type],
-          targetTypes: [type],
+          sourceType: type,
+          targetType: type,
         },
-      }
-    : {};
+      ]
+    : [];
 
   const packResp = await page.request.post(`${MEMORY_API_URL}/api/schemas`, {
     headers,

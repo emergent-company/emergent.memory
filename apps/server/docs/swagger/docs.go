@@ -40316,14 +40316,14 @@ const docTemplate = `{
                 "relationshipTypeSchemas": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "relationship_type_schemas": {
-                    "description": "RelationshipTypeSchemas accepts both snake_case and camelCase keys.\nUse GetRelationshipTypeSchemas() to retrieve the resolved value.",
+                    "description": "RelationshipTypeSchemas is the optional relationship-type definitions in\nthe request shape: a JSON array of {\"name\",\"sourceType\",\"targetType\"}\nobjects, e.g. [{\"name\":\"annotates\",\"sourceType\":\"Note\",\"targetType\":\"Note\"}].\nThe map-of-rel-type → schema form stored in\nkb.graph_schemas.relationship_type_schemas is the legacy storage shape and\nis NOT accepted here.\nAccepts both snake_case and camelCase keys.\nUse GetRelationshipTypeSchemas() to retrieve the resolved value.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "repository_url": {
@@ -41233,9 +41233,10 @@ const docTemplate = `{
                     }
                 },
                 "relationship_type_schemas": {
+                    "description": "RelationshipTypeSchemas is the request shape only: a JSON array of\n{\"name\",\"sourceType\",\"targetType\"} objects. The stored map form is not\naccepted on update.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "repository_url": {

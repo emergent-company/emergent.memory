@@ -420,10 +420,16 @@ type CreatePackRequest struct {
 	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas"`
 	ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas"`
 
-	// RelationshipTypeSchemas accepts both snake_case and camelCase keys.
+	// RelationshipTypeSchemas is the optional relationship-type definitions in
+	// the request shape: a JSON array of {"name","sourceType","targetType"}
+	// objects, e.g. [{"name":"annotates","sourceType":"Note","targetType":"Note"}].
+	// The map-of-rel-type → schema form stored in
+	// kb.graph_schemas.relationship_type_schemas is the legacy storage shape and
+	// is NOT accepted here.
+	// Accepts both snake_case and camelCase keys.
 	// Use GetRelationshipTypeSchemas() to retrieve the resolved value.
-	RelationshipTypeSchemasSnake json.RawMessage `json:"relationship_type_schemas,omitempty"`
-	RelationshipTypeSchemasCamel json.RawMessage `json:"relationshipTypeSchemas,omitempty"`
+	RelationshipTypeSchemasSnake json.RawMessage `json:"relationship_type_schemas,omitempty" swaggertype:"array,object"`
+	RelationshipTypeSchemasCamel json.RawMessage `json:"relationshipTypeSchemas,omitempty" swaggertype:"array,object"`
 
 	// UIConfigs accepts both snake_case and camelCase keys.
 	UIConfigsSnake json.RawMessage `json:"ui_configs,omitempty"`
@@ -468,15 +474,18 @@ func (r *CreatePackRequest) GetExtractionPrompts() json.RawMessage {
 
 // UpdatePackRequest is the request to update an existing schema (partial update — only non-nil fields are applied)
 type UpdatePackRequest struct {
-	Name                    *string         `json:"name,omitempty"`
-	Version                 *string         `json:"version,omitempty"`
-	Description             *string         `json:"description,omitempty"`
-	Author                  *string         `json:"author,omitempty"`
-	License                 *string         `json:"license,omitempty"`
-	RepositoryURL           *string         `json:"repository_url,omitempty"`
-	DocumentationURL        *string         `json:"documentation_url,omitempty"`
-	ObjectTypeSchemas       json.RawMessage `json:"object_type_schemas,omitempty"`
-	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
+	Name              *string         `json:"name,omitempty"`
+	Version           *string         `json:"version,omitempty"`
+	Description       *string         `json:"description,omitempty"`
+	Author            *string         `json:"author,omitempty"`
+	License           *string         `json:"license,omitempty"`
+	RepositoryURL     *string         `json:"repository_url,omitempty"`
+	DocumentationURL  *string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas json.RawMessage `json:"object_type_schemas,omitempty"`
+	// RelationshipTypeSchemas is the request shape only: a JSON array of
+	// {"name","sourceType","targetType"} objects. The stored map form is not
+	// accepted on update.
+	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty" swaggertype:"array,object"`
 	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
 	// Migrations is the optional upgrade-path block for this schema version.
