@@ -48,7 +48,7 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternLegacyBordered, file: "documents_chunks.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "inbox.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "migrations.templ", count: 4, note: "normalise to the shared form-control component"},
-		{pattern: patternLegacyBordered, file: "objects.templ", count: 5, note: "normalise to the shared form-control component"},
+		{pattern: patternLegacyBordered, file: "objects.templ", count: 2, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "project_settings.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "share_page.templ", count: 3, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "sidepanel.templ", count: 1, note: "normalise to the shared form-control component"},

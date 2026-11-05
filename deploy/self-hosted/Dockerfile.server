@@ -202,6 +202,16 @@ ARG TARGETARCH
 ARG GITHUB_MCP_SERVER_VERSION
 
 RUN apk add --no-cache curl tar coreutils
+# The release-asset host is the one network step curl's own retries do not ride
+# out: it can return 504 for minutes, while `--retry` only waits seconds (#117).
+# Same bounded-retry helper as the Go stages; a COPY is stage-scoped.
+COPY deploy/self-hosted/scripts/retry.sh /usr/local/bin/retry
+
+# fetch <label> <url> <dest>: bounded retry around one HTTP GET. On the final
+# failure it prints the URL and the HTTP status carried by the last response
+# (000 means no response at all), then exits with curl's status. The retry only
+# repeats the GET; checksum verification stays below, outside this helper, so a
+# flaky host cannot weaken it.
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) asset_arch=x86_64 ;; \
@@ -210,8 +220,22 @@ RUN set -eux; \
     esac; \
     base="https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_SERVER_VERSION}"; \
     asset="github-mcp-server_Linux_${asset_arch}.tar.gz"; \
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "/tmp/${asset}" "${base}/${asset}"; \
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
+    fetch() { \
+      fetch_label=$1; fetch_url=$2; fetch_dest=$3; \
+      fetch_rc=0; \
+      fetch_out=$(sh /usr/local/bin/retry 3 20 "$fetch_label" -- \
+        curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+          -w '\nHTTP_STATUS=%{http_code}' -o "$fetch_dest" "$fetch_url" 2>&1) || fetch_rc=$?; \
+      if [ "$fetch_rc" -ne 0 ]; then \
+        printf '%s\n' "$fetch_out" >&2; \
+        fetch_http=$(printf '%s\n' "$fetch_out" | sed -n 's/^HTTP_STATUS=//p' | tail -n 1); \
+        echo "ERROR: ${fetch_label}: ${fetch_url} failed after retries (HTTP ${fetch_http:-000})" >&2; \
+        exit "$fetch_rc"; \
+      fi; \
+      printf '%s\n' "$fetch_out" | sed -e '/^HTTP_STATUS=/d' -e '/^$/d' >&2; \
+    }; \
+    fetch "github-mcp-server asset (${TARGETARCH})" "${base}/${asset}" "/tmp/${asset}"; \
+    fetch "github-mcp-server checksums (${TARGETARCH})" "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt" /tmp/github-mcp-checksums.txt; \
     expected="$(awk -v a="${asset}" '$2==a || $2=="*"a {print $1}' /tmp/github-mcp-checksums.txt)"; \
     test -n "${expected}"; \
     echo "${expected}  /tmp/${asset}" | sha256sum -c -; \

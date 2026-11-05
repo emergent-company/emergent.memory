@@ -2679,3 +2679,29 @@ func relTypeDisplayName(rt CompiledType) string {
 	}
 	return rt.Name
 }
+
+// objectBranchOptionLabel is the branch name the branch filter currently holds,
+// in the same wording its option list uses ("Main branch" for the main line), so
+// the closed control and the open menu can never disagree. An id that is no
+// longer in the loaded list falls back to the id itself rather than to "Main
+// branch", which would claim a filter that is not applied.
+func objectBranchOptionLabel(branches []Branch, id string) string {
+	if id == "" {
+		return "Main branch"
+	}
+	for _, b := range branches {
+		if b.ID == id {
+			return b.Name
+		}
+	}
+	return id
+}
+
+// objectTypeOptionLabel is the object-type filter's current value as the control
+// shows it: "All types" when the filter is empty.
+func objectTypeOptionLabel(objectType string) string {
+	if objectType == "" {
+		return "All types"
+	}
+	return objectType
+}

@@ -101,6 +101,61 @@ struct ChatSessionHistoryLoaderTests {
         #expect(fake.detailCallCount == 2)
     }
 
+    /// A conversation that loads successfully with **no records** must settle.
+    ///
+    /// `beginHistoryLoad()` opens the loading state that `ChatTranscriptView`
+    /// reads twice: `historyStatus` draws "Loading earlier messages" while
+    /// `isLoadingHistory && history.isEmpty`, and `showsEmptyState` requires
+    /// `!isLoadingHistory`. If the completed load leaves the flag set, an empty
+    /// conversation is stuck on the loading line and its empty state (agent
+    /// identity + suggested prompts) can never appear.
+    @Test func emptyConversationClearsTheLoadingFlagAndReachesTheEmptyState() async {
+        let fake = SequencedSessionLogClient([.success([])])
+        let loader = ChatSessionHistoryLoader(client: fake)
+        let transcript = ChatSessionTranscriptStore()
+
+        let applied = await loader.load(conversationID: "conv-empty", into: transcript)
+
+        #expect(applied)
+        #expect(loader.loadedConversationID == "conv-empty")
+        // The flag `historyStatus` and `showsEmptyState` gate on.
+        #expect(transcript.isLoadingHistory == false)
+        #expect(transcript.historyError == nil)
+        // The empty state's store-level conditions, with no records to show.
+        #expect(transcript.history.isEmpty)
+        #expect(transcript.liveMessages.isEmpty)
+        #expect(transcript.pendingApprovals.isEmpty)
+        #expect(transcript.lastRecordCount == 0)
+    }
+
+    /// The flag must settle on the failure path too, and the error must still
+    /// reach the banner; a later success clears the error.
+    @Test func failureAfterAnEmptyLoadSurfacesTheErrorAndClearsTheFlag() async {
+        let fake = SequencedSessionLogClient([
+            .success([]),
+            .failure(GatewayError.transport("Session log unreachable")),
+            .success([]),
+        ])
+        let loader = ChatSessionHistoryLoader(client: fake)
+        let transcript = ChatSessionTranscriptStore()
+
+        _ = await loader.load(conversationID: "conv-empty", into: transcript)
+        #expect(transcript.isLoadingHistory == false)
+
+        let failed = await loader.load(conversationID: "conv-empty", force: true, into: transcript)
+
+        #expect(failed == false)
+        #expect(transcript.isLoadingHistory == false)
+        #expect(transcript.historyError == "Session log unreachable")
+        #expect(loader.loadedConversationID == nil)
+
+        let recovered = await loader.load(conversationID: "conv-empty", into: transcript)
+
+        #expect(recovered)
+        #expect(transcript.isLoadingHistory == false)
+        #expect(transcript.historyError == nil)
+    }
+
     @Test func loadedConversationIsNotRefetchedUnlessForced() async {
         let fake = SequencedSessionLogClient([.success([record("one")]), .success([record("two")])])
         let loader = ChatSessionHistoryLoader(client: fake)
