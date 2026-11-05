@@ -615,8 +615,9 @@ func (s *Server) renderObjects(c echo.Context, title string, data objectsPageDat
 		// hides the actor picker and the provenance toggle while a query is
 		// active (the search endpoints cannot be provenance-scoped), so a search
 		// submitted in place has to remove them, and clearing the query has to
-		// bring them back — neither happens without a reload otherwise. The row
-		// is browse-only, so this is the only other transition that rewrites it.
+		// bring them back — neither happens without a reload otherwise. Nothing
+		// else rewrites the row, and replacing it on every change would drop
+		// focus out of the select the user just operated.
 		modeChanged := hxSource(c.Request()) == objectsSearchFormSource
 		renderPartial(c.Response().Writer, c.Request(), objectsResultsFragment(data, actorPicked || modeChanged))
 		return nil

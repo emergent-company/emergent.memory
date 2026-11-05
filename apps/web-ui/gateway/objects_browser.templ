@@ -248,11 +248,15 @@ templ objectsBrowserResults(data objectsPageData) {
 // The toolbar's two forms each hold the other's state as hidden inputs, so both
 // blocks are refreshed from the applied filters (otherwise a search after a
 // branch change would silently drop the branch, which is exactly the class of
-// bug the actor filter had, #131). The filter *row* is replaced only when the
-// actor changed: that is the one control whose label, menu checks, and the
-// provenance toggle's presence are server-rendered, and replacing the row on
-// every change would drop focus out of the select the user just used.
-templ objectsResultsFragment(data objectsPageData, actorChanged bool) {
+// bug the actor filter had, #131).
+//
+// The filter *row* is replaced only when its rendered content can differ from
+// what is already on screen: an actor pick (the trigger's label and avatar, the
+// menu's checks, and the provenance toggle all follow it) and a search starting
+// or ending (the actor picker and provenance toggle are browse-only, so search
+// mode hides them). Replacing it on every change would drop focus out of the
+// select the user just operated, so branch/type/sort responses leave it alone.
+templ objectsResultsFragment(data objectsPageData, refreshRow bool) {
 	@objectsBrowserResults(data)
 	<div id="objects-search-hidden" class="contents" hx-swap-oob="innerHTML">
 		@objectsSearchHiddenFilters(data)
@@ -260,7 +264,7 @@ templ objectsResultsFragment(data objectsPageData, actorChanged bool) {
 	<div id="objects-filter-hidden" class="contents" hx-swap-oob="innerHTML">
 		@objectsFilterHiddenFilters(data)
 	</div>
-	if actorChanged {
+	if refreshRow {
 		<div id="objects-filter-controls" class="contents" hx-swap-oob="innerHTML">
 			@objectsFilterControls(data)
 		</div>
