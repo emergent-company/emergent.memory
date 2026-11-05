@@ -249,9 +249,7 @@ struct ToolActivityGroup: View {
             VStack(alignment: .leading, spacing: 1 * .grid) {
                 header
                 if isExpanded {
-                    ForEach(tools) { tool in
-                        LiveToolChip(tool: tool)
-                    }
+                    stepList
                 }
             }
         } else {
@@ -260,6 +258,23 @@ struct ToolActivityGroup: View {
             }
         }
     }
+
+    /// The opened rows, capped and scrolled like the web console's 24rem run:
+    /// a long run stays a readable block instead of pushing the reply away.
+    private var stepList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1 * .grid) {
+                ForEach(tools) { tool in
+                    LiveToolChip(tool: tool)
+                }
+            }
+        }
+        .frame(maxHeight: Self.expandedMaxHeight)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// `24rem` at the web console's body size.
+    private static let expandedMaxHeight: CGFloat = 384
 
     // MARK: Line
 
@@ -271,12 +286,15 @@ struct ToolActivityGroup: View {
         } label: {
             HStack(spacing: 2 * .grid) {
                 // One wrench leads the line, as on the web console: a run of
-                // mixed families has no single category glyph to draw.
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: iconSize * 0.62, weight: .semibold))
-                    .foregroundStyle(.fg3)
-                    .frame(width: iconSize, height: iconSize)
-                    .accessibilityHidden(true)
+                // mixed families has no single category glyph to draw. At
+                // accessibility sizes the count and the failure need its room.
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.system(size: iconSize * 0.62, weight: .semibold))
+                        .foregroundStyle(.fg3)
+                        .frame(width: iconSize, height: iconSize)
+                        .accessibilityHidden(true)
+                }
 
                 ForEach(run.linePieces(at: dynamicTypeSize), id: \.self) { piece in
                     switch piece {
@@ -320,6 +338,8 @@ struct ToolActivityGroup: View {
             .font(MemoryFont.bodySmall)
             .foregroundStyle(.fg1)
             .lineLimit(1)
+            // The count keeps its room before the decorative spacer.
+            .layoutPriority(1)
     }
 
     /// The tools involved (" · Entity search, Web search ×2"), the line the web
@@ -343,6 +363,7 @@ struct ToolActivityGroup: View {
             Text("chat.tool.group.failed \(run.failedCount)")
                 .font(MemoryFont.meta)
                 .lineLimit(1)
+                .layoutPriority(1)
         }
         .foregroundStyle(.fgSerious)
     }

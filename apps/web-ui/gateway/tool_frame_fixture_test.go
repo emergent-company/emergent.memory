@@ -12,7 +12,7 @@ import (
 // The shared presentation contract for one live tool call. The fixture holds a
 // worker frame (`upstream`) and the enrichment the gateway adds in place
 // (`expected`); the frame a client receives is the two merged. The same file is
-// read by the iOS test (VoiceAgentTests/ToolServerPresentationTests.swift), so a
+// read by the iOS test (VoiceAgentTests/ToolFrameFixtureTests.swift), so a
 // change to the wording, the casing or the shape of `toolCategory`,
 // `toolSubject` or `toolView` breaks one of the two surfaces instead of
 // silently making them describe the same call differently.

@@ -103,7 +103,6 @@ struct ToolActivityMetaTextTests {
         #expect(ToolActivityTiming.isReadable(1))
         #expect(ToolActivityTiming.isReadable(12))
 
-        let base = Date(timeIntervalSince1970: 1_700_000_000)
         let locales = [
             Locale(identifier: "en_US"),
             Locale(identifier: "de_DE"),

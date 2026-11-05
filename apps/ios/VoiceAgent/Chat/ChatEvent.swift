@@ -99,7 +99,10 @@ struct ChatToolResultEvent: Equatable, Decodable {
         isError = try container.decode(Bool.self, forKey: .isError)
         category = try? container.decodeIfPresent(ChatToolCategory.self, forKey: .category)
         view = try? container.decodeIfPresent(ServerToolView.self, forKey: .view)
-        outputSize = ToolResultSize.byteCount(of: result)
+        // A failed worker result carries the error message in `result`, which is
+        // not an output: reporting its size would describe the failure as the
+        // response. The HTTP path measures the envelope's result field instead.
+        outputSize = isError ? nil : ToolResultSize.byteCount(of: result)
     }
 
     private enum CodingKeys: String, CodingKey {

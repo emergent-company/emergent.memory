@@ -169,4 +169,34 @@ struct ToolFrameFixtureTests {
         // drawing an empty row.
         #expect(tool.doneVerbText == "Searched memory")
     }
+
+    /// A category that arrives without a family leaves the classification on the
+    /// app's own name table; the server's verb still wins when it sent one.
+    @Test func aCategoryWithoutAFamilyFallsBackToTheAppsTable() throws {
+        let payload = #"""
+        {"type":"mcp_tool","tool":"search_entities","status":"started","id":"call-1",
+         "result":{"query":"swift"},
+         "toolCategory":{"verb":"Consulted memory","runningVerb":"Consulting memory"}}
+        """#
+        let event = try #require(
+            ChatStreamFrameDecoder.decode(payload, fallbackToolID: { "fallback" })
+        )
+        guard case let .activity(.toolCall(call)) = event else {
+            Issue.record("expected a tool call")
+            return
+        }
+        #expect(call.category?.family == "")
+
+        let tool = ToolCallInfo(
+            id: "call-1",
+            name: "search_entities",
+            arguments: call.arguments,
+            result: nil,
+            isError: false,
+            isRunning: true,
+            category: call.category
+        )
+        #expect(tool.category == .search)
+        #expect(tool.doneVerbText == "Consulted memory")
+    }
 }

@@ -38,6 +38,23 @@ enum ChatUIPropValue: Equatable {
         }
     }
 
+    /// The text the web console measures a result's byte size by: a string is
+    /// its own text, every other value is JSON, as `JSON.stringify(value, null,
+    /// 2)` produces it. `displayText` is a rendering (an array reads as a
+    /// sentence), so it must not be used for the size.
+    var wireText: String {
+        if case let .string(value) = self {
+            return value
+        }
+        guard
+            let data = try? JSONEncoder().encode(self),
+            let any = try? JSONSerialization.jsonObject(with: data),
+            let pretty = try? JSONSerialization.data(withJSONObject: any, options: [.prettyPrinted, .sortedKeys]),
+            let text = String(data: pretty, encoding: .utf8)
+        else { return displayText }
+        return text
+    }
+
     /// The `[[label, value], ...]` pairs of an array of `{label, value}` rows.
     var rows: [(String, String)] {
         guard case let .array(items) = self else { return [] }

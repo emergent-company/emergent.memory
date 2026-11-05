@@ -11,8 +11,9 @@ import Foundation
 /// copy so the row can be localized, but which family a call belongs to is the
 /// server's answer — one table, not two.
 struct ChatToolCategory: Equatable, Decodable {
-    /// The family id (`memory`, `search`, `web`, …). Unknown ids degrade to the
-    /// generic `.tool` family rather than dropping the event.
+    /// The family id (`memory`, `search`, `web`, …). An id this build does not
+    /// know (or a category that arrived without one) leaves the row on the
+    /// app's own name table rather than drawing the generic family.
     let family: String
     /// What the settled step says, e.g. "Searched memory".
     let verb: String
@@ -34,7 +35,7 @@ struct ChatToolCategory: Equatable, Decodable {
     /// falls back to its own table.
     init(from decoder: Decoder) throws {
         let container = try? decoder.container(keyedBy: CodingKeys.self)
-        family = (try? container?.decodeIfPresent(String.self, forKey: .family)) ?? "tool"
+        family = (try? container?.decodeIfPresent(String.self, forKey: .family)) ?? ""
         verb = (try? container?.decodeIfPresent(String.self, forKey: .verb)) ?? ""
         runningVerb = (try? container?.decodeIfPresent(String.self, forKey: .runningVerb)) ?? ""
         icon = (try? container?.decodeIfPresent(String.self, forKey: .icon)) ?? ""

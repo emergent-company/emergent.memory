@@ -207,7 +207,7 @@ struct ChatEventDecodingTests {
             Issue.record("expected a tool_result event")
             return
         }
-        #expect(event == .toolResult(ChatToolResultEvent(id: "t1", tool: "delete_file", result: "no such file", isError: true, outputSize: 12)))
+        #expect(event == .toolResult(ChatToolResultEvent(id: "t1", tool: "delete_file", result: "no such file", isError: true)))
     }
 
     @Test func decodesThinkingDelta() {

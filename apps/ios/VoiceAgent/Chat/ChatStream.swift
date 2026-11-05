@@ -187,9 +187,11 @@ enum ChatStreamFrameDecoder {
         }
         let failed = envelope.status == "error" || envelope.status == "failed"
         // The size is the output payload's, measured before the error/status
-        // fallback: "129 B response" must describe what the tool returned, not
-        // the message explaining that it returned nothing.
-        let output = envelope.result?.displayText
+        // fallback and in the form the web console measures (a string as-is,
+        // anything else as JSON): "129 B response" must describe what the tool
+        // returned, not the message explaining that it returned nothing.
+        let outputValue = envelope.result
+        let output = outputValue?.displayText
         return .activity(.toolResult(ChatToolResultEvent(
             id: id,
             tool: tool,
@@ -197,7 +199,7 @@ enum ChatStreamFrameDecoder {
             isError: failed,
             category: envelope.toolCategory,
             view: envelope.toolView,
-            outputSize: ToolResultSize.byteCount(of: output)
+            outputSize: ToolResultSize.byteCount(of: outputValue?.wireText)
         )))
     }
 
