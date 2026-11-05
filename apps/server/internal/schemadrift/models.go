@@ -102,6 +102,8 @@ var models = []any{
 	(*graph.GraphRelationship)(nil),
 	(*graph.Branch)(nil),
 	(*graph.BranchLineage)(nil),
+	(*graph.ProvenanceContribution)(nil),
+	(*graph.SourceGeneration)(nil),
 
 	// domain/apitoken
 	(*apitoken.ApiToken)(nil),
