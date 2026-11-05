@@ -40744,10 +40744,8 @@ const docTemplate = `{
                     }
                 },
                 "existingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExistingSchema is the registered JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "existingSchemaId": {
                     "type": "string"
@@ -40762,16 +40760,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "incomingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "IncomingSchema is the incoming JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "mergedSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "MergedSchema is the preview of the merged JSON Schema object.",
+                    "type": "object"
                 },
                 "typeName": {
                     "type": "string"
@@ -40785,9 +40779,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "objectTypes": {
+                    "description": "ObjectTypes is a JSON array of {\"name\",\"label\",\"properties\",...} objects.\nThe map-of-type-name → schema stored form is also accepted here and is\nread-compatible.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 }
             }
@@ -44146,10 +44141,8 @@ const docTemplate = `{
                     }
                 },
                 "existingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExistingSchema is the registered JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "existingSchemaId": {
                     "type": "string"
@@ -44164,16 +44157,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "incomingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "IncomingSchema is the incoming JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "mergedSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "MergedSchema is the preview of the merged JSON Schema object.",
+                    "type": "object"
                 },
                 "typeName": {
                     "type": "string"

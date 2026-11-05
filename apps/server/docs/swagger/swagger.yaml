@@ -9146,9 +9146,9 @@ definitions:
           $ref: '#/definitions/domain_schemas.PropertyConflict'
         type: array
       existingSchema:
-        items:
-          type: integer
-        type: array
+        description: ExistingSchema is the registered JSON Schema object for this
+          type.
+        type: object
       existingSchemaId:
         type: string
       existingSchemaName:
@@ -9158,13 +9158,11 @@ definitions:
       incomingPackName:
         type: string
       incomingSchema:
-        items:
-          type: integer
-        type: array
+        description: IncomingSchema is the incoming JSON Schema object for this type.
+        type: object
       mergedSchema:
-        items:
-          type: integer
-        type: array
+        description: MergedSchema is the preview of the merged JSON Schema object.
+        type: object
       typeName:
         type: string
     type: object
@@ -9173,8 +9171,12 @@ definitions:
       name:
         type: string
       objectTypes:
+        description: |-
+          ObjectTypes is a JSON array of {"name","label","properties",...} objects.
+          The map-of-type-name → schema stored form is also accepted here and is
+          read-compatible.
         items:
-          type: integer
+          type: object
         type: array
     type: object
   domain_schemas.MergePreviewRequest:
@@ -11496,9 +11498,9 @@ definitions:
           $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.PropertyConflict'
         type: array
       existingSchema:
-        items:
-          type: integer
-        type: array
+        description: ExistingSchema is the registered JSON Schema object for this
+          type.
+        type: object
       existingSchemaId:
         type: string
       existingSchemaName:
@@ -11508,13 +11510,11 @@ definitions:
       incomingPackName:
         type: string
       incomingSchema:
-        items:
-          type: integer
-        type: array
+        description: IncomingSchema is the incoming JSON Schema object for this type.
+        type: object
       mergedSchema:
-        items:
-          type: integer
-        type: array
+        description: MergedSchema is the preview of the merged JSON Schema object.
+        type: object
       typeName:
         type: string
     type: object

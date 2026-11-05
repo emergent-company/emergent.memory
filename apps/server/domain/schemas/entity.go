@@ -364,26 +364,34 @@ type SchemaConflict struct {
 	ConflictingProperties []PropertyConflict `json:"conflicting_properties,omitempty"`
 }
 
-// MergePreviewPack is one incoming pack in a merge preview request. ObjectTypes
-// accepts the same array/map storage formats as a stored pack's
-// object_type_schemas column.
+// MergePreviewPack is one incoming pack in a merge preview request.
+// ObjectTypes accepts the same array/map storage formats as a stored pack's
+// object_type_schemas column: the array form is the canonical writer shape
+// (blueprint apply/seeder and the HTTP request path), while the map form is the
+// legacy stored shape and remains read-compatible.
 type MergePreviewPack struct {
-	Name        string          `json:"name"`
-	ObjectTypes json.RawMessage `json:"objectTypes"`
+	Name string `json:"name"`
+	// ObjectTypes is a JSON array of {"name","label","properties",...} objects.
+	// The map-of-type-name → schema stored form is also accepted here and is
+	// read-compatible.
+	ObjectTypes json.RawMessage `json:"objectTypes" swaggertype:"array,object"`
 }
 
 // MergePreviewConflict describes one type-name collision found by a merge
 // preview. It is reported even when no properties are added or conflicting,
 // because the type-name collision itself requires a merge decision.
 type MergePreviewConflict struct {
-	TypeName              string             `json:"typeName"`
-	IncomingPackName      string             `json:"incomingPackName"`
-	ExistingSchemaID      string             `json:"existingSchemaId,omitempty"`
-	ExistingSchemaName    string             `json:"existingSchemaName,omitempty"`
-	ExistingSchemaVersion string             `json:"existingSchemaVersion,omitempty"`
-	ExistingSchema        json.RawMessage    `json:"existingSchema,omitempty"`
-	IncomingSchema        json.RawMessage    `json:"incomingSchema,omitempty"`
-	MergedSchema          json.RawMessage    `json:"mergedSchema,omitempty"`
+	TypeName              string `json:"typeName"`
+	IncomingPackName      string `json:"incomingPackName"`
+	ExistingSchemaID      string `json:"existingSchemaId,omitempty"`
+	ExistingSchemaName    string `json:"existingSchemaName,omitempty"`
+	ExistingSchemaVersion string `json:"existingSchemaVersion,omitempty"`
+	// ExistingSchema is the registered JSON Schema object for this type.
+	ExistingSchema json.RawMessage `json:"existingSchema,omitempty" swaggertype:"object"`
+	// IncomingSchema is the incoming JSON Schema object for this type.
+	IncomingSchema json.RawMessage `json:"incomingSchema,omitempty" swaggertype:"object"`
+	// MergedSchema is the preview of the merged JSON Schema object.
+	MergedSchema          json.RawMessage    `json:"mergedSchema,omitempty" swaggertype:"object"`
 	AddedProperties       []string           `json:"addedProperties,omitempty"`
 	ConflictingProperties []PropertyConflict `json:"conflictingProperties,omitempty"`
 }
