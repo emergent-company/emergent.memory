@@ -19,7 +19,7 @@ Manage Memory Blueprints using `memory blueprints`. A blueprint is a directory o
 - **Blueprint** — a directory containing `schemas/` (or `packs/` for backward compatibility), `agents/`, `skills/`, and/or `seed/` subdirectories. Installed with `memory blueprints install <source>`.
 - **Seed data** — pre-defined graph objects and relationships in per-type JSONL files under `seed/objects/` and `seed/relationships/`. Applied after packs and agents.
 - **Key** — a stable string identity on a seed object. Objects with a key are idempotent: skipped on re-apply (or upserted with `--upgrade`). Keyless objects are always inserted.
-- **Validate** — `memory blueprints validate <source>` checks a blueprint for structural errors and cross-reference problems without making any API calls.
+- **Validate** — `memory blueprints validate [--strict] <source>` checks a blueprint's full contract — structure, cross-references, and UI/schema metadata — without making any API calls. `--strict` makes warnings fatal.
 - **Dump** — `memory blueprints dump <output-dir>` exports a live project's graph as re-applyable seed files.
 
 ---
@@ -46,22 +46,33 @@ memory blueprints install <source> --token ghp_...
 # or set MEMORY_GITHUB_TOKEN in the environment
 ```
 
+Install (and `--upgrade`) preserves the full schema metadata it reads: object
+`labels`, `required` lists, `ui` blocks, `embedding`/`extraction` blocks, pack
+`uiConfigs`, and relationship `properties`. No separate metadata script is
+needed — author the fields in the pack files and they are applied verbatim.
+
 ### Validate a blueprint (no API calls required)
 
 ```bash
 memory blueprints validate <source>
+memory blueprints validate <source> --strict
 memory blueprints validate https://github.com/org/repo
 memory blueprints validate https://github.com/org/repo#v1.2.0
 ```
 
 Validates the blueprint directory (or GitHub repo) offline — no project, no auth needed. Reports errors and warnings for:
 - **Packs** — missing required fields, invalid relationship `sourceType`/`targetType` cross-references, duplicate names
+- **Type metadata** — missing `label`/`labels`, undeclared `required` properties, property definitions that are not mappings or lack a canonical `type`, unknown/non-canonical types, `enum` shape/type mismatches, arrays without `items`, `minimum`/`maximum` on non-numeric properties, `x-embedding-target` misuse, and malformed `embedding`/`extraction` blocks are all warnings (the server is lenient; `--strict` enforces them)
+- **UI metadata** — inline `ui` or pack `uiConfigs` missing `icon`/`color` (warning), icon outside the shared Lucide catalog (warning), non-hex color (warning), `uiConfigs` key naming no declared type (warning)
+- **Relationships** — missing `label` (warning), relationship `properties` validated with the same property rules
 - **Agents** — invalid `visibility` or `dispatchMode` values; missing `model.name`
 - **Skills** — missing `name`/`description`, empty content body
 - **Seed objects** — missing `type`, keyless objects (warning)
 - **Seed relationships** — missing endpoints, unresolvable `srcKey`/`dstKey` against seed objects
 
-Exits `0` when clean or warnings-only, `1` when any error is found. **Always validate before installing.**
+Exits `0` when clean or warnings-only, `1` when any error is found. With
+`--strict`, warnings also exit `1`, so a blueprint must be fully clean to pass.
+**Always validate before installing.**
 
 ### Export a project as seed files (dump)
 

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaicon"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/database"
@@ -48,23 +49,6 @@ type TemplateInfo struct {
 	ProjectID   string `json:"project_id,omitempty"`
 	OrgID       string `json:"org_id,omitempty"`
 	Source      string `json:"source"`
-}
-
-// schemaIconCatalog is the closed set of Lucide icon names the UI renders for
-// schema object types (mirrors apps/web-ui/gateway/type_icons.go). Values
-// outside this set silently fall back to a generic box, so schema authors and
-// agents must pick from here. Names are bare Lucide kebab-case.
-var schemaIconCatalog = []string{
-	"box", "file-text", "file", "git-branch", "git-commit", "git-merge",
-	"git-pull-request", "shield", "shield-check", "zap", "layers", "tag",
-	"star", "heart", "alert-triangle", "bell", "book", "book-open",
-	"briefcase", "calendar", "camera", "check", "check-circle", "circle",
-	"clock", "cloud", "code", "cog", "settings", "database", "edit", "eye",
-	"folder", "globe", "hash", "home", "image", "info", "key", "link",
-	"list", "lock", "mail", "map", "map-pin", "message-circle", "monitor",
-	"package", "paperclip", "pen", "phone", "play", "plus", "puzzle",
-	"search", "send", "server", "share", "sparkles", "terminal", "trash",
-	"user", "users", "wrench", "x",
 }
 
 // SchemaIconListResult is the response of the schema-icon-list MCP tool.
@@ -142,8 +126,8 @@ func (s *Service) executeSchemaVersion(ctx context.Context, projectID string) (*
 // for schema object-type UI configs. Static — requires no project context.
 func (s *Service) executeSchemaIconList(_ context.Context, _ string) (*ToolResult, error) {
 	return s.wrapResult(SchemaIconListResult{
-		Icons: schemaIconCatalog,
-		Count: len(schemaIconCatalog),
+		Icons: schemaicon.Names(),
+		Count: len(schemaicon.Names()),
 		Format: "Use the bare Lucide kebab-case name as the value of ui_configs.<type>.icon " +
 			"(e.g. \"file-text\"). PascalCase (\"FileText\") and \"lucide--file-text\" are also accepted.",
 		ColorNote: "ui_configs.<type>.color accepts any hex color, e.g. \"#3B82F6\".",

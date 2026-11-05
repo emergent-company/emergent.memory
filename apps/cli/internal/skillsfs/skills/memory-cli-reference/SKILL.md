@@ -1947,6 +1947,10 @@ Checks performed:
                defined by some pack in the blueprint — an endpoint may be owned
                by a different pack than the one declaring the relationship),
                duplicate names within and across files.
+  Type metadata — labels, required property lists, property definitions and
+               types, enum values, array items, minimum/maximum, embedding
+               target, embedding/extraction blocks, inline ui and pack uiConfigs
+               (icon/color), and relationship properties.
   Agents     — required fields, enum values (visibility, dispatchMode),
                model.name required when model block is present, duplicate names.
   Skills     — required fields, non-empty content body, duplicate names.
@@ -1958,11 +1962,14 @@ This command is offline and checks relationship endpoints against the blueprint'
 own packs only; 'memory blueprints install' additionally accepts object types
 already present in the project.
 
-Exits 0 when only warnings are found, exits 1 when any error is found.
+Exits 0 when only warnings are found, exits 1 when any error is found. With
+--strict, warnings also make the command exit 1, so a blueprint must be fully
+clean to pass.
 
 Examples:
 
   memory blueprints validate ./my-config
+  memory blueprints validate ./my-config --strict
   memory blueprints validate https://github.com/acme/memory-blueprints
   memory blueprints validate https://github.com/acme/memory-blueprints#v1.2.0
 
@@ -1974,6 +1981,7 @@ memory blueprints validate <source> [flags]
 
 ```
   -h, --help           help for validate
+      --strict         Treat warnings as failures (exit 1)
       --token string   GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
 ```
 
