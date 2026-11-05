@@ -16,8 +16,9 @@ import (
 // --- view models ---
 
 // SchemaListView is the Schema list view model: the compiled types plus the
-// resolved blueprint provenance per object type (by type name). FlashMsg/
-// FlashErr carry PRG feedback from install/derive actions.
+// resolved blueprint provenance per kind-qualified type name ("object:person" /
+// "relationship:knows"). FlashMsg/FlashErr carry PRG feedback from install/
+// derive actions.
 type SchemaListView struct {
 	Compiled   *CompiledSchemaTypes
 	Provenance map[string]*ProvenanceInfo
@@ -83,10 +84,23 @@ func (s *Server) uiSchema(c echo.Context) error {
 	sortCompiledTypesByName(visible.ObjectTypes)
 	sortCompiledTypesByName(visible.RelationshipTypes)
 	index := s.buildProvenanceIndex(ctx)
+	// Keyed by type kind and name ("object:person", "relationship:knows"): object
+	// and relationship types are separate namespaces, so a single name-keyed map
+	// let one kind's blueprint leak onto the other kind's heading. The index
+	// resolves by pack (name+version), which both kinds carry, so relationship
+	// groups show their owning blueprint too.
 	prov := map[string]*ProvenanceInfo{}
-	for _, t := range visible.ObjectTypes {
-		if p := provenanceFor(index, t); p != nil {
-			prov[t.Name] = p
+	for _, kind := range []struct {
+		prefix string
+		types  []CompiledType
+	}{
+		{provenanceKindObject, visible.ObjectTypes},
+		{provenanceKindRelationship, visible.RelationshipTypes},
+	} {
+		for _, t := range kind.types {
+			if p := provenanceFor(index, t); p != nil {
+				prov[kind.prefix+":"+t.Name] = p
+			}
 		}
 	}
 	flashMsg := flashFromQuery(c, []flashParam{
@@ -299,6 +313,89 @@ func compiledTypeSchemaLabel(t CompiledType) string {
 		return t.SchemaName + " v" + t.SchemaVersion
 	}
 	return t.SchemaName
+}
+
+// compiledTypeGroup is one origin group in the Schema page's type list: every
+// compiled type that comes from the same blueprint or schema pack. Grouping
+// lets the list render the origin once as a heading instead of repeating a
+// provenance chip on every row.
+type compiledTypeGroup struct {
+	// Key is the stable identity of the origin ("blueprint:<id>" or
+	// "pack:<name>@<version>"), exposed as a data attribute for tests.
+	Key string
+	// Label is the origin as displayed: the blueprint name + version when a
+	// blueprint claims the type, otherwise the source schema name + version.
+	Label string
+	// BlueprintID is set only for blueprint-derived groups, which link to the
+	// blueprint page.
+	BlueprintID string
+	// PackID is the source schema pack's id for pack-only groups, which link to
+	// the schema pack page. Empty when the API omitted it (the heading then
+	// renders unlinked) or for blueprint groups, whose heading links the
+	// blueprint instead.
+	PackID string
+	Types  []CompiledType
+}
+
+// Provenance map keys are qualified by type kind: object and relationship types
+// share names across separate namespaces, so an unqualified name could pick up
+// the other kind's blueprint.
+const (
+	provenanceKindObject       = "object"
+	provenanceKindRelationship = "relationship"
+)
+
+// provenanceKindForList names the provenance namespace a type list belongs to.
+func provenanceKindForList(endpoints bool) string {
+	if endpoints {
+		return provenanceKindRelationship
+	}
+	return provenanceKindObject
+}
+
+// groupCompiledTypes buckets compiled types by origin. Blueprint-derived
+// groups come first (they are the ones a user can open and reason about), then
+// pack-only groups; both orders are case-insensitive by label so the list is
+// stable between requests. Types inside a group are ordered by display label.
+// provenance is keyed by kind-qualified type name (see provenanceKindObject), so
+// both type kinds resolve their own blueprint; it may be nil, in which case
+// every type groups by its source schema.
+func groupCompiledTypes(types []CompiledType, provenance map[string]*ProvenanceInfo, kind string) []compiledTypeGroup {
+	index := make(map[string]int, len(types))
+	groups := make([]compiledTypeGroup, 0, len(types))
+	for _, t := range types {
+		key, label, blueprintID := "pack:"+t.SchemaName+"@"+t.SchemaVersion, compiledTypeSchemaLabel(t), ""
+		packID := t.SchemaID
+		if p := provenance[kind+":"+t.Name]; p != nil {
+			key, label, blueprintID, packID = "blueprint:"+p.BlueprintID, typeProvenanceLabel(p), p.BlueprintID, ""
+		}
+		i, ok := index[key]
+		if !ok {
+			i = len(groups)
+			index[key] = i
+			groups = append(groups, compiledTypeGroup{Key: key, Label: label, BlueprintID: blueprintID, PackID: packID})
+		} else if groups[i].PackID == "" && blueprintID == "" {
+			// The API may omit schema ids on some types; keep the first one that
+			// carries one so the pack heading can link.
+			groups[i].PackID = packID
+		}
+		groups[i].Types = append(groups[i].Types, t)
+	}
+	for i := range groups {
+		slice := groups[i].Types
+		sort.SliceStable(slice, func(a, b int) bool {
+			return strings.ToLower(compiledTypeLabel(slice[a])) < strings.ToLower(compiledTypeLabel(slice[b]))
+		})
+		groups[i].Types = slice
+	}
+	sort.SliceStable(groups, func(a, b int) bool {
+		leftBlueprint, rightBlueprint := groups[a].BlueprintID != "", groups[b].BlueprintID != ""
+		if leftBlueprint != rightBlueprint {
+			return leftBlueprint
+		}
+		return strings.ToLower(groups[a].Label) < strings.ToLower(groups[b].Label)
+	})
+	return groups
 }
 
 // schemaOriginLabel renders a schema name/version pair for the object-type

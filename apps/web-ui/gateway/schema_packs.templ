@@ -49,37 +49,45 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 					ActionIcon:  "lucide--plus",
 				})
 			} else {
-				@cardList("", cardListProps{}) {
-					for _, p := range packs {
-						@schemaPackRow(p)
+				<div class="flex flex-col gap-5" data-testid="schema-pack-groups">
+					for _, g := range groupSchemaPacks(packs) {
+						<div class="flex flex-col gap-2" data-testid="schema-pack-group" data-schema-pack-group={ g.Key }>
+							@originHeading(g.Label, g.BlueprintID(), "", len(g.Packs), "pack", "packs")
+							for _, p := range g.Packs {
+								@schemaPackCard(p)
+							}
+						</div>
 					}
-				}
+				</div>
 			}
 		}
 	}
 }
 
-// schemaPackRow is one active pack: name, version, owner badge, owning
-// blueprint (when one applies), type counts, and description. The whole row is
-// the link to the pack detail.
-templ schemaPackRow(p schemaPackSummary) {
-	<a class="block px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) }>
-		<div class="flex flex-wrap items-center gap-2">
-			<p class="text-sm font-medium">{ p.Name }</p>
-			@ui.Badge(ui.BadgeProps{Label: "v" + p.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
-			@ownerBadge(p, ui.BadgeSizeXS)
-			if p.Provenance != nil {
-				@ui.Badge(ui.BadgeProps{Label: typeProvenanceLabel(p.Provenance), Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--library"})
+// schemaPackCard is one active pack in the list: a package icon tile, the pack
+// name in the pack colour (yellow, matching the compiled schema's pack group
+// headings), its version and owner badges, type counts and description, with a
+// chevron standing in for the detail page the whole card links to. Same card
+// shape as the compiled schema's type cards so both list surfaces read alike.
+templ schemaPackCard(p schemaPackSummary) {
+	<a class="rounded-box border-line bg-base-100 hover:border-primary/40 group flex items-start gap-3 border px-3 py-2.5 transition-colors" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) } data-testid="schema-pack-card">
+		@ui.IconTile("lucide--package", ui.IconTileProps{Tone: "warning"})
+		<div class="min-w-0 flex-1">
+			<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+				<span class="text-warning truncate text-sm font-medium">{ p.Name }</span>
+				@ui.Badge(ui.BadgeProps{Label: "v" + p.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				@ownerBadge(p, ui.BadgeSizeXS)
+			</div>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+				{ p.typeCountLabel() }
+			}
+			if p.Description != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 truncate"}) {
+					{ p.Description }
+				}
 			}
 		</div>
-		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
-			{ p.typeCountLabel() }
-		}
-		if p.Description != "" {
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
-				{ p.Description }
-			}
-		}
+		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-faint")
 	</a>
 }
 
@@ -122,16 +130,8 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 					</div>
 				}
 				@schemaPackMeta(pack)
-				{{
-					prov := map[string]*ProvenanceInfo{}
-					if pack.Provenance != nil {
-						for _, t := range pack.ObjectTypes {
-							prov[t.Name] = pack.Provenance
-						}
-					}
-				}}
-				@compiledTypesTable("Object types", pack.ObjectTypes, false, "/schema/object-types/", prov)
-				@compiledTypesTable("Relationship types", pack.RelationshipTypes, true, "", nil)
+				@typeCardSection("Object types", pack.ObjectTypes, false, "/schema/object-types/")
+				@typeCardSection("Relationship types", pack.RelationshipTypes, true, "")
 			}
 		}
 	}

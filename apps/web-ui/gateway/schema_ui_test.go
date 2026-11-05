@@ -154,18 +154,87 @@ func TestRenderSchemaEditorDerivedGate(t *testing.T) {
 	}
 }
 
+// TestRenderSchemaListProvenanceLink pins the Schema list's origin treatment:
+// the owning blueprint is rendered once as the type group's heading (a link to
+// the blueprint) instead of a "Blueprint-derived" chip repeated on every row.
 func TestRenderSchemaListProvenanceLink(t *testing.T) {
-	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{
-		{Name: "person", SchemaName: "personal-memory", SchemaVersion: "1.0.0"},
-	}}
+	compiled := &CompiledSchemaTypes{
+		ObjectTypes: []CompiledType{
+			{Name: "person", SchemaName: "personal-memory", SchemaVersion: "1.0.0"},
+			{Name: "note", SchemaName: "agent-notes", SchemaVersion: "2.0.0", SchemaID: "pack-notes"},
+		},
+		// Same name as the object type above, different namespace: the
+		// kind-qualified provenance keys must keep the two apart, so this
+		// relationship stays in its own pack group while the object type
+		// groups under bp1.
+		RelationshipTypes: []CompiledType{
+			{Name: "note", SchemaName: "agent-notes", SchemaVersion: "2.0.0", SchemaID: "pack-notes"},
+		},
+	}
 	prov := map[string]*ProvenanceInfo{
-		"person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
+		"object:person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
 	}
 	html := renderHTML(t, SchemaPage(&SchemaListView{Compiled: compiled, Provenance: prov}, nil))
-	for _, want := range []string{"Blueprint-derived", `href="/blueprints/bp1"`, "personal-memory v1.0.0"} {
+	for _, want := range []string{
+		`data-schema-group="blueprint:bp1"`,
+		`class="text-info text-sm font-semibold hover:underline" href="/blueprints/bp1"`,
+		"personal-memory v1.0.0",
+		`data-schema-group="pack:agent-notes@2.0.0"`,
+		`class="text-warning text-sm font-semibold hover:underline" href="/schema/packs/pack-notes"`,
+		"agent-notes v2.0.0",
+	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("schema list provenance missing %q", want)
+			t.Errorf("schema list groups missing %q", want)
 		}
+	}
+	if got := strings.Count(html, `data-schema-group="blueprint:bp1"`); got != 1 {
+		t.Errorf("blueprint group rendered %d times, want 1 (a relationship sharing the object type's name must not inherit its blueprint)", got)
+	}
+	if strings.Contains(html, "Blueprint-derived") {
+		t.Error("provenance must be a group heading, not a per-row badge")
+	}
+}
+
+// TestGroupCompiledTypes pins the grouping rules the Schema list depends on:
+// blueprint groups before pack groups, stable case-insensitive ordering by
+// label, and label order inside a group.
+func TestGroupCompiledTypes(t *testing.T) {
+	types := []CompiledType{
+		{Name: "van", Label: "Van", SchemaName: "cars", SchemaVersion: "1.0.0", SchemaID: "pack-cars"},
+		{Name: "note", Label: "Note", SchemaName: "agent-notes", SchemaVersion: "2.0.0"},
+		{Name: "person", Label: "Person", SchemaName: "personal-memory", SchemaVersion: "1.0.0"},
+		{Name: "car", Label: "Car", SchemaName: "cars", SchemaVersion: "1.0.0", SchemaID: "pack-cars"},
+		{Name: "task", Label: "Task", SchemaName: "agent-notes", SchemaVersion: "2.0.0"},
+	}
+	prov := map[string]*ProvenanceInfo{
+		"object:person": {BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"},
+		"object:note":   {BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"},
+		"object:task":   {BlueprintID: "bp2", BlueprintName: "agent-notes", BlueprintVersion: "2.0.0"},
+	}
+	groups := groupCompiledTypes(types, prov, provenanceKindObject)
+	var keys []string
+	for _, g := range groups {
+		keys = append(keys, g.Key)
+	}
+	want := []string{"blueprint:bp2", "blueprint:bp1", "pack:cars@1.0.0"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("group order = %v, want %v", keys, want)
+	}
+	if groups[2].BlueprintID != "" {
+		t.Errorf("a pack group must not carry a blueprint id: %+v", groups[2])
+	}
+	if groups[2].PackID != "pack-cars" {
+		t.Errorf("a pack group must carry its schema pack id to link: %+v", groups[2])
+	}
+	if groups[0].PackID != "" {
+		t.Errorf("a blueprint group must not carry a pack id: %+v", groups[0])
+	}
+	var cars []string
+	for _, c := range groups[2].Types {
+		cars = append(cars, c.Name)
+	}
+	if strings.Join(cars, ",") != "car,van" {
+		t.Errorf("types within a pack group must sort by label, got %v", cars)
 	}
 }
 
