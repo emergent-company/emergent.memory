@@ -8961,14 +8961,19 @@ definitions:
       documentation_url:
         type: string
       extraction_prompts:
-        description: ExtractionPrompts accepts both snake_case and camelCase keys.
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionPrompts is a JSON object keyed by object type name, each value
+          a prompt config such as {"system_prompt":"...","field_hints":{...}}.
+          This map form is what the MCP create-schema tool writes (it rejects a
+          non-object with "must be an object, got %T"), the published API docs and
+          SKILL.md show, and the assign/restore readers unmarshal as
+          map[string]json.RawMessage; no array form is read. Blueprint manifests do
+          not carry a pack-level extraction_prompts field.
+          Accepts both snake_case and camelCase keys.
+          Use GetExtractionPrompts() to retrieve the resolved value.
+        type: object
       extractionPrompts:
-        items:
-          type: integer
-        type: array
+        type: object
       license:
         type: string
       migrations:
@@ -8980,14 +8985,22 @@ definitions:
         type: string
       object_type_schemas:
         description: |-
-          ObjectTypeSchemas accepts both snake_case and camelCase keys.
+          ObjectTypeSchemas is the object-type definitions in the request shape: a
+          JSON array of {"name","label","properties",...} objects, e.g.
+          [{"name":"Note","properties":{...}}]. This is the shape the validator
+          accepts and the shape blueprint apply/seeder write. The map-of-type-name
+          → schema form stored in kb.graph_schemas.object_type_schemas (legacy
+          rows, the MCP create-schema tool, and the discovery path) is
+          read-compatible on later reads, but validateSchemaDefinitions does NOT
+          accept it on this request.
+          Accepts both snake_case and camelCase keys.
           Use GetObjectTypeSchemas() to retrieve the resolved value.
         items:
-          type: integer
+          type: object
         type: array
       objectTypeSchemas:
         items:
-          type: integer
+          type: object
         type: array
       relationship_type_schemas:
         description: |-
@@ -9009,14 +9022,19 @@ definitions:
       repository_url:
         type: string
       ui_configs:
-        description: UIConfigs accepts both snake_case and camelCase keys.
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfigs is a JSON object keyed by object type name, each value a UI
+          config such as {"icon":"file-text","color":"#3B82F6"}. This map form is
+          what the MCP create-schema tool writes (it rejects a non-object with
+          "must be an object, got %T"), the published API docs and SKILL.md show,
+          and the compiled-types reader unmarshals as map[string]json.RawMessage;
+          an array is not a supported shape. Blueprint manifests express UI per
+          type, inline, not through this pack-level map.
+          Accepts both snake_case and camelCase keys.
+          Use GetUIConfigs() to retrieve the resolved value.
+        type: object
       uiConfigs:
-        items:
-          type: integer
-        type: array
+        type: object
       version:
         type: string
     type: object
@@ -9128,9 +9146,9 @@ definitions:
           $ref: '#/definitions/domain_schemas.PropertyConflict'
         type: array
       existingSchema:
-        items:
-          type: integer
-        type: array
+        description: ExistingSchema is the registered JSON Schema object for this
+          type.
+        type: object
       existingSchemaId:
         type: string
       existingSchemaName:
@@ -9140,13 +9158,11 @@ definitions:
       incomingPackName:
         type: string
       incomingSchema:
-        items:
-          type: integer
-        type: array
+        description: IncomingSchema is the incoming JSON Schema object for this type.
+        type: object
       mergedSchema:
-        items:
-          type: integer
-        type: array
+        description: MergedSchema is the preview of the merged JSON Schema object.
+        type: object
       typeName:
         type: string
     type: object
@@ -9155,8 +9171,12 @@ definitions:
       name:
         type: string
       objectTypes:
+        description: |-
+          ObjectTypes is a JSON array of {"name","label","properties",...} objects.
+          The map-of-type-name → schema stored form is also accepted here and is
+          read-compatible.
         items:
-          type: integer
+          type: object
         type: array
     type: object
   domain_schemas.MergePreviewRequest:
@@ -9669,9 +9689,10 @@ definitions:
       documentation_url:
         type: string
       extraction_prompts:
-        items:
-          type: integer
-        type: array
+        description: |-
+          ExtractionPrompts is a JSON object keyed by object type name (type name →
+          prompt config); an array is not a supported shape.
+        type: object
       license:
         type: string
       migrations:
@@ -9682,8 +9703,14 @@ definitions:
       name:
         type: string
       object_type_schemas:
+        description: |-
+          ObjectTypeSchemas is the request shape only: a JSON array of
+          {"name","label","properties",...} objects, which is also what blueprint
+          apply/seeder write. The map-of-type-name → schema stored form (legacy
+          rows, MCP create-schema, discovery) is read-compatible elsewhere but is
+          not accepted on update.
         items:
-          type: integer
+          type: object
         type: array
       relationship_type_schemas:
         description: |-
@@ -9696,9 +9723,10 @@ definitions:
       repository_url:
         type: string
       ui_configs:
-        items:
-          type: integer
-        type: array
+        description: |-
+          UIConfigs is a JSON object keyed by object type name (type name → UI
+          config); an array is not a supported shape.
+        type: object
       version:
         type: string
     type: object
@@ -11470,9 +11498,9 @@ definitions:
           $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_schemas.PropertyConflict'
         type: array
       existingSchema:
-        items:
-          type: integer
-        type: array
+        description: ExistingSchema is the registered JSON Schema object for this
+          type.
+        type: object
       existingSchemaId:
         type: string
       existingSchemaName:
@@ -11482,13 +11510,11 @@ definitions:
       incomingPackName:
         type: string
       incomingSchema:
-        items:
-          type: integer
-        type: array
+        description: IncomingSchema is the incoming JSON Schema object for this type.
+        type: object
       mergedSchema:
-        items:
-          type: integer
-        type: array
+        description: MergedSchema is the preview of the merged JSON Schema object.
+        type: object
       typeName:
         type: string
     type: object

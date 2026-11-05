@@ -364,26 +364,34 @@ type SchemaConflict struct {
 	ConflictingProperties []PropertyConflict `json:"conflicting_properties,omitempty"`
 }
 
-// MergePreviewPack is one incoming pack in a merge preview request. ObjectTypes
-// accepts the same array/map storage formats as a stored pack's
-// object_type_schemas column.
+// MergePreviewPack is one incoming pack in a merge preview request.
+// ObjectTypes accepts the same array/map storage formats as a stored pack's
+// object_type_schemas column: the array form is the canonical writer shape
+// (blueprint apply/seeder and the HTTP request path), while the map form is the
+// legacy stored shape and remains read-compatible.
 type MergePreviewPack struct {
-	Name        string          `json:"name"`
-	ObjectTypes json.RawMessage `json:"objectTypes"`
+	Name string `json:"name"`
+	// ObjectTypes is a JSON array of {"name","label","properties",...} objects.
+	// The map-of-type-name → schema stored form is also accepted here and is
+	// read-compatible.
+	ObjectTypes json.RawMessage `json:"objectTypes" swaggertype:"array,object"`
 }
 
 // MergePreviewConflict describes one type-name collision found by a merge
 // preview. It is reported even when no properties are added or conflicting,
 // because the type-name collision itself requires a merge decision.
 type MergePreviewConflict struct {
-	TypeName              string             `json:"typeName"`
-	IncomingPackName      string             `json:"incomingPackName"`
-	ExistingSchemaID      string             `json:"existingSchemaId,omitempty"`
-	ExistingSchemaName    string             `json:"existingSchemaName,omitempty"`
-	ExistingSchemaVersion string             `json:"existingSchemaVersion,omitempty"`
-	ExistingSchema        json.RawMessage    `json:"existingSchema,omitempty"`
-	IncomingSchema        json.RawMessage    `json:"incomingSchema,omitempty"`
-	MergedSchema          json.RawMessage    `json:"mergedSchema,omitempty"`
+	TypeName              string `json:"typeName"`
+	IncomingPackName      string `json:"incomingPackName"`
+	ExistingSchemaID      string `json:"existingSchemaId,omitempty"`
+	ExistingSchemaName    string `json:"existingSchemaName,omitempty"`
+	ExistingSchemaVersion string `json:"existingSchemaVersion,omitempty"`
+	// ExistingSchema is the registered JSON Schema object for this type.
+	ExistingSchema json.RawMessage `json:"existingSchema,omitempty" swaggertype:"object"`
+	// IncomingSchema is the incoming JSON Schema object for this type.
+	IncomingSchema json.RawMessage `json:"incomingSchema,omitempty" swaggertype:"object"`
+	// MergedSchema is the preview of the merged JSON Schema object.
+	MergedSchema          json.RawMessage    `json:"mergedSchema,omitempty" swaggertype:"object"`
 	AddedProperties       []string           `json:"addedProperties,omitempty"`
 	ConflictingProperties []PropertyConflict `json:"conflictingProperties,omitempty"`
 }
@@ -452,10 +460,18 @@ type CreatePackRequest struct {
 	// Migrations is the optional upgrade-path block for this schema version.
 	Migrations *SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
 
-	// ObjectTypeSchemas accepts both snake_case and camelCase keys.
+	// ObjectTypeSchemas is the object-type definitions in the request shape: a
+	// JSON array of {"name","label","properties",...} objects, e.g.
+	// [{"name":"Note","properties":{...}}]. This is the shape the validator
+	// accepts and the shape blueprint apply/seeder write. The map-of-type-name
+	// → schema form stored in kb.graph_schemas.object_type_schemas (legacy
+	// rows, the MCP create-schema tool, and the discovery path) is
+	// read-compatible on later reads, but validateSchemaDefinitions does NOT
+	// accept it on this request.
+	// Accepts both snake_case and camelCase keys.
 	// Use GetObjectTypeSchemas() to retrieve the resolved value.
-	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas"`
-	ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas"`
+	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas" swaggertype:"array,object"`
+	ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas" swaggertype:"array,object"`
 
 	// RelationshipTypeSchemas is the optional relationship-type definitions in
 	// the request shape: a JSON array of {"name","sourceType","targetType"}
@@ -468,13 +484,29 @@ type CreatePackRequest struct {
 	RelationshipTypeSchemasSnake json.RawMessage `json:"relationship_type_schemas,omitempty" swaggertype:"array,object"`
 	RelationshipTypeSchemasCamel json.RawMessage `json:"relationshipTypeSchemas,omitempty" swaggertype:"array,object"`
 
-	// UIConfigs accepts both snake_case and camelCase keys.
-	UIConfigsSnake json.RawMessage `json:"ui_configs,omitempty"`
-	UIConfigsCamel json.RawMessage `json:"uiConfigs,omitempty"`
+	// UIConfigs is a JSON object keyed by object type name, each value a UI
+	// config such as {"icon":"file-text","color":"#3B82F6"}. This map form is
+	// what the MCP create-schema tool writes (it rejects a non-object with
+	// "must be an object, got %T"), the published API docs and SKILL.md show,
+	// and the compiled-types reader unmarshals as map[string]json.RawMessage;
+	// an array is not a supported shape. Blueprint manifests express UI per
+	// type, inline, not through this pack-level map.
+	// Accepts both snake_case and camelCase keys.
+	// Use GetUIConfigs() to retrieve the resolved value.
+	UIConfigsSnake json.RawMessage `json:"ui_configs,omitempty" swaggertype:"object"`
+	UIConfigsCamel json.RawMessage `json:"uiConfigs,omitempty" swaggertype:"object"`
 
-	// ExtractionPrompts accepts both snake_case and camelCase keys.
-	ExtractionPromptsSnake json.RawMessage `json:"extraction_prompts,omitempty"`
-	ExtractionPromptsCamel json.RawMessage `json:"extractionPrompts,omitempty"`
+	// ExtractionPrompts is a JSON object keyed by object type name, each value
+	// a prompt config such as {"system_prompt":"...","field_hints":{...}}.
+	// This map form is what the MCP create-schema tool writes (it rejects a
+	// non-object with "must be an object, got %T"), the published API docs and
+	// SKILL.md show, and the assign/restore readers unmarshal as
+	// map[string]json.RawMessage; no array form is read. Blueprint manifests do
+	// not carry a pack-level extraction_prompts field.
+	// Accepts both snake_case and camelCase keys.
+	// Use GetExtractionPrompts() to retrieve the resolved value.
+	ExtractionPromptsSnake json.RawMessage `json:"extraction_prompts,omitempty" swaggertype:"object"`
+	ExtractionPromptsCamel json.RawMessage `json:"extractionPrompts,omitempty" swaggertype:"object"`
 }
 
 // ObjectTypeSchemas returns the ObjectTypeSchemas value, preferring snake_case over camelCase.
@@ -511,20 +543,29 @@ func (r *CreatePackRequest) GetExtractionPrompts() json.RawMessage {
 
 // UpdatePackRequest is the request to update an existing schema (partial update — only non-nil fields are applied)
 type UpdatePackRequest struct {
-	Name              *string         `json:"name,omitempty"`
-	Version           *string         `json:"version,omitempty"`
-	Description       *string         `json:"description,omitempty"`
-	Author            *string         `json:"author,omitempty"`
-	License           *string         `json:"license,omitempty"`
-	RepositoryURL     *string         `json:"repository_url,omitempty"`
-	DocumentationURL  *string         `json:"documentation_url,omitempty"`
-	ObjectTypeSchemas json.RawMessage `json:"object_type_schemas,omitempty"`
+	Name             *string `json:"name,omitempty"`
+	Version          *string `json:"version,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	Author           *string `json:"author,omitempty"`
+	License          *string `json:"license,omitempty"`
+	RepositoryURL    *string `json:"repository_url,omitempty"`
+	DocumentationURL *string `json:"documentation_url,omitempty"`
+	// ObjectTypeSchemas is the request shape only: a JSON array of
+	// {"name","label","properties",...} objects, which is also what blueprint
+	// apply/seeder write. The map-of-type-name → schema stored form (legacy
+	// rows, MCP create-schema, discovery) is read-compatible elsewhere but is
+	// not accepted on update.
+	ObjectTypeSchemas json.RawMessage `json:"object_type_schemas,omitempty" swaggertype:"array,object"`
 	// RelationshipTypeSchemas is the request shape only: a JSON array of
 	// {"name","sourceType","targetType"} objects. The stored map form is not
 	// accepted on update.
 	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty" swaggertype:"array,object"`
-	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
-	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+	// UIConfigs is a JSON object keyed by object type name (type name → UI
+	// config); an array is not a supported shape.
+	UIConfigs json.RawMessage `json:"ui_configs,omitempty" swaggertype:"object"`
+	// ExtractionPrompts is a JSON object keyed by object type name (type name →
+	// prompt config); an array is not a supported shape.
+	ExtractionPrompts json.RawMessage `json:"extraction_prompts,omitempty" swaggertype:"object"`
 	// Migrations is the optional upgrade-path block for this schema version.
 	Migrations *SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
 }

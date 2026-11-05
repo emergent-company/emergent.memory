@@ -40526,17 +40526,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "extraction_prompts": {
-                    "description": "ExtractionPrompts accepts both snake_case and camelCase keys.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name, each value\na prompt config such as {\"system_prompt\":\"...\",\"field_hints\":{...}}.\nThis map form is what the MCP create-schema tool writes (it rejects a\nnon-object with \"must be an object, got %T\"), the published API docs and\nSKILL.md show, and the assign/restore readers unmarshal as\nmap[string]json.RawMessage; no array form is read. Blueprint manifests do\nnot carry a pack-level extraction_prompts field.\nAccepts both snake_case and camelCase keys.\nUse GetExtractionPrompts() to retrieve the resolved value.",
+                    "type": "object"
                 },
                 "license": {
                     "type": "string"
@@ -40555,14 +40549,14 @@ const docTemplate = `{
                 "objectTypeSchemas": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "object_type_schemas": {
-                    "description": "ObjectTypeSchemas accepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
+                    "description": "ObjectTypeSchemas is the object-type definitions in the request shape: a\nJSON array of {\"name\",\"label\",\"properties\",...} objects, e.g.\n[{\"name\":\"Note\",\"properties\":{...}}]. This is the shape the validator\naccepts and the shape blueprint apply/seeder write. The map-of-type-name\n→ schema form stored in kb.graph_schemas.object_type_schemas (legacy\nrows, the MCP create-schema tool, and the discovery path) is\nread-compatible on later reads, but validateSchemaDefinitions does NOT\naccept it on this request.\nAccepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "relationshipTypeSchemas": {
@@ -40582,17 +40576,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "uiConfigs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "ui_configs": {
-                    "description": "UIConfigs accepts both snake_case and camelCase keys.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfigs is a JSON object keyed by object type name, each value a UI\nconfig such as {\"icon\":\"file-text\",\"color\":\"#3B82F6\"}. This map form is\nwhat the MCP create-schema tool writes (it rejects a non-object with\n\"must be an object, got %T\"), the published API docs and SKILL.md show,\nand the compiled-types reader unmarshals as map[string]json.RawMessage;\nan array is not a supported shape. Blueprint manifests express UI per\ntype, inline, not through this pack-level map.\nAccepts both snake_case and camelCase keys.\nUse GetUIConfigs() to retrieve the resolved value.",
+                    "type": "object"
                 },
                 "version": {
                     "type": "string"
@@ -40756,10 +40744,8 @@ const docTemplate = `{
                     }
                 },
                 "existingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExistingSchema is the registered JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "existingSchemaId": {
                     "type": "string"
@@ -40774,16 +40760,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "incomingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "IncomingSchema is the incoming JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "mergedSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "MergedSchema is the preview of the merged JSON Schema object.",
+                    "type": "object"
                 },
                 "typeName": {
                     "type": "string"
@@ -40797,9 +40779,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "objectTypes": {
+                    "description": "ObjectTypes is a JSON array of {\"name\",\"label\",\"properties\",...} objects.\nThe map-of-type-name → schema stored form is also accepted here and is\nread-compatible.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 }
             }
@@ -41548,10 +41531,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "extraction_prompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name (type name →\nprompt config); an array is not a supported shape.",
+                    "type": "object"
                 },
                 "license": {
                     "type": "string"
@@ -41568,9 +41549,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "object_type_schemas": {
+                    "description": "ObjectTypeSchemas is the request shape only: a JSON array of\n{\"name\",\"label\",\"properties\",...} objects, which is also what blueprint\napply/seeder write. The map-of-type-name → schema stored form (legacy\nrows, MCP create-schema, discovery) is read-compatible elsewhere but is\nnot accepted on update.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "relationship_type_schemas": {
@@ -41584,10 +41566,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "ui_configs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfigs is a JSON object keyed by object type name (type name → UI\nconfig); an array is not a supported shape.",
+                    "type": "object"
                 },
                 "version": {
                     "type": "string"
@@ -44161,10 +44141,8 @@ const docTemplate = `{
                     }
                 },
                 "existingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExistingSchema is the registered JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "existingSchemaId": {
                     "type": "string"
@@ -44179,16 +44157,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "incomingSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "IncomingSchema is the incoming JSON Schema object for this type.",
+                    "type": "object"
                 },
                 "mergedSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "MergedSchema is the preview of the merged JSON Schema object.",
+                    "type": "object"
                 },
                 "typeName": {
                     "type": "string"
