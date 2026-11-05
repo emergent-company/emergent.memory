@@ -125,7 +125,7 @@ curl -X DELETE https://api.example.com/api/schemas/<schemaId> \
 | `uiConfigs` | object | Map of type name → UI config |
 | `extractionPrompts` | object | Map of type name → prompt config |
 | `migrations` | object | Optional migration hints block (see [Schema migrations](#schema-migrations)) |
-| `checksum` | string | SHA-256 of canonical content (auto-computed) |
+| `checksum` | string | md5 of canonical content (32 hex characters) |
 | `draft` | bool | `true` = not visible to projects |
 | `publishedAt` | timestamp | When the schema was published |
 | `deprecatedAt` | timestamp | When the schema was deprecated |
