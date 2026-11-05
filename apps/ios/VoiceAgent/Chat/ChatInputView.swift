@@ -42,7 +42,10 @@ struct ChatInputView: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 3 * .grid) {
+        // Center the button on the composer: its 44pt hit target sits around a
+        // 32pt circle, so bottom-aligning it (with extra bottom padding) made
+        // the circle ride visibly high against a one-line text field.
+        HStack(alignment: .center, spacing: 3 * .grid) {
             textField()
             if store.isGeneratingReply, allowsInterrupt {
                 stopButton()
@@ -115,9 +118,9 @@ struct ChatInputView: View {
                 .frame(width: 8 * .grid, height: 8 * .grid)
         }
         #if os(iOS)
-        .padding([.bottom, .trailing], 3 * .grid)
+        .padding(.trailing, 3 * .grid)
         #else
-        .padding([.bottom, .trailing], 2 * .grid)
+        .padding(.trailing, 2 * .grid)
         #endif
         .disabled(isSendDisabled)
         #if os(visionOS)
@@ -141,9 +144,9 @@ struct ChatInputView: View {
                 .frame(width: 8 * .grid, height: 8 * .grid)
         }
         #if os(iOS)
-        .padding([.bottom, .trailing], 3 * .grid)
+        .padding(.trailing, 3 * .grid)
         #else
-        .padding([.bottom, .trailing], 2 * .grid)
+        .padding(.trailing, 2 * .grid)
         #endif
         #if os(visionOS)
         .buttonStyle(.plain)

@@ -41,7 +41,7 @@ struct VoiceAgentApp: App {
 /// reaches the token endpoint on the next connect — no relaunch needed.
 ///
 /// `MemorySessionController` captures its `MemoryConfig` once at init, so the
-/// controller (and its `Session`/`LocalMedia`) is rebuilt from a fresh config
+/// controller (and its `Session`/`LocalMediaModel`) is rebuilt from a fresh config
 /// on every selection change instead of being mutated in place. The same
 /// applies to opening another conversation: the controller is rebuilt for the
 /// new `ActiveSessionStore.launchKey`.

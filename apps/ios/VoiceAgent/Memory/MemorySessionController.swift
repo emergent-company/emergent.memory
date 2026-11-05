@@ -5,7 +5,7 @@ import Foundation
 import LiveKit
 
 /// Drives a Memory voice session on the LiveKit Swift SDK's
-/// `Session`/`LocalMedia` architecture: connects + dispatches
+/// `Session`/`LocalMediaModel` architecture: connects + dispatches
 /// `alfred` (agent name flows through the token request), classifies
 /// connection failures with a retry affordance, and consumes Memory's
 /// text-stream signals (`lk.agent.ready` chime, `lk.agent.events` away,
@@ -32,7 +32,7 @@ final class MemorySessionController: ObservableObject {
     static let chatInterruptTopic = "lk.chat.interrupt"
 
     let session: Session
-    let localMedia: LocalMedia
+    let localMedia: LocalMediaModel
 
     /// Live rich-chat activity (tool chips, thinking, approval/question cards)
     /// decoded from `lk.chat.events` and rendered by `ChatView`.
@@ -77,7 +77,11 @@ final class MemorySessionController: ObservableObject {
     private var sessionEndTask: Task<Void, Never>?
 
     /// Speaks agent replies locally (AVSpeechSynthesizer — no server TTS).
-    private let speechSynthesizer = AVSpeechSynthesizer()
+    ///
+    /// Created on first use: this controller exists from app launch, and
+    /// constructing audio objects up front is exactly what used to take audio
+    /// away from other apps before the user joined a call.
+    private lazy var speechSynthesizer = AVSpeechSynthesizer()
 
     init(config: MemoryConfig, conversationID: String? = nil, startMuted: Bool = false) {
         self.config = config
@@ -89,7 +93,7 @@ final class MemorySessionController: ObservableObject {
             startMuted: startMuted
         )
         self.session = session
-        localMedia = LocalMedia(session: session)
+        localMedia = LocalMediaModel(session: session)
         observe()
     }
 
