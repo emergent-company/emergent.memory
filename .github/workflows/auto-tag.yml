@@ -133,26 +133,55 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           TAG="v${VERSION}"
-          dispatch() {
-            wf="$1"; shift
-            echo "::group::dispatch ${wf} on ${TAG}"
-            gh workflow run "${wf}" --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" "$@"
-            echo "::endgroup::"
-          }
-          dispatch publish-self-hosted-images.yml
-          dispatch build-publish.yml
-          dispatch cli.yml
-          dispatch publish-workspace-image.yml
-          dispatch server-sdk.yml
-          # `tag` is required here: the workflow cannot read it off the ref
+
+          # One entry per workflow that declares `on: push: tags: v*`.
+          # Format: <workflow-file>[|<extra `gh workflow run` args>]. The extra
+          # field exists for release-versions.yml, whose `tag` input is required
           # because a run may be dispatched for a past release.
-          dispatch release-versions.yml --field "tag=${TAG}"
-          dispatch docs.yml
-          dispatch connector-release.yml
-          dispatch ios-release.yml
-          dispatch mac-release.yml
+          DISPATCHES=(
+            "publish-self-hosted-images.yml"
+            "build-publish.yml"
+            "cli.yml"
+            "publish-workspace-image.yml"
+            "server-sdk.yml"
+            "release-versions.yml|--field tag=${TAG}"
+            "docs.yml"
+            "connector-release.yml"
+            "ios-release.yml"
+            "mac-release.yml"
+          )
+
+          failed=()
+          for entry in "${DISPATCHES[@]}"; do
+            wf="${entry%%|*}"
+            extra="${entry#*|}"
+            if [ "$extra" = "$entry" ]; then extra=""; fi
+            echo "::group::dispatch ${wf} on ${TAG}"
+            # `extra` is a deliberate argument list, so it stays unquoted.
+            if gh workflow run "${wf}" --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" ${extra}; then
+              echo "dispatched ${wf}"
+            else
+              echo "::error::dispatch failed: ${wf}"
+              if [ -z "$extra" ]; then failed+=("$wf"); else failed+=("$wf $extra"); fi
+            fi
+            echo "::endgroup::"
+          done
+
+          # Attempt every dispatch before failing. The tag now exists, so a
+          # re-run of this job takes the `exists=true` path and never retries
+          # these — a partial fan-out would need a human regardless, and the run
+          # must say exactly which workflows are missing.
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "ERROR: ${#failed[@]} release workflow(s) were not dispatched: ${failed[*]}" >&2
+            echo "The tag ${TAG} already exists, so re-running this job skips dispatch." >&2
+            echo "Start the missing workflow(s) by hand:" >&2
+            for f in "${failed[@]}"; do
+              echo "  gh workflow run ${f} --repo ${GITHUB_REPOSITORY} --ref ${TAG}" >&2
+            done
+            exit 1
+          fi
           echo "Dispatched the release fan-out for ${TAG}."
 
       - name: Verify release workflows started
