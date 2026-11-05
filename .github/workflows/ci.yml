@@ -267,6 +267,20 @@ jobs:
       - name: Workflow injection guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: python3 .github/scripts/check-injection.py .github/workflows
+      # auto-tag dispatches the release fan-out itself when no RELEASE_TOKEN is
+      # available (#116). Its manifest must equal the set of workflows that
+      # actually trigger on a v* tag, or a new/renamed workflow is skipped
+      # silently at release time. Checked here as well as in auto-tag so drift
+      # fails the PR instead of the next release. `v0.0.0` is a probe tag: the
+      # script only reads workflow files, it never creates a tag.
+      - name: Release fan-out guard (self-test)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: python3 .github/scripts/check-release-fanout.py --self-test
+      - name: Release fan-out guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: >-
+          python3 .github/scripts/check-release-fanout.py
+          .github/workflows .github/release-workflows.txt v0.0.0
       - name: go.work coverage guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/check-go-work-coverage.sh
