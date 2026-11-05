@@ -200,6 +200,14 @@ final class ChatSessionTranscriptStore {
         historyError = message
     }
 
+    /// Records that a history fetch was abandoned — the view went away, or a
+    /// newer load replaced it — without turning it into a failure the user
+    /// would be asked to retry.
+    func cancelHistoryLoad() {
+        isLoadingHistory = false
+        historyError = nil
+    }
+
     /// Removes `questionId` from the pending list (the user answered it).
     func markApprovalAnswered(questionId: String) {
         pendingApprovals.removeAll { $0.questionId == questionId }

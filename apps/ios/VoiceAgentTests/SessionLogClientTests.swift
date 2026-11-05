@@ -283,4 +283,31 @@ private nonisolated func requestBodyData(_ request: URLRequest) -> Data? {
         #expect(seen[2].method == "DELETE")
         #expect(seen[2].path == "/api/conversations/conv-1")
     }
+
+    /// The URL is derived from the token endpoint, but a session-log failure
+    /// must name the session log's own host — naming `/api/token` made it read
+    /// as a token failure.
+    @Test func transportFailureNamesTheSessionLogHostNotTheTokenEndpoint() async throws {
+        var config = MemoryConfig()
+        config.tokenEndpoint = "http://host:8080/api/token"
+        config.apiKey = "secret"
+        SessionLogStubProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        defer { SessionLogStubProtocol.handler = nil }
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [SessionLogStubProtocol.self]
+        let client = SessionLogClient(
+            config: config,
+            session: URLSession(configuration: sessionConfig)
+        )
+
+        do {
+            _ = try await client.detail(room: "conv-1")
+            Issue.record("Expected a transport failure")
+        } catch {
+            let message = error.localizedDescription
+            #expect(message.contains("the session log at http://host:8080"))
+            #expect(!message.contains("/api/token"))
+        }
+    }
 }
