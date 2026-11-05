@@ -102,6 +102,8 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
 		Provenance: "created",
+		Branches:   []Branch{{ID: "b1", Name: "plan/next-gen"}},
+		Types:      []string{"note"},
 		ActorType:  "agent",
 		ActorID:    "11111111-1111-1111-1111-111111111111",
 		ActorOptions: []objectActorOption{
@@ -134,6 +136,23 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	if got := strings.Count(html, `name="provenance" value="created" checked`); got != 1 {
 		t.Errorf("active provenance mode not checked: %d", got)
 	}
+	// The chosen mode is filled with the primary colour. A `btn-active` shade is
+	// a 7% darkening that disappears beside its two neighbours, which is what
+	// made the toggle read as three unrelated buttons (#121).
+	if got := strings.Count(html, "btn join-item btn-primary"); got != 1 {
+		t.Errorf("active provenance mode should be the only filled segment: %d", got)
+	}
+
+	// Branch, type and actor are one control family: the actor picker's closed
+	// trigger wears the same select chrome as the two <select>s instead of its
+	// own input box and hand-rolled chevron (#123).
+	filterForm := formBlock(t, html, "objects-filters-form")
+	if got := strings.Count(filterForm, `class="select w-56`); got != 3 {
+		t.Errorf("filter controls sharing the select chrome = %d, want 3 (branch, type, actor):\n%s", got, filterForm)
+	}
+	if strings.Contains(filterForm, "input input-bordered input-sm") {
+		t.Error("actor trigger should wear the select chrome, not the input chrome")
+	}
 	// The free-text actor-id input is gone: actors are chosen from the picker.
 	if strings.Contains(html, `aria-label="Actor id"`) {
 		t.Error("actor id text input should be replaced by the actor picker")
@@ -152,6 +171,75 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	}
 	if !strings.Contains(noActor, `aria-checked="true"`) {
 		t.Error("Any actor must render as the checked row when no actor is active")
+	}
+}
+
+// TestObjectsFilterSelectsTruncateTheirValue pins the filter row's select markup.
+// The native <select> stays in charge — it keeps the field name, the id, the
+// auto-apply hook and the whole option list — but Chromium hard-clips a select's
+// chosen value even with appearance:none and text-overflow:ellipsis, so the
+// visible chrome renders the label and the select sits transparent on top of it.
+// Without that layering a long branch name runs into the chevron instead of
+// ending in an ellipsis.
+func TestObjectsFilterSelectsTruncateTheirValue(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:    []GraphObject{{ID: "o1", Type: "note"}},
+		Types:      []string{"note"},
+		Branches:   []Branch{{ID: "b1", Name: "plan/next-gen"}},
+		BranchID:   "b1",
+		TypeFilter: "",
+	}))
+	form := formBlock(t, html, "objects-filters-form")
+
+	// The chosen value is rendered in the visible layer, where CSS can truncate it.
+	for _, want := range []string{
+		`<span class="min-w-0 truncate" aria-hidden="true">plan/next-gen</span>`,
+		`<span class="min-w-0 truncate" aria-hidden="true">All types</span>`,
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("filter row should render the selected value in the truncating layer; missing %s", want)
+		}
+	}
+	// Only the two native <select>s are overlaid: the actor picker is a menu of
+	// submit buttons, not a native control, so it must not grow a third.
+	if got := strings.Count(form, `class="absolute inset-0 size-full cursor-pointer opacity-0"`); got != 2 {
+		t.Errorf("transparent native selects layered over the chrome = %d, want 2 (branch, type)", got)
+	}
+	// The overlay must not cost the control its identity or its behaviour.
+	for _, want := range []string{
+		`id="objects-filter-branch"`, `name="branch"`,
+		`id="objects-filter-type"`, `name="type"`,
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("overlaid select must keep %s", want)
+		}
+	}
+}
+
+// TestObjectBranchOptionLabel keeps the closed control's wording identical to the
+// option list's, including the two cases where a guess would lie: an empty id is
+// the main line, and an id that is not in the loaded list shows as itself rather
+// than as "Main branch", which would claim a filter that is not applied.
+func TestObjectBranchOptionLabel(t *testing.T) {
+	branches := []Branch{{ID: "b1", Name: "plan/next-gen"}}
+	for _, tc := range []struct {
+		name string
+		id   string
+		want string
+	}{
+		{"main line", "", "Main branch"},
+		{"loaded branch", "b1", "plan/next-gen"},
+		{"unknown id", "gone", "gone"},
+	} {
+		if got := objectBranchOptionLabel(branches, tc.id); got != tc.want {
+			t.Errorf("%s: label = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if got := objectTypeOptionLabel(""); got != "All types" {
+		t.Errorf("empty type filter labels as %q, want All types", got)
+	}
+	if got := objectTypeOptionLabel("person"); got != "person" {
+		t.Errorf("type filter labels as %q, want person", got)
 	}
 }
 
@@ -180,6 +268,30 @@ func TestRenderObjectsActorFilterFallbackOption(t *testing.T) {
 	// already active); only the closed control names it.
 	if strings.Contains(html, `value="user:deadbeef-0000-0000-0000-000000000000"`) {
 		t.Error("an unknown actor must not be offered as a pickable row")
+	}
+}
+
+// TestRenderObjectsProvenanceDefaultsToAny pins the toggle's rendered
+// invariant: the template normalizes the mode before comparing, so an absent or
+// unrecognised ?provenance= still renders the group with exactly one selected
+// segment (Any) — never a join of three buttons with nothing chosen (#121).
+func TestRenderObjectsProvenanceDefaultsToAny(t *testing.T) {
+	for _, raw := range []string{"", "sideways"} {
+		html := renderHTML(t, ObjectsPage(objectsPageData{
+			Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
+			Provenance: raw,
+			ActorType:  "agent",
+			ActorID:    "11111111-1111-1111-1111-111111111111",
+			ActorOptions: []objectActorOption{
+				{Type: "agent", ID: "11111111-1111-1111-1111-111111111111", Label: "diane"},
+			},
+		}))
+		if got := strings.Count(html, "btn join-item btn-primary"); got != 1 {
+			t.Errorf("provenance %q: filled segments = %d, want 1", raw, got)
+		}
+		if want := `name="provenance" value="any" checked`; !strings.Contains(html, want) {
+			t.Errorf("provenance %q: Any should be the selected segment", raw)
+		}
 	}
 }
 
