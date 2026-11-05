@@ -131,6 +131,37 @@ def block(lines, start, parent_indent):
     return start + 1, end
 
 
+def flow_balance(text):
+    depth = 0
+    quote = None
+    for ch in text:
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+    return depth
+
+
+def join_flow_value(text, lines, index, end):
+    """Join a flow value that continues onto deeper lines until it balances."""
+    if not text or text[0] not in "[{":
+        return text
+    depth = flow_balance(text)
+    j = index + 1
+    while depth > 0 and j < end:
+        text = text + " " + lines[j].strip()
+        depth = flow_balance(text)
+        j += 1
+    if depth != 0:
+        raise FanoutError("unbalanced flow list in a push filter")
+    return text
+
+
 def parse_list_value(text):
     """Parse a scalar or flow list, or return None when a block list follows."""
     text = strip_inline_comment(text).strip()
@@ -175,7 +206,8 @@ def parse_block_push(lines, start, end):
         name = key[1]
         if name not in PUSH_FILTERS:
             continue
-        values = parse_list_value(key[2])
+        raw = join_flow_value(key[2], lines, i, end)
+        values = parse_list_value(raw)
         if values is None:
             values = block_list(lines, i, end, child_indent)
         if name in ("tags", "tags-ignore", "branches", "branches-ignore"):
@@ -268,11 +300,16 @@ def parse_on(path):
 def tag_triggers(tag, spec):
     """Apply GitHub's push-filter rules for a tag ref."""
     if "tags" in spec:
-        positives = [p for p in spec["tags"] if not p.startswith("!")]
-        negatives = [p[1:] for p in spec["tags"] if p.startswith("!")]
-        if not positives or not any(fnmatch.fnmatchcase(tag, p) for p in positives):
-            return False
-        return not any(fnmatch.fnmatchcase(tag, p) for p in negatives)
+        # GitHub evaluates tag patterns in order: a matching `!` pattern
+        # excludes, and a later positive match includes again.
+        matched = False
+        for pattern in spec["tags"]:
+            if pattern.startswith("!"):
+                if fnmatch.fnmatchcase(tag, pattern[1:]):
+                    matched = False
+            elif fnmatch.fnmatchcase(tag, pattern):
+                matched = True
+        return matched
 
     if "tags-ignore" in spec:
         return not any(fnmatch.fnmatchcase(tag, p) for p in spec["tags-ignore"])
@@ -464,6 +501,27 @@ def run_self_test():
             "v0.1.2",
             0,
             "negated tag pattern excludes the tag",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags:\n      - v*\n      - '!v0.91.*'\n  workflow_dispatch:\n",
+            [],
+            "v0.91.0",
+            0,
+            "a matching negative after a positive excludes the tag",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags:\n      - '!v0.*'\n      - v0.91.*\n  workflow_dispatch:\n",
+            [],
+            "v0.91.0",
+            1,
+            "a positive after a negative re-includes the tag",
+        ),
+        (
+            "name: A\non:\n  push:\n    tags: ['v2.*',\n      'v0.91.*']\n  workflow_dispatch:\n",
+            [],
+            "v0.91.0",
+            1,
+            "multi-line flow list matches on a continuation line",
         ),
     ]
 

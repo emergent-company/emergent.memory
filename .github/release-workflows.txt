@@ -4,8 +4,8 @@
 #   <workflow-file>
 #   <workflow-file>|<extra `gh workflow run` arguments>
 #
-# The set must equal the workflows whose `on: push: tags:` matches the release
-# tag, and every entry must declare `workflow_dispatch:`. That equality is
+# The set must equal the workflows whose `on.push` fires for a release tag,
+# and every entry must declare `workflow_dispatch:`. That equality is
 # enforced *before* the tag is created by
 # .github/scripts/check-release-fanout.py; the dispatch step reads this file so
 # the manifest is the single source of truth.
