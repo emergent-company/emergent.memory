@@ -70,10 +70,12 @@ fi
 # This guard is about what THIS branch changed. Compare removal and modification
 # candidates against the merge base of the base ref and HEAD, not against the
 # base tip: a branch that is merely behind the base would otherwise look like it
-# deleted every migration the base gained after the branch point.
+# deleted every migration the base gained after the branch point. If the history
+# is too shallow to find a merge base, fall back to the base tip (the pre-fix,
+# fail-closed behaviour) rather than skipping the guard.
 if ! mb="$(git merge-base "$base" HEAD 2>/dev/null)"; then
-  echo "migration-immutability: WARNING no merge base between $base and HEAD; skipping" >&2
-  exit 0
+  echo "migration-immutability: WARNING no merge base with $base (shallow clone?); comparing against the base tip instead, which may report migrations the base gained after your branch point" >&2
+  mb="$base"
 fi
 
 # Extract the numeric version from a migration filename (basename only).
