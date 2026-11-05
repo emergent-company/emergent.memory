@@ -167,6 +167,10 @@ final class ChatActivityStore {
     /// Opens a live step, joining the open run when it is still consecutive.
     /// The start stamp is what lets the row report how long the work took — the
     /// worker's events carry no timing of their own.
+    ///
+    /// The gateway's category and subject travel with the event: the row then
+    /// describes the call the way the web console's chip does, instead of
+    /// classifying it from the app's own table.
     private func recordToolCall(_ call: ChatToolCallEvent, in turn: inout Turn) {
         let info = ToolCallInfo(
             id: call.id,
@@ -175,7 +179,9 @@ final class ChatActivityStore {
             result: nil,
             isError: false,
             isRunning: true,
-            startedAt: now()
+            startedAt: now(),
+            category: call.category,
+            subject: call.subject
         )
         if turn.isToolGroupOpen, let last = turn.toolGroups.indices.last {
             turn.toolGroups[last].tools.append(info)
@@ -185,9 +191,10 @@ final class ChatActivityStore {
         turn.isToolGroupOpen = true
     }
 
-    /// Settles a live step: keeps its start stamp, records the result, and
-    /// measures the duration. A result with no matching call is ignored, and a
-    /// call with no start stamp stays untimed rather than timed from now.
+    /// Settles a live step: keeps its start stamp, its category and its subject,
+    /// records the result and the gateway's readable view of it, and measures
+    /// the duration. A result with no matching call is ignored, and a call with
+    /// no start stamp stays untimed rather than timed from now.
     private func settleToolResult(_ result: ChatToolResultEvent, in turn: inout Turn) {
         guard
             let groupIndex = turn.toolGroups.firstIndex(where: { group in
@@ -195,16 +202,19 @@ final class ChatActivityStore {
             }),
             let toolIndex = turn.toolGroups[groupIndex].tools.firstIndex(where: { $0.id == result.id })
         else { return }
-        let start = turn.toolGroups[groupIndex].tools[toolIndex].startedAt
+        let existing = turn.toolGroups[groupIndex].tools[toolIndex]
         turn.toolGroups[groupIndex].tools[toolIndex] = ToolCallInfo(
             id: result.id,
-            name: turn.toolGroups[groupIndex].tools[toolIndex].name,
-            arguments: turn.toolGroups[groupIndex].tools[toolIndex].arguments,
+            name: existing.name,
+            arguments: existing.arguments,
             result: result.result,
             isError: result.isError,
             isRunning: false,
-            startedAt: start,
-            duration: start.map { max(0, now().timeIntervalSince($0)) }
+            startedAt: existing.startedAt,
+            duration: existing.startedAt.map { max(0, now().timeIntervalSince($0)) },
+            category: result.category ?? existing.serverCategory,
+            subject: existing.serverSubject,
+            presentation: result.view?.presentation
         )
     }
 

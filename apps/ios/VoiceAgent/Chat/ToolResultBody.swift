@@ -9,6 +9,9 @@ import SwiftUI
 /// wire shape.
 struct ToolResultBody: View {
     let presentation: ToolResultPresentation
+    /// The tool's wire name, shown inside the raw-payload disclosure the way the
+    /// web console's disclosure names it. Nil for a row that has no name to show.
+    var toolName: String?
 
     @Environment(\.locale) private var locale
     /// The payload behind the disclosure, closed by default: the readable body
@@ -172,6 +175,12 @@ struct ToolResultBody: View {
 
     private var rawBlock: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
+            if let toolName, !toolName.isEmpty {
+                Text(verbatim: toolName)
+                    .font(MemoryFont.metaMono)
+                    .foregroundStyle(.fg3)
+                    .textSelection(.enabled)
+            }
             Text(presentation.raw)
                 .font(MemoryFont.metaMono)
                 .foregroundStyle(.fg1)

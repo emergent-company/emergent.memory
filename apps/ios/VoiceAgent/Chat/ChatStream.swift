@@ -180,7 +180,9 @@ enum ChatStreamFrameDecoder {
             return .activity(.toolCall(ChatToolCallEvent(
                 id: id,
                 tool: tool,
-                arguments: envelope.result?.displayText ?? ""
+                arguments: envelope.result?.displayText ?? "",
+                category: envelope.toolCategory,
+                subject: envelope.toolSubject
             )))
         }
         let failed = envelope.status == "error" || envelope.status == "failed"
@@ -192,7 +194,9 @@ enum ChatStreamFrameDecoder {
             id: id,
             tool: tool,
             result: output,
-            isError: failed
+            isError: failed,
+            category: envelope.toolCategory,
+            view: envelope.toolView
         )))
     }
 
@@ -303,6 +307,13 @@ private struct ChatStreamEnvelope: Decodable {
     let surfaceId: String?
     let messages: [ChatUIMessage]?
     let citations: [ChatUIPropValue]?
+    /// The gateway's presentation of a tool call: its category (verb per tense,
+    /// family, glyph), the one-line subject of what it was asked to do, and the
+    /// readable view of its result. Sent on `mcp_tool` frames so the app renders
+    /// the call the way the web console does rather than re-deriving it.
+    let toolCategory: ChatToolCategory?
+    let toolSubject: String?
+    let toolView: ServerToolView?
 }
 
 private extension String {

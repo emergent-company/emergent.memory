@@ -1,0 +1,115 @@
+{
+  "description": "One tool call's two live frames, as the gateway enriches them for /api/chat. `upstream` is what the worker sends, `frame` is what the client receives (the enrichment added in place; the highlighted `resultHtml` is omitted here), and `expected` is the enrichment itself. apps/web-ui/gateway/tool_frame_fixture_test.go proves the gateway emits `expected`; apps/ios/VoiceAgentTests/ToolServerPresentationTests.swift proves the app draws `frame`. Change the wording, the casing or the shape here and both surfaces must follow.",
+  "frames": [
+    {
+      "upstream": {
+        "type": "mcp_tool",
+        "tool": "search_entities",
+        "status": "started",
+        "id": "call-1",
+        "result": {
+          "query": "retrieval guide",
+          "limit": 5
+        }
+      },
+      "frame": {
+        "type": "mcp_tool",
+        "tool": "search_entities",
+        "status": "started",
+        "id": "call-1",
+        "result": {
+          "query": "retrieval guide",
+          "limit": 5
+        },
+        "toolCategory": {
+          "family": "search",
+          "verb": "Searched memory",
+          "runningVerb": "Searching memory",
+          "icon": "lucide--search"
+        },
+        "toolSubject": "retrieval guide"
+      },
+      "expected": {
+        "toolCategory": {
+          "family": "search",
+          "verb": "Searched memory",
+          "runningVerb": "Searching memory",
+          "icon": "lucide--search"
+        },
+        "toolSubject": "retrieval guide"
+      }
+    },
+    {
+      "upstream": {
+        "type": "mcp_tool",
+        "tool": "search_entities",
+        "status": "completed",
+        "id": "call-1",
+        "result": {
+          "results": [
+            {
+              "id": "d1",
+              "title": "Retrieval guide",
+              "kind": "document",
+              "url": "https://example.com/guide"
+            }
+          ],
+          "total": 1
+        }
+      },
+      "frame": {
+        "type": "mcp_tool",
+        "tool": "search_entities",
+        "status": "completed",
+        "id": "call-1",
+        "result": {
+          "results": [
+            {
+              "id": "d1",
+              "title": "Retrieval guide",
+              "kind": "document",
+              "url": "https://example.com/guide"
+            }
+          ],
+          "total": 1
+        },
+        "toolCategory": {
+          "family": "search",
+          "verb": "Searched memory",
+          "runningVerb": "Searching memory",
+          "icon": "lucide--search"
+        },
+        "toolView": {
+          "kind": "records",
+          "items": [
+            {
+              "title": "Retrieval guide",
+              "link": "https://example.com/guide"
+            }
+          ],
+          "outcome": "1 record",
+          "raw": "{\n  \"results\": [\n    {\n      \"id\": \"d1\",\n      \"kind\": \"document\",\n      \"title\": \"Retrieval guide\",\n      \"url\": \"https://example.com/guide\"\n    }\n  ],\n  \"total\": 1\n}"
+        }
+      },
+      "expected": {
+        "toolCategory": {
+          "family": "search",
+          "verb": "Searched memory",
+          "runningVerb": "Searching memory",
+          "icon": "lucide--search"
+        },
+        "toolView": {
+          "kind": "records",
+          "items": [
+            {
+              "title": "Retrieval guide",
+              "link": "https://example.com/guide"
+            }
+          ],
+          "outcome": "1 record",
+          "raw": "{\n  \"results\": [\n    {\n      \"id\": \"d1\",\n      \"kind\": \"document\",\n      \"title\": \"Retrieval guide\",\n      \"url\": \"https://example.com/guide\"\n    }\n  ],\n  \"total\": 1\n}"
+        }
+      }
+    }
+  ]
+}

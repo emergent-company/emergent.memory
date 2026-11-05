@@ -169,12 +169,25 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         }
     }
 
-    var runningPhrase: LocalizedStringKey {
-        LocalizedStringKey(runningKey)
+    /// The settled step's verb, resolved from the app's string catalogue.
+    ///
+    /// A row prefers the gateway's own verb (`ChatToolCategory.verb`) and only
+    /// falls back to this when the gateway sent no category, so the two
+    /// surfaces cannot word the same call differently.
+    var doneText: String {
+        localised(doneKey)
     }
 
-    var donePhrase: LocalizedStringKey {
-        LocalizedStringKey(doneKey)
+    /// The in-flight step's verb, same rule.
+    var runningText: String {
+        localised(runningKey)
+    }
+
+    /// The catalogue value for a key built at runtime: a family's key is
+    /// assembled from its raw value, so it cannot be a `LocalizedStringKey`
+    /// literal.
+    private func localised(_ key: String) -> String {
+        Bundle.main.localizedString(forKey: key, value: nil, table: nil)
     }
 }
 
@@ -290,6 +303,29 @@ enum ToolActivityTiming {
     /// "2s", "1m 5s"; nil under a second, which reads as no time at all.
     static func text(_ seconds: TimeInterval?, locale: Locale = .current) -> String? {
         formatted(seconds, width: .narrow, locale: locale)
+    }
+
+    /// The expanded step's compact duration, worded as the web console words it:
+    /// sub-second in milliseconds ("850ms"), then "1.2s", "5m", "2h 15m".
+    ///
+    /// The two surfaces print the same number the same way, so a step's meta
+    /// line reads identically wherever it is opened.
+    static func metaText(_ seconds: TimeInterval?) -> String? {
+        guard let seconds, seconds.isFinite, seconds >= 0 else { return nil }
+        if seconds < 1 {
+            return "\(Int((seconds * 1000).rounded()))ms"
+        }
+        if seconds < 60 {
+            let tenths = (seconds * 10).rounded() / 10
+            return tenths == tenths.rounded()
+                ? "\(Int(tenths))s"
+                : String(format: "%.1fs", tenths)
+        }
+        let minutes = Int(seconds / 60)
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        return "\(minutes / 60)h \(minutes % 60)m"
     }
 
     /// The same span in words ("2 seconds"), for VoiceOver.

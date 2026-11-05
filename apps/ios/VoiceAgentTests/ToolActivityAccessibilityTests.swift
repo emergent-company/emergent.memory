@@ -10,9 +10,9 @@ import Testing
 ///
 /// SwiftUI does not vend its accessibility tree to a `UIHostingController` in
 /// this test target, so the view projects `SummaryAccessibility` one-to-one, as
-/// it does `linePieces`: one element, labelled with the count/span/failure and
-/// valued with the disclosure state. The glyph strip, failure glyph and chevron
-/// are decorative and `accessibilityHidden`. A real VoiceOver pass on a device
+/// it does `linePieces`: one element, labelled with the count/names/failure and
+/// valued with the disclosure state. The wrench, failure glyph and chevron are
+/// decorative and `accessibilityHidden`. A real VoiceOver pass on a device
 /// remains open (#2192).
 @MainActor
 struct ToolActivitySummaryAccessibilityTests {
@@ -26,9 +26,9 @@ struct ToolActivitySummaryAccessibilityTests {
         ])
     }
 
-    @Test func theCollapsedSummaryCarriesCountSpanAndFailure() {
+    @Test func theCollapsedSummaryCarriesCountNamesAndFailure() {
         let summary = failedRun.summaryAccessibility(expanded: false, locale: english)
-        #expect(summary.label == "2 steps, 3 seconds, a step failed")
+        #expect(summary.label == "2 tool calls, Entity search, Web fetch, 1 failed")
         #expect(summary.value == "Collapsed")
     }
 
@@ -58,12 +58,13 @@ struct ToolActivitySummaryAccessibilityTests {
 
     /// The exposed element is exactly the spoken label and the disclosure value:
     /// there is no field through which a glyph, the chevron or an icon label
-    /// could reach VoiceOver. The strip is still drawn, so the silence comes from
-    /// hiding it, not from deleting it (#2192).
+    /// could reach VoiceOver. The glyphs are still drawn, so the silence comes
+    /// from hiding them, not from deleting them (#2192).
     @Test func theExposedElementIsOnlyLabelAndValue() {
         let summary = failedRun.summaryAccessibility(expanded: false, locale: english)
         let fields = Mirror(reflecting: summary).children.compactMap(\.label)
         #expect(fields == ["label", "value"])
-        #expect(failedRun.linePieces(at: .large).contains(.glyphStrip))
+        // The line draws the same three things the web console draws.
+        #expect(failedRun.linePieces(at: .large) == [.calls, .breakdown, .failed])
     }
 }
