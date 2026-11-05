@@ -1114,8 +1114,8 @@ func (s *Service) RevokeShareInstance(ctx context.Context, projectID, userID, id
 	return store.Update(ctx, inst)
 }
 
-// RotateShareInstance issues a replacement token with the current scopes,
-// invalidates the old one, and keeps the allowlist intact.
+// RotateShareInstance issues a replacement token whose scopes are re-derived
+// from the allowlist, invalidates the old one, and keeps the allowlist intact.
 func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id, baseURL string) (*CreateShareInstanceResponse, error) {
 	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
 		return nil, err
@@ -1134,6 +1134,23 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 	}
 	if inst.RevokedAt != nil {
 		return nil, apperror.New(409, "share_instance_revoked", "Share instance is revoked and cannot be rotated")
+	}
+
+	// Scopes are a function of the allowlist, and that derivation can widen as a
+	// tool gains a runtime-only scope (shareToolAdditionalScopes). Refresh the
+	// bound token before the replacement copies its scopes, so a share created by
+	// an older build heals on rotate. Fail here and the old token is untouched; a
+	// failure after this point leaves a valid, correctly-scoped old token. A nil
+	// allowlist is unrestricted and keeps whatever scopes it already has.
+	if inst.AllowedTools != nil {
+		s.GetToolDefinitionsForProject(ctx, projectID)
+		scopes, serr := s.scopesForAllowlist(inst.AllowedTools)
+		if serr != nil {
+			return nil, serr
+		}
+		if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
+			return nil, uerr
+		}
 	}
 
 	// Rotate atomically: the token service revokes the old token, inserts the

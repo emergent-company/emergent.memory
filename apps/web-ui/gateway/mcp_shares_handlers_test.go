@@ -1324,6 +1324,9 @@ func TestMCPShareEditPageDoesNotApplyDefaultTemplate(t *testing.T) {
 	if strings.Contains(body, `value="search_memory" class="checkbox checkbox-sm mt-0.5" checked`) {
 		t.Error("editing a share must never apply a preset to its existing grant")
 	}
+	if !strings.Contains(body, `value="get_object" class="checkbox checkbox-sm mt-0.5" checked`) {
+		t.Error("the edit page must render the share's own tools as checked")
+	}
 	if !strings.Contains(body, `data-share-template="read-only"`) {
 		t.Error("edit page must still offer the presets")
 	}

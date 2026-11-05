@@ -8,13 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// shareTestService returns a bare Service with the package tool index seeded.
+// GetToolByName reads a process-global index that GetToolDefinitions (and
+// therefore BuildToolCatalog) populates; seeding explicitly keeps these tests
+// hermetic instead of relying on an earlier test's side effect.
+func shareTestService() *Service {
+	svc := &Service{}
+	svc.GetToolDefinitions()
+	return svc
+}
+
 // testShareCatalog builds the catalog a project admin sees when no
 // project-specific dynamic tools are registered: BuildToolCatalog over a bare
 // Service, which reads the static tool definitions and applies the same
 // shareability filter the endpoint uses.
 func testShareCatalog(t *testing.T) []CatalogToolDTO {
 	t.Helper()
-	svc := &Service{}
+	svc := shareTestService()
 	catalog := BuildToolCatalog(context.Background(), svc, "proj-1")
 	require.NotEmpty(t, catalog, "shareable catalog must not be empty")
 	return catalog
@@ -112,7 +122,7 @@ func TestShareTemplatesNeverCarryNonShareableScopes(t *testing.T) {
 // exposes under those scopes, so an outside client migrated to a
 // template-keyed share does not lose tools it used to have. The legacy token's
 // non-tool scopes (chat:use, projects:read baseline) are covered separately by
-// TestSearchKnowledgeShareDerivesChatUse.
+// TestShareLoopbackToolsDeriveChatUse.
 func TestReadOnlyTemplateCoversLegacyScopes(t *testing.T) {
 	catalog := testShareCatalog(t)
 	var readOnly *ShareTemplateDTO
@@ -143,7 +153,7 @@ func TestReadOnlyTemplateCoversLegacyScopes(t *testing.T) {
 // chat:use. A share without it would advertise the tool and then 403 every call.
 // The legacy read-only token carried chat:use for exactly this reason.
 func TestShareLoopbackToolsDeriveChatUse(t *testing.T) {
-	svc := &Service{}
+	svc := shareTestService()
 	for _, tool := range []string{"search-knowledge", "remember", "forget"} {
 		scopes, err := deriveScopesForToolNames([]string{tool}, svc.GetToolByName)
 		require.NoError(t, err)
@@ -197,23 +207,25 @@ func TestShareTemplateDerivedScopesPerPreset(t *testing.T) {
 		"agent-observer": {"agents:read", "chat:use", "graph:read", "projects:read", "search"},
 		"documents-only": {"documents:read", "documents:write", "projects:read", "schema:read", "search"},
 	}
-	svc := &Service{}
+	svc := shareTestService()
+	checked := map[string]bool{}
 	for _, tmpl := range ResolveShareTemplates(testShareCatalog(t)) {
 		expected, ok := want[tmpl.ID]
 		if !ok {
 			continue // full-access is pinned by the ceiling test above.
 		}
+		checked[tmpl.ID] = true
 		scopes, err := deriveScopesForToolNames(tmpl.Tools, svc.GetToolByName)
 		require.NoError(t, err, "template %q", tmpl.ID)
 		assert.Equal(t, expected, scopes, "template %q changed the scopes it grants", tmpl.ID)
+		if tmpl.ID == "documents-only" {
+			// A Documents share must not be able to write knowledge or touch chat
+			// over REST: no chat:use, no graph:write.
+			assert.NotContains(t, scopes, "chat:use")
+			assert.NotContains(t, scopes, "graph:write")
+		}
 	}
-
-	// A Documents share must not be able to write knowledge or touch chat over
-	// REST: no chat:use, no graph:write.
-	documents, ok := want["documents-only"]
-	require.True(t, ok)
-	assert.NotContains(t, documents, "chat:use")
-	assert.NotContains(t, documents, "graph:write")
+	assert.Len(t, checked, len(want), "every narrow preset must have been resolved and checked")
 }
 
 // TestShareTemplateDerivedScopesStayWithinDocumentedSet pins the scopes a preset
@@ -238,7 +250,7 @@ func TestShareTemplateDerivedScopesStayWithinDocumentedSet(t *testing.T) {
 		"skills:write":    true,
 		"agents:read":     true,
 	}
-	svc := &Service{}
+	svc := shareTestService()
 	for _, tmpl := range ResolveShareTemplates(testShareCatalog(t)) {
 		scopes, err := deriveScopesForToolNames(tmpl.Tools, svc.GetToolByName)
 		require.NoError(t, err, "template %q", tmpl.ID)

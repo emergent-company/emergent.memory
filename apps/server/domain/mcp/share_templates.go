@@ -53,7 +53,7 @@ var shareTemplates = []ShareTemplate{
 	{
 		ID:          "read-only",
 		Label:       "Read-only",
-		Description: "Search and read the knowledge graph, documents, schemas, journal and agent runs — nothing can be changed.",
+		Description: "Search and read the knowledge graph, documents, schemas, journal and agent runs. No MCP tool in this set writes.",
 		Default:     true,
 		Scopes: []string{
 			"search",

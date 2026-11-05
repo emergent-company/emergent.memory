@@ -778,6 +778,38 @@ func TestRotateShareInstance(t *testing.T) {
 	assert.Equal(t, []string{"entity-search"}, store.byID["i1"].AllowedTools)
 }
 
+// TestRotateShareInstanceRefreshesDerivedScopes: scopes are a function of the
+// allowlist, so a share minted before a runtime-only scope existed must heal on
+// rotate rather than staying permanently 403 on that tool.
+func TestRotateShareInstanceRefreshesDerivedScopes(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old",
+		AllowedTools: []string{"search-knowledge"},
+	}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Contains(t, tok.updateScopes, "chat:use", "rotation must restore the runtime loopback scope")
+	assert.Contains(t, tok.updateScopes, "search")
+}
+
+// TestRotateShareInstanceLeavesUnrestrictedScopesAlone: a nil allowlist means
+// unrestricted, which is not the same thing as the legacy read-only scope set.
+// Rotate must not silently narrow such a share.
+func TestRotateShareInstanceLeavesUnrestrictedScopesAlone(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "old"}
+	tok := &fakeTokenSvc{regenerateID: "new", regenerateToken: "emt_new"}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	_, err := svc.RotateShareInstance(context.Background(), "proj", "user", "i1", "http://h")
+	require.NoError(t, err)
+	assert.Nil(t, tok.updateScopes, "an unrestricted share keeps its existing scopes")
+}
+
 func TestListShareInstancesIncludesLegacy(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1"}
