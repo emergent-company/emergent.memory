@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaicon"
 )
 
 func TestExtractToken(t *testing.T) {
@@ -577,11 +579,11 @@ func TestSchemaIconListTool(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &parsed); err != nil {
 		t.Fatalf("unmarshal SchemaIconListResult: %v", err)
 	}
-	if parsed.Count != len(schemaIconCatalog) {
-		t.Errorf("Count = %d, want %d", parsed.Count, len(schemaIconCatalog))
+	if parsed.Count != len(schemaicon.Names()) {
+		t.Errorf("Count = %d, want %d", parsed.Count, len(schemaicon.Names()))
 	}
-	if parsed.Count != 65 {
-		t.Errorf("Count = %d, want 65", parsed.Count)
+	if parsed.Count != 66 {
+		t.Errorf("Count = %d, want 66", parsed.Count)
 	}
 	found := map[string]bool{}
 	for _, icon := range parsed.Icons {
