@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,9 +29,13 @@ type workData struct {
 	ObjectTypes       []CompiledType
 	RelationshipTypes []CompiledType
 	BoardTypes        []CompiledType
-	SelectedType      string
+	SelectedTypes     []string
+	TypeCounts        map[string]int
+	Matrices          []workMatrix
+	FilterExplicit    bool
+	ScopeBase         string
+	LaneOpen          map[string]bool
 	Items             []WorkItem
-	Matrix            workMatrix
 	Allowances        boardAllowances
 	Rules             []workRuleRow
 	FlashMsg          string
@@ -102,6 +108,8 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 	}
 	data.BoardTypes = boardTypesFromCompiled(compiled)
 	data.Allowances = boardAllowancesFromCompiled(compiled)
+	data.ScopeBase = linkBaseFromContext(ctx)
+	data.LaneOpen = workLanePrefs(c, data.ScopeBase)
 
 	if data.Section != workBoardSection {
 		return nil
@@ -111,11 +119,26 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		return err
 	}
 	data.Items = items
-	data.SelectedType = c.QueryParam("type")
-	if data.SelectedType == "" {
-		data.SelectedType = firstTypeWithItems(data.BoardTypes, items)
+	q := c.Request().URL.Query()
+	data.FilterExplicit = q.Get("filter") == "1"
+	data.SelectedTypes = resolveWorkTypeFilter(data.BoardTypes, q["type"], data.FilterExplicit)
+	data.TypeCounts = map[string]int{}
+	for _, it := range items {
+		data.TypeCounts[it.Type]++
 	}
-	data.Matrix = buildWorkMatrix(data.SelectedType, items, compiled)
+	selected := map[string]bool{}
+	for _, name := range data.SelectedTypes {
+		selected[name] = true
+	}
+	for _, t := range data.BoardTypes {
+		if !selected[t.Name] {
+			continue
+		}
+		if !data.FilterExplicit && data.TypeCounts[t.Name] == 0 {
+			continue // default view hides empty types
+		}
+		data.Matrices = append(data.Matrices, buildWorkMatrix(t.Name, items, compiled))
+	}
 	return nil
 }
 
@@ -131,21 +154,32 @@ func rulesForDefinition(d *AgentDefinition) []workRuleRow {
 	return out
 }
 
-// firstTypeWithItems picks the first type that has items, else the first type.
-func firstTypeWithItems(types []CompiledType, items []WorkItem) string {
-	have := map[string]bool{}
-	for _, it := range items {
-		have[it.Type] = true
-	}
-	for _, t := range types {
-		if have[t.Name] {
-			return t.Name
+// resolveWorkTypeFilter resolves the board's type selection from the query.
+// With no explicit filter the board shows every board type (checked in the
+// dropdown); an explicit filter is the validated, de-duplicated subset. An
+// explicit filter with no type params selects nothing.
+func resolveWorkTypeFilter(boardTypes []CompiledType, raw []string, explicit bool) []string {
+	if !explicit {
+		out := make([]string, 0, len(boardTypes))
+		for _, t := range boardTypes {
+			out = append(out, t.Name)
 		}
+		return out
 	}
-	if len(types) > 0 {
-		return types[0].Name
+	known := make(map[string]bool, len(boardTypes))
+	for _, t := range boardTypes {
+		known[t.Name] = true
 	}
-	return ""
+	seen := make(map[string]bool, len(raw))
+	var out []string
+	for _, name := range raw {
+		if name == "" || !known[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 // --- matrix ---
@@ -159,6 +193,7 @@ type workMatrix struct {
 
 type workColumn struct {
 	Status string
+	Label  string
 	Count  int
 }
 
@@ -197,6 +232,10 @@ func buildWorkMatrix(typeName string, items []WorkItem, compiled *CompiledSchema
 	if typeDef != nil {
 		statuses = boardLanesForType(*typeDef)
 	}
+	known := make(map[string]bool, len(statuses))
+	for _, s := range statuses {
+		known[s] = true
+	}
 	byStatus := map[string]int{}
 	rows := map[string]map[string][]WorkItem{
 		"working": {}, "queued": {}, "retrying": {}, "blocked": {}, "review": {}, "idle": {},
@@ -205,25 +244,22 @@ func buildWorkMatrix(typeName string, items []WorkItem, compiled *CompiledSchema
 		if it.Type != typeName {
 			continue
 		}
-		m.Total++
-		byStatus[it.Status]++
-		rows[bucketFor(it)][it.Status] = append(rows[bucketFor(it)][it.Status], it)
-	}
-	// Keep item-only statuses as extra columns.
-	seen := map[string]bool{}
-	for _, s := range statuses {
-		seen[s] = true
-	}
-	var extra []string
-	for s := range byStatus {
-		if !seen[s] {
-			extra = append(extra, s)
+		// Statuses outside the type's declared vocabulary (including an empty
+		// status) collapse into the first "No status" column rather than
+		// inventing new lanes.
+		key := it.Status
+		if !known[key] {
+			key = ""
 		}
+		m.Total++
+		byStatus[key]++
+		rows[bucketFor(it)][key] = append(rows[bucketFor(it)][key], it)
 	}
-	sort.Strings(extra)
-	statuses = append(append([]string{}, statuses...), extra...)
+	if byStatus[""] > 0 {
+		m.Columns = append(m.Columns, workColumn{Status: "", Label: "No status", Count: byStatus[""]})
+	}
 	for _, s := range statuses {
-		m.Columns = append(m.Columns, workColumn{Status: s, Count: byStatus[s]})
+		m.Columns = append(m.Columns, workColumn{Status: s, Label: s, Count: byStatus[s]})
 	}
 	m.Groups = []workGroup{
 		{Key: "active", Label: "Active", Rows: []workRow{
@@ -250,20 +286,143 @@ func buildWorkMatrix(typeName string, items []WorkItem, compiled *CompiledSchema
 	return m
 }
 
-// workTabClass returns the active/inactive tab class for a Work subpage.
-func workTabClass(current, target string) string {
-	if current == target {
-		return "btn btn-sm btn-primary"
+// workLanePrefs reads the persisted open/closed matrix lane preferences from
+// the work_lanes cookie. Keys are "<scope>|<type>|<group>"; a missing key uses
+// the default (Active/Attention open, Idle closed).
+func workLanePrefs(c echo.Context, scope string) map[string]bool {
+	out := map[string]bool{}
+	ck, err := c.Cookie(workLanesCookie)
+	if err != nil || ck.Value == "" {
+		return out
 	}
-	return "btn btn-sm btn-ghost"
+	raw, err := url.QueryUnescape(ck.Value)
+	if err != nil {
+		return out
+	}
+	var stored map[string]bool
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return out
+	}
+	prefix := scope + "|"
+	for k, v := range stored {
+		if strings.HasPrefix(k, prefix) {
+			out[k] = v
+		}
+	}
+	return out
 }
 
-// workTypeTabClass returns the active/inactive tab class for a type.
-func workTypeTabClass(name, selected string) string {
-	if name == selected {
-		return "btn btn-sm btn-primary"
+// workLaneKey is the stable preference key for one type's execution group.
+func workLaneKey(data workData, objectType, group string) string {
+	return data.ScopeBase + "|" + objectType + "|" + group
+}
+
+// workLaneOpen reports whether one matrix group should render expanded.
+func workLaneOpen(data workData, objectType, group string) bool {
+	if v, ok := data.LaneOpen[workLaneKey(data, objectType, group)]; ok {
+		return v
 	}
-	return "btn btn-sm btn-ghost"
+	return group != "idle"
+}
+
+// workLanesCookie persists per-user matrix lane open/closed preferences.
+const workLanesCookie = "memory_work_lanes"
+
+// workStatusAccentClass is the card's left-border color for a workflow status.
+func workStatusAccentClass(status string) string {
+	switch status {
+	case "done":
+		return "border-l-success"
+	case "review":
+		return "border-l-warning"
+	case "revision":
+		return "border-l-accent"
+	case "in_progress":
+		return "border-l-info"
+	case "ready":
+		return "border-l-primary"
+	case "blocked":
+		return "border-l-error"
+	default:
+		return "border-l-base-content/20"
+	}
+}
+
+// workStatusDotClass is the column-header dot color for a workflow status.
+func workStatusDotClass(status string) string {
+	switch status {
+	case "done":
+		return "bg-success"
+	case "review":
+		return "bg-warning"
+	case "revision":
+		return "bg-accent"
+	case "in_progress":
+		return "bg-info"
+	case "ready":
+		return "bg-primary"
+	case "blocked":
+		return "bg-error"
+	default:
+		return "bg-base-content/25"
+	}
+}
+
+// workTypeByName returns a board type by name, or a bare CompiledType.
+func workTypeByName(types []CompiledType, name string) CompiledType {
+	for _, t := range types {
+		if t.Name == name {
+			return t
+		}
+	}
+	return CompiledType{Name: name}
+}
+
+// workTypeLabel returns a type's display label, falling back to its name.
+func workTypeLabel(t CompiledType, fallback string) string {
+	if t.Label != "" {
+		return t.Label
+	}
+	if t.Name != "" {
+		return t.Name
+	}
+	return fallback
+}
+
+// workTypeChecked reports whether a type is selected in the filter. With no
+// explicit filter the dropdown shows every type checked.
+func workTypeChecked(data workData, name string) bool {
+	if !data.FilterExplicit {
+		return true
+	}
+	return slices.Contains(data.SelectedTypes, name)
+}
+
+// workFilterTypes returns the explicit selection for action forms; nil when the
+// board is showing all types.
+func workFilterTypes(data workData) []string {
+	if !data.FilterExplicit {
+		return nil
+	}
+	return data.SelectedTypes
+}
+
+// workRuleEditHref builds the edit-page URL for one rule.
+func workRuleEditHref(r workRuleRow) string {
+	q := url.Values{}
+	q.Set("agent", r.AgentID)
+	q.Set("type", r.ObjectType)
+	return "/work/settings/rules/edit?" + q.Encode()
+}
+
+// workAgentNameByID resolves an agent's display name, falling back to the id.
+func workAgentNameByID(agents []AgentDefinitionSummary, id string) string {
+	for _, a := range agents {
+		if a.ID == id {
+			return a.Name
+		}
+	}
+	return id
 }
 
 // workGroupCount sums a group's row counts for its header.
@@ -309,16 +468,91 @@ func bucketFor(it WorkItem) string {
 
 // --- actions ---
 
+// workRuleFormData is the payload for the New/Edit rule pages.
+type workRuleFormData struct {
+	Mode            string // new | edit
+	Agents          []AgentDefinitionSummary
+	ObjectTypes     []CompiledType
+	SelectedAgentID string
+	SelectedType    string
+	Rule            AgentObjectRule
+	FlashErr        error
+}
+
+// uiWorkRuleNew renders the create-rule page.
+func (s *Server) uiWorkRuleNew(c echo.Context) error {
+	rule := AgentObjectRule{
+		CanCreate: boolPtr(true),
+		CanUpdate: boolPtr(true),
+		CanDelete: boolPtr(true),
+	}
+	return s.renderWorkRuleForm(c, "new", c.QueryParam("agent"), c.QueryParam("type"), rule, nil)
+}
+
+// uiWorkRuleEdit renders the edit-rule page for an existing (agent, type) rule.
+func (s *Server) uiWorkRuleEdit(c echo.Context) error {
+	ctx := c.Request().Context()
+	agentID := c.QueryParam("agent")
+	objectType := c.QueryParam("type")
+	if agentID == "" || objectType == "" {
+		return redirectWithError(c, "/work/"+workSettingsSection, fmt.Errorf("agent and object type are required"))
+	}
+	def, err := s.memory.GetAgentDefinition(ctx, agentID)
+	if err != nil {
+		return redirectWithError(c, "/work/"+workSettingsSection, err)
+	}
+	rule := def.WorkConfig.RuleFor(objectType)
+	if rule == nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	return s.renderWorkRuleForm(c, "edit", agentID, objectType, *rule, nil)
+}
+
+// renderWorkRuleForm loads the selects and renders the shared rule form.
+func (s *Server) renderWorkRuleForm(c echo.Context, mode, agentID, objectType string, rule AgentObjectRule, flashErr error) error {
+	ctx := c.Request().Context()
+	agents, err := s.memory.ListAgentDefinitions(ctx)
+	if err != nil {
+		return redirectWithError(c, "/work/"+workSettingsSection, err)
+	}
+	var types []CompiledType
+	if compiled, err := s.memory.GetCompiledTypes(ctx); err == nil && compiled != nil {
+		types = visibleCompiledTypes(compiled.ObjectTypes)
+	}
+	// Keep an existing selection visible even if the type is no longer compiled.
+	if objectType != "" && !slices.ContainsFunc(types, func(t CompiledType) bool { return t.Name == objectType }) {
+		types = append(types, CompiledType{Name: objectType})
+	}
+	title := "New rule"
+	if mode == "edit" {
+		title = "Edit rule"
+	}
+	return s.page(c, pageTitle(title), WorkRulePage(workRuleFormData{
+		Mode:            mode,
+		Agents:          agents,
+		ObjectTypes:     types,
+		SelectedAgentID: agentID,
+		SelectedType:    objectType,
+		Rule:            rule,
+		FlashErr:        flashErr,
+	}))
+}
+
 // uiWorkRuleSave creates or replaces one (agent, object type) rule.
 func (s *Server) uiWorkRuleSave(c echo.Context) error {
 	ctx := c.Request().Context()
 	if err := c.Request().ParseForm(); err != nil {
 		return redirectWithError(c, "/work/"+workSettingsSection, err)
 	}
+	mode := strings.TrimSpace(c.FormValue("mode"))
+	if mode == "" {
+		mode = "edit"
+	}
 	agentID := strings.TrimSpace(c.FormValue("agentId"))
 	objectType := strings.TrimSpace(c.FormValue("ruleObjectType"))
+	rule := parseRuleRow(c, objectType)
 	if agentID == "" || objectType == "" {
-		return redirectWithError(c, "/work/"+workSettingsSection, fmt.Errorf("agent and object type are required"))
+		return s.renderWorkRuleForm(c, mode, agentID, objectType, rule, fmt.Errorf("agent and object type are required"))
 	}
 	def, err := s.memory.GetAgentDefinition(ctx, agentID)
 	if err != nil {
@@ -327,7 +561,13 @@ func (s *Server) uiWorkRuleSave(c echo.Context) error {
 	if def.WorkConfig == nil {
 		def.WorkConfig = &AgentWorkConfig{}
 	}
-	rule := parseRuleRow(c, objectType)
+	existing := def.WorkConfig.RuleFor(objectType)
+	if (mode == "create" || mode == "new") && existing != nil {
+		return s.renderWorkRuleForm(c, mode, agentID, objectType, rule, fmt.Errorf("a rule for %s and %s already exists — edit it instead", def.Name, objectType))
+	}
+	if mode == "edit" && existing == nil {
+		return s.renderWorkRuleForm(c, mode, agentID, objectType, rule, fmt.Errorf("the rule no longer exists"))
+	}
 	replaced := false
 	for i := range def.WorkConfig.ObjectRules {
 		if def.WorkConfig.ObjectRules[i].ObjectType == objectType {
@@ -339,9 +579,9 @@ func (s *Server) uiWorkRuleSave(c echo.Context) error {
 	if !replaced {
 		def.WorkConfig.ObjectRules = append(def.WorkConfig.ObjectRules, rule)
 	}
-	if compiled, err := s.memory.GetCompiledTypes(ctx); err == nil {
-		if err := validateGatewayWorkRules(def, compiled); err != nil {
-			return redirectWithError(c, "/work/"+workSettingsSection, err)
+	if compiled, cerr := s.memory.GetCompiledTypes(ctx); cerr == nil {
+		if verr := validateGatewayWorkRules(def, compiled); verr != nil {
+			return s.renderWorkRuleForm(c, mode, agentID, objectType, rule, verr)
 		}
 	}
 	deriveDelegation(def)
@@ -351,7 +591,7 @@ func (s *Server) uiWorkRuleSave(c echo.Context) error {
 	if _, err := s.memory.UpdateAgentDefinition(ctx, agentID, def); err != nil {
 		return redirectWithError(c, "/work/"+workSettingsSection, err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/work/"+workSettingsSection+"?agent="+url.QueryEscape(agentID)+"&updated=1")
+	return c.Redirect(http.StatusSeeOther, "/work/"+workSettingsSection+"?updated=1")
 }
 
 // uiWorkRuleDelete removes one rule row.
@@ -431,14 +671,48 @@ func (s *Server) uiWorkUnblock(c echo.Context) error {
 		UnblockWorkItem(ctx context.Context, canonicalID, note string) (*WorkItemAction, error)
 	}
 	note := strings.TrimSpace(c.FormValue("note"))
+	_ = c.Request().ParseForm()
+	returnTo := workBoardReturnPath(c.Request().Form["type"])
 	u, ok := s.memory.(unblocker)
 	if !ok {
-		return redirectWithError(c, "/work/"+workBoardSection, fmt.Errorf("unblock is not supported by this backend"))
+		return redirectWithError(c, returnTo, fmt.Errorf("unblock is not supported by this backend"))
 	}
 	if _, err := u.UnblockWorkItem(c.Request().Context(), c.Param("canonicalId"), note); err != nil {
-		return redirectWithError(c, "/work/"+workBoardSection+"?type="+url.QueryEscape(c.QueryParam("type")), err)
+		return redirectWithError(c, returnTo, err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/work/"+workBoardSection+"?type="+url.QueryEscape(c.QueryParam("type")))
+	return c.Redirect(http.StatusSeeOther, returnTo)
+}
+
+// uiWorkSetStatus performs an exact-status move from the Work board drag/drop.
+// The matrix reloads itself after a successful move.
+func (s *Server) uiWorkSetStatus(c echo.Context) error {
+	status := strings.TrimSpace(c.FormValue("status"))
+	if status == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
+	}
+	if _, err := s.memory.SetWorkItemStatus(c.Request().Context(), c.Param("canonicalId"), status); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// workBoardReturnPath builds the board URL for a set of selected type names,
+// preserving an explicit filter; no types means the all-types board.
+func workBoardReturnPath(types []string) string {
+	var kept []string
+	for _, t := range types {
+		if t = strings.TrimSpace(t); t != "" {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		return "/work/" + workBoardSection
+	}
+	q := url.Values{"filter": {"1"}}
+	for _, t := range kept {
+		q.Add("type", t)
+	}
+	return "/work/" + workBoardSection + "?" + q.Encode()
 }
 
 // parseRuleRow reads one rule's fields from the form.
