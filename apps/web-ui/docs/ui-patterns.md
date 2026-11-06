@@ -161,6 +161,62 @@ Consequences:
   survive any swap, but is discouraged in favor of rendering those surfaces
   outside `#main-content` (sidepanel, object preview — `ui.templ:132-138`).
 
+### List filters refresh a region, never the document
+
+A filter control on a list surface replaces the results region in place: the
+header, the stats strip, the toolbar the user is operating, and the document
+itself all stay. The rules, and the failure each one prevents:
+
+- **`hx-get` goes on the `<form>`**, not on a child `<select>`. htmx v4
+  serializes the enclosing form only when the source element *is* the form.
+- **Request the page URL**, never a fragment route: `hx-get="/objects"` with
+  `hx-target="#objects-results"`, `hx-swap="outerHTML"`, `hx-push-url="true"`.
+  htmx pushes the *request* URL, so pushing `/objects/partial?…` would leave an
+  address bar that does not reload as a page.
+- **Set `hx-target`/`hx-swap` explicitly.** `<main>` carries
+  `hx-target="#main-content" hx-swap="innerHTML"` and htmx propagates those to
+  descendants, so an un-targeted filter swaps the whole page body back in.
+- **The server picks page vs region from `HX-Target`** —
+  `targetsResultsRegion` in `list_filters.go`, called from the handler. Pages do
+  not hand-branch on `HX-Request` (see the partial-rendering rule above).
+- **Never `form.submit()` from a `change` handler.** `submit()` does not
+  dispatch a `submit` event, so htmx's boosted form never sees it and the
+  browser performs a full document load — the exact bug this contract exists to
+  prevent. Where a control genuinely needs to submit a form, use
+  `requestSubmit()`.
+- **Triggers are chosen per control.** A select-only filter form is
+  `hx-trigger="change, submit"`. A form that also carries a free-text field is
+  `hx-trigger="change target:select, submit"`: only a `<select>`'s change
+  applies, so typing a query and tabbing away does not fire a search. A query
+  form is `submit` only.
+- **Two forms keep each other's state in hidden inputs** and refresh those
+  blocks out of band (`hx-swap-oob="innerHTML"`). Otherwise a search after a
+  branch change silently drops the branch.
+- **Server-rendered chrome the filter changes is refreshed out of band too**
+  (the search results count in the header, the branch-scoped stats strip), or,
+  when it is pure selection state, painted from the input by CSS —
+  `.memory-provenance-segment:has(> input:checked)` — so a swap cannot leave two
+  segments lit or the previous mode filled. The same applies to a control the
+  filter response changes the *existence* of: the objects filter row hides its
+  actor picker while a search is active, so a response that starts or ends a
+  search replaces the row as well (the server tells which form asked from
+  `HX-Source`, `hxSource` in `list_filters.go`). Refresh the row only when it can
+  differ, though: replacing it on a branch change drops focus out of the select
+  the user just operated.
+- **Mark the elements that replace a list a user can select rows in.** htmx
+  dispatches `htmx:after:swap` on the element that issued the request, but
+  substitutes the swap target when that element is no longer in the document —
+  which is exactly what replacing a region does to the sort links inside it. Put
+  the same marker (`data-objects-list-refresh`) on the forms, the sort links and
+  the region, and match the event target exactly: a "load more" button that lives
+  inside the region must not clear a selection it only appended to.
+
+The helper is `apps/web-ui/gateway/list_filters.go` (`filterFormAttrs`,
+`submitFilterFormAttrs`, `selectFilterFormAttrs`, `regionFilterAttrs`); the
+region ids live there too. Browser-level proof:
+`tests/e2e/specs/gateway-smoke/list-filters.spec.ts` and
+`tests/e2e/specs/js/list-filter-wiring.spec.ts`.
+
 ---
 
 ## 4. Interactive-widget inventory

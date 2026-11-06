@@ -11,7 +11,7 @@ struct ChatSessionControls: View {
     let onHangUp: () async -> Void
 
     @EnvironmentObject private var session: Session
-    @EnvironmentObject private var localMedia: LocalMedia
+    @EnvironmentObject private var localMedia: LocalMediaModel
 
     var body: some View {
         if mode == .voice {

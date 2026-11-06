@@ -19,56 +19,75 @@ enum ToolActivityGrouping {
 
 // MARK: - Run summary
 
-/// What a run's summary line reports: how many steps, how long the run
-/// occupied, the categories involved, and whether any step failed.
+/// What a run's summary line reports: how many calls it holds, the names a
+/// reader would recognise, and how many of them failed — the same line the web
+/// console draws above the folded steps.
 struct ToolActivityRun {
-    /// One glyph on the line, carrying the strongest state its category is in.
-    struct Icon: Identifiable, Equatable {
-        let category: MemoryToolCategory
-        let state: ToolActivityState
-
-        var id: String {
-            category.rawValue
-        }
-
-        /// Colour is state, never category (see `ToolActivityStyle`).
-        var tint: Color {
-            state.tint
-        }
-    }
-
-    /// Beyond this many categories the line just counts; the rows still show
-    /// every step.
-    static let maxIcons = 4
-
     let tools: [ToolCallInfo]
 
     var steps: Int {
         tools.count
     }
 
-    /// Also what the line has to say aloud: a collapsed run must not hide that
-    /// one of its steps failed.
+    /// How many of the run's steps failed. A collapsed run must not hide that:
+    /// the rows that carried the error are folded away with it.
+    var failedCount: Int {
+        tools.filter(\.isError).count
+    }
+
+    /// Whether any step failed.
     var hasError: Bool {
-        tools.contains(where: \.isError)
+        failedCount > 0
     }
 
-    /// The run's span, not the sum of its steps: parallel calls overlap.
-    var span: TimeInterval? {
-        ToolActivityTiming.span(of: tools)
-    }
+    /// How many distinct names the breakdown names before it summarizes the
+    /// tail, matching the web console.
+    static let maxBreakdownNames = 3
 
-    /// One glyph per distinct category, in order of first use.
-    var icons: [Icon] {
-        var seen = Set<MemoryToolCategory>()
-        var result: [Icon] = []
-        for tool in tools where seen.insert(tool.category).inserted {
-            result.append(Icon(category: tool.category, state: state(for: tool.category)))
-            if result.count == Self.maxIcons {
-                break
+    /// The names a reader would recognise, in order of first use: up to three
+    /// distinct tools with a ×N multiplier, then "+N more" for the tail.
+    ///
+    /// The web console builds its line from the same raw names (its
+    /// `breakdownText`), so a run of steps reads identically on both surfaces.
+    var breakdown: String? {
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for tool in tools {
+            let name = tool.name
+            guard !name.isEmpty else { continue }
+            if counts[name] == nil {
+                order.append(name)
             }
+            counts[name, default: 0] += 1
         }
-        return result
+        guard !order.isEmpty else { return nil }
+        var parts: [String] = []
+        for name in order.prefix(Self.maxBreakdownNames) {
+            let label = Self.humanized(name)
+            let count = counts[name] ?? 1
+            parts.append(count > 1 ? "\(label) ×\(count)" : label)
+        }
+        if order.count > Self.maxBreakdownNames {
+            parts.append("+\(order.count - Self.maxBreakdownNames) more")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// A wire name made readable the way the web console renders it:
+    /// `entity-search` → "Entity search".
+    static func humanized(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return name }
+        // The same three mutations the web console makes, in the same order, so
+        // the two surfaces name a run's tools identically — including the
+        // punctuation-only name that collapses to nothing.
+        let collapsed = trimmed
+            .replacingOccurrences(of: #"[._\-]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !collapsed.isEmpty else { return "" }
+        return collapsed.prefix(1).uppercased() + collapsed.dropFirst()
     }
 
     /// The one element the summary line exposes to assistive technology: the
@@ -78,10 +97,10 @@ struct ToolActivityRun {
     /// SwiftUI does not vend its accessibility tree to a `UIHostingController`
     /// in the unit-test target, so the view projects this value one-to-one —
     /// one element labelled `label` with `value` — exactly as it projects
-    /// `linePieces`. Everything else on the line (the category glyph strip, the
-    /// failure glyph, the chevron) is decorative and `accessibilityHidden`, so it
-    /// has no place in this type. A real VoiceOver pass on a device remains open
-    /// (#2192).
+    /// `linePieces`. Everything else on the line (the wrench, the failure
+    /// count's glyph, the chevron) is decorative and `accessibilityHidden`, so
+    /// it has no place in this type. A real VoiceOver pass on a device remains
+    /// open (#2192).
     struct SummaryAccessibility: Equatable {
         let label: String
         let value: String
@@ -98,34 +117,22 @@ struct ToolActivityRun {
         )
     }
 
-    /// The line as VoiceOver reads it: the count, the spoken time when the run
-    /// has one, and a failure — because a closed run's rows, and their error
-    /// text, are not in the transcript any more.
+    /// The line as VoiceOver reads it: the call count, the same names the line
+    /// prints, and how many steps failed — because a closed run's rows, and
+    /// their error text, are not in the transcript any more.
     ///
     /// Every clause resolves in `locale`, not the process locale: the parameter
     /// is what a caller uses to speak a run in the language the rest of the
-    /// screen is reading, and a signature that only forwarded it to the time
-    /// would silently mix languages (#2125).
+    /// screen is reading (#2125).
     func spokenLine(locale: Locale = .current) -> String {
-        var line = String(localized: "chat.tool.group.steps \(steps)", locale: locale)
-        if let spoken = ToolActivityTiming.spoken(span, locale: locale) {
-            line += ", \(spoken)"
+        var line = String(localized: "chat.tool.group.calls \(steps)", locale: locale)
+        if let breakdown {
+            line += ", \(breakdown)"
         }
-        if hasError {
-            line += ", \(String(localized: "chat.tool.group.a11y.failed", locale: locale))"
+        if failedCount > 0 {
+            line += ", \(String(localized: "chat.tool.group.failed \(failedCount)", locale: locale))"
         }
         return line
-    }
-
-    private func state(for category: MemoryToolCategory) -> ToolActivityState {
-        let matching = tools.filter { $0.category == category }
-        if matching.contains(where: \.isError) {
-            return .failed
-        }
-        if matching.contains(where: \.isRunning) {
-            return .running
-        }
-        return .idle
     }
 }
 
@@ -134,60 +141,34 @@ struct ToolActivityRun {
 extension ToolActivityRun {
     /// One thing the summary line draws, in order.
     enum LinePiece: Hashable {
-        /// The category glyph strip — decorative, so it is the first to go.
-        case glyphStrip
-        /// How many steps the run has.
-        case steps
-        /// How long the run occupied, when that is worth showing.
-        case span
-        /// That at least one step failed.
-        case failure
+        /// How many tool calls the run holds.
+        case calls
+        /// The names of the tools involved, when there are any.
+        case breakdown
+        /// How many steps failed, when any did.
+        case failed
     }
 
-    /// What the summary line draws at `size`.
+    /// What the summary line draws, in order.
     ///
     /// The count is always there: it is the only summary a closed run has left.
-    /// The strip is dropped at accessibility text sizes, where its scaled glyphs
-    /// would take the room the count needs; the span and the failure marker
-    /// follow the run. Kept here, on the model, so the rule is testable and the
-    /// view is a one-to-one projection of it (#2125).
-    func linePieces(at size: DynamicTypeSize) -> [LinePiece] {
-        var pieces: [LinePiece] = []
-        if !size.isAccessibilitySize {
-            pieces.append(.glyphStrip)
+    /// The names, when the run has any, and the failure count follow it. The
+    /// web console draws the same three things in the same order, so one run
+    /// reads the same on both surfaces.
+    ///
+    /// At accessibility text sizes the names give way: the count and the failure
+    /// still fit one readable line, where a breakdown would leave neither room
+    /// to read. The old summary dropped its decorative glyph strip there for the
+    /// same reason (#2192).
+    func linePieces(at size: DynamicTypeSize = .large) -> [LinePiece] {
+        var pieces: [LinePiece] = [.calls]
+        if breakdown != nil, !size.isAccessibilitySize {
+            pieces.append(.breakdown)
         }
-        pieces.append(.steps)
-        // A numeric predicate owned by the timing model, not the rendered text:
-        // the view formats the span in `\.locale`, so deciding from a
-        // process-locale string could claim a span the view then cannot draw
-        // (#2192).
-        if ToolActivityTiming.isReadable(span) {
-            pieces.append(.span)
-        }
-        if hasError {
-            pieces.append(.failure)
+        if failedCount > 0 {
+            pieces.append(.failed)
         }
         return pieces
-    }
-}
-
-/// How a category's steps are doing, in the order that outranks: a failed
-/// step colours the run even while a sibling still runs.
-enum ToolActivityState: Equatable {
-    case idle
-    case running
-    case failed
-
-    /// The line's glyph colour: quiet when settled, accents while working,
-    /// serious on failure — the same precedence as `ToolActivityStyle.tint`,
-    /// but a shade quieter when idle (`.fg3`): the line's glyphs have no disc
-    /// behind them, so they take the caption colour rather than a row's `.fg2`.
-    var tint: Color {
-        switch self {
-        case .idle: .fg3
-        case .running: .fgAccent
-        case .failed: .fgSerious
-        }
     }
 }
 
@@ -234,8 +215,9 @@ extension EnvironmentValues {
 
 // MARK: - Group
 
-/// A turn's tool calls as one run: the categories involved, how many steps and
-/// how long they took, with the step rows behind the line.
+/// A turn's tool calls as one run: how many calls it holds, which tools they
+/// were, and how many failed, with the step rows behind the line. The line is
+/// the web console's line, drawn natively.
 struct ToolActivityGroup: View {
     let tools: [ToolCallInfo]
     let turnID: UUID
@@ -245,15 +227,6 @@ struct ToolActivityGroup: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
     @ScaledMetric(relativeTo: .caption) private var iconSize: CGFloat = 14
-
-    /// Accessibility text sizes are where the summary line has to give something
-    /// up: `linePieces` drops the decorative glyph strip (the opened rows still
-    /// show every category) and the count is allowed to wrap, because the count
-    /// is the one thing this line exists to say — it is the only summary a closed
-    /// run has left (#2125).
-    private var isAccessibilitySize: Bool {
-        dynamicTypeSize.isAccessibilitySize
-    }
 
     private var run: ToolActivityRun {
         ToolActivityRun(tools: tools)
@@ -276,9 +249,7 @@ struct ToolActivityGroup: View {
             VStack(alignment: .leading, spacing: 1 * .grid) {
                 header
                 if isExpanded {
-                    ForEach(tools) { tool in
-                        LiveToolChip(tool: tool)
-                    }
+                    stepList
                 }
             }
         } else {
@@ -287,6 +258,23 @@ struct ToolActivityGroup: View {
             }
         }
     }
+
+    /// The opened rows, capped and scrolled like the web console's 24rem run:
+    /// a long run stays a readable block instead of pushing the reply away.
+    private var stepList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1 * .grid) {
+                ForEach(tools) { tool in
+                    LiveToolChip(tool: tool)
+                }
+            }
+        }
+        .frame(maxHeight: Self.expandedMaxHeight)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// `24rem` at the web console's body size.
+    private static let expandedMaxHeight: CGFloat = 384
 
     // MARK: Line
 
@@ -297,17 +285,34 @@ struct ToolActivityGroup: View {
             }
         } label: {
             HStack(spacing: 2 * .grid) {
+                // One wrench leads the line, as on the web console: a run of
+                // mixed families has no single category glyph to draw. At
+                // accessibility sizes the count and the failure need its room.
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.system(size: iconSize * 0.62, weight: .semibold))
+                        .foregroundStyle(.fg3)
+                        .frame(width: iconSize, height: iconSize)
+                        .accessibilityHidden(true)
+                }
+
                 ForEach(run.linePieces(at: dynamicTypeSize), id: \.self) { piece in
                     switch piece {
-                    case .glyphStrip:
-                        iconStrip
-                    case .steps:
-                        stepsText
-                    case .span:
-                        spanText
-                    case .failure:
-                        failureGlyph
+                    case .calls:
+                        callsText
+                    case .breakdown:
+                        breakdownText
+                    case .failed:
+                        failedText
                     }
+                }
+
+                // A run in flight spins, as the web console's summary does, so
+                // a folded run still says it is working.
+                if isRunning {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityHidden(true)
                 }
 
                 Spacer(minLength: 2 * .grid)
@@ -319,39 +324,48 @@ struct ToolActivityGroup: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // One summary element: the glyphs and the chevron are decorative and
-        // hidden, and the count/time/failure are spoken from `spokenLine` so a
-        // closed run still announces what it contains.
+        // One summary element: the wrench, the failure glyph and the chevron are
+        // decorative and hidden, and the count/names/failures are spoken from
+        // `spokenLine` so a closed run still announces what it contains.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: summaryAccessibility.label))
         .accessibilityValue(Text(verbatim: summaryAccessibility.value))
     }
 
-    /// The count, the one thing the line always says. It may wrap instead of
-    /// ellipsising at accessibility sizes, where a phone cannot show it beside
-    /// the chevron on a single line (#2125).
-    private var stepsText: some View {
-        Text(stepsKey)
+    /// How many calls the run holds ("2 tool calls").
+    private var callsText: some View {
+        Text(callsKey)
             .font(MemoryFont.bodySmall)
             .foregroundStyle(.fg1)
-            .lineLimit(isAccessibilitySize ? nil : 1)
+            .lineLimit(1)
+            // The count keeps its room before the decorative spacer.
+            .layoutPriority(1)
     }
 
-    /// The run's span at its narrowest ("12s"), when it has one.
-    @ViewBuilder private var spanText: some View {
-        if let time = ToolActivityTiming.text(run.span, locale: locale) {
-            Text(verbatim: time)
-                .font(MemoryFont.meta)
-                .monospacedDigit()
-                .foregroundStyle(.fg3)
-        }
-    }
-
-    private var failureGlyph: some View {
-        Image(systemName: "exclamationmark.triangle.fill")
+    /// The tools involved (" · Entity search, Web search ×2"), the line the web
+    /// console prints after the count.
+    private var breakdownText: some View {
+        Text(verbatim: run.breakdown.map { " · \($0)" } ?? "")
             .font(MemoryFont.meta)
-            .foregroundStyle(.fgSerious)
-            .accessibilityHidden(true)
+            .foregroundStyle(.fg3)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .layoutPriority(-1)
+    }
+
+    /// How many steps failed ("1 failed"), a word as well as a colour so the
+    /// state never rests on colour alone.
+    private var failedText: some View {
+        HStack(spacing: 1 * .grid) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(MemoryFont.meta)
+                .accessibilityHidden(true)
+            Text("chat.tool.group.failed \(run.failedCount)")
+                .font(MemoryFont.meta)
+                .lineLimit(1)
+                .layoutPriority(1)
+        }
+        .foregroundStyle(.fgSerious)
     }
 
     private var chevron: some View {
@@ -362,21 +376,9 @@ struct ToolActivityGroup: View {
             .accessibilityHidden(true)
     }
 
-    private var iconStrip: some View {
-        HStack(spacing: 1) {
-            ForEach(run.icons) { icon in
-                Image(systemName: icon.category.symbol)
-                    .font(.system(size: iconSize * 0.62, weight: .semibold))
-                    .foregroundStyle(icon.tint)
-                    .frame(width: iconSize, height: iconSize)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
     // MARK: Copy
 
-    private var stepsKey: LocalizedStringKey {
-        "chat.tool.group.steps \(run.steps)"
+    private var callsKey: LocalizedStringKey {
+        "chat.tool.group.calls \(run.steps)"
     }
 }

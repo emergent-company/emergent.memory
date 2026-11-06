@@ -70,6 +70,9 @@ struct ChatView: View {
                 .padding(.vertical, 2 * .grid)
             }
             .scrollDismissesKeyboard(.interactively)
+            // Open on the newest message even before the first `onAppear`
+            // scroll runs (long histories lay out lazily).
+            .defaultScrollAnchor(.bottom)
             .onAppear {
                 scrollToBottom(proxy, animated: false)
             }
@@ -91,6 +94,10 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal)
+        // A different controller means a different agent/session: give the
+        // scroll view (and the offset it remembers) a fresh identity so a new
+        // chat cannot open where the previous one was scrolled to.
+        .id(ObjectIdentifier(controller))
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
@@ -182,13 +189,7 @@ struct ChatView: View {
                 ThinkingBlockView(text: block.text, isLive: block.isLive)
             }
             ForEach(turn.toolGroups) { group in
-                if ToolActivityGrouping.isGrouped(group.tools) {
-                    ToolCallGroupView(group: group)
-                } else {
-                    ForEach(group.tools) { tool in
-                        LiveToolChip(tool: tool)
-                    }
-                }
+                ToolActivityGroup(tools: group.tools, turnID: turn.id)
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in

@@ -397,9 +397,9 @@ func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs [
 	result := &MergePreviewResult{Conflicts: []MergePreviewConflict{}}
 
 	for _, pack := range packs {
-		typeMap := parseObjectTypeSchemasToMap(pack.ObjectTypes)
-		if typeMap == nil {
-			continue
+		typeMap, err := parseIncomingObjectTypesStrict(pack.GetObjectTypes())
+		if err != nil {
+			return nil, err
 		}
 
 		for typeName, incomingSchema := range typeMap {
@@ -667,6 +667,100 @@ func parseObjectTypeSchemas(data json.RawMessage, packID, packName, packVersion 
 //   - Map format (blueprint seeds): {typeName: {label, description, properties, ...}, ...}
 func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
 	return schemanorm.ObjectTypeSchemasToMap(data)
+}
+
+// previewObjectTypesShapeHint is the actionable half of the 400 returned when
+// an incoming merge-preview pack's objectTypes value cannot be read.
+const previewObjectTypesShapeHint = `objectTypes must be a JSON array of {"name","label","properties",...} objects or a JSON object mapping type names to schema objects, for example [{"name":"Person","properties":{"name":{"type":"string"}}}]`
+
+func invalidObjectTypes(detail string) error {
+	if detail == "" {
+		return apperror.NewBadRequest(previewObjectTypesShapeHint)
+	}
+	return apperror.NewBadRequest(detail + "; " + previewObjectTypesShapeHint)
+}
+
+// parseIncomingObjectTypesStrict parses objectTypes at the PreviewMerge request
+// boundary. parseObjectTypeSchemasToMap must keep tolerating legacy storage junk
+// on read paths; this variant is only for incoming data, where a value that is
+// present but unreadable is a client bug and must not look like "no object
+// types" (which would fail the pre-mutation collision check open).
+//
+// Absent/empty values (nil, empty RawMessage, JSON null, [], {}) return an empty
+// map and no error. Both accepted shapes stay read-compatible: an array of
+// {"name",...} objects and a map of type name → schema. Array entries are
+// validated rather than dropped, so a partially malformed array names the bad
+// entry instead of silently previewing a subset of the caller's types.
+func parseIncomingObjectTypesStrict(data json.RawMessage) (map[string]json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return map[string]json.RawMessage{}, nil
+	}
+
+	switch trimmed[0] {
+	case '[':
+		var entries []json.RawMessage
+		if err := json.Unmarshal(trimmed, &entries); err != nil {
+			return nil, invalidObjectTypes("objectTypes is not valid JSON")
+		}
+		if len(entries) == 0 {
+			return map[string]json.RawMessage{}, nil
+		}
+		for i, entry := range entries {
+			var obj map[string]json.RawMessage
+			if err := json.Unmarshal(entry, &obj); err != nil || obj == nil {
+				return nil, invalidObjectTypes(fmt.Sprintf("objectTypes entry %d must be a JSON object", i+1))
+			}
+
+			// Validate every string field the tolerant array decoder reads, so
+			// a bad label/description is reported with its position and key
+			// instead of falling through to the catch-all "array could not be
+			// read" after the normaliser fails. RawMessage fields cannot fail
+			// to decode, so they need no type check here.
+			for _, field := range []string{"name", "label", "description"} {
+				raw, ok := obj[field]
+				if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+					if field == "name" {
+						return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d is missing a non-empty string "name"`, i+1))
+					}
+					continue
+				}
+				var value string
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d has an invalid %q field: expected a string`, i+1, field))
+				}
+				if field == "name" && value == "" {
+					return nil, invalidObjectTypes(fmt.Sprintf(`objectTypes entry %d has an empty "name"`, i+1))
+				}
+			}
+		}
+		typeMap := schemanorm.ObjectTypeSchemasToMap(trimmed)
+		if typeMap == nil {
+			// Unreachable after validating every entry, but do not silently
+			// downgrade to "no types" if the normaliser disagrees.
+			return nil, invalidObjectTypes("objectTypes array could not be read")
+		}
+		return typeMap, nil
+
+	case '{':
+		var objMap map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &objMap); err != nil {
+			return nil, invalidObjectTypes("objectTypes is not valid JSON")
+		}
+		if len(objMap) == 0 {
+			return map[string]json.RawMessage{}, nil
+		}
+		for name, raw := range objMap {
+			var schema map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &schema); err != nil || schema == nil {
+				return nil, invalidObjectTypes(fmt.Sprintf("objectTypes[%q] must be a JSON object schema", name))
+			}
+		}
+		return objMap, nil
+
+	default:
+		return nil, invalidObjectTypes("objectTypes must be a JSON array or object")
+	}
 }
 
 // parseRelationshipTypeSchemas parses relationship_type_schemas JSON which may

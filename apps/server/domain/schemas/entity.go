@@ -1,6 +1,7 @@
 package schemas
 
 import (
+	"bytes"
 	"encoding/json"
 	"time"
 
@@ -185,22 +186,45 @@ type MigrationJobStatusResponse struct {
 type GraphMemorySchema struct {
 	bun.BaseModel `bun:"table:kb.graph_schemas,alias:gtp"`
 
-	ID                      string                `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	Name                    string                `bun:"name,notnull" json:"name"`
-	Version                 string                `bun:"version,notnull" json:"version"`
-	Description             *string               `bun:"description" json:"description,omitempty"`
-	Author                  *string               `bun:"author" json:"author,omitempty"`
-	Source                  *string               `bun:"source" json:"source,omitempty"`
-	License                 *string               `bun:"license" json:"license,omitempty"`
-	RepositoryURL           *string               `bun:"repository_url" json:"repositoryUrl,omitempty"`
-	DocumentationURL        *string               `bun:"documentation_url" json:"documentationUrl,omitempty"`
-	ObjectTypeSchemas       json.RawMessage       `bun:"object_type_schemas,type:jsonb" json:"objectTypeSchemas,omitempty"`
-	RelationshipTypeSchemas json.RawMessage       `bun:"relationship_type_schemas,type:jsonb" json:"relationshipTypeSchemas,omitempty"`
-	UIConfigs               json.RawMessage       `bun:"ui_configs,type:jsonb" json:"uiConfigs,omitempty"`
-	ExtractionPrompts       json.RawMessage       `bun:"extraction_prompts,type:jsonb" json:"extractionPrompts,omitempty"`
-	Migrations              *SchemaMigrationHints `bun:"migrations,type:jsonb" json:"migrations,omitempty"`
-	Checksum                *string               `bun:"checksum" json:"checksum,omitempty"`
-	ProjectID               *string               `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	ID               string  `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	Name             string  `bun:"name,notnull" json:"name"`
+	Version          string  `bun:"version,notnull" json:"version"`
+	Description      *string `bun:"description" json:"description,omitempty"`
+	Author           *string `bun:"author" json:"author,omitempty"`
+	Source           *string `bun:"source" json:"source,omitempty"`
+	License          *string `bun:"license" json:"license,omitempty"`
+	RepositoryURL    *string `bun:"repository_url" json:"repositoryUrl,omitempty"`
+	DocumentationURL *string `bun:"documentation_url" json:"documentationUrl,omitempty"`
+	// ObjectTypeSchemas is the stored object-type definitions. Two live writer
+	// shapes exist: a JSON array of {"name","label","properties",...} objects
+	// (HTTP CreatePack/UpdatePack, blueprint apply/seeder and the builtin
+	// seeder) and a map of type name → schema (the MCP create-schema tool and
+	// the discovery job; older stored rows are also maps). Readers normalise
+	// both, so no single Swagger 2.0 item type is declared for it.
+	ObjectTypeSchemas json.RawMessage `bun:"object_type_schemas,type:jsonb" json:"objectTypeSchemas,omitempty" swaggertype:"object"`
+	// RelationshipTypeSchemas is the stored relationship-type definitions. Two
+	// live writer shapes exist: a JSON array of {"name","sourceType",
+	// "targetType"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder
+	// and the builtin seeder) and a map of relationship type name → schema (the
+	// MCP create-schema tool and the discovery job; older stored rows are also
+	// maps). Readers normalise both, so no single Swagger 2.0 item type is
+	// declared for it.
+	RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb" json:"relationshipTypeSchemas,omitempty" swaggertype:"object"`
+	// UIConfigs is a JSON object keyed by object type name, each value a UI
+	// config such as {"icon":"file-text","color":"#3B82F6"}. Every writer
+	// produces that map (HTTP CreatePack/UpdatePack, the MCP create-schema tool
+	// and the discovery job). The column is opaque jsonb, so reads are
+	// best-effort for anything else stored there.
+	UIConfigs json.RawMessage `bun:"ui_configs,type:jsonb" json:"uiConfigs,omitempty" swaggertype:"object"`
+	// ExtractionPrompts is a JSON object keyed by object type name, each value
+	// a prompt config such as {"system_prompt":"...","field_hints":{...}}.
+	// Every writer produces that map (HTTP CreatePack/UpdatePack, the MCP
+	// create-schema tool and the discovery job). The column is opaque jsonb,
+	// so reads are best-effort for anything else stored there.
+	ExtractionPrompts json.RawMessage       `bun:"extraction_prompts,type:jsonb" json:"extractionPrompts,omitempty" swaggertype:"object"`
+	Migrations        *SchemaMigrationHints `bun:"migrations,type:jsonb" json:"migrations,omitempty"`
+	Checksum          *string               `bun:"checksum" json:"checksum,omitempty"`
+	ProjectID         *string               `bun:"project_id,type:uuid" json:"projectId,omitempty"`
 	// PendingReview marks discovery output that is awaiting an explicit
 	// install. It is false for a pack created or imported any other way, so a
 	// client can tell "proposed by a run" from "unassigned".
@@ -311,15 +335,21 @@ type SchemaListResponse struct {
 
 // InstalledSchemaItem represents an installed schema for a project
 type InstalledSchemaItem struct {
-	ID                string                 `json:"id"` // assignment ID
-	SchemaID          string                 `json:"schemaId"`
-	Name              string                 `json:"name"`
-	Version           string                 `json:"version"`
-	Description       *string                `json:"description,omitempty"`
-	Active            bool                   `json:"active"`
-	InstalledAt       time.Time              `json:"installedAt"`
-	Customizations    map[string]interface{} `json:"customizations,omitempty"`
-	ExtractionPrompts json.RawMessage        `json:"extractionPrompts,omitempty"`
+	ID             string                 `json:"id"` // assignment ID
+	SchemaID       string                 `json:"schemaId"`
+	Name           string                 `json:"name"`
+	Version        string                 `json:"version"`
+	Description    *string                `json:"description,omitempty"`
+	Active         bool                   `json:"active"`
+	InstalledAt    time.Time              `json:"installedAt"`
+	Customizations map[string]interface{} `json:"customizations,omitempty"`
+	// ExtractionPrompts is the installed pack's extraction_prompts: a JSON
+	// object keyed by object type name, each value a prompt config such as
+	// {"system_prompt":"...","field_hints":{...}}. Every writer produces that
+	// map (HTTP CreatePack/UpdatePack, the MCP create-schema tool and the
+	// discovery job); the column is opaque jsonb, so reads are best-effort for
+	// anything else stored there.
+	ExtractionPrompts json.RawMessage `json:"extractionPrompts,omitempty" swaggertype:"object"`
 }
 
 // AssignPackRequest is the request to assign a memory schema to a project
@@ -369,12 +399,51 @@ type SchemaConflict struct {
 // object_type_schemas column: the array form is the canonical writer shape
 // (blueprint apply/seeder and the HTTP request path), while the map form is the
 // legacy stored shape and remains read-compatible.
+//
+// The object-type field accepts the same snake_case and camelCase spellings as
+// the sibling pack request structs. Use GetObjectTypes() to retrieve the
+// resolved value.
 type MergePreviewPack struct {
 	Name string `json:"name"`
 	// ObjectTypes is a JSON array of {"name","label","properties",...} objects.
 	// The map-of-type-name → schema stored form is also accepted here and is
 	// read-compatible.
-	ObjectTypes json.RawMessage `json:"objectTypes" swaggertype:"array,object"`
+	ObjectTypes json.RawMessage `json:"objectTypes,omitempty" swaggertype:"array,object"`
+	// ObjectTypeSchemasSnake mirrors the sibling pack request/storage spelling.
+	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas,omitempty" swaggertype:"array,object"`
+	// ObjectTypesSnake accepts the short snake_case spelling named in #163.
+	ObjectTypesSnake json.RawMessage `json:"object_types,omitempty" swaggertype:"array,object"`
+}
+
+// UnmarshalJSON accepts the documented camelCase key and both snake_case
+// aliases, while rejecting genuinely unknown pack keys. A typo such as
+// "objectTypesTypo" must not bind to nothing and look like an absent
+// objectTypes value: that is the fail-open the merge preview gate is meant to
+// prevent. Other pack-level keys are not part of this endpoint's contract.
+func (p *MergePreviewPack) UnmarshalJSON(data []byte) error {
+	type packJSON MergePreviewPack
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var decoded packJSON
+	if err := dec.Decode(&decoded); err != nil {
+		return err
+	}
+	*p = MergePreviewPack(decoded)
+	return nil
+}
+
+// GetObjectTypes returns the resolved object-type value, preferring snake_case
+// over camelCase to match CreatePackRequest/UpdatePackRequest. The long
+// storage-column spelling object_type_schemas wins over the short object_types
+// alias when both are present.
+func (p *MergePreviewPack) GetObjectTypes() json.RawMessage {
+	if len(p.ObjectTypeSchemasSnake) > 0 {
+		return p.ObjectTypeSchemasSnake
+	}
+	if len(p.ObjectTypesSnake) > 0 {
+		return p.ObjectTypesSnake
+	}
+	return p.ObjectTypes
 }
 
 // MergePreviewConflict describes one type-name collision found by a merge

@@ -1269,6 +1269,52 @@
   document.addEventListener("DOMContentLoaded", function () { syncScopeGroups(document); });
   document.addEventListener("htmx:after:swap", function (ev) { syncScopeGroups(ev.target); });
 
+  /* ---------- list filters (in-place result refreshes) ---------- */
+  /* A filter control that renders over a copy of its own chrome cannot repaint
+     that copy: the objects branch/type <select>s sit transparent over a sibling
+     span (a native select hard-clips the chosen value, see objectsFilterSelect),
+     so an in-place list refresh would leave the previous value on screen. Mirror
+     the chosen option's text into the label. Labels and option text are the same
+     strings by construction (objectBranchOptionLabel / objectTypeOptionLabel).
+     The delegated listener keeps working for rows htmx has swapped in. */
+  document.addEventListener("change", function (ev) {
+    var sel = ev.target;
+    if (!sel || sel.tagName !== "SELECT" || !sel.hasAttribute("data-mirror-select")) return;
+    var label = sel.parentElement && sel.parentElement.querySelector("[data-mirror-label]");
+    if (label) {
+      var chosen = sel.options[sel.selectedIndex];
+      label.textContent = chosen ? chosen.textContent : "";
+    }
+    /* The objects stats strip is branch-scoped. A branch change no longer
+       reloads the page, so re-run its deferred fetch — and let it read the
+       branch from the form (hx-include) instead of the URL the page loaded. */
+    if (sel.hasAttribute("data-stats-refresh")) {
+      var stats = document.getElementById("objects-stats");
+      if (stats) stats.dispatchEvent(new CustomEvent("objects-stats-refresh"));
+    }
+  });
+
+  /* A results refresh replaces the rows under a live Alpine selection model.
+     Drop the selection with them: otherwise the bulk bar keeps counting (and
+     mutating) rows that are no longer on screen.
+
+     The event lands on the element that issued the request — the filter form,
+     a sort link — but htmx substitutes the swap target when that element is no
+     longer in the document, which is exactly what replacing #objects-results
+     does to the sort links inside it. So the region carries the same marker
+     and every case is an exact match on the event target. "Load more" targets
+     #objects-list, which carries neither: it appends rows to the list the user
+     is still selecting from, so that selection survives. */
+  document.addEventListener("htmx:after:swap", function (ev) {
+    var source = ev.target;
+    if (!source || !source.matches) return;
+    if (!source.matches("[data-objects-list-refresh]")) return;
+    var root = document.querySelector("[data-object-select-root]");
+    if (!root || !window.Alpine) return;
+    var model = window.Alpine.$data(root);
+    if (model) model.sel = [];
+  });
+
   /* expose for templ script blocks */
   window.MemoryApp = {
     openAgentForm: openAgentForm,

@@ -232,6 +232,24 @@ jobs:
       - name: Swagger spec drift guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/swagger-drift.sh
+      # Swagger raw-JSON guard (#162). swag cannot type a json.RawMessage, so
+      # without a swaggertype tag it publishes the field as items:{type:integer}
+      # and a generated client decodes []int. The same lie was fixed by hand in
+      # #156/#158/#159 and reintroduced by #136 and #164 within hours. This
+      # guard checks the schema-pack structs at the source level first, so a new
+      # raw-JSON field fails while it is being written rather than only when a
+      # PR happens to regenerate swagger, then asserts the committed
+      # swagger.json does not render any of those fields as arrays of integers
+      # (a present-but-wrong tag must not pass). Waivers are reason-pinned in
+      # scripts/preflight/swagger-raw-json.allow. It runs here next to the drift
+      # guard because the branch-protection-required `ci` job is the only place
+      # it can gate: server.yml is path-filtered and advisory, so a step there
+      # would surface after merge. Cheap (~0.2 s: awk + jq, no Go build) and
+      # deliberately not in scripts/preflight/all.sh (run by the step below) so
+      # each check runs once.
+      - name: Swagger raw-JSON guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/swagger-raw-json.sh
       # Go module file drift guard (#2193). apps/server/go.sum was 40 `/go.mod`
       # hash lines short for months (#2083): a warm module cache hides that,
       # because verification happens at download time, so only the first cold

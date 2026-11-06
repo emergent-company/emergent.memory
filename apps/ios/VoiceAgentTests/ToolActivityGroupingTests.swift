@@ -30,49 +30,55 @@ struct ToolActivityRunTests {
         #expect(ToolActivityRun(tools: [tool("entity-search"), tool("web-fetch")]).steps == 2)
     }
 
-    @Test func oneGlyphPerCategoryInOrderOfFirstUse() {
+    /// The breakdown is the web console's line: the names a reader would
+    /// recognise, in order of first use, with a ×N multiplier for repeats.
+    @Test func namesUpToThreeToolsWithMultipliers() {
         let run = ToolActivityRun(tools: [
             tool("entity-search"),
             tool("web-fetch"),
-            tool("entity-query"),
-            tool("document-get"),
+            tool("entity-search"),
         ])
-        #expect(run.icons.map(\.category) == [.memory, .web, .documents])
+        #expect(run.breakdown == "Entity search ×2, Web fetch")
     }
 
-    @Test func capsTheGlyphsAndStillCountsEveryStep() {
-        let tools = [
+    @Test func summarizesTheTailOfALongBreakdown() {
+        let run = ToolActivityRun(tools: [
             tool("entity-search"),
             tool("web-fetch"),
             tool("document-get"),
             tool("schema-list"),
             tool("project-get"),
-            tool("skill-list"),
-        ]
-        let run = ToolActivityRun(tools: tools)
-        #expect(run.icons.count == ToolActivityRun.maxIcons)
-        #expect(run.icons.map(\.category) == [.memory, .web, .documents, .schemas])
-        #expect(run.steps == tools.count)
-    }
-
-    @Test func reportsTheStrongestStateInTheCategory() {
-        // Error outranks running, running outranks settled.
-        let run = ToolActivityRun(tools: [
-            tool("entity-search", running: true),
-            tool("entity-query", isError: true),
-            tool("entity-create"),
-            tool("web-fetch", running: true),
-            tool("document-get"),
         ])
-        let states = Dictionary(uniqueKeysWithValues: run.icons.map { ($0.category, $0.state) })
-        #expect(states[.memory] == .failed)
-        #expect(states[.web] == .running)
-        #expect(states[.documents] == .idle)
+        #expect(run.breakdown == "Entity search, Web fetch, Document get, +2 more")
     }
 
-    @Test func reportsAFailureSoACollapsedRunCannotHideIt() {
+    @Test func noBreakdownWhenNoCallCarriesAName() {
+        #expect(ToolActivityRun(tools: [tool("")]).breakdown == nil)
+        #expect(ToolActivityRun(tools: []).breakdown == nil)
+    }
+
+    /// A wire name is made readable exactly as the web console's
+    /// `humanizeToolName` does it, so both surfaces print the same words.
+    @Test func humanizesTheWireNameLikeTheWebConsole() {
+        #expect(ToolActivityRun.humanized("entity-search") == "Entity search")
+        #expect(ToolActivityRun.humanized("search_entities") == "Search entities")
+        #expect(ToolActivityRun.humanized("web.search") == "Web search")
+        #expect(ToolActivityRun.humanized("  web   fetch  ") == "Web fetch")
+        // The web console lowercases the rest of the name before capitalizing
+        // the first letter, so both surfaces print the same words.
+        #expect(ToolActivityRun.humanized("MCP-Server") == "Mcp server")
+    }
+
+    @Test func countsTheFailuresSoACollapsedRunCannotHideThem() {
+        let run = ToolActivityRun(tools: [
+            tool("entity-search", isError: true),
+            tool("web-fetch"),
+            tool("document-get", isError: true),
+        ])
+        #expect(run.failedCount == 2)
+        #expect(run.hasError)
+        #expect(ToolActivityRun(tools: [tool("entity-search")]).failedCount == 0)
         #expect(!ToolActivityRun(tools: [tool("entity-search")]).hasError)
-        #expect(ToolActivityRun(tools: [tool("entity-search"), tool("web-fetch", isError: true)]).hasError)
     }
 }
 
@@ -81,90 +87,39 @@ struct ToolActivityRunTests {
 struct ToolActivitySpokenLineTests {
     private let english = Locale(identifier: "en_US")
 
-    @Test func readsTheCountAndTheSpokenTime() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
+    @Test func readsTheCountAndTheNames() {
         let run = ToolActivityRun(tools: [
-            tool("entity-search", start: start, duration: 6),
-            tool("web-fetch", start: start.addingTimeInterval(6), duration: 6),
+            tool("entity-search"),
+            tool("web-fetch"),
         ])
-        #expect(run.spokenLine(locale: english) == "2 steps, 12 seconds")
+        #expect(run.spokenLine(locale: english) == "2 tool calls, Entity search, Web fetch")
     }
 
-    @Test func readsTheCountWhenTheRunHasNoTime() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        // Still running: no span, so nothing to say about time.
-        let running = ToolActivityRun(tools: [
-            tool("entity-search", start: start, duration: 6),
-            tool("web-fetch", running: true, start: start.addingTimeInterval(6)),
-        ])
-        #expect(running.spokenLine(locale: english) == "2 steps")
-
-        // Settled but under a second: same rule as a step row, which shows no
-        // time below one second either.
-        let brief = ToolActivityRun(tools: [
-            tool("entity-search", start: start, duration: 0.2),
-            tool("web-fetch", start: start.addingTimeInterval(0.2), duration: 0.2),
-        ])
-        #expect(brief.spokenLine(locale: english) == "2 steps")
+    @Test func readsTheCountWhenNoCallCarriesAName() {
+        let run = ToolActivityRun(tools: [tool(""), tool("")])
+        #expect(run.spokenLine(locale: english) == "2 tool calls")
     }
 
-    @Test func saysWhenAStepFailed() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
+    /// One call reads as one call, as it does on the web console.
+    @Test func readsASingleCallInTheSingular() {
+        let run = ToolActivityRun(tools: [tool("entity-search")])
+        #expect(run.spokenLine(locale: english) == "1 tool call, Entity search")
+    }
+
+    @Test func saysHowManyStepsFailed() {
         let run = ToolActivityRun(tools: [
-            tool("entity-search", isError: true, start: start, duration: 2),
-            tool("web-fetch", start: start.addingTimeInterval(2), duration: 1),
+            tool("entity-search", isError: true),
+            tool("web-fetch"),
         ])
-        #expect(run.spokenLine(locale: english) == "2 steps, 3 seconds, a step failed")
+        #expect(run.spokenLine(locale: english) == "2 tool calls, Entity search, Web fetch, 1 failed")
     }
 
     /// The count and the failure clause resolve in the caller's locale, not the
-    /// process locale. A run with no span leaves the count as the only digits on
-    /// the line, so locale-aware digits prove which locale produced it: the
-    /// catalog ships English only today, which is exactly why nothing else would
-    /// have caught this (#2125).
+    /// process locale. The catalog ships English only today, which is exactly
+    /// why nothing else would have caught this (#2125).
     @Test func readsTheCountInTheRequestedLocale() {
-        let running = ToolActivityRun(tools: [
-            tool("entity-search", running: true),
-            tool("web-fetch", running: true),
-        ])
-        #expect(running.spokenLine(locale: Locale(identifier: "ar_EG")).hasPrefix("٢"))
-    }
-}
-
-// MARK: - Run span
-
-struct ToolActivitySpanTests {
-    @Test func spansFirstStartToLastEnd() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        let tools = [
-            tool("entity-search", start: start, duration: 4),
-            tool("web-fetch", start: start.addingTimeInterval(10), duration: 2),
-        ]
-        #expect(ToolActivityTiming.span(of: tools) == 12)
-    }
-
-    @Test func measuresTheOverlapNotTheSum() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        let tools = [
-            tool("entity-search", start: start, duration: 6),
-            tool("web-fetch", start: start.addingTimeInterval(1), duration: 1),
-        ]
-        // Ends at 6, not 7: the run occupied six seconds, not seven.
-        #expect(ToolActivityTiming.span(of: tools) == 6)
-    }
-
-    @Test func noSpanWhileAStepIsStillRunning() {
-        let start = Date(timeIntervalSince1970: 1_700_000_000)
-        let tools = [
-            tool("entity-search", start: start, duration: 4),
-            tool("web-fetch", running: true, start: start.addingTimeInterval(5)),
-        ]
-        #expect(ToolActivityTiming.span(of: tools) == nil)
-    }
-
-    @Test func noSpanWithoutTiming() {
-        #expect(ToolActivityTiming.span(of: []) == nil)
-        #expect(ToolActivityTiming.span(of: [tool("entity-search"), tool("web-fetch")]) == nil)
+        let run = ToolActivityRun(tools: [tool(""), tool("")])
+        #expect(run.spokenLine(locale: Locale(identifier: "ar_EG")).hasPrefix("٢"))
     }
 }
 

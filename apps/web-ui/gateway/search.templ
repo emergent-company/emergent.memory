@@ -27,32 +27,62 @@ templ SearchPage(data searchPageData) {
 			@pageError("Search failed", data.LoadErr)
 		} else {
 			@searchToolbar(data)
-			if data.Query == "" {
-				@searchIntro()
-			} else {
-				@searchResults(data)
-			}
+			@searchResultsPanel(data)
 		}
 	}
 }
 
+// searchResultsPanel is the swap region every search control refreshes: the
+// intro before a query and the result sections after one. It always renders (the
+// intro is inside it) so a request made from the pre-query state still has a
+// target to swap.
+templ searchResultsPanel(data searchPageData) {
+	<div id="search-results" data-testid="search-results">
+		if data.LoadErr != nil {
+			// A filter/limit change that failed keeps the page: the error
+			// replaces the results instead of the whole surface.
+			@pageError("Search failed", data.LoadErr)
+		} else if data.Query == "" {
+			@searchIntro()
+		} else {
+			@searchResults(data)
+		}
+	</div>
+}
+
+// searchResultCount is the header's result badge, grouped so a search response
+// can refresh it out of band: the count lives in the header, outside the results
+// region, and would otherwise still show the previous query's total.
+templ searchResultCount(data searchPageData) {
+	if data.Query != "" && data.LoadErr == nil {
+		@countBadgeLabel(countLabel(len(data.Documents)+len(data.Objects), "result", "results"), "lucide--search")
+	}
+}
+
 // searchHeader is the standard list-page header, with the shown result count as
-// its only adornment.
+// its only adornment. The badge is wrapped in a stable id so a search response
+// can refresh it out of band: it sits in the header, outside the results region.
 templ searchHeader(data searchPageData) {
 	@pageHeader("Knowledge", "Search", "Search inside ingested documents and across the knowledge graph in one place.") {
-		if data.Query != "" && data.LoadErr == nil {
-			@countBadgeLabel(countLabel(len(data.Documents)+len(data.Objects), "result", "results"), "lucide--search")
-		}
+		<span id="search-result-count" class="contents" data-testid="search-result-count">
+			@searchResultCount(data)
+		</span>
 	}
 }
 
 // searchToolbar is the query row: the search box plus the filter and limit
 // controls, in one card and one form, so a search keeps the scope it was
 // started with. The controls are ordinary GET form fields — no script.
+//
+// The form refreshes #search-results in place and pushes the URL: running a
+// search, or narrowing one, replaces the result sections rather than reloading
+// the page. Only a <select>'s change applies immediately — the query field
+// searches on submit, so typing then tabbing away does not fire a search the
+// user did not ask for (selectFilterFormAttrs).
 templ searchToolbar(data searchPageData) {
 	<div class="mb-4">
 		@components.PanelCard("", nil, "p-3 sm:p-4") {
-			<form method="get" action="/search" class="flex flex-col gap-3" data-testid="search-form">
+			<form method="get" action="/search" class="flex flex-col gap-3" data-testid="search-form" { selectFilterFormAttrs("/search", searchResultsRegion)... }>
 				<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 					<label class="input flex w-full min-w-0 flex-1 items-center gap-2">
 						@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
@@ -92,14 +122,14 @@ templ searchToolbar(data searchPageData) {
 				</div>
 				<div class="border-base-content/10 flex flex-wrap items-end gap-x-3 gap-y-2 border-t pt-3">
 					@fm.FormControl("search-filter-type", "Search in", fm.LabelAbove, "", "", nil) {
-						<select id="search-filter-type" name="type" class="select select-sm" aria-label="Search in" data-testid="search-type-filter" onchange="this.form.submit()">
+						<select id="search-filter-type" name="type" class="select select-sm" aria-label="Search in" data-testid="search-type-filter">
 							for _, opt := range searchTypeOptions() {
 								<option value={ opt.Value } selected?={ opt.Value == data.Type }>{ opt.Label }</option>
 							}
 						</select>
 					}
 					@fm.FormControl("search-filter-limit", "Results", fm.LabelAbove, "", "", nil) {
-						<select id="search-filter-limit" name="limit" class="select select-sm" aria-label="Number of results" data-testid="search-limit-filter" onchange="this.form.submit()">
+						<select id="search-filter-limit" name="limit" class="select select-sm" aria-label="Number of results" data-testid="search-limit-filter">
 							for _, opt := range searchLimitOptions() {
 								<option value={ strconv.Itoa(opt.Value) } selected?={ opt.Value == data.Limit }>{ opt.Label }</option>
 							}
@@ -114,10 +144,21 @@ templ searchToolbar(data searchPageData) {
 							Apply
 						}
 					</noscript>
+					<span id="search-results-loading" class="htmx-indicator loading loading-spinner loading-xs mb-2" aria-hidden="true"></span>
 				</div>
 			</form>
 		}
 	</div>
+}
+
+// searchResultsFragment is the response body for a search/filter request: the
+// results region plus the header's result count, which sits outside the region
+// and would otherwise keep showing the previous query's total.
+templ searchResultsFragment(data searchPageData) {
+	@searchResultsPanel(data)
+	<span id="search-result-count" class="contents" hx-swap-oob="innerHTML">
+		@searchResultCount(data)
+	</span>
 }
 
 // searchIntro is the pre-query state: what this surface searches and how to use

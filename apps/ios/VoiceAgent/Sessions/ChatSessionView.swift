@@ -26,7 +26,7 @@ struct ChatSessionView: View {
     @Environment(ActiveSessionStore.self) var activeSession
     @EnvironmentObject var controller: MemorySessionController
     @EnvironmentObject private var session: Session
-    @EnvironmentObject private var localMedia: LocalMedia
+    @EnvironmentObject private var localMedia: LocalMediaModel
     @Environment(ChatActivityStore.self) var activity
     @Environment(\.voiceEnabled) private var voiceEnabled
     @Environment(\.dismiss) private var dismiss

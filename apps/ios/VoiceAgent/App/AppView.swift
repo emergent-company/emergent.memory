@@ -4,7 +4,7 @@ import SwiftUI
 struct AppView: View {
     @EnvironmentObject private var controller: MemorySessionController
     @EnvironmentObject private var session: Session
-    @EnvironmentObject private var localMedia: LocalMedia
+    @EnvironmentObject private var localMedia: LocalMediaModel
 
     @State private var chat: Bool = false
     @FocusState private var keyboardFocus: Bool

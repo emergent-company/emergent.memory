@@ -2130,3 +2130,16 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
   .memory-subagent-dot[data-status="working"] { animation: none; }
   .memory-subagent-chevron { transition: none; }
 }
+
+/* ---------- objects filter bars ---------- */
+
+/* The provenance toggle's chosen segment. Painting it from the radio is what
+   keeps it truthful without a page load: a filter response replaces only the
+   list, and htmx's back/forward restore can repaint the row too, so a
+   server-rendered `btn-primary` would keep the previous mode lit (or light two
+   segments at once). The state lives in the input, the paint follows it. */
+.memory-provenance-segment:has(> input:checked) {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-content);
+}

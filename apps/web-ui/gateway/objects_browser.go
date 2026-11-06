@@ -126,16 +126,27 @@ func objectsNextSortDir(data objectsPageData) string {
 	return "asc"
 }
 
-// objectsFilterAutoApply returns the change handler that applies a filter
-// immediately, or nil inside the gallery preview. The preview keeps every
-// control interactive but must not navigate its iframe, and form.submit()
-// bypasses the form's onsubmit guard — so the handler is not rendered there at
-// all rather than rendered and defeated.
-func objectsFilterAutoApply(preview bool) templ.Attributes {
-	if preview {
+// objectsFormAttrs is the htmx wiring for the objects toolbar's forms: each
+// request carries the form's values to the page URL, replaces #objects-results
+// in place, and pushes the URL so reloading keeps the filters. Searching and
+// filtering therefore behave alike — the list changes, the header, stats strip,
+// and controls stay where they are — and neither is a document navigation.
+//
+// The gallery preview renders no wiring: it has no backend, and it must not
+// navigate its iframe.
+func objectsFormAttrs(data objectsPageData, onChange bool, action string) templ.Attributes {
+	if data.Preview {
 		return nil
 	}
-	return templ.Attributes{"onchange": "this.form.submit()"}
+	var attrs templ.Attributes
+	if onChange {
+		attrs = filterFormAttrs(action, objectsResultsRegion)
+	} else {
+		attrs = submitFilterFormAttrs(action, objectsResultsRegion)
+	}
+	attrs["hx-indicator"] = "#objects-results-loading"
+	attrs["data-objects-list-refresh"] = "true"
+	return attrs
 }
 
 // objectsPreviewGuards keeps a gallery preview inert: the form renders with all

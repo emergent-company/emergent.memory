@@ -34,8 +34,21 @@ func TestDocumentsStatusFilterIsSelect(t *testing.T) {
 	if !strings.Contains(form, `<select id="documents-filter-status" name="status"`) {
 		t.Errorf("status select must live inside the filter form:\n%s", form)
 	}
-	if !strings.Contains(form, `onchange="this.form.submit()"`) {
-		t.Errorf("status select must submit the filter form:\n%s", form)
+	// The select applies itself by refreshing the results region: a full document
+	// load would re-render the page for a narrowed list.
+	for _, want := range []string{
+		`hx-get="/documents"`,
+		`hx-target="#documents-results"`,
+		`hx-swap="outerHTML"`,
+		`hx-push-url="true"`,
+		`hx-trigger="change, submit"`,
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("filter form missing %q:\n%s", want, form)
+		}
+	}
+	if strings.Contains(form, `this.form.submit()`) {
+		t.Error("a filter control must not call form.submit(); it bypasses htmx and reloads the page")
 	}
 	// The active bucket is selected and the counts the tabs showed survive.
 	for _, want := range []string{

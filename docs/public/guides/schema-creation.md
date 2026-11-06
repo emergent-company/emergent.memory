@@ -58,14 +58,14 @@ Both MCP and REST methods use identical field definitions and validation.
 
 The following fields are **automatically generated** by the system and **cannot be specified** during creation:
 
-| Field          | Type      | Description                                  | Format           |
-| -------------- | --------- | -------------------------------------------- | ---------------- |
-| `id`           | UUID      | Unique identifier                            | `"550e8400-..."` |
-| `checksum`     | string    | Content hash for version tracking            | SHA-256 hash     |
-| `draft`        | boolean   | Draft status (always `false` after creation) | `false`          |
-| `published_at` | timestamp | Publication timestamp                        | RFC3339          |
-| `created_at`   | timestamp | Creation timestamp                           | RFC3339          |
-| `updated_at`   | timestamp | Last modification timestamp                  | RFC3339          |
+| Field          | Type      | Description                                  | Format             |
+| -------------- | --------- | -------------------------------------------- | ------------------ |
+| `id`           | UUID      | Unique identifier                            | `"550e8400-..."`   |
+| `checksum`     | string    | Content hash for version tracking            | md5 (32 hex chars) |
+| `draft`        | boolean   | Draft status (always `false` after creation) | `false`            |
+| `published_at` | timestamp | Publication timestamp                        | RFC3339            |
+| `created_at`   | timestamp | Creation timestamp                           | RFC3339            |
+| `updated_at`   | timestamp | Last modification timestamp                  | RFC3339            |
 
 **Date Format**: All timestamps use **RFC3339** format (e.g., `"2025-02-10T09:26:57Z"`).
 
