@@ -49,7 +49,7 @@ templ EmbeddingsPage(data embeddingPageData) {
 }
 
 templ embeddingsHeader(ok bool) {
-	@pageHeader("Memory Browser", "Embeddings", "Vector embedding pipeline — queue backlog, worker state, and tuning.") {
+	@pageHeader("Memory", "Embeddings", "Vector embedding pipeline — queue backlog, worker state, and tuning.") {
 		if ok {
 			@ui.Badge(ui.BadgeProps{
 				Label:   "pipeline status",

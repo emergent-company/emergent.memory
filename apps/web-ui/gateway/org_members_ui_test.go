@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -688,6 +689,83 @@ func TestSidebarGroupsRoleGating(t *testing.T) {
 
 	if !hrefs(orgSidebarGroups("/o/org-1", true))["/o/org-1/members"] {
 		t.Error("org_admin org sidebar must show Members")
+	}
+}
+
+// itemLabels returns the labels of one group's items, in render order.
+func itemLabels(g layout.SidebarGroup) []string {
+	labels := make([]string, 0, len(g.Items))
+	for _, item := range g.Items {
+		labels = append(labels, item.Label)
+	}
+	return labels
+}
+
+// TestSidebarGroupsProjectLayout pins the project nav's group names, item
+// membership and order. The nav is a product surface that is easy to edit by
+// accident (items silently landing back in the group they were moved out of),
+// and no other test reads these labels.
+func TestSidebarGroupsProjectLayout(t *testing.T) {
+	want := [][]string{
+		// ungrouped top-level entries
+		{"Approvals", "Chat", "Search", "Sessions"},
+		{"Board", "Work Settings"},
+		{"Agents", "Schedules", "Skills"},
+		{"Objects", "Embeddings", "Schema", "Blueprints", "Documents", "Data Sources"},
+		{"Settings", "Members", "API Tokens", "MCP Servers", "MCP Registry", "Usage", "Backups"},
+	}
+	// Group labels are asserted separately because index 0 is the unlabelled
+	// top-level block.
+	wantGroupLabels := []string{"", "Work", "Agents", "Memory", "Project"}
+
+	groups := sidebarGroups("", true)
+	if len(groups) != len(want) {
+		t.Fatalf("got %d sidebar groups, want %d", len(groups), len(want))
+	}
+	for i, g := range groups {
+		if g.Label != wantGroupLabels[i] {
+			t.Errorf("group %d label = %q, want %q", i, g.Label, wantGroupLabels[i])
+		}
+		if got := itemLabels(g); !slices.Equal(got, want[i]) {
+			t.Errorf("group %q items = %v, want %v", g.Label, got, want[i])
+		}
+	}
+
+	// The "Settings" group entry is the /settings hub itself; its href must not
+	// move even though its label changed from "Project". It must also be the
+	// only nav link with that accessible name (Work's entry is "Work Settings").
+	settingsLinks := 0
+	for _, g := range groups {
+		for _, item := range g.Items {
+			if item.Label == "Settings" {
+				settingsLinks++
+				if item.Href != "/settings" {
+					t.Errorf("Settings item href = %q, want /settings", item.Href)
+				}
+			}
+		}
+	}
+	if settingsLinks != 1 {
+		t.Errorf("%d nav links are named Settings, want exactly 1", settingsLinks)
+	}
+
+	// Backups is org_admin-only *and* belongs to the Project group now.
+	nonAdmin := sidebarGroups("", false)
+	last := nonAdmin[len(nonAdmin)-1]
+	if last.Label != "Project" {
+		t.Fatalf("last group label = %q, want Project", last.Label)
+	}
+	for _, item := range last.Items {
+		if item.Label == "Backups" {
+			t.Error("non-admin Project group must hide Backups")
+		}
+	}
+
+	// Usage is a project-level entry now: it must not sit in the ungrouped block.
+	for _, item := range groups[0].Items {
+		if item.Label == "Usage" {
+			t.Error("Usage must not be an ungrouped top-level entry")
+		}
 	}
 }
 

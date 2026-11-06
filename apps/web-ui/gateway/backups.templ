@@ -48,7 +48,7 @@ templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error
 // backupsHeader is the page header. The restore marker stays visible in every
 // state so the "not yet available" truth never disappears (design D5).
 templ backupsHeader(total int, ok bool) {
-	@pageHeader("Memory Browser", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.") {
+	@pageHeader("Memory", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.") {
 		<div class="flex flex-wrap items-center gap-2">
 			if ok {
 				@countBadge(total, "backup", "lucide--archive")
