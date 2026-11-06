@@ -56,20 +56,27 @@ func (s *Service) GetAccessTree(ctx context.Context, userID string) ([]OrgWithPr
 		return []OrgWithProjects{}, nil
 	}
 
-	// Query organizations with membership
+	// Query organizations with membership. Soft-deleted orgs are excluded: the
+	// access tree drives default-project selection, and a deleted org is not a
+	// valid destination (#44).
 	var orgRows []orgRow
 	err := s.db.NewRaw(`
 		SELECT o.id as org_id, o.name as org_name, om.role
 		FROM kb.orgs o
 		INNER JOIN kb.organization_memberships om ON o.id = om.organization_id
 		WHERE om.user_id = ?
+		  AND o.deleted_at IS NULL
 		ORDER BY o.created_at DESC
 	`, userID).Scan(ctx, &orgRows)
 	if err != nil {
 		return nil, err
 	}
 
-	// Query projects with membership
+	// Query projects with membership. Soft-deleted (pending-deletion) projects
+	// are excluded for the same reason: the tree is the source for default
+	// project selection, and a project awaiting purge must never be picked
+	// (#44). The org join is not required here because a project whose org is
+	// absent from orgRows is dropped when the tree is assembled.
 	var projectRows []projectRow
 	err = s.db.NewRaw(`
 		SELECT p.id as project_id, p.name as project_name, p.organization_id as org_id,
@@ -77,6 +84,7 @@ func (s *Service) GetAccessTree(ctx context.Context, userID string) ([]OrgWithPr
 		FROM kb.projects p
 		INNER JOIN kb.project_memberships pm ON p.id = pm.project_id
 		WHERE pm.user_id = ?
+		  AND p.deleted_at IS NULL
 		ORDER BY p.created_at DESC
 	`, userID).Scan(ctx, &projectRows)
 	if err != nil {
