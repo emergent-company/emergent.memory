@@ -129,7 +129,10 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 			Label: "Work",
 			Items: []layout.SidebarItem{
 				{Label: "Board", Href: base + "/work/board", Icon: "lucide--kanban-square"},
-				{Label: "Settings", Href: base + "/work/settings", Icon: "lucide--list-checks"},
+				// "Work Settings": the Project group's landing entry is also
+				// labelled "Settings", and two nav links sharing one accessible
+				// name is ambiguous for screen readers and role-name selectors.
+				{Label: "Work Settings", Href: base + "/work/settings", Icon: "lucide--list-checks"},
 			},
 		},
 		{

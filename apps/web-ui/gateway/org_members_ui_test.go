@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -691,16 +692,11 @@ func TestSidebarGroupsRoleGating(t *testing.T) {
 	}
 }
 
-// sidebarLabels flattens the project nav into group-label → item-label lists so
-// a test can pin both grouping and order.
-func sidebarLabels(groups []layout.SidebarGroup) [][]string {
-	labels := make([][]string, 0, len(groups))
-	for _, g := range groups {
-		row := make([]string, 0, len(g.Items))
-		for _, item := range g.Items {
-			row = append(row, item.Label)
-		}
-		labels = append(labels, row)
+// itemLabels returns the labels of one group's items, in render order.
+func itemLabels(g layout.SidebarGroup) []string {
+	labels := make([]string, 0, len(g.Items))
+	for _, item := range g.Items {
+		labels = append(labels, item.Label)
 	}
 	return labels
 }
@@ -713,7 +709,7 @@ func TestSidebarGroupsProjectLayout(t *testing.T) {
 	want := [][]string{
 		// ungrouped top-level entries
 		{"Approvals", "Chat", "Search", "Sessions"},
-		{"Board", "Settings"},
+		{"Board", "Work Settings"},
 		{"Agents", "Schedules", "Skills"},
 		{"Objects", "Embeddings", "Schema", "Blueprints", "Documents", "Data Sources"},
 		{"Settings", "Members", "API Tokens", "MCP Servers", "MCP Registry", "Usage", "Backups"},
@@ -730,17 +726,27 @@ func TestSidebarGroupsProjectLayout(t *testing.T) {
 		if g.Label != wantGroupLabels[i] {
 			t.Errorf("group %d label = %q, want %q", i, g.Label, wantGroupLabels[i])
 		}
-		if got := sidebarLabels([]layout.SidebarGroup{g})[0]; !equalLabels(got, want[i]) {
+		if got := itemLabels(g); !slices.Equal(got, want[i]) {
 			t.Errorf("group %q items = %v, want %v", g.Label, got, want[i])
 		}
 	}
 
 	// The "Settings" group entry is the /settings hub itself; its href must not
-	// move even though its label changed from "Project".
-	for _, item := range groups[len(groups)-1].Items {
-		if item.Label == "Settings" && item.Href != "/settings" {
-			t.Errorf("Settings item href = %q, want /settings", item.Href)
+	// move even though its label changed from "Project". It must also be the
+	// only nav link with that accessible name (Work's entry is "Work Settings").
+	settingsLinks := 0
+	for _, g := range groups {
+		for _, item := range g.Items {
+			if item.Label == "Settings" {
+				settingsLinks++
+				if item.Href != "/settings" {
+					t.Errorf("Settings item href = %q, want /settings", item.Href)
+				}
+			}
 		}
+	}
+	if settingsLinks != 1 {
+		t.Errorf("%d nav links are named Settings, want exactly 1", settingsLinks)
 	}
 
 	// Backups is org_admin-only *and* belongs to the Project group now.
@@ -761,19 +767,6 @@ func TestSidebarGroupsProjectLayout(t *testing.T) {
 			t.Error("Usage must not be an ungrouped top-level entry")
 		}
 	}
-}
-
-// equalLabels compares two label rows element-wise.
-func equalLabels(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // --- Role helper units ---
