@@ -3175,6 +3175,22 @@
 <td>Create and update documents</td>
 </tr>
 <tr>
+<td><code>documents:delete</code></td>
+<td>Delete documents</td>
+</tr>
+<tr>
+<td><code>ingest:write</code></td>
+<td>Trigger document ingestion/parsing</td>
+</tr>
+<tr>
+<td><code>chunks:read</code></td>
+<td>Read document chunks</td>
+</tr>
+<tr>
+<td><code>chunks:write</code></td>
+<td>Create and update chunks</td>
+</tr>
+<tr>
 <td><code>graph:read</code></td>
 <td>Read graph objects</td>
 </tr>
@@ -3183,12 +3199,52 @@
 <td>Create and update graph objects</td>
 </tr>
 <tr>
+<td><code>graph:search:read</code></td>
+<td>Graph vector search</td>
+</tr>
+<tr>
 <td><code>search</code></td>
-<td>Run hybrid and semantic search</td>
+<td>Run hybrid and semantic search (MCP)</td>
+</tr>
+<tr>
+<td><code>search:read</code></td>
+<td>Unified REST search</td>
 </tr>
 <tr>
 <td><code>journal:read</code></td>
 <td>Read the project journal</td>
+</tr>
+<tr>
+<td><code>extraction:read</code></td>
+<td>View extraction jobs</td>
+</tr>
+<tr>
+<td><code>extraction:write</code></td>
+<td>Manage extraction jobs</td>
+</tr>
+<tr>
+<td><code>tasks:read</code></td>
+<td>Read tasks</td>
+</tr>
+<tr>
+<td><code>tasks:write</code></td>
+<td>Resolve and cancel tasks</td>
+</tr>
+<tr>
+<td><code>notifications:read</code></td>
+<td>Read notifications</td>
+</tr>
+<tr>
+<td><code>notifications:write</code></td>
+<td>Mark notifications as read</td>
+</tr>
+<tr>
+<td><code>user-activity:read</code></td>
+<td>View the activity log</td>
+</tr>
+<tr>
+<td><code>user-activity:write</code></td>
+<td>Write activity entries</td>
 </tr>
 <tr>
 <td><code>schema:read</code></td>
@@ -3219,10 +3275,10 @@
 <p>Assign only the scopes your integration needs. The full list, including
 branch, skill and admin scopes, is in
 <a href="../../developer-guide/security-scopes/">Security and Scopes</a>.</p>
-<p>The CLI also accepts two presets: <code>--scopes read</code> (documents, graph, search,
-journal, schema, agents and project metadata, read-only) and <code>--scopes write</code>
-(documents, graph, schema, agents and project writes). Combine them with
-<code>--scopes read,write</code>.</p>
+<p>The CLI also accepts two presets: <code>--scopes read</code> (the read-only set above) and
+<code>--scopes write</code> (documents, graph, schema, agents and project writes, plus the
+REST write scopes the retired <code>data:write</code> umbrella used to imply). Combine them
+with <code>--scopes read,write</code>.</p>
 <div class="admonition note">
 <p class="admonition-title"><code>data:read</code> and <code>data:write</code> are retired</p>
 <p>The coarse <code>data:read</code> / <code>data:write</code> umbrellas can no longer be requested
@@ -3232,10 +3288,8 @@ the change keep exactly the access they had; a token that still holds one
 cannot be re-scoped in the web UI, so create a replacement and revoke it (or
 update its scopes through the API, which accepts a set that drops the
 umbrella).</p>
-<p>A new token is also <strong>narrower</strong> than the umbrella it replaces: the reads
-<code>data:read</code> granted for chunks, the unified search endpoint, extraction and
-tasks are not in the mintable catalogue, so a token created now cannot call
-those REST endpoints. MCP tools are unaffected. See
+<p>Every fine-grained scope the umbrellas implied is mintable, so a replacement
+token can request the exact REST scopes it needs. See
 <a href="../../developer-guide/security-scopes/#umbrella-scopes">Security and Scopes</a>.</p>
 </div>
 <hr />

@@ -3383,7 +3383,7 @@
 
 
 <h1 id="security-scopes">Security Scopes<a class="headerlink" href="#security-scopes" title="Permanent link">&para;</a></h1>
-<p>Every API request is authorized by checking the scopes granted to the bearer token (user session token or API token). This page is the complete reference for all 38 permission scopes.</p>
+<p>Every API request is authorized by checking the scopes granted to the bearer token (user session token or API token). This page is the complete reference for the permission scopes.</p>
 <h2 id="scope-types">Scope types<a class="headerlink" href="#scope-types" title="Permanent link">&para;</a></h2>
 <p>There are two kinds of scopes:</p>
 <ul>
@@ -3740,20 +3740,14 @@ user-facing token. Request the fine-grained scopes instead; the CLI presets
 </tr>
 </tbody>
 </table>
-<div class="admonition warning">
-<p class="admonition-title">What a fine-grained replacement does not cover</p>
-<p>A token created now can only carry scopes from the mintable catalogue below.
-Seven of the reads <code>data:read</code> implied are <strong>not</strong> in it — <code>chunks:read</code>,
+<div class="admonition note">
+<p class="admonition-title">Every umbrella implication is mintable directly</p>
+<p>The fine-grained scopes <code>data:read</code> and <code>data:write</code> imply are all in the
+mintable catalogue below, so a token created after the retirement can reach
+the same REST surfaces by requesting them explicitly (<code>chunks:read</code>,
 <code>search:read</code>, <code>graph:search:read</code>, <code>extraction:read</code>, <code>tasks:read</code>,
-<code>user-activity:read</code>, <code>notifications:read</code> — so a new token cannot call the
-REST endpoints those scopes guard (<code>GET /api/chunks</code>, <code>POST
-/api/search/unified</code>, <code>GET /api/search/trace/:id</code>, extraction and task
-listings). Only a token minted before the retirement, which still holds the
-umbrella, can. Likewise <code>documents:delete</code>, <code>chunks:write</code>, <code>ingest:write</code>,
-<code>extraction:write</code>, <code>tasks:write</code>, <code>user-activity:write</code> and
-<code>notifications:write</code> are reachable only through <code>data:write</code>. The MCP tools
-are not affected: they are gated on <code>documents:read</code>, <code>search</code>, <code>graph:read</code>
-and <code>journal:read</code>, which the mintable catalogue does provide.</p>
+<code>user-activity:read</code>, <code>notifications:read</code>, and the matching writes). The
+<code>read</code> and <code>write</code> presets include them.</p>
 </div>
 <hr />
 <h2 id="api-token-scopes">API token scopes<a class="headerlink" href="#api-token-scopes" title="Permanent link">&para;</a></h2>
@@ -3775,6 +3769,22 @@ and <code>journal:read</code>, which the mintable catalogue does provide.</p>
 <td>Create and update documents</td>
 </tr>
 <tr>
+<td><code>documents:delete</code></td>
+<td>Delete documents</td>
+</tr>
+<tr>
+<td><code>ingest:write</code></td>
+<td>Trigger document ingestion/parsing</td>
+</tr>
+<tr>
+<td><code>chunks:read</code></td>
+<td>Read document chunks</td>
+</tr>
+<tr>
+<td><code>chunks:write</code></td>
+<td>Create and update document chunks</td>
+</tr>
+<tr>
 <td><code>graph:read</code></td>
 <td>Read graph objects</td>
 </tr>
@@ -3783,8 +3793,16 @@ and <code>journal:read</code>, which the mintable catalogue does provide.</p>
 <td>Create and update graph objects</td>
 </tr>
 <tr>
+<td><code>graph:search:read</code></td>
+<td>Graph-specific vector search</td>
+</tr>
+<tr>
 <td><code>search</code></td>
-<td>Run hybrid and semantic search</td>
+<td>Run hybrid and semantic search (MCP)</td>
+</tr>
+<tr>
+<td><code>search:read</code></td>
+<td>Unified REST search (vector + keyword)</td>
 </tr>
 <tr>
 <td><code>journal:read</code></td>
@@ -3793,6 +3811,38 @@ and <code>journal:read</code>, which the mintable catalogue does provide.</p>
 <tr>
 <td><code>journal:write</code></td>
 <td>Append to the project journal</td>
+</tr>
+<tr>
+<td><code>extraction:read</code></td>
+<td>View extraction jobs, logs and statistics</td>
+</tr>
+<tr>
+<td><code>extraction:write</code></td>
+<td>Create, cancel and retry extraction jobs</td>
+</tr>
+<tr>
+<td><code>tasks:read</code></td>
+<td>List and read tasks</td>
+</tr>
+<tr>
+<td><code>tasks:write</code></td>
+<td>Resolve and cancel tasks</td>
+</tr>
+<tr>
+<td><code>notifications:read</code></td>
+<td>List and read notifications</td>
+</tr>
+<tr>
+<td><code>notifications:write</code></td>
+<td>Mark notifications as read</td>
+</tr>
+<tr>
+<td><code>user-activity:read</code></td>
+<td>View the user activity log</td>
+</tr>
+<tr>
+<td><code>user-activity:write</code></td>
+<td>Write user activity entries</td>
 </tr>
 <tr>
 <td><code>schema:read</code></td>
@@ -3913,8 +3963,13 @@ and <code>journal:read</code>, which the mintable catalogue does provide.</p>
 </tr>
 <tr>
 <td>Extraction jobs</td>
-<td><code>extraction:read</code> (via <code>admin:read</code>)</td>
-<td><code>extraction:write</code> (via <code>admin:write</code>)</td>
+<td><code>extraction:read</code></td>
+<td><code>extraction:write</code></td>
+</tr>
+<tr>
+<td>Document chunks</td>
+<td><code>chunks:read</code></td>
+<td><code>chunks:write</code></td>
 </tr>
 <tr>
 <td>MCP server registry</td>
