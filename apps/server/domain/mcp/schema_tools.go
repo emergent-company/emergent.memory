@@ -161,7 +161,11 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 	// false; nothing read it, so deprecated schemas were listed regardless
 	// (#2377). Apply it to the count as well, so `total` describes the same set
 	// the page does — a count that disagrees with the rows is its own lie.
-	includeDeprecated, _ := args["include_deprecated"].(bool)
+	// A mistyped value is refused, matching REST and the resource (#24).
+	includeDeprecated, err := boolToolArg(args, "include_deprecated")
+	if err != nil {
+		return nil, err
+	}
 
 	var rows []struct {
 		ID          string `bun:"id"`
@@ -188,7 +192,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 
 	query = query.Order("updated_at DESC").Limit(limit).Offset(offset)
 
-	err := query.Scan(ctx, &rows)
+	err = query.Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("list schemas: %w", err)
 	}
@@ -465,7 +469,10 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("schema_id is required")
 	}
 
-	force, _ := args["force"].(bool)
+	force, err := boolToolArg(args, "force")
+	if err != nil {
+		return nil, err
+	}
 
 	if s.schemasSvc == nil {
 		return nil, fmt.Errorf("schemas service not available")
@@ -511,7 +518,10 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 		return nil, fmt.Errorf("schema_id is required")
 	}
 
-	active, _ := args["active"].(bool)
+	active, err := boolToolArg(args, "active")
+	if err != nil {
+		return nil, err
+	}
 
 	if s.schemasSvc == nil {
 		return nil, fmt.Errorf("schemas service not available")
@@ -1085,7 +1095,10 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 
 	scope := TypeScopeFromContext(ctx)
 
-	verbose, _ := args["verbose"].(bool)
+	verbose, err := boolToolArg(args, "verbose")
+	if err != nil {
+		return nil, err
+	}
 
 	type objectTypeRow struct {
 		TypeName      string         `bun:"type_name"`
@@ -1254,7 +1267,10 @@ func (s *Service) executeSchemaMigrateExecute(ctx context.Context, projectID str
 		return nil, fmt.Errorf("from_schema_id and to_schema_id are required")
 	}
 
-	force, _ := args["force"].(bool)
+	force, err := boolToolArg(args, "force")
+	if err != nil {
+		return nil, err
+	}
 	maxObjects := 0
 	if mo, ok := args["max_objects"].(float64); ok {
 		maxObjects = int(mo)
@@ -1282,7 +1298,10 @@ func (s *Service) executeSchemaMigrateRollback(ctx context.Context, projectID st
 	if toVersion == "" {
 		return nil, fmt.Errorf("to_version is required")
 	}
-	restoreTypeRegistry, _ := args["restore_type_registry"].(bool)
+	restoreTypeRegistry, err := boolToolArg(args, "restore_type_registry")
+	if err != nil {
+		return nil, err
+	}
 
 	result, err := s.schemasSvc.RollbackSchemaMigration(ctx, projectID, &schemas.SchemaMigrationRollbackRequest{
 		ToVersion:           toVersion,

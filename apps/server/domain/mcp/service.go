@@ -2330,6 +2330,12 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		}
 	}
 
+	// Refuse a mistyped boolean for every tool that declares one, before the
+	// handler silently reads it as false (#24).
+	if err := validateBooleanArgs(toolDef, args); err != nil {
+		return nil, err
+	}
+
 	// Intra-run tool-result cache (issue #1192). Authority is enforced above on
 	// every call, including cache hits; the cache wraps only the tool-specific
 	// dispatch below. Returns uncached when the run context carries no cache

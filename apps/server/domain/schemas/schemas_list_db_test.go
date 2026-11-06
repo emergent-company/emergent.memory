@@ -434,3 +434,76 @@ func TestListSchemaPacksDeprecatedFilter(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "include_deprecated")
 	})
 }
+
+// TestGetAvailablePacksExcludesDeprecated covers #24.1: the install picker
+// (schema-list-available) must not offer retired packs, while an already
+// installed retired pack stays visible through schema-list-installed so an
+// existing project does not lose sight of it.
+func TestGetAvailablePacksExcludesDeprecated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database integration test in short mode (#24.1)")
+	}
+	ctx := context.Background()
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "schemasavailable")
+	defer testDB.Close()
+	db := testDB.GetDB()
+
+	repo := schemas.NewRepository(db, slog.Default())
+	// project_schemas has an FK to kb.projects, so the fixture must create the
+	// project rather than invent a UUID.
+	orgID := uuid.NewString()
+	projectID := uuid.NewString()
+	_, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "test-org-"+orgID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "test-project-"+projectID)
+	require.NoError(t, err)
+
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	desc := func(s string) *string { return &s }
+
+	liveID := insertCatalogSchema(t, ctx, db, "live-pack", desc("installable"), &projectID, base)
+	retiredID := insertCatalogSchema(t, ctx, db, "retired-pack", desc("retired"), &projectID, timePtrOffset(t, base, -10))
+	markSchemaDeprecated(t, ctx, db, retiredID)
+
+	t.Run("available excludes a deprecated, uninstalled pack", func(t *testing.T) {
+		available, err := repo.GetAvailablePacks(ctx, projectID)
+		require.NoError(t, err)
+		require.Len(t, available, 1)
+		assert.Equal(t, liveID, available[0].ID)
+	})
+
+	t.Run("installed still shows the deprecated pack", func(t *testing.T) {
+		now := time.Now().UTC()
+		_, err := db.NewInsert().Model(&schemas.ProjectMemorySchema{
+			ID:          uuid.NewString(),
+			ProjectID:   projectID,
+			SchemaID:    retiredID,
+			Active:      true,
+			InstalledAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}).Exec(ctx)
+		require.NoError(t, err, "install deprecated pack")
+
+		installed, err := repo.GetInstalledPacks(ctx, projectID)
+		require.NoError(t, err)
+		require.Len(t, installed, 1)
+		assert.Equal(t, retiredID, installed[0].SchemaID)
+		assert.Equal(t, "retired-pack", installed[0].Name)
+
+		// The installed retired pack is not a candidate, and installing it did
+		// not resurrect it: only the live pack remains in the picker.
+		available, err := repo.GetAvailablePacks(ctx, projectID)
+		require.NoError(t, err)
+		require.Len(t, available, 1)
+		assert.Equal(t, liveID, available[0].ID)
+	})
+
+	t.Run("catalog can still audit the deprecated row", func(t *testing.T) {
+		packs, total, err := repo.ListSchemaPacks(ctx, projectID, "", 20, 0, true)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		require.Len(t, packs, 2)
+	})
+}

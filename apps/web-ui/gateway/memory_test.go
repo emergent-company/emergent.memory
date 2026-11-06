@@ -71,6 +71,11 @@ func TestListAllSchemas(t *testing.T) {
 	if !strings.Contains(sawQuery, "limit=100") {
 		t.Errorf("query %q missing limit=100", sawQuery)
 	}
+	// This join is metadata, not a picker: a deprecated-but-assigned pack must
+	// still be resolvable, so the query has to ask for deprecated rows (#24).
+	if !strings.Contains(sawQuery, "include_deprecated=true") {
+		t.Errorf("query %q missing include_deprecated=true", sawQuery)
+	}
 	if len(out) != 2 {
 		t.Fatalf("got %d schemas, want 2: %+v", len(out), out)
 	}
