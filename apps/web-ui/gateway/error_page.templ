@@ -48,7 +48,6 @@ templ errorPage(data errorPageData) {
 			<link rel="manifest" href="/assets/manifest.webmanifest"/>
 			@appleSplashLinks()
 			<title>{ pageTitle(data.Heading) }</title>
-			@behaviors.Tag()
 			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
 			@foucBackgroundGuard()
 			<style>
@@ -130,7 +129,12 @@ templ errorPage(data errorPageData) {
 				margin-top: 1.75rem;
 			}
 			</style>
+			<!-- The stylesheet precedes every head script here too: a
+			     parser-blocking script ahead of it delays the styled first paint. -->
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- go-daisy behaviour-init runtime (window.gdOnce/gdBehaviour/
+			     gdRescan) — after the stylesheet, still before any body script. -->
+			@behaviors.Tag()
 		</head>
 		<body class="bg-base-200">
 			<div class="error-stage">

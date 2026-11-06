@@ -36,13 +36,6 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 			<link rel="manifest" href="/assets/manifest.webmanifest"/>
 			@appleSplashLinks()
 			<title>{ pageTitle("Sign in") }</title>
-			@sentryHead(sentryHeadOpts{
-				DSN:                     sentryDSN,
-				Environment:             sentryEnvironment,
-				TracesSampleRate:        sentryTracesSampleRate,
-				ReplaySessionSampleRate: sentryReplaySessionSampleRate,
-				ReplayOnErrorSampleRate: sentryReplayOnErrorSampleRate,
-			})
 			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
 			@foucBackgroundGuard()
 			<style>
@@ -116,6 +109,16 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 			}
 			</style>
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- Sentry sits after the stylesheet, as in the app shell: the SDK is
+			     deferred today (see sentry_head.templ), so position blocks
+			     nothing — this keeps it behind app.css even if that regresses. -->
+			@sentryHead(sentryHeadOpts{
+				DSN:                     sentryDSN,
+				Environment:             sentryEnvironment,
+				TracesSampleRate:        sentryTracesSampleRate,
+				ReplaySessionSampleRate: sentryReplaySessionSampleRate,
+				ReplayOnErrorSampleRate: sentryReplayOnErrorSampleRate,
+			})
 		</head>
 		<body class="bg-base-200">
 			<div class="login-stage">

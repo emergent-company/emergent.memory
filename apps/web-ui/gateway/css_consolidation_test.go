@@ -255,6 +255,141 @@ func TestStackedMobileTables(t *testing.T) {
 	}
 }
 
+// stripHTMLComments blanks out <!-- … --> spans so a comment that merely
+// mentions <head> (several of these templates carry one) cannot make the
+// in-head scan below pass or fail by mistake. Spans become spaces of the same
+// length so offsets in error messages stay readable.
+func stripHTMLComments(src string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(src, "<!--")
+		if i < 0 {
+			b.WriteString(src)
+			return b.String()
+		}
+		b.WriteString(src[:i])
+		rest := src[i:]
+		j := strings.Index(rest, "-->")
+		if j < 0 {
+			return b.String()
+		}
+		b.WriteString(strings.Repeat(" ", j+len("-->")))
+		src = rest[j+len("-->"):]
+	}
+}
+
+// lastOpenHead returns the offset of the last real <head …> tag in s, or -1.
+// It skips lookalikes such as <header>, which the body of a gallery page uses.
+func lastOpenHead(s string) int {
+	last := -1
+	for off := 0; ; {
+		i := strings.Index(s[off:], "<head")
+		if i < 0 {
+			return last
+		}
+		at := off + i
+		next := at + len("<head")
+		if next >= len(s) || s[next] == '>' || s[next] == ' ' || s[next] == '\t' || s[next] == '\n' || s[next] == '\r' {
+			last = at
+		}
+		off = next
+	}
+}
+
+// TestPageHeadStylesheetPrecedesHeadScripts pins the ordering half of the
+// unstyled-flash fix: a render-blocking stylesheet only protects the first
+// paint if the parser reaches it before it stops to execute a script, so the
+// stylesheet link must appear ahead of every head script — the go-daisy
+// behaviour runtime, and the Sentry block if it ever goes back to a synchronous
+// tag. Rendered with a DSN configured so the Sentry branch is live; the
+// unconfigured shell emits no third-party script and would prove less.
+func TestPageHeadStylesheetPrecedesHeadScripts(t *testing.T) {
+	html := renderPageShellWithSentry(t, sentryTestOpts())
+
+	headEnd := strings.Index(html, "</head>")
+	if headEnd < 0 {
+		t.Fatal("shell has no </head>")
+	}
+	head := html[:headEnd]
+	css := strings.Index(head, "/assets/css/app.css")
+	if css < 0 {
+		t.Fatal("the app stylesheet is not in <head>")
+	}
+	firstScript := strings.Index(head, "<script")
+	if firstScript < 0 {
+		t.Fatal("no <script> in <head> — the ordering check would pass vacuously")
+	}
+	if firstScript < css {
+		t.Errorf("a <script> at head offset %d precedes the stylesheet at %d (%q…) — a script ahead of the CSS can delay the styled first paint", firstScript, css, head[firstScript:css])
+	}
+	if !strings.Contains(head[css:], "<script") {
+		t.Error("no <script> after the stylesheet in <head> — the ordering check would pass vacuously")
+	}
+}
+
+// TestEveryFullDocumentTemplateLoadsStylesheetInHead generalises
+// TestPageHeadStylesheetIsRenderBlocking from the app shell to every
+// full-document template, and to the ordering inside their <head>. The unstyled
+// flash was one template emitting the compiled stylesheet at the end of <body>,
+// where the first paint can win the race; the shell had a render test, the
+// login, error, share and gallery documents had none.
+//
+// Source-level on purpose: those pages need request and server state a unit
+// test cannot build, and a source scan also covers a *new* full-document
+// template. One limit is accepted and noted so nobody trusts it further than it
+// goes: a stylesheet emitted by a shared component call is invisible here. For
+// ordering it checks the emitters this tree actually uses — a literal <script>
+// plus @behaviors.Tag() and @sentryHead(); a new component that emits a head
+// script has to be added to that list to be caught.
+func TestEveryFullDocumentTemplateLoadsStylesheetInHead(t *testing.T) {
+	const ref = `webui.AssetPath("/css/app.css")`
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read gateway dir: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".templ") {
+			continue
+		}
+		b, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		src := stripHTMLComments(string(b))
+		if !strings.Contains(src, ref) {
+			continue
+		}
+		checked++
+		for off := 0; ; {
+			i := strings.Index(src[off:], ref)
+			if i < 0 {
+				break
+			}
+			at := off + i
+			off = at + len(ref)
+			open := lastOpenHead(src[:at])
+			closed := strings.LastIndex(src[:at], "</head")
+			if open < 0 || open < closed {
+				t.Errorf("%s: the app stylesheet (offset %d) is emitted outside <head> — the first paint can beat it and the page flashes unstyled", e.Name(), at)
+				continue
+			}
+			// Script emitters that can appear inside a head: a literal tag, and
+			// the two components that emit one (go-daisy's init runtime and the
+			// Sentry block). Anything ahead of the stylesheet delays its
+			// discovery — none of them has a reason to run first.
+			for _, emitter := range []string{"<script", "@behaviors.Tag()", "@sentryHead("} {
+				if strings.Contains(src[open:at], emitter) {
+					t.Errorf("%s: %q precedes the app stylesheet inside <head> — a script ahead of the CSS can delay the styled first paint", e.Name(), emitter)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no template emitting the app stylesheet — the check is not looking at the right files")
+	}
+}
+
 // renderPageShellWithSentry renders the full app shell with a configured Sentry
 // head, so tests can assert on the SDK block's load strategy (issue #209).
 func renderPageShellWithSentry(t *testing.T, opts sentryHeadOpts) string {
