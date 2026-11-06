@@ -31619,9 +31619,6 @@ const docTemplate = `{
         },
         "domain_chat.StreamRequest": {
             "type": "object",
-            "required": [
-                "message"
-            ],
             "properties": {
                 "agentDefinitionId": {
                     "type": "string"
@@ -31637,6 +31634,26 @@ const docTemplate = `{
                     "maxLength": 100000
                 },
                 "namespace": {
+                    "type": "string"
+                },
+                "surfaceAction": {
+                    "description": "SurfaceAction is an A2UI surface action the user took. The server frames it\nas the user message the agent receives\n(agents.A2UIActionMessage), so no client invents that wording; Message may\nthen be empty, or carry free-form text typed alongside the action.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_chat.SurfaceAction"
+                        }
+                    ]
+                }
+            }
+        },
+        "domain_chat.SurfaceAction": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "The clicked component's payload: ` + "`" + `{componentId, response}` + "`" + ` for the cards\nthe shared renderer builds. Typed as an object, not free JSON, so the\npublished schema says what clients actually send.",
+                    "type": "object"
+                },
+                "surfaceId": {
                     "type": "string"
                 }
             }

@@ -699,12 +699,52 @@ func validateAddMessageRequest(req *AddMessageRequest) error {
 	return nil
 }
 
+// streamMessage is the user turn the agent receives: the typed text, or the
+// surface action framed for it.
+//
+// A surface action is a message, not a protocol of its own — the A2A transport
+// already frames it this way — so both transports share one wording and an
+// agent cannot tell which client delivered the click.
+func streamMessage(req *StreamRequest) string {
+	message := strings.TrimSpace(req.Message)
+	if req.SurfaceAction == nil {
+		return message
+	}
+	return agents.A2UIActionMessage(agents.A2UIAction{
+		SurfaceID: strings.TrimSpace(req.SurfaceAction.SurfaceID),
+		Action:    req.SurfaceAction.Action,
+	}, message)
+}
+
 func validateStreamRequest(req *StreamRequest) error {
-	if strings.TrimSpace(req.Message) == "" {
+	hasSurfaceAction := req.SurfaceAction != nil
+	if strings.TrimSpace(req.Message) == "" && !hasSurfaceAction {
 		return apperror.ErrBadRequest.WithMessage("message is required")
 	}
 	if len(req.Message) > 100000 {
 		return apperror.ErrBadRequest.WithMessage("message must be at most 100000 characters")
+	}
+	if hasSurfaceAction {
+		surfaceID := strings.TrimSpace(req.SurfaceAction.SurfaceID)
+		if surfaceID == "" {
+			return apperror.ErrBadRequest.WithMessage("surfaceAction.surfaceId is required")
+		}
+		// A surface belongs to the conversation that rendered it: without one the
+		// turn would open a new conversation titled by the framed action text.
+		if req.ConversationID == nil || strings.TrimSpace(*req.ConversationID) == "" {
+			return apperror.ErrBadRequest.WithMessage("surfaceAction requires conversationId")
+		}
+		// The agent reads the action as JSON; an absent or empty payload would be
+		// framed as `null` and leave it nothing to act on.
+		action, ok := req.SurfaceAction.Action.(map[string]any)
+		if !ok || len(action) == 0 {
+			return apperror.ErrBadRequest.WithMessage("surfaceAction.action must be a non-empty object")
+		}
+		// The framed turn is what the agent reads and the conversation records, so
+		// it is bounded by the same message limit as typed text.
+		if len(streamMessage(req)) > 100000 {
+			return apperror.ErrBadRequest.WithMessage("surface action is too large to send as a message")
+		}
 	}
 	if req.ConversationID != nil {
 		if _, err := uuid.Parse(*req.ConversationID); err != nil {
@@ -833,7 +873,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	)
 	defer span.End()
 
-	message := strings.TrimSpace(req.Message)
+	message := streamMessage(&req)
 
 	// If agentDefinitionId is provided, validate it exists. On a new
 	// conversation it is bound at creation; on an existing conversation it is

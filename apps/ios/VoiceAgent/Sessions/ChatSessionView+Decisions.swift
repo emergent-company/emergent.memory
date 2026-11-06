@@ -116,11 +116,31 @@ extension ChatSessionView {
     }
 
     func submitSurfaceAction(_ surface: ChatUISurface, _ action: ChatUIAction) {
-        // A generic A2UI surface action has no HTTP transport yet (product #66),
-        // so a text session renders surfaces read-only — the same thing the web
-        // chat can do today. Voice keeps the worker round-trip. Approval- and
-        // question-shaped cards are answered through the routes above.
-        guard activeSession.mode == .voice else { return }
+        if activeSession.mode == .text {
+            // The action rides the chat turn: the server frames the message the
+            // agent receives, so a click never becomes client-invented prose.
+            // A dropped send (a turn is already streaming) leaves the card
+            // unsubmitted rather than marking a decision that never left.
+            let turn = transport.send(
+                "",
+                surfaceAction: ChatSurfaceAction(
+                    surfaceID: surface.id,
+                    componentID: action.componentId,
+                    response: action.response
+                ),
+                conversationID: openConversationID,
+                agentName: route.agentName,
+                transcript: transcript,
+                activity: activity
+            )
+            guard turn != nil else { return }
+            activity.submitSurfaceAction(
+                surfaceId: surface.id,
+                componentId: action.componentId,
+                response: action.response
+            )
+            return
+        }
         activity.submitSurfaceAction(
             surfaceId: surface.id,
             componentId: action.componentId,
