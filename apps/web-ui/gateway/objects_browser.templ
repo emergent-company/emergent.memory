@@ -42,7 +42,7 @@ templ ObjectsPage(data objectsPageData) {
 				@objectsBrowserHeader(data)
 			}
 			if data.LoadErr != nil {
-				@pageError("Failed to load objects", data.LoadErr)
+				@pageErrorNotice("Failed to load objects", data.LoadErr)
 			} else {
 				if data.Query == "" && data.AgentID == "" {
 					@objectsBrowserStats(data)

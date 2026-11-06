@@ -24,7 +24,7 @@ templ DocumentsPage(data documentPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@documentsHeader(data.LoadErr == nil)
 		if data.LoadErr != nil {
-			@pageError("Failed to load documents", data.LoadErr)
+			@pageErrorNotice("Failed to load documents", data.LoadErr)
 		} else {
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			@documentsProblemsPanel(data)

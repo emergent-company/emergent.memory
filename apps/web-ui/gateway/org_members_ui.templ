@@ -32,7 +32,7 @@ templ OrgsPage(data orgsPageData) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("Organizations unavailable", data.LoadErr)
+			@pageErrorNotice("Organizations unavailable", data.LoadErr)
 		} else {
 			if len(data.Pending) > 0 {
 				@ui.Section("Pending invitations", ui.SectionProps{
@@ -127,6 +127,12 @@ templ orgProjectRow(p ProjectAccessDto) {
 
 // roleBadge renders the shared role badge (label + colour derived from the
 // role enum).
+// memberRoleMeta is the member's role chip, under the description rather than in
+// the action slot.
+templ memberRoleMeta(m ProjectMemberDto) {
+	@roleBadge(m.Role)
+}
+
 templ roleBadge(role string) {
 	@components.StatusBadge(roleLabel(role), roleIntent(role), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS})
 }
@@ -583,9 +589,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 			})
 		} else {
 			{{ m := *data.Member }}
-			@detailHeader(memberDetailCrumbs(base, memberDisplayName(m)), "", memberDisplayName(m), m.Email) {
-				@roleBadge(m.Role)
-			}
+			@detailHeader(memberDetailCrumbs(base, memberDisplayName(m)), "", memberDisplayName(m), m.Email, detailHeaderOpts{Meta: memberRoleMeta(m)})
 			@flashToasts("", data.FlashErr)
 			@ui.Section("Member", ui.SectionProps{
 				Margin:    "mb-6",
@@ -742,7 +746,7 @@ templ profileRailContent(active string) {
 templ ProfilePage(data profilePageData) {
 	@profilePageFrame("profile", "Profile", "Your name and contact details.", data.FlashMsg, data.FlashErr) {
 		if data.LoadErr != nil {
-			@pageError("Profile unavailable", data.LoadErr)
+			@pageErrorNotice("Profile unavailable", data.LoadErr)
 		} else {
 			@profileRailContent("profile") {
 				if data.Profile != nil {
@@ -762,7 +766,7 @@ templ ProfilePage(data profilePageData) {
 templ InvitationsPage(data invitationsPageData) {
 	@profilePageFrame("invitations", "Invitations", "Invitations to join organizations and projects.", data.FlashMsg, data.FlashErr) {
 		if data.LoadErr != nil {
-			@pageError("Invitations unavailable", data.LoadErr)
+			@pageErrorNotice("Invitations unavailable", data.LoadErr)
 		} else {
 			@profileRailContent("invitations") {
 				@ui.Section("Pending invitations", ui.SectionProps{

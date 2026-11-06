@@ -19,7 +19,7 @@ templ SessionsPage(agents []AgentDefinitionSummary, convs []Conversation, loadEr
 	@layout.Container(layout.ContainerLG, nil) {
 		@sessionsHeader()
 		if loadErr != nil {
-			@pageError("Failed to load sessions", loadErr)
+			@pageErrorNotice("Failed to load sessions", loadErr)
 		} else if len(convs) == 0 {
 			@sessionsEmpty()
 		} else {

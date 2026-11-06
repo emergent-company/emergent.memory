@@ -24,7 +24,7 @@ templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error,
 		@skillsHeader(assistantAgent)
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
-			@pageError("Failed to load skills", loadErr)
+			@pageErrorNotice("Failed to load skills", loadErr)
 		} else {
 			if len(skills) == 0 {
 				@skillsEmpty()

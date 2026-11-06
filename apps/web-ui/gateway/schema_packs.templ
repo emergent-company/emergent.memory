@@ -34,7 +34,7 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 		}
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if loadErr != nil {
-				@pageError("Failed to load schema packs", loadErr)
+				@pageErrorNotice("Failed to load schema packs", loadErr)
 			} else if len(packs) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--library",
@@ -104,7 +104,7 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 		}
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if loadErr != nil {
-				@pageError("Schema pack unavailable", loadErr)
+				@pageErrorNotice("Schema pack unavailable", loadErr)
 			} else if pack == nil {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--circle-help",

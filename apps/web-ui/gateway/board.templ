@@ -15,32 +15,23 @@ import (
 // readout (when any reaction agent is unhealthy), and the status columns.
 templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, allowances boardAllowances, statusMap boardStatusMap, loadErr error) {
 	@layout.Container(layout.ContainerFull, nil) {
-		@boardHeaderRegion()
+		<div id="board-header" data-testid="board-header">
+			@boardHeader()
+		</div>
 		if loadErr != nil {
 			@pageError("Board unavailable", loadErr)
 		} else {
 			@boardHealthRegion(agents)
 			<!-- Live refresh: htmx's hx-sse extension (loaded by the page shell,
 			     after htmx) holds /board/stream open and the server pushes
-			     rendered <hx-partial> frames for #board, #board-header and
-			     #board-health whenever a work item or agent run changes — so
+			     rendered <hx-partial> frames for #board and #board-health
+			     whenever a work item or agent run changes — so
 			     agent-driven transitions appear without a reload. -->
 			<div id="board-live" hx-sse:connect="/board/stream" aria-hidden="true"></div>
 			@BoardColumns(items, statuses, allowances, statusMap, "")
 		}
 		<div id="board-drawer" data-testid="board-drawer"></div>
 	}
-}
-
-// boardHeaderRegion wraps the page heading in a stable swap target so a live
-// frame can refresh the header without re-rendering the page. The wrapper is
-// inside the fragment (outerMorph on #board-header), so the header stays one
-// node and focus/scroll elsewhere is untouched. The item count is not part of
-// it: totals belong to the lanes, which each carry their own count.
-templ boardHeaderRegion() {
-	<div id="board-header" data-testid="board-header">
-		@boardHeader()
-	</div>
 }
 
 // boardHealthRegion wraps the circuit-breaker readout in a stable swap target.

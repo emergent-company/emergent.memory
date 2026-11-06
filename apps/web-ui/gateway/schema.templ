@@ -538,10 +538,15 @@ templ SchemaObjectTypePage(view *SchemaObjectTypeView, loadErr error) {
 	}
 }
 
+// schemaObjectTypeHeaderMeta is the type's identity chip row: kind, icon and
+// colour. It renders under the description, never in the action slot.
+templ schemaObjectTypeHeaderMeta(detail *ObjectTypeDetail, icon string, color string) {
+	@typeNameChip(detail.Name, ui.BadgeGhost, icon, color)
+}
+
 templ schemaObjectTypeHeader(detail *ObjectTypeDetail, icon string, color string) {
-	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(detail))), "", objectTypeLabel(detail), "", detailHeaderOpts{Margin: "mb-4"}) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(detail))), "", objectTypeLabel(detail), "", detailHeaderOpts{Margin: "mb-4", Meta: schemaObjectTypeHeaderMeta(detail, icon, color)}) {
 		<div class="flex flex-wrap items-center gap-2">
-			@typeNameChip(detail.Name, ui.BadgeGhost, icon, color)
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/schema/object-types/" + url.PathEscape(detail.Name) + "/edit",

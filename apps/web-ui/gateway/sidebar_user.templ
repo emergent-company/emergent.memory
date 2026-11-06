@@ -19,8 +19,9 @@ import (
 // after tapping a link on small screens; keep the active nav item in sync
 // across htmx navigations). It is idempotent via window._sidebarInit.
 //
-// providersMissing surfaces a warning indicator on the "Settings" entry
-// (/settings) when the project has no LLM provider configured yet.
+// providersMissing surfaces a warning indicator on the Settings hub entry
+// (see sidebarSettingsHref: "/settings" under any link base) when the project
+// has no LLM provider configured yet.
 templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 	<div id="_layout-sidebar" class="flex flex-col bg-base-100">
 		<!-- Header: logo -->
@@ -35,7 +36,7 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 						<p class={ "menu-label px-2.5 pb-1.5", templ.KV("pt-5", i > 0), templ.KV("pt-0", i == 0) }>{ group.Label }</p>
 					}
 				for _, item := range group.Items {
-					{{ if providersMissing && item.Href == "/settings" { item.Warn = sidebarProviderWarning() } }}
+					{{ if providersMissing && sidebarSettingsHref(item.Href) { item.Warn = sidebarProviderWarning() } }}
 					@layout.SidebarNavItem(item)
 				}
 				}

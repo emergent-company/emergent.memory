@@ -25,7 +25,7 @@ templ EmbeddingsPage(data embeddingPageData) {
 			@embeddingsModelWarning()
 		}
 		if data.ProgressErr != nil {
-			@pageError("Failed to load embedding statistics", data.ProgressErr)
+			@pageErrorNotice("Failed to load embedding statistics", data.ProgressErr)
 		} else if data.Empty {
 			if data.coverageComplete() {
 				@embeddingsComplete(data.Coverage)

@@ -246,14 +246,31 @@ templ memoryLogo() {
 	</div>
 }
 
-// pageError is the shared fetch-failure state. It renders the page's heading in
-// its own right — an error state replaces the header, it does not sit under one
-// — so the title carries the same scale as pageHead's h1 and the two never read
-// as different page sizes.
+// pageError is the shared fetch-failure state for a page whose error state *is*
+// the page: nothing else renders a header, so the heading is the page's own h1
+// and carries the header's title scale.
+//
+// A page that already rendered its header (many detail pages keep the header
+// and swap only the body) uses pageErrorNotice instead, or the page would carry
+// two <h1>s.
 templ pageError(heading string, err error) {
 	<div class="mb-4">
 		<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ heading }</h1>
 	</div>
+	@pageErrorAlert(err)
+}
+
+// pageErrorNotice is the fetch-failure state under an existing header: a section
+// label plus the alert, never a second h1.
+templ pageErrorNotice(heading string, err error) {
+	<div class="mb-4">
+		<h2 class="text-sm font-semibold tracking-tight">{ heading }</h2>
+	</div>
+	@pageErrorAlert(err)
+}
+
+// pageErrorAlert is the shared error alert both states render.
+templ pageErrorAlert(err error) {
 	@ui.Alert(ui.AlertProps{
 		Type:    ui.AlertError,
 		Style:   ui.AlertStyleOutline,
@@ -273,7 +290,7 @@ templ RootUnavailablePage(err error) {
 		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
 			Your data is safe — Memory is temporarily unavailable and will retry automatically.
 		}
-		@pageError("Service temporarily unavailable", err)
+		@pageErrorNotice("Service temporarily unavailable", err)
 	}
 }
 
@@ -297,7 +314,7 @@ templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel s
 		@agentsHeader()
 		@flashToasts(flashMsg, nil)
 		if loadErr != nil {
-			@pageError("Agents unavailable", loadErr)
+			@pageErrorNotice("Agents unavailable", loadErr)
 		} else if len(agents) == 0 {
 			@agentsEmpty()
 		} else {
@@ -671,10 +688,14 @@ var sectionGroup = sectionGroups()
 // groupLandings builds navGroupHref from sidebarGroups: a group's landing page
 // is its first item. isOrgAdmin is true so admin-gated entries (Backups) still
 // resolve to their group in headers a non-admin never sees.
+//
+// The sidebar's first group has no label — those are the ungrouped top-level
+// entries (Approvals, Chat, Search, Sessions) — and is skipped: ungrouped is
+// the absence of a group, not a group with an empty name.
 func groupLandings() map[string]string {
 	out := map[string]string{}
 	for _, g := range sidebarGroups("", true) {
-		if len(g.Items) == 0 {
+		if g.Label == "" || len(g.Items) == 0 {
 			continue
 		}
 		out[g.Label] = g.Items[0].Href
@@ -683,10 +704,15 @@ func groupLandings() map[string]string {
 }
 
 // sectionGroups builds sectionGroup from sidebarGroups: each item is a section
-// owned by the group it is listed under.
+// owned by the group it is listed under. Ungrouped entries are skipped for the
+// same reason: a section with no group is ungrouped, and mapping it to "" would
+// add a key that can never resolve.
 func sectionGroups() map[string]string {
 	out := map[string]string{}
 	for _, g := range sidebarGroups("", true) {
+		if g.Label == "" {
+			continue
+		}
 		for _, it := range g.Items {
 			out[it.Label] = g.Label
 		}

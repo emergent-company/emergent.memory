@@ -378,7 +378,7 @@ templ APITokenEditPage(data apiTokenEditPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
 			@detailHeader(crumbs, "", "Edit scopes", "", detailHeaderOpts{Margin: "mb-6"}) {}
-			@pageError("Token unavailable", data.LoadErr)
+			@pageErrorNotice("Token unavailable", data.LoadErr)
 		} else if data.NotFound || data.Token == nil {
 			@detailHeader(crumbs, "", "Edit scopes", "", detailHeaderOpts{Margin: "mb-6"}) {}
 			@ui.EmptyState(ui.EmptyStateProps{
@@ -403,7 +403,7 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 		if data.LoadErr != nil {
 			@pageHeader("", "Edit scopes", "") {}
 			@flashToasts("", data.FlashErr)
-			@pageError("Token unavailable", data.LoadErr)
+			@pageErrorNotice("Token unavailable", data.LoadErr)
 		} else if data.NotFound || data.Token == nil {
 			@pageHeader("", "Edit scopes", "") {}
 			@flashToasts("", data.FlashErr)

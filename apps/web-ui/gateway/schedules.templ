@@ -25,7 +25,7 @@ templ SchedulesPage(schedules []ScheduledAgent, defs []AgentDefinitionSummary, l
 		@schedulesHeader()
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
-			@pageError("Failed to load schedules", loadErr)
+			@pageErrorNotice("Failed to load schedules", loadErr)
 		} else if len(schedules) == 0 {
 			@schedulesEmpty()
 		} else {

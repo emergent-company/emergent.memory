@@ -86,7 +86,7 @@ templ ProjectSettingsPage(data projectSettingsData) {
 		@projectSettingsHeader()
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("Project settings unavailable", data.LoadErr)
+			@pageErrorNotice("Project settings unavailable", data.LoadErr)
 		} else {
 			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
 				@projectInfoPanel(data.Project)
@@ -210,7 +210,7 @@ templ BudgetSettingsPage(data budgetSettingsPageData) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("Budget settings unavailable", data.LoadErr)
+			@pageErrorNotice("Budget settings unavailable", data.LoadErr)
 		} else {
 			@layout.Rail(settingsSubNav("budget", data.ProvidersMissing), nil) {
 				@budgetPanel(data.Project)

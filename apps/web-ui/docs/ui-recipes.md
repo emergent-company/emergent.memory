@@ -61,7 +61,7 @@ action) → a desktop
 `components.TableCard` table and a mobile list, with an empty state and
 `pageError` on load failure. Follow `AgentsPage`."
 
-**Recipe** (`AgentsPage`, `ui.templ:249`):
+**Recipe** (`AgentsPage`, `ui.templ:312`):
 
 ```go
 templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel string, loadErr error) {
@@ -122,9 +122,9 @@ that also has a text field, `submitFilterFormAttrs` for a query form). Never wir
 a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
 page.
 
-**Source:** `ui.templ:249` (`AgentsPage`), `ui.templ:913` (`pageHeader`),
-`ui.templ:253` (`pageError`), `components/table.templ:10`,
-`components/list.templ:10`, `ui.templ:385` (`agentsTable`),
+**Source:** `ui.templ:312` (`AgentsPage`), `ui.templ:939` (`pageHeader`),
+`ui.templ:256` (`pageError`), `components/table.templ:10`,
+`components/list.templ:10`, `ui.templ:445` (`agentsTable`),
 `gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
 `documentsResults`, `documentsResultsFragment`).
 
@@ -172,7 +172,7 @@ rather than the path to it (`KeepTrailLinks`, e.g. a run opened from its
 schedule), every crumb stays a link and nothing is marked active — the `h1`
 names the page.
 
-**Source:** `ui.templ:776` (`pageHead`), `ui.templ:958` (`detailHeader`),
+**Source:** `ui.templ:802` (`pageHead`), `ui.templ:984` (`detailHeader`),
 `components/nav.templ:10-53`, `schedules.templ:197,212`.
 
 ---
@@ -240,7 +240,7 @@ the component.
 falls back to `EmptyDash` unless `NoEmptyDash`.
 
 **Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:13`,
-`ui.templ:326` (`statRow`), `ui.templ:841` (`cardList`).
+`ui.templ:386` (`statRow`), `ui.templ:1088` (`cardList`).
 
 ---
 
@@ -368,7 +368,7 @@ flag `?updated=1`/`?created=1`/`?deleted=1`; errors ride `?err=`.
 
 **Source:** `schedules.templ:255` (edit), `schedules.templ:386` (create),
 `components/form.templ:37` (`SaveChangesButton`), `ui.go:166,181,188`
-(`flashToast`/`redirectWithError`/`flashError`), `ui.templ:1058` (`flashToasts`),
+(`flashToast`/`redirectWithError`/`flashError`), `ui.templ:1337` (`flashToasts`),
 `schedules.go:159`.
 
 ---
@@ -383,7 +383,7 @@ flag `?updated=1`/`?created=1`/`?deleted=1`; errors ride `?err=`.
 from a `data-action` button; use `components.DialogAutoOpen()` when the dialog
 must re-open after an htmx swap."
 
-**Recipe** (`agentFormDialog`, `ui.templ:498`, opened at `ui.templ:264`):
+**Recipe** (`agentFormDialog`, `ui.templ:549`, opened at `ui.templ:329`):
 
 ```go
 templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, defaultModel string) {
@@ -409,7 +409,7 @@ and after every htmx swap.
 **Contract:** dialog id stable and passed literally to `openDialog`; title `<h3>`
 id; form field ids; auto-open only via `data-dialog-autoopen`.
 
-**Source:** `ui.templ:498` (dialog), `ui.templ:264` (render),
+**Source:** `ui.templ:549` (dialog), `ui.templ:329` (render),
 `components/dialog.templ:9`, `webui/static/js/app.js:180,390,644,656,666`.
 
 ---
@@ -424,7 +424,7 @@ actions.
 the delete route. For an inline form that needs a confirm gate before submit,
 add `data-requires-confirm`."
 
-**Recipe** (`deleteConfirmDialog`, `ui.templ:596`; trigger `ui.templ:265`):
+**Recipe** (`deleteConfirmDialog`, `ui.templ:649`; trigger `ui.templ:330`):
 
 ```go
 templ deleteConfirmDialog() {
@@ -444,7 +444,7 @@ Two mechanisms:
 the object; `components.ConfirmIcon`/`DeleteWarning`
 (`components/confirm.templ:14,32`) for the shared warning body.
 
-**Source:** `ui.templ:596` (`deleteConfirmDialog`), `ui.templ:591`
+**Source:** `ui.templ:649` (`deleteConfirmDialog`), `ui.templ:303`
 (`deleteAgentDescription`), `components/confirm.templ:14,32`,
 `webui/static/js/app.js:390,435,441`.
 
@@ -541,7 +541,7 @@ Severity is one rule with one definition per side — never pass an ad-hoc
 The rule lives in `toastDurationMs` (`ui.go:168`, server) and `toastDuration`
 (`app.js:139`, client).
 
-**Recipe** (server PRG — `ui.templ:1029`; client — `app.js:135`):
+**Recipe** (server PRG — `ui.templ:1337`; client — `app.js:135`):
 
 ```go
 @flashToasts(flashMsg, flashErr) // error-then-success pair; both skipped when unset
@@ -556,7 +556,7 @@ inline responses use the `memory-toast` `HX-Trigger` with `{kind, message}`;
 client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 
 **Source:** `ui.go:163,168,181,185`
-(`flashToast`/`toastDurationMs`/`redirectWithError`/`flashError`), `ui.templ:1029`
+(`flashToast`/`toastDurationMs`/`redirectWithError`/`flashError`), `ui.templ:1337`
 (`flashToasts`), `webui/static/js/app.js:135` (`toast`), go-daisy
 `components/alpine/lifecycle.go` (`ToastQueueInitPausable`) +
 `components/ui/toast-queue.templ`.
@@ -583,18 +583,18 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 
 | Pattern | Primary source |
 |---|---|
-| `layout.list` | `ui.templ:249,629,224`; `components/table.templ:10`; `components/list.templ:10` |
-| `layout.detail` | `ui.templ:687,726`; `components/nav.templ:10,34,47`; `schedules.templ:197` |
+| `layout.list` | `ui.templ:312,939,445`; `components/table.templ:10`; `components/list.templ:10` |
+| `layout.detail` | `ui.templ:984,963`; `components/nav.templ:10,34,47`; `schedules.templ:197` |
 | `layout.settings-rail` | `project_settings.templ:35`; `agent.templ:39`; `components/nav.templ:34` |
 | `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:13` |
 | `edit.inline-autosave` | `webui/static/js/agent-settings.js:25,200,279`; recipe above |
 | `edit.inline-htmx` | `project_settings.templ:19,256`; `settings_handlers.go:870`; `settings_providers.go:372` |
-| `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1058` |
-| `edit.modal` | `ui.templ:498,264`; `components/dialog.templ:9`; `webui/static/js/app.js:180,644,666` |
-| `edit.confirm` | `ui.templ:596`; `components/confirm.templ:14,32`; `webui/static/js/app.js:390` |
+| `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1337` |
+| `edit.modal` | `ui.templ:549,329`; `components/dialog.templ:9`; `webui/static/js/app.js:180,644,666` |
+| `edit.confirm` | `ui.templ:649`; `components/confirm.templ:14,32`; `webui/static/js/app.js:390` |
 | `edit.row-menu` | `org_context.templ:93,458` |
 | `edit.row-action` | `schedules.templ:94,120`; `components/form.templ:50` |
-| `feedback.toast` | `ui.go:163`; `ui.templ:1029`; `webui/static/js/app.js:135`; go-daisy `components/ui/toast-queue.templ` |
+| `feedback.toast` | `ui.go:163`; `ui.templ:1337`; `webui/static/js/app.js:135`; go-daisy `components/ui/toast-queue.templ` |
 
 ## Adding a pattern (or a variant)
 

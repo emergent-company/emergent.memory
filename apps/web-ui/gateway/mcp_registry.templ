@@ -25,7 +25,7 @@ templ MCPServerRegistryPage(data mcpRegistryPageData) {
 		@mcpRegistrySearchBox(data.Query)
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("MCP registry unavailable", data.LoadErr)
+			@pageErrorNotice("MCP registry unavailable", data.LoadErr)
 		} else if len(data.Servers) == 0 {
 			@mcpRegistryEmptyState(data.Query)
 		} else {

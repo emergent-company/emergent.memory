@@ -24,7 +24,7 @@ templ SearchPage(data searchPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@searchHeader()
 		if data.LoadErr != nil {
-			@pageError("Search failed", data.LoadErr)
+			@pageErrorNotice("Search failed", data.LoadErr)
 		} else {
 			@searchToolbar(data)
 			@searchResultsPanel(data)

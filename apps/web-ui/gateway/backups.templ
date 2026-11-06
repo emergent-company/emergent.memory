@@ -26,7 +26,7 @@ templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error
 		@backupsHeader()
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
-			@pageError("Failed to load backups", loadErr)
+			@pageErrorNotice("Failed to load backups", loadErr)
 		} else if unavailable != "" {
 			@backupsUnavailable(unavailable)
 		} else {

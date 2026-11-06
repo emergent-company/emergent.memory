@@ -18,7 +18,8 @@ import (
 // /board/stream (see board.templ); this endpoint subscribes to the project's
 // real-time event stream and, whenever something that affects the board
 // changes, pushes server-rendered <hx-partial> frames that htmx morphs into
-// #board, #board-header and #board-health.
+// #board and #board-health. The page header is part of the initial render only:
+// it carries no count or state, so there is nothing for a frame to refresh.
 //
 // Why this exists: the previous client-side board.js subscribed to
 // entity.created/updated/deleted only, but the work path emits
@@ -220,8 +221,6 @@ type boardStreamState struct {
 	allowances boardAllowances
 	statusMap  boardStatusMap
 
-	headerSent bool
-	lastCount  int
 	healthSent bool
 	lastHealth string
 }
@@ -242,18 +241,6 @@ func (st *boardStreamState) push() error {
 	}
 	if err := writeSSEPartial(st.w, "#board", "outerMorph", boardHTML); err != nil {
 		return err
-	}
-
-	if !st.headerSent || st.lastCount != len(items) {
-		st.headerSent = true
-		st.lastCount = len(items)
-		headerHTML, herr := st.render(boardHeaderRegion())
-		if herr != nil {
-			return herr
-		}
-		if err := writeSSEPartial(st.w, "#board-header", "outerMorph", headerHTML); err != nil {
-			return err
-		}
 	}
 
 	return st.pushHealth()

@@ -443,7 +443,7 @@ templ NotificationPreferencesPage(d notificationPrefsView) {
 		}
 		@flashToasts(d.FlashMsg, d.FlashErr)
 		if d.LoadErr != nil {
-			@pageError("Notification settings unavailable", d.LoadErr)
+			@pageErrorNotice("Notification settings unavailable", d.LoadErr)
 		} else if d.Project == nil {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--folder",

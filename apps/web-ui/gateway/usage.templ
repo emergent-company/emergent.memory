@@ -19,7 +19,7 @@ templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, 
 	@layout.Container(layout.ContainerLG, nil) {
 		@usageHeader()
 		if loadErr != nil {
-			@pageError("Failed to load usage", loadErr)
+			@pageErrorNotice("Failed to load usage", loadErr)
 		} else {
 			@usageRangeSelector(days)
 			if hasUsageData(summary, series) {

@@ -12,7 +12,8 @@ import (
 
 // --- MCP Sharing pages (/settings/mcp-servers/shares) ---
 //
-// A crumb-framed list page plus standalone create (/new) and edit
+// A crumb-framed list page plus standalone create (/new), duplicate
+// (/:id/duplicate, the create page seeded from an existing share) and edit
 // (/:id/edit) pages, nested under the MCP Servers settings area. Create and
 // rotate render the one-time key reveal page — the raw key lives only in that
 // response and is never stored or logged. Revoke and rotate are confirmed in
@@ -49,7 +50,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("MCP shares unavailable", data.LoadErr)
+			@pageErrorNotice("MCP shares unavailable", data.LoadErr)
 		} else if len(data.Shares) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--share-2",
@@ -80,7 +81,9 @@ templ MCPSharesPage(data mcpSharesPageData) {
 }
 
 // mcpShareRow is one share: identity + status, tool counts, timestamps,
-// and the edit/rotate/revoke actions. Legacy shares render read-only.
+// and the edit/duplicate/invite/rotate/revoke actions. Legacy shares render
+// read-only apart from Duplicate, which creates a new share rather than
+// touching them.
 templ mcpShareRow(inst MCPShareInstance) {
 	<div class="flex flex-col gap-3 px-4 py-3.5" data-mcp-share-row={ inst.ID }>
 		<div class="flex flex-wrap items-start justify-between gap-3">
@@ -99,11 +102,17 @@ templ mcpShareRow(inst MCPShareInstance) {
 					}
 				}
 			</div>
-			if !inst.IsLegacy {
-				<div class="flex shrink-0 items-center gap-1">
+			<div class="flex shrink-0 items-center gap-1">
+				if inst.IsLegacy {
+					// Legacy instances cannot be edited, rotated or revoked here,
+					// but they CAN be copied: the copy is an ordinary named share,
+					// which is the documented way off a legacy share. Nothing about
+					// the source changes.
+					@mcpShareDuplicateButton(inst)
+				} else {
 					@mcpShareActionsMenu(inst)
-				</div>
-			}
+				}
+			</div>
 		</div>
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted">
 			@components.MetaChip("lucide--wrench", countLabel(inst.ToolCount, "tool", "tools"))
@@ -149,6 +158,12 @@ templ mcpShareActionsMenu(inst MCPShareInstance) {
 					</a>
 				</li>
 				<li>
+					<a href={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/duplicate") } class="flex items-center gap-2" data-testid={ "mcp-share-duplicate-link-" + inst.ID }>
+						@ui.IconSpan("lucide--copy", "size-4")
+						<span>Duplicate share</span>
+					</a>
+				</li>
+				<li>
 					<button type="button" class="flex items-center gap-2" data-dialog-open={ "mcp-share-invite-" + inst.ID } data-testid={ "mcp-share-invite-open-" + inst.ID }>
 						@ui.IconSpan("lucide--mail-plus", "size-4")
 						<span>Invite by email</span>
@@ -171,6 +186,25 @@ templ mcpShareActionsMenu(inst MCPShareInstance) {
 	}
 }
 
+// mcpShareDuplicateButton is the legacy row's one available action: start a new
+// share from this one. Legacy instances are otherwise read-only, and copying
+// does not touch them.
+templ mcpShareDuplicateButton(inst MCPShareInstance) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/duplicate",
+		Variant: ui.ButtonGhost,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--copy",
+		Attrs: templ.Attributes{
+			"title":       "Start a new share from " + inst.Name,
+			"data-testid": "mcp-share-duplicate-link-" + inst.ID,
+		},
+	}) {
+		Duplicate share
+	}
+}
+
 // mcpShareStatusBadge renders the share's status badge.
 templ mcpShareStatusBadge(inst MCPShareInstance) {
 	@components.StatusBadge(mcpShareStatusLabel(inst.Status), mcpShareStatusIntent(inst.Status), "", components.StatusBadgeOpts{
@@ -186,7 +220,9 @@ templ mcpShareRevokeDialog(inst MCPShareInstance) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>
-				@ui.DialogTitle() { Revoke share? }
+				@ui.DialogTitle() {
+					Revoke share? 
+				}
 				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					This immediately invalidates <span class="font-medium text-base-content">{ inst.Name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
 				}
@@ -223,7 +259,9 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 				@ui.IconSpan("lucide--refresh-cw", "size-5")
 			</div>
 			<div>
-				@ui.DialogTitle() { Rotate key? }
+				@ui.DialogTitle() {
+					Rotate key? 
+				}
 				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					A new key is issued for <span class="font-medium text-base-content">{ inst.Name }</span> and the current key stops working immediately. The new key is shown once.
 				}
@@ -270,7 +308,9 @@ templ mcpShareInviteDialog(inst MCPShareInstance) {
 				@ui.IconSpan("lucide--mail-plus", "size-5")
 			</div>
 			<div>
-				@ui.DialogTitle() { Email the share key? }
+				@ui.DialogTitle() {
+					Email the share key? 
+				}
 				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					<span class="font-medium text-base-content">{ inst.Name }</span>'s current key and client setup instructions are emailed to the addresses below. The key does not change, so anyone already using the share keeps working.
 				}
@@ -320,15 +360,32 @@ templ mcpShareInviteDialog(inst MCPShareInstance) {
 	}
 }
 
-// MCPShareNewPage renders the create page (GET .../shares/new).
+// MCPShareNewPage renders the create page (GET .../shares/new), which is also
+// the "Duplicate MCP share" page when the draft was seeded from an existing
+// share — the only difference is the page copy.
 templ MCPShareNewPage(data mcpShareFormData) {
+	{{
+		crumb := "New share"
+		if data.CopyFrom != "" || data.NotFound {
+			crumb = "Duplicate share"
+		}
+	}}
 	<div class={ pageFormChromeClass } data-mcp-share-form="">
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, "New share")), "", "New MCP share", "Name the share and choose what an outside MCP client can reach.", detailHeaderOpts{Margin: "mb-6"}) {}
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, crumb)), "", mcpShareNewPageHeading(data), mcpShareNewPageSubtitle(data), detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts("", data.FlashErr)
 	</div>
-	if data.LoadErr != nil {
+	if data.NotFound {
 		<div class={ pageFormFieldsClass }>
-			@pageError("Tool catalog unavailable", data.LoadErr)
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--share-2",
+				Title:       "MCP share not found",
+				Description: "No share with this id to duplicate.",
+				Bordered:    true,
+			})
+		</div>
+	} else if data.LoadErr != nil {
+		<div class={ pageFormFieldsClass }>
+			@pageErrorNotice("Tool catalog unavailable", data.LoadErr)
 		</div>
 	} else {
 		@mcpShareFormBody(data, false)
@@ -341,7 +398,7 @@ templ MCPShareEditPage(data mcpShareFormData) {
 	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, "Edit share")) }}
 	if data.NotFound {
 		@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
-			@detailHeader(crumbs, "", "Edit share", "", detailHeaderOpts{Margin: "mb-6"}) {}
+			@detailHeader(crumbs, "", "Edit share", "", detailHeaderOpts{Margin: "mb-6"})
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--share-2",
 				Title:       "MCP share not found",
@@ -352,16 +409,16 @@ templ MCPShareEditPage(data mcpShareFormData) {
 		}
 	} else if data.LoadErr != nil {
 		<div class={ pageFormChromeClass } data-mcp-share-form="">
-			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"})
 			@flashToasts("", data.FlashErr)
 		</div>
 		<div class={ pageFormFieldsClass }>
-			@pageError("Tool catalog unavailable", data.LoadErr)
+			@pageErrorNotice("Tool catalog unavailable", data.LoadErr)
 		</div>
 		@mcpShareScripts()
 	} else {
 		<div class={ pageFormChromeClass } data-mcp-share-form="">
-			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"})
 			@flashToasts("", data.FlashErr)
 		</div>
 		@mcpShareFormBody(data, true)
@@ -371,11 +428,18 @@ templ MCPShareEditPage(data mcpShareFormData) {
 
 // mcpShareFormBody is the shared create/edit form card.
 templ mcpShareFormBody(data mcpShareFormData, editing bool) {
-	{{ action := mcpShareSettingsBase + "/new"
-	if editing {
-		action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
-	} }}
+	{{
+		action := mcpShareSettingsBase + "/new"
+		if editing {
+			action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
+		}
+	}}
 	<form method="post" action={ templ.URL(action) } data-mcp-share-form-fields hx-disable="find button.memory-save-btn">
+		if data.CopyFrom != "" {
+			// Carried as a hidden field so an inline validation re-render keeps
+			// the "duplicated from X" framing. It is display-only.
+			<input type="hidden" name="copyFrom" value={ data.CopyFrom }/>
+		}
 		<div class={ pageFormFieldsClass }>
 			@components.PanelCard("", nil) {
 				<div class="flex flex-col gap-5">
@@ -443,7 +507,11 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 					{{ activeTaken := false }}
 					for _, t := range data.Templates {
 						{{ active := !activeTaken && mcpShareSameToolSet(data.Tools, t.Tools) }}
-						{{ if active { activeTaken = true } }}
+						{{
+							if active {
+								activeTaken = true
+							}
+						}}
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeButton,
 							Variant:    ui.ButtonOutline,
@@ -521,10 +589,10 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 // dialog returns to the list and the key is gone for good.
 templ mcpShareRevealModal(r mcpShareReveal) {
 	@components.SecretRevealModal(components.SecretRevealProps{
-		Heading:    r.Heading,
-		Name:       r.Name,
-		SecretID:   "mcp-share-key",
-		Secret:     r.Token,
+		Heading:      r.Heading,
+		Name:         r.Name,
+		SecretID:     "mcp-share-key",
+		Secret:       r.Token,
 		EndpointID:   "mcp-share-endpoint",
 		Endpoint:     r.MCPURL,
 		Warning:      "This key will not be shown again. You can email it to someone later from the share's ⋯ menu; if you lose it, issue a new key.",

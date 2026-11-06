@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -18,6 +17,13 @@ func TestHeaderGroupMapsMirrorTheSidebar(t *testing.T) {
 	wantHref := map[string]string{}
 	wantSection := map[string]string{}
 	for _, g := range sidebarGroups("", true) {
+		if g.Label == "" {
+			// The ungrouped block: the absence of a group, not a group named "".
+			if _, ok := navGroupHref[""]; ok {
+				t.Errorf("navGroupHref has a %q key; the ungrouped block is not a group", "")
+			}
+			continue
+		}
 		if len(g.Items) == 0 {
 			t.Fatalf("sidebar group %q has no items; a group's landing page is its first item", g.Label)
 		}
@@ -53,36 +59,119 @@ func TestHeaderGroupMapsMirrorTheSidebar(t *testing.T) {
 	}
 }
 
-// TestPageHeaderGroupLiteralsAreSidebarGroups scans every page's header call:
-// a page may name a real sidebar group or be ungrouped (""), never a label the
-// sidebar does not own — a stale label would otherwise render a first crumb
-// with no destination.
-func TestPageHeaderGroupLiteralsAreSidebarGroups(t *testing.T) {
-	re := regexp.MustCompile(`@pageHeader(?:WithMeta)?\("([^"]*)"`)
+// TestHeaderGroupLiteralsAreSidebarGroups scans every page header's group
+// argument — `pageHeader`/`pageHeaderWithMeta`'s first argument and
+// `detailHeader`'s second. It must be a real sidebar group or "" (ungrouped),
+// never a label the sidebar does not own: a stale label would otherwise render
+// a first crumb with no destination.
+//
+// Detail headers normally inherit the group from their trail root and pass "",
+// so this guards the call sites that do name one as well as the list pages.
+func TestHeaderGroupLiteralsAreSidebarGroups(t *testing.T) {
 	files, err := filepath.Glob("*.templ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	checked := 0
+	pageHeaderCalls, detailHeaderCalls := 0, 0
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
-		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-			group := m[1]
-			checked++
-			if group == "" {
-				continue
-			}
-			if _, ok := navGroupHref[group]; !ok {
-				t.Errorf("%s: pageHeader group %q is not a sidebar group (want one of %v, or \"\" for an ungrouped page)", f, group, knownGroups())
+		text := string(src)
+		for _, call := range []string{"@pageHeader(", "@pageHeaderWithMeta("} {
+			for i := 0; ; {
+				j := strings.Index(text[i:], call)
+				if j < 0 {
+					break
+				}
+				start := i + j + len(call)
+				if args := topLevelArgs(text[start:]); len(args) > 0 {
+					pageHeaderCalls++
+					checkHeaderGroup(t, f, strings.TrimSuffix(call, "("), args[0])
+				}
+				i = start
 			}
 		}
+		for i := 0; ; {
+			j := strings.Index(text[i:], "@detailHeader(")
+			if j < 0 {
+				break
+			}
+			start := i + j + len("@detailHeader(")
+			args := topLevelArgs(text[start:])
+			if len(args) < 2 {
+				t.Errorf("%s: detailHeader needs (crumbs, group, title, description); found %d argument(s)", f, len(args))
+			} else {
+				detailHeaderCalls++
+				checkHeaderGroup(t, f, "@detailHeader", args[1])
+			}
+			i = start
+		}
 	}
-	if checked < 15 {
-		t.Fatalf("parsed %d pageHeader calls across %d templates; the scan is not matching the code it is meant to guard", checked, len(files))
+	if pageHeaderCalls < 15 {
+		t.Fatalf("parsed %d pageHeader calls across %d templates; the scan is not matching the code it is meant to guard", pageHeaderCalls, len(files))
 	}
+	if detailHeaderCalls < 10 {
+		t.Fatalf("parsed %d detailHeader calls across %d templates; the scan is not matching the code it is meant to guard", detailHeaderCalls, len(files))
+	}
+}
+
+// checkHeaderGroup asserts one header's group argument is a sidebar group or "".
+func checkHeaderGroup(t *testing.T, file, call, arg string) {
+	t.Helper()
+	arg = strings.TrimSpace(arg)
+	if !strings.HasPrefix(arg, `"`) || !strings.HasSuffix(arg, `"`) {
+		// A computed group would slip past the map check, so name it rather than
+		// skipping it silently.
+		t.Errorf("%s: %s group argument %s is not a string literal; pass a sidebar group or \"\"", file, call, arg)
+		return
+	}
+	group := strings.Trim(arg, `"`)
+	if group == "" {
+		return
+	}
+	if _, ok := navGroupHref[group]; !ok {
+		t.Errorf("%s: %s group %q is not a sidebar group (want one of %v, or \"\" for an ungrouped page)", file, call, group, knownGroups())
+	}
+}
+
+// topLevelArgs splits the text after a call's opening paren into its top-level
+// arguments, so a comma inside a nested call or a struct literal does not split
+// an argument.
+func topLevelArgs(s string) []string {
+	var args []string
+	depth, start := 0, 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && quote != '`' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'' || c == '`':
+			quote = c
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			if depth == 0 {
+				if last := strings.TrimSpace(s[start:i]); last != "" {
+					args = append(args, last)
+				}
+				return args
+			}
+			depth--
+		case c == ',' && depth == 0:
+			args = append(args, strings.TrimSpace(s[start:i]))
+			start = i + 1
+		}
+	}
+	return args
 }
 
 // TestRunPageHeaderKeepsTrailLinks covers the origin-trail exception: the run

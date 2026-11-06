@@ -230,7 +230,7 @@ templ dsOAuthClientsPage(rail templ.Component, crumbs []nav.BreadcrumbItem, titl
 		@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
-			@pageError("OAuth clients unavailable", loadErr)
+			@pageErrorNotice("OAuth clients unavailable", loadErr)
 		} else {
 			@layout.Rail(rail, nil) {
 				<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">

@@ -22,7 +22,7 @@ templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem,
 		@blueprintsHeader()
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
-			@pageError("Failed to load blueprints", loadErr)
+			@pageErrorNotice("Failed to load blueprints", loadErr)
 		} else {
 			@installedSection(applied, upgradeByName(upgrades))
 			@draftsSection(drafts)
