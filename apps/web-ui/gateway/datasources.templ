@@ -1520,7 +1520,7 @@ templ DocumentVersionsPage(doc *Document, versions []DocumentVersion, loadErr er
 			@pageError("Document unavailable", loadErr)
 		} else {
 			@documentDetailHeader(doc, "versions")
-			@layout.Rail(documentSubNav(doc.ID, "versions"), nil) {
+			@layout.Rail(documentSubNav(doc, "versions"), nil) {
 				@dsVersionHistory(versions)
 			}
 		}
