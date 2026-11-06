@@ -52,7 +52,16 @@ const SKELETON = `<!doctype html>
 </body>
 </html>`;
 
-/** Boots the /chat page with a stub `fetch` that records `/api/chat` bodies. */
+/**
+ * Boots the /chat page with a stub `fetch` that records `/api/chat` bodies.
+ *
+ * The boot transcript load (`/api/conversations/<id>/history`) is held open on
+ * purpose. A resolved load empties `#chat-messages` asynchronously, which would
+ * delete the card the test renders there (a real page re-renders its own cards,
+ * so the wipe is only an artifact of the harness owning that DOM). Everything
+ * the click path needs — the conversation id, the agent picker, the transcript
+ * container and its listener — is in place before that load resolves.
+ */
 async function boot(page: Page, options: { holdStream?: boolean } = {}): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
@@ -72,6 +81,10 @@ async function boot(page: Page, options: { holdStream?: boolean } = {}): Promise
       const u = String(url);
       if (u.indexOf('/partial/') === 0) {
         return Promise.resolve(new Response('', { status: 200 }));
+      }
+      if (/^\/api\/conversations\/[^/]+\/history$/.test(u)) {
+        // Held open: see the boot comment above.
+        return new Promise<Response>(function () {});
       }
       if (u === '/api/chat') {
         w.__chatBodies.push(JSON.parse(String(init?.body ?? '{}')));
@@ -103,23 +116,22 @@ async function boot(page: Page, options: { holdStream?: boolean } = {}): Promise
   await page.addScriptTag({ path: CHAT_STREAM_JS });
   await page.addScriptTag({ path: CHAT_JS });
 
+  // The resume path publishes the conversation id to the URL (updateUrl) before
+  // it awaits the transcript, so this is the settle point for the click path.
+  await page.waitForFunction(() => window.location.search.indexOf('c=conv-1') !== -1);
+
   return errors;
 }
 
 /**
- * Renders one A2UI approval surface through the real shared renderer.
- *
- * The host is a fresh element on `document.body`, not `#chat-messages`: chat.js
- * owns that container and re-renders it asynchronously, which would delete the
- * card mid-test. The renderer appends into whatever host it is given, and the
- * click still travels the shipped `a2ui:action` event on `document`.
+ * Renders one A2UI approval surface through the real shared renderer — the same
+ * `renderA2UISurface` the gateway's live `ui` frame and the history renderer
+ * call — appending the card into the host the test chooses.
  */
-async function renderApprovalCard(page: Page): Promise<void> {
+async function renderApprovalCard(page: Page, hostId: string): Promise<void> {
   await page.evaluate(
-    ({ surfaceId, componentId }) => {
-      const host = document.createElement('div');
-      host.id = 'a2ui-harness';
-      document.body.appendChild(host);
+    ({ surfaceId, componentId, hostId }) => {
+      const host = document.getElementById(hostId) as HTMLElement;
       const components = (
         window as unknown as {
           MemoryChatComponents: {
@@ -142,24 +154,24 @@ async function renderApprovalCard(page: Page): Promise<void> {
         { messages: host },
       );
     },
-    { surfaceId: SURFACE_ID, componentId: COMPONENT_ID },
+    { surfaceId: SURFACE_ID, componentId: COMPONENT_ID, hostId },
   );
 }
 
+function postedBodies(page: Page) {
+  return page.evaluate(() => (window as unknown as { __chatBodies: unknown[] }).__chatBodies);
+}
+
 test.describe('A2UI surface actions over HTTP (chat.js)', () => {
-  test('an Approve click posts the action as the next chat turn', async ({ page }) => {
+  test('an Approve click inside the transcript posts the action as the next chat turn', async ({ page }) => {
     const errors = await boot(page);
-    await renderApprovalCard(page);
+    await renderApprovalCard(page, 'chat-messages');
 
     await page.getByRole('button', { name: 'Approve' }).click();
 
-    await expect
-      .poll(async () => page.evaluate(() => (window as unknown as { __chatBodies: unknown[] }).__chatBodies.length))
-      .toBe(1);
+    await expect.poll(async () => (await postedBodies(page)).length).toBe(1);
 
-    const bodies = await page.evaluate(
-      () => (window as unknown as { __chatBodies: Record<string, unknown>[] }).__chatBodies,
-    );
+    const bodies = await postedBodies(page);
     // The click is the turn: no typed text, and the surface id + action payload
     // travel untouched so the server can frame the agent's message.
     expect(bodies[0]).toEqual({
@@ -171,21 +183,36 @@ test.describe('A2UI surface actions over HTTP (chat.js)', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a click while a turn streams is ignored', async ({ page }) => {
-    const errors = await boot(page, { holdStream: true });
-    await renderApprovalCard(page);
+  test('a card outside the transcript posts nothing', async ({ page }) => {
+    const errors = await boot(page);
+    // The side panel renders the same cards in its own host (as does the public
+    // share page). It listens to its own conversation; the /chat page must not
+    // answer a card it does not own, or a click there lands in a stale turn.
+    await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.id = 'a2ui-harness';
+      document.body.appendChild(host);
+    });
+    await renderApprovalCard(page, 'a2ui-harness');
 
     await page.getByRole('button', { name: 'Approve' }).click();
-    await expect
-      .poll(async () => page.evaluate(() => (window as unknown as { __chatBodies: unknown[] }).__chatBodies.length))
-      .toBe(1);
+    await page.waitForTimeout(150);
+
+    expect(await postedBodies(page)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  test('a click while a turn streams is ignored', async ({ page }) => {
+    const errors = await boot(page, { holdStream: true });
+    await renderApprovalCard(page, 'chat-messages');
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect.poll(async () => (await postedBodies(page)).length).toBe(1);
 
     // The second click must not queue a turn behind the open one.
     await page.getByRole('button', { name: 'Reject' }).click({ force: true });
     await page.waitForTimeout(150);
-    expect(
-      await page.evaluate(() => (window as unknown as { __chatBodies: unknown[] }).__chatBodies.length),
-    ).toBe(1);
+    expect(await postedBodies(page)).toHaveLength(1);
     expect(errors).toEqual([]);
   });
 });

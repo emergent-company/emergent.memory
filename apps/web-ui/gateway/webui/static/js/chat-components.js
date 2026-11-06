@@ -1709,6 +1709,19 @@
     return null;
   }
 
+  // a2uiEmit reports a card action as a DOM event from the element that was
+  // clicked, bubbling to whichever host owns the transcript. The renderer owns
+  // no transport: the chat page sends the action as its conversation's next
+  // turn, and a host that renders the same card without a sender (the side
+  // panel, the public share page) stays inert instead of posting somewhere.
+  function a2uiEmit(source, surfaceId, action) {
+    (source || document).dispatchEvent(new CustomEvent("a2ui:action", {
+      bubbles: true,
+      composed: true,
+      detail: { surfaceId: surfaceId, action: action },
+    }));
+  }
+
   function a2uiButton(surfaceId, label, action, primary) {
     var btn = document.createElement("button");
     btn.type = "button";
@@ -1718,9 +1731,7 @@
       // The renderer reports the click and nothing else: the host page sends it
       // (chat.js posts it as the conversation's next turn, and the server frames
       // the wording the agent receives), so no endpoint is invented here.
-      document.dispatchEvent(new CustomEvent("a2ui:action", {
-        detail: { surfaceId: surfaceId, action: action },
-      }));
+      a2uiEmit(btn, surfaceId, action);
     });
     return btn;
   }
@@ -1833,9 +1844,7 @@
     cancelBtn.setAttribute("data-testid", "chat-approval-cancel");
     cancelBtn.textContent = "Cancel";
     cancelBtn.addEventListener("click", function () {
-      document.dispatchEvent(new CustomEvent("a2ui:action", {
-        detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: "cancel" } },
-      }));
+      a2uiEmit(cancelBtn, surfaceId, { componentId: comp.id, response: "cancel" });
     });
     actions.appendChild(cancelBtn);
 
@@ -1845,9 +1854,7 @@
     rejectBtn.setAttribute("data-testid", "chat-approval-reject");
     rejectBtn.textContent = "Reject";
     rejectBtn.addEventListener("click", function () {
-      document.dispatchEvent(new CustomEvent("a2ui:action", {
-        detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: "reject" } },
-      }));
+      a2uiEmit(rejectBtn, surfaceId, { componentId: comp.id, response: "reject" });
     });
     actions.appendChild(rejectBtn);
 
@@ -1857,9 +1864,7 @@
     approveBtn.setAttribute("data-testid", "chat-approval-approve");
     approveBtn.textContent = "Approve";
     approveBtn.addEventListener("click", function () {
-      document.dispatchEvent(new CustomEvent("a2ui:action", {
-        detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: "approve" } },
-      }));
+      a2uiEmit(approveBtn, surfaceId, { componentId: comp.id, response: "approve" });
     });
     actions.appendChild(approveBtn);
 
@@ -1930,9 +1935,7 @@
           row.appendChild(textWrap);
 
           row.addEventListener("click", function () {
-            document.dispatchEvent(new CustomEvent("a2ui:action", {
-              detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: value } },
-            }));
+            a2uiEmit(row, surfaceId, { componentId: comp.id, response: value });
           });
           optsEl.appendChild(row);
         })(options[i]);
@@ -2092,10 +2095,11 @@
     return shell.wrap;
   }
 
-  // A2UI surface actions are dispatched as `a2ui:action` events (detail:
-  // {surfaceId, action}) and sent by the host page: chat.js turns one into the
-  // conversation's next chat turn. The renderer stays transport-free, so the
-  // same card works in the side panel and the share page unchanged.
+  // A2UI surface actions are dispatched as bubbling `a2ui:action` events
+  // (detail: {surfaceId, action}) from the clicked element, and sent by whichever
+  // host owns the transcript: chat.js turns one into the conversation's next
+  // turn. The renderer stays transport-free, so the same card works in the side
+  // panel and the share page unchanged.
 
   /* ---------- shared timeline renderer ---------- */
 

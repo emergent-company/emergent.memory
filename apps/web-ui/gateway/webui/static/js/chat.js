@@ -195,6 +195,11 @@
     onSubagent: function (evt) { if (subagentTrack) subagentTrack.upsert(evt); },
     onActivity: function (type) { activityBoundary(type); },
     onMeta: function (evt) {
+      // The agent-backed stream emits a second meta frame once the run exists,
+      // carrying runId (#67). Prefer it for stop; the timeline/refresh path in
+      // onNewestRun/handleRefreshPayload remains the fallback when a server
+      // predates the frame or the run is direct-LLM.
+      if (evt.runId) liveRunId = evt.runId;
       if (evt.conversationId) {
         // A brand-new conversation (id not yet in the rail) should appear
         // in the session list immediately — no full reload needed.
@@ -329,6 +334,17 @@
     agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
+
+    // An A2UI card inside this transcript reports its click; the page turns it
+    // into the conversation's next turn. Bound to the transcript, not document,
+    // so the side panel's cards (same renderer, its own host) stay inert here.
+    if (messages) {
+      messages.addEventListener("a2ui:action", function (evt) {
+        var detail = evt && evt.detail;
+        if (!detail) return;
+        dispatchSurfaceAction(detail.surfaceId, detail.action);
+      });
+    }
 
     subagentTrack = MemoryChatComponents.createSubagentTrack({
       mount: function () { return document.getElementById("chat-subagents"); },
@@ -2876,14 +2892,6 @@
   document.addEventListener("click", function (ev) {
     var t = ev.target.closest("[data-action='close-tool-panel']");
     if (t) closeToolPanel();
-  });
-  // document-level: an A2UI card (approval, question, proposal) reports the
-  // click; in a text chat with no room to send it over, it becomes the next turn.
-  // Registered once at boot so it survives #chat-root swaps.
-  document.addEventListener("a2ui:action", function (evt) {
-    var detail = evt && evt.detail;
-    if (!detail) return;
-    dispatchSurfaceAction(detail.surfaceId, detail.action);
   });
   // document-level: the queue rows live under the server-rendered #chat-queue
   // mount, so their controls are delegated too (survives every render/swap).
