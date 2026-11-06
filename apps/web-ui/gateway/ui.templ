@@ -52,6 +52,19 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<meta name="sentry-traces-sample-rate" content={ sentryTracesSampleRate }/>
 			<meta name="sentry-replay-session-sample-rate" content={ sentryReplaySessionSampleRate }/>
 			<meta name="sentry-replay-on-error-sample-rate" content={ sentryReplayOnErrorSampleRate }/>
+			@foucBackgroundGuard()
+			<!-- The stylesheet MUST be in <head>, and ahead of every head script:
+			     it is render-blocking there, so a full navigation (every project
+			     switch, every hard reload) keeps painting the old document until
+			     the CSS is ready. Emitted at the end of <body> instead — where
+			     this used to sit — the first paint won the race and the user saw
+			     the shell unstyled for a moment on any cache miss (fresh deploy,
+			     changed ?v= hash, cold tab). It also sits before the behaviour
+			     runtime and the Sentry bundle, so neither a parser-blocking
+			     same-origin script nor a slow third-party CDN can delay its
+			     discovery. Nothing htmx-swaps it: it lives outside #main-content
+			     either way. -->
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<!-- go-daisy behaviour-init runtime: defines window.gdOnce/gdBehaviour/
 			     gdRescan before any component inline script runs (clipboard copy,
 			     spinners, sidebar, data-table, htmx after-settle rescan). -->
@@ -75,15 +88,6 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			})();
 			</script>
 			}
-			@foucBackgroundGuard()
-			<!-- The stylesheet MUST be in <head>: it is render-blocking there, so a
-			     full navigation (every project switch, every hard reload) keeps
-			     painting the old document until the CSS is ready. Emitted at the
-			     end of <body> instead — where this used to sit — the first paint
-			     wins the race and the user sees the shell unstyled for a moment
-			     on any cache miss (fresh deploy, changed ?v= hash, cold tab).
-			     Nothing htmx-swaps it: it lives outside #main-content either way. -->
-			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<meta name="view-transition" content="same-origin"/>
 		</head>
 		<body class="bg-base-200 min-h-screen" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>

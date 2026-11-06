@@ -254,3 +254,85 @@ func TestStackedMobileTables(t *testing.T) {
 		}
 	}
 }
+
+// TestPageHeadStylesheetPrecedesHeadScripts pins the ordering half of the
+// unstyled-flash fix. A render-blocking stylesheet only protects the first
+// paint if the parser reaches it before it stops to execute a script, so the
+// stylesheet link must appear ahead of every head script — the go-daisy
+// behaviour runtime and, above all, the third-party Sentry CDN bundle. A slow
+// or unreachable CDN would otherwise hold the parser (and the stylesheet's
+// discovery) hostage on every cold load.
+func TestPageHeadStylesheetPrecedesHeadScripts(t *testing.T) {
+	body := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		_, err := w.Write([]byte("<p>hi</p>"))
+		return err
+	})
+	// Render with the overlay URL set too: the feedback overlay is the other
+	// optional head addition, and it must stay out of the stylesheet's way.
+	html := renderPageShellWithOverlay(t, "https://feedback.example.test", body)
+
+	headEnd := strings.Index(html, "</head>")
+	if headEnd < 0 {
+		t.Fatal("shell has no </head>")
+	}
+	head := html[:headEnd]
+	css := strings.Index(head, "/assets/css/app.css")
+	if css < 0 {
+		t.Fatal("the app stylesheet is not in <head>")
+	}
+	if s := strings.Index(head, "<script"); s >= 0 && s < css {
+		end := s + 90
+		if end > css {
+			end = css
+		}
+		t.Errorf("a <script> at offset %d precedes the stylesheet at %d in <head> (%q…) — a parser-blocking script ahead of the CSS delays the styled first paint", s, css, head[s:end])
+	}
+}
+
+// TestEveryFullDocumentTemplateLoadsStylesheetInHead generalises
+// TestPageHeadStylesheetIsRenderBlocking from the app shell to every
+// full-document template. The unstyled flash was one template emitting the
+// compiled stylesheet at the end of <body>, where the first paint can win the
+// race; the shell has a render test now, but the login, error, share and
+// gallery documents did not. This walks the .templ sources instead of rendering
+// each component: the auth/error pages need request and server state a unit
+// test does not have, and a source check also catches a *new* full-document
+// template, which a per-component render test cannot.
+func TestEveryFullDocumentTemplateLoadsStylesheetInHead(t *testing.T) {
+	const ref = `webui.AssetPath("/css/app.css")`
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read gateway dir: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".templ") {
+			continue
+		}
+		b, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		src := string(b)
+		if !strings.Contains(src, ref) {
+			continue
+		}
+		checked++
+		for off := 0; ; {
+			i := strings.Index(src[off:], ref)
+			if i < 0 {
+				break
+			}
+			at := off + i
+			open := strings.LastIndex(src[:at], "<head>")
+			closed := strings.LastIndex(src[:at], "</head>")
+			if open < 0 || open < closed {
+				t.Errorf("%s: the app stylesheet (offset %d) is emitted outside <head> — the first paint can beat it and the page flashes unstyled", e.Name(), at)
+			}
+			off = at + len(ref)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no template emitting the app stylesheet — the check is not looking at the right files")
+	}
+}
