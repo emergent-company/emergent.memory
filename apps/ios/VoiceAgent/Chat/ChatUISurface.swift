@@ -39,20 +39,127 @@ enum ChatUIPropValue: Equatable {
     }
 
     /// The text the web console measures a result's byte size by: a string is
-    /// its own text, every other value is JSON, as `JSON.stringify(value, null,
-    /// 2)` produces it. `displayText` is a rendering (an array reads as a
-    /// sentence), so it must not be used for the size.
+    /// its own text, every other value is `JSON.stringify(value, null, 2)`.
+    ///
+    /// Foundation's pretty printer is close but not the same text — it writes
+    /// `"key" : value` and prints doubles with 17 digits — so the shape is
+    /// written here exactly as ECMAScript writes it. `displayText` is a
+    /// rendering (an array reads as a sentence), so it must not be used for the
+    /// size.
     var wireText: String {
         if case let .string(value) = self {
             return value
         }
-        guard
-            let data = try? JSONEncoder().encode(self),
-            let any = try? JSONSerialization.jsonObject(with: data),
-            let pretty = try? JSONSerialization.data(withJSONObject: any, options: [.prettyPrinted, .sortedKeys]),
-            let text = String(data: pretty, encoding: .utf8)
-        else { return displayText }
-        return text
+        return Self.jsJSON(self, indent: 0)
+    }
+
+    private static func jsJSON(_ value: ChatUIPropValue, indent: Int) -> String {
+        switch value {
+        case let .string(text):
+            return jsString(text)
+        case let .number(number):
+            return jsNumber(number)
+        case let .bool(flag):
+            return flag ? "true" : "false"
+        case .null:
+            return "null"
+        case let .array(items):
+            guard !items.isEmpty else { return "[]" }
+            let pad = String(repeating: " ", count: indent + 2)
+            let rows = items.map { pad + jsJSON($0, indent: indent + 2) }
+            return "[\n" + rows.joined(separator: ",\n") + "\n" + jsClosing(indent: indent, bracket: "]")
+        case let .object(object):
+            guard !object.isEmpty else { return "{}" }
+            let pad = String(repeating: " ", count: indent + 2)
+            let rows = object.keys.sorted().map { key in
+                pad + jsString(key) + ": " + jsJSON(object[key] ?? .null, indent: indent + 2)
+            }
+            return "{\n" + rows.joined(separator: ",\n") + "\n" + jsClosing(indent: indent, bracket: "}")
+        }
+    }
+
+    private static func jsClosing(indent: Int, bracket: String) -> String {
+        String(repeating: " ", count: indent) + bracket
+    }
+
+    /// A JSON string as ECMAScript writes it: only the mandatory escapes, a
+    /// slash stays a slash, and control characters become `\u00xx`.
+    private static func jsString(_ text: String) -> String {
+        var out = "\""
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x22: out += "\\\""
+            case 0x5C: out += "\\\\"
+            case 0x08: out += "\\b"
+            case 0x0C: out += "\\f"
+            case 0x0A: out += "\\n"
+            case 0x0D: out += "\\r"
+            case 0x09: out += "\\t"
+            case 0x00 ... 0x1F: out += String(format: "\\u%04x", scalar.value)
+            default: out.unicodeScalars.append(scalar)
+            }
+        }
+        return out + "\""
+    }
+
+    /// A number as ECMAScript writes it: the shortest round-trip digits, plain
+    /// notation from 1e-6 up to (not including) 1e21, and exponent notation
+    /// without zero padding outside that range.
+    private static func jsNumber(_ value: Double) -> String {
+        guard value.isFinite else { return "null" }
+        guard value != 0 else { return "0" }
+        let magnitude = abs(value)
+        guard magnitude >= 1e-6, magnitude < 1e21 else {
+            return exponentNumber(value)
+        }
+        var text = String(value)
+        var exponent = 0
+        if let index = text.firstIndex(where: { $0 == "e" || $0 == "E" }) {
+            exponent = Int(text[text.index(after: index)...]) ?? 0
+            text = String(text[..<index])
+        }
+        var sign = ""
+        if text.hasPrefix("-") {
+            sign = "-"
+            text.removeFirst()
+        }
+        var digits = text.replacingOccurrences(of: ".", with: "")
+        let pointIndex = text.firstIndex(of: ".").map { text.distance(from: text.startIndex, to: $0) } ?? text.count
+        // Value as `0.<digits> × 10^scale`, the form plain notation expands.
+        let scale = pointIndex + exponent
+        while digits.count > 1, digits.hasSuffix("0") {
+            digits.removeLast()
+        }
+        if scale <= 0 {
+            return sign + "0." + String(repeating: "0", count: -scale) + digits
+        }
+        if scale >= digits.count {
+            return sign + digits + String(repeating: "0", count: scale - digits.count)
+        }
+        let split = digits.index(digits.startIndex, offsetBy: scale)
+        return sign + String(digits[..<split]) + "." + String(digits[split...])
+    }
+
+    /// Exponent notation: ECMAScript keeps the sign but drops a leading zero
+    /// (`1e+21`, `1e-7`).
+    private static func exponentNumber(_ value: Double) -> String {
+        let text = String(value)
+        guard let index = text.firstIndex(where: { $0 == "e" || $0 == "E" }) else {
+            return text
+        }
+        var exponent = String(text[text.index(after: index)...])
+        var sign = ""
+        if exponent.hasPrefix("-") {
+            sign = "-"
+            exponent.removeFirst()
+        } else if exponent.hasPrefix("+") {
+            sign = "+"
+            exponent.removeFirst()
+        }
+        while exponent.count > 1, exponent.hasPrefix("0") {
+            exponent.removeFirst()
+        }
+        return String(text[..<index]) + "e" + sign + exponent
     }
 
     /// The `[[label, value], ...]` pairs of an array of `{label, value}` rows.
