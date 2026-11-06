@@ -234,7 +234,7 @@ templ addMemberButton(base string) {
 templ membersBody(data membersPageData) {
 	{{ base := membersBaseFor(data.Base) }}
 	if data.LoadErr != nil {
-		@pageError("Members unavailable", data.LoadErr)
+		@pageErrorNotice("Members unavailable", data.LoadErr)
 	} else {
 		if data.PendingErr != nil {
 			@ui.Alert(ui.AlertProps{

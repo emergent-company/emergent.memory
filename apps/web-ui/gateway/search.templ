@@ -40,8 +40,9 @@ templ searchResultsPanel(data searchPageData) {
 	<div id="search-results" data-testid="search-results">
 		if data.LoadErr != nil {
 			// A filter/limit change that failed keeps the page: the error
-			// replaces the results instead of the whole surface.
-			@pageError("Search failed", data.LoadErr)
+			// replaces the results instead of the whole surface. SearchPage
+			// renders its header unconditionally, so this stays a notice.
+			@pageErrorNotice("Search failed", data.LoadErr)
 		} else if data.Query == "" {
 			@searchIntro()
 		} else {

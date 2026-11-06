@@ -95,7 +95,7 @@ templ apiTokenListState(actionBase string, data apiTokensPageData, emptyTitle, e
 				Message: "Couldn't refresh the token list: " + data.LoadErr.Error(),
 			})
 		} else {
-			@pageError("API tokens unavailable", data.LoadErr)
+			@pageErrorNotice("API tokens unavailable", data.LoadErr)
 		}
 	} else {
 		@apiTokenTable(data.Tokens, actionBase, emptyTitle, emptyDesc)

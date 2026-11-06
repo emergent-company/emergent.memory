@@ -46,7 +46,7 @@ templ inboxListRegion(d inboxView) {
 		if d.Scope == inboxScopeProject && !d.ProjectSelected {
 			@inboxNoProject()
 		} else if d.LoadErr != nil {
-			@pageError("Inbox unavailable", d.LoadErr)
+			@pageErrorNotice("Inbox unavailable", d.LoadErr)
 		} else if len(d.Notifications) == 0 {
 			@inboxEmpty(d)
 		} else {

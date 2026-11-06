@@ -125,7 +125,7 @@ a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
 page.
 
 **Source:** `ui.templ:312` (`AgentsPage`), `ui.templ:939` (`pageHeader`),
-`ui.templ:256` (`pageError`), `components/table.templ:10`,
+`ui.templ:265` (`pageErrorNotice`), `components/table.templ:10`,
 `components/list.templ:10`, `ui.templ:445` (`agentsTable`),
 `gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
 `documentsResults`, `documentsResultsFragment`).

@@ -230,9 +230,9 @@ templ objectsBrowserResults(data objectsPageData) {
 	<div id="objects-results" data-testid="objects-results" data-objects-list-refresh="true">
 		if data.LoadErr != nil {
 			// A filter request that failed to load keeps the page: the error
-			// replaces the list instead of the whole surface (the page path
-			// renders pageError above the toolbar and never reaches here).
-			@pageError("Failed to load objects", data.LoadErr)
+			// replaces the list instead of the whole surface. The page renders
+			// its header unconditionally, so this is a notice, never a second h1.
+			@pageErrorNotice("Failed to load objects", data.LoadErr)
 		} else {
 			if data.Query != "" {
 				@objectsBrowserResultsNote(data)

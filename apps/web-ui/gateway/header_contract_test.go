@@ -281,41 +281,59 @@ func TestCollectionCountsSitBelowTheHeader(t *testing.T) {
 
 // TestOneH1PerPage is the runtime half of the one-`h1` rule: a page in its
 // error state renders exactly one `h1` — the header's when the page has one,
-// the error heading when the error state is the page.
+// the error heading when the error state is the page. A swapped-in region is
+// held to the same rule from the other side: it must render none, because the
+// page it lands in already owns the one.
 func TestOneH1PerPage(t *testing.T) {
 	cases := []struct {
 		name string
 		page templ.Component
+		want int
 	}{
-		{"board (header then notice)", BoardPage(nil, nil, nil, boardAllowances{}, boardStatusMap{}, errTest)},
-		{"agents list", AgentsPage(nil, nil, "", errTest, "")},
-		{"approvals", ApprovalsPage(nil, nil, errTest)},
-		{"skills", SkillsPage(nil, errTest, "", nil, "", nil)},
-		{"sessions", SessionsPage(nil, nil, errTest)},
-		{"usage", UsagePage(nil, nil, usageChartPayload{}, 0, false, 30, errTest)},
-		{"backups", BackupsPage(nil, 0, "", errTest, "", nil)},
+		{"board (header then notice)", BoardPage(nil, nil, nil, boardAllowances{}, boardStatusMap{}, errTest), 1},
+		{"agents list", AgentsPage(nil, nil, "", errTest, ""), 1},
+		{"approvals", ApprovalsPage(nil, nil, errTest), 1},
+		{"skills", SkillsPage(nil, errTest, "", nil, "", nil), 1},
+		{"sessions", SessionsPage(nil, nil, errTest), 1},
+		{"usage", UsagePage(nil, nil, usageChartPayload{}, 0, false, 30, errTest), 1},
+		{"backups", BackupsPage(nil, 0, "", errTest, "", nil), 1},
+		{"inbox (list region lowers the error)", InboxPage(inboxView{LoadErr: errTest}), 1},
+		{"members", MembersPage(membersPageData{Base: "/members", LoadErr: errTest}), 1},
+		{"project members", ProjectMembersPage(membersPageData{Base: "/settings/members", LoadErr: errTest}, false, true), 1},
+		{"api tokens", APITokensPage(apiTokensPageData{LoadErr: errTest}), 1},
+		{"account tokens", AccountTokensPage(apiTokensPageData{LoadErr: errTest}), 1},
 		// The other shape: the error state *is* the page, so its heading is the
 		// single h1.
-		{"orgs list (error is the page)", OrgsPage(orgsPageData{LoadErr: errTest})},
+		{"orgs list (error is the page)", OrgsPage(orgsPageData{LoadErr: errTest}), 1},
+		// Swap regions: rendered into a page that already has its header.
+		{"documents results", documentsResults(documentPageData{LoadErr: errTest}), 0},
+		{"search results", searchResultsPanel(searchPageData{LoadErr: errTest}), 0},
+		{"objects results", objectsBrowserResults(objectsPageData{LoadErr: errTest}), 0},
+		{"inbox list region", inboxListRegion(inboxView{LoadErr: errTest}), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			html := renderHTML(t, tc.page)
-			if got := strings.Count(html, "<h1"); got != 1 {
-				t.Errorf("page renders %d <h1> elements, want exactly 1:\n%s", got, html)
+			if got := strings.Count(html, "<h1"); got != tc.want {
+				t.Errorf("%d <h1> elements, want %d:\n%s", got, tc.want, html)
 			}
 		})
 	}
 }
 
-// TestNoTemplateRendersHeaderBeforePageError is the static half: a template that
-// renders a shared header (directly, or through a wrapper such as
-// `boardHeader`) must not go on to render `pageError`. Its h1 is for a page
-// whose error state *is* the page; a page that already rendered a header uses
-// `pageErrorNotice`. Branch-exclusive sites put the error first by convention,
-// so a header call textually before a `pageError` call is the regression this
-// catches — and the check resolves wrappers, which is how the board page slipped
-// past a hand sweep.
+// TestNoTemplateRendersHeaderBeforePageError is the static half of the rule: a
+// template that renders a shared header must not go on to render `pageError`.
+// Its h1 is for a page whose error state *is* the page; a page that already
+// rendered a header uses `pageErrorNotice`.
+//
+// Both sides resolve through callers AND callees: a page reaches its header
+// through a wrapper such as `@boardHeader()`, and it reaches the error through a
+// body such as `@inboxListRegion()`. Comparing only literal `@pageHeader(` /
+// `@pageError(` text in the page's own body missed both shapes — the board page
+// (header two calls away) and the inbox/members/tokens pages (error one call
+// away) each slipped past a hand sweep. Branch-exclusive sites put the error
+// first by convention, so "a header call before the call that lowers to
+// pageError" is the regression this catches.
 func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 	type tmplBody struct {
 		file string
@@ -323,7 +341,6 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 		body string
 	}
 	var bodies []tmplBody
-	byName := map[string]*tmplBody{}
 	files, err := filepath.Glob("*.templ")
 	if err != nil {
 		t.Fatal(err)
@@ -341,12 +358,8 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 			if i+1 < len(locs) {
 				end = locs[i+1][0]
 			}
-			b := tmplBody{file: f, name: text[m[2]:m[3]], body: text[m[1]:end]}
-			bodies = append(bodies, b)
+			bodies = append(bodies, tmplBody{file: f, name: text[m[2]:m[3]], body: text[m[1]:end]})
 		}
-	}
-	for i := range bodies {
-		byName[bodies[i].name] = &bodies[i]
 	}
 
 	callRe := regexp.MustCompile(`@(\w+)\(`)
@@ -357,11 +370,12 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 		}
 		return out
 	}
-	// rendersHeader: the shared header renderers, plus anything that reaches one.
+	// rendersHeader / lowersToPageError: the leaves, plus every template that
+	// reaches one through a call (fixed point over the call graph).
 	rendersHeader := map[string]bool{
-		"pageHeader": true, "pageHeaderWithMeta": true, "detailHeader": true,
+		"pageHead": true, "pageHeader": true, "pageHeaderWithMeta": true, "detailHeader": true,
 	}
-	callsPageError := map[string]bool{"pageError": true}
+	lowersToPageError := map[string]bool{"pageError": true}
 	for changed := true; changed; {
 		changed = false
 		for i := range bodies {
@@ -371,43 +385,46 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 					rendersHeader[b.name] = true
 					changed = true
 				}
-				if callsPageError[callee] && !callsPageError[b.name] {
-					callsPageError[b.name] = true
+				if lowersToPageError[callee] && !lowersToPageError[b.name] {
+					lowersToPageError[b.name] = true
 					changed = true
 				}
 			}
 		}
 	}
 
+	// firstAt returns the earliest call to any callee in the set, so position is
+	// measured at the call site in this body rather than inside a callee.
+	firstAt := func(body string, reachable map[string]bool) int {
+		first := -1
+		for _, callee := range calls(body) {
+			if !reachable[callee] {
+				continue
+			}
+			if at := strings.Index(body, "@"+callee+"("); at >= 0 && (first < 0 || at < first) {
+				first = at
+			}
+		}
+		return first
+	}
+
 	checked := 0
 	for i := range bodies {
 		b := &bodies[i]
-		if !rendersHeader[b.name] || !callsPageError[b.name] {
+		if !rendersHeader[b.name] || !lowersToPageError[b.name] {
 			continue
 		}
-		firstHeader, firstError := -1, strings.Index(b.body, "@pageError(")
-		if firstError < 0 {
-			continue // the error comes from a callee that is itself guarded
-		}
-		for _, callee := range calls(b.body) {
-			if !rendersHeader[callee] {
-				continue
-			}
-			at := strings.Index(b.body, "@"+callee+"(")
-			if at >= 0 && (firstHeader < 0 || at < firstHeader) {
-				firstHeader = at
-			}
-		}
-		if firstHeader < 0 {
-			continue
+		firstHeader, firstError := firstAt(b.body, rendersHeader), firstAt(b.body, lowersToPageError)
+		if firstHeader < 0 || firstError < 0 {
+			continue // the pair only coexists through a shared callee, not in this body
 		}
 		checked++
 		if firstHeader < firstError {
-			t.Errorf("%s: %s renders a page header and then pageError; use pageErrorNotice so the page keeps one <h1>", b.file, b.name)
+			t.Errorf("%s: %s renders a page header and then something that lowers to pageError; use pageErrorNotice so the page keeps one <h1>", b.file, b.name)
 		}
 	}
 	if checked < 10 {
-		t.Fatalf("checked %d templates that render a header and a pageError; the scan is not matching the code it guards", checked)
+		t.Fatalf("checked %d templates that render a header and lower to pageError; the scan is not matching the code it guards", checked)
 	}
 }
 
