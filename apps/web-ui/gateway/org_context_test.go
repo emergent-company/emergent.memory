@@ -289,13 +289,17 @@ func TestUIOrgLanding(t *testing.T) {
 	if !strings.Contains(body, `<tr id="p3">`) {
 		t.Errorf("pending project row must render without clickable affordances, want <tr id=\"p3\">")
 	}
-	// org-context sidebar renders, project nav does not
+	// org-context sidebar renders, project nav does not. The sentinels are
+	// project-nav-only hrefs: a retired label ("Memory Browser") would pass
+	// vacuously once the string left the codebase entirely.
 	for _, want := range []string{`href="/o/o1/members"`, `href="/o/o1/settings"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("org sidebar missing %q", want)
 		}
 	}
-	for _, absent := range []string{"Memory Browser", `href="/objects"`} {
+	// (/usage is not a valid sentinel: the ⌘K palette data carries it for every
+	// shell, including the org one.)
+	for _, absent := range []string{`href="/objects"`, `href="/settings/tokens"`} {
 		if strings.Contains(body, absent) {
 			t.Errorf("project nav must not render in org context, found %q", absent)
 		}
