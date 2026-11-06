@@ -254,3 +254,23 @@ func TestStackedMobileTables(t *testing.T) {
 		}
 	}
 }
+
+// renderPageShellWithSentry renders the full app shell with a configured Sentry
+// head, so tests can assert on the SDK block's load strategy (issue #209).
+func renderPageShellWithSentry(t *testing.T, opts sentryHeadOpts) string {
+	t.Helper()
+	body := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		_, err := w.Write([]byte("<p>hi</p>"))
+		return err
+	})
+	return renderHTML(t, appShell(
+		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		0,
+		nil,
+		nil, nil,
+		body,
+		nil,
+		opts.DSN, opts.Environment, opts.TracesSampleRate, opts.ReplaySessionSampleRate, opts.ReplayOnErrorSampleRate,
+		"",
+	))
+}
