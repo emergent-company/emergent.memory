@@ -11,9 +11,10 @@
 //   - counts are reconciled from /api/notifications/counts on load, on every
 //     htmx settle (scope/tab switch), and on every received event;
 //   - the inbox list refreshes through the server-rendered
-//     /partial/inbox-list fragment (the list plus an out-of-band tab strip), so
-//     notification text is never re-inserted via innerHTML and the page around
-//     the list — scroll, focus, open rows — survives the swap.
+//     /partial/inbox-list fragment (the list plus out-of-band refreshes of the
+//     tab strip and, on the Project scope, the scope switch), so notification
+//     text is never re-inserted via innerHTML and the page around the list —
+//     scroll, focus, open rows — survives the swap.
 //
 // Inline actions are delegated clicks that call the gateway JSON API and then
 // reconcile counts + refresh the list. Everything degrades to a no-op when its
@@ -122,8 +123,9 @@
   }
 
   // refreshList re-renders the inbox list fragment through htmx. The server
-  // returns #inbox-list plus an out-of-band tab strip, so counts stay live while
-  // the page around the list keeps its scroll, focus and open rows. Swapping
+  // returns #inbox-list plus out-of-band refreshes of #inbox-tabs and, on the
+  // Project scope, #inbox-scope-switch, so counts stay live while the page
+  // around the list keeps its scroll, focus and open rows. Swapping
   // #main-content here (the pre-fragment behaviour) re-rendered the whole page
   // on every event and every inline action.
   function refreshList() {
@@ -145,7 +147,22 @@
     if (window.htmx && window.htmx.ajax) {
       // outerHTML: the response's root IS #inbox-list, so innerHTML would nest a
       // second #inbox-list inside the target (duplicate id) on the first swap.
-      window.htmx.ajax("GET", url, { target: "#inbox-list", swap: "outerHTML" });
+      var pending;
+      try {
+        pending = window.htmx.ajax("GET", url, {
+          target: "#inbox-list",
+          swap: "outerHTML",
+        });
+      } catch (e) {
+        return; // htmx could not issue the request; the next event retries.
+      }
+      // htmx.ajax returns a promise. A failed refresh (502, timeout, dropped
+      // connection) must not become an unhandled rejection: the list keeps the
+      // rows it already has, the next notification or inline action retries,
+      // and the bell reconcile above is independent. Swallow it deliberately.
+      if (pending && typeof pending.catch === "function") {
+        pending.catch(function () {});
+      }
     } else {
       window.location.reload();
     }
