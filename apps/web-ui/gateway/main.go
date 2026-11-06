@@ -598,6 +598,7 @@ func main() {
 	e.GET("/settings/mcp-servers/shares", s.uiMCPShares)
 	e.GET("/settings/mcp-servers/shares/new", s.uiMCPShareNewPage)
 	e.POST("/settings/mcp-servers/shares/new", s.uiMCPShareCreate)
+	e.GET("/settings/mcp-servers/shares/:id/duplicate", s.uiMCPShareDuplicatePage)
 	e.GET("/settings/mcp-servers/shares/:id/edit", s.uiMCPShareEditPage)
 	e.POST("/settings/mcp-servers/shares/:id/update", s.uiMCPShareUpdate)
 	e.POST("/settings/mcp-servers/shares/:id/revoke", s.uiMCPShareRevoke)
