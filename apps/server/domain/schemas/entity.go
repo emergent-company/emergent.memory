@@ -395,16 +395,31 @@ type SchemaConflict struct {
 }
 
 // MergePreviewPack is one incoming pack in a merge preview request.
-// ObjectTypes accepts the same array/map storage formats as a stored pack's
-// object_type_schemas column: the array form is the canonical writer shape
-// (blueprint apply/seeder and the HTTP request path), while the map form is the
-// legacy stored shape and remains read-compatible.
 //
-// The object-type field accepts the same snake_case and camelCase spellings as
-// the sibling pack request structs. Use GetObjectTypes() to retrieve the
-// resolved value.
+// The preview consumes only the pack name and its object-type definitions. The
+// object-type field accepts the same array/map storage formats as a stored
+// pack's object_type_schemas column: the array form is the canonical writer
+// shape (blueprint apply/seeder and the HTTP request path), while the map form
+// is the legacy stored shape and remains read-compatible. It also accepts the
+// same camelCase and snake_case spellings as the sibling pack request structs;
+// use GetObjectTypes() to retrieve the resolved value.
+//
+// The remaining fields mirror the blueprint manifest pack shape
+// (domain/blueprints.PackManifest) and are accepted for shape compatibility so
+// a forwarded manifest pack still previews. They are tolerated but not read:
+// version, description, author, migrations, relationshipTypes,
+// relationshipTypeSchemas, and relationship_type_schemas. Unknown keys are
+// still rejected.
 type MergePreviewPack struct {
 	Name string `json:"name"`
+	// Version is manifest metadata; tolerated, not read.
+	Version string `json:"version,omitempty"`
+	// Description is manifest metadata; tolerated, not read.
+	Description string `json:"description,omitempty"`
+	// Author is manifest metadata; tolerated, not read.
+	Author string `json:"author,omitempty"`
+	// Migrations is the manifest's upgrade-path block; tolerated, not read.
+	Migrations *SchemaMigrationHints `json:"migrations,omitempty"`
 	// ObjectTypes is a JSON array of {"name","label","properties",...} objects.
 	// The map-of-type-name → schema stored form is also accepted here and is
 	// read-compatible.
@@ -413,13 +428,28 @@ type MergePreviewPack struct {
 	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas,omitempty" swaggertype:"array,object"`
 	// ObjectTypesSnake accepts the short snake_case spelling named in #163.
 	ObjectTypesSnake json.RawMessage `json:"object_types,omitempty" swaggertype:"array,object"`
+	// ObjectTypeSchemasCamel is the blueprint manifest's camelCase alias for
+	// object type definitions. UnmarshalJSON promotes it into ObjectTypes only
+	// when no canonical objectTypes value is present, so #164's precedence is
+	// unchanged.
+	ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas,omitempty" swaggertype:"array,object"`
+	// RelationshipTypes is the manifest's relationship-type list; tolerated,
+	// not read. A merge preview only reports object-type collisions.
+	RelationshipTypes json.RawMessage `json:"relationshipTypes,omitempty" swaggertype:"array,object"`
+	// RelationshipTypeSchemasCamel is the manifest's camelCase relationship
+	// alias; tolerated, not read.
+	RelationshipTypeSchemasCamel json.RawMessage `json:"relationshipTypeSchemas,omitempty" swaggertype:"array,object"`
+	// RelationshipTypeSchemasSnake is the sibling pack request's snake_case
+	// relationship alias; tolerated, not read.
+	RelationshipTypeSchemasSnake json.RawMessage `json:"relationship_type_schemas,omitempty" swaggertype:"array,object"`
 }
 
-// UnmarshalJSON accepts the documented camelCase key and both snake_case
-// aliases, while rejecting genuinely unknown pack keys. A typo such as
-// "objectTypesTypo" must not bind to nothing and look like an absent
+// UnmarshalJSON accepts the documented object-type spellings and the blueprint
+// manifest pack's fields, while rejecting genuinely unknown pack keys. A typo
+// such as "objectTypesTypo" must not bind to nothing and look like an absent
 // objectTypes value: that is the fail-open the merge preview gate is meant to
-// prevent. Other pack-level keys are not part of this endpoint's contract.
+// prevent. Narrowing the accepted set to the pack shape (rather than disabling
+// unknown-field rejection) is what makes the rejection useful.
 func (p *MergePreviewPack) UnmarshalJSON(data []byte) error {
 	type packJSON MergePreviewPack
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -427,6 +457,13 @@ func (p *MergePreviewPack) UnmarshalJSON(data []byte) error {
 	var decoded packJSON
 	if err := dec.Decode(&decoded); err != nil {
 		return err
+	}
+	// Mirror the blueprint manifest's own alias handling: the camelCase
+	// objectTypeSchemas spelling fills ObjectTypes only when the canonical key
+	// is absent, so the preview consumes it without reordering #164's
+	// object-type precedence.
+	if len(decoded.ObjectTypes) == 0 && len(decoded.ObjectTypeSchemasCamel) > 0 {
+		decoded.ObjectTypes = decoded.ObjectTypeSchemasCamel
 	}
 	*p = MergePreviewPack(decoded)
 	return nil
@@ -467,6 +504,14 @@ type MergePreviewConflict struct {
 
 // MergePreviewRequest is the body for POST
 // /api/schemas/projects/:projectId/merge-preview.
+//
+// Each pack may carry the preview's own keys (name, objectTypes and its
+// object_type_schemas/object_types/objectTypeSchemas spellings) plus the
+// blueprint manifest pack metadata (version, description, author, migrations,
+// relationshipTypes, relationshipTypeSchemas, relationship_type_schemas). The
+// manifest metadata is accepted for shape compatibility but is not read: the
+// preview computes object-type conflicts only. Keys outside that set are
+// rejected with a 400 that names the offending key.
 type MergePreviewRequest struct {
 	Packs []MergePreviewPack `json:"packs"`
 }

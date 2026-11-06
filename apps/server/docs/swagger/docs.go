@@ -17788,7 +17788,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes.",
+                "description": "Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes. Each pack may carry name, objectTypes (and the object_type_schemas, object_types, objectTypeSchemas aliases) plus blueprint-manifest metadata: version, description, author, migrations, relationshipTypes, relationshipTypeSchemas, relationship_type_schemas. The preview consumes object types only; manifest metadata is accepted for shape compatibility but not read. Unknown keys are rejected with a 400 that names the offending field.",
                 "consumes": [
                     "application/json"
                 ],
@@ -40737,8 +40737,31 @@ const docTemplate = `{
         "domain_schemas.MergePreviewPack": {
             "type": "object",
             "properties": {
+                "author": {
+                    "description": "Author is manifest metadata; tolerated, not read.",
+                    "type": "string"
+                },
+                "description": {
+                    "description": "Description is manifest metadata; tolerated, not read.",
+                    "type": "string"
+                },
+                "migrations": {
+                    "description": "Migrations is the manifest's upgrade-path block; tolerated, not read.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                        }
+                    ]
+                },
                 "name": {
                     "type": "string"
+                },
+                "objectTypeSchemas": {
+                    "description": "ObjectTypeSchemasCamel is the blueprint manifest's camelCase alias for\nobject type definitions. UnmarshalJSON promotes it into ObjectTypes only\nwhen no canonical objectTypes value is present, so #164's precedence is\nunchanged.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 },
                 "objectTypes": {
                     "description": "ObjectTypes is a JSON array of {\"name\",\"label\",\"properties\",...} objects.\nThe map-of-type-name → schema stored form is also accepted here and is\nread-compatible.",
@@ -40760,6 +40783,31 @@ const docTemplate = `{
                     "items": {
                         "type": "object"
                     }
+                },
+                "relationshipTypeSchemas": {
+                    "description": "RelationshipTypeSchemasCamel is the manifest's camelCase relationship\nalias; tolerated, not read.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "relationshipTypes": {
+                    "description": "RelationshipTypes is the manifest's relationship-type list; tolerated,\nnot read. A merge preview only reports object-type collisions.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "relationship_type_schemas": {
+                    "description": "RelationshipTypeSchemasSnake is the sibling pack request's snake_case\nrelationship alias; tolerated, not read.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "version": {
+                    "description": "Version is manifest metadata; tolerated, not read.",
+                    "type": "string"
                 }
             }
         },

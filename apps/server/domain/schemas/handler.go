@@ -1,8 +1,12 @@
 package schemas
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -223,9 +227,49 @@ func (h *Handler) AssignPack(c echo.Context) error {
 	return c.JSON(http.StatusCreated, result)
 }
 
+// mergePreviewPackKeysHint lists the pack keys merge-preview accepts. It is
+// appended to an unknown-field 400 so a client that sent a typo or a
+// non-pack field can correct the request without reading the server source.
+const mergePreviewPackKeysHint = `a pack accepts name, objectTypes (aliases object_type_schemas, object_types, objectTypeSchemas), version, description, author, migrations, relationshipTypes (aliases relationshipTypeSchemas, relationship_type_schemas)`
+
+// mergePreviewBindErrorMessage turns a merge-preview JSON bind failure into a
+// client-facing 400 message. The unknown-field decoder error names the exact
+// client key, which is the one actionable thing about a typo, so it is
+// preserved. Decoder internals (Go value types, struct layouts, "cannot
+// unmarshal") are deliberately not surfaced: they name server implementation,
+// not the client's field.
+func mergePreviewBindErrorMessage(err error) string {
+	// Echo wraps decoder failures in *echo.HTTPError. Unwrap to the decoder
+	// error so the client-facing message is built from the field name, not from
+	// Echo's "code=400, message=..." rendering.
+	var echoErr *echo.HTTPError
+	if errors.As(err, &echoErr) {
+		switch {
+		case echoErr.Internal != nil:
+			err = echoErr.Internal
+		case echoErr.Message != nil:
+			if msg, ok := echoErr.Message.(string); ok {
+				err = errors.New(msg)
+			}
+		}
+	}
+
+	const unknownFieldPrefix = "json: unknown field "
+	if msg := err.Error(); strings.HasPrefix(msg, unknownFieldPrefix) {
+		return fmt.Sprintf("invalid request body: %s; %s", strings.TrimPrefix(msg, "json: "), mergePreviewPackKeysHint)
+	}
+
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) && typeErr.Field != "" {
+		return fmt.Sprintf("invalid request body: field %q has the wrong JSON type", typeErr.Field)
+	}
+
+	return "invalid request body"
+}
+
 // PreviewMerge handles POST /api/schemas/projects/:projectId/merge-preview
 // @Summary      Preview pack merge
-// @Description  Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes.
+// @Description  Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes. Each pack may carry name, objectTypes (and the object_type_schemas, object_types, objectTypeSchemas aliases) plus blueprint-manifest metadata: version, description, author, migrations, relationshipTypes, relationshipTypeSchemas, relationship_type_schemas. The preview consumes object types only; manifest metadata is accepted for shape compatibility but not read. Unknown keys are rejected with a 400 that names the offending field.
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
@@ -245,7 +289,7 @@ func (h *Handler) PreviewMerge(c echo.Context) error {
 
 	var req MergePreviewRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.NewBadRequest("invalid request body")
+		return apperror.NewBadRequest(mergePreviewBindErrorMessage(err))
 	}
 	if len(req.Packs) == 0 {
 		return apperror.NewBadRequest("at least one pack is required")

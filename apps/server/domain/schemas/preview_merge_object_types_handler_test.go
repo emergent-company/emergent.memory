@@ -58,10 +58,21 @@ func TestPreviewMergeHandlerObjectTypes(t *testing.T) {
 			wantContains: []string{"objectTypes", "JSON array", "JSON object", `{"name":"Person"`},
 		},
 		{
-			name:        "unknown pack key is rejected",
-			body:        `{"packs":[{"name":"Broken","objectTypesTypo":[{"name":"Typo"}]}]}`,
-			wantStatus:  http.StatusBadRequest,
-			wantMessage: "invalid request body",
+			name:         "unknown pack key is rejected and named",
+			body:         `{"packs":[{"name":"Broken","objectTypesTypo":[{"name":"Typo"}]}]}`,
+			wantStatus:   http.StatusBadRequest,
+			wantContains: []string{`invalid request body`, `unknown field "objectTypesTypo"`, "objectTypes"},
+		},
+		{
+			name:       "manifest metadata keys are accepted",
+			body:       `{"packs":[{"name":"Manifest","version":"1.0.0","description":"d","author":"a","migrations":{"from_version":"1.0.0"},"objectTypes":{},"relationshipTypes":[{"name":"rel","sourceType":"A","targetType":"B"}],"relationshipTypeSchemas":[],"objectTypeSchemas":[]}]}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:         "wrong packs type does not leak a decoder dump",
+			body:         `{"packs":"not-an-array"}`,
+			wantStatus:   http.StatusBadRequest,
+			wantContains: []string{"invalid request body"},
 		},
 		{
 			name:       "object_type_schemas empty array is accepted",

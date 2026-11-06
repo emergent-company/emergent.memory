@@ -42,6 +42,21 @@ func TestMergePreviewPackObjectTypeKeys(t *testing.T) {
 			want:    `[{"name":"Long"}]`,
 		},
 		{
+			name:    "manifest objectTypeSchemas alias is consumed as a fallback",
+			payload: `{"name":"p","objectTypeSchemas":[{"name":"ManifestAlias"}]}`,
+			want:    `[{"name":"ManifestAlias"}]`,
+		},
+		{
+			name:    "canonical objectTypes wins over manifest alias",
+			payload: `{"name":"p","objectTypes":[{"name":"Canonical"}],"objectTypeSchemas":[{"name":"ManifestAlias"}]}`,
+			want:    `[{"name":"Canonical"}]`,
+		},
+		{
+			name:    "manifest metadata keys are tolerated",
+			payload: `{"name":"p","version":"1.0.0","description":"d","author":"a","migrations":{"from_version":"1.0.0"},"relationshipTypes":[{"name":"rel"}],"relationshipTypeSchemas":[{"name":"rel"}],"relationship_type_schemas":[{"name":"rel"}],"objectTypes":[{"name":"Manifest"}]}`,
+			want:    `[{"name":"Manifest"}]`,
+		},
+		{
 			name:    "unknown key is rejected",
 			payload: `{"name":"p","objectTypesTypo":[{"name":"Typo"}]}`,
 			wantErr: "unknown field",
