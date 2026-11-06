@@ -20,12 +20,12 @@ import (
 // pending embedding work instead.
 templ EmbeddingsPage(data embeddingPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@embeddingsHeader(data.ProgressErr == nil && data.StatusErr == nil)
+		@embeddingsHeader()
 		if data.EmbeddingModelMissing {
 			@embeddingsModelWarning()
 		}
 		if data.ProgressErr != nil {
-			@pageError("Failed to load embedding statistics", data.ProgressErr)
+			@pageErrorNotice("Failed to load embedding statistics", data.ProgressErr)
 		} else if data.Empty {
 			if data.coverageComplete() {
 				@embeddingsComplete(data.Coverage)
@@ -48,17 +48,8 @@ templ EmbeddingsPage(data embeddingPageData) {
 	}
 }
 
-templ embeddingsHeader(ok bool) {
-	@pageHeader("Memory", "Embeddings", "Vector embedding pipeline — queue backlog, worker state, and tuning.") {
-		if ok {
-			@ui.Badge(ui.BadgeProps{
-				Label:   "pipeline status",
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeSM,
-				Icon:    "lucide--scan-line",
-			})
-		}
-	}
+templ embeddingsHeader() {
+	@pageHeader("Memory", "Embeddings", "Vector embedding pipeline — queue backlog, worker state, and tuning.")
 }
 
 // embeddingsModelWarning is shown when the active project has no embedding

@@ -876,7 +876,9 @@ func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 	query := c.QueryParam("q")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), pageError("Data source unavailable", dsFormError(err)))
+		// A fragment swapped into an existing page: the page already owns the h1,
+		// so the error renders as a notice under it.
+		renderPartial(c.Response().Writer, c.Request(), pageErrorNotice("Data source unavailable", dsFormError(err)))
 		return nil
 	}
 	// The fragment mirrors the page's Drive gate: the folder-listing step is

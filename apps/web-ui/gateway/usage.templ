@@ -17,9 +17,9 @@ import (
 // A failed backend fetch renders the whole-page error state (no crash).
 templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, payload usageChartPayload, monthSpend float64, hasMonthSpend bool, days int, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@usageHeader(loadErr == nil, days)
+		@usageHeader()
 		if loadErr != nil {
-			@pageError("Failed to load usage", loadErr)
+			@pageErrorNotice("Failed to load usage", loadErr)
 		} else {
 			@usageRangeSelector(days)
 			if hasUsageData(summary, series) {
@@ -38,12 +38,8 @@ templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, 
 	}
 }
 
-templ usageHeader(ok bool, days int) {
-	@pageHeader("Control plane", "Usage", "LLM token consumption and session activity for this project — costs are retail-price estimates.") {
-		if ok {
-			@countBadgeLabel(strconv.Itoa(days)+" day range", "lucide--chart-column")
-		}
-	}
+templ usageHeader() {
+	@pageHeader("Project", "Usage", "LLM token consumption and session activity for this project — costs are retail-price estimates.")
 }
 
 // usageRangeSelector renders the 7/30/90-day links; the active range is

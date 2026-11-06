@@ -53,6 +53,7 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 						ActionIcon:  "lucide--plus",
 					})
 				} else {
+					@sectionCount(compiledTypeCountLabel(compiled))
 					@compiledTypeCards("Object types", compiled.ObjectTypes, false, "/schema/object-types/", provenance)
 					@compiledTypeCards("Relationship types", compiled.RelationshipTypes, true, "", provenance)
 				}
@@ -235,9 +236,8 @@ templ schemaDiscoveryJobState(job *discoveryJob) {
 // schemaHeader is the Schema page header: title, subtitle, and the two primary
 // actions (Add schema, Save as blueprint).
 templ schemaHeader(compiled *CompiledSchemaTypes) {
-	@pageHeader("Knowledge", "Schema", "Compiled object and relationship types from active schema packs and built-in system types.") {
+	@pageHeader("Memory", "Schema", "Compiled object and relationship types from active schema packs and built-in system types.") {
 		<div class="flex flex-wrap items-center gap-2">
-			@countBadgeLabel(compiledTypeCountLabel(compiled), "lucide--git-branch")
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/schema/add",
@@ -538,10 +538,15 @@ templ SchemaObjectTypePage(view *SchemaObjectTypeView, loadErr error) {
 	}
 }
 
+// schemaObjectTypeHeaderMeta is the type's identity chip row: kind, icon and
+// colour. It renders under the description, never in the action slot.
+templ schemaObjectTypeHeaderMeta(detail *ObjectTypeDetail, icon string, color string) {
+	@typeNameChip(detail.Name, ui.BadgeGhost, icon, color)
+}
+
 templ schemaObjectTypeHeader(detail *ObjectTypeDetail, icon string, color string) {
-	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(detail))), "Object type", objectTypeLabel(detail), "", detailHeaderOpts{Margin: "mb-4"}) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(detail))), "", objectTypeLabel(detail), "", detailHeaderOpts{Margin: "mb-4", Meta: schemaObjectTypeHeaderMeta(detail, icon, color)}) {
 		<div class="flex flex-wrap items-center gap-2">
-			@typeNameChip(detail.Name, ui.BadgeGhost, icon, color)
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/schema/object-types/" + url.PathEscape(detail.Name) + "/edit",

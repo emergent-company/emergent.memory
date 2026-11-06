@@ -283,7 +283,7 @@ func TestUIConnectedDevicesRoute(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Connected devices", "No devices registered yet.", "newer", "older", "2 nodes", "Connected", "Select a node above", `action="/settings/mcp-nodes/remove"`} {
+	for _, want := range []string{"Connected devices", "No devices registered yet.", "newer", "older", "Connected", "Select a node above", `action="/settings/mcp-nodes/remove"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("route missing %q", want)
 		}
