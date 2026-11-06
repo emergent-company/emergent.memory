@@ -139,4 +139,114 @@ struct HTTPChatTransportFailureTests {
         // The user's turn stays: only the assistant copy was superseded.
         #expect(transcript.liveMessages.map(\.role) == [.user])
     }
+
+    /// A recovered drop clears only its own banner. The composer's banner slot is
+    /// shared by every turn, so a later failure that landed while the wait ran
+    /// has to survive the recovery (#213).
+    @Test func aRecoveredDropDoesNotClearAnotherTurnsBanner() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = HTTPChatTransport(
+            config: MemoryConfig(),
+            stream: SequencedChatStream(turns: [
+                StubTurn(
+                    payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA],
+                    error: URLError(.networkConnectionLost)
+                ),
+                // The second turn's stream ends on its own failure frame.
+                StubTurn(payloads: [#"{"type":"error","error":"Model timed out"}"#]),
+            ]),
+            session: URLSession(configuration: .ephemeral)
+        )
+
+        let first = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await first.value
+        #expect(transport.interruptedTurn != nil)
+
+        // The user sends another turn while the first drop's wait is running; it
+        // fails, and its failure now owns the banner.
+        let second = try #require(transport.send(
+            "and again",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await second.value
+        #expect(transport.errorMessage == "Model timed out")
+
+        // The wait then finds the first reply's record and settles that drop.
+        transport.discardInterruptedLiveCopy(in: transcript)
+
+        #expect(transport.interruptedTurn == nil)
+        // The second turn's failure survives: the user must still see why it
+        // produced nothing.
+        #expect(transport.errorMessage == "Model timed out")
+    }
+
+    /// The deliberate other half of the rule: a drop the wait never settles keeps
+    /// its banner, because that banner is the only signal the reply was lost.
+    @Test func aDropThatNeverRecoversKeepsItsBanner() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(
+            payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA],
+            error: URLError(.networkConnectionLost)
+        )
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        let interrupted = try #require(transport.interruptedTurn)
+        // The banner belongs to this drop, which is what lets a settlement tell
+        // it apart from a later turn's failure.
+        #expect(transport.errorMessage == interrupted.failureMessage)
+        // Nothing settled it: both the wait's signal and the banner remain.
+        #expect(transport.errorMessage != nil)
+    }
+}
+
+/// One turn as ``SequencedChatStream`` serves it.
+struct StubTurn {
+    var payloads: [String] = []
+    var error: Error?
+}
+
+/// Serves one turn per `frames` call, so two sends can run through one transport —
+/// the composer banner slot they share is the subject of one test here.
+struct SequencedChatStream: ChatStreaming {
+    let turns: [StubTurn]
+    private let served = ServedTurns()
+
+    func frames(_: ChatTurnRequest) -> AsyncThrowingStream<String, Error> {
+        let next = served.next(of: turns)
+        return AsyncThrowingStream { continuation in
+            for payload in next.payloads {
+                continuation.yield(payload)
+            }
+            continuation.finish(throwing: next.error)
+        }
+    }
+}
+
+/// Hands ``SequencedChatStream`` its turns in order (written from `frames`).
+final class ServedTurns: @unchecked Sendable {
+    private var index = 0
+
+    func next(of turns: [StubTurn]) -> StubTurn {
+        defer { index += 1 }
+        return turns[min(index, turns.count - 1)]
+    }
 }

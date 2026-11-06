@@ -132,6 +132,34 @@ struct InterruptedTurnRecoveryTests {
 
         #expect(ChatSessionTranscriptStore.recordedReply(extending: "hi there", in: detail, since: 2))
     }
+
+    /// A reply that called a tool between two assistant segments renders as two
+    /// entries, so the second one does not start with what the client saw. The
+    /// reply itself does, and that is what the wait recognises (#213).
+    @Test func recognisesAReplyASplitToolCallInterrupts() {
+        let records = [
+            turn("user", "hello"),
+            turn("assistant", "hi the"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+            turn("assistant", "re"),
+        ]
+        let detail = SessionDetail(room: "conv-1", records: records)
+
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
+    }
+
+    /// The tool record is not itself the reply: with only the truncated copy
+    /// recorded, a tool call in between must not look like progress.
+    @Test func aToolCallDoesNotMakeTheTruncatedCopyLookFinished() {
+        let records = [
+            turn("user", "hello"),
+            turn("assistant", "hi the"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+        ]
+        let detail = SessionDetail(room: "conv-1", records: records)
+
+        #expect(!ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
+    }
 }
 
 /// Answers `true` for the first `limit` checks, then `false`.

@@ -88,9 +88,9 @@ final class ChatSessionTranscriptStore {
     /// The rendered entries for one detail's records: consecutive same-role
     /// turns merged with a newline, `tools_executed` kept between runs.
     ///
-    /// One builder, used by ``loadHistory(from:)`` and by ``recordedReply``, so a
-    /// predicate cannot judge a different shape from the one the transcript
-    /// renders.
+    /// This is the *rendering* shape. ``recordedReply(extending:in:since:)``
+    /// deliberately judges the flattened reply instead: a tool call between two
+    /// assistant segments splits the rendered timeline but not the reply.
     private static func entries(from records: [SessionRecord]) -> [HistoryEntry] {
         var entries: [HistoryEntry] = []
         for record in records {
@@ -195,23 +195,49 @@ final class ChatSessionTranscriptStore {
     /// Three conditions, each earning its place:
     /// - the record grew past `baseline`, so an older reply cannot pass for this
     ///   one just because it starts the same way;
-    /// - its newest turn is the assistant's, because a run still executing leaves
-    ///   step records after its last turn;
-    /// - that turn opens with what the client already saw and carries more.
+    /// - the reply the record holds — every assistant turn after the last user
+    ///   turn, concatenated — opens with what the client already saw;
+    /// - it carries more than that, so a record still holding only the truncated
+    ///   copy keeps the wait going.
     ///
-    /// The turn compared is the *merged* entry the transcript renders, not the
-    /// newest raw record: a resumed run re-enters the agent and appends a record
-    /// holding only the tail of the reply, which does not start with the partial
-    /// even though the merged entry does.
+    /// The continuation is *not* the rendered timeline's shape. Rendering splits
+    /// entries at a `tools_executed` record, but a reply that called a tool is
+    /// still one reply: `"hi the"`, a tool call, `"re"` is `"hi there"`. Judging
+    /// the concatenation finds it; judging the last rendered entry did not
+    /// (`emergent.memory#213`).
     static func recordedReply(extending partial: String, in detail: SessionDetail, since baseline: Int) -> Bool {
         let opening = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !opening.isEmpty, detail.records.count > baseline else { return false }
-        let turns = entries(from: detail.records).compactMap { entry -> ChatMessage? in
-            guard case let .message(message) = entry else { return nil }
-            return message
+        let continuation = continuation(from: detail.records)
+        return continuation.count > opening.count && continuation.hasPrefix(opening)
+    }
+
+    /// Every assistant turn after the last user turn, concatenated in record
+    /// order: the reply to the turn the client is waiting on, whether or not a
+    /// tool call split it.
+    private static func continuation(from records: [SessionRecord]) -> String {
+        var text = ""
+        var collecting = false
+        for record in records {
+            switch record.kind {
+            case "turn":
+                guard let role = record.role else { continue }
+                if role == "user" {
+                    // A new user turn starts a new reply; anything recorded for
+                    // an earlier one is not the continuation being waited on.
+                    text = ""
+                    collecting = true
+                    continue
+                }
+                guard collecting, let turn = record.text else { continue }
+                text += turn
+            default:
+                // `tools_executed` between assistant segments does not split the
+                // reply; other record kinds carry no reply text.
+                continue
+            }
         }
-        guard let latest = turns.last, latest.role == .assistant else { return false }
-        return latest.text.count > opening.count && latest.text.hasPrefix(opening)
+        return text
     }
 
     /// Marks the start of a history fetch (the previous result stays visible
