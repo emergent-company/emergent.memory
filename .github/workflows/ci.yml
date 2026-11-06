@@ -334,6 +334,15 @@ jobs:
       - name: Tree hygiene tests
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/tree-hygiene.test.sh
+      # #886: the merge-guard verdict is a pair of string comparisons that
+      # `bash -n` and a YAML parse cannot check -- a wrong branch in
+      # `awaiting_review()` turns a rejection green (a merge the guard exists to
+      # stop), and the opposite puts red back on every push. This extracts both
+      # `run:` blocks from merge-guard.yml, stubs `gh`, and drives the eight
+      # no-marker/stale/approval/rejection cases on both triggers.
+      - name: Merge guard awaiting-review tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/merge-guard-awaiting.test.sh
       # The deploy/self-hosted helpers are shell and run inside image builds,
       # where their failure modes are silent: sleeping after the last attempt
       # only slows a build, a swallowed status reports success after a real
