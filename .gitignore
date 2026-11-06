@@ -259,6 +259,11 @@ sdk/python/.coverage
 /service-exposes-seed
 /test-coverage
 /uml-gen
+
+# Root-level gateway builds (e.g. `go build -o web-ui ./apps/web-ui/gateway` from
+# the repo root). The gateway module ignores its own `memory` and `web-ui` builds.
+/web-ui
+
 # Temp scripts and data files
 /fix.go
 /fix.patch

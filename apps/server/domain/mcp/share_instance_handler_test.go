@@ -88,6 +88,13 @@ func TestHandleCreateShareInstanceDuplicate(t *testing.T) {
 	assertAppError(t, err, 409)
 }
 
+func TestHandleCreateShareInstanceMissingTools(t *testing.T) {
+	h := newTestHandler(newFakeShareStore(), &fakeTokenSvc{}, &fakeAgentDir{})
+	c, _ := newJSONContext(t, http.MethodPost, `{"name":"Team A"}`, adminUser(), []string{"projectId"}, []string{"proj-1"})
+	err := h.HandleCreateShareInstance(*c)
+	assertAppError(t, err, 422)
+}
+
 func TestHandleCreateShareInstanceEmptyTools(t *testing.T) {
 	h := newTestHandler(newFakeShareStore(), &fakeTokenSvc{}, &fakeAgentDir{})
 	c, _ := newJSONContext(t, http.MethodPost, `{"name":"Team A","tools":[]}`, adminUser(), []string{"projectId"}, []string{"proj-1"})

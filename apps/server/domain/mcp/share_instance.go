@@ -188,8 +188,10 @@ func InstanceScopeFromContext(ctx context.Context) *InstanceScope {
 // ============================================================================
 
 // CreateShareInstanceRequest is the request body for POST .../shares.
-// Tools == nil means unrestricted (null allowlist); an empty non-nil slice is
-// rejected.
+// Tools is required and must name at least one tool. A nil allowlist (the
+// internal representation of a legacy unrestricted share) is rejected on
+// create: omitting the field used to mint a token whose read-only scopes did
+// not match the "unrestricted" label, and the UI already requires a selection.
 //
 // Agents is retained ONLY so a legacy client that supplies the retired agent
 // allowlist can be rejected explicitly; instances scope tools only and the
@@ -348,13 +350,15 @@ func isNonShareableScope(scope string) bool {
 }
 
 // normalizeToolAllowlist validates and de-duplicates an explicit tool
-// allowlist. A nil input means unrestricted. An empty input is rejected.
+// allowlist. A nil input means the legacy unrestricted allowlist (kept for
+// stored rows; CreateShareInstance rejects it so new shares always carry an
+// explicit list). An empty input is rejected.
 func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, error) {
 	if tools == nil {
 		return nil, nil
 	}
 	if len(*tools) == 0 {
-		return nil, apperror.NewValidation("tools must not be empty; omit the field for an unrestricted allowlist")
+		return nil, apperror.NewValidation("tools must not be empty; select at least one tool")
 	}
 	out := make([]string, 0, len(*tools))
 	for _, raw := range *tools {
@@ -875,6 +879,15 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 	// endpoint.
 	if req.Agents != nil {
 		return nil, errAgentsNotSupported()
+	}
+	// New shares must carry an explicit allowlist. A nil allowlist is the
+	// legacy "unrestricted" representation: the token gets the read-only scope
+	// set, so the request's apparent intent (all tools) and what the key can
+	// actually do diverge until the first write. Requiring the list here keeps
+	// every new share reviewable and matches the UI, which requires a
+	// selection. Legacy rows keep their NULL allowlist and stay readable.
+	if req.Tools == nil {
+		return nil, apperror.NewValidation("tools is required: select at least one tool")
 	}
 
 	// Populate the tool index (including project/relay tools) before validating.

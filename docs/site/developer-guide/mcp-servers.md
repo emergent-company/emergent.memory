@@ -149,7 +149,10 @@ The same data is available to API clients: `GET /api/projects/{projectId}/mcp/to
 returns `tools` plus a `templates` array (id, label, description, `tools`,
 `toolCount`, and `default` on the preselected one). Creating a share still sends
 an explicit `tools` list — a template is a UI convenience, not a new request
-field.
+field. The list is required: a request with no `tools` (or an empty array) is
+rejected with HTTP 422. Shares created before the allowlist existed, and the
+legacy `POST /api/projects/{projectId}/mcp/share` endpoint, keep an unrestricted
+allowlist and remain read-only through their token scopes.
 
 The key is shown to *you* exactly once, on the creation screen. If you also
 entered recipients, they have their own copy; otherwise copy it before closing

@@ -615,17 +615,24 @@ func TestCreateShareInstance(t *testing.T) {
 	assert.Len(t, store.byID, 1)
 }
 
-func TestCreateShareInstanceNoTools(t *testing.T) {
+// TestCreateShareInstanceMissingToolsRejected pins the create contract: a new
+// share must name its tools. A nil allowlist used to create an "unrestricted"
+// instance whose read-only-scoped token could not write, which is the opposite
+// of what the request appears to ask for. Legacy rows keep their NULL
+// allowlist; only creation requires the explicit list.
+func TestCreateShareInstanceMissingToolsRejected(t *testing.T) {
 	store := newFakeShareStore()
 	tok := &fakeTokenSvc{createToken: "emt_raw", createID: "tok-1"}
 	svc := newTestService(store, tok, &fakeAgentDir{})
 
 	resp, err := svc.CreateShareInstance(context.Background(), "proj", "user", "http://h", CreateShareInstanceRequest{Name: "All"})
-	require.NoError(t, err)
-	assert.Nil(t, resp.Tools)
-	// A null (unrestricted) allowlist grants the legacy read-only scope set so
-	// the token is actually usable.
-	assert.ElementsMatch(t, readOnlyMCPScopes, tok.createdScopes)
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.True(t, errors.As(err, &appErr))
+	assert.Equal(t, 422, appErr.HTTPStatus)
+	assert.Nil(t, resp)
+	assert.Empty(t, store.byID, "no instance may be created without a tool allowlist")
+	assert.Nil(t, tok.createdScopes, "no token may be minted without a tool allowlist")
 }
 
 // TestReadOnlyMCPScopesPinned pins the exact scope set granted to a read-only
