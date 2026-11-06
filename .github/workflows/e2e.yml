@@ -104,9 +104,28 @@ jobs:
           # are configured with. Set inline because the self-hosted pool spans
           # hosts whose configuration this workflow cannot read, so the number is
           # kept here as well.
+          #
+          # `[registry."docker.io"] mirrors` resolves base images (`golang:*`,
+          # `alpine:*`) and their blobs through Google's public Docker Hub mirror
+          # instead of `registry-1.docker.io`. Every anonymous Docker Hub request
+          # counts against one 100-pulls/6h per-IP quota shared by every job on
+          # the runner, and a `429 Too Many Requests` there kills the job in its
+          # build step before a test runs — it is infrastructure, not a test
+          # failure (#50, #211). BuildKit tries each mirror before the original
+          # registry, so a mirror that is down or returns 404 falls through to
+          # Docker Hub instead of failing the build. A mirror that serves a
+          # stale but valid manifest for a tag is used silently — the trust any
+          # registry mirror carries.
+          #
+          # Inline for the same reason as the bound above: a `docker-container`
+          # builder reads no host file, so a host-level copy cannot reach it and
+          # the mirror has to travel with the job.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
+
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       # Pin the docker-container builder this action creates for the
       # bare `docker build` / `docker compose ... --build` steps inside
@@ -273,9 +292,28 @@ jobs:
           # are configured with. Set inline because the self-hosted pool spans
           # hosts whose configuration this workflow cannot read, so the number is
           # kept here as well.
+          #
+          # `[registry."docker.io"] mirrors` resolves base images (`golang:*`,
+          # `alpine:*`) and their blobs through Google's public Docker Hub mirror
+          # instead of `registry-1.docker.io`. Every anonymous Docker Hub request
+          # counts against one 100-pulls/6h per-IP quota shared by every job on
+          # the runner, and a `429 Too Many Requests` there kills the job in its
+          # build step before a test runs — it is infrastructure, not a test
+          # failure (#50, #211). BuildKit tries each mirror before the original
+          # registry, so a mirror that is down or returns 404 falls through to
+          # Docker Hub instead of failing the build. A mirror that serves a
+          # stale but valid manifest for a tag is used silently — the trust any
+          # registry mirror carries.
+          #
+          # Inline for the same reason as the bound above: a `docker-container`
+          # builder reads no host file, so a host-level copy cannot reach it and
+          # the mirror has to travel with the job.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
+
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       # Optional Docker Hub authentication (issue #50). Base images (`golang:*`,
       # `alpine:*`) are otherwise resolved anonymously against a 100-pulls/6h
@@ -484,9 +522,28 @@ jobs:
           # are configured with. Set inline because the self-hosted pool spans
           # hosts whose configuration this workflow cannot read, so the number is
           # kept here as well.
+          #
+          # `[registry."docker.io"] mirrors` resolves base images (`golang:*`,
+          # `alpine:*`) and their blobs through Google's public Docker Hub mirror
+          # instead of `registry-1.docker.io`. Every anonymous Docker Hub request
+          # counts against one 100-pulls/6h per-IP quota shared by every job on
+          # the runner, and a `429 Too Many Requests` there kills the job in its
+          # build step before a test runs — it is infrastructure, not a test
+          # failure (#50, #211). BuildKit tries each mirror before the original
+          # registry, so a mirror that is down or returns 404 falls through to
+          # Docker Hub instead of failing the build. A mirror that serves a
+          # stale but valid manifest for a tag is used silently — the trust any
+          # registry mirror carries.
+          #
+          # Inline for the same reason as the bound above: a `docker-container`
+          # builder reads no host file, so a host-level copy cannot reach it and
+          # the mirror has to travel with the job.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
+
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       # Optional Docker Hub authentication (issue #50). Base images (`golang:*`,
       # `alpine:*`) are otherwise resolved anonymously against a 100-pulls/6h
