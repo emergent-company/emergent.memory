@@ -194,6 +194,34 @@ func (r *Repository) GetByID(ctx context.Context, projectID, ownerUserID string,
 	return &conv, nil
 }
 
+// OwnedConversationIDForRun resolves the conversation a run belongs to via
+// kb.agent_runs.session_id -> kb.chat_conversations.session_id, but ONLY when
+// that conversation is in projectID and owned by ownerUserID. It returns ""
+// for an unknown run, a run with no session/conversation (scheduled or
+// background runs), a run in another project, or a conversation owned by
+// another member — the caller cannot tell "not yours" from "does not exist".
+//
+// The strict owner predicate (rather than the owner-or-shared read predicate)
+// is deliberate: a project-scoped device credential must not be able to stop a
+// run in another member's conversation, even when that conversation is shared.
+func (r *Repository) OwnedConversationIDForRun(ctx context.Context, projectID, ownerUserID, runID string) (string, error) {
+	var conversationID string
+	err := r.db.NewRaw(`
+		SELECT cc.id::text
+		FROM kb.agent_runs ar
+		JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+		WHERE ar.id = ?
+		  AND cc.project_id = ?
+		  AND cc.owner_user_id = ?`, runID, projectID, ownerUserID).Scan(ctx, &conversationID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("owned conversation for run: %w", err)
+	}
+	return conversationID, nil
+}
+
 // GetByIDWithMessages retrieves a conversation with all its messages, scoped
 // to the caller (owner or non-private).
 func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {

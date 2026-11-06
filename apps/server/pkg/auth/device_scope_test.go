@@ -64,6 +64,15 @@ func TestRejectDeviceTokenOutsideSurface(t *testing.T) {
 		{"graph objects search allowed", "GET", "/api/graph/objects/search", deviceScopes, false},
 		{"voice enablement setting allowed", "GET", "/api/projects/p1/settings/voice/enabled", deviceScopes, false},
 
+		{"chat run cancel allowed", "POST", "/api/chat/runs/r1/cancel", deviceScopes, false},
+		{"chat run cancel extra segment rejected", "POST", "/api/chat/runs/r1/cancel/x", deviceScopes, true},
+		{"chat run cancel missing run rejected", "POST", "/api/chat/runs//cancel", deviceScopes, true},
+		{"chat run cancel wrong action rejected", "POST", "/api/chat/runs/r1/stop", deviceScopes, true},
+		{"chat run cancel nested rejected", "POST", "/api/chat/runs/a/b/cancel", deviceScopes, true},
+		{"chat run cancel wrong method rejected", "PUT", "/api/chat/runs/r1/cancel", deviceScopes, true},
+		{"agent run read stays closed", "GET", "/api/projects/p1/agent-runs/r1", deviceScopes, true},
+		{"agent-scoped cancel stays closed", "POST", "/api/projects/p1/agents/a1/runs/r1/cancel", deviceScopes, true},
+
 		{"conversation archive allowed", "POST", "/api/chat/c1/archive", deviceScopes, false},
 		{"conversation unarchive allowed", "POST", "/api/chat/c1/unarchive", deviceScopes, false},
 		{"conversation delete allowed", "DELETE", "/api/chat/c1", deviceScopes, false},

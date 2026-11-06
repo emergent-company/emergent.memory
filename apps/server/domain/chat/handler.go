@@ -1170,6 +1170,94 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	return nil
 }
 
+// CancelRun handles POST /api/chat/runs/:runId/cancel — the device-scoped
+// stop route (issue #81). It is guarded by chat:use, but scope alone is not an
+// authorization: the run must belong to a conversation in the caller's project
+// that the caller OWNS. A device credential is project-bound, so without the
+// owner check it could stop another member's run by naming its id.
+//
+// The durable "cancelling" transition is committed first (visible to every
+// server instance); the local executor notification is only a fast path. A run
+// that already reached a terminal state reports cancelled:false with its
+// status instead of pretending the cancel succeeded.
+//
+// @Summary      Cancel a chat run
+// @Description  Stops an agent-backed run that belongs to one of the caller's own conversations.
+// @Tags         chat
+// @Accept       json
+// @Produce      json
+// @Param        runId path string true "Agent run ID (UUID)"
+// @Success      200 {object} map[string]any "Run cancellation requested"
+// @Failure      400 {object} apperror.Error "Invalid run id"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Run not found or not owned by the caller"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/chat/runs/{runId}/cancel [post]
+// @Security     bearerAuth
+func (h *Handler) CancelRun(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+	// A malformed id can never name a run; treat it as not found so the route
+	// does not become an id-format oracle.
+	if _, err := uuid.Parse(runID); err != nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	ctx := c.Request().Context()
+
+	// Ownership gate. An empty result covers unknown runs, scheduled runs with
+	// no chat conversation, runs in another project, and runs in another
+	// member's conversation — all indistinguishable to the caller.
+	conversationID, err := h.svc.repo.OwnedConversationIDForRun(ctx, user.ProjectID, user.ID, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to resolve run ownership", err)
+	}
+	if conversationID == "" {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	accepted, err := h.agentRepo.RequestRunCancellation(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to cancel run", err)
+	}
+	if !accepted {
+		status := string(agents.RunStatusError)
+		if current, findErr := h.agentRepo.FindRunByID(ctx, runID); findErr == nil && current != nil {
+			status = string(current.Status)
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"message":   "Run already " + status,
+				"runId":     runID,
+				"cancelled": false,
+				"status":    status,
+			},
+		})
+	}
+
+	// Fast-path notification for an in-flight run in this process. Runs on
+	// other instances observe the persisted "cancelling" status at their next
+	// step boundary, so correctness does not depend on this call.
+	if h.agentExecutor != nil {
+		h.agentExecutor.Cancel(runID, agents.UserCancelReason)
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"message":   "Run cancellation requested",
+			"runId":     runID,
+			"cancelled": true,
+			"status":    string(agents.RunStatusCancelling),
+		},
+	})
+}
+
 func (h *Handler) formatSearchContext(results []search.UnifiedSearchResultItem) string {
 	if len(results) == 0 {
 		return ""
@@ -1359,6 +1447,11 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		}
 		runID := run.ID
 
+		// Additive run-id frame: the first meta (written before the branch) only
+		// carries the conversation. Emit a second meta now that the run exists so
+		// a client can name it when asking to stop (#67).
+		_ = sseWriter.WriteData(sse.NewMetaEventWithRun(conv.ID.String(), runID))
+
 		// Create a stub tool call in the trace
 		_ = h.agentRepo.CreateToolCall(ctx, &agents.AgentRunToolCall{
 			RunID:    runID,
@@ -1452,6 +1545,13 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		}
 		if rootRunID != "" {
 			execReq.RootRunID = &rootRunID
+		}
+		// Additive run-id frame: Execute creates the run internally, so this
+		// callback fires as soon as the row exists and before the agent takes
+		// its first step. The earlier meta frame stays exactly as it was; a
+		// client that ignores this second one is unaffected (#67).
+		execReq.OnRunCreated = func(runID string) {
+			_ = sseWriter.WriteData(sse.NewMetaEventWithRun(conv.ID.String(), runID))
 		}
 		result, err = h.agentExecutor.Execute(ctx, execReq)
 	}

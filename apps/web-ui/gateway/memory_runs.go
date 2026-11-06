@@ -286,16 +286,17 @@ func (m *MemoryClient) ListToolApprovals(ctx context.Context) ([]ToolApprovalIte
 	return out.Data, nil
 }
 
-// CancelAgentRun proxies the project/agent-scoped upstream cancel endpoint
-// (POST /api/projects/:projectId/agents/:id/runs/:runId/cancel). agentID is
-// the runtime agent id resolved from the run's own DTO (GetAgentRun), so the
-// upstream "run belongs to agent" guard always matches. The response reports
-// whether the run was actually transitioned to cancelled (false when it had
-// already reached a terminal state), so the caller's response stays consistent
-// with the run row. Any non-2xx (unknown agent/run, backend down) surfaces as a
-// typed error the caller maps to {"ok":false}.
-func (m *MemoryClient) CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error) {
-	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/agents/" + url.PathEscape(agentID) + "/runs/" + url.PathEscape(runID) + "/cancel"
+// CancelAgentRun proxies the chat-scoped upstream cancel endpoint
+// (POST /api/chat/runs/:runId/cancel) verbatim with the caller's bearer. The
+// server authenticates that bearer, enforces chat:use, and owner-checks the
+// run's conversation, so the gateway no longer needs an agent-runs read to
+// resolve a runtime agent id first. The response reports whether the run was
+// actually transitioned to cancelling (false when it had already reached a
+// terminal state), keeping the caller's response consistent with the run row.
+// Any non-2xx (unknown/foreign run, not allowed, backend down) surfaces as a
+// typed error the handler propagates as a status rather than an ok:false body.
+func (m *MemoryClient) CancelAgentRun(ctx context.Context, runID string) (bool, error) {
+	path := "/api/chat/runs/" + url.PathEscape(runID) + "/cancel"
 	var env struct {
 		Success bool `json:"success"`
 		Data    struct {

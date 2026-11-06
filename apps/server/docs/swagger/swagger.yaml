@@ -14241,6 +14241,47 @@ paths:
       summary: Create conversation
       tags:
       - chat
+  /api/chat/runs/{runId}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Stops an agent-backed run that belongs to one of the caller's own
+        conversations.
+      parameters:
+      - description: Agent run ID (UUID)
+        in: path
+        name: runId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Run cancellation requested
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid run id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Run not found or not owned by the caller
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Cancel a chat run
+      tags:
+      - chat
   /api/chat/stream:
     post:
       consumes:

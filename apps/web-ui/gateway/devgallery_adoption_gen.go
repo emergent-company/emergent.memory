@@ -39,5 +39,5 @@ var adoptionFindings = []AdoptionFinding{
 	{File: "runs.templ", Line: 96, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 102, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "share_manage.templ", Line: 415, Marker: "class:card", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
-	{File: "share_page.templ", Line: 690, Marker: "class:alert", Owners: []string{"Alert"}},
+	{File: "share_page.templ", Line: 676, Marker: "class:alert", Owners: []string{"Alert"}},
 }

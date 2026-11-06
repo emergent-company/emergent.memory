@@ -58,16 +58,50 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 		data.LoadErr = userFacingError(err)
 	} else {
 		data.Servers = servers
-		// The builtin tool taxonomy is additive: when the groups endpoint is
-		// unavailable (older memory) or the fetch fails, the builtin rows fall
-		// back to the flat cached-tool list rather than failing the page.
-		if mcpServersHasBuiltin(servers) {
-			if groups, gerr := s.memory.ListBuiltinToolGroups(ctx); gerr == nil {
-				data.BuiltinGroups = groups
-			}
-		}
 	}
 	return s.page(c, pageTitle("MCP Servers"), MCPServersPage(data))
+}
+
+// uiMCPServerToolsFragment renders one server's cached-tool rows for the
+// expand-on-demand rows host on the list page
+// (GET /settings/mcp-servers/:id/tools). The list page ships no rows: a fully
+// populated builtin catalogue is ~140 kB of markup — half the page's weight —
+// inside a collapsed row the user has not opened (#210). This is the deferred
+// half, fetched once per row on its first expand.
+//
+// It reads the server detail (which carries the cached tools) and, for the
+// builtin server, the capability taxonomy; a failed taxonomy degrades to the
+// flat list exactly as the page did before.
+func (s *Server) uiMCPServerToolsFragment(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "server id is required")
+	}
+	// htmx only swaps 2xx responses, so a failure has to come back as markup the
+	// user can read rather than as a status code the page silently drops.
+	srv, err := s.memory.GetMCPServer(ctx, id)
+	if err != nil {
+		return mcpToolsErrorNote(c, id, userFacingError(err).Error())
+	}
+	if srv == nil {
+		return mcpToolsErrorNote(c, id, "server not found")
+	}
+	var groups []BuiltinToolGroup
+	if mcpServerIsBuiltin(*srv) {
+		if g, gerr := s.memory.ListBuiltinToolGroups(ctx); gerr == nil {
+			groups = g
+		}
+	}
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextHTMLCharsetUTF8)
+	return mcpServerToolsContainer(*srv, srv.Tools, groups).Render(ctx, c.Response())
+}
+
+// mcpToolsErrorNote answers a failed tool-rows fetch with a rendered note in
+// the rows container.
+func mcpToolsErrorNote(c echo.Context, serverID string, msg string) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextHTMLCharsetUTF8)
+	return mcpServerToolsError(serverID, msg).Render(c.Request().Context(), c.Response())
 }
 
 // mcpOAuthLanding folds the OAuth callback status (?mcp_oauth=<status>) into the
