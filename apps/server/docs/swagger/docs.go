@@ -15108,7 +15108,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool allowlist (tools is required and must be non-empty), and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.",
+                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool allowlist, and optionally emails the one-time key and client setup snippets to the listed recipients. Returns the raw token exactly once.",
                 "consumes": [
                     "application/json"
                 ],
