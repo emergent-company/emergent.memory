@@ -37,20 +37,20 @@ struct InterruptedTurnRecovery {
         isCurrent: () -> Bool,
         apply: (SessionDetail) -> Void
     ) async {
-        for _ in 0 ..< attempts {
-            await sleep(interval)
-            guard !Task.isCancelled, isCurrent() else { return }
-            guard let detail = try? await client.detail(room: conversationID) else { continue }
-            // A fetch that finishes after the view moved on belongs to a
-            // transcript this wait no longer owns.
-            guard isCurrent() else { return }
-            guard ChatSessionTranscriptStore.recordedReply(
-                extending: partialText,
-                in: detail,
-                since: baseline
-            ) else { continue }
-            apply(detail)
-            return
-        }
+        // The reading loop and its ownership checks are shared with the resumed
+        // approval wait (see ``RecordedTurnPoll``); only the accept rule differs.
+        let poll = RecordedTurnPoll(client: client, attempts: attempts, interval: interval, sleep: sleep)
+        await poll.run(
+            conversationID: conversationID,
+            isCurrent: isCurrent,
+            accept: { detail in
+                ChatSessionTranscriptStore.recordedReply(
+                    extending: partialText,
+                    in: detail,
+                    since: baseline
+                )
+            },
+            apply: apply
+        )
     }
 }

@@ -29,6 +29,7 @@ extension ChatSessionView {
             let conversationID = openConversationID
         else { return }
         let baseline = transcript.lastRecordCount
+        let scope = TranscriptWaitScope(conversationID: conversationID, baseline: baseline)
         let recovery = InterruptedTurnRecovery(client: SessionLogClient(config: MemoryConfig()))
         await recovery.run(
             conversationID: conversationID,
@@ -36,8 +37,7 @@ extension ChatSessionView {
             baseline: baseline,
             isCurrent: {
                 transport.interruptedTurn?.liveMessageID == interrupted.liveMessageID
-                    && openConversationID == conversationID
-                    && transcript.lastRecordCount == baseline
+                    && scopeIsCurrent(scope)
             },
             apply: { detail in
                 transcript.loadHistory(from: detail)
