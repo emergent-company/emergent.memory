@@ -29,16 +29,23 @@ import (
 
 // mcpServersPageData is the payload for the list page (MCPServersPage): the
 // registry's servers (each already carrying its cached Tools + ToolCount from
-// memory's list DTO), the builtin server's capability-group taxonomy
-// (BuiltinGroups — empty when memory is older than the groups endpoint or the
-// fetch failed, in which case the builtin tools render as a flat list), a
-// whole-page LoadErr, and PRG flash feedback.
+// memory's list DTO), a whole-page LoadErr, and PRG flash feedback.
+//
+// The builtin server's capability-group taxonomy is NOT loaded here: the tool
+// rows (and the groups that organise them) are fetched when a row is first
+// expanded, so the page does not pay for a catalogue nobody has opened (#210).
 type mcpServersPageData struct {
-	Servers       []MCPServer
-	BuiltinGroups []BuiltinToolGroup
-	LoadErr       error
-	FlashMsg      string
-	FlashErr      error
+	Servers  []MCPServer
+	LoadErr  error
+	FlashMsg string
+	FlashErr error
+}
+
+// mcpServerToolsFragmentPath is where an expanded row fetches its cached-tool
+// rows from (uiMCPServerToolsFragment). Kept next to the page data so the templ
+// and the route cannot drift.
+func mcpServerToolsFragmentPath(serverID string) string {
+	return mcpServerSettingsBase + "/" + url.PathEscape(serverID) + "/tools"
 }
 
 // mcpServerFormData is the payload shared by the create and edit pages
@@ -232,12 +239,6 @@ func mcpBuiltinToolGroups(tools []MCPTool, groups []BuiltinToolGroup) (grouped [
 		}
 	}
 	return grouped, other
-}
-
-// mcpServersHasBuiltin reports whether any listed server is the builtin tool
-// source (the only row whose tools use the grouped view).
-func mcpServersHasBuiltin(servers []MCPServer) bool {
-	return slices.ContainsFunc(servers, mcpServerIsBuiltin)
 }
 
 // mcpServerValidTransport reports whether t is a transport a user may choose

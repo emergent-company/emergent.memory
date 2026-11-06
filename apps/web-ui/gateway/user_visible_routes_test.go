@@ -156,6 +156,7 @@ var userVisibleRoutes = []gatewayRoute{
 	{method: "POST", path: "/settings/mcp-servers/shares/:id/rotate", handler: "uiMCPShareRotate"},
 	{method: "POST", path: "/settings/mcp-servers/shares/:id/invite", handler: "uiMCPShareInvite"},
 	{method: "GET", path: "/settings/mcp-servers/:id/edit", handler: "uiMCPEditPage"},
+	{method: "GET", path: "/settings/mcp-servers/:id/tools", handler: "uiMCPServerToolsFragment"},
 	{method: "POST", path: "/settings/mcp-servers/:id/update", handler: "uiMCPUpdate"},
 	{method: "POST", path: "/settings/mcp-servers/:id/delete", handler: "uiMCPDelete"},
 	{method: "POST", path: "/settings/mcp-servers/:id/toggle", handler: "uiMCPToggle"},
