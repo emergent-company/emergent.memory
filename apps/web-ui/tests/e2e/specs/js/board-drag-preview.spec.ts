@@ -264,15 +264,15 @@ test.describe('Board drag + preview wiring (app.js)', () => {
   });
 
   // Only the columns frame can move the card under the pointer. Deferring the
-  // count/health frames too would leave those readouts stale until some later
-  // event happened to arrive.
-  test('count and health frames still apply during a drag', async ({ page }) => {
+  // health frame too would leave that readout stale until some later event
+  // happened to arrive.
+  test('health frames still apply during a drag', async ({ page }) => {
     const errors = await bootstrap(page);
 
     await dragStart(page, 'card-ready');
     const cancelled = await page.evaluate(() => {
       const detail = {
-        message: { data: '<hx-partial hx-target="#board-header" hx-swap="outerMorph"></hx-partial>' },
+        message: { data: '<hx-partial hx-target="#board-health" hx-swap="outerMorph"></hx-partial>' },
         cancelled: false,
       };
       document.dispatchEvent(new CustomEvent('htmx:sse:before:message', { detail }));

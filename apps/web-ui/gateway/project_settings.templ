@@ -83,10 +83,10 @@ templ providersRailItem(active string, providersMissing bool) {
 // save flows.
 templ ProjectSettingsPage(data projectSettingsData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@projectSettingsHeader(data.Project != nil && data.LoadErr == nil)
+		@projectSettingsHeader()
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("Project settings unavailable", data.LoadErr)
+			@pageErrorNotice("Project settings unavailable", data.LoadErr)
 		} else {
 			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
 				@projectInfoPanel(data.Project)
@@ -103,7 +103,6 @@ templ ProjectSettingsPage(data projectSettingsData) {
 templ AssistantSettingsPage(data assistantSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Assistant")), "", "Assistant", "The agent that powers the assistant side panel.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("assistant", "lucide--bot")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(settingsSubNav("assistant", data.ProvidersMissing), nil) {
@@ -117,7 +116,6 @@ templ AssistantSettingsPage(data assistantSettingsPageData) {
 templ OverridesSettingsPage(data overridesSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Agent overrides")), "", "Agent overrides", "Per-agent definition overrides.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("overrides", "lucide--wrench")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(settingsSubNav("overrides", data.ProvidersMissing), nil) {
@@ -131,7 +129,6 @@ templ OverridesSettingsPage(data overridesSettingsPageData) {
 templ ProvidersSettingsPage(data providersSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Providers")), "", "Providers", "LLM providers and per-model rates.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("providers", "lucide--server")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(settingsSubNav("providers", data.ProvidersMissing), nil) {
@@ -146,7 +143,6 @@ templ ProvidersSettingsPage(data providersSettingsPageData) {
 templ VoiceSettingsPage(data voiceSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Voice")), "", "Voice", "Text-to-speech and speech-to-text providers, LiveKit endpoints, and turn tuning.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("voice", "lucide--mic")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(settingsSubNav("voice", data.ProvidersMissing), nil) {
@@ -163,9 +159,8 @@ templ VoiceSettingsPage(data voiceSettingsPageData) {
 // data models; this page only co-locates their rendering.
 templ ConnectedDevicesPage(data connectedDevicesPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected devices")), "", "Connected devices", "The phones and machines connected to this project — the Memory iOS app, and Mac or Linux connector machines that register here as MCP relay nodes. Each relay tool is named by its node's instance id + the tool name, so the instance id is the unique key linking every relay tool back to its node.", detailHeaderOpts{Margin: "mb-6", SubtitleFull: true}) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected devices")), "", "Connected devices", "The phones and machines connected to this project — the Memory iOS app, and Mac or Linux connector machines that register here as MCP relay nodes. Each relay tool is named by its node's instance id + the tool name, so the instance id is the unique key linking every relay tool back to its node.", detailHeaderOpts{Margin: "mb-6"}) {
 			if len(data.Nodes) > 0 {
-				@countBadge(len(data.Nodes), "node", "lucide--radio")
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    "/settings/devices",
@@ -212,12 +207,10 @@ templ ConnectedDevicesPage(data connectedDevicesPageData) {
 // flow.
 templ BudgetSettingsPage(data budgetSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("budget", "lucide--wallet")
-		}
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("Budget settings unavailable", data.LoadErr)
+			@pageErrorNotice("Budget settings unavailable", data.LoadErr)
 		} else {
 			@layout.Rail(settingsSubNav("budget", data.ProvidersMissing), nil) {
 				@budgetPanel(data.Project)
@@ -246,12 +239,8 @@ templ budgetPanel(p *Project) {
 	}
 }
 
-templ projectSettingsHeader(ok bool) {
-	@pageHeader("Project", "Project Settings", "Project-level Memory configuration — the project record and the remember pipeline.") {
-		if ok {
-			@countBadgeLabel("project", "lucide--settings")
-		}
-	}
+templ projectSettingsHeader() {
+	@pageHeader("Project", "Project Settings", "Project-level Memory configuration — the project record and the remember pipeline.")
 }
 
 // projectInfoPanel edits the project record itself: name, project info, chat
@@ -1744,7 +1733,6 @@ templ providerConfigSaveErrorModal(err error) {
 templ providerConfigPage(data providerConfigPageData) {
 	<div class={ pageFormChromeClass }>
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Providers", "/settings/providers", providerFormTitle(data.Provider))), "", providerFormTitle(data.Provider), "Configure an LLM provider.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("providers", "lucide--server")
 		}
 		if data.FlashMsg != "" {
 			@flashToast("success", data.FlashMsg)

@@ -109,6 +109,22 @@ func TestGetCountsUnread(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGetCountsActionRequiredPredicateOnce pins the Action-required bucket's SQL:
+// it carries requires_action = true exactly once whether or not the caller
+// already filtered by it. applyScopeFilter adds the predicate for the Action
+// required tab; the bucket must not append a second copy.
+func TestGetCountsActionRequiredPredicateOnce(t *testing.T) {
+	repo, _ := newRepoMock(t)
+
+	for _, requiresAction := range []bool{false, true} {
+		q := repo.countBaseActionRequired("u1", CountParams{RequiresAction: requiresAction})
+		sql := q.String()
+		if got := strings.Count(sql, "requires_action = true"); got != 1 {
+			t.Errorf("RequiresAction=%v: requires_action predicate appears %d times, want 1\nSQL: %s", requiresAction, got, sql)
+		}
+	}
+}
+
 // TestGetStatsDismissedExcludesCleared asserts GetStats draws all three of its
 // counters from the same row population: `cleared_at IS NULL`. A dismissed row
 // that was also cleared (Dismiss sets both dismissed=true and cleared_at) must

@@ -6,7 +6,6 @@ import (
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
-	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -16,31 +15,23 @@ import (
 // readout (when any reaction agent is unhealthy), and the status columns.
 templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, allowances boardAllowances, statusMap boardStatusMap, loadErr error) {
 	@layout.Container(layout.ContainerFull, nil) {
-		@boardHeaderRegion(len(items), loadErr == nil)
+		<div id="board-header" data-testid="board-header">
+			@boardHeader()
+		</div>
 		if loadErr != nil {
-			@pageError("Board unavailable", loadErr)
+			@pageErrorNotice("Board unavailable", loadErr)
 		} else {
 			@boardHealthRegion(agents)
 			<!-- Live refresh: htmx's hx-sse extension (loaded by the page shell,
 			     after htmx) holds /board/stream open and the server pushes
-			     rendered <hx-partial> frames for #board, #board-header and
-			     #board-health whenever a work item or agent run changes — so
+			     rendered <hx-partial> frames for #board and #board-health
+			     whenever a work item or agent run changes — so
 			     agent-driven transitions appear without a reload. -->
 			<div id="board-live" hx-sse:connect="/board/stream" aria-hidden="true"></div>
 			@BoardColumns(items, statuses, allowances, statusMap, "")
 		}
 		<div id="board-drawer" data-testid="board-drawer"></div>
 	}
-}
-
-// boardHeaderRegion wraps the page heading in a stable swap target so a live
-// frame can refresh the item count without re-rendering the page. The wrapper
-// is inside the fragment (outerMorph on #board-header), so the header and its
-// count stay one node and focus/scroll elsewhere is untouched.
-templ boardHeaderRegion(count int, ok bool) {
-	<div id="board-header" data-testid="board-header">
-		@boardHeader(count, ok)
-	</div>
 }
 
 // boardHealthRegion wraps the circuit-breaker readout in a stable swap target.
@@ -68,32 +59,12 @@ templ BoardRefresh(items []WorkItem, statuses []string, allowances boardAllowanc
 	<div id="board-drawer" hx-swap-oob="true" data-testid="board-drawer"></div>
 }
 
-// boardHeader is the board's page heading. It renders nav.PageHeading directly
-// (rather than the shared pageHeader helper) for one reason: the board is the
-// app's only full-bleed page (layout.ContainerFull), so its subtitle has no
-// measure at all — on a wide monitor it would run the whole width of the
-// content area as a single line, leaving the title/subtitle and the right-hand
-// count badge stranded at opposite edges. SubtitleFull:false restores the
-// shared max-w-2xl reading measure the helper hard-codes off for every capped
-// page; every other prop mirrors pageHeader so the markup is otherwise
-// identical. The kicker, title, subtitle and badge are unchanged.
-templ boardHeader(count int, ok bool) {
-	{{ var actions templ.Component
-	if ok {
-		actions = countBadgeLabel(countLabel(count, "item", "items"), "lucide--kanban-square")
-	} }}
-	@nav.PageHeading(nav.PageHeadingProps{
-		Kicker:          "Control plane",
-		Title:           "Board",
-		Subtitle:        "Work items across object status lanes — drag a card between lanes to move it (Ready re-executes it), or open a card to review and act on it.",
-		Actions:         actions,
-		Margin:          "mb-6",
-		Dashboard:       true,
-		SubtitleFull:    false,
-		HideBreadcrumbs: true,
-		NoTopMargin:     true,
-		Flat:            true,
-	})
+// boardHeader is the board's page header. The board is the app's only
+// full-bleed page (layout.ContainerFull), but its header is the shared one:
+// the description keeps the max-w-2xl reading measure every page uses, so it
+// never runs the width of the content area as a single line.
+templ boardHeader() {
+	@pageHeader("Work", "Board", "Work items across object status lanes — drag a card between lanes to move it (Ready re-executes it), or open a card to review and act on it.")
 }
 
 // boardHealth renders the agent circuit-breaker readout: a warning listing

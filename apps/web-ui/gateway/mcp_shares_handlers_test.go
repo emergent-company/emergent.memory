@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 )
@@ -239,6 +240,7 @@ func mcpShareTestServer(s *Server) *echo.Echo {
 	e.GET("/settings/mcp-servers/shares", s.uiMCPShares)
 	e.GET("/settings/mcp-servers/shares/new", s.uiMCPShareNewPage)
 	e.POST("/settings/mcp-servers/shares/new", s.uiMCPShareCreate)
+	e.GET("/settings/mcp-servers/shares/:id/duplicate", s.uiMCPShareDuplicatePage)
 	e.GET("/settings/mcp-servers/shares/:id/edit", s.uiMCPShareEditPage)
 	e.POST("/settings/mcp-servers/shares/:id/update", s.uiMCPShareUpdate)
 	e.POST("/settings/mcp-servers/shares/:id/revoke", s.uiMCPShareRevoke)
@@ -295,7 +297,12 @@ func TestMCPSharesListRendersRowsAndLegacyReadOnly(t *testing.T) {
 		`href="/settings/mcp-servers/shares/sh-1/edit"`,
 		`data-testid="mcp-share-actions-sh-1"`, `aria-label="Actions for research"`,
 		`data-dialog-open="mcp-share-invite-sh-1"`,
+		`href="/settings/mcp-servers/shares/sh-1/duplicate"`,
+		`data-testid="mcp-share-duplicate-link-sh-1"`,
 		"legacy", "old share",
+		// Legacy rows are read-only except for Duplicate, which creates a new
+		// share instead of touching them.
+		`data-testid="mcp-share-duplicate-link-sh-legacy"`,
 		`href="/settings/mcp-servers/shares/new"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -308,9 +315,11 @@ func TestMCPSharesListRendersRowsAndLegacyReadOnly(t *testing.T) {
 			t.Errorf("shares list must not render agent allowlist data %q", absent)
 		}
 	}
-	// legacy row is read-only: no edit/rotate/revoke for it
+	// legacy row is read-only: no edit/rotate/revoke for it, and no actions menu
+	// (Duplicate is rendered as its one standalone action)
 	for _, absent := range []string{
 		`href="/settings/mcp-servers/shares/sh-legacy/edit"`,
+		`data-testid="mcp-share-actions-sh-legacy"`,
 		`aria-label="Rotate key for old share"`,
 		`aria-label="Revoke old share"`,
 	} {
@@ -398,6 +407,207 @@ func TestMCPShareNewPageIgnoresAgentPreselect(t *testing.T) {
 	if strings.Contains(body, `name="agents"`) || strings.Contains(body, `value="a1"`) {
 		t.Error("create form must not render an agent picker or preselect an agent")
 	}
+}
+
+// --- duplicate (copy-and-start-editing) flow ---
+
+// TestMCPShareDuplicatePagePrefills proves the duplicate route opens the create
+// form seeded from the source share: a free "(copy)" name, its description, its
+// tool selection, and no invite recipients (a copy mints a new key, so nobody is
+// emailed implicitly).
+func TestMCPShareDuplicatePagePrefills(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/sh-1/duplicate")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET duplicate = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Duplicate MCP share", "Duplicate share",
+		`value="research (copy)"`,
+		"read-only research access",
+		`name="copyFrom" value="research"`,
+		`action="/settings/mcp-servers/shares/new"`,
+		`value="search_memory" class="checkbox checkbox-sm mt-0.5" checked`,
+		`value="get_object" class="checkbox checkbox-sm mt-0.5" checked`,
+		"Create share",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("duplicate page missing %q", want)
+		}
+	}
+	// The copy is a create page: it keeps the invite field, but recipients are
+	// never carried over — a copy means a new key, and nobody is emailed it
+	// implicitly.
+	if !strings.Contains(body, `id="mcp-share-emails" name="emails" type="text" value=""`) {
+		t.Error("duplicate page must render an empty invite field")
+	}
+	for _, absent := range []string{"New MCP share", "Save changes", `action="/settings/mcp-servers/shares/sh-1/update"`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("duplicate page must not render %q", absent)
+		}
+	}
+	if strings.Contains(body, `value="create_agent" class="checkbox checkbox-sm mt-0.5" checked`) {
+		t.Error("duplicate page must only check the source share's tools")
+	}
+}
+
+// TestMCPShareDuplicateUsesFreeName proves the derived name never collides with
+// an existing share, including case-insensitively.
+func TestMCPShareDuplicateUsesFreeName(t *testing.T) {
+	shares := append(mcpShareFixture(), MCPShareInstance{
+		ID: "sh-2", Name: "Research (Copy)", Status: "active", CreatedAt: "2026-02-01T00:00:00Z",
+		Tools: []string{"search_memory"}, ToolCount: 1,
+	})
+	f := newMCPShareTestBackend(shares, mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/sh-1/duplicate")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET duplicate = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `value="research (copy 2)"`) {
+		t.Errorf("duplicate page must skip the taken name, body missing %q", `value="research (copy 2)"`)
+	}
+}
+
+// TestMCPShareDuplicateLegacyAllowed proves a legacy share can be copied: the
+// copy is an ordinary named share, which is how a project moves off a legacy
+// instance. The source is never edited.
+func TestMCPShareDuplicateLegacyAllowed(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/sh-legacy/duplicate")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET legacy duplicate = %d, want 200 (not a redirect)", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `value="old share (copy)"`) {
+		t.Errorf("legacy duplicate must prefill a copy name, body missing %q", `value="old share (copy)"`)
+	}
+	if f.lastUpdateID != "" {
+		t.Errorf("duplicating must not update the source share, updated %q", f.lastUpdateID)
+	}
+}
+
+// TestMCPShareDuplicateNotFound renders the empty state instead of a redirect so
+// a stale duplicate link explains itself.
+func TestMCPShareDuplicateNotFound(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	f.getErr = fmt.Errorf("memory 404 not_found: share missing")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/nope/duplicate")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET missing duplicate = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"MCP share not found", "No share with this id to duplicate."} {
+		if !strings.Contains(body, want) {
+			t.Errorf("not-found page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Create share") {
+		t.Error("not-found page must not render the form")
+	}
+}
+
+// TestMCPShareDuplicateCreateKeepsHeading proves a validation failure on a
+// duplicated draft re-renders as "Duplicate MCP share" rather than dropping back
+// to the blank-create framing (copyFrom rides in a hidden field).
+func TestMCPShareDuplicateCreateKeepsHeading(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	// No tools selected: validation fails before anything is created.
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new",
+		"name=research (copy)&description=copy&copyFrom=research")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST duplicate draft = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Duplicate MCP share", `name="copyFrom" value="research"`,
+		"Select at least one tool to expose.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("re-rendered duplicate draft missing %q", want)
+		}
+	}
+	if f.lastCreate != nil {
+		t.Error("an invalid draft must not reach the create API")
+	}
+}
+
+// TestMCPShareDuplicateNameDerivation covers the copy-name helper directly: the
+// suffix ladder, case-insensitive collision checks, a failing list call, and the
+// name-length clamp.
+func TestMCPShareDuplicateNameDerivation(t *testing.T) {
+	cases := []struct {
+		name   string
+		shares []MCPShareInstance
+		base   string
+		want   string
+	}{
+		{name: "no shares", base: "research", want: "research (copy)"},
+		{name: "copy taken", shares: []MCPShareInstance{{Name: "research (copy)"}}, base: "research", want: "research (copy 2)"},
+		{name: "case insensitive", shares: []MCPShareInstance{{Name: "RESEARCH (COPY)"}, {Name: "Research (Copy 2)"}}, base: "research", want: "research (copy 3)"},
+		{name: "blank base", base: "  ", want: "share (copy)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMCPShareTestBackend(tc.shares, nil)
+			s := &Server{cfg: Config{}, memory: f}
+			if got := s.mcpShareDuplicateName(context.Background(), tc.base); got != tc.want {
+				t.Errorf("duplicateName(%q) = %q, want %q", tc.base, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("list failure still derives a name", func(t *testing.T) {
+		f := newMCPShareTestBackend(nil, nil)
+		f.listErr = fmt.Errorf("memory 502 unavailable")
+		s := &Server{cfg: Config{}, memory: f}
+		if got := s.mcpShareDuplicateName(context.Background(), "research"); got != "research (copy)" {
+			t.Errorf("duplicateName = %q, want the unsuffixed fallback", got)
+		}
+	})
+
+	t.Run("long name clamped to the column limit", func(t *testing.T) {
+		f := newMCPShareTestBackend(nil, nil)
+		s := &Server{cfg: Config{}, memory: f}
+		got := s.mcpShareDuplicateName(context.Background(), strings.Repeat("x", 300))
+		if len(got) != mcpShareNameMaxLen {
+			t.Errorf("len(duplicateName) = %d, want %d", len(got), mcpShareNameMaxLen)
+		}
+		if !strings.HasSuffix(got, " (copy)") {
+			t.Errorf("duplicateName = %q, want the copy suffix kept", got)
+		}
+	})
+
+	t.Run("multibyte name clamped by bytes, not runes", func(t *testing.T) {
+		f := newMCPShareTestBackend(nil, nil)
+		s := &Server{cfg: Config{}, memory: f}
+		// The backend measures the limit with len(), so 200 two-byte runes is
+		// already over it even though it is only 200 characters.
+		got := s.mcpShareDuplicateName(context.Background(), strings.Repeat("é", 200))
+		if len(got) > mcpShareNameMaxLen {
+			t.Errorf("len(duplicateName) = %d, want <= %d", len(got), mcpShareNameMaxLen)
+		}
+		if !strings.HasSuffix(got, " (copy)") {
+			t.Errorf("duplicateName = %q, want the copy suffix kept", got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("duplicateName = %q is not valid UTF-8 (a rune was split)", got)
+		}
+	})
 }
 
 func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {

@@ -120,7 +120,7 @@ func TestMemberCrumbsCurrentIsNotLink(t *testing.T) {
 
 // TestConvertedPagesRenderDetailTrails covers the pages that used the list-page
 // header (or an incomplete trail) before the breadcrumb sweep. Each renders a
-// trail from its section root to a single active, non-navigable current item.
+// trail from its nav group to a single active, non-navigable current item.
 func TestConvertedPagesRenderDetailTrails(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -128,10 +128,10 @@ func TestConvertedPagesRenderDetailTrails(t *testing.T) {
 		rootHref string
 		current  string
 	}{
-		{"backup detail", backupDetailHeader(&Backup{ProjectName: "Acme"}), "/backups", "Acme"},
+		{"backup detail", backupDetailHeader(&Backup{ProjectName: "Acme"}), "/settings", "Acme"},
 		{"notification settings", NotificationPreferencesPage(notificationPrefsView{}), "/inbox", "Notification settings"},
-		{"connect a data source", DataSourceNewPage(nil, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil), "/data-sources", "Connect a data source"},
-		{"blueprint model map", BlueprintImportModelMapPage(BlueprintModelMapData{}), "/blueprints", "Review blueprint models"},
+		{"connect a data source", DataSourceNewPage(nil, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil), "/objects", "Connect a data source"},
+		{"blueprint model map", BlueprintImportModelMapPage(BlueprintModelMapData{}), "/objects", "Review blueprint models"},
 		{"credentials", CredentialsPage(dsCredentialsPageData{}), "/settings", "Credentials"},
 		{"org landing", OrgLandingPage(orgPageData{Org: &Org{ID: "org_1", Name: "Acme"}}), "/orgs", "Acme"},
 		{"org members", OrgMembersPage(orgMembersPageData{Org: &Org{ID: "org_1", Name: "Acme"}}), "/orgs", "Members"},

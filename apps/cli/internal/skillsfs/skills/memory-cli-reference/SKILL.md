@@ -1713,7 +1713,7 @@ memory blueprints [flags]
 ### Options
 
 ```
-      --dry-run                 Preview actions without making any API calls
+      --dry-run                 Preview actions without writing anything (it still reads project context)
   -h, --help                    help for blueprints
       --map-model stringArray   Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)
       --merge-types             Merge incoming object types into existing registered types (required non-interactively on a type-name collision)
@@ -1904,7 +1904,7 @@ memory blueprints install <source> [flags]
 ### Options
 
 ```
-      --dry-run                 Preview actions without making any API calls
+      --dry-run                 Preview actions without writing anything (it still reads project context)
   -h, --help                    help for install
       --map-model stringArray   Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)
       --merge-types             Merge incoming object types into existing registered types (required non-interactively on a type-name collision)

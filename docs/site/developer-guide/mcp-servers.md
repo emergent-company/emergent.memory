@@ -154,6 +154,14 @@ rejected with HTTP 422. Shares created before the allowlist existed, and the
 legacy `POST /api/projects/{projectId}/mcp/share` endpoint, keep an unrestricted
 allowlist and remain read-only through their token scopes.
 
+**Copy an existing share.** To start a new share from one that already works,
+open its **⋯** menu → **Duplicate share**. The create form opens pre-filled with
+that share's description and tool selection, under a free name (`<name> (copy)`,
+or `(copy 2)` and so on when that name is taken); adjust anything and save. The
+copy is an ordinary new share with its own key — the source share, its key, and
+its invite recipients are untouched. Legacy shares can be copied this way too,
+which is how you move off one, even though they cannot be edited.
+
 The key is shown to *you* exactly once, on the creation screen. If you also
 entered recipients, they have their own copy; otherwise copy it before closing
 the dialog.

@@ -20,6 +20,7 @@ import (
 // call. *notifications.Service satisfies it.
 type projectNotifier interface {
 	CreateForProjectMembers(ctx context.Context, projectID string, in notifications.CreateInput, opts ...notifications.FanoutOptions) error
+	CreateOrReopenForProjectMembers(ctx context.Context, projectID string, in notifications.CreateInput) error
 }
 
 // Processing stages named in a failure notification, so a member reading the
@@ -36,9 +37,11 @@ const failureCauseMax = 240
 
 // notifyProcessingFailed announces that an upload's processing reached dead
 // letter. It is deliberately NOT actor-excluded: the person whose run failed is
-// the one who most needs to hear about it. Coalescing is by job id, so a retry
-// of the same job cannot stack rows, while a deliberate re-run (new job) alerts
-// again.
+// the one who most needs to hear about it. Coalescing is by job id and the
+// write reopens an existing active row: a retry keeps the same job id (see
+// DocumentParsingJobsService.RetryJob), so a second failure must refresh the
+// row's message/details to the current error and mark it unread instead of
+// being swallowed by the first failure's group key (#13).
 func notifyProcessingFailed(
 	ctx context.Context,
 	svc projectNotifier,
@@ -92,7 +95,10 @@ func notifyProcessingFailed(
 	}
 
 	// No FanoutOptions: a failure is never hidden from the member who caused it.
-	if err := svc.CreateForProjectMembers(ctx, projectID, in); err != nil {
+	// Reopen rather than create: RetryJob reuses the job id, so a second failure
+	// must refresh this row (and return it to unread) instead of being coalesced
+	// away by the still-active first failure (#13).
+	if err := svc.CreateOrReopenForProjectMembers(ctx, projectID, in); err != nil {
 		log.Warn("failed to emit processing-failure notification",
 			slog.String("job_id", jobID),
 			slog.String("document_id", documentID),

@@ -166,15 +166,17 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 }
 
 // needsModelState reports whether any row depends on the project's model state:
-// a configuration failure's copy, or a permission failure on a queue that needs
-// a model (so the row can name it and offer a live test).
+// a configuration failure's copy, or a credential failure on a queue that needs
+// a model (so the row can name it and offer a live test). A resource-access
+// permission failure does not depend on it and must not pay for the read.
 func needsModelState(byArea map[Area][]Problem) bool {
 	for _, problems := range byArea {
 		for _, p := range problems {
 			if p.Failure.Class == ClassConfiguration {
 				return true
 			}
-			if p.Failure.Class == ClassPermission && isModelQueue(p.Queue) {
+			if p.Failure.Class == ClassPermission &&
+				p.Failure.Cause == CauseCredential && isModelQueue(p.Queue) {
 				return true
 			}
 		}

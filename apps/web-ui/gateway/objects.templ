@@ -895,55 +895,59 @@ func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.Bread
 	return crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj)))
 }
 
-// objectDetailHeader intentionally does NOT use the shared detailHeader: it
-// renders a rich chip row (type chip + status/embedding badges) ABOVE the title
-// and uses items-start alignment, neither of which detailHeader models (kicker is
-// a plain string, TitleLeading is inline-before-title, Actions sit on the right,
-// and the flex is hardcoded items-center/items-end).
+// objectDetailHeader renders the object detail page header through the shared
+// detail header: the page's type chip, branch, status and embedding state are
+// chips under the description (never inline with, or above, the title), and the
+// single page action is the primary one.
 templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, trail []nav.BreadcrumbItem, status *objectStatusControl, active string) {
+	{{ crumbs := objectBreadcrumbs(obj, trail)
+	opts := detailHeaderOpts{Meta: objectDetailMeta(obj, branch, typeUIByType, status, active)}
+	if len(trail) > 0 {
+		// An origin trail (reached from a document's extraction history) is a
+		// path of ancestors: the object label is the h1, not a crumb, and every
+		// ancestor stays navigable.
+		opts.KeepTrailLinks = true
+	} else {
+		crumbs = crumbsActive(crumbs)
+	} }}
+	@detailHeader(crumbs, "", graphObjectLabel(*obj), "", opts) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects/" + url.PathEscape(obj.ID) + "/chat",
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--messages-square",
+		}) {
+			Chat about object
+		}
+	}
+}
+
+// objectDetailMeta renders the object's identity/state chips: its type, branch,
+// workflow status (suppressed on the Overview, whose Workflow panel carries the
+// editable control) and embedding state.
+templ objectDetailMeta(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, status *objectStatusControl, active string) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
-	<div class="mb-6">
-		@nav.Breadcrumbs(objectBreadcrumbs(obj, trail), nav.BreadcrumbsDividerDefault)
-		<div class="mt-2 flex flex-wrap items-start justify-between gap-4">
-			<div class="min-w-0">
-				<div class="mb-2 flex flex-wrap items-center gap-2">
-					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
-					@objectBranchChip(branch)
-					// The Overview's Workflow panel already carries the editable
-					// status for a workflow type, so the badge would duplicate it.
-					// Every other subpage keeps the read-only badge.
-					if obj.Status != "" && !(active == "overview" && !objectWorkControlDisabled(status)) {
-						@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
-							Size:  ui.BadgeSizeSM,
-							Dot:   true,
-							Attrs: templ.Attributes{"data-status": obj.Status},
-						})
-					}
-					if obj.EmbeddingStatus != "" {
-						{{ lbl, variant := embeddingStatusBadge(obj.EmbeddingStatus) }}
-						@ui.Badge(ui.BadgeProps{
-							Label:   lbl,
-							Variant: variant,
-							Size:    ui.BadgeSizeSM,
-						})
-					}
-					if obj.EmbeddingUpdatedAt != "" {
-						<span class="text-muted text-xs">Embedded { relTime(obj.EmbeddingUpdatedAt) }</span>
-					}
-				</div>
-				<h1 class="text-2xl font-bold tracking-tight">{ graphObjectLabel(*obj) }</h1>
-			</div>
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    "/objects/" + url.PathEscape(obj.ID) + "/chat",
-				Variant: ui.ButtonSecondary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--messages-square",
-			}) {
-				Chat about object
-			}
-		</div>
-	</div>
+	@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+	@objectBranchChip(branch)
+	if obj.Status != "" && !(active == "overview" && !objectWorkControlDisabled(status)) {
+		@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
+			Size:  ui.BadgeSizeSM,
+			Dot:   true,
+			Attrs: templ.Attributes{"data-status": obj.Status},
+		})
+	}
+	if obj.EmbeddingStatus != "" {
+		{{ lbl, variant := embeddingStatusBadge(obj.EmbeddingStatus) }}
+		@ui.Badge(ui.BadgeProps{
+			Label:   lbl,
+			Variant: variant,
+			Size:    ui.BadgeSizeSM,
+		})
+	}
+	if obj.EmbeddingUpdatedAt != "" {
+		<span class="text-muted text-xs">Embedded { relTime(obj.EmbeddingUpdatedAt) }</span>
+	}
 }
 
 // objectBranchChip renders the object's branch as an always-present chip:

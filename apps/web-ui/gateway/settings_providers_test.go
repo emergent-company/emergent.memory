@@ -1663,6 +1663,33 @@ func TestUIProjectDefaultModelTestGenerative(t *testing.T) {
 	}
 }
 
+// The processing-problems row posts Failure.Model verbatim. For Google Vertex
+// that is a provider-prefixed resource path, not a bare "provider/model" pair:
+// the endpoint must split only the first slash and forward the rest unchanged,
+// or the live test would target a model named "projects".
+func TestUIProjectDefaultModelTestVertexResourcePathRoundTrips(t *testing.T) {
+	const selected = "google-vertex/projects/my-project/locations/us-central1/publishers/google/models/gemini-2.5-flash"
+	const bare = "projects/my-project/locations/us-central1/publishers/google/models/gemini-2.5-flash"
+
+	f := &fakeMemory{
+		modelTestResult: &ProviderTestResult{Provider: "google-vertex", Model: bare, Reply: "hello", LatencyMs: 42},
+	}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=generative&generative_model="+url.QueryEscape(selected))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "success", "Model test")
+	if len(f.modelTestCalls) != 1 {
+		t.Fatalf("want exactly 1 test call, got %+v", f.modelTestCalls)
+	}
+	call := f.modelTestCalls[0]
+	if call.Provider != "google-vertex" || call.Model != bare || call.ModelType != "generative" {
+		t.Errorf("test call = %+v, want provider google-vertex and the full resource path %q", call, bare)
+	}
+}
+
 // TestUIProjectDefaultModelTestEmbedding covers the embedding happy path: the
 // toast names the verified embedding model and no reply snippet is expected.
 func TestUIProjectDefaultModelTestEmbedding(t *testing.T) {

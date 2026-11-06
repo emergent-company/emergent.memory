@@ -21,9 +21,6 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs")), "", "Schema packs", "Active schema packs contributing object and relationship types to this project.") {
 			<div class="flex flex-wrap items-center gap-2">
-				if loadErr == nil {
-					@countBadgeLabel(countLabel(len(packs), "pack", "packs"), "lucide--library")
-				}
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    "/schema/add",
@@ -37,7 +34,7 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 		}
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if loadErr != nil {
-				@pageError("Failed to load schema packs", loadErr)
+				@pageErrorNotice("Failed to load schema packs", loadErr)
 			} else if len(packs) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--library",
@@ -107,7 +104,7 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 		}
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if loadErr != nil {
-				@pageError("Schema pack unavailable", loadErr)
+				@pageErrorNotice("Schema pack unavailable", loadErr)
 			} else if pack == nil {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--circle-help",
@@ -139,32 +136,32 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 
 // schemaPackHeader is the pack detail header: breadcrumb, name, description,
 // version, owner, and installed (active) state.
+templ schemaPackHeaderMeta(pack *schemaPackSummary) {
+	@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
+	@ownerBadge(*pack, ui.BadgeSizeSM)
+	@ui.Badge(ui.BadgeProps{Label: "Active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeSM, Dot: true})
+}
+
 templ schemaPackHeader(pack *schemaPackSummary) {
-	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
-		<div class="flex flex-wrap items-center gap-2">
-			@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
-			@ownerBadge(*pack, ui.BadgeSizeSM)
-			@ui.Badge(ui.BadgeProps{Label: "Active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeSM, Dot: true})
-		</div>
-	}
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6", Meta: schemaPackHeaderMeta(pack)})
 }
 
 // SchemaPackPendingPage renders a pack that exists in the project's catalog but
 // is not installed — the state a discovery run leaves its result in. It shows
 // what the run proposed and the one action that turns it into compiled types,
 // so the Schema page's "Review pack" link never dead-ends on a not-found page.
+templ pendingPackHeaderMeta(pack *pendingPack) {
+	@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
+	if pack.PendingReview {
+		@ui.Badge(ui.BadgeProps{Label: "Pending review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeSM, Dot: true})
+	} else {
+		@ui.Badge(ui.BadgeProps{Label: "Not installed", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM})
+	}
+}
+
 templ SchemaPackPendingPage(pack *pendingPack, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
-			<div class="flex flex-wrap items-center gap-2">
-				@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
-				if pack.PendingReview {
-					@ui.Badge(ui.BadgeProps{Label: "Pending review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeSM, Dot: true})
-				} else {
-					@ui.Badge(ui.BadgeProps{Label: "Not installed", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM})
-				}
-			</div>
-		}
+		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6", Meta: pendingPackHeaderMeta(pack)})
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if flashErr != nil {
 				<div class="mb-4">

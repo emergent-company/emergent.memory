@@ -292,7 +292,7 @@ func TestRenderConnectedDevicesPage(t *testing.T) {
 		// section 2: Devices
 		"Devices", "iPhone", "Registered",
 		// section 3: MCP nodes
-		"MCP nodes", "mac-ada", "1 node", "mac-ada_notes_search",
+		"MCP nodes", "mac-ada", "mac-ada_notes_search",
 		`href="/settings/devices?node=mac-ada"`,
 		// settings rail
 		`href="/settings"`, `href="/settings/voice"`, `href="/settings/devices"`,
