@@ -414,6 +414,79 @@ func TestApplyChangesetResolvesRefsAndCreatesRelationship(t *testing.T) {
 	assert.Equal(t, 0, leaked, "the rejected changeset left its object behind")
 }
 
+// TestApplyChangesetNormalisesRelationshipType: a source pushes a type in
+// mixed case and the row is stored the way every ordinary write stores one —
+// lower_snake_case — so a type-filtered read finds it, an ordinary create of
+// the same edge dedupes onto it, and a re-push that renames the type versions
+// the row instead of leaving a twin (#140).
+func TestApplyChangesetNormalisesRelationshipType(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "reltype")
+
+	resp, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{
+			{Ref: "ada", Type: "Person", ExternalID: "rt-ada", ExternalRevisionSeq: seq(1)},
+			{Ref: "bob", Type: "Person", ExternalID: "rt-bob", ExternalRevisionSeq: seq(1)},
+		},
+		Relationships: []graph.ChangesetRelationshipItem{{
+			Type:                "KNOWS",
+			SrcRef:              "ada",
+			DstRef:              "bob",
+			ExternalID:          "rt-knows",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	pushed := *resultFor(t, resp, "rt-knows").SubjectID
+
+	// The type is stored the way the search filter looks for it: the HTTP layer
+	// lowercases the `type` parameter, so a verbatim "KNOWS" was unfindable.
+	listed, err := svc.ListRelationships(ctx, graph.RelationshipListParams{ProjectID: projectID, Type: strPtrCS("knows")})
+	require.NoError(t, err)
+	require.Len(t, listed.Items, 1, "a type-filtered read must find the pushed relationship")
+	assert.Equal(t, "knows", listed.Items[0].Type)
+	assert.Equal(t, pushed, listed.Items[0].ID)
+
+	// The ordinary create path lowercases its type before the unique index, so a
+	// differently-cased create of the same edge now resolves to the pushed row.
+	adaID := *resultFor(t, resp, "rt-ada").CanonicalID
+	bobID := *resultFor(t, resp, "rt-bob").CanonicalID
+	existing, err := svc.CreateRelationship(ctx, projectID, &graph.CreateGraphRelationshipRequest{
+		Type: "Knows", SrcID: adaID, DstID: bobID, Properties: map[string]any{},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, pushed, existing.CanonicalID, "the ordinary create minted a second row for the same edge")
+
+	// A re-push cannot rename a relationship: the type is part of its identity
+	// (Repository.CreateRelationshipVersion inherits the head's type), so the
+	// rename is accepted as an update of properties and the head keeps the
+	// normalised type it was created with.
+	renamed, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Relationships: []graph.ChangesetRelationshipItem{{
+			Type:                "Works With",
+			SrcID:               &adaID,
+			DstID:               &bobID,
+			ExternalID:          "rt-knows",
+			ExternalRevisionSeq: seq(2),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, graph.ChangesetOutcomeUpdated, resultFor(t, renamed, "rt-knows").Outcome)
+
+	renamedList, err := svc.ListRelationships(ctx, graph.RelationshipListParams{ProjectID: projectID, Type: strPtrCS("knows")})
+	require.NoError(t, err)
+	require.Len(t, renamedList.Items, 1)
+	assert.Equal(t, "knows", renamedList.Items[0].Type, "the version path leaked an unnormalised type")
+
+	// One relationship, two versions: the second push versioned the row instead
+	// of adding a twin, and no unnormalised type reached the head.
+	all, err := svc.ListRelationships(ctx, graph.RelationshipListParams{ProjectID: projectID})
+	require.NoError(t, err)
+	assert.Len(t, all.Items, 1, "the second push added a second relationship instead of versioning the existing one")
+}
+
 // TestApplyChangesetRejectsOverCapAndForeignSource: the cap is named in the
 // error, and a source from another project cannot be pushed for.
 func TestApplyChangesetRejectsOverCapAndForeignSource(t *testing.T) {

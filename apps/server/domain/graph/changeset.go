@@ -424,6 +424,13 @@ func (s *Service) applyChangesetRelationship(
 ) (ChangesetItemResult, *uuid.UUID, error) {
 	result := ChangesetItemResult{Kind: ContributionSubjectRelationship, ExternalID: item.ExternalID}
 	seq := revisionSeq(item.ExternalRevisionSeq)
+	// A relationship type is lower_snake_case by contract: every ordinary write
+	// path normalises it (normalizeRelationType) and the search filter lowercases
+	// its `type` parameter unconditionally. Storing a pushed type verbatim minted
+	// a row that no type-filtered read could find, and let an ordinary create of
+	// the same edge add a second row beside it (#140). Object types are not
+	// normalised: they are CamelCase by convention (`Person`), not snake_case.
+	relType := normalizeRelationType(item.Type)
 
 	contrib, err := s.repo.GetPresentContribution(ctx, tx, projectID, sourceID, branchID, ContributionSubjectRelationship, item.ExternalID)
 	if err != nil {
@@ -477,8 +484,13 @@ func (s *Service) applyChangesetRelationship(
 		version.RootRunID = nil
 		version.ActorType = &actorType
 		version.ActorID = actorID
-		if item.Type != "" {
-			version.Type = item.Type
+		// Set for completeness only: Repository.CreateRelationshipVersion inherits
+		// the head's type, because the type is part of the relationship's identity
+		// (it is one of the head's unique key columns), so a re-push cannot rename
+		// it. Normalising here keeps the invariant true for every assignment we
+		// make, rather than relying on the repository to launder it.
+		if relType != "" {
+			version.Type = relType
 		}
 		if item.Properties != nil {
 			version.Properties = item.Properties
@@ -515,7 +527,7 @@ func (s *Service) applyChangesetRelationship(
 	rel := &GraphRelationship{
 		ProjectID:     projectID,
 		BranchID:      srcObj.BranchID,
-		Type:          item.Type,
+		Type:          relType,
 		SrcID:         srcObj.CanonicalID,
 		DstID:         dstObj.CanonicalID,
 		Properties:    props,
