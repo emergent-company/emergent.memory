@@ -17785,7 +17785,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes.",
+                "description": "Read-only preview of the type-name collisions and property-level conflicts that would occur if the supplied packs were assigned or created. Makes no database changes. Each pack may carry name, objectTypes (and the object_type_schemas, object_types, objectTypeSchemas aliases) plus blueprint-manifest metadata: version, description, author, migrations, relationshipTypes, relationshipTypeSchemas, relationship_type_schemas. The preview consumes object types only; manifest metadata is accepted for shape compatibility but not read. Unknown keys are rejected with a 400 that names the offending field.",
                 "consumes": [
                     "application/json"
                 ],
@@ -39982,16 +39982,12 @@
                     "type": "boolean"
                 },
                 "extraction_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionConfig is one type's extraction config object, e.g.\n{\"extractRelationships\":true,\"confidenceThreshold\":0.7}. The repository\nstores it verbatim as the registry row's extraction_config.",
+                    "type": "object"
                 },
                 "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "JSONSchema is the JSON Schema object for the new type. The handler\nrequires it and the repository stores it verbatim in the registry row;\nreaders unmarshal that column as an object, so an array is not a valid\nshape.",
+                    "type": "object"
                 },
                 "namespace": {
                     "type": "string"
@@ -40000,10 +39996,8 @@
                     "type": "string"
                 },
                 "ui_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfig is one type's presentation config object, e.g.\n{\"icon\":\"building\",\"color\":\"#4f46e5\"} (not a map keyed by control name\nor by type name). The repository stores it verbatim as the registry\nrow's ui_config.",
+                    "type": "object"
                 }
             }
         },
@@ -40023,10 +40017,8 @@
                     "type": "string"
                 },
                 "relationshipTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "RelationshipTypeSchemas is the stored relationship-type definitions. Two\nlive writer shapes exist: a JSON array of {\"name\",\"sourceType\",\n\"targetType\"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder\nand the builtin seeder) and a map of relationship type name → schema (the\nMCP create-schema tool and the discovery job; older stored rows are also\nmaps). Readers normalise both, so no single Swagger 2.0 item type is\ndeclared for it.",
+                    "type": "object"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -40075,16 +40067,12 @@
                     "type": "boolean"
                 },
                 "extraction_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionConfig is the snapshot of the registry's extraction_config:\none type's extraction config object copied from the pack's\nextraction_prompts[typeName] ({\"system_prompt\":\"...\",\"field_hints\":{...}})\nor supplied verbatim by the HTTP CreateType/UpdateType handlers.",
+                    "type": "object"
                 },
                 "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "JSONSchema is the snapshot of the registry's json_schema at this version.\nThe version trigger copies it from kb.project_object_schema_registry, so\nit has the same writers as SchemaRegistryEntryDTO.JSONSchema and is an\nobject.",
+                    "type": "object"
                 },
                 "namespace": {
                     "type": "string"
@@ -40096,10 +40084,8 @@
                     "type": "integer"
                 },
                 "ui_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfig is the snapshot of the registry's ui_config: one type's\npresentation config object copied from the pack's ui_configs[typeName]\n({\"icon\":\"...\",\"color\":\"...\"}) or supplied verbatim by the HTTP\nCreateType/UpdateType handlers. It is not a map keyed by control name or\nby type name.",
+                    "type": "object"
                 }
             }
         },
@@ -40122,19 +40108,15 @@
                     "type": "boolean"
                 },
                 "extractionConfig": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionConfig is one type's extraction config object, e.g.\n{\"system_prompt\":\"...\",\"field_hints\":{...}}. HTTP CreateType/UpdateType\nstore it verbatim; pack install/restore copy the type's\nextraction_prompts[typeName] entry.",
+                    "type": "object"
                 },
                 "id": {
                     "type": "string"
                 },
                 "jsonSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "JSONSchema is the registered type's JSON Schema object. Writers: the\nHTTP CreateType/UpdateType handlers (verbatim), template pack\ninstall/merge/restore (each pack object-type schema is an object), the\nMCP create-schema tool (json.Marshal of the type map) and the\nSession/Message migration backfill (pack array elements). No in-tree\nwriter stores an array.",
+                    "type": "object"
                 },
                 "memorySchema": {
                     "description": "Relations - for joining",
@@ -40164,10 +40146,8 @@
                     "type": "string"
                 },
                 "uiConfig": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfig is one type's presentation config object, e.g.\n{\"icon\":\"building\",\"color\":\"#4f46e5\"}. HTTP CreateType/UpdateType store\nit verbatim; pack install/restore copy the type's ui_configs[typeName]\nentry. It is not a map keyed by control name or by type name.",
+                    "type": "object"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -40238,10 +40218,8 @@
                     }
                 },
                 "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "JSONSchema is the registered type's JSON Schema object, populated from\nkb.project_object_schema_registry.json_schema. Every in-tree writer of\nthat column stores an object: the HTTP CreateType/UpdateType handlers\nstore the request verbatim, template pack install/merge/restore copy each\npack object-type schema (an object), and the MCP create-schema tool\nmarshals the type map. The pack-listing fallback also builds\n{\"type\":\"object\",\"properties\":...}. No in-tree writer stores an array.",
+                    "type": "object"
                 },
                 "namespace": {
                     "type": "string"
@@ -40316,25 +40294,19 @@
                     "type": "boolean"
                 },
                 "extraction_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionConfig is one type's extraction config object, e.g.\n{\"extractRelationships\":true,\"confidenceThreshold\":0.7}, applied\nverbatim to the registry row's extraction_config when non-empty.",
+                    "type": "object"
                 },
                 "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "JSONSchema is the partial update's JSON Schema object, applied verbatim\nto the registry row (and bumping schema_version) when non-empty. Readers\nunmarshal that column as an object, so an array is not a valid shape.",
+                    "type": "object"
                 },
                 "namespace": {
                     "type": "string"
                 },
                 "ui_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfig is one type's presentation config object, e.g.\n{\"icon\":\"building\",\"color\":\"#4f46e5\"} (not a map keyed by control name\nor by type name), applied verbatim to the registry row's ui_config when\nnon-empty.",
+                    "type": "object"
                 }
             }
         },
@@ -40609,10 +40581,8 @@
                     "type": "boolean"
                 },
                 "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is a JSON object keyed by object type name, each value\na prompt config such as {\"system_prompt\":\"...\",\"field_hints\":{...}}.\nEvery writer produces that map (HTTP CreatePack/UpdatePack, the MCP\ncreate-schema tool and the discovery job). The column is opaque jsonb,\nso reads are best-effort for anything else stored there.",
+                    "type": "object"
                 },
                 "id": {
                     "type": "string"
@@ -40627,10 +40597,8 @@
                     "type": "string"
                 },
                 "objectTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ObjectTypeSchemas is the stored object-type definitions. Two live writer\nshapes exist: a JSON array of {\"name\",\"label\",\"properties\",...} objects\n(HTTP CreatePack/UpdatePack, blueprint apply/seeder and the builtin\nseeder) and a map of type name → schema (the MCP create-schema tool and\nthe discovery job; older stored rows are also maps). Readers normalise\nboth, so no single Swagger 2.0 item type is declared for it.",
+                    "type": "object"
                 },
                 "pendingReview": {
                     "description": "PendingReview marks discovery output that is awaiting an explicit\ninstall. It is false for a pack created or imported any other way, so a\nclient can tell \"proposed by a run\" from \"unassigned\".",
@@ -40643,10 +40611,8 @@
                     "type": "string"
                 },
                 "relationshipTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "RelationshipTypeSchemas is the stored relationship-type definitions. Two\nlive writer shapes exist: a JSON array of {\"name\",\"sourceType\",\n\"targetType\"} objects (HTTP CreatePack/UpdatePack, blueprint apply/seeder\nand the builtin seeder) and a map of relationship type name → schema (the\nMCP create-schema tool and the discovery job; older stored rows are also\nmaps). Readers normalise both, so no single Swagger 2.0 item type is\ndeclared for it.",
+                    "type": "object"
                 },
                 "repositoryUrl": {
                     "type": "string"
@@ -40655,10 +40621,8 @@
                     "type": "string"
                 },
                 "uiConfigs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "UIConfigs is a JSON object keyed by object type name, each value a UI\nconfig such as {\"icon\":\"file-text\",\"color\":\"#3B82F6\"}. Every writer\nproduces that map (HTTP CreatePack/UpdatePack, the MCP create-schema tool\nand the discovery job). The column is opaque jsonb, so reads are\nbest-effort for anything else stored there.",
+                    "type": "object"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -40682,10 +40646,8 @@
                     "type": "string"
                 },
                 "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "ExtractionPrompts is the installed pack's extraction_prompts: a JSON\nobject keyed by object type name, each value a prompt config such as\n{\"system_prompt\":\"...\",\"field_hints\":{...}}. Every writer produces that\nmap (HTTP CreatePack/UpdatePack, the MCP create-schema tool and the\ndiscovery job); the column is opaque jsonb, so reads are best-effort for\nanything else stored there.",
+                    "type": "object"
                 },
                 "id": {
                     "description": "assignment ID",
@@ -40772,8 +40734,31 @@
         "domain_schemas.MergePreviewPack": {
             "type": "object",
             "properties": {
+                "author": {
+                    "description": "Author is manifest metadata; tolerated, not read.",
+                    "type": "string"
+                },
+                "description": {
+                    "description": "Description is manifest metadata; tolerated, not read.",
+                    "type": "string"
+                },
+                "migrations": {
+                    "description": "Migrations is the manifest's upgrade-path block; tolerated, not read.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                        }
+                    ]
+                },
                 "name": {
                     "type": "string"
+                },
+                "objectTypeSchemas": {
+                    "description": "ObjectTypeSchemasCamel is the blueprint manifest's camelCase alias for\nobject type definitions. UnmarshalJSON promotes it into ObjectTypes only\nwhen no canonical objectTypes value is present, so #164's precedence is\nunchanged.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 },
                 "objectTypes": {
                     "description": "ObjectTypes is a JSON array of {\"name\",\"label\",\"properties\",...} objects.\nThe map-of-type-name → schema stored form is also accepted here and is\nread-compatible.",
@@ -40795,6 +40780,31 @@
                     "items": {
                         "type": "object"
                     }
+                },
+                "relationshipTypeSchemas": {
+                    "description": "RelationshipTypeSchemasCamel is the manifest's camelCase relationship\nalias; tolerated, not read.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "relationshipTypes": {
+                    "description": "RelationshipTypes is the manifest's relationship-type list; tolerated,\nnot read. A merge preview only reports object-type collisions.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "relationship_type_schemas": {
+                    "description": "RelationshipTypeSchemasSnake is the sibling pack request's snake_case\nrelationship alias; tolerated, not read.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "version": {
+                    "description": "Version is manifest metadata; tolerated, not read.",
+                    "type": "string"
                 }
             }
         },
