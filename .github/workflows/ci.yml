@@ -208,6 +208,76 @@ jobs:
       - name: Guard migration workspace
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/migration-workspace.sh
+      # Schema documentation drift (#757 in the control repository). The guard
+      # exists -- server.yml runs `schema-dbml -check` after migrating a real
+      # Postgres -- but it lives in the path-filtered advisory workflow, so #2500
+      # merged a migration without regenerating docs/schema.dbml, the job's own
+      # run went red on that exact step, and every PR that merged main afterwards
+      # inherited the staleness (#2501 had to carry the fix).
+      #
+      # docs/schema.dbml is produced by INTROSPECTING a migrated database, so
+      # this is the only guard in this workflow that needs a live Postgres. That
+      # is why it is scoped to the PRs where it can matter: a migration or the
+      # document itself changing. Mirrors the db-backed job's sequence verbatim
+      # (same pgvector image, because the migration chain creates the `vector`
+      # extension); measured there as start 3 s, migrate 1 s, check <1 s. The
+      # 216-353 s that job takes is the DB test suite, not this guard.
+      - name: Detect schema documentation scope
+        id: schema-doc-scope
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Three-dot diff: files this branch changed since it diverged from the
+          # base, so merging main into the branch does not widen the scope.
+          # The generator is in scope too: a change to cmd/schema-dbml can change
+          # the document without any migration changing.
+          changed=$(git diff --name-only "${BASE_SHA}...HEAD" -- \
+            apps/server/migrations apps/server/cmd/schema-dbml docs/schema.dbml)
+          if [ -n "$changed" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            printf 'schema documentation is in scope:\n%s\n' "$changed"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Schema documentation is current
+        if: steps.schema-doc-scope.outputs.changed == 'true'
+        env:
+          PG_CONTAINER: schema-doc-pg-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # 127.0.0.1::5432 publishes the container port on a free host port.
+          docker run -d --name "$PG_CONTAINER" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=emergent \
+            -p 127.0.0.1::5432 \
+            pgvector/pgvector:pg18-trixie
+          trap 'docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true' EXIT
+          HOST_PORT=$(docker port "$PG_CONTAINER" 5432/tcp | head -1 | awk -F: '{print $NF}')
+          if [ -z "$HOST_PORT" ]; then
+            echo "::error::could not determine the Postgres host port"
+            docker logs "$PG_CONTAINER" || true
+            exit 1
+          fi
+          for _ in $(seq 1 60); do
+            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "$PG_CONTAINER" pg_isready -U postgres \
+            || { echo "::error::Postgres did not become ready"; docker logs "$PG_CONTAINER" || true; exit 1; }
+          # cmd/migrate gives DATABASE_URL precedence over POSTGRES_* and a
+          # DATABASE_URL bypasses the -allow-localhost guard, which is why the
+          # flag is still passed: this DSN is the throwaway container.
+          export DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${HOST_PORT}/emergent?sslmode=disable"
+          cd apps/server
+          go run ./cmd/migrate -c up -allow-localhost
+          # A migration that changes the schema must regenerate the document in
+          # the same PR, or it silently rots.
+          go run ./cmd/schema-dbml -check -out ../../docs/schema.dbml
       - name: Guard route authority
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         working-directory: apps/server
