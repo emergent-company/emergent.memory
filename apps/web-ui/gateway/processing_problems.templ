@@ -252,20 +252,24 @@ templ processingProblemRow(p ProcessingProblem, canManage bool) {
 				// Reuses the Providers page's live test so the panel can settle
 				// "is my model actually working?" instead of sending the user to a
 				// page that already looks correct. The outcome arrives as an alert
-				// modal via HX-Trigger.
-				<form hx-post="/settings/providers/model-config/test" hx-swap="none">
-					<input type="hidden" name="model_type" value={ processingProblemTestModelType(p) }/>
-					<input type="hidden" name={ processingProblemTestModelField(p) } value={ p.Failure.Model }/>
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonSecondary,
-						Style:   ui.ButtonStyleOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--plug-zap",
-					}) {
-						Test model
-					}
-				</form>
+				// modal via HX-Trigger. The field comes from the server's model
+				// family; an unknown family omits the form rather than posting an
+				// empty field name.
+				if field, ok := processingProblemTestModelField(p); ok {
+					<form hx-post="/settings/providers/model-config/test" hx-swap="none">
+						<input type="hidden" name="model_type" value={ processingProblemTestModelType(p) }/>
+						<input type="hidden" name={ field } value={ p.Failure.Model }/>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plug-zap",
+						}) {
+							Test model
+						}
+					</form>
+				}
 			}
 			if fix := processingProblemFixHref(p); fix != "" {
 				<a class="link link-primary text-xs" href={ templ.URL(fix) }>{ processingProblemFixLabel(p) }</a>
