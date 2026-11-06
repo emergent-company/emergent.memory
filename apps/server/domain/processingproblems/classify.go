@@ -90,14 +90,31 @@ func Classify(queue, message string) Failure {
 			Retryable:   false,
 		}
 
+	// A refusal to read a document or another resource is still a permission
+	// problem, but it is not about the model credential: naming a model and
+	// offering to test it would send the user to the wrong fix. The rule sits
+	// above the credential rule because "permission denied reading document X"
+	// contains the same words as a rejected key.
+	case resourceAccessDenied(msg):
+		return Failure{
+			Class:       ClassPermission,
+			Cause:       CauseResourceAccess,
+			Summary:     permissionSummary(queue),
+			Remediation: permissionRemediation(queue),
+			Retryable:   false,
+		}
+
 	case containsAny(msg, "401", "403", "unauthorized", "forbidden", "permission denied", "invalid_grant",
 		"invalid grant", "token expired", "access denied", "not authorized",
 		"credential", "api key is not", "invalid api key", "incorrect api key", "authentication fails",
 		"unauthenticated"):
 		// A rejected or missing credential is a permission problem, not a model
-		// selection one: the provider is configured, and the fix is its key.
+		// selection one: the provider is configured, and the fix is its key. The
+		// cause is recorded so applyModelState only names a model for this shape,
+		// not for a resource-access refusal above.
 		return Failure{
 			Class:       ClassPermission,
+			Cause:       CauseCredential,
 			Summary:     permissionSummary(queue),
 			Remediation: permissionRemediation(queue),
 			Retryable:   false,
@@ -213,6 +230,24 @@ func containsAny(msg string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+// resourceAccessDenied reports whether a permission failure is about access to
+// a document or another resource rather than the provider credential. Both
+// shapes use the same words ("permission denied", "forbidden"), so the deciding
+// signal is a resource noun or an access verb. The distinction matters because
+// only a credential failure makes a model test meaningful.
+func resourceAccessDenied(msg string) bool {
+	if !containsAny(msg, "permission denied", "permissions denied", "access denied", "forbidden",
+		"not authorized", "does not have permission", "no permission", "insufficient permission",
+		"lacks permission", "missing permission") {
+		return false
+	}
+	return containsAny(msg,
+		"reading", "accessing", "opening", "listing",
+		"document", "file", "bucket", "object", "folder", "source",
+		"resource", "blob", "dataset", "path",
+	)
 }
 
 // modelNotFoundRe catches the vendor phrasings that put words between "model"

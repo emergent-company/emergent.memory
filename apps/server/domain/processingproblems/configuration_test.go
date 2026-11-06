@@ -15,8 +15,27 @@ func TestClassifyCredentialIsPermission(t *testing.T) {
 	if got.Class != ClassPermission {
 		t.Fatalf("class = %q, want %q", got.Class, ClassPermission)
 	}
+	if got.Cause != CauseCredential {
+		t.Fatalf("cause = %q, want %q: only a credential failure may name a model", got.Cause, CauseCredential)
+	}
 	if got.Verified {
 		t.Fatal("verified = true: permission copy is written from the error, not checked against state")
+	}
+}
+
+// A refusal to read a document is a permission failure but not a credential
+// one. The classifier has to say which, because only a credential failure may
+// get the model chip and the live test.
+func TestClassifyResourceAccessIsNotACredentialFailure(t *testing.T) {
+	got := Classify(QueueObjectExtraction, "permission denied reading document doc-1")
+	if got.Class != ClassPermission {
+		t.Fatalf("class = %q, want %q", got.Class, ClassPermission)
+	}
+	if got.Cause != CauseResourceAccess {
+		t.Fatalf("cause = %q, want %q", got.Cause, CauseResourceAccess)
+	}
+	if got.Cause == CauseCredential {
+		t.Fatal("resource access classified as a credential failure")
 	}
 }
 
@@ -241,6 +260,77 @@ func TestApplyModelStateSelectsTheRightFamily(t *testing.T) {
 	}
 }
 
+// Only a credential failure gets the model chip. A resource-access refusal on
+// the same model-dependent queue must not: the provider can be perfectly
+// configured, and "Test model" would say nothing about the document it could not
+// read.
+func TestApplyModelStateOnlyNamesAModelForCredentialFailures(t *testing.T) {
+	state := modelstate.State{
+		GenerativeModel:  "google-vertex/projects/p/locations/l/publishers/google/models/gemini-2.5-flash",
+		GenerativeSource: "project",
+		ProviderCount:    1,
+	}
+	credential := Problem{
+		Queue:   QueueObjectExtraction,
+		Failure: Classify(QueueObjectExtraction, "provider rejected the request: invalid api key"),
+	}
+	resource := Problem{
+		Queue:   QueueObjectExtraction,
+		Failure: Classify(QueueObjectExtraction, "permission denied reading document doc-1"),
+	}
+	byArea := map[Area][]Problem{AreaDocuments: {credential, resource}}
+	applyModelState(byArea, state)
+
+	if got := byArea[AreaDocuments][0].Failure; got.Model != state.GenerativeModel ||
+		got.ModelType != string(modelstate.KindGenerative) || got.Cause != CauseCredential {
+		t.Fatalf("credential failure = %+v, want the generative model named for the row's test", got)
+	}
+	if got := byArea[AreaDocuments][1].Failure; got.Model != "" || got.ModelType != "" {
+		t.Fatalf("resource-access failure = %+v, want no model: the cause is the document, not the credential", got)
+	}
+}
+
+// The server owns the queue → model-family mapping, so it must put that family
+// on the payload. The gateway consumes it instead of keeping a second map that
+// can drift.
+func TestApplyModelStatePutsTheFamilyOnThePayload(t *testing.T) {
+	state := modelstate.State{
+		GenerativeModel:  "openai/deepseek-v4-flash",
+		GenerativeSource: "project",
+		EmbeddingModel:   "openai/text-embedding-3-small",
+		EmbeddingSource:  "project",
+		ProviderCount:    1,
+	}
+	tests := []struct {
+		name     string
+		queue    string
+		message  string
+		wantType string
+		want     string
+	}{
+		{"chunk embedding", QueueChunkEmbedding, "no embedding model configured", string(modelstate.KindEmbedding), state.EmbeddingModel},
+		{"graph embedding", QueueGraphEmbedding, "no embedding model configured", string(modelstate.KindEmbedding), state.EmbeddingModel},
+		{"relationship embedding", QueueGraphRelationshipEmbedding, "no embedding model configured", string(modelstate.KindEmbedding), state.EmbeddingModel},
+		{"extraction", QueueObjectExtraction, "provider rejected the request: invalid api key", string(modelstate.KindGenerative), state.GenerativeModel},
+		{"discovery", QueueDiscovery, "no generative model configured", string(modelstate.KindGenerative), state.GenerativeModel},
+		{"agent run", QueueAgentRun, "provider rejected the request: invalid api key", string(modelstate.KindGenerative), state.GenerativeModel},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := Problem{Queue: tc.queue, Failure: Classify(tc.queue, tc.message)}
+			byArea := map[Area][]Problem{AreaDocuments: {problem}}
+			applyModelState(byArea, state)
+			got := byArea[AreaDocuments][0].Failure
+			if got.ModelType != tc.wantType {
+				t.Fatalf("modelType = %q, want %q", got.ModelType, tc.wantType)
+			}
+			if got.Model != tc.want {
+				t.Fatalf("model = %q, want %q", got.Model, tc.want)
+			}
+		})
+	}
+}
+
 // needsModelState decides whether the state read happens at all: a report with
 // no model-dependent row must not pay for (or fail on) it.
 func TestNeedsModelState(t *testing.T) {
@@ -258,5 +348,10 @@ func TestNeedsModelState(t *testing.T) {
 		AreaSources: {{Queue: QueueSourceSync, Failure: Classify(QueueSourceSync, "permission denied")}},
 	}) {
 		t.Fatal("needsModelState = true for a source permission failure, which is about the source")
+	}
+	if needsModelState(map[Area][]Problem{
+		AreaDocuments: {{Queue: QueueObjectExtraction, Failure: Classify(QueueObjectExtraction, "permission denied reading document doc-1")}},
+	}) {
+		t.Fatal("needsModelState = true for a resource-access failure: the model state cannot explain it")
 	}
 }
