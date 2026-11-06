@@ -579,9 +579,10 @@ func deviceCredentialToken(c echo.Context) string {
 
 // deviceSurfacePath reports whether a gateway request path/method is within the
 // device surface: room-token mint, agent picker (list/detail), the per-agent
-// object browser, chat relay, conversation lifecycle (archive/unarchive/delete),
-// session log/records, and memory browsing. A device credential is rejected on
-// everything else (defence in depth over the server's own surface guard).
+// object browser, chat relay + its run-cancel route, conversation lifecycle
+// (archive/unarchive/delete), session log/records, and memory browsing. A
+// device credential is rejected on everything else (defence in depth over the
+// server's own surface guard).
 func deviceSurfacePath(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -609,6 +610,11 @@ func deviceSurfacePath(method, path string) bool {
 		if path == "/api/token" || path == "/api/chat" {
 			return true
 		}
+		// Stopping a chat run the credential's user owns (#81). The gateway
+		// proxies this verbatim; memory owner-checks the run there.
+		if deviceChatRunCancelPath(path) {
+			return true
+		}
 		if deviceConversationLifecyclePath(path, "archive") ||
 			deviceConversationLifecyclePath(path, "unarchive") {
 			return true
@@ -632,6 +638,17 @@ func deviceQuestionActionPath(path, action string) bool {
 	}
 	parts := strings.Split(rest, "/")
 	return len(parts) == 2 && parts[0] != "" && parts[1] == action
+}
+
+// deviceChatRunCancelPath reports whether path is exactly
+// `/api/chat/runs/{runId}/cancel`: one non-empty run id, nothing deeper.
+func deviceChatRunCancelPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/chat/runs/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] == "cancel"
 }
 
 // deviceConversationLifecyclePath reports whether path is exactly

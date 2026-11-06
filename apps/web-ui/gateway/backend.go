@@ -37,7 +37,7 @@ type MemoryBackend interface {
 	CancelQuestion(ctx context.Context, questionID string) (*RespondQuestionResult, error)
 	ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error)
 	ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
-	CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error)
+	CancelAgentRun(ctx context.Context, runID string) (bool, error)
 	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
 	ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error)
 	// ListConversationsWithAncestors is the rail's variant: the page also

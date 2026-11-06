@@ -32,10 +32,13 @@ to the gateway's `/api/chat` and render the SSE frames (`meta`, `token`,
 `done`) through the same transcript, activity and A2UI stores voice uses.
 `citations` is decoded and then ignored — this client has no citation UI, so it
 does not pretend to have one.
-Decisions go to `/api/chat/questions/{id}/respond|cancel`. A text turn cannot be
-interrupted server-side yet — memory runs the agent on a detached context, and a
-device credential has no run-cancellation route — so text mode offers no stop
-control rather than one that only closes the stream.
+Decisions go to `/api/chat/questions/{id}/respond|cancel`. A device credential
+can now stop an agent-backed text run over the gateway's
+`POST /api/chat/runs/{runId}/cancel` (owner-checked server-side), and the SSE
+`meta` frame carries the `runId` once the run exists. This client's text
+composer does not yet render a stop control; closing the HTTP stream still only
+detaches the client while the run continues, so the stop action is follow-up
+work (#81 step 3).
 
 Voice turns:
 

@@ -195,6 +195,11 @@
     onSubagent: function (evt) { if (subagentTrack) subagentTrack.upsert(evt); },
     onActivity: function (type) { activityBoundary(type); },
     onMeta: function (evt) {
+      // The agent-backed stream emits a second meta frame once the run exists,
+      // carrying runId (#67). Prefer it for stop; the timeline/refresh path in
+      // onNewestRun/handleRefreshPayload remains the fallback when a server
+      // predates the frame or the run is direct-LLM.
+      if (evt.runId) liveRunId = evt.runId;
       if (evt.conversationId) {
         // A brand-new conversation (id not yet in the rail) should appear
         // in the session list immediately — no full reload needed.
