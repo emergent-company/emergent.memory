@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -25,14 +26,9 @@ type oauthConsentData struct {
 // signed-in page: the user can inspect the client, scopes, and project before
 // approving.
 templ OAuthConsentPage(data oauthConsentData) {
+	{{ description := data.ClientName + " wants to connect to a Memory project on your behalf." }}
 	@layout.Container(layout.ContainerLG, nil) {
-		<div class="mb-6">
-			<p class="text-xs font-medium uppercase tracking-wider text-base-content/50">Authorize application</p>
-			<h1 class="mt-1 text-2xl font-semibold tracking-tight">{ data.ClientName }</h1>
-			<p class="mt-2 text-sm text-base-content/70">
-				<strong>{ data.ClientName }</strong> wants to connect to a Memory project on your behalf.
-			</p>
-		</div>
+		@detailHeader(crumbsActive(nav.Crumbs("Authorize application", "", data.ClientName)), "", data.ClientName, description, detailHeaderOpts{Margin: "mb-6"})
 
 		if data.Error != "" {
 			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Message: data.Error})
@@ -134,13 +130,7 @@ type connectedAppsData struct {
 // authorized, with the project and scopes, and a revoke action.
 templ ConnectedAppsPage(data connectedAppsData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		<div class="mb-6">
-			<p class="text-xs font-medium uppercase tracking-wider text-base-content/50">Settings</p>
-			<h1 class="mt-1 text-2xl font-semibold tracking-tight">Connected apps</h1>
-			<p class="mt-2 max-w-2xl text-sm text-base-content/70">
-				Applications you have authorized to access Memory. Each grant is limited to one project and the scopes shown; revoking it immediately invalidates its token.
-			</p>
-		</div>
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected apps")), "", "Connected apps", "Applications you have authorized to access Memory. Each grant is limited to one project and the scopes shown; revoking it immediately invalidates its token.", detailHeaderOpts{Margin: "mb-6"})
 
 		if data.Flash != "" {
 			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Style: ui.AlertStyleSoft, Message: data.Flash})

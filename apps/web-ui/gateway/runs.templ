@@ -58,15 +58,17 @@ templ RunPage(data runPageData) {
 	</div>
 }
 
+templ runStatusMeta(run *ScheduledAgentRun) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   run.Status,
+		Variant: scheduleStatusIntent(&run.Status),
+		Size:    ui.BadgeSizeSM,
+		Dot:     true,
+	})
+}
+
 templ runPageHeader(run *ScheduledAgentRun) {
-	@detailHeader(runCrumbTrail(run), "", "Session", runDescription(run), detailHeaderOpts{KeepTrailLinks: true}) {
-		@ui.Badge(ui.BadgeProps{
-			Label:   run.Status,
-			Variant: scheduleStatusIntent(&run.Status),
-			Size:    ui.BadgeSizeSM,
-			Dot:     true,
-		})
-	}
+	@detailHeader(runCrumbTrail(run), "", "Session", runDescription(run), detailHeaderOpts{KeepTrailLinks: true, Meta: runStatusMeta(run)})
 }
 
 // runMetaHeader renders the run's metadata block below the page header: a

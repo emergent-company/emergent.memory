@@ -55,12 +55,14 @@ templ ComponentGalleryDocument(content templ.Component, feedbackOverlayURL strin
 templ ComponentGalleryPage(entries []GalleryEntry, gaps []AdoptionViewSummary) {
 	{{ total, needsFixture := galleryStats(entries) }}
 	<main class="w-full px-6 sm:px-8" { tpl.Attributes{"data-testid": "component-gallery"}... }>
-		@pageHeader("", "Component gallery", "Reusable gateway templ components, grouped by layer and category. Each renders in its own sandboxed fixture frame.") {
+		@pageHeader("", "Component gallery", "Reusable gateway templ components, grouped by layer and category. Each renders in its own sandboxed fixture frame.")
+
+		<div class="mb-6 flex flex-wrap items-center gap-2" data-testid="gallery-stats">
 			<span class="badge badge-ghost badge-sm" data-testid="gallery-total">{ countLabel(total, "component", "components") }</span>
 			if needsFixture > 0 {
 				<span class="badge badge-warning badge-outline badge-sm" data-testid="gallery-needs-fixture">{ countLabel(needsFixture, "needs fixture", "need fixtures") }</span>
 			}
-		}
+		</div>
 
 		<!-- Whole-page previews come first: they are the review surface for
 		     layout work, ahead of the component catalog. -->

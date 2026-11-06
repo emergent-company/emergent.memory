@@ -818,7 +818,7 @@ func TestRenderDocumentDetailPage(t *testing.T) {
 	preview := documentPreview{Mode: previewModeText, Text: "hello preview"}
 	html := renderHTML(t, DocumentDetailPage(doc, preview, nil, "", nil, false))
 	for _, want := range []string{
-		"Spec.md", "2 chunks", "completed", "15 objects extracted",
+		"Spec.md", "completed", "15 objects extracted",
 		`action="/documents/d1/extract"`, `href="/documents"`,
 		`action="/documents/d1/delete"`, "Delete this document? This cannot be undone.", "lucide--trash-2", ">Delete<",
 		// sub-navigation rail

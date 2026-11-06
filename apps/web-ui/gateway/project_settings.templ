@@ -83,7 +83,7 @@ templ providersRailItem(active string, providersMissing bool) {
 // save flows.
 templ ProjectSettingsPage(data projectSettingsData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@projectSettingsHeader(data.Project != nil && data.LoadErr == nil)
+		@projectSettingsHeader()
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
 			@pageError("Project settings unavailable", data.LoadErr)
@@ -161,7 +161,6 @@ templ ConnectedDevicesPage(data connectedDevicesPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected devices")), "", "Connected devices", "The phones and machines connected to this project — the Memory iOS app, and Mac or Linux connector machines that register here as MCP relay nodes. Each relay tool is named by its node's instance id + the tool name, so the instance id is the unique key linking every relay tool back to its node.", detailHeaderOpts{Margin: "mb-6"}) {
 			if len(data.Nodes) > 0 {
-				@countBadge(len(data.Nodes), "node", "lucide--radio")
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    "/settings/devices",
@@ -208,9 +207,7 @@ templ ConnectedDevicesPage(data connectedDevicesPageData) {
 // flow.
 templ BudgetSettingsPage(data budgetSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("budget", "lucide--wallet")
-		}
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
 			@pageError("Budget settings unavailable", data.LoadErr)

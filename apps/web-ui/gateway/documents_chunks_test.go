@@ -103,6 +103,7 @@ func TestRenderDocumentDetailChunkEditor(t *testing.T) {
 	html := renderHTML(t, DocumentChunksPage(doc, chunks, nil))
 
 	for _, want := range []string{
+		"2 chunks", // the collection carries its own count
 		`data-testid="chunk-row-0"`, `data-testid="chunk-row-1"`,
 		`data-chunk-id="c0"`, `data-chunk-id="c1"`,
 		`id="chunk-editor-0"`, `id="chunk-editor-1"`,

@@ -202,15 +202,17 @@ templ SkillDetailPage(skill *Skill, loadErr error, flashMsg string, flashErr err
 	}
 }
 
+templ skillUpdatedMeta(s *Skill) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   "updated " + relTime(s.UpdatedAt),
+		Variant: ui.BadgeGhost,
+		Size:    ui.BadgeSizeSM,
+		Icon:    "lucide--clock",
+	})
+}
+
 templ skillDetailHeader(s *Skill) {
-	@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", s.Name)), "", s.Name, s.Description) {
-		@ui.Badge(ui.BadgeProps{
-			Label:   "updated " + relTime(s.UpdatedAt),
-			Variant: ui.BadgeGhost,
-			Size:    ui.BadgeSizeSM,
-			Icon:    "lucide--clock",
-		})
-	}
+	@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", s.Name)), "", s.Name, s.Description, detailHeaderOpts{Meta: skillUpdatedMeta(s)})
 }
 
 templ skillDetailMeta(s *Skill) {

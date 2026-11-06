@@ -737,10 +737,8 @@ func documentSectionCrumbs(doc *Document, section string) []nav.BreadcrumbItem {
 // Extraction history: its own identity (short id, status) lives in the run
 // header below, so the trail stops at the section.
 templ documentDetailHeader(doc *Document, section string) {
-	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
+	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6", Meta: documentHeaderMeta(doc)}) {
 		<div class="flex flex-wrap items-center gap-2">
-			@countBadgeLabel(strconv.Itoa(doc.Chunks)+" chunk"+plural(doc.Chunks), "lucide--braces")
-			@documentStatusBadge(documentHeaderStatus(doc))
 			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeSubmit,
@@ -755,6 +753,12 @@ templ documentDetailHeader(doc *Document, section string) {
 			</form>
 		</div>
 	}
+}
+
+// documentHeaderMeta is the document's identity/state chip row: ingestion
+// status. The chunk count belongs to the Chunks collection, not the header.
+templ documentHeaderMeta(doc *Document) {
+	@documentStatusBadge(documentHeaderStatus(doc))
 }
 
 templ extractionCard(doc *Document, flashMsg string, flashErr error, blocked bool) {

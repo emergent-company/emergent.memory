@@ -349,23 +349,27 @@ templ BackupDetailPage(b *Backup, loadErr error) {
 	}
 }
 
-// backupDetailHeader is the detail header: title, status/type badges, and the
+// backupHeaderMeta is the backup's identity/state chip row (status, type).
+templ backupHeaderMeta(b *Backup) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   backupStatusLabel(b.Status),
+		Variant: backupStatusIntent(b.Status),
+		Size:    ui.BadgeSizeXS,
+		Dot:     true,
+		Animate: backupStatusAnimate(b.Status),
+	})
+	@ui.Badge(ui.BadgeProps{
+		Label:   backupTypeLabel(b.BackupType),
+		Variant: backupTypeIntent(b.BackupType),
+		Size:    ui.BadgeSizeXS,
+	})
+}
+
+// backupDetailHeader is the detail header: title, status/type chips, and the
 // back/download/delete actions. Download is offered only for ready backups.
 templ backupDetailHeader(b *Backup) {
-	@detailHeader(crumbsActive(nav.Crumbs("Backups", "/backups", backupTitle(*b))), "", backupTitle(*b), "A snapshot of the active project's documents, objects, and chat.", detailHeaderOpts{Margin: "mb-6"}) {
+	@detailHeader(crumbsActive(nav.Crumbs("Backups", "/backups", backupTitle(*b))), "", backupTitle(*b), "A snapshot of the active project's documents, objects, and chat.", detailHeaderOpts{Margin: "mb-6", Meta: backupHeaderMeta(b)}) {
 		<div class="flex flex-wrap items-center gap-2">
-			@ui.Badge(ui.BadgeProps{
-				Label:   backupStatusLabel(b.Status),
-				Variant: backupStatusIntent(b.Status),
-				Size:    ui.BadgeSizeXS,
-				Dot:     true,
-				Animate: backupStatusAnimate(b.Status),
-			})
-			@ui.Badge(ui.BadgeProps{
-				Label:   backupTypeLabel(b.BackupType),
-				Variant: backupTypeIntent(b.BackupType),
-				Size:    ui.BadgeSizeXS,
-			})
 			<div class="flex flex-wrap items-center gap-1">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,

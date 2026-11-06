@@ -77,6 +77,9 @@ templ SessionPage(agents []AgentDefinitionSummary, detail *ConversationDetail, g
 			if len(groups) == 0 {
 				@sessionTimelineEmpty()
 			} else {
+				if detail != nil && len(detail.Messages) > 0 {
+					@sectionCount(countLabel(len(detail.Messages), "message", "messages"))
+				}
 				@sessionTimeline(sessionAgentUI(agents, detail), groups)
 			}
 		}
@@ -92,15 +95,16 @@ func sessionAgentUI(agents []AgentDefinitionSummary, detail *ConversationDetail)
 	return agentUIForList(agents, detail.AgentDefinitionID)
 }
 
+templ sessionHeaderMeta(agents []AgentDefinitionSummary, detail *ConversationDetail) {
+	if detail.AgentDefinitionID != "" {
+		{{ aui := agentUIForList(agents, detail.AgentDefinitionID) }}
+		@agentNameChip(shortID(detail.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
+	}
+}
+
 templ sessionDetailHeader(agents []AgentDefinitionSummary, detail *ConversationDetail) {
 	if detail != nil {
-		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", sessionTitle(detail))), "", sessionTitle(detail), "Created "+relTime(detail.CreatedAt), detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel(strconv.Itoa(len(detail.Messages))+" message"+plural(len(detail.Messages)), "lucide--message-square")
-			if detail.AgentDefinitionID != "" {
-				{{ aui := agentUIForList(agents, detail.AgentDefinitionID) }}
-				@agentNameChip(shortID(detail.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
-			}
-		}
+		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", sessionTitle(detail))), "", sessionTitle(detail), "Created "+relTime(detail.CreatedAt), detailHeaderOpts{Margin: "mb-6", Meta: sessionHeaderMeta(agents, detail)})
 	} else {
 		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", "Session")), "", "Session", "", detailHeaderOpts{Margin: "mb-6"})
 	}
