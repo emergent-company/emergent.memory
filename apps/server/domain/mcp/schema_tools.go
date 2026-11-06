@@ -456,6 +456,73 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 	return s.wrapResult(result)
 }
 
+func (s *Service) executeSchemaPackList(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if s.schemasSvc == nil {
+		return nil, fmt.Errorf("schemas service not available")
+	}
+
+	search, _ := args["search"].(string)
+
+	limit := 20
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := 0
+	if o, ok := args["offset"].(float64); ok && o > 0 {
+		offset = int(o)
+	}
+
+	includeDeprecated, err := boolToolArg(args, "include_deprecated")
+	if err != nil {
+		return nil, err
+	}
+
+	packs, total, err := s.schemasSvc.ListSchemaPacks(ctx, projectID, search, limit, offset, includeDeprecated)
+	if err != nil {
+		return nil, fmt.Errorf("list schema packs: %w", err)
+	}
+
+	result := map[string]any{
+		"project_id": projectID,
+		"packs":      packs,
+		"total":      total,
+		"limit":      limit,
+		"offset":     offset,
+	}
+	return s.wrapResult(result)
+}
+
+func (s *Service) executeSchemaPackClaims(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if s.schemasSvc == nil {
+		return nil, fmt.Errorf("schemas service not available")
+	}
+
+	claims, err := s.schemasSvc.ListPackClaims(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list schema pack claims: %w", err)
+	}
+
+	result := map[string]any{
+		"project_id": projectID,
+		"claims":     claims,
+		"total":      len(claims),
+	}
+	return s.wrapResult(result)
+}
+
 func (s *Service) executeAssignSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
 		return nil, fmt.Errorf("project context required")

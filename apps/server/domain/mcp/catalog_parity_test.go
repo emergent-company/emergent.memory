@@ -142,6 +142,44 @@ func TestAssignSchemaToolDeclaresOnlyWiredArgs(t *testing.T) {
 		"only schema_id is mandatory; force is the optional escape hatch")
 }
 
+// TestCatalogParityReadOnlyToolsRegistered pins the tools added for the
+// blueprint/schema catalog parity work (#18): each must be discoverable in the
+// served catalog with the read scope it was documented under. A definition with
+// no dispatch case is a tool a client can discover and never run; the dispatch
+// half is covered by the compile-time interface assertions and the handler
+// tests.
+func TestCatalogParityReadOnlyToolsRegistered(t *testing.T) {
+	svc := fullCatalog(t)
+
+	cases := map[string]string{
+		"blueprint-updates-status":      "schema:read",
+		"blueprint-import-preview":      "schema:read",
+		"blueprint-model-overrides-get": "schema:read",
+		"schema-pack-list":              "schema:read",
+		"schema-pack-claims":            "schema:read",
+	}
+	for name, wantScope := range cases {
+		def := svc.GetToolByName(name)
+		require.NotNil(t, def, "tool %q must be registered in the catalog", name)
+		require.Equal(t, wantScope, def.RequiredScope,
+			"tool %q must declare the read scope it was documented under", name)
+		require.NotEmpty(t, def.Description, "tool %q needs a description an agent can act on", name)
+	}
+
+	// The pack list advertises the same include_deprecated flag the REST
+	// catalog and schema-list expose, so discovery matches the handler.
+	list := svc.GetToolByName("schema-pack-list")
+	prop, ok := list.InputSchema.Properties["include_deprecated"]
+	require.True(t, ok, "schema-pack-list must advertise include_deprecated")
+	require.Equal(t, "boolean", prop.Type)
+
+	// The preview keeps token out of the response contract: it is fetched with,
+	// never stored, and no output schema key leaks it.
+	preview := svc.GetToolByName("blueprint-import-preview")
+	require.Contains(t, preview.InputSchema.Properties, "url")
+	require.Contains(t, preview.InputSchema.Properties, "modelOverrides")
+}
+
 // TestSchemaToolDeclaredArgsAreWired pins #2377: every property these two tools
 // advertise now has a reader (or a writer, for schema-create), so the catalogue
 // stops promising knobs nothing consumes.

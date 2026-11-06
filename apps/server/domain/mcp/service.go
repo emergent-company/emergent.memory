@@ -621,7 +621,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list-available",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
+			Description:  "Get the packs this project can still install: its own packs that are not installed and not deprecated. This is the install picker, not the project catalog (schema-pack-list) or the assigned list (schema-list-installed); an already-installed pack stays visible there even after it is deprecated.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -631,7 +631,50 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list-installed",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get all schemas currently installed in the project with their configuration and active status.",
+			Description:  "Get all schemas currently installed in the project with their configuration and active status. Includes installed packs whose catalog row has since been deprecated, so an existing project keeps sight of what it uses.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:         "schema-pack-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List the schema packs owned by the current project's catalog (id, name, version, project, source), with optional search and pagination. This is the project catalog, not the install picker (schema-list-available) or the assignment list (schema-list-installed). Deprecated packs are hidden by default; set include_deprecated to audit retirement.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"search": {
+						Type:        "string",
+						Description: "Optional search term to filter packs by name or description",
+					},
+					"include_deprecated": {
+						Type:        "boolean",
+						Description: "Include packs that have been deprecated (default: false)",
+						Default:     false,
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 20, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     20,
+					},
+					"offset": {
+						Type:        "number",
+						Description: "Number of results to skip (default: 0)",
+						Minimum:     intPtr(0),
+						Default:     0,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:         "schema-pack-claims",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List which applied blueprints claim which of the project's schema packs — the pack → blueprint provenance map. Answers \"which blueprint owns this pack\" and is the counterpart of the pack list. Only packs claimed by an applied blueprint are returned; an unclaimed pack is absent rather than listed with an empty blueprint set.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -692,7 +735,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-create",
-			Description: "Create a new memory schema in the global registry. Requires object type schemas at minimum.",
+			Description: "Create a new memory schema owned by the current project. Packs are project-scoped, not global: the new pack is written to this project's schema catalog and its object types are registered in this project's type registry. Requires object type schemas at minimum. Global built-in packs are readable but immutable.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1791,6 +1834,8 @@ var toolRequiredScope = map[string]string{
 	"schema-get":            "schema:read",
 	"schema-list-available": "schema:read",
 	"schema-list-installed": "schema:read",
+	"schema-pack-list":      "schema:read",
+	"schema-pack-claims":    "schema:read",
 	"schema-history":        "schema:read",
 	"schema-compiled-types": "graph:read",
 	"schema-icon-list":      "schema:read",
@@ -2376,6 +2421,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeGetAvailableTemplates(ctx, projectID, args)
 	case "schema-list-installed":
 		return s.executeGetInstalledTemplates(ctx, projectID, args)
+	case "schema-pack-list":
+		return s.executeSchemaPackList(ctx, projectID, args)
+	case "schema-pack-claims":
+		return s.executeSchemaPackClaims(ctx, projectID, args)
 	case "schema-assign":
 		return s.executeAssignSchema(ctx, projectID, args)
 	case "schema-assignment-update":
@@ -6344,6 +6393,12 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 		return s.blueprintToolHandler.ExecuteBlueprintNewVersion(ctx, projectID, args)
 	case "blueprint-update":
 		return s.blueprintToolHandler.ExecuteBlueprintUpdate(ctx, projectID, args)
+	case "blueprint-updates-status":
+		return s.blueprintToolHandler.ExecuteBlueprintUpdatesStatus(ctx, projectID, args)
+	case "blueprint-import-preview":
+		return s.blueprintToolHandler.ExecuteBlueprintImportPreview(ctx, projectID, args)
+	case "blueprint-model-overrides-get":
+		return s.blueprintToolHandler.ExecuteBlueprintModelOverridesGet(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("unknown blueprint tool: %s", toolName)
 	}

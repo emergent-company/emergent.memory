@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
@@ -294,4 +295,122 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintUpdate(ctx context.Context, pr
 		return errResult("failed to update blueprint: " + err.Error())
 	}
 	return h.wrapResult(bp)
+}
+
+// stringMapArg extracts a map[string]string from a tool argument that may be
+// passed as a JSON object (map[string]any) or a JSON-encoded object string.
+// Non-string values are ignored.
+func stringMapArg(v any) map[string]string {
+	switch m := v.(type) {
+	case nil:
+		return nil
+	case map[string]string:
+		return m
+	case map[string]any:
+		out := make(map[string]string, len(m))
+		for k, val := range m {
+			if s, ok := val.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
+	case string:
+		if strings.TrimSpace(m) == "" {
+			return nil
+		}
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(m), &raw); err != nil {
+			return nil
+		}
+		out := make(map[string]string, len(raw))
+		for k, val := range raw {
+			if s, ok := val.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// ExecuteBlueprintUpdatesStatus reports the latest upstream-update status for
+// an applied blueprint by name. It is a pure read: it does not enqueue a check
+// and does not contact GitHub.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintUpdatesStatus(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	if projectID == "" {
+		return errResult("project context required for blueprint update status")
+	}
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return errResult("name is required")
+	}
+
+	status, err := h.svc.GetUpdateStatus(ctx, projectID, name)
+	if err != nil {
+		return errResult("failed to get blueprint update status: " + err.Error())
+	}
+	return h.wrapResult(status)
+}
+
+// ExecuteBlueprintImportPreview fetches and validates a blueprint from GitHub
+// and returns its metadata and manifest WITHOUT creating, publishing, or
+// applying anything. In project scope it also reports the object-type
+// collisions an apply would hit, mirroring the REST preview endpoint.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintImportPreview(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	url, _ := args["url"].(string)
+	if strings.TrimSpace(url) == "" {
+		return errResult("url is required")
+	}
+	ref, _ := args["ref"].(string)
+	token, _ := args["token"].(string)
+
+	// A global (no project) preview reads the platform-global catalogue
+	// surface and requires the same superadmin authority as the REST
+	// endpoint; project-scoped previews are unchanged.
+	if projectID == "" {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(ctx); err != nil {
+			return errResult("forbidden: global blueprint previews require superadmin_full")
+		}
+	}
+
+	req := &ImportGitHubRequest{
+		URL:            url,
+		Ref:            ref,
+		Token:          token,
+		ModelOverrides: stringMapArg(args["modelOverrides"]),
+	}
+	preview, err := h.svc.PreviewFromGitHub(ctx, req)
+	if err != nil {
+		return errResult("failed to preview blueprint import: " + err.Error())
+	}
+
+	// Project-scoped previews report object-type collisions an apply would
+	// hit. Global previews have no registry to compare against.
+	if projectID != "" {
+		conflicts, cerr := h.svc.PreviewManifestConflicts(ctx, projectID, preview.Manifest)
+		if cerr != nil {
+			return errResult("failed to preview type conflicts: " + cerr.Error())
+		}
+		preview.TypeConflicts = conflicts
+	}
+	return h.wrapResult(preview)
+}
+
+// ExecuteBlueprintModelOverridesGet returns the project-scoped model overrides
+// stored for a blueprint name. Read-only: changing them remains a REST PUT.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintModelOverridesGet(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	if projectID == "" {
+		return errResult("project context required for blueprint model overrides")
+	}
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return errResult("name is required")
+	}
+
+	overrides, err := h.svc.GetModelOverrides(ctx, projectID, name)
+	if err != nil {
+		return errResult("failed to get blueprint model overrides: " + err.Error())
+	}
+	return h.wrapResult(map[string]any{"modelOverrides": overrides})
 }
