@@ -1715,9 +1715,9 @@
     btn.className = primary ? "btn btn-primary btn-sm" : "btn btn-ghost btn-sm";
     btn.textContent = label;
     btn.addEventListener("click", function () {
-      // TODO(agent-structured-ui): wire resume/respond — for now a click just
-      // emits an `a2ui:action` CustomEvent so a follow-up can send the decision
-      // back to the agent (resume) / server (respond). No endpoint is invented.
+      // The renderer reports the click and nothing else: the host page sends it
+      // (chat.js posts it as the conversation's next turn, and the server frames
+      // the wording the agent receives), so no endpoint is invented here.
       document.dispatchEvent(new CustomEvent("a2ui:action", {
         detail: { surfaceId: surfaceId, action: action },
       }));
@@ -2092,15 +2092,10 @@
     return shell.wrap;
   }
 
-  // Phase-1 action stub: card buttons emit an `a2ui:action` CustomEvent
-  // (detail: {surfaceId, action}); this listener currently just logs it. The
-  // real resume/respond wiring (POSTing the decision back to the gateway/agent)
-  // is a follow-up.
-  document.addEventListener("a2ui:action", function (evt) {
-    // TODO(agent-structured-ui): send evt.detail (surfaceId + action) to the
-    // server to resume/respond to the paused agent run.
-    console.log("a2ui:action", evt.detail);
-  });
+  // A2UI surface actions are dispatched as `a2ui:action` events (detail:
+  // {surfaceId, action}) and sent by the host page: chat.js turns one into the
+  // conversation's next chat turn. The renderer stays transport-free, so the
+  // same card works in the side panel and the share page unchanged.
 
   /* ---------- shared timeline renderer ---------- */
 

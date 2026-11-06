@@ -116,6 +116,17 @@ type ChatRequest struct {
 	ConversationID    string `json:"conversationId,omitempty"`
 	Message           string `json:"message"`
 	CanonicalID       string `json:"canonicalId,omitempty"`
+	// SurfaceAction carries an A2UI surface action to the server, which frames
+	// it as the agent turn; Message may then be empty.
+	SurfaceAction *ChatSurfaceAction `json:"surfaceAction,omitempty"`
+}
+
+// ChatSurfaceAction is an A2UI surface action: the surface the user acted on and
+// the payload its component carries. The server owns the wording sent to the
+// agent, so clients only report what was clicked.
+type ChatSurfaceAction struct {
+	SurfaceID string `json:"surfaceId"`
+	Action    any    `json:"action"`
 }
 
 // ChatStream opens a streaming chat request and returns the raw SSE body.

@@ -279,6 +279,89 @@ func TestValidateStreamRequest(t *testing.T) {
 			errMsg:  "message must be at most 100000 characters",
 		},
 		{
+			name: "surface action without a message",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				SurfaceAction: &SurfaceAction{
+					SurfaceID: "s1",
+					Action:    map[string]any{"componentId": "c1", "response": "approve"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "surface action with typed text",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				Message:        "why?",
+				SurfaceAction: &SurfaceAction{
+					SurfaceID: "s1",
+					Action:    map[string]any{"componentId": "c1", "response": "approve"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "surface action without a surfaceId",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				SurfaceAction:  &SurfaceAction{Action: map[string]any{"response": "approve"}},
+			},
+			wantErr: true,
+			errMsg:  "surfaceAction.surfaceId is required",
+		},
+		{
+			name: "surface action without a conversation",
+			req: &StreamRequest{
+				SurfaceAction: &SurfaceAction{
+					SurfaceID: "s1",
+					Action:    map[string]any{"componentId": "c1", "response": "approve"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "surfaceAction requires conversationId",
+		},
+		{
+			name: "surface action with no action payload",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				SurfaceAction:  &SurfaceAction{SurfaceID: "s1"},
+			},
+			wantErr: true,
+			errMsg:  "surfaceAction.action must be a non-empty object",
+		},
+		{
+			name: "surface action with an empty action object",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				SurfaceAction:  &SurfaceAction{SurfaceID: "s1", Action: map[string]any{}},
+			},
+			wantErr: true,
+			errMsg:  "surfaceAction.action must be a non-empty object",
+		},
+		{
+			name: "surface action with a non-object action",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				SurfaceAction:  &SurfaceAction{SurfaceID: "s1", Action: "approve"},
+			},
+			wantErr: true,
+			errMsg:  "surfaceAction.action must be a non-empty object",
+		},
+		{
+			name: "surface action whose framed turn is too long",
+			req: &StreamRequest{
+				ConversationID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+				Message:        strings.Repeat("a", 99999),
+				SurfaceAction: &SurfaceAction{
+					SurfaceID: strings.Repeat("s", 200),
+					Action:    map[string]any{"response": "approve"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "surface action is too large to send as a message",
+		},
+		{
 			name: "valid conversationId",
 			req: &StreamRequest{
 				Message:        "Hello",
@@ -328,6 +411,42 @@ func TestValidateStreamRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A surface action becomes the user turn: the framing lives here, once, so a
+// client never invents the prose the agent reads.
+func TestStreamMessageFramesSurfaceAction(t *testing.T) {
+	t.Run("plain text is unchanged", func(t *testing.T) {
+		got := streamMessage(&StreamRequest{Message: "  hello  "})
+		if got != "hello" {
+			t.Errorf("streamMessage() = %q, want %q", got, "hello")
+		}
+	})
+
+	t.Run("surface action is framed", func(t *testing.T) {
+		got := streamMessage(&StreamRequest{
+			Message: "why?",
+			SurfaceAction: &SurfaceAction{
+				SurfaceID: " s1 ",
+				Action:    map[string]any{"componentId": "c1", "response": "approve"},
+			},
+		})
+		want := "The user took an action on UI surface \"s1\":\n" +
+			"{\"componentId\":\"c1\",\"response\":\"approve\"}\n\nwhy?"
+		if got != want {
+			t.Errorf("streamMessage() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("surface action without typed text ends after the action", func(t *testing.T) {
+		got := streamMessage(&StreamRequest{
+			SurfaceAction: &SurfaceAction{SurfaceID: "s1", Action: map[string]any{"response": "reject"}},
+		})
+		want := "The user took an action on UI surface \"s1\":\n{\"response\":\"reject\"}"
+		if got != want {
+			t.Errorf("streamMessage() = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestFormatSearchContext(t *testing.T) {
