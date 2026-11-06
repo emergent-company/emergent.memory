@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -32,6 +33,7 @@ const (
 	ChangesetOutcomeSkipped   = "skipped"
 	ChangesetOutcomeWithdrawn = "withdrawn"
 	ChangesetOutcomeNotFound  = "not_found"
+	ChangesetOutcomeRefused   = "refused"
 )
 
 // ChangesetObjectItem is one object upsert in a changeset. The payload fields
@@ -218,6 +220,24 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 		return nil, err
 	}
 
+	// Bind the caller to the source it names. The request body's source_id is
+	// client-supplied, so a project member alone does not establish that the
+	// caller *is* that source: the grant row does. The system principal
+	// (extraction, ingestion, backfills) is exempt — it is the explicit internal
+	// writer, not a credential to be granted. The check runs before BeginTx so a
+	// refused push writes no version, contribution or generation row.
+	credentialKind, credentialID, _ := auth.CredentialFromContext(ctx)
+	if actorType != ActorSystem {
+		granted, err := s.repo.HasSourceGrant(ctx, s.repo.DB(), projectID, req.SourceID, credentialKind, credentialID)
+		if err != nil {
+			return nil, err
+		}
+		if !granted {
+			return nil, apperror.New(409, "owner_conflict",
+				"caller is not granted authority to act as this source")
+		}
+	}
+
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
 		return nil, apperror.NewDatabase("Database operation failed", err)
@@ -230,7 +250,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	relEmbedIDs := make([]string, 0, len(req.Relationships))
 
 	for i, objItem := range req.Objects {
-		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID)
+		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID, credentialKind, credentialID)
 		if err != nil {
 			return nil, fmt.Errorf("objects[%d] (%s): %w", i, objItem.ExternalID, err)
 		}
@@ -333,6 +353,8 @@ func (s *Service) applyChangesetObject(
 	schemas *ExtractionSchemas,
 	actorType string,
 	actorID *uuid.UUID,
+	credentialKind string,
+	credentialID *uuid.UUID,
 ) (ChangesetItemResult, *GraphObject, error) {
 	result := ChangesetItemResult{Kind: ContributionSubjectObject, ExternalID: item.ExternalID}
 	seq := revisionSeq(item.ExternalRevisionSeq)
@@ -365,12 +387,31 @@ func (s *Service) applyChangesetObject(
 			// second head.
 			head = prevRow
 		}
+		adopt := false
 		if head.OwnerSourceID != nil && *head.OwnerSourceID != sourceID {
-			return result, nil, apperror.New(409, "owner_conflict",
-				"object is owned by another source; a source may only revise the records it owns")
+			// The record's head is owned by a different source. Refuse per item
+			// unless the caller also holds a grant for that owner, in which case
+			// the write adopts it: the caller becomes the owner with
+			// data_class 'adopted', and the previous owner stays a contributor.
+			// A refusal does not abort the rest of the changeset — the generation
+			// row is still written and the other items still apply.
+			granted := actorType == ActorSystem
+			if !granted {
+				var err error
+				granted, err = s.repo.HasSourceGrant(ctx, tx, projectID, *head.OwnerSourceID, credentialKind, credentialID)
+				if err != nil {
+					return result, nil, err
+				}
+			}
+			if !granted {
+				result.Outcome = ChangesetOutcomeRefused
+				result.Reason = "object is owned by another source and the caller holds no grant for it"
+				return result, nil, nil
+			}
+			adopt = true
 		}
 
-		version := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, s)
+		version := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, adopt, s)
 		if err := s.repo.CreateVersion(ctx, tx, head, version); err != nil {
 			return result, nil, err
 		}
@@ -644,7 +685,7 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 // push is authoritative for the content it owns, but never rewrites the
 // `_sources` array: that array belongs to the document-extraction path and this
 // capability leaves it alone.
-func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, s *Service) *GraphObject {
+func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, adopt bool, s *Service) *GraphObject {
 	version := *head
 	version.ID = uuid.Nil
 	version.SupersedesID = nil
@@ -691,10 +732,16 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 		version.SchemaVersion = &schemaVersion
 	}
 
-	// A source push is authoritative for its own record, so the row stays
-	// source-classified and keeps the owner it already had (the owner check
-	// above refuses a different one).
-	version.DataClass = DataClassSource
+	// A source push is authoritative for its own record: the row stays
+	// source-classified with the caller as owner. A cross-owner write that holds
+	// a grant for the previous owner is an adoption instead — the caller becomes
+	// the owner with data_class 'adopted', and the previous owner's contribution
+	// is preserved by CreateVersion's inheritance.
+	if adopt {
+		version.DataClass = DataClassAdopted
+	} else {
+		version.DataClass = DataClassSource
+	}
 	version.OwnerSourceID = &sourceID
 	return &version
 }

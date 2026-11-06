@@ -30,6 +30,29 @@ func createTestSource(t *testing.T, ctx context.Context, db bun.IDB, projectID u
 		VALUES (?, ?, 'test-provider', ?)
 	`, id, projectID, name)
 	require.NoError(t, err)
+	// Mirror the migration backfill (00265, option 1): a source that predates
+	// grants keeps a wildcard grant so integrations keep working. The majority
+	// of the changeset tests exercise the "existing integration" shape; the
+	// adversarial tests build an ungranted source with createTestSourceUngranted.
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO kb.source_grants (project_id, source_id, credential_kind, credential_id, granted_by_type)
+		VALUES (?, ?, 'project', NULL, 'system')
+	`, projectID, id)
+	require.NoError(t, err)
+	return id
+}
+
+// createTestSourceUngranted is a source created after the migration backfill:
+// it carries no wildcard grant, so a push as it is refused until an explicit
+// grant is written. It is the "impersonation window closed" state.
+func createTestSourceUngranted(t *testing.T, ctx context.Context, db bun.IDB, projectID uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO kb.sources (id, project_id, provider, display_name)
+		VALUES (?, ?, 'test-provider', ?)
+	`, id, projectID, name)
+	require.NoError(t, err)
 	return id
 }
 
