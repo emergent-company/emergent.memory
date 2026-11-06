@@ -38,7 +38,7 @@ var tokenScopeGroups = []struct {
 		},
 	},
 	{
-		Title: "Fine-grained (MCP)",
+		Title: "Fine-grained",
 		Scopes: []tokenScope{
 			{"graph:read", "Read graph objects and relationships"},
 			{"graph:write", "Create, update and delete graph objects and relationships"},
@@ -52,6 +52,20 @@ var tokenScopeGroups = []struct {
 			{"skills:write", "Manage skills"},
 			{"documents:read", "Read documents"},
 			{"documents:write", "Write documents"},
+			{"documents:delete", "Delete documents"},
+			{"chunks:read", "Read document chunks"},
+			{"chunks:write", "Create and update document chunks"},
+			{"ingest:write", "Trigger document ingestion/parsing"},
+			{"extraction:read", "View extraction jobs, logs and statistics"},
+			{"extraction:write", "Create, cancel and retry extraction jobs"},
+			{"tasks:read", "List and read tasks"},
+			{"tasks:write", "Resolve and cancel tasks"},
+			{"notifications:read", "List and read notifications"},
+			{"notifications:write", "Mark notifications as read"},
+			{"user-activity:read", "View the user activity log"},
+			{"user-activity:write", "Write user activity entries"},
+			{"search:read", "Unified REST search (vector + keyword)"},
+			{"graph:search:read", "Graph-specific vector search"},
 		},
 	},
 	{
@@ -503,12 +517,17 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 // fine-grained equivalents.
 var tokenScopePresets = map[string][]string{
 	"read": {
-		"documents:read", "search", "graph:read", "journal:read",
+		"documents:read", "chunks:read", "search", "search:read",
+		"graph:read", "graph:search:read", "journal:read",
 		"schema:read", "agents:read", "projects:read",
+		"extraction:read", "tasks:read", "user-activity:read",
+		"notifications:read",
 	},
 	"write": {
-		"documents:write", "graph:write", "schema:write",
-		"agents:write", "projects:write",
+		"documents:write", "documents:delete", "chunks:write",
+		"ingest:write", "graph:write", "extraction:write",
+		"tasks:write", "user-activity:write", "notifications:write",
+		"schema:write", "agents:write", "projects:write",
 	},
 }
 

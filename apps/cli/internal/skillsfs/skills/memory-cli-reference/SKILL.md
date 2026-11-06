@@ -4440,8 +4440,10 @@ Share read-only MCP access with a teammate or AI agent
 Generate a read-only API token for your project and print ready-to-use
 MCP config snippets for Claude Desktop, Cursor, and OpenCode.
 
-The token is scoped to documents:read, search, graph:read, journal:read,
-schema:read, agents:read, projects:read, and chat:use.
+The token is scoped to documents:read, chunks:read, search, search:read,
+graph:read, graph:search:read, journal:read, extraction:read, tasks:read,
+user-activity:read, notifications:read, schema:read, agents:read,
+projects:read, and chat:use.
 Write operations will be rejected. The token can be revoked at any time with:
 
   memory tokens revoke <token-id> --project <project>
@@ -6412,7 +6414,7 @@ On success, prints the full plaintext Token value prominently (this is the only
 time the full token is shown — save it immediately), followed by ID, Name, Type,
 Prefix, Scopes, and Created timestamp.
 
-Valid scopes: schema:read, schema:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, project:admin, admin, admin:all.
+Valid scopes: schema:read, schema:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, documents:delete, chunks:read, chunks:write, ingest:write, extraction:read, extraction:write, tasks:read, tasks:write, notifications:read, notifications:write, user-activity:read, user-activity:write, search:read, graph:search:read, project:admin, admin, admin:all.
 Scopes are comma-separated. Use --scopes all to grant full admin access (admin:all).
 Run 'memory tokens scopes' for a description of each scope.
 

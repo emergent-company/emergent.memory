@@ -214,8 +214,8 @@ func TestAccountTokenMintRequiresMembership(t *testing.T) {
 
 // TestCreate_ViewerCeilingUsesFineGrainedReads pins the project_viewer token
 // ceiling to the fine-grained read scopes: data:read is retired from minting, so
-// a viewer must be able to ask for documents:read / search / graph:read /
-// journal:read explicitly, and must still be refused any write scope.
+// a viewer must be able to ask for the read scopes the umbrella used to imply
+// explicitly, and must still be refused any write scope.
 func TestCreate_ViewerCeilingUsesFineGrainedReads(t *testing.T) {
 	f := newMintFixture(t)
 	ctx := context.Background()
@@ -232,7 +232,12 @@ func TestCreate_ViewerCeilingUsesFineGrainedReads(t *testing.T) {
 
 	// The fine-grained reads a viewer may request.
 	_, err = f.svc.Create(ctx, f.projectA, viewerID, "viewer-read",
-		[]string{"documents:read", "search", "graph:read", "journal:read"})
+		[]string{
+			"documents:read", "chunks:read", "search", "search:read",
+			"graph:read", "graph:search:read", "journal:read",
+			"extraction:read", "tasks:read", "user-activity:read",
+			"notifications:read",
+		})
 	require.NoError(t, err)
 
 	// Write scopes are still refused.

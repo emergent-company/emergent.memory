@@ -70,16 +70,24 @@ func getTokenPrefix(token string) string {
 // viewerReadOnlyScopes lists the scopes a project_viewer may *request* on a
 // token. data:read is retired from user-facing minting, so the fine-grained
 // read scopes it covered for a project token are listed explicitly — a viewer
-// can still mint a token that reads documents, search and the graph, but
+// can still mint a token that reaches every read-only REST surface (documents,
+// chunks, search, graph, extraction, tasks, notifications and activity), but
 // nothing wider.
 var viewerReadOnlyScopes = map[string]bool{
-	"documents:read": true,
-	"search":         true,
-	"graph:read":     true,
-	"journal:read":   true,
-	"schema:read":    true,
-	"agents:read":    true,
-	"projects:read":  true,
+	"documents:read":     true,
+	"search":             true,
+	"search:read":        true,
+	"graph:read":         true,
+	"graph:search:read":  true,
+	"journal:read":       true,
+	"schema:read":        true,
+	"agents:read":        true,
+	"projects:read":      true,
+	"chunks:read":        true,
+	"extraction:read":    true,
+	"tasks:read":         true,
+	"user-activity:read": true,
+	"notifications:read": true,
 	// The device marker is reserved to CreateDeviceToken, whose hardcoded
 	// ceiling is read-only. Allowing it here lets a project_viewer provision
 	// their phone without granting anything beyond that ceiling.

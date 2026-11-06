@@ -169,12 +169,19 @@ func TestAPITokenScopeAreaMapping(t *testing.T) {
 		"schema:read": apiTokenAreaSchemas, "schema:write": apiTokenAreaSchemas, "schema:migrate": apiTokenAreaSchemas,
 		"data:read": apiTokenAreaData, "data:write": apiTokenAreaData,
 		"documents:read": apiTokenAreaDocuments, "documents:write": apiTokenAreaDocuments,
+		"documents:delete": apiTokenAreaDocuments, "ingest:write": apiTokenAreaDocuments,
+		"chunks:read": apiTokenAreaDocuments, "chunks:write": apiTokenAreaDocuments,
+		"extraction:read": apiTokenAreaExtraction, "extraction:write": apiTokenAreaExtraction,
 		"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
+		"search:read": apiTokenAreaGraph, "graph:search:read": apiTokenAreaGraph,
 		"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
 		"agents:read": apiTokenAreaAgents, "agents:write": apiTokenAreaAgents, "chat:use": apiTokenAreaAgents,
 		"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects, "project:admin": apiTokenAreaProjects,
 		"journal:read": apiTokenAreaJournal, "journal:write": apiTokenAreaJournal,
 		"skills:read": apiTokenAreaSkills, "skills:write": apiTokenAreaSkills,
+		"tasks:read": apiTokenAreaTasks, "tasks:write": apiTokenAreaTasks,
+		"notifications:read": apiTokenAreaNotifications, "notifications:write": apiTokenAreaNotifications,
+		"user-activity:read": apiTokenAreaUserActivity, "user-activity:write": apiTokenAreaUserActivity,
 		"admin": apiTokenAreaAdmin, "admin:all": apiTokenAreaAdmin,
 		"mystery:scope": apiTokenAreaOther,
 	}
@@ -225,12 +232,17 @@ func TestAPITokenAreaBadges(t *testing.T) {
 // special-cases admin/admin:all, schema:migrate, chat:use and search (none carry
 // the :write suffix), so those are asserted explicitly to catch a dropped case.
 func TestAPITokenScopeMutates(t *testing.T) {
-	for _, scope := range []string{"admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search"} {
+	for _, scope := range []string{"admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search", "documents:delete"} {
 		if !apiTokenScopeMutates(scope) {
 			t.Errorf("apiTokenScopeMutates(%q) = false, want true (special-cased)", scope)
 		}
 	}
-	for _, scope := range []string{"schema:read", "data:read", "documents:read", "graph:read", "branches:read", "agents:read", "projects:read", "journal:read", "skills:read"} {
+	for _, scope := range []string{
+		"schema:read", "data:read", "documents:read", "graph:read", "branches:read",
+		"agents:read", "projects:read", "journal:read", "skills:read", "chunks:read",
+		"search:read", "graph:search:read", "extraction:read", "tasks:read",
+		"user-activity:read", "notifications:read",
+	} {
 		if apiTokenScopeMutates(scope) {
 			t.Errorf("apiTokenScopeMutates(%q) = true, want false (read-only)", scope)
 		}
@@ -258,6 +270,14 @@ func TestAPITokenScopesPinned(t *testing.T) {
 		"journal:read", "journal:write",
 		"skills:read", "skills:write",
 		"documents:read", "documents:write",
+		// REST scopes the retired data:read/data:write umbrellas used to imply
+		"documents:delete", "ingest:write",
+		"chunks:read", "chunks:write",
+		"search:read", "graph:search:read",
+		"extraction:read", "extraction:write",
+		"tasks:read", "tasks:write",
+		"user-activity:read", "user-activity:write",
+		"notifications:read", "notifications:write",
 		// admin
 		"admin", "admin:all",
 		// project-scoped admin
