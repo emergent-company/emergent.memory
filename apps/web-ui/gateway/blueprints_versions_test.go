@@ -1,9 +1,68 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"slices"
 	"testing"
+
+	"github.com/labstack/echo/v4"
 )
+
+// TestGalleryVersionOrderMatchesServer pins the gallery's version history to
+// the order GET /api/blueprints/name/:name/versions returns. The fixture is
+// already in the server's newest-first order (sortVersionsNewestFirst), so the
+// gallery must render it unchanged. The old gateway comparator reordered it:
+// it put 1.0.0-beta.10 above beta.2, put a prerelease above its release, and
+// let CreatedAt decide same-core ties (the two 1.0.0 rows).
+func TestGalleryVersionOrderMatchesServer(t *testing.T) {
+	serverOrder := []BlueprintRecord{
+		{ID: "a", Version: "2.0.0", CreatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "b", Version: "1.10.0", CreatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c", Version: "1.9.0", CreatedAt: "2026-01-01T00:00:00Z"},
+		// Same core, deliberately out of CreatedAt order: the server keeps its
+		// total order (equal versions compare equal), the old gateway fallback
+		// would have put "e" first.
+		{ID: "d", Version: "1.0.0", CreatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "e", Version: "1.0.0", CreatedAt: "2026-12-01T00:00:00Z"},
+		{ID: "f", Version: "1.0.0-beta.2", CreatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "g", Version: "1.0.0-beta.10", CreatedAt: "2026-12-01T00:00:00Z"},
+		{ID: "h", Version: "latest", CreatedAt: "2026-01-01T00:00:00Z"},
+	}
+	for i := range serverOrder {
+		serverOrder[i].Name = "agent-notes"
+		serverOrder[i].Status = "published"
+	}
+	f := &fakeMemory{
+		blueprint:         &BlueprintRecord{ID: "a", Name: "agent-notes", Version: "2.0.0", Status: "published"},
+		blueprintVersions: serverOrder,
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/blueprints/:id", s.uiBlueprint)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/blueprints/a", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	// The version rows are the only `<p class="font-mono text-xs font-medium">
+	// v...</p>` elements on the page.
+	row := regexp.MustCompile(`<p class="font-mono text-xs font-medium">v([^<]*)</p>`)
+	matches := row.FindAllStringSubmatch(rec.Body.String(), -1)
+	got := make([]string, 0, len(matches))
+	for _, m := range matches {
+		got = append(got, m[1])
+	}
+	want := make([]string, 0, len(serverOrder))
+	for _, r := range serverOrder {
+		want = append(want, r.Version)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("gallery version order = %v, want server order %v", got, want)
+	}
+}
 
 func TestNextVersion(t *testing.T) {
 	cases := []struct {
@@ -30,52 +89,69 @@ func TestNextVersion(t *testing.T) {
 	}
 }
 
-func TestSortVersionsNewestFirst(t *testing.T) {
-	t.Run("numeric ordering not lexicographic", func(t *testing.T) {
-		vs := []BlueprintVersionView{
-			{ID: "b", Version: "1.9.0"},
-			{ID: "a", Version: "1.10.0"},
-			{ID: "c", Version: "1.2.0"},
+// TestVersionIsNewer is the table test for the gateway's only remaining
+// version comparison. Each row is a pair the old `versionGreater` got wrong
+// (it fell back to CreatedAt on a numeric-core tie and read unparseable
+// versions as 0.0.0) so the gallery's available list now agrees with the
+// server's ordering.
+func TestVersionIsNewer(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		// Numeric major/minor/patch, not string order.
+		{"1.10.0", "1.9.0", true},
+		{"1.9.0", "1.10.0", false},
+		{"2.0.0", "1.99.99", true},
+		// A release is newer than its own prereleases.
+		{"1.0.0", "1.0.0-beta.1", true},
+		{"1.0.0-beta.1", "1.0.0", false},
+		{"1.1.0-rc.1", "1.0.0", true},
+		// Prerelease segments compare lexicographically: beta.2 > beta.10.
+		{"1.0.0-beta.2", "1.0.0-beta.10", true},
+		{"1.0.0-beta.10", "1.0.0-beta.2", false},
+		// Equal core/version is not "newer" — no CreatedAt tie-break exists.
+		{"1.0.0", "1.0.0", false},
+		{"1.0.0+build.2", "1.0.0+build.1", true},
+		// Parseable versions above unparseable ones.
+		{"1.0.0", "latest", true},
+		{"latest", "1.0.0", false},
+		{"none", "banana", true}, // both unparseable: descending raw string
+		{"banana", "none", false},
+		// Leading v and whitespace follow the server's parser.
+		{"v1.2.0", "1.1.9", true},
+	}
+	for _, tc := range cases {
+		if got := versionIsNewer(tc.a, tc.b); got != tc.want {
+			t.Errorf("versionIsNewer(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
-		sortVersionsNewestFirst(vs)
-		want := []string{"1.10.0", "1.9.0", "1.2.0"}
-		for i := range want {
-			if vs[i].Version != want[i] {
-				t.Fatalf("order = %v, want %v", versionsOf(vs), want)
-			}
-		}
-	})
-
-	t.Run("CreatedAt then ID tie-break", func(t *testing.T) {
-		vs := []BlueprintVersionView{
-			{ID: "z", Version: "1.0.0", CreatedAt: "2026-01-01T00:00:00Z"},
-			{ID: "a", Version: "1.0.0", CreatedAt: "2026-02-01T00:00:00Z"},
-			{ID: "m", Version: "1.0.0", CreatedAt: "2026-01-01T00:00:00Z"},
-		}
-		sortVersionsNewestFirst(vs)
-		want := []string{"a", "m", "z"} // newest CreatedAt first, then ID ASC
-		for i := range want {
-			if vs[i].ID != want[i] {
-				t.Fatalf("order = %v, want %v", idsOf(vs), want)
-			}
-		}
-	})
+	}
 }
 
-func versionsOf(vs []BlueprintVersionView) []string {
-	out := make([]string, 0, len(vs))
-	for _, v := range vs {
-		out = append(out, v.Version)
+// TestChooseCompareBaseUsesAPIOrder pins the comparison base to the position
+// of the current version in the API's newest-first list, so it no longer
+// re-derives version order from a second comparator.
+func TestChooseCompareBaseUsesAPIOrder(t *testing.T) {
+	vs := []BlueprintVersionView{
+		{ID: "a", Version: "2.0.0"},
+		{ID: "b", Version: "1.10.0"},
+		{ID: "c", Version: "1.9.0"},
+		{ID: "d", Version: "1.0.0"},
 	}
-	return out
-}
-
-func idsOf(vs []BlueprintVersionView) []string {
-	out := make([]string, 0, len(vs))
-	for _, v := range vs {
-		out = append(out, v.ID)
+	cases := []struct {
+		name, requested, current, want string
+	}{
+		{"defaults below current", "", "b", "c"},
+		{"current newest picks next", "", "a", "b"},
+		{"current oldest falls back to newest", "", "d", "a"},
+		{"requested wins", "c", "b", "c"},
+		{"unknown requested ignored", "zzz", "b", "c"},
 	}
-	return out
+	for _, tc := range cases {
+		if got := chooseCompareBase(vs, tc.requested, tc.current); got != tc.want {
+			t.Errorf("%s: chooseCompareBase = %q, want %q", tc.name, got, tc.want)
+		}
+	}
 }
 
 func TestDiffBlueprintDetails(t *testing.T) {

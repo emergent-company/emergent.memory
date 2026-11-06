@@ -666,8 +666,11 @@ func (s *Server) uiBlueprint(c echo.Context) error {
 		d.IsDraft = d.Status == "draft"
 		d.Installed = appliedContainsBlueprint(applied, d.ID)
 		if records, err := s.memory.ListBlueprintVersions(ctx, d.Name); err == nil {
+			// The API returns the history newest-first (sortVersionsNewestFirst
+			// in the server's blueprint repository). Preserve it verbatim: a
+			// second ordering here is exactly what made the gallery disagree
+			// with GET /api/blueprints/name/:name/versions (#15).
 			d.Versions = blueprintVersionViews(records, applied, d.ID)
-			sortVersionsNewestFirst(d.Versions)
 		} else {
 			captureError(err)
 		}
@@ -689,7 +692,7 @@ func (s *Server) uiBlueprint(c echo.Context) error {
 				}
 			}
 			d.CompareOptions = options
-			if baseID := chooseCompareBase(options, c.QueryParam("compare"), d.Version); baseID != "" {
+			if baseID := chooseCompareBase(d.Versions, c.QueryParam("compare"), d.ID); baseID != "" {
 				if baseRec, err := s.memory.GetBlueprint(ctx, baseID); err == nil {
 					d.CompareVersion = baseRec.Version
 					d.Diff = diffBlueprintDetails(buildBlueprintRecordDetail(baseRec), d)
@@ -735,24 +738,32 @@ func appliedContainsBlueprint(applied []AppliedBlueprint, id string) bool {
 	return slices.ContainsFunc(applied, func(ap AppliedBlueprint) bool { return ap.BlueprintID == id })
 }
 
-// chooseCompareBase picks the comparison base id from options (newest first):
-// an explicitly requested option id when valid, else the highest option whose
-// version is strictly lower than current, else the first option.
-func chooseCompareBase(options []BlueprintVersionView, requested, current string) string {
-	if requested != "" {
-		for _, o := range options {
-			if o.ID == requested {
-				return o.ID
+// chooseCompareBase picks the comparison base id from versions (newest first,
+// in the order the API returns them): an explicitly requested version when
+// valid, else the version immediately below the current one, else the newest.
+// Reading the position from the API's order keeps this decision on the same
+// comparator as the rest of the history instead of re-deriving it here.
+func chooseCompareBase(versions []BlueprintVersionView, requested, currentID string) string {
+	if requested != "" && requested != currentID {
+		for _, v := range versions {
+			if v.ID == requested {
+				return v.ID
 			}
 		}
 	}
-	for _, o := range options {
-		if versionGreater(current, o.Version) {
-			return o.ID
+	for i, v := range versions {
+		if v.ID == currentID {
+			if i+1 < len(versions) {
+				return versions[i+1].ID
+			}
+			break
 		}
 	}
-	if len(options) > 0 {
-		return options[0].ID
+	// Current is oldest (or absent): fall back to the newest other version.
+	for _, v := range versions {
+		if v.ID != currentID {
+			return v.ID
+		}
 	}
 	return ""
 }

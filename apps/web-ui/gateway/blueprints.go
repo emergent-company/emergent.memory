@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -95,7 +94,7 @@ func buildAvailableList(records []BlueprintRecord, applied []AppliedBlueprint) [
 		if r.Status == "draft" {
 			continue
 		}
-		if cur, ok := latest[r.Name]; !ok || versionGreater(r.Version, cur.Version) {
+		if cur, ok := latest[r.Name]; !ok || versionIsNewer(r.Version, cur.Version) {
 			latest[r.Name] = r
 		}
 	}
@@ -104,7 +103,7 @@ func buildAvailableList(records []BlueprintRecord, applied []AppliedBlueprint) [
 	for name, r := range latest {
 		upgrade := false
 		if iv, ok := appliedVersion[name]; ok {
-			if !versionGreater(r.Version, iv) {
+			if !versionIsNewer(r.Version, iv) {
 				continue
 			}
 			upgrade = true
@@ -234,24 +233,86 @@ func blueprintUpdateFailureLabel(msg string) string {
 	return "Update failed: " + s
 }
 
-// versionGreater compares two dotted version strings numerically
-// (e.g. "2.0.0" > "1.9.0"). Missing segments compare as zero.
-func versionGreater(a, b string) bool {
-	pa := strings.Split(a, ".")
-	pb := strings.Split(b, ".")
-	for i := range max(len(pa), len(pb)) {
-		var na, nb int
-		if i < len(pa) {
-			na, _ = strconv.Atoi(pa[i])
-		}
-		if i < len(pb) {
-			nb, _ = strconv.Atoi(pb[i])
-		}
-		if na != nb {
-			return na > nb
+// versionIsNewer reports whether a is strictly newer than b. It encodes the
+// same rule the server uses to order blueprint version histories
+// (compareVersionsNewestFirst in apps/server/domain/blueprints/repository.go):
+// numeric major/minor/patch, a release above its own prereleases, parseable
+// versions above unparseable ones, and a descending raw-string tie-break.
+//
+// Prerelease segments are compared lexicographically, not component-wise:
+// "beta.2" is newer than "beta.10". That is deliberate and matches the server
+// and the update checker; do not "fix" it to numeric prerelease ordering.
+//
+// The gallery does not sort a blueprint's version history with this predicate:
+// GET /api/blueprints/name/:name/versions already returns it newest-first and
+// the page preserves that order. This is only used to pick the newest published
+// row per name and to decide whether an installed version is behind it.
+func versionIsNewer(a, b string) bool {
+	if a == b {
+		return false
+	}
+	aCore, aOK := parseVersionCore(a)
+	bCore, bOK := parseVersionCore(b)
+	if aOK != bOK {
+		return aOK // parseable versions sort above unparseable ones
+	}
+	if !aOK {
+		return a > b
+	}
+	for i := range 3 {
+		if aCore[i] != bCore[i] {
+			return aCore[i] > bCore[i]
 		}
 	}
-	return false
+	aPre, bPre := versionPrerelease(a), versionPrerelease(b)
+	switch {
+	case aPre == bPre:
+		return a > b
+	case aPre == "":
+		return true // a is a release, b is a prerelease
+	case bPre == "":
+		return false
+	default:
+		return aPre > bPre
+	}
+}
+
+// parseVersionCore parses a strict semver "major.minor.patch" core, tolerating a
+// leading "v" and any "-prerelease" / "+metadata" suffix (the same tolerance as
+// the server's parseSemver). ok is false when the string is not a semver core.
+func parseVersionCore(v string) (core [3]int, ok bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return core, false
+	}
+	for i, p := range parts {
+		if p == "" {
+			return core, false
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return core, false
+		}
+		core[i] = n
+	}
+	return core, true
+}
+
+// versionPrerelease returns the semver prerelease segment ("1.2.3-beta.1" →
+// "beta.1"), or "" for a release with no prerelease. Build metadata is ignored.
+func versionPrerelease(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		return v[i+1:]
+	}
+	return ""
 }
 
 // nextVersion returns the semver patch bump of v. It parses the leading numeric
@@ -288,24 +349,6 @@ func nextVersion(v string) string {
 	}
 	nums[2]++
 	return fmt.Sprintf("%d.%d.%d", nums[0], nums[1], nums[2])
-}
-
-// sortVersionsNewestFirst orders versions by semver descending (numeric, not
-// lexicographic), tie-breaking on CreatedAt descending and then ID ascending so
-// the result is deterministic.
-func sortVersionsNewestFirst(vs []BlueprintVersionView) {
-	slices.SortFunc(vs, func(a, b BlueprintVersionView) int {
-		switch {
-		case versionGreater(a.Version, b.Version):
-			return -1
-		case versionGreater(b.Version, a.Version):
-			return 1
-		}
-		if a.CreatedAt != b.CreatedAt {
-			return cmp.Compare(b.CreatedAt, a.CreatedAt)
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
 }
 
 // --- blueprint details ---
