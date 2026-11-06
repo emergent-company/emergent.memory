@@ -27,7 +27,7 @@ templ InboxPage(d inboxView) {
 			data-project-id={ inboxProjectID(d) }
 			data-project-filter={ d.ProjectFilter }
 		>
-			@inboxScopeSwitch(d)
+			@inboxScopeSwitch(d, false)
 			if inboxShowsTabs(d) {
 				@inboxProjectFilterControl(d)
 				@inboxTabs(d)
@@ -39,8 +39,10 @@ templ InboxPage(d inboxView) {
 
 // inboxListRegion is the #inbox-list swap target: the notification list, or the
 // empty/error/no-project state that stands in for it. It is deliberately one
-// stable element so /partial/inbox-list can replace its contents without
-// touching the scope switch, filter, or tab strip around it.
+// stable element so /partial/inbox-list can replace the element itself
+// (htmx `swap: "outerHTML"`: same id, new node) without touching the scope
+// switch, filter, or tab strip around it. The fragment must therefore return
+// this element as its root, keeping the id on the root node.
 templ inboxListRegion(d inboxView) {
 	<div id="inbox-list">
 		if d.Scope == inboxScopeProject && !d.ProjectSelected {
@@ -55,14 +57,35 @@ templ inboxListRegion(d inboxView) {
 	</div>
 }
 
-// inboxListPartial is the /partial/inbox-list fragment: the list region plus an
-// out-of-band refresh of the tab strip, so per-tab counts stay live in the same
-// round trip. The strip is omitted when the page would not render one.
+// inboxListPartial is the /partial/inbox-list fragment: the #inbox-list region
+// (swapped with outerHTML; see inboxListRegion) plus out-of-band refreshes of the
+// region-adjacent state that moves with the same counts:
+//
+//   - the tab strip (#inbox-tabs, innerHTML), so per-tab counts stay live;
+//   - the scope switch (#inbox-scope-switch, outerHTML) on the Project scope,
+//     whose Project entry carries the unread badge. No other scope renders that
+//     badge, so no other scope needs the extra swap.
+//
+// The tab strip is omitted when the page would not render one; the scope switch
+// is always on the page, so its refresh is emitted only where it can change.
+// When the counts call fails the view carries no counts and both refreshes render
+// no badges, exactly as a full page load would; a stale badge is never preserved.
+//
+// Known limitation: the project filter's <option> list
+// (inboxProjectFilterControl, rendered for Everything/Account) is NOT refreshed.
+// The view already re-reads the project list on every fragment request, but
+// out-of-band swapping an interactive <select> on every notification frame
+// would close an open dropdown (fragments are requested per event, not per
+// project-membership change). A project added or removed while the inbox stays
+// open is therefore reflected on the next full page load, not on a live refresh.
 templ inboxListPartial(d inboxView) {
 	if inboxShowsTabs(d) {
 		<div id="inbox-tabs" hx-swap-oob="innerHTML">
 			@inboxTabStrip(d)
 		</div>
+	}
+	if d.Scope == inboxScopeProject && d.ProjectSelected {
+		@inboxScopeSwitch(d, true)
 	}
 	@inboxListRegion(d)
 }
@@ -88,8 +111,20 @@ templ inboxHeader(d inboxView) {
 // the default and lists both scopes, so the bell (which counts this scope) shows
 // project activity too. Project shows its unread count when that scope is
 // active.
-templ inboxScopeSwitch(d inboxView) {
-	<div class="mb-4 flex flex-wrap items-center gap-2" data-inbox-scope-switch>
+//
+// oob renders the same switch as an out-of-band swap for /partial/inbox-list, so
+// the Project badge follows a live list refresh instead of waiting for a full
+// page load. Only the Project scope emits it (see inboxListPartial).
+templ inboxScopeSwitch(d inboxView, oob bool) {
+	{{ attrs := templ.Attributes{
+		"id":                      "inbox-scope-switch",
+		"class":                   "mb-4 flex flex-wrap items-center gap-2",
+		"data-inbox-scope-switch": "",
+	}
+	if oob {
+		attrs["hx-swap-oob"] = "true"
+	} }}
+	<div { attrs... }>
 		@inboxScopeLink(d, inboxScopeAll, "Everything", "lucide--inbox")
 		@inboxScopeLink(d, inboxScopeAccount, "Account", "lucide--user-round")
 		@inboxScopeLink(d, inboxScopeProject, "Project", "lucide--folder")

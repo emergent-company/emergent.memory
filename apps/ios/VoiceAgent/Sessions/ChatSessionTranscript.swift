@@ -75,8 +75,25 @@ final class ChatSessionTranscriptStore {
             historyError = nil
         }
 
+        history = Self.entries(from: detail.records)
+        // A turn streamed over HTTP is persisted server-side, so a reload must
+        // not leave its live copy on top of the recorded one.
+        liveMessages.removeAll { historyCovers(role: $0.role, text: $0.text) }
+        lastRecordCount = detail.records.count
+        pendingApprovals = detail.pendingApprovals.map {
+            ApprovalRequest(questionId: $0.questionID, tool: $0.tool, arguments: $0.arguments)
+        }
+    }
+
+    /// The rendered entries for one detail's records: consecutive same-role
+    /// turns merged with a newline, `tools_executed` kept between runs.
+    ///
+    /// One builder, used by ``loadHistory(from:)`` and by ``recordedReply``, so a
+    /// predicate cannot judge a different shape from the one the transcript
+    /// renders.
+    private static func entries(from records: [SessionRecord]) -> [HistoryEntry] {
         var entries: [HistoryEntry] = []
-        for record in detail.records {
+        for record in records {
             switch record.kind {
             case "turn":
                 guard let roleText = record.role, let text = record.text, !text.isEmpty else { continue }
@@ -103,15 +120,7 @@ final class ChatSessionTranscriptStore {
                 continue
             }
         }
-
-        history = entries
-        // A turn streamed over HTTP is persisted server-side, so a reload must
-        // not leave its live copy on top of the recorded one.
-        liveMessages.removeAll { historyCovers(role: $0.role, text: $0.text) }
-        lastRecordCount = detail.records.count
-        pendingApprovals = detail.pendingApprovals.map {
-            ApprovalRequest(questionId: $0.questionID, tool: $0.tool, arguments: $0.arguments)
-        }
+        return entries
     }
 
     /// Replaces the live transcript from the room's message list.
@@ -186,15 +195,23 @@ final class ChatSessionTranscriptStore {
     /// Three conditions, each earning its place:
     /// - the record grew past `baseline`, so an older reply cannot pass for this
     ///   one just because it starts the same way;
-    /// - its newest `turn` is an assistant turn, because a run still executing
-    ///   leaves step records after its last turn;
+    /// - its newest turn is the assistant's, because a run still executing leaves
+    ///   step records after its last turn;
     /// - that turn opens with what the client already saw and carries more.
+    ///
+    /// The turn compared is the *merged* entry the transcript renders, not the
+    /// newest raw record: a resumed run re-enters the agent and appends a record
+    /// holding only the tail of the reply, which does not start with the partial
+    /// even though the merged entry does.
     static func recordedReply(extending partial: String, in detail: SessionDetail, since baseline: Int) -> Bool {
         let opening = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !opening.isEmpty, detail.records.count > baseline else { return false }
-        guard let latest = detail.records.last(where: { $0.kind == "turn" }) else { return false }
-        guard latest.role != "user", let text = latest.text else { return false }
-        return text.count > opening.count && text.hasPrefix(opening)
+        let turns = entries(from: detail.records).compactMap { entry -> ChatMessage? in
+            guard case let .message(message) = entry else { return nil }
+            return message
+        }
+        guard let latest = turns.last, latest.role == .assistant else { return false }
+        return latest.text.count > opening.count && latest.text.hasPrefix(opening)
     }
 
     /// Marks the start of a history fetch (the previous result stays visible
