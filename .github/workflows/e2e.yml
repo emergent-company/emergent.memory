@@ -74,6 +74,10 @@ jobs:
       # unattributable. `teardown` removes every `memory-server:ci-<run_id>-*`
       # image this run leaves behind.
       MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-integration
+      # `secrets` is not a readable context in a step `if:` (the workflow fails
+      # to parse), so evaluate "both secrets are present" here in job env and
+      # gate the Docker Hub login step on the resulting "true"/"false" string.
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
       # e2e is a standalone module with its own workspace (e2e/go.work), so the
       # root build list cannot perturb it: runlog pins an older
       # google.golang.org/adk whose telemetry does not compile against the
@@ -127,7 +131,7 @@ jobs:
       # both repository secrets exist, so unauthenticated runs keep today's
       # behaviour exactly.
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: env.DOCKERHUB_LOGIN == 'true'
         uses: docker/login-action@v3
         with:
           registry: docker.io
@@ -165,9 +169,11 @@ jobs:
           docker "${build_args[@]}" 2>&1 | tee "${RUNNER_TEMP}/docker-build-server.log"
           status=${PIPESTATUS[0]}
           set -e
-          if grep -qF '429 Too Many Requests' "${RUNNER_TEMP}/docker-build-server.log"; then
+          if grep -qiE '429 Too Many Requests|toomanyrequests|reached your pull rate limit' "${RUNNER_TEMP}/docker-build-server.log"; then
             echo "::error title=Docker Hub pull quota exhausted::Docker Hub returned 429 Too Many Requests while building ${MEMORY_SERVER_IMAGE}. This is infrastructure (anonymous pull quota), not a failing test. Add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) so the Docker Hub login step above authenticates base-image pulls; see issue #50."
             echo "Fix: add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) and re-run this job."
+            # Keep the red even if the build retried and exited 0: the issue
+            # requires a quota-exhaustion build to fail loudly.
             [ "${status}" -ne 0 ] || status=1
           fi
           exit "${status}"
@@ -198,9 +204,11 @@ jobs:
           ./run_tests.sh --build-only 2>&1 | tee "${RUNNER_TEMP}/test-image-build.log"
           status=${PIPESTATUS[0]}
           set -e
-          if grep -qF '429 Too Many Requests' "${RUNNER_TEMP}/test-image-build.log"; then
+          if grep -qiE '429 Too Many Requests|toomanyrequests|reached your pull rate limit' "${RUNNER_TEMP}/test-image-build.log"; then
             echo "::error title=Docker Hub pull quota exhausted::Docker Hub returned 429 Too Many Requests while building the CLI test image. This is infrastructure (anonymous pull quota), not a failing test. Add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) so the Docker Hub login step authenticates base-image pulls; see issue #50."
             echo "Fix: add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) and re-run this job."
+            # Keep the red even if the build retried and exited 0: the issue
+            # requires a quota-exhaustion build to fail loudly.
             [ "${status}" -ne 0 ] || status=1
           fi
           exit "${status}"
@@ -241,6 +249,8 @@ jobs:
     env:
       # Per-run, per-job image tag (#2008) — see the `integration` job.
       MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-api
+      # See the `integration` job: `secrets` is not allowed in a step `if:`.
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
       # e2e is a standalone module with its own workspace (e2e/go.work), so the
       # root build list cannot perturb it: runlog pins an older
       # google.golang.org/adk whose telemetry does not compile against the
@@ -273,7 +283,7 @@ jobs:
       # both repository secrets exist, so unauthenticated runs keep today's
       # behaviour exactly.
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: env.DOCKERHUB_LOGIN == 'true'
         uses: docker/login-action@v3
         with:
           registry: docker.io
@@ -311,9 +321,11 @@ jobs:
           docker "${build_args[@]}" 2>&1 | tee "${RUNNER_TEMP}/docker-build-server.log"
           status=${PIPESTATUS[0]}
           set -e
-          if grep -qF '429 Too Many Requests' "${RUNNER_TEMP}/docker-build-server.log"; then
+          if grep -qiE '429 Too Many Requests|toomanyrequests|reached your pull rate limit' "${RUNNER_TEMP}/docker-build-server.log"; then
             echo "::error title=Docker Hub pull quota exhausted::Docker Hub returned 429 Too Many Requests while building ${MEMORY_SERVER_IMAGE}. This is infrastructure (anonymous pull quota), not a failing test. Add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) so the Docker Hub login step above authenticates base-image pulls; see issue #50."
             echo "Fix: add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) and re-run this job."
+            # Keep the red even if the build retried and exited 0: the issue
+            # requires a quota-exhaustion build to fail loudly.
             [ "${status}" -ne 0 ] || status=1
           fi
           exit "${status}"
@@ -438,6 +450,8 @@ jobs:
     env:
       # Per-run, per-job image tag (#2008) — see the `integration` job.
       MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-mailgun
+      # See the `integration` job: `secrets` is not allowed in a step `if:`.
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
       # e2e is a standalone module with its own workspace (e2e/go.work), so the
       # root build list cannot perturb it: runlog pins an older
       # google.golang.org/adk whose telemetry does not compile against the
@@ -480,7 +494,7 @@ jobs:
       # both repository secrets exist, so unauthenticated runs keep today's
       # behaviour exactly.
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: env.DOCKERHUB_LOGIN == 'true'
         uses: docker/login-action@v3
         with:
           registry: docker.io
@@ -518,9 +532,11 @@ jobs:
           docker "${build_args[@]}" 2>&1 | tee "${RUNNER_TEMP}/docker-build-server.log"
           status=${PIPESTATUS[0]}
           set -e
-          if grep -qF '429 Too Many Requests' "${RUNNER_TEMP}/docker-build-server.log"; then
+          if grep -qiE '429 Too Many Requests|toomanyrequests|reached your pull rate limit' "${RUNNER_TEMP}/docker-build-server.log"; then
             echo "::error title=Docker Hub pull quota exhausted::Docker Hub returned 429 Too Many Requests while building ${MEMORY_SERVER_IMAGE}. This is infrastructure (anonymous pull quota), not a failing test. Add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) so the Docker Hub login step above authenticates base-image pulls; see issue #50."
             echo "Fix: add the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets (read-only Docker Hub token) and re-run this job."
+            # Keep the red even if the build retried and exited 0: the issue
+            # requires a quota-exhaustion build to fail loudly.
             [ "${status}" -ne 0 ] || status=1
           fi
           exit "${status}"
