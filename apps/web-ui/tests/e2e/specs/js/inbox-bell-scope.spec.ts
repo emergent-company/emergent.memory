@@ -52,21 +52,35 @@ type Harness = {
 // loads inbox.js so its init() runs against the stubs. Returns the recorded
 // calls so the test can assert which scopes were counted and whether the list
 // was refreshed.
-async function boot(page: Page, body: string): Promise<Harness> {
+async function boot(
+  page: Page,
+  body: string,
+  opts: { rejectRefresh?: boolean } = {},
+): Promise<Harness> {
   const harness: Harness = { countCalls: [], refreshCalls: [], streamUrls: [], errors: [] };
   page.on('pageerror', (err) => harness.errors.push(err.message));
   await page.setContent(`<!doctype html><html><body data-active-project-id="p1">${body}</body></html>`);
-  harness.countCalls = await page.evaluate(async (unread) => {
+  harness.countCalls = await page.evaluate(async ({ unread, rejectRefresh }) => {
     const w = window as unknown as Record<string, unknown> & {
       __countCalls: string[];
       __refreshCalls: string[];
+      __rejections: string[];
+      __rejectRefresh: boolean;
       __streams: Array<{ url: string; listeners: Record<string, Array<(ev: unknown) => void>> }>;
       __unread: Record<string, number>;
     };
     w.__countCalls = [];
     w.__refreshCalls = [];
+    w.__rejections = [];
+    w.__rejectRefresh = rejectRefresh;
     w.__streams = [];
     w.__unread = unread as Record<string, number>;
+
+    // Record unhandled rejections alongside pageerror: a swallowed failure must
+    // leave neither. Installed before inbox.js so init() runs under the trap.
+    window.addEventListener('unhandledrejection', (ev) => {
+      w.__rejections.push(String((ev as PromiseRejectionEvent).reason));
+    });
 
     // EventSource stand-in that records listeners so the test can deliver a real
     // frame through the same code path the browser would.
@@ -117,13 +131,18 @@ async function boot(page: Page, body: string): Promise<Harness> {
             ' ' +
             ((opts && opts.swap) || ''),
         );
+        // htmx.ajax returns a promise; the failure case must be handled by
+        // refreshList instead of surfacing as an unhandled rejection.
+        return w.__rejectRefresh
+          ? Promise.reject(new Error('list refresh failed'))
+          : Promise.resolve();
       },
     };
 
     // memory's scope helper, absent on the bare page.
     w.MemoryScope = { path: function (p: string) { return p; } };
     return w.__countCalls;
-  }, UNREAD);
+  }, { unread: UNREAD, rejectRefresh: !!opts.rejectRefresh });
   await page.addScriptTag({ path: INBOX_JS });
   return harness;
 }
@@ -140,6 +159,13 @@ async function calls(page: Page): Promise<{ count: string[]; refresh: string[]; 
       refresh: w.__refreshCalls.slice(),
       streams: w.__streams.map((s) => s.url),
     };
+  });
+}
+
+async function unhandledRejections(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __rejections: string[] };
+    return w.__rejections.slice();
   });
 }
 
@@ -232,6 +258,22 @@ test('a notification entity frame refreshes the bell and the list', async ({ pag
   ).toBe(true);
   expect(after.refresh.some((r) => r.includes('#main-content'))).toBe(false);
   expect(h.errors).toEqual([]);
+});
+
+test('a failed list refresh is swallowed, not an unhandled rejection', async ({ page }) => {
+  const h = await boot(page, `${BELL}${ALL_PAGE}`, { rejectRefresh: true });
+  await expect(page.locator('[data-notifications-badge]')).toHaveText('6');
+
+  await emit(page, 'entity.created', { entity: 'notification', id: 'n1' });
+
+  // The refresh must have been attempted (so this cannot pass vacuously)…
+  await expect
+    .poll(async () => (await calls(page)).refresh.length)
+    .toBeGreaterThan(0);
+  // …and its rejected promise must have been handled, with no page error.
+  await page.waitForTimeout(50);
+  expect(h.errors).toEqual([]);
+  expect(await unhandledRejections(page)).toEqual([]);
 });
 
 test('frames for other entities do not touch the inbox', async ({ page }) => {
