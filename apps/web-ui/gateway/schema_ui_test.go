@@ -548,3 +548,38 @@ func TestRenderSchemaHistoryStates(t *testing.T) {
 		t.Error("unavailable history notice missing")
 	}
 }
+
+// TestRenderObjectTypeCardIsCollapsible pins the schema type card's shape: a
+// <details> disclosure (collapsed until clicked, so its property table stays
+// off the scannable index) whose summary puts the type description on the
+// second line under the name, next to the icon. Both behaviours were requested
+// in #30/#29.
+func TestRenderObjectTypeCardIsCollapsible(t *testing.T) {
+	const description = "An ordered walk a persona takes across contexts."
+	html := renderHTML(t, objectTypeCard(CompiledType{
+		Name:        "Scenario",
+		Description: description,
+		Properties:  json.RawMessage(`{"name":{"type":"string"}}`),
+	}, "/schema/object-types/Scenario"))
+
+	if !strings.Contains(html, "<details") {
+		t.Fatal("type card must be a collapsible <details> element")
+	}
+	if strings.Contains(html, "<details open") {
+		t.Error("type card must start collapsed")
+	}
+
+	label := strings.Index(html, ">Scenario</a>")
+	desc := strings.Index(html, description)
+	summaryEnd := strings.Index(html, "</summary>")
+	properties := strings.Index(html, ">Properties<")
+	if label < 0 || desc < 0 || summaryEnd < 0 || properties < 0 {
+		t.Fatalf("card missing label/description/summary/properties (label=%d desc=%d summary=%d props=%d)", label, desc, summaryEnd, properties)
+	}
+	if desc < label || desc > summaryEnd {
+		t.Error("description must sit under the type name inside the summary")
+	}
+	if properties < summaryEnd {
+		t.Error("property table must live inside the disclosure, not the summary")
+	}
+}

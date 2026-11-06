@@ -657,26 +657,28 @@ templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessi
 				}
 			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>
-			<div class="text-xs text-muted">{ railSubtitle(subtitleName, c.UpdatedAt) }</div>
+			<div class="flex min-w-0 items-center gap-1.5">
+				<span class="truncate text-xs text-muted">{ railSubtitle(subtitleName, c.UpdatedAt) }</span>
+				if opts.SubchatCount > 0 {
+					@ui.Button(ui.ButtonProps{
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonXS,
+						ExtraClass: "gap-1",
+						AriaLabel:  subchatToggleLabel(opts.SubchatCount, opts.SubchatsExpanded),
+						Attrs: templ.Attributes{
+							"data-action":        "toggle-subchats",
+							"data-subchat-group": c.ID,
+							"data-testid":        "session-subchats-toggle",
+							"aria-expanded":      boolString(opts.SubchatsExpanded),
+						},
+					}) {
+						<span class="text-xs tabular-nums">{ strconv.Itoa(opts.SubchatCount) }</span>
+						@ui.IconSpan("lucide--chevron-down", "size-3 subchat-chevron")
+					}
+				}
+			</div>
 		</div>
 		<div class="flex items-center gap-1">
-			if opts.SubchatCount > 0 {
-				@ui.Button(ui.ButtonProps{
-					Variant:    ui.ButtonGhost,
-					Size:       ui.ButtonXS,
-					ExtraClass: "gap-1",
-					AriaLabel:  subchatToggleLabel(opts.SubchatCount, opts.SubchatsExpanded),
-					Attrs: templ.Attributes{
-						"data-action":        "toggle-subchats",
-						"data-subchat-group": c.ID,
-						"data-testid":        "session-subchats-toggle",
-						"aria-expanded":      boolString(opts.SubchatsExpanded),
-					},
-				}) {
-					<span class="text-xs tabular-nums">{ strconv.Itoa(opts.SubchatCount) }</span>
-					@ui.IconSpan("lucide--chevron-down", "size-3 subchat-chevron")
-				}
-			}
 			@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")
 			<!-- Row action menu. Uses the shared go-daisy popover (native
 			     popover top-layer, position:fixed) rather than a CSS dropdown:
