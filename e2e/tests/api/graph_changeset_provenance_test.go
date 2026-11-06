@@ -374,8 +374,9 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 	listRaw := mustStatus(t, listResp, http.StatusOK)
 	var listed struct {
 		Items []struct {
-			ID        string `json:"id"`
-			DataClass string `json:"data_class"`
+			ID            string             `json:"id"`
+			DataClass     string             `json:"data_class"`
+			Contributions []contributionJSON `json:"contributions"`
 		} `json:"items"`
 		Total int `json:"total"`
 	}
@@ -387,6 +388,18 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 	for _, item := range listed.Items {
 		if item.DataClass != "source" {
 			t.Errorf("expected every listed row to disclose data_class=source, got %q for %s", item.DataClass, item.ID)
+		}
+		// #135: a listed row reports its sources without a per-row detail call.
+		if len(item.Contributions) != 1 {
+			t.Errorf("the listed object %s lost its contributor: %s", item.ID, listRaw)
+			continue
+		}
+		if item.Contributions[0].SubjectKind != "object" {
+			t.Errorf("expected subject_kind=object on the listed object %s, got %q", item.ID, item.Contributions[0].SubjectKind)
+		}
+		if item.Contributions[0].SubjectVersionID != item.ID {
+			t.Errorf("expected the listed object's contribution to describe its version (%s), got %s",
+				item.ID, item.Contributions[0].SubjectVersionID)
 		}
 	}
 

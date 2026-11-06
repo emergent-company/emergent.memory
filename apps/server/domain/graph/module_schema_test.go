@@ -195,6 +195,28 @@ func TestParseRelationshipTypeSchemasToMap(t *testing.T) {
 		}
 	})
 
+	t.Run("keys are normalised to lower_snake_case", func(t *testing.T) {
+		// Relationship rows are stored lower_snake_case, so a registry key must
+		// be canonicalised too or a declared `knows` schema is skipped by a
+		// `KNOWS` write (#176). Differently-cased spellings merge into one entry.
+		data := json.RawMessage(`[
+			{"name":"Knows","sourceType":"Person","targetType":"Person"},
+			{"name":"KNOWS","sourceType":"Agent","targetType":"Agent"}
+		]`)
+
+		got := parseRelationshipTypeSchemasToMap(data)
+		if len(got) != 1 {
+			t.Fatalf("expected the casings to merge into 1 type, got %d: %v", len(got), got)
+		}
+		rel, ok := got["knows"]
+		if !ok {
+			t.Fatalf("expected canonical 'knows' key, got %v", got)
+		}
+		if len(rel.SourceTypes) != 2 {
+			t.Errorf("expected both source types merged, got %v", rel.SourceTypes)
+		}
+	})
+
 	t.Run("nil on empty", func(t *testing.T) {
 		if parseRelationshipTypeSchemasToMap(nil) != nil {
 			t.Error("expected nil for empty input")

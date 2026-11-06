@@ -720,44 +720,83 @@ func TestExtractText_JoinsMultiplePerInputErrors(t *testing.T) {
 	}
 }
 
-// TestExtractText_SendsOCRLanguageAsCanonicalArray pins the canonical
-// ocr.language form: an array of language codes, not a bare string. A
-// multi-language hint like "eng+deu" is split on "+" so each code stays a
-// separate element.
-func TestExtractText_SendsOCRLanguageAsCanonicalArray(t *testing.T) {
-	var gotConfig struct {
-		OCR struct {
-			Backend  string   `json:"backend"`
-			Language []string `json:"language"`
-		} `json:"ocr"`
-		ForceOCR bool `json:"force_ocr"`
+// TestExtractText_SendsOCRLanguageAsString pins Xberg's documented
+// ocr.language contract: a single string, not an array. Multiple languages are
+// joined with "+" (e.g. "eng+deu"), exactly as kreuzberg's OcrConfig takes
+// them. Sending an array previously made /extract return 400 "invalid type:
+// sequence, expected a string".
+func TestExtractText_SendsOCRLanguageAsString(t *testing.T) {
+	tests := []struct {
+		name     string
+		language string
+	}{
+		{name: "single language", language: "eng"},
+		{name: "multiple languages joined with plus", language: "eng+deu"},
 	}
 
-	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Errorf("ParseMultipartForm() error = %v", err)
-		}
-		raw := r.FormValue("config")
-		if raw == "" {
-			t.Error("config field missing from multipart request")
-		}
-		if err := json.Unmarshal([]byte(raw), &gotConfig); err != nil {
-			t.Errorf("config is not valid JSON / wrong shape: %v (raw=%q)", err, raw)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"content":"ok"}],"errors":[]}`)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotConfig struct {
+				OCR struct {
+					Backend  string `json:"backend"`
+					Language string `json:"language"`
+				} `json:"ocr"`
+				ForceOCR bool `json:"force_ocr"`
+			}
 
-	_, err := c.ExtractText(context.Background(), []byte("bytes"), "doc.pdf", "application/pdf", &ExtractOptions{
-		OCRLanguage: "eng+deu",
-	})
-	if err != nil {
-		t.Fatalf("ExtractText() error = %v, want nil", err)
-	}
-	if gotConfig.OCR.Backend != "tesseract" {
-		t.Errorf("ocr.backend = %q, want %q", gotConfig.OCR.Backend, "tesseract")
-	}
-	if len(gotConfig.OCR.Language) != 2 || gotConfig.OCR.Language[0] != "eng" || gotConfig.OCR.Language[1] != "deu" {
-		t.Errorf("ocr.language = %#v, want []string{\"eng\", \"deu\"}", gotConfig.OCR.Language)
+			c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
+					t.Fatalf("ParseMultipartForm() error = %v", err)
+				}
+				files := r.MultipartForm.File["files"]
+				if len(files) != 1 || files[0].Filename != "doc.pdf" {
+					t.Errorf("files = %v, want one part named doc.pdf", files)
+				}
+				raw := r.FormValue("config")
+				if raw == "" {
+					t.Fatal("config field missing from multipart request")
+				}
+
+				// The wire type must be a JSON string; decoding into []string
+				// succeeds here only after the regression, so assert on the
+				// decoded generic value as well as the documented struct.
+				var generic struct {
+					OCR map[string]any `json:"ocr"`
+				}
+				if err := json.Unmarshal([]byte(raw), &generic); err != nil {
+					t.Fatalf("config is not valid JSON: %v (raw=%q)", err, raw)
+				}
+				lang, ok := generic.OCR["language"].(string)
+				if !ok {
+					t.Fatalf("ocr.language = %#v (%T), want a JSON string", generic.OCR["language"], generic.OCR["language"])
+				}
+				if lang != tt.language {
+					t.Errorf("ocr.language = %q, want %q", lang, tt.language)
+				}
+
+				if err := json.Unmarshal([]byte(raw), &gotConfig); err != nil {
+					t.Fatalf("config does not match documented shape: %v (raw=%q)", err, raw)
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[{"content":"ok"}],"errors":[]}`)
+			})
+
+			got, err := c.ExtractText(context.Background(), []byte("bytes"), "doc.pdf", "application/pdf", &ExtractOptions{
+				OCRLanguage: tt.language,
+			})
+			if err != nil {
+				t.Fatalf("ExtractText() error = %v, want nil", err)
+			}
+			if got.Content != "ok" {
+				t.Errorf("Content = %q, want %q", got.Content, "ok")
+			}
+			if gotConfig.OCR.Backend != "tesseract" {
+				t.Errorf("ocr.backend = %q, want %q", gotConfig.OCR.Backend, "tesseract")
+			}
+			if gotConfig.OCR.Language != tt.language {
+				t.Errorf("ocr.language = %q, want %q", gotConfig.OCR.Language, tt.language)
+			}
+		})
 	}
 }
