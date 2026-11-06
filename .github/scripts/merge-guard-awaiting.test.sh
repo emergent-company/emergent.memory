@@ -36,6 +36,15 @@
 # one step, a renamed env input or an expression this harness cannot resolve
 # fails the suite instead of silently testing a stale copy of the logic.
 #
+# Step ATTRIBUTES are asserted too (#185). The run blocks alone cannot see
+# `continue-on-error`: on the publish step it turns a non-zero exit back into a
+# green job -- silently reopening the gate #155 closed -- while this suite would
+# stay green. Each step therefore has an explicit attribute allowlist, the
+# publish step must carry no exit-status-neutralising attribute, the verify step
+# must keep `continue-on-error: true` (the publish step only runs because verify
+# does not abort the job), and an unknown attribute fails by name instead of
+# being ignored.
+#
 # Offline, deterministic, no credentials: the stub serves the PR head and the
 # comment list from fixtures, and records the check-run body the publish step
 # would have POSTed.
@@ -139,7 +148,9 @@ for n, (a, b) in enumerate(zip(starts, starts[1:]), start=1):
 
     indent = None
     run = []
-    for l in body[run_at + 1:]:
+    run_end = len(body)
+    for j in range(run_at + 1, len(body)):
+        l = body[j]
         if l.strip() == "":
             run.append("")
             continue
@@ -147,6 +158,7 @@ for n, (a, b) in enumerate(zip(starts, starts[1:]), start=1):
         if indent is None:
             indent = cur
         if cur < indent:
+            run_end = j
             break
         run.append(l[indent:])
     while run and run[-1] == "":
@@ -178,12 +190,49 @@ for n, (a, b) in enumerate(zip(starts, starts[1:]), start=1):
                 value = expr_m.group(1)
             value = re.sub(r"\s+", " ", value).strip()
             env.append((key_m.group(1), value))
-    blocks.append((run, env))
 
-for n, (run, env) in enumerate(blocks, start=1):
+    # Step attributes: every key at the step's own indent, excluding the
+    # `run:` block scalar (whose body may contain anything). Written out so
+    # the shell side can assert the attributes by name; a key this reader
+    # cannot place is a failure, not something to skip.
+    attrs = []
+    seen = set()
+
+    def add_attr(key, value):
+        if key in seen:
+            sys.exit(f"step {n}: duplicate attribute {key!r}")
+        seen.add(key)
+        attrs.append((key, value))
+
+    name_m = re.match(r"^      - name: (.*)$", body[0])
+    if not name_m:
+        sys.exit(f"step {n}: list item does not start with '- name: '")
+    add_attr("name", name_m.group(1).strip())
+
+    for i, l in enumerate(body):
+        if i == 0 or (run_at < i < run_end):
+            continue
+        if l.strip() == "" or l.lstrip().startswith("#"):
+            continue
+        key_m = re.match(r"^        ([A-Za-z0-9_-]+):(?:[ \t]+(.*))?$", l)
+        if key_m:
+            value = (key_m.group(2) or "").strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                value = value[1:-1]
+            add_attr(key_m.group(1), value)
+            continue
+        cur = len(l) - len(l.lstrip(" "))
+        if cur == 8:
+            sys.exit(f"step {n}: unparsed attribute line: {l!r}")
+    blocks.append((run, env, attrs))
+
+for n, (run, env, attrs) in enumerate(blocks, start=1):
     (out / f"step{n}.sh").write_text("\n".join(run) + "\n", encoding="utf-8")
     (out / f"step{n}.env").write_text(
         "".join(f"{k}={v}\n" for k, v in env), encoding="utf-8"
+    )
+    (out / f"step{n}.attrs").write_text(
+        "".join(f"{k}\t{v}\n" for k, v in attrs), encoding="utf-8"
     )
 print(f"extracted {len(blocks)} run blocks")
 PY
@@ -193,6 +242,70 @@ then
   exit 1
 fi
 ok "the workflow yields exactly two steps with one run block each"
+
+# --- step attributes ---------------------------------------------------------
+# The run blocks are only half of each step. `continue-on-error` is invisible
+# to them: on the publish step it turns a non-zero exit into a green job and
+# silently reopens the gate (#185). Assert the attributes by name, with an
+# explicit allowlist per step so a new key fails instead of being ignored.
+attr_value() { # <step> <key> -> value on stdout, non-zero when absent
+  awk -F'\t' -v key="$2" '$1 == key { print $2; found = 1; exit } END { exit !found }' \
+    "$STEP_DIR/step$1.attrs"
+}
+
+assert_attr_allowlist() { # <step> <label> <allowed, space-separated>
+  local n=$1 label=$2 allowed=" $3 " key _rest violations=0
+  while IFS=$'\t' read -r key _rest; do
+    [[ -n $key ]] || continue
+    if [[ $allowed != *" $key "* ]]; then
+      bad "step $n ($label): unexpected attribute '$key'; attributes are read by an explicit allowlist ($3) so none can hide from this suite"
+      violations=$((violations + 1))
+    fi
+  done <"$STEP_DIR/step$n.attrs"
+  if ((violations == 0)); then
+    ok "step $n ($label): every step attribute is on the inspected allowlist"
+  fi
+}
+
+assert_attr_equals() { # <step> <label> <key> <expected>
+  local n=$1 label=$2 key=$3 expected=$4 got
+  if ! got=$(attr_value "$n" "$key"); then
+    bad "step $n ($label): required attribute '$key' is missing (expected '$expected')"
+  elif [[ $got == "$expected" ]]; then
+    ok "step $n ($label): attribute '$key' is '$expected'"
+  else
+    bad "step $n ($label): attribute '$key' is '${got:-<empty>}', expected '$expected'"
+  fi
+}
+
+assert_attr_absent() { # <step> <label> <key> <why>
+  local n=$1 label=$2 key=$3 why=$4 got
+  if got=$(attr_value "$n" "$key"); then
+    bad "step $n ($label): forbidden attribute '$key' is '${got:-<empty>}'; $why"
+  else
+    ok "step $n ($label): forbidden attribute '$key' is absent"
+  fi
+}
+
+assert_attr_allowlist 1 verify "name id continue-on-error shell env run"
+assert_attr_allowlist 2 publish "name if shell env run"
+
+# verify: `continue-on-error: true` is what lets the publish step run at all.
+# Without it a refused merge aborts before it can publish the verdict.
+assert_attr_equals 1 verify id verify
+assert_attr_equals 1 verify continue-on-error true
+
+# publish: this is the step that turns the job red when the gate must refuse.
+# `continue-on-error` here neutralises exactly that exit status and makes the
+# job green again -- the hole this suite exists to keep closed.
+assert_attr_absent 2 publish continue-on-error \
+  "it neutralises the publish step's exit status and would make the job green on an awaiting-review or rejection verdict"
+assert_attr_equals 2 publish if "always()"
+
+# Both extracted bodies are executed with bash; a different shell would make
+# this suite run a language the workflow never uses.
+assert_attr_equals 1 verify shell bash
+assert_attr_equals 2 publish shell bash
 
 # An env input this suite cannot resolve is a hard failure: running the block
 # with a wrong value would test the harness, not the workflow.
