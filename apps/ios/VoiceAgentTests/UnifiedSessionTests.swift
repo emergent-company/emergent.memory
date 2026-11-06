@@ -265,8 +265,8 @@ struct ChatSessionTranscriptStoreTests {
 
     /// A dropped run counts as recorded only when three things hold at once,
     /// because each one alone is satisfied by the wrong thing: the record grew,
-    /// its newest turn is the assistant's, and that turn carries more of the
-    /// reply than the client saw.
+    /// the reply it records still opens with what the client saw, and it carries
+    /// more than that.
     @Test func aDroppedReplyIsRecognisedOnlyWhenTheRecordHoldsIt() {
         let partial = "hi the"
         let records = [

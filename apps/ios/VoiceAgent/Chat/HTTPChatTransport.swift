@@ -127,6 +127,11 @@ final class HTTPChatTransport {
         let liveMessageID: String
         /// What the user already saw, used to recognise the finished reply.
         let partialText: String
+        /// The banner this drop raised. The composer's banner slot is shared by
+        /// every turn, so settling this drop must not clear a later turn's
+        /// failure: `discardInterruptedLiveCopy` only clears the banner when it
+        /// is still this one (`emergent.memory#213`).
+        let failureMessage: String
     }
 
     /// The turn whose reply was cut off mid-stream, set only once text is on
@@ -242,13 +247,17 @@ final class HTTPChatTransport {
     /// Trades the truncated live copy for the finished reply the record now
     /// holds: the record renders on its own, so keeping the partial would stack
     /// a shorter duplicate underneath it. The banner goes with it — the drop is
-    /// no longer the last word on the turn.
+    /// no longer the last word on the turn — but only if that banner is still
+    /// this drop's: the slot is shared, and a later turn may have failed in the
+    /// meantime (`emergent.memory#213`).
     func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
         guard let interrupted = interruptedTurn else { return }
         liveMessages.removeAll { $0.id == interrupted.liveMessageID }
         transcript.syncLive(liveMessages)
         interruptedTurn = nil
-        errorMessage = nil
+        if errorMessage == interrupted.failureMessage {
+            errorMessage = nil
+        }
     }
 
     // MARK: - Streaming
@@ -298,14 +307,18 @@ final class HTTPChatTransport {
             // Stop pressed: keep whatever streamed in.
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = ChatTurnFailure.message(for: error)
+            let failure = ChatTurnFailure.message(for: error)
+            errorMessage = failure
             // Text on screen means the run got going: it is still going
             // server-side and will be recorded when it ends, so the view can
             // wait for the finished reply. Without text there is nothing to
             // recover and nothing to reload.
             interruptedTurn = state.text.isEmpty ? nil : InterruptedTurn(
                 liveMessageID: state.assistantMessageID,
-                partialText: state.text
+                partialText: state.text,
+                // Remembered so settling this drop does not clear a banner a
+                // later turn raised over the same slot.
+                failureMessage: failure
             )
             activity.markReplyFinished()
         }
