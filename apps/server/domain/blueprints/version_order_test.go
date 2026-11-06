@@ -81,6 +81,15 @@ func TestSortVersionsNewestFirst(t *testing.T) {
 		}
 	})
 
+	t.Run("contract fixture shared with the web UI gallery", func(t *testing.T) {
+		// The gallery renders this exact order verbatim (issue #15): release
+		// above prerelease, lexicographic prerelease (beta.2 above beta.10),
+		// numeric core, and unparseable last.
+		bps := versions("latest", "1.0.0-beta.10", "1.0.0-beta.2", "1.0.0", "1.9.0", "1.10.0")
+		sortVersionsNewestFirst(bps)
+		equal(t, bps, []string{"1.10.0", "1.9.0", "1.0.0", "1.0.0-beta.2", "1.0.0-beta.10", "latest"})
+	})
+
 	t.Run("equal versions keep incoming order", func(t *testing.T) {
 		bps := versions("1.0.0", "1.0.0", "1.0.0")
 		bps[0].ID, bps[1].ID, bps[2].ID = "first", "second", "third"
