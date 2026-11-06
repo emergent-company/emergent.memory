@@ -2153,10 +2153,14 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	actorType, actorID := actorFromContext(ctx, actorID)
 
+	// Normalise once: the schema lookup, the inverse-type lookup, the advisory
+	// lock and the stored row must all agree on the canonical type (#175/#176).
+	relType := normalizeRelationType(req.Type)
+
 	// Pre-load inverse map to avoid mutex deadlock with DB connection pool
 	// If the cache is empty, this fetches from DB before we hold a transaction.
 	if s.inverseTypeProvider != nil {
-		_, _ = s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), req.Type)
+		_, _ = s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), relType)
 	}
 
 	// Fetch schemas BEFORE transaction to avoid deadlock
@@ -2205,7 +2209,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	// Validate relationship type, endpoint types, and properties against schema.
 	if schemas != nil {
-		validated, err := validateRelationshipProperties(req.Type, srcObj.Type, dstObj.Type, req.Properties, schemas)
+		validated, err := validateRelationshipProperties(relType, srcObj.Type, dstObj.Type, req.Properties, schemas)
 		if err != nil {
 			return nil, false, apperror.ErrBadRequest.WithMessage(err.Error())
 		}
@@ -2219,7 +2223,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	rel := &GraphRelationship{
 		ProjectID:  projectID,
 		BranchID:   effectiveBranchID,
-		Type:       normalizeRelationType(req.Type),
+		Type:       relType,
 		Label:      req.Label,
 		SrcID:      srcObj.CanonicalID,
 		DstID:      dstObj.CanonicalID,
@@ -2241,7 +2245,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight, actorType, actorID)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, relType, srcObj, dstObj, req.Properties, req.Weight, actorType, actorID)
 		}
 
 		if err := tx.Commit(); err != nil {
@@ -2263,7 +2267,6 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 				dstKey = *dstObj.Key
 			}
 			entityType := entityTypeRelationship
-			relType := req.Type
 			s.eventSink.Log(ctx, LogParams{
 				ProjectID:  projectID,
 				BranchID:   effectiveBranchID,
@@ -2274,7 +2277,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 				ActorID:    actorID,
 				Metadata: map[string]any{
 					"src_key":  srcKey,
-					"rel_type": req.Type,
+					"rel_type": relType,
 					"dst_key":  dstKey,
 				},
 			})
@@ -2290,7 +2293,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	tx.Rollback()
 
 	// Read HEAD outside any transaction (no lock needed — the row is stable).
-	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, relType, srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -2316,12 +2319,12 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 	defer tx2.Rollback()
 
-	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
+	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, relType, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
 		return nil, false, err
 	}
 
 	// Re-fetch inside the locked tx to get the definitive current HEAD.
-	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, relType, srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -2351,7 +2354,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 
 		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
-		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, relType, srcObj.CanonicalID, dstObj.CanonicalID)
 		if newHead == nil {
 			return newVersion.ToResponse(), false, nil
 		}
@@ -2385,7 +2388,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
-	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, relType, srcObj.CanonicalID, dstObj.CanonicalID)
 	if newHead == nil {
 		return newVersion.ToResponse(), false, nil
 	}
@@ -2422,10 +2425,15 @@ func (s *Service) maybeCreateInverse(
 	actorType string,
 	actorID *uuid.UUID,
 ) (*GraphRelationshipResponse, string) {
+	// The inverse map is keyed by canonical lower_snake_case type (see
+	// inverseTypeProviderAdapter), so a caller-supplied "KNOWS" has to be
+	// normalised before the lookup or the inverse is silently skipped (#176).
+	relType = normalizeRelationType(relType)
 	inverseType, ok := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), relType)
 	if !ok || inverseType == "" {
 		return nil, ""
 	}
+	inverseType = normalizeRelationType(inverseType)
 
 	s.log.Debug("creating inverse relationship",
 		slog.String("primary_type", relType),
@@ -5749,6 +5757,10 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: type is required and must not be empty", i))
 		}
 
+		// Normalise once and use it for the insert, the inverse lookup and the
+		// advisory lock — the same contract every ordinary write follows (#176).
+		relType := normalizeRelationType(relReq.Type)
+
 		// Resolve src: prefer src_ref (new object in this call), fall back to src_id (existing object)
 		var srcObj *GraphObject
 		if relReq.SrcRef != "" {
@@ -5789,7 +5801,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		rel := &GraphRelationship{
 			ProjectID:  projectID,
 			BranchID:   srcObj.BranchID,
-			Type:       relReq.Type,
+			Type:       relType,
 			SrcID:      srcObj.CanonicalID,
 			DstID:      dstObj.CanonicalID,
 			Properties: relReq.Properties,
@@ -5810,7 +5822,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight, actorType, actorID)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relType, srcObj, dstObj, relReq.Properties, relReq.Weight, actorType, actorID)
 		}
 
 		resp := rel.ToResponse()
