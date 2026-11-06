@@ -59,7 +59,8 @@ inside an existing page instead of a dedicated route.
 `layout.Container(LG)` → `pageHeader(group, title, description)` (with a primary
 action) → a desktop
 `components.TableCard` table and a mobile list, with an empty state and
-`pageError` on load failure. Follow `AgentsPage`."
+`pageErrorNotice` on load failure — the header is already rendered, so the error
+sits under it and the page keeps one `h1`. Follow `AgentsPage`."
 
 **Recipe** (`AgentsPage`, `ui.templ:312`):
 
@@ -70,7 +71,8 @@ templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel s
 			// primary create action forwards into the header action slot
 		}
 		if loadErr != nil {
-			@pageError("Agents unavailable", loadErr)
+			// The header above owns the h1; the error is a notice under it.
+			@pageErrorNotice("Agents unavailable", loadErr)
 		} else if len(agents) == 0 {
 			@agentsEmpty()
 		} else {
@@ -143,7 +145,7 @@ a `layout.Rail` with `components.SettingsRail` + `SubNavItem`. Pass `""` for
 `detailHeaderOpts.Meta` with the page's identity/state chips — never the action
 slot."
 
-**Recipe** (synthesised: `detailHeader` from `schedules.templ:213`, rail from
+**Recipe** (synthesised: `detailHeader` from `schedules.templ:211`, rail from
 `agent.templ:39`):
 
 ```go
@@ -444,7 +446,7 @@ Two mechanisms:
 the object; `components.ConfirmIcon`/`DeleteWarning`
 (`components/confirm.templ:14,32`) for the shared warning body.
 
-**Source:** `ui.templ:649` (`deleteConfirmDialog`), `ui.templ:303`
+**Source:** `ui.templ:649` (`deleteConfirmDialog`), `ui.templ:644`
 (`deleteAgentDescription`), `components/confirm.templ:14,32`,
 `webui/static/js/app.js:390,435,441`.
 

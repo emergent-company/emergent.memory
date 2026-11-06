@@ -3,8 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/a-h/templ"
 )
 
 // TestHeaderGroupMapsMirrorTheSidebar pins the header contract's first rule to
@@ -273,6 +276,138 @@ func TestCollectionCountsSitBelowTheHeader(t *testing.T) {
 				t.Errorf("count %q is header material again: %q", tc.count, meta)
 			}
 		})
+	}
+}
+
+// TestOneH1PerPage is the runtime half of the one-`h1` rule: a page in its
+// error state renders exactly one `h1` — the header's when the page has one,
+// the error heading when the error state is the page.
+func TestOneH1PerPage(t *testing.T) {
+	cases := []struct {
+		name string
+		page templ.Component
+	}{
+		{"board (header then notice)", BoardPage(nil, nil, nil, boardAllowances{}, boardStatusMap{}, errTest)},
+		{"agents list", AgentsPage(nil, nil, "", errTest, "")},
+		{"approvals", ApprovalsPage(nil, nil, errTest)},
+		{"skills", SkillsPage(nil, errTest, "", nil, "", nil)},
+		{"sessions", SessionsPage(nil, nil, errTest)},
+		{"usage", UsagePage(nil, nil, usageChartPayload{}, 0, false, 30, errTest)},
+		{"backups", BackupsPage(nil, 0, "", errTest, "", nil)},
+		// The other shape: the error state *is* the page, so its heading is the
+		// single h1.
+		{"orgs list (error is the page)", OrgsPage(orgsPageData{LoadErr: errTest})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			html := renderHTML(t, tc.page)
+			if got := strings.Count(html, "<h1"); got != 1 {
+				t.Errorf("page renders %d <h1> elements, want exactly 1:\n%s", got, html)
+			}
+		})
+	}
+}
+
+// TestNoTemplateRendersHeaderBeforePageError is the static half: a template that
+// renders a shared header (directly, or through a wrapper such as
+// `boardHeader`) must not go on to render `pageError`. Its h1 is for a page
+// whose error state *is* the page; a page that already rendered a header uses
+// `pageErrorNotice`. Branch-exclusive sites put the error first by convention,
+// so a header call textually before a `pageError` call is the regression this
+// catches — and the check resolves wrappers, which is how the board page slipped
+// past a hand sweep.
+func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
+	type tmplBody struct {
+		file string
+		name string
+		body string
+	}
+	var bodies []tmplBody
+	byName := map[string]*tmplBody{}
+	files, err := filepath.Glob("*.templ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := regexp.MustCompile(`(?m)^templ (\w+)\(`)
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		text := string(src)
+		locs := decl.FindAllStringSubmatchIndex(text, -1)
+		for i, m := range locs {
+			end := len(text)
+			if i+1 < len(locs) {
+				end = locs[i+1][0]
+			}
+			b := tmplBody{file: f, name: text[m[2]:m[3]], body: text[m[1]:end]}
+			bodies = append(bodies, b)
+		}
+	}
+	for i := range bodies {
+		byName[bodies[i].name] = &bodies[i]
+	}
+
+	callRe := regexp.MustCompile(`@(\w+)\(`)
+	calls := func(body string) []string {
+		var out []string
+		for _, m := range callRe.FindAllStringSubmatch(body, -1) {
+			out = append(out, m[1])
+		}
+		return out
+	}
+	// rendersHeader: the shared header renderers, plus anything that reaches one.
+	rendersHeader := map[string]bool{
+		"pageHeader": true, "pageHeaderWithMeta": true, "detailHeader": true,
+	}
+	callsPageError := map[string]bool{"pageError": true}
+	for changed := true; changed; {
+		changed = false
+		for i := range bodies {
+			b := &bodies[i]
+			for _, callee := range calls(b.body) {
+				if rendersHeader[callee] && !rendersHeader[b.name] {
+					rendersHeader[b.name] = true
+					changed = true
+				}
+				if callsPageError[callee] && !callsPageError[b.name] {
+					callsPageError[b.name] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	checked := 0
+	for i := range bodies {
+		b := &bodies[i]
+		if !rendersHeader[b.name] || !callsPageError[b.name] {
+			continue
+		}
+		firstHeader, firstError := -1, strings.Index(b.body, "@pageError(")
+		if firstError < 0 {
+			continue // the error comes from a callee that is itself guarded
+		}
+		for _, callee := range calls(b.body) {
+			if !rendersHeader[callee] {
+				continue
+			}
+			at := strings.Index(b.body, "@"+callee+"(")
+			if at >= 0 && (firstHeader < 0 || at < firstHeader) {
+				firstHeader = at
+			}
+		}
+		if firstHeader < 0 {
+			continue
+		}
+		checked++
+		if firstHeader < firstError {
+			t.Errorf("%s: %s renders a page header and then pageError; use pageErrorNotice so the page keeps one <h1>", b.file, b.name)
+		}
+	}
+	if checked < 10 {
+		t.Fatalf("checked %d templates that render a header and a pageError; the scan is not matching the code it guards", checked)
 	}
 }
 

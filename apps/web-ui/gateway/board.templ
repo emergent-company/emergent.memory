@@ -19,7 +19,7 @@ templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, al
 			@boardHeader()
 		</div>
 		if loadErr != nil {
-			@pageError("Board unavailable", loadErr)
+			@pageErrorNotice("Board unavailable", loadErr)
 		} else {
 			@boardHealthRegion(agents)
 			<!-- Live refresh: htmx's hx-sse extension (loaded by the page shell,

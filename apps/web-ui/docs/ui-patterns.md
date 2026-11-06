@@ -51,7 +51,8 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 | `detailHeader(crumbs,group,title,description,opts…)` | `ui.templ:984` | detail-page header; `group` may be `""` to inherit it from the trail root |
 | `pageHead(headerSpec)` | `ui.templ:802` | **the** header renderer — both wrappers delegate to it |
 | `sectionCount(label)` | `ui.templ:1051` | a collection's own count line, above the table/list it counts |
-| `pageError(heading, err)` | `ui.templ:256` | shared fetch-failure state (`ui.Alert`) |
+| `pageError(heading, err)` | `ui.templ:256` | fetch-failure state for a page whose error state *is* the page (`h1` + `ui.Alert`) |
+| `pageErrorNotice(heading, err)` | `ui.templ:265` | fetch-failure state under an existing header (`h2` label + the same alert) |
 | `ui.Section(title, SectionProps)` | `agent.templ:232` | titled panel + empty state |
 | `components.PanelCard` | `components/panel.templ:13` | `ui.CardRaw` + `memory-density-comfortable` |
 | `components.TableCard` | `components/table.templ:10` | `ui.CardRaw` + `memory-density-flush` (zero padding, table meets edges) |
@@ -96,7 +97,10 @@ the action row and chip row are positioned.
    "updated …"). Never inline with the title, never in the action slot.
 4. **Counts are not header material.** A count belongs to the collection it
    counts — `sectionCount` above the table, or the section/table's own summary.
-5. **Actions sit on the right**: zero, one, or two render inline; three or more
+5. **One `h1` per page.** `pageError` is for a page whose error state *is* the
+   page; a page (or a swapped fragment) that already rendered its header uses
+   `pageErrorNotice`, so the error never adds a second `h1`.
+6. **Actions sit on the right**: zero, one, or two render inline; three or more
    keep the first inline and collapse the rest behind a "More" dropdown
    (`headerActions`, `ui.templ:852`). A destructive entry carries `Danger: true`
    so it reads as destructive inside the menu too. The backups detail page is
