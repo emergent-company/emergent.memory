@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 )
@@ -62,6 +63,12 @@ type mcpShareFormData struct {
 	Emails      string
 	Catalog     []MCPShareTool
 	Templates   []MCPShareTemplate
+
+	// CopyFrom is the name of the share this draft was seeded from (the
+	// "Duplicate share" flow), empty on a blank create form. It drives the page
+	// copy only: the submission is an ordinary create that mints a fresh key, so
+	// nothing about the source share changes.
+	CopyFrom string
 
 	Legacy     bool
 	NotFound   bool
@@ -141,13 +148,123 @@ func (s *Server) uiMCPShareNewPage(c echo.Context) error {
 	} else {
 		data.Tools = mcpShareApplyDefaultTemplate(&MCPShareCatalog{Tools: data.Catalog, Templates: data.Templates}, data.Tools)
 	}
-	return s.page(c, pageTitle("New MCP share"), MCPShareNewPage(data))
+	return s.page(c, pageTitle(mcpShareNewPageHeading(data)), MCPShareNewPage(data))
 }
 
 // renderMCPShareNewPage re-renders the create page with inline errors and the
 // user's draft intact (no partial save).
 func (s *Server) renderMCPShareNewPage(c echo.Context, data mcpShareFormData) error {
-	return s.page(c, pageTitle("New MCP share"), MCPShareNewPage(data))
+	return s.page(c, pageTitle(mcpShareNewPageHeading(data)), MCPShareNewPage(data))
+}
+
+// --- duplicate flow ---
+
+// mcpShareNameMaxLen mirrors the backend's name limit: `normalizeInstanceName`
+// rejects a trimmed name whose `len` exceeds 255, so the limit is in bytes and a
+// derived copy name is clamped the same way.
+const mcpShareNameMaxLen = 255
+
+// uiMCPShareDuplicatePage renders the create form seeded from an existing share
+// (GET .../shares/:id/duplicate), so a new share can start from a known tool
+// allowlist instead of a blank form. The submission is an ordinary create — it
+// posts to .../shares/new and mints a brand-new key — and the source share is
+// never modified, which is why legacy instances are copyable even though this UI
+// cannot edit them. Invite recipients are deliberately NOT carried over: a copy
+// means a new key, and nobody should be emailed one implicitly.
+func (s *Server) uiMCPShareDuplicatePage(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, mcpShareSettingsBase, errShareIDRequired())
+	}
+	src, err := s.memory.GetMCPShareInstance(ctx, id)
+	if err != nil {
+		if isMemoryNotFound(err) {
+			data := mcpShareFormData{NotFound: true, FlashErr: flashError(c)}
+			return s.page(c, pageTitle(mcpShareNewPageHeading(data)), MCPShareNewPage(data))
+		}
+		return redirectWithError(c, mcpShareSettingsBase, err)
+	}
+	data := mcpShareFormData{
+		Name:        s.mcpShareDuplicateName(ctx, src.Name),
+		Description: src.Description,
+		Tools:       append([]string(nil), src.Tools...),
+		CopyFrom:    src.Name,
+		FlashErr:    flashError(c),
+	}
+	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
+		data.LoadErr = userFacingError(err)
+	}
+	return s.page(c, pageTitle(mcpShareNewPageHeading(data)), MCPShareNewPage(data))
+}
+
+// mcpShareDuplicateName derives a free name for a copy: "<name> (copy)", then
+// "<name> (copy 2)", "<name> (copy 3)", … Uniqueness is case-insensitive per
+// project (the backend enforces it), so candidates are compared the same way.
+// The stem is shortened when needed so the suffix never pushes the name past
+// mcpShareNameMaxLen. The candidate space is unbounded and the taken set is
+// finite, so the loop always terminates.
+func (s *Server) mcpShareDuplicateName(ctx context.Context, base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "share"
+	}
+	taken := map[string]bool{}
+	if shares, err := s.memory.ListMCPShareInstances(ctx); err == nil {
+		for _, sh := range shares {
+			taken[strings.ToLower(strings.TrimSpace(sh.Name))] = true
+		}
+	}
+	for i := 1; ; i++ {
+		suffix := " (copy)"
+		if i > 1 {
+			suffix = fmt.Sprintf(" (copy %d)", i)
+		}
+		name := mcpShareTruncateName(base, mcpShareNameMaxLen-len(suffix)) + suffix
+		if !taken[strings.ToLower(name)] {
+			return name
+		}
+	}
+}
+
+// mcpShareTruncateName cuts s to at most maxBytes UTF-8 bytes without splitting
+// a rune, so a copy name derived from a non-ASCII source still fits the
+// backend's byte-measured limit.
+func mcpShareTruncateName(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(maxBytes)
+	used := 0
+	for _, r := range s {
+		n := utf8.RuneLen(r)
+		if used+n > maxBytes {
+			break
+		}
+		b.WriteRune(r)
+		used += n
+	}
+	return b.String()
+}
+
+// mcpShareNewPageHeading titles the create page. A duplicate names itself as
+// such so the user never mistakes the seeded draft for a blank form; the
+// not-found state belongs to the duplicate route (a blank create cannot 404).
+func mcpShareNewPageHeading(data mcpShareFormData) string {
+	if data.CopyFrom != "" || data.NotFound {
+		return "Duplicate MCP share"
+	}
+	return "New MCP share"
+}
+
+// mcpShareNewPageSubtitle explains where a duplicated draft came from, that the
+// copy gets its own key, and that the source keeps working.
+func mcpShareNewPageSubtitle(data mcpShareFormData) string {
+	if data.CopyFrom != "" {
+		return "Starts from “" + data.CopyFrom + "”. Its tools and description are carried over — adjust them and save to mint a key for the new share; the original is untouched."
+	}
+	return "Name the share and choose what an outside MCP client can reach."
 }
 
 // uiMCPShareCreate handles POST .../shares/new. Validation failures re-render
@@ -608,6 +725,10 @@ func mcpShareFormDataFromRequest(c echo.Context) mcpShareFormData {
 		Description: strings.TrimSpace(c.FormValue("description")),
 		Tools:       tools,
 		Emails:      strings.TrimSpace(c.FormValue("emails")),
+		// copyFrom rides along as a hidden field so an inline validation
+		// re-render keeps the "duplicated from X" framing; it carries no
+		// behaviour of its own.
+		CopyFrom: strings.TrimSpace(c.FormValue("copyFrom")),
 	}
 }
 
