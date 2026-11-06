@@ -843,6 +843,13 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		}
 	}
 
+	// A listed row is a version row, so it reports the sources backing it just
+	// like GetByID. fillObjectContributions fetches the whole page in one query,
+	// keeping the cost at one extra read per page rather than one per row.
+	if err := s.fillObjectContributions(ctx, params.ProjectID, items); err != nil {
+		return nil, err
+	}
+
 	var nextCursor *string
 	if hasMore && len(objects) > 0 {
 		last := objects[len(objects)-1]
@@ -2873,6 +2880,12 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 		objectIDs = append(objectIDs, r.Object.ID)
 	}
 
+	// Search rows are object version rows too: report their sources from the
+	// same one-query page fill the list uses.
+	if err := s.fillSearchResultContributions(ctx, projectID, data); err != nil {
+		return nil, err
+	}
+
 	if len(objectIDs) > 0 {
 		s.recordAccessTimestamps(objectIDs)
 	}
@@ -2942,6 +2955,12 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 			VectorDist:  &r.Distance,
 		}
 		objectIDs = append(objectIDs, r.Object.ID)
+	}
+
+	// Search rows are object version rows too: report their sources from the
+	// same one-query page fill the list uses.
+	if err := s.fillSearchResultContributions(ctx, projectID, data); err != nil {
+		return nil, err
 	}
 
 	if len(objectIDs) > 0 {
@@ -3283,6 +3302,12 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 			VectorScore:  fr.vectorScore,
 			VectorDist:   fr.vectorDist,
 		}
+	}
+
+	// Search rows are object version rows too: report their sources from the
+	// same one-query page fill the list uses.
+	if err := s.fillSearchResultContributions(ctx, projectID, data); err != nil {
+		return nil, err
 	}
 
 	totalMs := float64(time.Since(totalStart).Microseconds()) / 1000.0
@@ -3867,6 +3892,21 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 		s.log.Warn("FTS returned zero results, skipping neighbor expansion",
 			slog.String("query", req.Query),
 			slog.String("project_id", projectID.String()))
+	}
+
+	// The primary hits and their expanded neighbours are both object versions,
+	// so fill them from one batched contribution read for the whole response.
+	objects := make([]*GraphObjectResponse, 0, len(primaryResults))
+	for _, item := range response.PrimaryResults {
+		if item != nil && item.Object != nil {
+			objects = append(objects, item.Object)
+		}
+	}
+	for _, list := range response.Neighbors {
+		objects = append(objects, list...)
+	}
+	if err := s.fillObjectContributions(ctx, projectID, objects); err != nil {
+		return nil, err
 	}
 
 	return response, nil

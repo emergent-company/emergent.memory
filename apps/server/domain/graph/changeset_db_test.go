@@ -1504,8 +1504,10 @@ func TestObjectDetailExposesContributions(t *testing.T) {
 }
 
 // TestHistoryExposesContributionsPerVersionInOneQuery is 12.1's history half
-// plus 12.3's N+1 guard: each version reports the rows keyed to it, and the
-// whole history costs one contribution query.
+// (which, together with the object detail, list and search responses, carries
+// `contributions` on every object read) plus 12.3's N+1 guard: each version
+// reports the rows keyed to it, and the whole history costs one contribution
+// query.
 func TestHistoryExposesContributionsPerVersionInOneQuery(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "history")
