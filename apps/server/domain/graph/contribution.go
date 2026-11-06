@@ -622,6 +622,21 @@ func (s *Service) fillObjectContributions(ctx context.Context, projectID uuid.UU
 	return nil
 }
 
+// fillSearchResultContributions attaches contributions to the objects wrapped
+// by a search page. Search responses nest the object under SearchResultItem for
+// its score, so this is the search-shaped adapter over fillObjectContributions:
+// the whole page still costs one batched contribution read.
+func (s *Service) fillSearchResultContributions(ctx context.Context, projectID uuid.UUID, items []*SearchResultItem) error {
+	objects := make([]*GraphObjectResponse, 0, len(items))
+	for _, item := range items {
+		if item == nil || item.Object == nil {
+			continue
+		}
+		objects = append(objects, item.Object)
+	}
+	return s.fillObjectContributions(ctx, projectID, objects)
+}
+
 // fillRelationshipContributions is the relationship half of
 // fillObjectContributions, reading subject_kind = relationship.
 func (s *Service) fillRelationshipContributions(ctx context.Context, projectID uuid.UUID, items []*GraphRelationshipResponse) error {
