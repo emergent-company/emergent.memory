@@ -2,16 +2,22 @@
 # Hermetic regression suite for the merge-guard workflow's trigger-dependent
 # verdict (#886).
 #
-# WHY: a push publishes a **neutral** `merge-guard: awaiting review` check while
-# the `workflow_dispatch` run the merge wrapper performs stays red for "no
-# marker" and "stale marker", and a trusted verdict that rejects the head is red
-# on either trigger. Every one of those is a string comparison in the workflow,
-# and both mistakes are silent in the wrong direction:
+# WHY: a push publishes a **neutral** `merge-guard: awaiting review` check run
+# (#148) but, since #155, the `verify` JOB fails so a pinned required context can
+# gate the merge -- the check run and the job conclusion deliberately disagree.
+# The `workflow_dispatch` run the merge wrapper performs is red for "no marker"
+# and "stale marker", and a trusted verdict that rejects the head is red on
+# either trigger. Every one of those is a string comparison in the workflow, and
+# both mistakes are silent in the wrong direction:
 #
 #   * a wrong branch in `awaiting_review()` turns a rejection green -- a merge
 #     the guard exists to stop;
 #   * the opposite mistake puts red back on every push, the noise that made
-#     lanes ignore the guard (#875);
+#     lanes ignore the guard (#875). #155 accepts that tension on purpose: the
+#     *check run* stays neutral so the PR list is quiet, but the *job* goes red
+#     because a pinned required context credits the job's own check, not the
+#     Checks-API run (#843). This suite therefore asserts both facts together:
+#     published conclusion `neutral` AND a non-zero publish exit;
 #   * `MODE` is the whole distinction between "automatic evaluation" and
 #     "binding evaluation", and it is one comparison away from being inverted.
 #
@@ -393,13 +399,14 @@ run_case() { # <label> <fixture> <mode> <want-step1> <want-awaiting:true|false> 
   fi
 }
 
-# The eight cases: a push is an automatic evaluation (neutral while nothing can
-# be enforced yet), a dispatch is the binding one (red -- nothing merges
-# unreviewed), and a rejection is red on both.
+# The eight cases: a push is an automatic evaluation (published check run
+# neutral, but the job exits non-zero -- nothing can be enforced yet), a dispatch
+# is the binding one (red -- nothing merges unreviewed), and a rejection is red
+# on both.
 run_case "push, no marker" "$tmp/no-marker.json" pull_request_target \
-  0 true neutral "merge-guard: awaiting review" 0
+  0 true neutral "merge-guard: awaiting review" 1
 run_case "push, stale marker" "$tmp/stale.json" pull_request_target \
-  0 true neutral "merge-guard: awaiting review" 0
+  0 true neutral "merge-guard: awaiting review" 1
 run_case "push, approval" "$tmp/approval.json" pull_request_target \
   0 false success "merge-guard: pass" 0
 
