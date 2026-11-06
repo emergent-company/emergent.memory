@@ -19,7 +19,7 @@ import (
 // after tapping a link on small screens; keep the active nav item in sync
 // across htmx navigations). It is idempotent via window._sidebarInit.
 //
-// providersMissing surfaces a warning indicator on the "Project" entry
+// providersMissing surfaces a warning indicator on the "Settings" entry
 // (/settings) when the project has no LLM provider configured yet.
 templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 	<div id="_layout-sidebar" class="flex flex-col bg-base-100">
@@ -122,9 +122,9 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 }
 
 // sidebarProviderWarning is the app-specific warning indicator shown after the
-// "Project" sidebar entry when the project has no LLM provider configured yet.
+// "Settings" sidebar entry when the project has no LLM provider configured yet.
 // It is passed through layout.SidebarItem.Warn; the copy stays local (go-daisy's
 // SidebarNavItem only carries the slot, not this copy).
 templ sidebarProviderWarning() {
-	<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured — open Project settings" title="No provider configured — open Project settings"></span>
+	<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured — open Settings" title="No provider configured — open Settings"></span>
 }

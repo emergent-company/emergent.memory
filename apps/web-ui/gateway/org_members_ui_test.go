@@ -691,6 +691,91 @@ func TestSidebarGroupsRoleGating(t *testing.T) {
 	}
 }
 
+// sidebarLabels flattens the project nav into group-label → item-label lists so
+// a test can pin both grouping and order.
+func sidebarLabels(groups []layout.SidebarGroup) [][]string {
+	labels := make([][]string, 0, len(groups))
+	for _, g := range groups {
+		row := make([]string, 0, len(g.Items))
+		for _, item := range g.Items {
+			row = append(row, item.Label)
+		}
+		labels = append(labels, row)
+	}
+	return labels
+}
+
+// TestSidebarGroupsProjectLayout pins the project nav's group names, item
+// membership and order. The nav is a product surface that is easy to edit by
+// accident (items silently landing back in the group they were moved out of),
+// and no other test reads these labels.
+func TestSidebarGroupsProjectLayout(t *testing.T) {
+	want := [][]string{
+		// ungrouped top-level entries
+		{"Approvals", "Chat", "Search", "Sessions"},
+		{"Board", "Settings"},
+		{"Agents", "Schedules", "Skills"},
+		{"Objects", "Embeddings", "Schema", "Blueprints", "Documents", "Data Sources"},
+		{"Settings", "Members", "API Tokens", "MCP Servers", "MCP Registry", "Usage", "Backups"},
+	}
+	// Group labels are asserted separately because index 0 is the unlabelled
+	// top-level block.
+	wantGroupLabels := []string{"", "Work", "Agents", "Memory", "Project"}
+
+	groups := sidebarGroups("", true)
+	if len(groups) != len(want) {
+		t.Fatalf("got %d sidebar groups, want %d", len(groups), len(want))
+	}
+	for i, g := range groups {
+		if g.Label != wantGroupLabels[i] {
+			t.Errorf("group %d label = %q, want %q", i, g.Label, wantGroupLabels[i])
+		}
+		if got := sidebarLabels([]layout.SidebarGroup{g})[0]; !equalLabels(got, want[i]) {
+			t.Errorf("group %q items = %v, want %v", g.Label, got, want[i])
+		}
+	}
+
+	// The "Settings" group entry is the /settings hub itself; its href must not
+	// move even though its label changed from "Project".
+	for _, item := range groups[len(groups)-1].Items {
+		if item.Label == "Settings" && item.Href != "/settings" {
+			t.Errorf("Settings item href = %q, want /settings", item.Href)
+		}
+	}
+
+	// Backups is org_admin-only *and* belongs to the Project group now.
+	nonAdmin := sidebarGroups("", false)
+	last := nonAdmin[len(nonAdmin)-1]
+	if last.Label != "Project" {
+		t.Fatalf("last group label = %q, want Project", last.Label)
+	}
+	for _, item := range last.Items {
+		if item.Label == "Backups" {
+			t.Error("non-admin Project group must hide Backups")
+		}
+	}
+
+	// Usage is a project-level entry now: it must not sit in the ungrouped block.
+	for _, item := range groups[0].Items {
+		if item.Label == "Usage" {
+			t.Error("Usage must not be an ungrouped top-level entry")
+		}
+	}
+}
+
+// equalLabels compares two label rows element-wise.
+func equalLabels(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // --- Role helper units ---
 
 func TestRoleLabelIntent(t *testing.T) {

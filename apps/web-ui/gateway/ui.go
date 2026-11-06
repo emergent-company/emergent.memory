@@ -72,6 +72,12 @@ func pageTestID(title string) string {
 // the Backups entry (org-scoped backups require org_admin of the active
 // project's owning org — see #997); it is threaded in by page() from the
 // caller's access tree.
+//
+// Groups: ungrouped top-level entries, Work, Agents, Memory (graph/content
+// surfaces) and Project (the /settings hub family plus back office entries).
+// Project-scoped settings live under the "Project" group headed by a
+// "Settings" item, so the group label and its landing page never read as the
+// same thing twice.
 func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	return sidebarGroupsWithWarn(base, isOrgAdmin, 0)
 }
@@ -85,17 +91,28 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 	if documentsWarn > 0 {
 		documentsItem.Warn = sidebarWarnBadge(documentsWarn)
 	}
-	memoryBrowser := []layout.SidebarItem{
+	memoryItems := []layout.SidebarItem{
 		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
 		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
 		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
+		{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
 		documentsItem,
 		{Label: "Data Sources", Href: base + "/data-sources", Icon: "lucide--cloud"},
+	}
+	projectItems := []layout.SidebarItem{
+		// The /settings hub is labelled "Settings" so the group label (Project)
+		// and its landing page do not read as the same thing twice.
+		{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"},
+		{Label: "Members", Href: base + "/settings/members", Icon: "lucide--users"},
+		{Label: "API Tokens", Href: base + "/settings/tokens", Icon: "lucide--key-round"},
+		{Label: "MCP Servers", Href: base + "/settings/mcp-servers", Icon: "lucide--server"},
+		{Label: "MCP Registry", Href: base + "/settings/mcp-registry", Icon: "lucide--globe"},
+		{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
 	}
 	if isOrgAdmin {
 		// Backups are org-scoped and org_admin-gated (see #997). Hiding the
 		// entry beats landing a non-admin on a page that degrades to an error.
-		memoryBrowser = append(memoryBrowser, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
+		projectItems = append(projectItems, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
 	}
 	return []layout.SidebarGroup{
 		{
@@ -106,7 +123,6 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
 				{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
-				{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
 			},
 		},
 		{
@@ -125,19 +141,12 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 			},
 		},
 		{
-			Label: "Memory Browser",
-			Items: memoryBrowser,
+			Label: "Memory",
+			Items: memoryItems,
 		},
 		{
-			Label: "Settings",
-			Items: []layout.SidebarItem{
-				{Label: "Project", Href: base + "/settings", Icon: "lucide--settings"},
-				{Label: "Members", Href: base + "/settings/members", Icon: "lucide--users"},
-				{Label: "API Tokens", Href: base + "/settings/tokens", Icon: "lucide--key-round"},
-				{Label: "MCP Servers", Href: base + "/settings/mcp-servers", Icon: "lucide--server"},
-				{Label: "MCP Registry", Href: base + "/settings/mcp-registry", Icon: "lucide--globe"},
-				{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
-			},
+			Label: "Project",
+			Items: projectItems,
 		},
 	}
 }
