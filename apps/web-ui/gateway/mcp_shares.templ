@@ -26,7 +26,6 @@ templ MCPSharesPage(data mcpSharesPageData) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing")) }}
 		@detailHeader(crumbs, "", "MCP Sharing", "Hand an outside MCP client a scoped key that exposes only the memory tools you choose. To share one agent, use that agent's own MCP endpoint instead.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
-				@countBadge(len(data.Shares), "share", "lucide--share-2")
 				// Agent sharing lives on the agent's own configuration surface:
 				// each agent's Settings page owns its MCP endpoint and keys.
 				@ui.Button(ui.ButtonProps{
@@ -51,7 +50,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("MCP shares unavailable", data.LoadErr)
+			@pageErrorNotice("MCP shares unavailable", data.LoadErr)
 		} else if len(data.Shares) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--share-2",
@@ -64,6 +63,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 				ActionIcon:  "lucide--plus",
 			})
 		} else {
+			@sectionCount(countLabel(len(data.Shares), "share", "shares"))
 			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, inst := range data.Shares {
@@ -385,7 +385,7 @@ templ MCPShareNewPage(data mcpShareFormData) {
 		</div>
 	} else if data.LoadErr != nil {
 		<div class={ pageFormFieldsClass }>
-			@pageError("Tool catalog unavailable", data.LoadErr)
+			@pageErrorNotice("Tool catalog unavailable", data.LoadErr)
 		</div>
 	} else {
 		@mcpShareFormBody(data, false)
@@ -413,7 +413,7 @@ templ MCPShareEditPage(data mcpShareFormData) {
 			@flashToasts("", data.FlashErr)
 		</div>
 		<div class={ pageFormFieldsClass }>
-			@pageError("Tool catalog unavailable", data.LoadErr)
+			@pageErrorNotice("Tool catalog unavailable", data.LoadErr)
 		</div>
 		@mcpShareScripts()
 	} else {

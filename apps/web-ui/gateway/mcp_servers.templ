@@ -29,7 +29,6 @@ templ MCPServersPage(data mcpServersPageData) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers")) }}
 		@detailHeader(crumbs, "", "MCP Servers", "Register and maintain the MCP servers that power agent tools.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
-				@countBadge(len(data.Servers), "server", "lucide--server")
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpShareSettingsBase,
@@ -52,7 +51,7 @@ templ MCPServersPage(data mcpServersPageData) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("MCP servers unavailable", data.LoadErr)
+			@pageErrorNotice("MCP servers unavailable", data.LoadErr)
 		} else if len(data.Servers) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--server",
@@ -65,6 +64,7 @@ templ MCPServersPage(data mcpServersPageData) {
 				ActionIcon:  "lucide--plus",
 			})
 		} else {
+			@sectionCount(countLabel(len(data.Servers), "server", "servers"))
 			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, srv := range data.Servers {
@@ -657,7 +657,7 @@ templ MCPServerEditPage(data mcpServerFormData) {
 	if data.LoadErr != nil {
 		@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
 			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
-			@pageError("Server unavailable", data.LoadErr)
+			@pageErrorNotice("Server unavailable", data.LoadErr)
 			@mcpServersScript()
 		}
 	} else if data.NotFound || data.ID == "" {

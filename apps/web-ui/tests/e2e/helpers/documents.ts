@@ -12,7 +12,7 @@ import { expectAppPage, goto } from './page';
 
 /** Stable locators for the browser's surfaces. */
 export const DOCUMENTS_LIST = '#documents-list';
-/** The header badge: the count of documents the active filters match. */
+/** The count line above the table: documents the active filters match. */
 export const DOCUMENTS_COUNT = '[data-testid="documents-count"]';
 export const DOCUMENTS_TABLE = '[data-testid="documents-table"]';
 export const DOCUMENTS_MOBILE_LIST = '#documents-mobile-list';

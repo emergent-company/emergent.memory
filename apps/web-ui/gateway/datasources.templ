@@ -22,14 +22,15 @@ import (
 // state.
 templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@dataSourcesHeader(len(integrations), loadErr == nil)
+		@dataSourcesHeader()
 		if loadErr != nil {
-			@pageError("Failed to load data sources", loadErr)
+			@pageErrorNotice("Failed to load data sources", loadErr)
 		} else {
 			@flashToasts(flashMsg, flashErr)
 			if len(integrations) == 0 {
 				@dataSourcesEmpty()
 			} else {
+				@sectionCount(countLabel(len(integrations), "source", "sources"))
 				@components.TableCard(nil) {
 					<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Provider';--h3:'Status';--h4:'Sync';--h5:'Last sync';--h6:''">
 						<table class="table table-sm" data-testid="ds-source-table">
@@ -56,12 +57,9 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 	}
 }
 
-templ dataSourcesHeader(count int, ok bool) {
-	@pageHeader("Integrations", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
+templ dataSourcesHeader() {
+	@pageHeader("Memory", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
 		<div class="flex flex-wrap items-center gap-2">
-			if ok {
-				@countBadgeLabel(countLabel(count, "source", "sources"), "lucide--cloud")
-			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/data-sources/new",
@@ -192,7 +190,7 @@ templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFiel
 				@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", "Connect a data source")), "", "Connect a data source", "Choose how to connect an external system and sync its documents into this project.", detailHeaderOpts{Margin: "mb-6"})
 				@flashToasts("", flashErr)
 				if loadErr != nil {
-					@pageError("Providers unavailable", loadErr)
+					@pageErrorNotice("Providers unavailable", loadErr)
 				} else if len(providers) == 0 {
 					@ui.EmptyState(ui.EmptyStateProps{
 						Icon:        "lucide--cloud",
@@ -406,7 +404,7 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 	</div>
 	if loadErr != nil {
 		<div class={ pageFormFieldsClass }>
-			@pageError("Provider schema unavailable", loadErr)
+			@pageErrorNotice("Provider schema unavailable", loadErr)
 		</div>
 	} else {
 		<form method="post" action="/data-sources/new" data-testid="ds-connect-form">
@@ -1216,10 +1214,14 @@ templ dsFolderPickerModal(src *DSIntegration) {
 	<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-folder-picker.js")) }></script>
 }
 
+// dataSourceHeaderMeta is the source's state chip row: connection/sync status.
+templ dataSourceHeaderMeta(src *DSIntegration) {
+	@dsStatusBadge(src.Status)
+}
+
 templ dataSourceDetailHeader(src *DSIntegration, providerName string, canSync bool) {
-	@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsSourceName(*src), providerName) {
+	@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsSourceName(*src), providerName, detailHeaderOpts{Margin: "mb-6", Meta: dataSourceHeaderMeta(src)}) {
 		<div class="flex flex-wrap items-center gap-2">
-			@dsStatusBadge(src.Status)
 			if canSync {
 				<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/sync") }>
 					@ui.Button(ui.ButtonProps{

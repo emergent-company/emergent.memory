@@ -250,6 +250,21 @@ main#main-content {
   scroll-padding-bottom: 5rem;
 }
 
+/* Page-header breadcrumbs (nav.Breadcrumbs). Every page trail starts with the
+   nav group it lives in and reads as chrome, not prose: small, tracked,
+   uppercase. The pair of classes out-specifies the `text-sm` utility the
+   component emits, so this is the one place the trail's typography is set. */
+.breadcrumbs.text-sm {
+  font-size: 0.6875rem;
+  line-height: 1.25rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.breadcrumbs.text-sm > ul > li > a,
+.breadcrumbs.text-sm > ul > li > span {
+  font-weight: 500;
+}
+
 /* Sticky form action bar (components.StickyFormActions). The bar is the last
    in-flow child of a page-terminal form, so at max scroll it sits flush with
    the bottom of #main-content. The chrome (top border + translucent surface +

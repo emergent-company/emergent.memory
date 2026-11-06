@@ -4510,8 +4510,11 @@ func TestRenderObjectDetailOriginTrail(t *testing.T) {
 	if strings.Contains(region, "font-medium text-base-content") {
 		t.Errorf("origin trail must not mark a crumb active: %s", region)
 	}
-	if strings.Contains(region, `href="/objects"`) {
-		t.Errorf("origin trail must not keep the default Objects crumb: %s", region)
+	if strings.Contains(region, ">Objects</a>") || strings.Contains(region, ">Objects<") {
+		t.Errorf("origin trail must not append the default Objects crumb: %s", region)
+	}
+	if !strings.Contains(region, ">Memory</a>") {
+		t.Errorf("origin trail must still start at the nav group: %s", region)
 	}
 }
 
