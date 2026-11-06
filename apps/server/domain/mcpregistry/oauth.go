@@ -121,6 +121,20 @@ func translateProtocolError(err error) error {
 // endpoints, and scopes needed to drive a connect flow. Metadata documents are
 // fetched over the SSRF-guarded outbound client, and every derived URL is
 // validated before it is fetched.
+//
+// mcpauth.Discover has two fallbacks this adapter does not exercise in its own
+// tests, so they are pinned in pkg/mcpauth instead:
+//
+//   - when the challenge advertises no resource_metadata, Discover consults
+//     /.well-known/oauth-protected-resource on the resource origin. The probe
+//     reports only challenges carrying resource_metadata or authorization_uri;
+//     an advertised document is authoritative, and the authorization_uri-only
+//     form is the only registry-reachable route into this fallback;
+//   - when neither the protected-resource metadata nor an authorization_uri
+//     names a server, Discover uses the resource origin as the authorization
+//     server. Every challenge the probe reports names one of those two inputs,
+//     and both resolve an issuer before this point, so the fallback is only
+//     reached when a metadata document deliberately omits its issuer.
 func discoverAuthRequirement(ctx context.Context, resourceURL string, ch authChallenge) (*authRequirement, error) {
 	req, err := mcpauth.Discover(ctx, mcpauth.DiscoveryConfig{
 		Resource:  resourceURL,
@@ -183,7 +197,8 @@ func registerClient(ctx context.Context, registrationEndpoint, clientName, redir
 		if errors.As(err, &rejected) {
 			return nil, &oauthRegistrationRejected{Status: rejected.Status, Excerpt: rejected.Excerpt}
 		}
-		if errors.Is(err, mcpauth.ErrNoRegistrationEndpoint) {
+		if errors.Is(err, mcpauth.ErrNoRegistrationEndpoint) ||
+			errors.Is(err, mcpauth.ErrClientRequired) {
 			return nil, fmt.Errorf("%w: %v", ErrOAuthClientRequired, err)
 		}
 		return nil, translateProtocolError(err)

@@ -180,9 +180,6 @@ func probeAuthChallenge(ctx context.Context, resourceURL string) (authChallenge,
 		Validate:  oauthValidateURL,
 	})
 	if err != nil {
-		if errors.Is(err, mcpauth.ErrURLNotAllowed) {
-			return authChallenge{}, fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
-		}
 		return authChallenge{}, fmt.Errorf("probing MCP server: %w", err)
 	}
 	if !found {

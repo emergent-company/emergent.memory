@@ -3,6 +3,7 @@ package mcpauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // newTestAS spins up a fake protected-resource + authorization server that
@@ -477,6 +479,197 @@ func TestDiscoverAndRegister_RejectsInternalResource(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "resource URL rejected") {
 		t.Errorf("DiscoverAndRegister() error = %v, want resource URL rejected", err)
+	}
+}
+
+// allowAllURLs is the permissive pre-fetch check the httptest-based discovery
+// tests need (the package's static guard rejects loopback literals).
+func allowAllURLs(context.Context, string) error { return nil }
+
+// TestFetchAuthMetadata_PreservesSentinelChain pins that the aggregate failure
+// keeps an individual candidate's error in the chain. A derived URL rejected by
+// the caller's guard must still be visible to errors.Is, so a caller can tell a
+// blocked URL from an upstream outage.
+func TestFetchAuthMetadata_PreservesSentinelChain(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+
+	blocked := "http://169.254.169.254/.well-known/oauth-authorization-server"
+	d := &discovery{
+		clientFor: func(string) *http.Client { return srv.Client() },
+		validate: func(_ context.Context, raw string) error {
+			if raw == blocked {
+				return errors.New("blocked address")
+			}
+			return nil
+		},
+	}
+	// The first candidate is absent (404); the second is rejected before it is
+	// fetched. That is the transient-failure branch, not ErrMetadataUnavailable.
+	_, err := d.fetchAuthMetadata(context.Background(), []string{srv.URL + "/missing", blocked})
+	if err == nil {
+		t.Fatal("fetchAuthMetadata() error = nil, want a discovery failure")
+	}
+	if !errors.Is(err, ErrURLNotAllowed) {
+		t.Errorf("error = %v, want it to wrap ErrURLNotAllowed", err)
+	}
+	if errors.Is(err, ErrMetadataUnavailable) {
+		t.Errorf("error = %v, must not be ErrMetadataUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), " -> 404") {
+		t.Errorf("error = %v, want it to keep the per-candidate detail", err)
+	}
+}
+
+// TestDiscover_AdvertisedResourceMetadataFailureIsFatal pins that a challenge
+// which advertises resource_metadata is authoritative: when that document
+// cannot be fetched, discovery fails instead of silently falling back to the
+// unadvertised well-known location.
+func TestDiscover_AdvertisedResourceMetadataFailureIsFatal(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/prm", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	// Both would make discovery succeed if the advertised document were
+	// silently skipped.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", writePRM)
+	mux.HandleFunc("/.well-known/oauth-authorization-server/auth/v1", writeASMetadata)
+
+	_, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		Challenge: Challenge{ResourceMetadataURL: srv.URL + "/prm"},
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err == nil {
+		t.Fatal("Discover() error = nil, want a hard failure for the advertised metadata document")
+	}
+	if !strings.Contains(err.Error(), "fetching protected resource metadata") {
+		t.Errorf("error = %v, want it to name the protected-resource metadata fetch", err)
+	}
+	if errors.Is(err, ErrMetadataUnavailable) {
+		t.Errorf("error = %v, must not be ErrMetadataUnavailable (the advertised fetch is a hard error)", err)
+	}
+}
+
+// TestDiscover_UnadvertisedResourceMetadata5xxIsTransient pins the decision for
+// the optional /.well-known/oauth-protected-resource fallback: a 5xx is a
+// transient upstream failure and must surface, not degrade silently into the
+// authorization-server walk (which makes the same 404/410-vs-5xx distinction).
+func TestDiscover_UnadvertisedResourceMetadata5xxIsTransient(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	// Without the decision this walk would succeed and report no error.
+	mux.HandleFunc("/.well-known/oauth-authorization-server", writeASMetadata)
+
+	_, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err == nil {
+		t.Fatal("Discover() error = nil, want the 5xx to surface instead of falling through to the authorization-server walk")
+	}
+	if errors.Is(err, ErrMetadataUnavailable) {
+		t.Errorf("error = %v, must not be ErrMetadataUnavailable (a 5xx is transient)", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error = %v, want it to name the HTTP 500", err)
+	}
+}
+
+// TestDiscover_WellKnownProtectedResourceFallback pins the unadvertised
+// fallback: with no resource_metadata on the challenge, Discover consults
+// /.well-known/oauth-protected-resource on the resource origin.
+func TestDiscover_WellKnownProtectedResourceFallback(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/.well-known/oauth-protected-resource", writePRM)
+	registerRFC8414AS(mux, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "unused"})
+	})
+
+	req, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if want := srv.URL + "/.well-known/oauth-protected-resource"; req.ResourceMetadataURL != want {
+		t.Errorf("ResourceMetadataURL = %q, want %q", req.ResourceMetadataURL, want)
+	}
+	if want := srv.URL + "/auth/v1"; req.AuthorizationServer != want {
+		t.Errorf("AuthorizationServer = %q, want %q", req.AuthorizationServer, want)
+	}
+}
+
+// TestDiscover_ResourceOriginAsAuthorizationServer pins the last fallback: with
+// no protected-resource metadata and no authorization_uri, the resource origin
+// is used as the authorization server.
+func TestDiscover_ResourceOriginAsAuthorizationServer(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// No protected-resource metadata anywhere (the mux's default 404), but the
+	// origin publishes authorization-server metadata.
+	mux.HandleFunc("/.well-known/oauth-authorization-server", writeASMetadata)
+
+	req, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if req.AuthorizationServer != srv.URL {
+		t.Errorf("AuthorizationServer = %q, want the resource origin %q", req.AuthorizationServer, srv.URL)
+	}
+	if req.ResourceMetadataURL != "" {
+		t.Errorf("ResourceMetadataURL = %q, want empty (nothing was published)", req.ResourceMetadataURL)
+	}
+	if req.AuthorizationEndpoint != srv.URL+"/auth" || req.TokenEndpoint != srv.URL+"/token" {
+		t.Errorf("endpoints = (%q, %q), want the origin's metadata", req.AuthorizationEndpoint, req.TokenEndpoint)
+	}
+}
+
+// TestDiscoverAndRegister_DoesNotMutateCallerClient pins that the package
+// bounds its own requests without overwriting a caller-supplied client's
+// timeout policy (the client may be shared across calls).
+func TestDiscoverAndRegister_DoesNotMutateCallerClient(t *testing.T) {
+	srv := newTestAS(t, http.StatusOK, func() map[string]any {
+		return map[string]any{"access_token": "at", "expires_in": 3600}
+	})
+	defer srv.Close()
+
+	caller := srv.Client()
+	caller.Timeout = 7 * time.Second
+
+	if _, err := DiscoverAndRegister(context.Background(), Config{
+		Resource:    srv.URL + "/api/mcp",
+		ClientName:  "Memory",
+		Scopes:      []string{"openid"},
+		RedirectURI: "https://app.example/callback",
+		HTTPClient:  caller,
+	}); err != nil {
+		t.Fatalf("DiscoverAndRegister() error = %v", err)
+	}
+	if caller.Timeout != 7*time.Second {
+		t.Errorf("caller client Timeout = %v after the call, want 7s (must not be mutated)", caller.Timeout)
 	}
 }
 
