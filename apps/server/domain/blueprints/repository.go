@@ -217,6 +217,11 @@ func (r *Repository) ListVersionsByName(ctx context.Context, projectID, name str
 // parse as semver sort below every parseable one, newest first among
 // themselves by plain string compare — a total order, so the result does not
 // depend on the incoming row order.
+//
+// This is the single ordering rule for blueprint version histories: the web UI
+// gallery consumes the order ListVersionsByName returns rather than re-sorting
+// it (issue #15). Keep it that way — a second comparator is what made the
+// gallery disagree with GET /api/blueprints/name/:name/versions.
 func sortVersionsNewestFirst(bps []Blueprint) {
 	sort.SliceStable(bps, func(i, j int) bool {
 		return compareVersionsNewestFirst(bps[i].Version, bps[j].Version) < 0

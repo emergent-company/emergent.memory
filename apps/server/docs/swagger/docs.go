@@ -38052,6 +38052,10 @@ const docTemplate = `{
                     "description": "Model is the model this project resolves to for the failure's family\n(routed \"instance/model\"): the generative model, or the embedding model\nfor an embedding queue. Empty when nothing resolves or the class is\nunrelated.",
                     "type": "string"
                 },
+                "modelType": {
+                    "description": "ModelType is the family Model belongs to (\"generative\" or \"embedding\").\nThe server owns the queue → family mapping, so clients use this instead\nof inferring it from the queue name; a second copy of that map is how the\ntwo drift apart.",
+                    "type": "string"
+                },
                 "remediation": {
                     "type": "string"
                 },
@@ -38075,14 +38079,18 @@ const docTemplate = `{
                 "no_default_model",
                 "model_unusable",
                 "model_unavailable",
-                "base_url"
+                "base_url",
+                "credential",
+                "resource_access"
             ],
             "x-enum-varnames": [
                 "CauseNoProvider",
                 "CauseNoDefaultModel",
                 "CauseModelUnusable",
                 "CauseModelUnavailable",
-                "CauseBaseURL"
+                "CauseBaseURL",
+                "CauseCredential",
+                "CauseResourceAccess"
             ]
         },
         "domain_processingproblems.FailureClass": {

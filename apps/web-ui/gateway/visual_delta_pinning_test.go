@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	ui "github.com/emergent-company/go-daisy/components/ui"
 	"golang.org/x/net/html"
 )
 
@@ -29,7 +30,7 @@ const (
 // h1, rather than a direct child of the mb-6 wrapper above the breadcrumbs.
 // checkHeaderDOM asserts the tile is not a direct wrapper child and shares the
 // h1's inline-flex parent with document order tile < h1. The test also locks the
-// Bare guard (leading tile dropped) and the tile markup itself.
+// chip row's position below the description and the tile markup itself.
 func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 	declared := &AgentDefinition{
 		ID: "a1", Name: "diane", Description: "household assistant",
@@ -68,21 +69,18 @@ func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 		}
 	})
 
-	t.Run("bare drops leading tile", func(t *testing.T) {
-		rendered := renderHTML(t, detailHeader(nil, "", "diane", "", detailHeaderOpts{
-			Margin:       "mb-6",
-			Dashboard:    true,
-			Bare:         true,
-			TitleLeading: agentIconTile("database", "#2563EB"),
+	t.Run("meta chips sit under the description", func(t *testing.T) {
+		rendered := renderHTML(t, detailHeader(nil, "Agents", "diane", "household assistant", detailHeaderOpts{
+			Margin: "mb-6",
+			Meta:   ui.Badge(ui.BadgeProps{Label: "updated 2h ago", Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM}),
 		}))
-		// The Bare guard ignores TitleLeading entirely — no tile icon/class survives.
-		if findElementByClass(parseDOM(t, rendered), strings.Fields(tileMark)...) != nil {
-			t.Error("bare header must drop the leading tile element")
-		}
-		for _, bad := range []string{tileMark, accentedGlyph, neutralGlyph} {
-			if strings.Contains(rendered, bad) {
-				t.Errorf("bare header must drop the leading tile, found %q", bad)
-			}
+		// Chips are page identity/state, not title decoration: they render in
+		// their own row BELOW the description, never around the h1.
+		h1 := strings.Index(rendered, "<h1")
+		desc := strings.Index(rendered, "household assistant")
+		meta := strings.Index(rendered, "data-header-meta")
+		if h1 < 0 || desc < 0 || meta < 0 || h1 >= desc || desc >= meta {
+			t.Fatalf("header order must be title, description, meta: h1=%d desc=%d meta=%d", h1, desc, meta)
 		}
 	})
 }

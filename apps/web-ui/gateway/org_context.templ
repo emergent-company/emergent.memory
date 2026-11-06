@@ -88,7 +88,6 @@ templ OrgLandingPage(data orgPageData) {
 		} else {
 			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name), "", data.Org.Name, "Projects in this organization.", detailHeaderOpts{Margin: "mb-6"}) {
 				<div class="flex items-center gap-2">
-					@countBadge(len(data.Projects), "project", "lucide--folder")
 					if data.IsOrgAdmin {
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeButton,
@@ -663,7 +662,6 @@ templ OrgMembersPage(data orgMembersPageData) {
 		} else {
 			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members"), "", "Members", "People in "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"}) {
 				<div class="flex flex-wrap items-center gap-2">
-					@countBadge(len(data.Members), "member", "lucide--users")
 					if data.IsOrgAdmin {
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeLink,
@@ -1014,7 +1012,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 		if data.LoadErr != nil {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
-			@pageHeader("Organization", "Settings", "Organization-level tool overrides for "+data.Org.Name+".") {}
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Settings", "/orgs/"+url.PathEscape(data.Org.ID)+"/settings", "Tools"), "", "Tools", "Organization-level tool overrides for "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"})
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "tools", data.IsOrgAdmin), nil) {
 			if len(data.Settings) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{

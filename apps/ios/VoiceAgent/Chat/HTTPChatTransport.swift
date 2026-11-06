@@ -259,12 +259,14 @@ final class HTTPChatTransport {
 
     /// Trades the truncated live copy for the finished reply the record now
     /// holds: the record renders on its own, so keeping the partial would stack
-    /// a shorter duplicate underneath it.
+    /// a shorter duplicate underneath it. The banner goes with it — the drop is
+    /// no longer the last word on the turn.
     func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
         guard let interrupted = interruptedTurn else { return }
         liveMessages.removeAll { $0.id == interrupted.liveMessageID }
         transcript.syncLive(liveMessages)
         interruptedTurn = nil
+        errorMessage = nil
     }
 
     // MARK: - Streaming

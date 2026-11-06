@@ -127,9 +127,14 @@ struct HTTPChatTransportFailureTests {
         ))
         await task.value
 
+        // The drop reports itself at the composer while it is the last word.
+        #expect(transport.errorMessage != nil)
+
         transport.discardInterruptedLiveCopy(in: transcript)
 
         #expect(transport.interruptedTurn == nil)
+        // The record supersedes the partial, so the banner goes with the copy.
+        #expect(transport.errorMessage == nil)
         #expect(transcript.liveMessages.contains { $0.role == .assistant } == false)
         // The user's turn stays: only the assistant copy was superseded.
         #expect(transcript.liveMessages.map(\.role) == [.user])

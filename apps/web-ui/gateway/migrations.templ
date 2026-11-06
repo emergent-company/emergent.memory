@@ -167,7 +167,7 @@ templ MigrationsPage(data migrationData) {
 }
 
 templ migrationsHeader() {
-	@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Schema migrations")), "", "Schema migrations", "Rename types and properties across live graph data when a blueprint version changes.", detailHeaderOpts{Margin: "mb-6", Bare: true})
+	@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Schema migrations")), "", "Schema migrations", "Rename types and properties across live graph data when a blueprint version changes.", detailHeaderOpts{Margin: "mb-6"})
 }
 
 templ noMigrationCard() {

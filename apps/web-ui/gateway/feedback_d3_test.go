@@ -177,7 +177,7 @@ func TestRenderOrgLandingHeaderAddProject(t *testing.T) {
 	for _, want := range []string{
 		"Add project",
 		`onclick="openNewProjectModal()"`,
-		`1 project`,
+		`href="/orgs"`, // crumbs start at the nav group
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("admin org landing header missing %q", want)

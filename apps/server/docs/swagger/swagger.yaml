@@ -7154,6 +7154,13 @@ definitions:
           for an embedding queue. Empty when nothing resolves or the class is
           unrelated.
         type: string
+      modelType:
+        description: |-
+          ModelType is the family Model belongs to ("generative" or "embedding").
+          The server owns the queue → family mapping, so clients use this instead
+          of inferring it from the queue name; a second copy of that map is how the
+          two drift apart.
+        type: string
       remediation:
         type: string
       retryable:
@@ -7178,6 +7185,8 @@ definitions:
     - model_unusable
     - model_unavailable
     - base_url
+    - credential
+    - resource_access
     type: string
     x-enum-varnames:
     - CauseNoProvider
@@ -7185,6 +7194,8 @@ definitions:
     - CauseModelUnusable
     - CauseModelUnavailable
     - CauseBaseURL
+    - CauseCredential
+    - CauseResourceAccess
   domain_processingproblems.FailureClass:
     enum:
     - configuration

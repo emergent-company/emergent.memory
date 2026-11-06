@@ -14,12 +14,12 @@ modal, list/detail/settings layouts) use the named-pattern catalog in
 
 ## 1. Page shell & composition
 
-The full document is `appShell` (`ui.templ:27`). It renders the HTML shell
+The full document is `appShell` (`ui.templ:28`). It renders the HTML shell
 (dark theme, sidebar, topbar, scrollable main) rather than go-daisy's
 `layout.PageFull` so the app can self-host htmx v4 with v2-compat config applied
-immediately after load (`ui.templ:23-26`).
+immediately after load (`ui.templ:24-27`).
 
-**Boosted `<main>`** (`ui.templ:120-128`):
+**Boosted `<main>`** (`ui.templ:141-151`):
 
 ```html
 <main id="main-content" hx-boost="true" hx-target="#main-content"
@@ -29,7 +29,7 @@ immediately after load (`ui.templ:23-26`).
 `hx-history-elt="true"` is load-bearing: htmx v4 history restores select the
 `[hx-history-elt]` out of the response and outerSync-swap it. Without it the
 fallback targets `document.body`, which replaces the `<link>`/`<script>`s that
-live in `<body>` (`ui.templ:140-183`) — see the full rationale at `ui.go:201-207`.
+live in `<body>` (`ui.templ:210-224`) — see the full rationale at `ui.go:201-207`.
 
 **Server-side page dispatch** is `Server.page` (`ui.go:208`): `render.IsPartial(r)`
 → `render.RenderPartial(w, r, partialWithTitle(title, content))` (`ui.go:210-217`),
@@ -44,11 +44,15 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 
 | Idiom | Where | Notes |
 |---|---|---|
-| `layout.Container(layout.ContainerLG, nil)` | `ui.templ:234`, `agent.templ:21` | go-daisy L0, `max-w-6xl` |
+| `layout.Container(layout.ContainerLG, nil)` | `ui.templ:288`, `agent.templ:21` | go-daisy L0, `max-w-6xl` |
 | `layout.Rail(nav, nil)` | `agent.templ:26` | sub-page rail (detail pages) |
-| `pageHeader(kicker,title,subtitle)` | `ui.templ:601` | list-page header; plain Go func so children forward into `nav.PageHeading.Actions` |
-| `detailHeader(crumbs,kicker,title,subtitle,opts…)` | `ui.templ:659` | detail-page header; `TitleLeading` routes through `detailHeaderWithTitleLeading` (`ui.templ:698`) |
-| `pageError(heading, err)` | `ui.templ:208` | shared fetch-failure state (`ui.Alert`) |
+| `pageHeader(group,title,description)` | `ui.templ:939` | list-page header; plain Go func so children forward into the action slot |
+| `pageHeaderWithMeta(group,title,description,meta)` | `ui.templ:945` | list header with a chip row under the description |
+| `detailHeader(crumbs,group,title,description,opts…)` | `ui.templ:984` | detail-page header; `group` may be `""` to inherit it from the trail root |
+| `pageHead(headerSpec)` | `ui.templ:802` | **the** header renderer — both wrappers delegate to it |
+| `sectionCount(label)` | `ui.templ:1051` | a collection's own count line, above the table/list it counts |
+| `pageError(heading, err)` | `ui.templ:256` | fetch-failure state for a page whose error state *is* the page (`h1` + `ui.Alert`) |
+| `pageErrorNotice(heading, err)` | `ui.templ:265` | fetch-failure state under an existing header (`h2` label + the same alert) |
 | `ui.Section(title, SectionProps)` | `agent.templ:232` | titled panel + empty state |
 | `components.PanelCard` | `components/panel.templ:13` | `ui.CardRaw` + `memory-density-comfortable` |
 | `components.TableCard` | `components/table.templ:10` | `ui.CardRaw` + `memory-density-flush` (zero padding, table meets edges) |
@@ -59,17 +63,55 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 | `components.StatusBadge` | `components/badge.templ:24` | L1 domain adapter |
 
 `pageHeader`/`detailHeader` are **Go functions, not templ components**, because
-their children must forward into `nav.PageHeading`'s `Actions` slot and templ
-components clear children context before the body runs (`ui.templ:596-600`,
-`ui.templ:651-658`).
+their children must forward into the header's action slot and templ components
+clear children context before the body runs (`ui.templ:945-951`,
+`ui.templ:984-990`). Both are thin wrappers over `pageHead(headerSpec)`, which is
+the only header renderer: one title scale, one description measure, one place
+the action row and chip row are positioned.
 
-**Known divergence — `objectDetailHeader`** (`objects.templ:647`) is the one
-detail header not built on `detailHeader`. It hand-rolls breadcrumbs + title row
-because it needs a type chip/badges *before* the `h1` and `nav.PageHeading`'s
-`Leading` slot renders above the breadcrumbs, not inline. The **convention** is
-`detailHeader` (or `pageHeader` for lists); `objectDetailHeader` is the
-documented exception, not a second pattern. Prefer extending `detailHeader`
-opts over forking another header.
+**The header contract** (all pages, every route):
+
+1. **Crumbs first**, always, starting with the **nav group** the page lives in
+   (`Work`, `Agents`, `Memory`, `Project` — the sidebar's groups) and ending
+   with the current page as an active, non-navigable item. Both maps are
+   **derived from the sidebar** rather than written down beside it: a group's
+   landing page is its first item (`navGroupHref` = `groupLandings()`,
+   `ui.templ:679,695`) and a section's group is the group it is listed under
+   (`sectionGroup` = `sectionGroups()`, `ui.templ:686,710`). A regrouped sidebar
+   therefore cannot leave a header pointing at a retired page — #180 renamed
+   *Memory Browser* → *Memory* and *Settings* → *Project*, and a hand-written
+   map kept rendering the old vocabulary. A detail trail names its section root
+   and inherits the group from it; a group that is also the trail's root is
+   folded, never repeated (folded by label **and** by landing URL, so an
+   `Objects` trail under the `Memory` group does not render `Memory → Objects`
+   twice). Ungrouped top-level pages (Chat, Search, Sessions, Approvals, Inbox,
+   Organizations) render a single active crumb — a trail root that is a real
+   page (the org list) stays a link.
+
+   Breadcrumbs render uppercase from `webui/css/app.css` (`.breadcrumbs.text-sm`) —
+   never per call site.
+2. **`h1` is text only.** Title scale is `text-2xl font-bold tracking-tight
+   lg:text-3xl` everywhere. `TitleLeading` is for an identity tile (the agent
+   icon), never a badge.
+3. **Chips go under the description** (`Meta`: type, branch, status, version,
+   "updated …"). Never inline with the title, never in the action slot.
+4. **Counts are not header material.** A count belongs to the collection it
+   counts — `sectionCount` above the table, or the section/table's own summary.
+5. **One `h1` per page.** `pageError` is for a page whose error state *is* the
+   page; a page (or a swapped fragment) that already rendered its header uses
+   `pageErrorNotice`, so the error never adds a second `h1`.
+6. **Actions sit on the right**: zero, one, or two render inline; three or more
+   keep the first inline and collapse the rest behind a "More" dropdown
+   (`headerActions`, `ui.templ:852`). A destructive entry carries `Danger: true`
+   so it reads as destructive inside the menu too. The backups detail page is
+   the one page with three actions today (back / download / delete).
+
+`objectDetailHeader` (`objects.templ:902`) now renders through `detailHeader`
+with `Meta`, so object pages share the same header. Its one special case is
+`detailHeaderOpts.KeepTrailLinks`: an **origin trail** (an object opened out of
+a document's extraction history, a run opened from its schedule) describes where
+the page was reached from, so the trail keeps every link and marks nothing
+active — the `h1` names the page.
 
 ---
 
@@ -90,12 +132,12 @@ reports what did change instead of failing the whole request.
 | Helper | Where | Does |
 |---|---|---|
 | `flashToast(kind, message)` | `ui.go:163` | inline script pushing into the Alpine `#toast-container` queue, or stashing `sessionStorage["memory-toast"]` for full loads; duration from `toastDurationMs` (`error` → `0`) |
-| `flashToasts(flashMsg, flashErr)` | `ui.templ:1029` | renders error-then-success toast pair; both skipped when unset |
+| `flashToasts(flashMsg, flashErr)` | `ui.templ:1337` | renders error-then-success toast pair; both skipped when unset |
 | `flashError(c)` | `ui.go:185` | decodes `?err=`; `"1"` is the legacy generic-failure sentinel |
 | `redirectWithError(c, path, err)` | `ui.go:178` | 303 to `path?err=<urlencoded>` |
 | `render.RedirectAfterMutation(w,r,path)` | go-daisy `render/render.go:129` | `HX-Redirect`+200 for HTMX requests, 303 otherwise |
 
-The toast queue itself is `ui.ToastQueueWithProps` in the shell (`ui.templ:80`),
+The toast queue itself is `ui.ToastQueueWithProps` in the shell (`ui.templ:93`),
 Alpine-owned (queue add, dismiss timer, countdown, hover-pause — `app.js:36-45`).
 
 **Toast severity.** The queue is severity-driven: an **`error` toast is
@@ -148,7 +190,7 @@ Policy:
 
 Consequences:
 
-- **Boosting is shell-wide** (`hx-boost` on `<main>`, `ui.templ:120-128`), not
+- **Boosting is shell-wide** (`hx-boost` on `<main>`, `ui.templ:141-151`), not
   per-link. Opt a subtree out with `hx-boost="false"` where a full navigation is
   wanted (or the surface has third-party JS that can't survive a swap — see
   `render.ForceReload`, `render/render.go:156`).
@@ -159,7 +201,7 @@ Consequences:
   body (`agent.templ:324`).
 - **`hx-preserve`** (`render/render.go:149`) is available for elements that must
   survive any swap, but is discouraged in favor of rendering those surfaces
-  outside `#main-content` (sidepanel, object preview — `ui.templ:132-138`).
+  outside `#main-content` (sidepanel, object preview — `ui.templ:128-130`).
 
 ### List filters refresh a region, never the document
 
@@ -235,12 +277,12 @@ Legend: L0 = go-daisy primitive, L3 = page-local helper.
 | Visibility listbox | `agent.templ:440-517` + `agent_visibility_dropdown.go:14` | L3 | Alpine `x-data`/`x-show`; closed state rendered **server-side** `style="display:none"` (`agent.templ:491`) |
 | Icon picker | `ui.IconPicker` (go-daisy `icon-picker_templ.go:50` + runtime); used `ui.templ:484`, `agent.templ:403` | L0 | go-daisy runtime `commit()` + hidden input |
 | Color picker | `ui.ColorPicker` (go-daisy `color-picker_templ.go:89` + runtime); used `ui.templ:494`, `agent.templ:416` | L0 | text input is the real form control; swatch synced |
-| Checkbox pickers (skills/delegation) | `checkboxPicker` (`ui.templ:865`); used `ui.templ:508,525`, `agent.templ:591,629` | L3 | `ui.SoftBox` of checkbox rows; visible + hidden empty note |
-| Model select | `modelSelect` (`ui.templ:976`) | L3 | native `<select>` with optgroups + synthetic "(current)" option |
+| Checkbox pickers (skills/delegation) | `checkboxPicker` (`ui.templ:1140`); used `ui.templ:508,525`, `agent.templ:591,629` | L3 | `ui.SoftBox` of checkbox rows; visible + hidden empty note |
+| Model select | `modelSelect` (`ui.templ:1284`) | L3 | native `<select>` with optgroups + synthetic "(current)" option |
 | Native `<dialog>` | `ui.Dialog` (go-daisy `dialog_templ.go:42`, emits `<dialog>`); `agentFormDialog` (`ui.templ:458`) | L0 | `showModal()` via `MemoryApp.openDialog` |
 | Confirm dialog | `ui.ConfirmDialog` (go-daisy `confirm-dialog_templ.go:33`); `deleteConfirmDialog` (`ui.templ:569`) | L0 | `MemoryApp.openDeleteConfirm` |
 | Dialog auto-open | `components.DialogAutoOpen` (`components/dialog.templ:9`) → `data-dialog-autoopen` | L1 | `app.js` opens on load + after htmx swap (`app.js:671-678`) |
-| Toasts | `ui.ToastQueueWithProps` (`ui.templ:80`) + `flashToast` (`ui.go:163`) | L0 | Alpine queue; add/dismiss/countdown; `error` toasts are persistent (`duration 0`) with a close button, others auto-dismiss + click-to-dismiss |
+| Toasts | `ui.ToastQueueWithProps` (`ui.templ:93`) + `flashToast` (`ui.go:163`) | L0 | Alpine queue; add/dismiss/countdown; `error` toasts are persistent (`duration 0`) with a close button, others auto-dismiss + click-to-dismiss |
 | Command palette | `ui.CommandPalette` (`spotlight.templ:48`, go-daisy `command-palette_templ.go:49`) | L0 | `⌘K` modal; rows htmx-nav + uncheck `#spotlight-toggle` |
 | Popover (row action menus) | `ui.Popover` (go-daisy `popover_templ.go:75`); `org_context.templ:80,445-457` | L0 | `window.goDaisy.popover.closeAll()` runtime |
 | CSS-only dropdowns | `ui.Dropdown` (go-daisy `dropdown_templ.go:31`); project switcher `auth_ui.templ:180`, account menu `account_menu.templ:13`, search-mode split button `objects.templ:34`, objects actor picker `objects.templ:225` | L0 | focus/focus-within; no JS, no truthful `aria-expanded` |
@@ -272,7 +314,7 @@ The visibility listbox's `style="display:none"` is **not** redundant with
 - The visibility listbox (`agent.templ:440-517`) — Alpine `x-data`/`x-show`/`x-cloak`.
 - The org bulk-delete toolbar (`org_context.templ:289,310,330`) — Alpine `x-data`/`x-show`.
 
-The toast queue (`ui.templ:80`) is Alpine-owned but comes from go-daisy
+The toast queue (`ui.templ:93`) is Alpine-owned but comes from go-daisy
 (`ui.ToastQueueWithProps`). Everything else is:
 
 - **`data-*` delegation** in `webui/static/js/app.js` (one `document`-level
