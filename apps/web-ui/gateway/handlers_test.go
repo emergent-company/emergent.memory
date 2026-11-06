@@ -520,7 +520,6 @@ type fakeMemory struct {
 	sessionTodos             []SessionTodo                  // returned by ListSessionTodos
 	sessionTodosErr          error                          // failure for ListSessionTodos
 	lastTodosSessionID       string                         // last session id passed to ListSessionTodos
-	cancelAgentID            string                         // last agent id passed to CancelAgentRun
 	cancelRunID              string                         // last run id passed to CancelAgentRun
 	cancelAgentRunErr        error                          // failure for CancelAgentRun
 	// cancelAgentRunCancelled overrides the "row actually cancelled" result of
@@ -925,8 +924,7 @@ func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem,
 	return f.approvals, nil
 }
 
-func (f *fakeMemory) CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error) {
-	f.cancelAgentID = agentID
+func (f *fakeMemory) CancelAgentRun(ctx context.Context, runID string) (bool, error) {
 	f.cancelRunID = runID
 	if f.cancelAgentRunErr != nil {
 		return false, f.cancelAgentRunErr
