@@ -239,8 +239,8 @@ func containsAny(msg string, needles ...string) bool {
 // only a credential failure makes a model test meaningful.
 func resourceAccessDenied(msg string) bool {
 	if !containsAny(msg, "permission denied", "permissions denied", "access denied", "forbidden",
-		"not authorized", "does not have permission", "no permission", "insufficient permission",
-		"lacks permission", "missing permission") {
+		"401", "403", "unauthorized", "not authorized", "does not have permission", "no permission",
+		"insufficient permission", "lacks permission", "missing permission") {
 		return false
 	}
 	return containsAny(msg,

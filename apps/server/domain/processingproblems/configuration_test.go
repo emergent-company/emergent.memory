@@ -27,15 +27,27 @@ func TestClassifyCredentialIsPermission(t *testing.T) {
 // one. The classifier has to say which, because only a credential failure may
 // get the model chip and the live test.
 func TestClassifyResourceAccessIsNotACredentialFailure(t *testing.T) {
-	got := Classify(QueueObjectExtraction, "permission denied reading document doc-1")
-	if got.Class != ClassPermission {
-		t.Fatalf("class = %q, want %q", got.Class, ClassPermission)
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{"permission denied", "permission denied reading document doc-1"},
+		{"forbidden object", "403 Forbidden: caller does not have permission to access object gs://bucket/doc"},
+		{"unauthorized document", "401 unauthorized reading document doc-1"},
 	}
-	if got.Cause != CauseResourceAccess {
-		t.Fatalf("cause = %q, want %q", got.Cause, CauseResourceAccess)
-	}
-	if got.Cause == CauseCredential {
-		t.Fatal("resource access classified as a credential failure")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Classify(QueueObjectExtraction, tc.message)
+			if got.Class != ClassPermission {
+				t.Fatalf("class = %q, want %q", got.Class, ClassPermission)
+			}
+			if got.Cause != CauseResourceAccess {
+				t.Fatalf("cause = %q, want %q", got.Cause, CauseResourceAccess)
+			}
+			if got.Cause == CauseCredential {
+				t.Fatal("resource access classified as a credential failure")
+			}
+		})
 	}
 }
 

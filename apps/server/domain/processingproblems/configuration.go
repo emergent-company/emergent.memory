@@ -62,7 +62,9 @@ func resolveConfiguration(f Failure, state modelstate.State, kind modelstate.Kin
 	model := state.Model(kind)
 	f.Verified = true
 	f.Model = model
-	f.ModelType = string(kind)
+	if model != "" {
+		f.ModelType = string(kind)
+	}
 
 	switch {
 	case f.Cause == CauseBaseURL:

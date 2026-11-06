@@ -74,9 +74,11 @@ type ProcessingProblemFailure struct {
 	Summary     string `json:"summary"`
 	Remediation string `json:"remediation"`
 	Retryable   bool   `json:"retryable"`
-	// Cause narrows a configuration failure to the element that is missing
-	// (no_provider, no_default_model, model_unusable, model_unavailable,
-	// base_url). Empty for classes the copy already describes exactly.
+	// Cause narrows a failure to the element that failed: a configuration
+	// failure's missing element (no_provider, no_default_model, model_unusable,
+	// model_unavailable, base_url), or a permission failure's shape
+	// (credential vs resource_access). Empty for classes the copy already
+	// describes exactly.
 	Cause string `json:"cause,omitempty"`
 	// Model is the generative model the project resolves to, when the failure is
 	// a model-provider problem. The row names it so "the model" is not anonymous.
