@@ -2,8 +2,8 @@ name: Meta CI
 
 # NO `paths:` filter on either trigger.
 #
-# `ci` is the branch-protection-required status check on `main` (the
-# required context list is exactly ["ci"]). A
+# `ci` is a branch-protection-required status check on `main` (the required
+# context list is exactly ["ci", "verify"]; `verify` is the merge-guard job). A
 # path-filtered required check never reports for PRs that do not touch the
 # listed paths, so the required check would simply be absent for those PRs and
 # the whole required-check set would become unenforceable. This workflow is
@@ -46,19 +46,20 @@ name: Meta CI
 # docs-only classifier above deliberately does not do. The rule there is about
 # *required* contexts: a skipped matrix job reports one check run under the
 # unexpanded name, so a required per-leg context would never be reported and the
-# PR would block forever (#797). Branch protection on `main` requires exactly
-# the `ci` context, so no per-leg name is required, and on an un-drafted PR
+# PR would block forever (#797). Branch protection on `main` requires the `ci`
+# and `verify` contexts, so no per-leg name is required, and on an un-drafted PR
 # (`ready_for_review` or any `synchronize`) the legs report normally. Gating a
 # matrix job is safe only while that stays true: if a per-leg context is ever
 # made required, un-gate it in the same change.
 #
-# `merge-guard` still runs as a check but is NOT a required context: a required
-# context is pinned to the app that reports it, and the guard publishes through
-# the Checks API, which a pinned context never credits (#843). The `Reviewed-SHA`
-# marker is enforced by scripts/merge-reviewed-pr.sh in the infra repo (and by
-# hand on paths that skip it), not by branch protection. There is no review bot:
-# a maintainer posts the review verdict as process, not as a check — the
-# required `ci` check does not read it.
+# The `merge-guard` Checks-API run still runs as a check but is NOT a required
+# context: a required context is pinned to the app that reports it, and a check
+# run the guard publishes through the Checks API is never credited to that pin
+# (#843). The required context is the guard's `verify` job check, which since
+# #181 is red whenever no trusted marker names the head. The `Reviewed-SHA`
+# marker is also enforced by scripts/merge-reviewed-pr.sh in the infra repo (and
+# by hand on paths that skip it). There is no review bot: a maintainer posts the
+# review verdict as a comment, and `verify` reads it.
 on:
   push:
     branches: [main]
