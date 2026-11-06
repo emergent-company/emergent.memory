@@ -1,6 +1,6 @@
 # Security Scopes
 
-Every API request is authorized by checking the scopes granted to the bearer token (user session token or API token). This page is the complete reference for all 38 permission scopes.
+Every API request is authorized by checking the scopes granted to the bearer token (user session token or API token). This page is the complete reference for the permission scopes.
 
 ## Scope types
 
@@ -143,19 +143,13 @@ These scopes implicitly grant all listed fine-grained scopes.
 | `agents:write` | includes `chat:admin` |
 | `projects:write` | includes `projects:read` |
 
-!!! warning "What a fine-grained replacement does not cover"
-    A token created now can only carry scopes from the mintable catalogue below.
-    Seven of the reads `data:read` implied are **not** in it — `chunks:read`,
+!!! note "Every umbrella implication is mintable directly"
+    The fine-grained scopes `data:read` and `data:write` imply are all in the
+    mintable catalogue below, so a token created after the retirement can reach
+    the same REST surfaces by requesting them explicitly (`chunks:read`,
     `search:read`, `graph:search:read`, `extraction:read`, `tasks:read`,
-    `user-activity:read`, `notifications:read` — so a new token cannot call the
-    REST endpoints those scopes guard (`GET /api/chunks`, `POST
-    /api/search/unified`, `GET /api/search/trace/:id`, extraction and task
-    listings). Only a token minted before the retirement, which still holds the
-    umbrella, can. Likewise `documents:delete`, `chunks:write`, `ingest:write`,
-    `extraction:write`, `tasks:write`, `user-activity:write` and
-    `notifications:write` are reachable only through `data:write`. The MCP tools
-    are not affected: they are gated on `documents:read`, `search`, `graph:read`
-    and `journal:read`, which the mintable catalogue does provide.
+    `user-activity:read`, `notifications:read`, and the matching writes). The
+    `read` and `write` presets include them.
 
 ---
 
@@ -167,11 +161,25 @@ When creating API tokens via the web UI, CLI or API, only the following scopes c
 |---|---|
 | `documents:read` | Read documents and their content |
 | `documents:write` | Create and update documents |
+| `documents:delete` | Delete documents |
+| `ingest:write` | Trigger document ingestion/parsing |
+| `chunks:read` | Read document chunks |
+| `chunks:write` | Create and update document chunks |
 | `graph:read` | Read graph objects |
 | `graph:write` | Create and update graph objects |
-| `search` | Run hybrid and semantic search |
+| `graph:search:read` | Graph-specific vector search |
+| `search` | Run hybrid and semantic search (MCP) |
+| `search:read` | Unified REST search (vector + keyword) |
 | `journal:read` | Read the project journal |
 | `journal:write` | Append to the project journal |
+| `extraction:read` | View extraction jobs, logs and statistics |
+| `extraction:write` | Create, cancel and retry extraction jobs |
+| `tasks:read` | List and read tasks |
+| `tasks:write` | Resolve and cancel tasks |
+| `notifications:read` | List and read notifications |
+| `notifications:write` | Mark notifications as read |
+| `user-activity:read` | View the user activity log |
+| `user-activity:write` | Write user activity entries |
 | `schema:read` | Read-only access to type registry and template packs |
 | `schema:write` | Install and modify schemas (also grants `schema:migrate`) |
 | `branches:read` | List and inspect graph branches |
@@ -204,7 +212,8 @@ The retired `data:read` / `data:write` umbrellas are **not** assignable. Fine-gr
 | Datasources + discovery | `discovery:read` | `discovery:write` |
 | Tasks | `tasks:read` | `tasks:write` |
 | Notifications | `notifications:read` | `notifications:write` |
-| Extraction jobs | `extraction:read` (via `admin:read`) | `extraction:write` (via `admin:write`) |
+| Extraction jobs | `extraction:read` | `extraction:write` |
+| Document chunks | `chunks:read` | `chunks:write` |
 | MCP server registry | `admin:read` | `admin:write` |
 | Workspace management | `admin:read` | `admin:write` |
 | Workspace images | `admin:read` | `admin:write` |

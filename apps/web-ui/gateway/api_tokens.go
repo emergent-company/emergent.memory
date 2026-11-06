@@ -102,6 +102,14 @@ var apiTokenScopes = []string{
 	"journal:read", "journal:write",
 	"skills:read", "skills:write",
 	"documents:read", "documents:write",
+	// REST scopes the retired data:read/data:write umbrellas used to imply
+	"documents:delete", "ingest:write",
+	"chunks:read", "chunks:write",
+	"search:read", "graph:search:read",
+	"extraction:read", "extraction:write",
+	"tasks:read", "tasks:write",
+	"user-activity:read", "user-activity:write",
+	"notifications:read", "notifications:write",
 	// admin
 	"admin", "admin:all",
 	// project-scoped admin (project membership management; project tokens only)

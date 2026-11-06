@@ -36,8 +36,8 @@ var ErrNotSignedIn = errors.New("project: not signed in")
 // (search-hybrid/search-semantic), graph (entity-search), journal and schema.
 // The remaining data:read implications (chunks:read, search:read,
 // graph:search:read, extraction:read, tasks:*, user-activity:*,
-// notifications:*) are not in the mintable catalogue at all, so no token could
-// carry them either way.
+// notifications:*) are mintable, but the connector does not need them for its
+// MCP tool set, so it keeps the narrower least-privilege set.
 var TokenScopes = []string{
 	"documents:read",
 	"search",

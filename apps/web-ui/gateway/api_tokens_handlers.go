@@ -89,26 +89,31 @@ type apiTokenScopeGroup struct {
 // the picker groups. Other is the fallback for scopes the gateway does not
 // recognise, so an unknown scope is still surfaced rather than hidden.
 const (
-	apiTokenAreaSchemas   = "Schemas"
-	apiTokenAreaData      = "Data"
-	apiTokenAreaDocuments = "Documents"
-	apiTokenAreaGraph     = "Graph"
-	apiTokenAreaBranches  = "Branches"
-	apiTokenAreaAgents    = "Agents"
-	apiTokenAreaProjects  = "Projects"
-	apiTokenAreaJournal   = "Journal"
-	apiTokenAreaSkills    = "Skills"
-	apiTokenAreaAdmin     = "Admin"
-	apiTokenAreaOther     = "Other"
+	apiTokenAreaSchemas       = "Schemas"
+	apiTokenAreaData          = "Data"
+	apiTokenAreaDocuments     = "Documents"
+	apiTokenAreaExtraction    = "Extraction"
+	apiTokenAreaGraph         = "Graph"
+	apiTokenAreaBranches      = "Branches"
+	apiTokenAreaAgents        = "Agents"
+	apiTokenAreaProjects      = "Projects"
+	apiTokenAreaJournal       = "Journal"
+	apiTokenAreaSkills        = "Skills"
+	apiTokenAreaTasks         = "Tasks"
+	apiTokenAreaNotifications = "Notifications"
+	apiTokenAreaUserActivity  = "User activity"
+	apiTokenAreaAdmin         = "Admin"
+	apiTokenAreaOther         = "Other"
 )
 
 // apiTokenAreas is the canonical taxonomy order, used by both the token-table
 // badges and the picker groups.
 var apiTokenAreas = []string{
 	apiTokenAreaSchemas, apiTokenAreaData, apiTokenAreaDocuments,
-	apiTokenAreaGraph, apiTokenAreaBranches, apiTokenAreaAgents,
-	apiTokenAreaProjects, apiTokenAreaJournal, apiTokenAreaSkills,
-	apiTokenAreaAdmin,
+	apiTokenAreaExtraction, apiTokenAreaGraph, apiTokenAreaBranches,
+	apiTokenAreaAgents, apiTokenAreaProjects, apiTokenAreaJournal,
+	apiTokenAreaSkills, apiTokenAreaTasks, apiTokenAreaNotifications,
+	apiTokenAreaUserActivity, apiTokenAreaAdmin,
 }
 
 // apiTokenScopeAreas is the single source of truth mapping every known token
@@ -118,12 +123,19 @@ var apiTokenScopeAreas = map[string]string{
 	"schema:read": apiTokenAreaSchemas, "schema:write": apiTokenAreaSchemas, "schema:migrate": apiTokenAreaSchemas,
 	"data:read": apiTokenAreaData, "data:write": apiTokenAreaData,
 	"documents:read": apiTokenAreaDocuments, "documents:write": apiTokenAreaDocuments,
+	"documents:delete": apiTokenAreaDocuments, "ingest:write": apiTokenAreaDocuments,
+	"chunks:read": apiTokenAreaDocuments, "chunks:write": apiTokenAreaDocuments,
+	"extraction:read": apiTokenAreaExtraction, "extraction:write": apiTokenAreaExtraction,
 	"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
+	"search:read": apiTokenAreaGraph, "graph:search:read": apiTokenAreaGraph,
 	"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
 	"agents:read": apiTokenAreaAgents, "agents:write": apiTokenAreaAgents, "chat:use": apiTokenAreaAgents,
 	"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects, "project:admin": apiTokenAreaProjects,
 	"journal:read": apiTokenAreaJournal, "journal:write": apiTokenAreaJournal,
 	"skills:read": apiTokenAreaSkills, "skills:write": apiTokenAreaSkills,
+	"tasks:read": apiTokenAreaTasks, "tasks:write": apiTokenAreaTasks,
+	"notifications:read": apiTokenAreaNotifications, "notifications:write": apiTokenAreaNotifications,
+	"user-activity:read": apiTokenAreaUserActivity, "user-activity:write": apiTokenAreaUserActivity,
 	"admin": apiTokenAreaAdmin, "admin:all": apiTokenAreaAdmin,
 }
 
@@ -140,7 +152,7 @@ func apiTokenScopeArea(scope string) string {
 // migration, or an execution like chat/search — rather than only read it.
 func apiTokenScopeMutates(scope string) bool {
 	switch scope {
-	case "admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search":
+	case "admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search", "documents:delete":
 		return true
 	}
 	return strings.HasSuffix(scope, ":write")
@@ -203,16 +215,25 @@ var scopePickerGroups = []apiTokenScopeGroup{
 		},
 	},
 	{
-		Label: apiTokenAreaDocuments, Hint: "Documents and their content.",
+		Label: apiTokenAreaDocuments, Hint: "Documents, chunks and their content.",
 		Options: []apiTokenScopeOption{
 			{"documents:read", "Read documents"}, {"documents:write", "Write documents"},
+			{"documents:delete", "Delete documents"}, {"ingest:write", "Trigger ingestion"},
+			{"chunks:read", "Read chunks"}, {"chunks:write", "Write chunks"},
+		},
+	},
+	{
+		Label: apiTokenAreaExtraction, Hint: "Extraction jobs, logs and statistics.",
+		Options: []apiTokenScopeOption{
+			{"extraction:read", "View extraction jobs"}, {"extraction:write", "Manage extraction jobs"},
 		},
 	},
 	{
 		Label: apiTokenAreaGraph, Hint: "Knowledge graph objects, relationships, and search.",
 		Options: []apiTokenScopeOption{
 			{"graph:read", "Read knowledge graph"}, {"graph:write", "Write knowledge graph"},
-			{"search", "Search memory"},
+			{"search", "Search memory (MCP)"}, {"search:read", "Search memory (REST)"},
+			{"graph:search:read", "Graph vector search"},
 		},
 	},
 	{
@@ -244,6 +265,24 @@ var scopePickerGroups = []apiTokenScopeGroup{
 		Label: apiTokenAreaSkills, Hint: "Reusable skills and their content.",
 		Options: []apiTokenScopeOption{
 			{"skills:read", "Read skills"}, {"skills:write", "Write skills"},
+		},
+	},
+	{
+		Label: apiTokenAreaTasks, Hint: "Project tasks.",
+		Options: []apiTokenScopeOption{
+			{"tasks:read", "Read tasks"}, {"tasks:write", "Resolve & cancel tasks"},
+		},
+	},
+	{
+		Label: apiTokenAreaNotifications, Hint: "Notification inbox and preferences.",
+		Options: []apiTokenScopeOption{
+			{"notifications:read", "Read notifications"}, {"notifications:write", "Mark notifications read"},
+		},
+	},
+	{
+		Label: apiTokenAreaUserActivity, Hint: "User activity log.",
+		Options: []apiTokenScopeOption{
+			{"user-activity:read", "Read activity"}, {"user-activity:write", "Write activity entries"},
 		},
 	},
 }

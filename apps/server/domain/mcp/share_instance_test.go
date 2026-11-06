@@ -645,8 +645,11 @@ func TestReadOnlyMCPScopesPinned(t *testing.T) {
 	// equivalents: the share token is minted through Service.Create, which no
 	// longer accepts data:read.
 	want := []string{
-		"documents:read", "search", "graph:read", "journal:read",
-		"schema:read", "agents:read", "projects:read", "chat:use",
+		"documents:read", "search", "search:read", "graph:read",
+		"graph:search:read", "journal:read", "chunks:read",
+		"extraction:read", "tasks:read", "user-activity:read",
+		"notifications:read", "schema:read", "agents:read", "projects:read",
+		"chat:use",
 	}
 	assert.Equal(t, want, readOnlyMCPScopes)
 }

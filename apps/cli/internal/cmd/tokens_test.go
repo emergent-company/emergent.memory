@@ -28,26 +28,37 @@ func TestNormalizeTokenScopes(t *testing.T) {
 			name:  "empty defaults to the read preset",
 			input: nil,
 			expect: []string{
-				"documents:read", "search", "graph:read", "journal:read",
+				"documents:read", "chunks:read", "search", "search:read",
+				"graph:read", "graph:search:read", "journal:read",
 				"schema:read", "agents:read", "projects:read",
+				"extraction:read", "tasks:read", "user-activity:read",
+				"notifications:read",
 			},
 		},
 		{
 			name:  "read preset expands and accepts explicit scopes",
 			input: []string{"read", "branches:read"},
 			expect: []string{
-				"documents:read", "search", "graph:read", "journal:read",
-				"schema:read", "agents:read", "projects:read", "branches:read",
+				"documents:read", "chunks:read", "search", "search:read",
+				"graph:read", "graph:search:read", "journal:read",
+				"schema:read", "agents:read", "projects:read",
+				"extraction:read", "tasks:read", "user-activity:read",
+				"notifications:read", "branches:read",
 			},
 		},
 		{
 			name:  "read and write presets combine without duplicates",
 			input: []string{"read", "write"},
 			expect: []string{
-				"documents:read", "search", "graph:read", "journal:read",
+				"documents:read", "chunks:read", "search", "search:read",
+				"graph:read", "graph:search:read", "journal:read",
 				"schema:read", "agents:read", "projects:read",
-				"documents:write", "graph:write", "schema:write",
-				"agents:write", "projects:write",
+				"extraction:read", "tasks:read", "user-activity:read",
+				"notifications:read",
+				"documents:write", "documents:delete", "chunks:write",
+				"ingest:write", "graph:write", "extraction:write",
+				"tasks:write", "user-activity:write", "notifications:write",
+				"schema:write", "agents:write", "projects:write",
 			},
 		},
 		{
@@ -66,6 +77,27 @@ func TestNormalizeTokenScopes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.expect, normalizeTokenScopes(tt.input))
 		})
+	}
+}
+
+// TestPresetsCoverEveryRetiredUmbrellaImplication pins the CLI boundary of the
+// #80 fix: the default `--scopes read` must include every REST read scope the
+// retired data:read umbrella used to imply (chunks, unified search, extraction,
+// task and notification listings), and the write preset must likewise cover
+// data:write. A default token therefore regains the REST surfaces it lost when
+// the umbrellas were retired.
+func TestPresetsCoverEveryRetiredUmbrellaImplication(t *testing.T) {
+	for _, scope := range []string{
+		"chunks:read", "search:read", "graph:search:read", "extraction:read",
+		"tasks:read", "user-activity:read", "notifications:read",
+	} {
+		assert.Contains(t, tokenScopePresets["read"], scope, "read preset missing %q", scope)
+	}
+	for _, scope := range []string{
+		"documents:delete", "chunks:write", "ingest:write", "extraction:write",
+		"tasks:write", "user-activity:write", "notifications:write",
+	} {
+		assert.Contains(t, tokenScopePresets["write"], scope, "write preset missing %q", scope)
 	}
 }
 
@@ -141,6 +173,10 @@ func TestTokenScopeGroups(t *testing.T) {
 		"branches:read", "branches:write", "search",
 		"journal:read", "journal:write", "skills:read", "skills:write",
 		"documents:read", "documents:write", "project:admin", "admin", "admin:all",
+		"documents:delete", "ingest:write", "chunks:read", "chunks:write",
+		"search:read", "graph:search:read", "extraction:read", "extraction:write",
+		"tasks:read", "tasks:write", "user-activity:read", "user-activity:write",
+		"notifications:read", "notifications:write",
 	} {
 		assert.True(t, names[want], "scope %q missing from tokenScopeGroups", want)
 	}
@@ -148,5 +184,5 @@ func TestTokenScopeGroups(t *testing.T) {
 	for _, retired := range []string{"data:read", "data:write"} {
 		assert.False(t, names[retired], "retired scope %q must not appear in tokenScopeGroups", retired)
 	}
-	assert.Equal(t, 22, count)
+	assert.Equal(t, 36, count)
 }

@@ -57,8 +57,11 @@ type ShareMCPAccessResponse struct {
 // These tokens are minted through Service.Create (a user-facing path), so
 // listing data:read here would now be rejected.
 var readOnlyMCPScopes = []string{
-	"documents:read", "search", "graph:read", "journal:read",
-	"schema:read", "agents:read", "projects:read", "chat:use",
+	"documents:read", "search", "search:read", "graph:read",
+	"graph:search:read", "journal:read", "chunks:read",
+	"extraction:read", "tasks:read", "user-activity:read",
+	"notifications:read", "schema:read", "agents:read", "projects:read",
+	"chat:use",
 }
 
 // emailRegexp is a simple RFC 5322-ish email validator.

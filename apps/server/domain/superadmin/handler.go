@@ -1079,8 +1079,10 @@ func (h *Handler) CreateServiceToken(c echo.Context) error {
 
 	// 3. Create a persistent account-level API token with readonly scopes
 	scopes := []string{
-		"documents:read", "search", "graph:read", "journal:read",
-		"schema:read", "agents:read", "projects:read",
+		"documents:read", "search", "search:read", "graph:read",
+		"graph:search:read", "journal:read", "chunks:read",
+		"extraction:read", "tasks:read", "user-activity:read",
+		"notifications:read", "schema:read", "agents:read", "projects:read",
 	}
 	result, err := h.tokenSvc.CreateAccountToken(ctx, userID, req.Name, scopes)
 	if err != nil {
