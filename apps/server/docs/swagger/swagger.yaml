@@ -9240,6 +9240,17 @@ definitions:
     type: object
   domain_schemas.MergePreviewPack:
     properties:
+      author:
+        description: Author is manifest metadata; tolerated, not read.
+        type: string
+      description:
+        description: Description is manifest metadata; tolerated, not read.
+        type: string
+      migrations:
+        allOf:
+        - $ref: '#/definitions/domain_schemas.SchemaMigrationHints'
+        description: Migrations is the manifest's upgrade-path block; tolerated, not
+          read.
       name:
         type: string
       object_type_schemas:
@@ -9254,6 +9265,15 @@ definitions:
         items:
           type: object
         type: array
+      objectTypeSchemas:
+        description: |-
+          ObjectTypeSchemasCamel is the blueprint manifest's camelCase alias for
+          object type definitions. UnmarshalJSON promotes it into ObjectTypes only
+          when no canonical objectTypes value is present, so #164's precedence is
+          unchanged.
+        items:
+          type: object
+        type: array
       objectTypes:
         description: |-
           ObjectTypes is a JSON array of {"name","label","properties",...} objects.
@@ -9262,6 +9282,30 @@ definitions:
         items:
           type: object
         type: array
+      relationship_type_schemas:
+        description: |-
+          RelationshipTypeSchemasSnake is the sibling pack request's snake_case
+          relationship alias; tolerated, not read.
+        items:
+          type: object
+        type: array
+      relationshipTypeSchemas:
+        description: |-
+          RelationshipTypeSchemasCamel is the manifest's camelCase relationship
+          alias; tolerated, not read.
+        items:
+          type: object
+        type: array
+      relationshipTypes:
+        description: |-
+          RelationshipTypes is the manifest's relationship-type list; tolerated,
+          not read. A merge preview only reports object-type collisions.
+        items:
+          type: object
+        type: array
+      version:
+        description: Version is manifest metadata; tolerated, not read.
+        type: string
     type: object
   domain_schemas.MergePreviewRequest:
     properties:
@@ -23517,9 +23561,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: Read-only preview of the type-name collisions and property-level
+      description: 'Read-only preview of the type-name collisions and property-level
         conflicts that would occur if the supplied packs were assigned or created.
-        Makes no database changes.
+        Makes no database changes. Each pack may carry name, objectTypes (and the
+        object_type_schemas, object_types, objectTypeSchemas aliases) plus blueprint-manifest
+        metadata: version, description, author, migrations, relationshipTypes, relationshipTypeSchemas,
+        relationship_type_schemas. The preview consumes object types only; manifest
+        metadata is accepted for shape compatibility but not read. Unknown keys are
+        rejected with a 400 that names the offending field.'
       parameters:
       - description: Project ID (UUID)
         in: path
