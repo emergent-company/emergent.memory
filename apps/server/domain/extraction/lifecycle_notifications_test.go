@@ -26,10 +26,16 @@ type fanoutCall struct {
 	projectID string
 	input     notifications.CreateInput
 	opts      []notifications.FanoutOptions
+	reopened  bool
 }
 
 func (f *fakeProjectNotifier) CreateForProjectMembers(_ context.Context, projectID string, in notifications.CreateInput, opts ...notifications.FanoutOptions) error {
 	f.calls = append(f.calls, fanoutCall{projectID: projectID, input: in, opts: opts})
+	return f.err
+}
+
+func (f *fakeProjectNotifier) CreateOrReopenForProjectMembers(_ context.Context, projectID string, in notifications.CreateInput) error {
+	f.calls = append(f.calls, fanoutCall{projectID: projectID, input: in, reopened: true})
 	return f.err
 }
 
@@ -71,6 +77,7 @@ func TestNotifyProcessingFailed_DeadLetterPayload(t *testing.T) {
 	require.Equal(t, "/documents/doc-1", *call.input.ActionURL)
 	require.NotNil(t, call.input.GroupKey)
 	require.Equal(t, "document.processing_failed:job-1", *call.input.GroupKey)
+	require.True(t, call.reopened, "a repeated job id must refresh the existing failure row, not coalesce it away")
 	// Failures are never actor-excluded: no FanoutOptions is passed at all.
 	require.Empty(t, call.opts, "the member whose run failed must still be notified")
 
