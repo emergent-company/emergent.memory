@@ -12,23 +12,9 @@
 # The schema-pack fields fixed by #161 have no entries: they are typed.
 # The entries below are live waivers for pre-existing debt. Each reason names
 # the shape the field should get and the file it lives in, so the field can be
-# fixed from this file alone. #170 tracks the schemaregistry batch; the seven
-# schemas entries are nested conflict/compiled-type DTOs outside #161's six.
-#
-# schemaregistry request/response DTOs (#170)
-apps/server/domain/schemaregistry/dto.go:SchemaRegistryEntryDTO.json_schema  -- JSON Schema object returned by the registry list; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:ObjectTypeVersionDTO.json_schema  -- JSON Schema object in a registry version snapshot; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:ObjectTypeVersionDTO.ui_config  -- UI config object keyed by control name in a registry version snapshot; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:ObjectTypeVersionDTO.extraction_config  -- extraction config object in a registry version snapshot; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:CreateTypeRequest.json_schema  -- JSON Schema object on the custom-type create request; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:CreateTypeRequest.ui_config  -- UI config object keyed by control name on the custom-type create request; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:CreateTypeRequest.extraction_config  -- extraction config object on the custom-type create request; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:UpdateTypeRequest.json_schema  -- JSON Schema object on the partial-update request; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:UpdateTypeRequest.ui_config  -- UI config object keyed by control name on the partial-update request; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/dto.go:UpdateTypeRequest.extraction_config  -- extraction config object on the partial-update request; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/entity.go:ProjectObjectSchemaRegistry.jsonSchema  -- registered object-type JSON Schema object; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/entity.go:ProjectObjectSchemaRegistry.uiConfig  -- registered object-type UI config object; declare swaggertype:"object" (#170).
-apps/server/domain/schemaregistry/entity.go:ProjectObjectSchemaRegistry.extractionConfig  -- registered object-type extraction config object; declare swaggertype:"object" (#170).
+# fixed from this file alone. The seven schemas entries are nested
+# conflict/compiled-type DTOs outside #161's six; the #170 schemaregistry batch
+# is typed, so it has no entries.
 #
 # nested schemas conflict/compiled-type DTOs (outside #161's six)
 apps/server/domain/schemas/entity.go:ObjectTypeSchema.properties  -- JSON Schema property map (object) on the compiled-type DTO; declare swaggertype:"object".

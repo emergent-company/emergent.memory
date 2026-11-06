@@ -11,15 +11,29 @@ import (
 type ProjectObjectSchemaRegistry struct {
 	bun.BaseModel `bun:"table:kb.project_object_schema_registry,alias:ptr"`
 
-	ID                  string          `bun:"id,pk,type:uuid" json:"id"`
-	ProjectID           string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	TypeName            string          `bun:"type_name,notnull" json:"typeName"`
-	Source              string          `bun:"source,notnull" json:"source"` // 'template', 'custom', 'discovered'
-	SchemaID            *string         `bun:"schema_id,type:uuid" json:"schemaId,omitempty"`
-	SchemaVersion       int             `bun:"schema_version,notnull,default:1" json:"schemaVersion"`
-	JSONSchema          json.RawMessage `bun:"json_schema,type:jsonb,notnull" json:"jsonSchema"`
-	UIConfig            json.RawMessage `bun:"ui_config,type:jsonb" json:"uiConfig,omitempty"`
-	ExtractionConfig    json.RawMessage `bun:"extraction_config,type:jsonb" json:"extractionConfig,omitempty"`
+	ID            string  `bun:"id,pk,type:uuid" json:"id"`
+	ProjectID     string  `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	TypeName      string  `bun:"type_name,notnull" json:"typeName"`
+	Source        string  `bun:"source,notnull" json:"source"` // 'template', 'custom', 'discovered'
+	SchemaID      *string `bun:"schema_id,type:uuid" json:"schemaId,omitempty"`
+	SchemaVersion int     `bun:"schema_version,notnull,default:1" json:"schemaVersion"`
+	// JSONSchema is the registered type's JSON Schema object. Writers: the
+	// HTTP CreateType/UpdateType handlers (verbatim), template pack
+	// install/merge/restore (each pack object-type schema is an object), the
+	// MCP create-schema tool (json.Marshal of the type map) and the
+	// Session/Message migration backfill (pack array elements). No in-tree
+	// writer stores an array.
+	JSONSchema json.RawMessage `bun:"json_schema,type:jsonb,notnull" json:"jsonSchema" swaggertype:"object"`
+	// UIConfig is one type's presentation config object, e.g.
+	// {"icon":"building","color":"#4f46e5"}. HTTP CreateType/UpdateType store
+	// it verbatim; pack install/restore copy the type's ui_configs[typeName]
+	// entry. It is not a map keyed by control name or by type name.
+	UIConfig json.RawMessage `bun:"ui_config,type:jsonb" json:"uiConfig,omitempty" swaggertype:"object"`
+	// ExtractionConfig is one type's extraction config object, e.g.
+	// {"system_prompt":"...","field_hints":{...}}. HTTP CreateType/UpdateType
+	// store it verbatim; pack install/restore copy the type's
+	// extraction_prompts[typeName] entry.
+	ExtractionConfig    json.RawMessage `bun:"extraction_config,type:jsonb" json:"extractionConfig,omitempty" swaggertype:"object"`
 	Enabled             bool            `bun:"enabled,notnull,default:true" json:"enabled"`
 	DiscoveryConfidence *float64        `bun:"discovery_confidence" json:"discoveryConfidence,omitempty"`
 	Description         *string         `bun:"description" json:"description,omitempty"`
