@@ -21,7 +21,7 @@ import (
 //   - the pending-invite fetch failed → the whole-page error state.
 templ InviteAcceptPage(data inviteAcceptPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Invitation", "You're invited", "Join a project or organization on emergent.memory.") {}
+		@pageHeader("", "You're invited", "Join a project or organization on emergent.memory.") {}
 		if data.LoadErr != nil {
 			@pageError("Invitation unavailable", data.LoadErr)
 		} else if data.Invite != nil {

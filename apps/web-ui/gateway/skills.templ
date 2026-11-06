@@ -21,7 +21,7 @@ import (
 // button ("" hides it); usedBy maps each skill name to its agent-usage count.
 templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@skillsHeader(len(skills), loadErr == nil, assistantAgent)
+		@skillsHeader(assistantAgent)
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageError("Failed to load skills", loadErr)
@@ -29,18 +29,16 @@ templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error,
 			if len(skills) == 0 {
 				@skillsEmpty()
 			} else {
+				@sectionCount(countLabel(len(skills), "skill", "skills"))
 				@skillsTable(skills, usedBy)
 			}
 		}
 	}
 }
 
-templ skillsHeader(count int, ok bool, assistantAgent string) {
-	@pageHeader("Memory", "Skills", "Reusable capabilities agents can call — write one, attach it to any agent.") {
+templ skillsHeader(assistantAgent string) {
+	@pageHeader("Agents", "Skills", "Reusable capabilities agents can call — write one, attach it to any agent.") {
 		<div class="flex items-center gap-2">
-			if ok {
-				@countBadgeLabel(countLabel(count, "skill", "skills"), "lucide--sparkles")
-			}
 			if assistantAgent != "" {
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeButton,

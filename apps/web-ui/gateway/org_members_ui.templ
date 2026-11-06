@@ -19,10 +19,7 @@ import (
 // /orgs/new. A failed tree fetch renders the whole-page error state.
 templ OrgsPage(data orgsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Workspace", "Organizations", "The organizations you belong to and the projects inside them.") {
-			if data.LoadErr == nil {
-				@countBadge(len(data.Orgs), "org", "lucide--building-2")
-			}
+		@pageHeader("Organizations", "Organizations", "The organizations you belong to and the projects inside them.") {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/orgs/new",
@@ -177,7 +174,7 @@ templ MembersPage(data membersPageData) {
 		subtitle = "People with access to " + data.ProjectName + "."
 	} }}
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Workspace", title, subtitle) {
+		@pageHeader("Settings", title, subtitle) {
 			if data.CanManage {
 				@addMemberButton(base)
 			}
@@ -723,7 +720,7 @@ templ profileSubNav(active string) {
 // the content column.
 templ profilePageFrame(active, title, subtitle, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Account", title, subtitle) {}
+		@pageHeader("", title, subtitle) {}
 		@flashToasts(flashMsg, flashErr)
 		{ children... }
 	}

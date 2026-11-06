@@ -156,7 +156,6 @@ func TestRenderMCPServersPageEmpty(t *testing.T) {
 	html := renderHTML(t, MCPServersPage(mcpServersPageData{}))
 	for _, want := range []string{
 		"No MCP servers yet", `href="/settings/mcp-servers/new"`, "Register a server",
-		"0 servers",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("empty MCPServersPage missing %q", want)

@@ -20,7 +20,7 @@ import (
 // pending embedding work instead.
 templ EmbeddingsPage(data embeddingPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@embeddingsHeader(data.ProgressErr == nil && data.StatusErr == nil)
+		@embeddingsHeader()
 		if data.EmbeddingModelMissing {
 			@embeddingsModelWarning()
 		}
@@ -48,16 +48,8 @@ templ EmbeddingsPage(data embeddingPageData) {
 	}
 }
 
-templ embeddingsHeader(ok bool) {
+templ embeddingsHeader() {
 	@pageHeader("Memory Browser", "Embeddings", "Vector embedding pipeline — queue backlog, worker state, and tuning.") {
-		if ok {
-			@ui.Badge(ui.BadgeProps{
-				Label:   "pipeline status",
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeSM,
-				Icon:    "lucide--scan-line",
-			})
-		}
 	}
 }
 

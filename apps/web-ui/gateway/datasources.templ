@@ -22,7 +22,7 @@ import (
 // state.
 templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@dataSourcesHeader(len(integrations), loadErr == nil)
+		@dataSourcesHeader(loadErr == nil)
 		if loadErr != nil {
 			@pageError("Failed to load data sources", loadErr)
 		} else {
@@ -30,6 +30,7 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 			if len(integrations) == 0 {
 				@dataSourcesEmpty()
 			} else {
+				@sectionCount(countLabel(len(integrations), "source", "sources"))
 				@components.TableCard(nil) {
 					<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Provider';--h3:'Status';--h4:'Sync';--h5:'Last sync';--h6:''">
 						<table class="table table-sm" data-testid="ds-source-table">
@@ -56,12 +57,9 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 	}
 }
 
-templ dataSourcesHeader(count int, ok bool) {
-	@pageHeader("Integrations", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
+templ dataSourcesHeader(ok bool) {
+	@pageHeader("Memory Browser", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
 		<div class="flex flex-wrap items-center gap-2">
-			if ok {
-				@countBadgeLabel(countLabel(count, "source", "sources"), "lucide--cloud")
-			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/data-sources/new",

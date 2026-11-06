@@ -59,7 +59,7 @@ templ RunPage(data runPageData) {
 }
 
 templ runPageHeader(run *ScheduledAgentRun) {
-	@detailHeader(runCrumbTrail(run), "", "Session", runDescription(run)) {
+	@detailHeader(runCrumbTrail(run), "", "Session", runDescription(run), detailHeaderOpts{KeepTrailLinks: true}) {
 		@ui.Badge(ui.BadgeProps{
 			Label:   run.Status,
 			Variant: scheduleStatusIntent(&run.Status),

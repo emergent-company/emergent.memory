@@ -23,7 +23,7 @@ import (
 // feedback from the create/download/delete flows.
 templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@backupsHeader(total, loadErr == nil && unavailable == "")
+		@backupsHeader()
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageError("Failed to load backups", loadErr)
@@ -34,6 +34,7 @@ templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error
 			if len(backups) == 0 {
 				@backupsEmpty()
 			} else {
+				@sectionCount(countLabel(total, "backup", "backups"))
 				if backupsAnyCreating(backups) {
 					@backupsProgressNote()
 					@templ.Raw(`<script type="text/javascript">(function(){setTimeout(function(){window.location.reload();},4000);})();</script>`)
@@ -47,20 +48,21 @@ templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error
 
 // backupsHeader is the page header. The restore marker stays visible in every
 // state so the "not yet available" truth never disappears (design D5).
-templ backupsHeader(total int, ok bool) {
-	@pageHeader("Memory Browser", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.") {
-		<div class="flex flex-wrap items-center gap-2">
-			if ok {
-				@countBadge(total, "backup", "lucide--archive")
-			}
-			@ui.Badge(ui.BadgeProps{
-				Label:   "Restore: later Memory release",
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeXS,
-				Icon:    "lucide--clock",
-			})
-		</div>
+templ backupsHeader() {
+	@pageHeaderWithMeta("Memory Browser", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.", backupsRestoreMeta()) {
 	}
+}
+
+// backupsRestoreMeta is the page's state chip: restore is deliberately not
+// wired yet. It sits under the description, next to the note that explains it,
+// rather than in the action slot.
+templ backupsRestoreMeta() {
+	@ui.Badge(ui.BadgeProps{
+		Label:   "Restore: later Memory release",
+		Variant: ui.BadgeGhost,
+		Size:    ui.BadgeSizeXS,
+		Icon:    "lucide--clock",
+	})
 }
 
 // restoreUnavailableNote documents that restore is deliberately not wired

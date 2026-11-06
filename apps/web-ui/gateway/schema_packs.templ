@@ -21,9 +21,6 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs")), "", "Schema packs", "Active schema packs contributing object and relationship types to this project.") {
 			<div class="flex flex-wrap items-center gap-2">
-				if loadErr == nil {
-					@countBadgeLabel(countLabel(len(packs), "pack", "packs"), "lucide--library")
-				}
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    "/schema/add",
@@ -140,7 +137,7 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 // schemaPackHeader is the pack detail header: breadcrumb, name, description,
 // version, owner, and installed (active) state.
 templ schemaPackHeader(pack *schemaPackSummary) {
-	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
 		<div class="flex flex-wrap items-center gap-2">
 			@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
 			@ownerBadge(*pack, ui.BadgeSizeSM)
@@ -155,7 +152,7 @@ templ schemaPackHeader(pack *schemaPackSummary) {
 // so the Schema page's "Review pack" link never dead-ends on a not-found page.
 templ SchemaPackPendingPage(pack *pendingPack, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
+		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
 			<div class="flex flex-wrap items-center gap-2">
 				@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
 				if pack.PendingReview {

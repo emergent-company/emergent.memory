@@ -55,7 +55,7 @@ templ ComponentGalleryDocument(content templ.Component, feedbackOverlayURL strin
 templ ComponentGalleryPage(entries []GalleryEntry, gaps []AdoptionViewSummary) {
 	{{ total, needsFixture := galleryStats(entries) }}
 	<main class="w-full px-6 sm:px-8" { tpl.Attributes{"data-testid": "component-gallery"}... }>
-		@pageHeader("Dev", "Component gallery", "Reusable gateway templ components, grouped by layer and category. Each renders in its own sandboxed fixture frame.") {
+		@pageHeader("", "Component gallery", "Reusable gateway templ components, grouped by layer and category. Each renders in its own sandboxed fixture frame.") {
 			<span class="badge badge-ghost badge-sm" data-testid="gallery-total">{ countLabel(total, "component", "components") }</span>
 			if needsFixture > 0 {
 				<span class="badge badge-warning badge-outline badge-sm" data-testid="gallery-needs-fixture">{ countLabel(needsFixture, "needs fixture", "need fixtures") }</span>

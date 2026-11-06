@@ -46,8 +46,11 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 |---|---|---|
 | `layout.Container(layout.ContainerLG, nil)` | `ui.templ:234`, `agent.templ:21` | go-daisy L0, `max-w-6xl` |
 | `layout.Rail(nav, nil)` | `agent.templ:26` | sub-page rail (detail pages) |
-| `pageHeader(kicker,title,subtitle)` | `ui.templ:601` | list-page header; plain Go func so children forward into `nav.PageHeading.Actions` |
-| `detailHeader(crumbs,kicker,title,subtitle,opts…)` | `ui.templ:659` | detail-page header; `TitleLeading` routes through `detailHeaderWithTitleLeading` (`ui.templ:698`) |
+| `pageHeader(group,title,description)` | `ui.templ:885` | list-page header; plain Go func so children forward into the action slot |
+| `pageHeaderWithMeta(group,title,description,meta)` | `ui.templ:891` | list header with a chip row under the description |
+| `detailHeader(crumbs,group,title,description,opts…)` | `ui.templ:930` | detail-page header; `group` may be `""` to inherit it from the trail root |
+| `pageHead(headerSpec)` | `ui.templ:760` | **the** header renderer — both wrappers delegate to it |
+| `sectionCount(label)` | `ui.templ:997` | a collection's own count line, above the table/list it counts |
 | `pageError(heading, err)` | `ui.templ:208` | shared fetch-failure state (`ui.Alert`) |
 | `ui.Section(title, SectionProps)` | `agent.templ:232` | titled panel + empty state |
 | `components.PanelCard` | `components/panel.templ:13` | `ui.CardRaw` + `memory-density-comfortable` |
@@ -59,17 +62,42 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 | `components.StatusBadge` | `components/badge.templ:24` | L1 domain adapter |
 
 `pageHeader`/`detailHeader` are **Go functions, not templ components**, because
-their children must forward into `nav.PageHeading`'s `Actions` slot and templ
-components clear children context before the body runs (`ui.templ:596-600`,
-`ui.templ:651-658`).
+their children must forward into the header's action slot and templ components
+clear children context before the body runs (`ui.templ:878-883`,
+`ui.templ:923-929`). Both are thin wrappers over `pageHead(headerSpec)`, which is
+the only header renderer: one title scale, one description measure, one place
+the action row and chip row are positioned.
 
-**Known divergence — `objectDetailHeader`** (`objects.templ:647`) is the one
-detail header not built on `detailHeader`. It hand-rolls breadcrumbs + title row
-because it needs a type chip/badges *before* the `h1` and `nav.PageHeading`'s
-`Leading` slot renders above the breadcrumbs, not inline. The **convention** is
-`detailHeader` (or `pageHeader` for lists); `objectDetailHeader` is the
-documented exception, not a second pattern. Prefer extending `detailHeader`
-opts over forking another header.
+**The header contract** (all pages, every route):
+
+1. **Crumbs first**, always, starting with the **nav group** the page lives in
+   (`Work`, `Agents`, `Memory Browser`, `Settings`, `Organizations`) and ending
+   with the current page as an active, non-navigable item. The group link is
+   the only copy of a group's landing URL (`navGroupHref`, `ui.templ:658`), so
+   navigation and headers cannot drift. A detail trail names its section root
+   and inherits the group from it (`sectionGroup`, `ui.templ:675`); a group that
+   is also the trail's root is folded, never repeated. Ungrouped top-level
+   pages (Chat, Search, Sessions, Usage, Inbox) render a single active crumb.
+   Breadcrumbs render uppercase from `webui/css/app.css` (`.breadcrumbs.text-sm`) —
+   never per call site.
+2. **`h1` is text only.** Title scale is `text-2xl font-bold tracking-tight
+   lg:text-3xl` everywhere. `TitleLeading` is for an identity tile (the agent
+   icon), never a badge.
+3. **Chips go under the description** (`Meta`: type, branch, status, version,
+   "updated …"). Never inline with the title, never in the action slot.
+4. **Counts are not header material.** A count belongs to the collection it
+   counts — `sectionCount` above the table, or the section/table's own summary.
+5. **Actions sit on the right**: zero, one, or two render inline; three or more
+   keep the first inline and collapse the rest behind a "More" dropdown
+   (`headerActions`, `ui.templ:808`). No page has three today — the helper is
+   the guardrail for when one would.
+
+`objectDetailHeader` (`objects.templ:907`) now renders through `detailHeader`
+with `Meta`, so object pages share the same header. Its one special case is
+`detailHeaderOpts.KeepTrailLinks`: an **origin trail** (an object opened out of
+a document's extraction history, a run opened from its schedule) describes where
+the page was reached from, so the trail keeps every link and marks nothing
+active — the `h1` names the page.
 
 ---
 

@@ -22,7 +22,7 @@ import (
 // section is simply empty.
 templ SearchPage(data searchPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@searchHeader(data)
+		@searchHeader()
 		if data.LoadErr != nil {
 			@pageError("Search failed", data.LoadErr)
 		} else {
@@ -50,23 +50,18 @@ templ searchResultsPanel(data searchPageData) {
 	</div>
 }
 
-// searchResultCount is the header's result badge, grouped so a search response
-// can refresh it out of band: the count lives in the header, outside the results
-// region, and would otherwise still show the previous query's total.
+// searchResultCount is the number of hits the query returned, rendered at the
+// head of the results summary. It lives inside the swapped results region, so it
+// always describes the search currently on screen.
 templ searchResultCount(data searchPageData) {
-	if data.Query != "" && data.LoadErr == nil {
-		@countBadgeLabel(countLabel(len(data.Documents)+len(data.Objects), "result", "results"), "lucide--search")
-	}
+	<span data-testid="search-result-count">{ countLabel(len(data.Documents)+len(data.Objects), "result", "results") }</span>
 }
 
-// searchHeader is the standard list-page header, with the shown result count as
-// its only adornment. The badge is wrapped in a stable id so a search response
-// can refresh it out of band: it sits in the header, outside the results region.
-templ searchHeader(data searchPageData) {
-	@pageHeader("Knowledge", "Search", "Search inside ingested documents and across the knowledge graph in one place.") {
-		<span id="search-result-count" class="contents" data-testid="search-result-count">
-			@searchResultCount(data)
-		</span>
+// searchHeader is the standard list-page header. The result count belongs to the
+// results, not the page chrome: it renders in the results summary line, inside
+// the region a search swaps.
+templ searchHeader() {
+	@pageHeader("", "Search", "Search inside ingested documents and across the knowledge graph in one place.") {
 	}
 }
 
@@ -152,13 +147,10 @@ templ searchToolbar(data searchPageData) {
 }
 
 // searchResultsFragment is the response body for a search/filter request: the
-// results region plus the header's result count, which sits outside the region
-// and would otherwise keep showing the previous query's total.
+// results region, which carries its own summary line and therefore its own
+// result count.
 templ searchResultsFragment(data searchPageData) {
 	@searchResultsPanel(data)
-	<span id="search-result-count" class="contents" hx-swap-oob="innerHTML">
-		@searchResultCount(data)
-	</span>
 }
 
 // searchIntro is the pre-query state: what this surface searches and how to use
@@ -214,7 +206,7 @@ templ searchResults(data searchPageData) {
 templ searchResultsNote(data searchPageData) {
 	<div class="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
 		<span class="text-muted-faint min-w-0 truncate text-xs" data-testid="search-results-summary">
-			{ countLabel(len(data.Documents)+len(data.Objects), "result", "results") } matching "{ data.Query }"
+			@searchResultCount(data) matching "{ data.Query }"
 		</span>
 		<div class="text-muted-faint flex shrink-0 items-center gap-3 text-xs">
 			if data.Meta.ExecutionTime.TotalMs > 0 {

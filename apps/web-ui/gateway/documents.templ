@@ -22,7 +22,7 @@ import (
 // as flashMsg.
 templ DocumentsPage(data documentPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@documentsHeader(data.Total, data.LoadErr == nil)
+		@documentsHeader(data.LoadErr == nil)
 		if data.LoadErr != nil {
 			@pageError("Failed to load documents", data.LoadErr)
 		} else {
@@ -36,10 +36,9 @@ templ DocumentsPage(data documentPageData) {
 	}
 }
 
-templ documentsHeader(total int, ok bool) {
-	@pageHeader("Knowledge", "Documents", "Source documents ingested into memory — upload new ones, preview chunks, and trigger extraction.") {
+templ documentsHeader(ok bool) {
+	@pageHeader("Memory Browser", "Documents", "Source documents ingested into memory — upload new ones, preview chunks, and trigger extraction.") {
 		if ok {
-			<span data-testid="documents-count">@countBadgeLabel(documentsCountLabel(total), "lucide--file-text")</span>
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,
 				Variant: ui.ButtonPrimary,
@@ -255,6 +254,9 @@ templ documentsFilterHiddenFilters(data documentPageData) {
 // page.
 templ documentsResults(data documentPageData) {
 	<div id="documents-results" data-testid="documents-results">
+		if data.LoadErr == nil {
+			<div class="mb-2" data-testid="documents-count">@countBadgeLabel(documentsCountLabel(data.Total), "lucide--file-text")</div>
+		}
 		if data.LoadErr != nil {
 			// A filter request that failed to load keeps the page: the error
 			// replaces the list instead of the whole surface (the page path

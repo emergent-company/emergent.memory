@@ -247,7 +247,7 @@ func (st *boardStreamState) push() error {
 	if !st.headerSent || st.lastCount != len(items) {
 		st.headerSent = true
 		st.lastCount = len(items)
-		headerHTML, herr := st.render(boardHeaderRegion(len(items), itemsErr == nil))
+		headerHTML, herr := st.render(boardHeaderRegion())
 		if herr != nil {
 			return herr
 		}

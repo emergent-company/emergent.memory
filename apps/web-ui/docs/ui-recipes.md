@@ -56,7 +56,8 @@ asserting.**
 inside an existing page instead of a dedicated route.
 
 **Instruction:** "Add a `<Entity>` list page using pattern `layout.list`:
-`layout.Container(LG)` → `pageHeader` (with a primary action) → a desktop
+`layout.Container(LG)` → `pageHeader(group, title, description)` (with a primary
+action) → a desktop
 `components.TableCard` table and a mobile list, with an empty state and
 `pageError` on load failure. Follow `AgentsPage`."
 
@@ -65,14 +66,15 @@ inside an existing page instead of a dedicated route.
 ```go
 templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel string, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Control plane", "Agents", "…subtitle…") {
-			// primary create action forwards into nav.PageHeading.Actions
+		@pageHeader("Agents", "Agents", "…subtitle…") {
+			// primary create action forwards into the header action slot
 		}
 		if loadErr != nil {
 			@pageError("Agents unavailable", loadErr)
 		} else if len(agents) == 0 {
 			@agentsEmpty()
 		} else {
+			@sectionCount(countLabel(len(agents), "agent", "agents"))
 			<div class="hidden md:block">@agentsTable(agents)</div>
 			<div class="md:hidden">@agentCardGrid(agents)</div>
 		}
@@ -120,7 +122,7 @@ that also has a text field, `submitFilterFormAttrs` for a query form). Never wir
 a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
 page.
 
-**Source:** `ui.templ:249` (`AgentsPage`), `ui.templ:629` (`pageHeader`),
+**Source:** `ui.templ:249` (`AgentsPage`), `ui.templ:885` (`pageHeader`),
 `ui.templ:224` (`pageError`), `components/table.templ:10`,
 `components/list.templ:10`, `ui.templ:385` (`agentsTable`),
 `gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
@@ -134,9 +136,12 @@ page.
 sections. **Avoid** a hand-rolled header — `detailHeader` is the convention.
 
 **Instruction:** "Add a `<Entity>` detail page using pattern `layout.detail`:
-`layout.Container(LG)` → `detailHeader(crumbs, kicker, title, subtitle)` → stacked
-`ui.Section`/`components.PanelCard` sections; if it has sub-sections, add a
-`layout.Rail` with `components.SettingsRail` + `SubNavItem`."
+`layout.Container(LG)` → `detailHeader(crumbs, group, title, description)` →
+stacked `ui.Section`/`components.PanelCard` sections; if it has sub-sections, add
+a `layout.Rail` with `components.SettingsRail` + `SubNavItem`. Pass `""` for
+`group` on a section-rooted page (it is inherited from the trail root) and fill
+`detailHeaderOpts.Meta` with the page's identity/state chips — never the action
+slot."
 
 **Recipe** (synthesised: `detailHeader` from `schedules.templ:213`, rail from
 `agent.templ:39`):
@@ -157,16 +162,18 @@ Sub-nav rail: `components.SettingsRail` (`components/nav.templ:34`) drives
 `components.SubNav` (`:10`) + `SubNavItem` (`:47`); active item sets
 `aria-current="page"`.
 
-**Contract:** `detailHeader` renders breadcrumbs + `h1`; sub-nav items carry
-`aria-current="page"` when active; page root keeps the `page-<slug>` testid.
+**Contract:** `detailHeader` renders breadcrumbs (nav group first, uppercase) +
+`h1` + description + chip row; no counts and no badges around the title; at most
+two inline actions. Sub-nav items carry `aria-current="page"` when active; page
+root keeps the `page-<slug>` testid.
 
-**Known exception:** `objectDetailHeader` (`objects.templ:874`) hand-rolls a
-type chip before the `h1` because `detailHeader`'s `Leading` slot renders above
-the breadcrumbs. Documented exception — prefer extending `detailHeader` opts.
+**Origin trails:** when the trail describes where the page was reached *from*
+rather than the path to it (`KeepTrailLinks`, e.g. a run opened from its
+schedule), every crumb stays a link and nothing is marked active — the `h1`
+names the page.
 
-**Source:** `ui.templ:687` (`detailHeader`), `ui.templ:726`
-(`detailHeaderWithTitleLeading`), `components/nav.templ:10-53`,
-`schedules.templ:197,212`.
+**Source:** `ui.templ:760` (`pageHead`), `ui.templ:930` (`detailHeader`),
+`components/nav.templ:10-53`, `schedules.templ:197,212`.
 
 ---
 

@@ -21,7 +21,6 @@ templ MCPServerRegistryPage(data mcpRegistryPageData) {
 	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-registry-root": ""}) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Registry")) }}
 		@detailHeader(crumbs, "", "MCP Registry", "A curated set of recommended MCP servers, vetted by Memory. Install remote servers into this project.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadge(len(data.Servers), "result", "lucide--globe")
 		}
 		@mcpRegistrySearchBox(data.Query)
 		@flashToasts(data.FlashMsg, data.FlashErr)
@@ -30,6 +29,7 @@ templ MCPServerRegistryPage(data mcpRegistryPageData) {
 		} else if len(data.Servers) == 0 {
 			@mcpRegistryEmptyState(data.Query)
 		} else {
+			<div class="mb-2 text-[11px] font-semibold tracking-wide text-muted-faint uppercase">{ countLabel(len(data.Servers), "result", "results") }</div>
 			<div class="flex flex-col gap-2">
 				for _, entry := range data.Servers {
 					@mcpRegistryEntry(entry, data.Devices, data.DevicesErr)

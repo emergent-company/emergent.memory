@@ -88,7 +88,6 @@ templ OrgLandingPage(data orgPageData) {
 		} else {
 			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name), "", data.Org.Name, "Projects in this organization.", detailHeaderOpts{Margin: "mb-6"}) {
 				<div class="flex items-center gap-2">
-					@countBadge(len(data.Projects), "project", "lucide--folder")
 					if data.IsOrgAdmin {
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeButton,
@@ -312,6 +311,7 @@ templ OrgLandingPage(data orgPageData) {
 				if pendingCount > 0 {
 					@projectsPendingRefreshNote(data.Org.ID, pendingCount)
 				}
+				@sectionCount(countLabel(len(data.Projects), "project", "projects"))
 				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-flush"}) {
 					@components.TableCard(nil) {
 						if data.IsOrgAdmin {
@@ -663,7 +663,6 @@ templ OrgMembersPage(data orgMembersPageData) {
 		} else {
 			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members"), "", "Members", "People in "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"}) {
 				<div class="flex flex-wrap items-center gap-2">
-					@countBadge(len(data.Members), "member", "lucide--users")
 					if data.IsOrgAdmin {
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeLink,
@@ -706,6 +705,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 				})
 			} else {
 				{{ soleAdmin := orgHasSoleAdmin(data.Members) }}
+				@sectionCount(countLabel(len(data.Members), "member", "members"))
 				@components.TableCard(nil) {
 					@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Member';--h2:'Role';--h3:'Activity';--h4:'Since';--h5:''"}}) {
 						@table.TableHead() {
@@ -1014,7 +1014,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 		if data.LoadErr != nil {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
-			@pageHeader("Organization", "Settings", "Organization-level tool overrides for "+data.Org.Name+".") {}
+			@pageHeader("Organizations", "Settings", "Organization-level tool overrides for "+data.Org.Name+".") {}
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "tools", data.IsOrgAdmin), nil) {
 			if len(data.Settings) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{

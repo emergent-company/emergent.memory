@@ -22,7 +22,7 @@ import (
 // the respond/cancel POST contract.
 templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Approvals")), "", "Approvals", "Human-in-the-loop input — answer pending agent questions and review every tool-approval decision.", detailHeaderOpts{Margin: "mb-6", SubtitleFull: true}) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Approvals")), "", "Approvals", "Human-in-the-loop input — answer pending agent questions and review every tool-approval decision.", detailHeaderOpts{Margin: "mb-6"}) {
 			@ui.Badge(ui.BadgeProps{
 				Label:   "audit",
 				Variant: ui.BadgeGhost,

@@ -266,7 +266,7 @@ templ pageError(heading string, err error) {
 // data loss.
 templ RootUnavailablePage(err error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Home", "Memory", "") {}
+		@pageHeader("", "Memory", "") {}
 		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
 			Your data is safe — Memory is temporarily unavailable and will retry automatically.
 		}
@@ -291,13 +291,14 @@ script openDeleteConfirm(id string, name string) {
 // invitation redirects to the joined project's agents page with ?accepted=1).
 templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel string, loadErr error, flashMsg string) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@agentsHeader(len(agents), loadErr == nil)
+		@agentsHeader()
 		@flashToasts(flashMsg, nil)
 		if loadErr != nil {
 			@pageError("Agents unavailable", loadErr)
 		} else if len(agents) == 0 {
 			@agentsEmpty()
 		} else {
+			@sectionCount(countLabel(len(agents), "agent", "agents"))
 			<div class="hidden md:block">
 				@agentsTable(agents)
 			</div>
@@ -310,22 +311,17 @@ templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel s
 	}
 }
 
-templ agentsHeader(count int, ok bool) {
-	@pageHeader("Control plane", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools.") {
-		<div class="flex items-center gap-2">
-			if ok {
-				@countBadge(count, "agent", "lucide--bot")
-			}
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeButton,
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--plus",
-				OnClick: openAgentForm(""),
-			}) {
-				New agent
-			}
-		</div>
+templ agentsHeader() {
+	@pageHeader("Agents", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools.") {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--plus",
+			OnClick: openAgentForm(""),
+		}) {
+			New agent
+		}
 	}
 }
 
@@ -655,73 +651,283 @@ templ deleteConfirmDialog() {
 
 // --- shared page chrome (extracted from repeated inline markup) ---
 
-// pageHeader renders the standard list-page header: kicker eyebrow + title +
-// subtitle on the left, right-side actions/badges via children.
+// navGroupHref maps a nav-group label to the landing page that the first
+// breadcrumb links to. The labels mirror the sidebar groups in sidebarGroups so
+// the header trail and the navigation cannot drift; this map is the only place
+// a group's landing URL is written down.
+var navGroupHref = map[string]string{
+	"Work":           "/work/board",
+	"Agents":         "/agents",
+	"Memory Browser": "/objects",
+	"Settings":       "/settings",
+	"Organizations":  "/orgs",
+}
+
+// sectionGroup maps the first crumb of a detail trail to the nav group it
+// belongs to. Detail headers pass "" for their group and inherit it from their
+// trail root, so a page names its section once. Labels missing from this map
+// are ungrouped top-level surfaces (Chat, Search, Sessions, Usage, Inbox):
+// their trail starts at the page itself.
+var sectionGroup = map[string]string{
+	"Objects":       "Memory Browser",
+	"Documents":     "Memory Browser",
+	"Embeddings":    "Memory Browser",
+	"Schema":        "Memory Browser",
+	"Data Sources":  "Memory Browser",
+	"Backups":       "Memory Browser",
+	"Agents":        "Agents",
+	"Schedules":     "Agents",
+	"Skills":        "Agents",
+	"Work":          "Work",
+	"Settings":      "Settings",
+	"Blueprints":    "Settings",
+	"Organizations": "Organizations",
+}
+
+// headerCrumbs builds the trail every page header renders: the nav group (as a
+// link) first, then the page's own trail.
 //
-// It is a thin delegate over nav.PageHeading (Flat + Dashboard + no-top-margin
-// variant), which reproduces this header's markup byte-for-byte. It is a plain
-// Go function (not a templ component) so its children forward into PageHeading's
-// Actions slot: templ components clear their children context before the body
-// runs, so a hand-written ComponentFunc reads GetChildren(ctx) directly.
-func pageHeader(kicker, title, subtitle string) templ.Component {
+// A group that is also the trail's root is folded in rather than repeated, so a
+// Settings page reads "SETTINGS / API TOKENS", never "SETTINGS / SETTINGS /".
+// group may be empty for ungrouped pages; the group is then inferred from the
+// trail root (sectionGroup) and left out when that root is ungrouped.
+//
+// markActive marks the last crumb as the current page and drops its link. It is
+// false for a trail that describes where the page was reached FROM (an object
+// opened out of a document's extraction history, a run opened from its
+// schedule): there the h1 names the page, every crumb stays navigable, and the
+// trail carries no current-page item.
+func headerCrumbs(group string, trail []nav.BreadcrumbItem, markActive bool) []nav.BreadcrumbItem {
+	if group == "" && len(trail) > 0 {
+		group = sectionGroup[trail[0].Label]
+	}
+	out := make([]nav.BreadcrumbItem, 0, len(trail)+1)
+	switch {
+	case group == "":
+	case len(trail) > 0 && trail[0].Label == group:
+		// The group is the trail's own root: keep its link, drop the duplicate.
+		out = append(out, trail[0])
+		trail = trail[1:]
+	default:
+		out = append(out, nav.BreadcrumbItem{Label: group, Href: navGroupHref[group]})
+	}
+	out = append(out, trail...)
+	if markActive {
+		if n := len(out); n > 0 {
+			out[n-1].Active = true
+			out[n-1].Href = ""
+		}
+	}
+	return out
+}
+
+// headerSpec is the single page-header contract. Everything the app renders at
+// the top of a page — list or detail — goes through pageHead:
+//
+//	CRUMBS (group link first, uppercase)
+//	Title [leading]                                   [actions]
+//	Description
+//	[Meta: identity/state chips]
+//
+// Counts are not header material: a count belongs to the collection it counts
+// (its table or section heading), never to the page chrome.
+type headerSpec struct {
+	Group       string
+	Crumbs      []nav.BreadcrumbItem
+	Title       string
+	Description string
+	// Meta renders under the description as a chip row (type, branch, status,
+	// version …). Nil renders nothing.
+	Meta templ.Component
+	// Actions renders in the right-hand slot. Two actions is the inline
+	// maximum; three or more collapse behind a "More" dropdown (headerActions).
+	Actions templ.Component
+	// TitleLeading renders immediately before the h1 on the same flex line —
+	// an identity tile, not a badge.
+	TitleLeading templ.Component
+	// KeepTrailLinks renders the trail as an ancestor path: the group is still
+	// prepended, but no crumb is forced active and no link is dropped. Use it
+	// when the current page is not part of the trail (the h1 names the page).
+	KeepTrailLinks bool
+	// Margin is the outer wrapper margin class. Default "mb-6".
+	Margin string
+}
+
+// pageHead renders headerSpec. It is the only page-header implementation: both
+// pageHeader (lists) and detailHeader (detail pages) are thin wrappers, so the
+// title scale, description measure, chip position and action placement cannot
+// drift between surfaces.
+templ pageHead(spec headerSpec) {
+	{{ margin := spec.Margin
+	if margin == "" {
+		margin = "mb-6"
+	}
+	crumbs := headerCrumbs(spec.Group, spec.Crumbs, !spec.KeepTrailLinks) }}
+	<div class={ margin }>
+		if len(crumbs) > 0 {
+			@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
+		}
+		<div class="mt-2 flex flex-wrap items-end justify-between gap-4">
+			<div class="min-w-0">
+				<div class="flex flex-wrap items-center gap-2">
+					if spec.TitleLeading != nil {
+						@spec.TitleLeading
+					}
+					<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ spec.Title }</h1>
+				</div>
+				if spec.Description != "" {
+					<p class="text-base-content/55 mt-1 max-w-2xl text-sm">{ spec.Description }</p>
+				}
+				if spec.Meta != nil {
+					<div class="mt-3 flex flex-wrap items-center gap-2" data-header-meta>
+						@spec.Meta
+					</div>
+				}
+			</div>
+			if spec.Actions != nil {
+				@spec.Actions
+			}
+		</div>
+	</div>
+}
+
+// headerAction is one entry in a page header's action slot.
+type headerAction struct {
+	Label     string
+	Icon      string
+	Href      string
+	OnClick   templ.ComponentScript
+	AriaLabel string
+	Variant   ui.ButtonVariant
+}
+
+// headerActions renders a header's actions: none, one, or two render inline in
+// the right-hand slot; three or more keep the first action inline and collapse
+// the rest behind a "More" dropdown, so the header never grows a wall of
+// buttons.
+templ headerActions(actions []headerAction) {
+	<div class="flex flex-wrap items-center gap-2">
+		if len(actions) == 1 || len(actions) == 2 {
+			for _, a := range actions {
+				@headerActionButton(a)
+			}
+		} else if len(actions) > 2 {
+			@headerActionButton(actions[0])
+			@ui.Dropdown(ui.DropdownEnd, nil) {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--ellipsis",
+					Shape:   ui.ButtonShapeSquare,
+					Attrs:   templ.Attributes{"aria-label": "More actions", "aria-haspopup": "menu"},
+				})
+				@ui.DropdownMenu(templ.Attributes{"aria-label": "More actions", "class": "w-56"}) {
+					for _, a := range actions[1:] {
+						<li role="none">
+							if a.Href != "" {
+								<a href={ templ.URL(a.Href) } role="menuitem" class="min-w-0">
+									if a.Icon != "" {
+										@ui.IconSpan(a.Icon, "size-4 shrink-0")
+									}
+									{ a.Label }
+								</a>
+							} else {
+								<button type="button" role="menuitem" class="min-w-0" onclick={ a.OnClick }>
+									if a.Icon != "" {
+										@ui.IconSpan(a.Icon, "size-4 shrink-0")
+									}
+									{ a.Label }
+								</button>
+							}
+						</li>
+					}
+				}
+			}
+		}
+	</div>
+}
+
+templ headerActionButton(a headerAction) {
+	if a.Href != "" {
+		@ui.Button(ui.ButtonProps{
+			Type:      ui.ButtonTypeLink,
+			Href:      a.Href,
+			Variant:   a.Variant,
+			Size:      ui.ButtonSM,
+			Icon:      a.Icon,
+			AriaLabel: a.AriaLabel,
+		}) {
+			{ a.Label }
+		}
+	} else {
+		@ui.Button(ui.ButtonProps{
+			Type:      ui.ButtonTypeButton,
+			Variant:   a.Variant,
+			Size:      ui.ButtonSM,
+			Icon:      a.Icon,
+			OnClick:   a.OnClick,
+			AriaLabel: a.AriaLabel,
+		}) {
+			{ a.Label }
+		}
+	}
+}
+
+// pageHeader renders the list-page header: the nav group (as a link) and the
+// page title as an active crumb, then the title and description, with children
+// filling the right-hand action slot.
+//
+// It is a plain Go function (not a templ component) so its children forward into
+// the header's action slot: templ components clear their children context before
+// the body runs, so a hand-written ComponentFunc reads GetChildren(ctx)
+// directly.
+func pageHeader(group, title, description string) templ.Component {
+	return pageHeaderWithMeta(group, title, description, nil)
+}
+
+// pageHeaderWithMeta is pageHeader with a chip row rendered under the
+// description (identity/state chips that belong to the page, never counts).
+func pageHeaderWithMeta(group, title, description string, meta templ.Component) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
 		children := templ.GetChildren(ctx)
 		if children == nil {
 			children = templ.NopComponent
 		}
-		return nav.PageHeading(nav.PageHeadingProps{
-			Title:           title,
-			Kicker:          kicker,
-			Subtitle:        subtitle,
-			Actions:         children,
-			Margin:          "mb-6",
-			Dashboard:       true,
-			SubtitleFull:    true,
-			HideBreadcrumbs: true,
-			NoTopMargin:     true,
-			Flat:            true,
+		return pageHead(headerSpec{
+			Group:       group,
+			Crumbs:      []nav.BreadcrumbItem{{Label: title}},
+			Title:       title,
+			Description: description,
+			Meta:        meta,
+			Actions:     children,
 		}).Render(ctx, w)
 	})
 }
 
-// detailHeaderOpts configures detailHeader variants. All fields optional.
+// detailHeaderOpts configures detailHeader. All fields optional.
 type detailHeaderOpts struct {
-	// Margin is the outer wrapper margin class. Default "mb-4".
+	// Margin is the outer wrapper margin class. Default "mb-6".
 	Margin string
-	// Dashboard switches to the dashboard variant: baseline-aligned right-side
-	// actions (items-end), no min-w-0 on the title column, and the larger
-	// lg:text-3xl title.
-	Dashboard bool
-	// Bare drops the flex title/actions row entirely — title (+subtitle) only,
-	// no right-side children. For headers without any actions.
-	Bare bool
-	// SubtitleFull renders the subtitle at full width (no max-w-2xl).
-	SubtitleFull bool
-	// TitleLeading renders inline immediately BEFORE the h1, on the same flex
-	// line — e.g. an agent identity icon tile. nav.PageHeading has no slot for
-	// this (its Leading sits above the breadcrumbs, its TitleAdornment after the
-	// h1), so a non-nil TitleLeading switches detailHeader to a local render of
-	// the same markup. Nil (the default) keeps the header byte-identical for
-	// every existing caller. Ignored when Bare, like every other slot.
+	// TitleLeading renders an identity tile immediately before the h1 (for
+	// example the agent icon tile) — an identity affordance, not a badge.
 	TitleLeading templ.Component
-	// TitleAdornment renders inline next to the h1 (same flex line), after it,
-	// e.g. a version badge. Nil (the default) keeps the h1 markup byte-identical
-	// for every existing caller.
-	TitleAdornment templ.Component
+	// Meta renders identity/state chips under the description: type, branch,
+	// status, version. Nil renders nothing.
+	Meta templ.Component
+	// KeepTrailLinks keeps every trail crumb navigable (see headerSpec).
+	KeepTrailLinks bool
 }
 
-// detailHeader renders a detail-page header: breadcrumb trail, optional kicker
-// eyebrow, h1 (+ optional subtitle), and right-side badges/actions via children.
+// detailHeader renders a detail-page header: breadcrumb trail, h1, description,
+// optional chip row, and right-side actions via children.
 //
-// It is a plain Go function (not a templ component) because its children must be
-// forwarded into the header's Actions slot, a templ.Component prop. templ
-// components clear their children context before the body runs, so `{ children... }`
-// cannot be converted into a Component value there; a hand-written ComponentFunc
-// reads GetChildren(ctx) directly. It delegates to nav.PageHeading by default;
-// a non-nil TitleLeading (an inline-before-h1 icon tile) routes through
-// detailHeaderWithTitleLeading, which renders the same markup locally because
-// PageHeading cannot place a component before its h1.
-func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) templ.Component {
+// group is the nav group the page belongs to; pass "" to inherit it from the
+// trail's root (see headerCrumbs). It is a plain Go function (not a templ
+// component) because its children must forward into the action slot: templ
+// components clear their children context before the body runs, so a
+// hand-written ComponentFunc reads GetChildren(ctx) directly.
+func detailHeader(crumbs []nav.BreadcrumbItem, group, title, description string, opts ...detailHeaderOpts) templ.Component {
 	o := detailHeaderOpts{}
 	if len(opts) > 0 {
 		o = opts[0]
@@ -731,79 +937,18 @@ func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, o
 		if children == nil {
 			children = templ.NopComponent
 		}
-		// TitleLeading is ignored when Bare, matching every other slot (the
-		// leading tile only appears on the dashboard header, never bare).
-		if o.TitleLeading != nil && !o.Bare {
-			margin := o.Margin
-			if margin == "" {
-				margin = "mb-4"
-			}
-			return detailHeaderWithTitleLeading(crumbs, kicker, title, subtitle, margin, o.SubtitleFull, o.Dashboard, o.TitleLeading, o.TitleAdornment, children).Render(ctx, w)
-		}
-		return nav.PageHeading(nav.PageHeadingProps{
-			Title:          title,
-			Breadcrumbs:    crumbs,
-			Kicker:         kicker,
-			Subtitle:       subtitle,
-			TitleAdornment: o.TitleAdornment,
+		return pageHead(headerSpec{
+			Group:        group,
+			Crumbs:       crumbs,
+			Title:        title,
+			Description:  description,
+			Meta:         o.Meta,
+			TitleLeading: o.TitleLeading,
 			Actions:        children,
 			Margin:         o.Margin,
-			Dashboard:      o.Dashboard,
-			Bare:           o.Bare,
-			SubtitleFull:   o.SubtitleFull,
+			KeepTrailLinks: o.KeepTrailLinks,
 		}).Render(ctx, w)
 	})
-}
-
-// detailHeaderWithTitleLeading mirrors nav.PageHeading's markup (both the
-// Dashboard and default variants) but renders titleLeading inline on the title's
-// flex line, immediately before the h1. It exists only for detailHeader's
-// TitleLeading path; every other header stays on PageHeading so its markup is
-// shared. subtitleFull/dashboard/kicker replicate PageHeading's rules.
-templ detailHeaderWithTitleLeading(crumbs []nav.BreadcrumbItem, kicker, title, subtitle, margin string, subtitleFull, dashboard bool, titleLeading, titleAdornment, actions templ.Component) {
-	<div class={ margin }>
-		@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
-		if dashboard {
-			<div class="mt-2 flex flex-wrap items-end justify-between gap-4">
-				<div>
-					<div class="flex flex-wrap items-center gap-2">
-						@titleLeading
-						<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-						if titleAdornment != nil {
-							@titleAdornment
-						}
-					</div>
-					if subtitle != "" {
-						<p class={ "text-muted mt-1", templ.KV("max-w-2xl", !subtitleFull), "text-sm" }>{ subtitle }</p>
-					}
-				</div>
-				if actions != nil {
-					@actions
-				}
-			</div>
-		} else {
-			<div class="mt-2 flex flex-wrap items-center justify-between gap-4">
-				<div class="min-w-0">
-					if kicker != "" {
-						@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-					}
-					<div class="flex flex-wrap items-center gap-2">
-						@titleLeading
-						<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-						if titleAdornment != nil {
-							@titleAdornment
-						}
-					</div>
-					if subtitle != "" {
-						<p class={ "text-muted mt-1", templ.KV("max-w-2xl", !subtitleFull), "text-sm" }>{ subtitle }</p>
-					}
-				</div>
-				if actions != nil {
-					@actions
-				}
-			</div>
-		}
-	</div>
 }
 
 // crumbsActive marks the trailing crumb as the current page (active styling)
@@ -844,6 +989,13 @@ templ chipRow(label, margin string, wrapped bool) {
 templ promptBlock(text string) {
 	@ui.Eyebrow("System prompt", ui.EyebrowProps{Size: "text-[10px]", Margin: "mt-4 mb-2"})
 	<pre class="max-h-80 overflow-auto whitespace-pre-wrap rounded-box border border-base-content/10 bg-base-200/40 p-3 font-mono text-xs leading-relaxed">{ text }</pre>
+}
+
+// sectionCount renders a collection's own count line ("12 documents") above the
+// table or list it counts. Counts belong to the collection, never to the page
+// header, so every page that used to carry one in its header renders it here.
+templ sectionCount(label string) {
+	<div class="mb-2 text-[11px] font-semibold tracking-wide text-muted-faint uppercase">{ label }</div>
 }
 
 // countBadge renders the "N noun(s)" ghost SM badge.

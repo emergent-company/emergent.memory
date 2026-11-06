@@ -19,7 +19,7 @@ import (
 // surface PRG feedback.
 templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem, available []AvailableSchemaItem, drafts []BlueprintRecord, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@blueprintsHeader(len(applied), loadErr == nil)
+		@blueprintsHeader()
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageError("Failed to load blueprints", loadErr)
@@ -36,11 +36,8 @@ templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem,
 	@ui.PopoverScript()
 }
 
-templ blueprintsHeader(count int, ok bool) {
-	@pageHeader("Knowledge", "Blueprints", "Schema packs that extend the graph — install and remove them.") {
-		if ok {
-			@countBadgeLabel(countLabel(count, "blueprint", "blueprints"), "lucide--library")
-		}
+templ blueprintsHeader() {
+	@pageHeader("Settings", "Blueprints", "Schema packs that extend the graph — install and remove them.") {
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeButton,
 			Variant: ui.ButtonPrimary,
@@ -536,7 +533,7 @@ templ BlueprintDetailPage(detail *BlueprintDetail, loadErr error) {
 
 templ blueprintDetailHeader(d *BlueprintDetail) {
 	@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", d.Name, "/blueprints/"+url.PathEscape(d.CanonicalID), "v"+d.Version)), "", d.Name, d.Description, detailHeaderOpts{
-		TitleAdornment: ui.Badge(ui.BadgeProps{Label: "v" + d.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--tag"}),
+		Meta: ui.Badge(ui.BadgeProps{Label: "v" + d.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--tag"}),
 	}) {
 		if d.CanDeriveVersion {
 			@ui.Button(ui.ButtonProps{

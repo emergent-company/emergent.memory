@@ -29,7 +29,6 @@ templ MCPServersPage(data mcpServersPageData) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers")) }}
 		@detailHeader(crumbs, "", "MCP Servers", "Register and maintain the MCP servers that power agent tools.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
-				@countBadge(len(data.Servers), "server", "lucide--server")
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpShareSettingsBase,
@@ -65,6 +64,7 @@ templ MCPServersPage(data mcpServersPageData) {
 				ActionIcon:  "lucide--plus",
 			})
 		} else {
+			@sectionCount(countLabel(len(data.Servers), "server", "servers"))
 			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, srv := range data.Servers {

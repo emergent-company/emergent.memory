@@ -110,36 +110,43 @@ func TestRefactorOutputExact(t *testing.T) {
 	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-base-content/50 text-sm mt-1">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
 	check("ui.ConfirmDialog", got, want)
 
-	// detailHeader default (existing callers)
+	// detailHeader: the nav group is prepended to the page's own trail, the
+	// description keeps the shared measure, and the title uses the one scale.
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "New skill")), "", "New skill", "A name, what it does, and the instructions that make it work."))
-	want = `<div class="mb-4"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/skills" class="">Skills</a></li><li class="font-medium text-base-content"><span class="">New skill</span></li></ul></div><div class="mt-2 flex flex-wrap items-center justify-between gap-4"><div class="min-w-0"><h1 class="text-2xl font-bold tracking-tight">New skill</h1><p class="text-base-content/55 mt-1 max-w-2xl text-sm">A name, what it does, and the instructions that make it work.</p></div></div></div>`
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/agents" class="">Agents</a></li><li class=""><a href="/skills" class="">Skills</a></li><li class="font-medium text-base-content"><span class="">New skill</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">New skill</h1></div><p class="text-base-content/55 mt-1 max-w-2xl text-sm">A name, what it does, and the instructions that make it work.</p></div></div></div>`
 	check("detailHeader default", got, want)
 
-	// detailHeader dashboard variant
-	got = render(detailHeader(crumbsActive(nav.Crumbs("Agents", "/agents", "diane", "/agents/a1")), "", "diane", "household assistant", detailHeaderOpts{Margin: "mb-6", Dashboard: true}),
-		`<span class="badge badge-ghost badge-sm"><span class="iconify lucide--clock size-3"></span>updated 2h ago</span>`)
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/agents" class="">Agents</a></li><li class="font-medium text-base-content"><span class="">diane</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">diane</h1><p class="text-base-content/55 mt-1 max-w-2xl text-sm">household assistant</p></div><span class="badge badge-ghost badge-sm"><span class="iconify lucide--clock size-3"></span>updated 2h ago</span></div></div>`
-	check("detailHeader dashboard", got, want)
+	// detailHeader Meta: identity/state chips render BELOW the description.
+	got = render(detailHeader(crumbsActive(nav.Crumbs("Agents", "/agents", "diane", "/agents/a1")), "", "diane", "household assistant", detailHeaderOpts{Margin: "mb-6", Meta: ui.Badge(ui.BadgeProps{Label: "updated 2h ago", Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--clock"})}))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/agents" class="">Agents</a></li><li class="font-medium text-base-content"><span class="">diane</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">diane</h1></div><p class="text-base-content/55 mt-1 max-w-2xl text-sm">household assistant</p><div class="mt-3 flex flex-wrap items-center gap-2" data-header-meta><span class="badge gap-1 badge-ghost badge-sm"><span class="iconify lucide--clock size-3 shrink-0" aria-hidden="true"></span><span class="">updated 2h ago</span></span></div></div></div></div>`
+	check("detailHeader meta", got, want)
 
-	// detailHeader bare (migrations)
-	got = render(detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Schema migrations")), "", "Schema migrations", "Rename types and properties across live graph data when a blueprint version changes.", detailHeaderOpts{Margin: "mb-6", Bare: true}))
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/blueprints" class="">Blueprints</a></li><li class="font-medium text-base-content"><span class="">Schema migrations</span></li></ul></div><div class="mt-2"><h1 class="text-2xl font-bold tracking-tight">Schema migrations</h1><p class="text-base-content/55 mt-1 text-sm">Rename types and properties across live graph data when a blueprint version changes.</p></div></div>`
-	check("detailHeader bare", got, want)
+	// detailHeader infers the group from the trail root: a Blueprints page
+	// starts at SETTINGS, the group it lives in.
+	got = render(detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Schema migrations")), "", "Schema migrations", "Rename types and properties across live graph data when a blueprint version changes.", detailHeaderOpts{Margin: "mb-6"}))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/settings" class="">Settings</a></li><li class=""><a href="/blueprints" class="">Blueprints</a></li><li class="font-medium text-base-content"><span class="">Schema migrations</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Schema migrations</h1></div><p class="text-base-content/55 mt-1 max-w-2xl text-sm">Rename types and properties across live graph data when a blueprint version changes.</p></div></div></div>`
+	check("detailHeader inferred group", got, want)
 
-	// detailHeader kicker (schema object type)
-	got = render(detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Person")), "Object type", "Person", "", detailHeaderOpts{Margin: "mb-6"}))
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/schema" class="">Schema</a></li><li class="font-medium text-base-content"><span class="">Person</span></li></ul></div><div class="mt-2 flex flex-wrap items-center justify-between gap-4"><div class="min-w-0"><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Object type</p><h1 class="text-2xl font-bold tracking-tight">Person</h1></div></div></div>`
-	check("detailHeader kicker", got, want)
+	// detailHeader on a Schema page inherits Memory Browser; the old "Object
+	// type" eyebrow is gone — crumbs carry the context.
+	got = render(detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Person")), "", "Person", "", detailHeaderOpts{Margin: "mb-6"}))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/objects" class="">Memory Browser</a></li><li class=""><a href="/schema" class="">Schema</a></li><li class="font-medium text-base-content"><span class="">Person</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Person</h1></div></div></div></div>`
+	check("detailHeader object type", got, want)
 
-	// pageHeader — full case (kicker + title + subtitle + one action)
-	got = render(pageHeader("Control plane", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools."), "<span>action</span>")
-	want = `<div class="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Control plane</p><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Agents</h1><p class="text-base-content/55 mt-1 text-sm">The personas Memory can become — pick a model, set the tone, grant tools.</p></div><span>action</span></div>`
-	check("pageHeader full", got, want)
+	// pageHeader: a group landing page collapses to one active crumb.
+	got = render(pageHeader("Agents", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools."), "<span>action</span>")
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class="font-medium text-base-content"><span class="">Agents</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Agents</h1></div><p class="text-base-content/55 mt-1 max-w-2xl text-sm">The personas Memory can become — pick a model, set the tone, grant tools.</p></div><span>action</span></div></div>`
+	check("pageHeader landing", got, want)
 
-	// pageHeader — empty subtitle, no actions
-	got = render(pageHeader("Kicker", "Title", ""))
-	want = `<div class="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Kicker</p><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Title</h1></div></div>`
-	check("pageHeader empty", got, want)
+	// pageHeader: a section page links its group first and marks itself active.
+	got = render(pageHeader("Settings", "Blueprints", ""))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/settings" class="">Settings</a></li><li class="font-medium text-base-content"><span class="">Blueprints</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Blueprints</h1></div></div></div></div>`
+	check("pageHeader section", got, want)
+
+	// pageHeader: an ungrouped page is a single active crumb.
+	got = render(pageHeader("", "Title", ""))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class="font-medium text-base-content"><span class="">Title</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Title</h1></div></div></div></div>`
+	check("pageHeader ungrouped", got, want)
 
 	// checkboxPicker — skill, empty with id
 	got = render(checkboxPicker(checkboxPickerProps{
