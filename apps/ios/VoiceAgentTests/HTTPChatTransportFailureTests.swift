@@ -190,8 +190,9 @@ struct HTTPChatTransportFailureTests {
         #expect(transport.errorMessage == "Model timed out")
     }
 
-    /// The deliberate other half of the rule: a drop the wait never settles keeps
-    /// its banner, because that banner is the only signal the reply was lost.
+    /// The deliberate other half of the rule: when the wait gives up, nothing
+    /// settles the drop, so the truncated copy and its banner stay — that banner
+    /// is the only signal the reply was lost (#213).
     @Test func aDropThatNeverRecoversKeepsItsBanner() async throws {
         let transcript = ChatSessionTranscriptStore()
         let activity = ChatActivityStore()
@@ -210,11 +211,34 @@ struct HTTPChatTransportFailureTests {
         await task.value
 
         let interrupted = try #require(transport.interruptedTurn)
+        let banner = try #require(transport.errorMessage)
         // The banner belongs to this drop, which is what lets a settlement tell
         // it apart from a later turn's failure.
-        #expect(transport.errorMessage == interrupted.failureMessage)
-        // Nothing settled it: both the wait's signal and the banner remain.
-        #expect(transport.errorMessage != nil)
+        #expect(banner == interrupted.failureMessage)
+
+        // The wait spends its whole window on a record that still holds only the
+        // truncated copy, so it gives up and never settles the drop.
+        let client = SequencedSessionLogClient([.success([
+            SessionRecord(kind: "turn", role: "user", text: "hello"),
+            SessionRecord(kind: "turn", role: "assistant", text: "hi the"),
+        ])])
+        await InterruptedTurnRecovery(client: client, attempts: 2, sleep: { _ in }).run(
+            conversationID: "c1",
+            partialText: interrupted.partialText,
+            baseline: 2,
+            isCurrent: { true },
+            apply: { detail in
+                transcript.loadHistory(from: detail)
+                transport.discardInterruptedLiveCopy(in: transcript)
+            }
+        )
+
+        #expect(client.detailCallCount == 2)
+        // Both the wait's signal and the banner survive the give-up.
+        #expect(transport.interruptedTurn != nil)
+        #expect(transport.errorMessage == banner)
+        // And the text the user already saw is still on screen.
+        #expect(transcript.liveMessages.contains { $0.role == .assistant })
     }
 }
 
@@ -247,6 +271,7 @@ final class ServedTurns: @unchecked Sendable {
 
     func next(of turns: [StubTurn]) -> StubTurn {
         defer { index += 1 }
+        guard !turns.isEmpty else { return StubTurn() }
         return turns[min(index, turns.count - 1)]
     }
 }

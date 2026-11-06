@@ -195,29 +195,38 @@ final class ChatSessionTranscriptStore {
     /// Three conditions, each earning its place:
     /// - the record grew past `baseline`, so an older reply cannot pass for this
     ///   one just because it starts the same way;
-    /// - the reply the record holds — every assistant turn after the last user
-    ///   turn, concatenated — opens with what the client already saw;
+    /// - some suffix of the reply's assistant turns opens with what the client
+    ///   already saw;
     /// - it carries more than that, so a record still holding only the truncated
     ///   copy keeps the wait going.
     ///
-    /// The continuation is *not* the rendered timeline's shape. Rendering splits
-    /// entries at a `tools_executed` record, but a reply that called a tool is
-    /// still one reply: `"hi the"`, a tool call, `"re"` is `"hi there"`. Judging
-    /// the concatenation finds it; judging the last rendered entry did not
-    /// (`emergent.memory#213`).
+    /// Suffixes, not one concatenation, because the client's partial can start
+    /// part-way through the recorded reply:
+    /// - rendering splits entries at a `tools_executed` record, but a reply that
+    ///   called a tool is still one reply: `"hi the"`, a tool call, `"re"` is
+    ///   `"hi there"`;
+    /// - the gateway records a function-call-only step as an assistant turn of
+    ///   its own, `"(calls: …)"` (`apps/web-ui/gateway/client_api.go`,
+    ///   `messageRecord`), so a reply with no preamble to its first tool step is
+    ///   stored as `"(calls: …)"` and then the answer — the text the client saw
+    ///   starts after that placeholder.
+    ///
+    /// Judging only the last rendered entry was what #213 found broken; judging
+    /// one concatenation only moves the break to the placeholder shape.
     static func recordedReply(extending partial: String, in detail: SessionDetail, since baseline: Int) -> Bool {
         let opening = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !opening.isEmpty, detail.records.count > baseline else { return false }
-        let continuation = continuation(from: detail.records)
-        return continuation.count > opening.count && continuation.hasPrefix(opening)
+        return replySuffixes(from: detail.records).contains {
+            $0.count > opening.count && $0.hasPrefix(opening)
+        }
     }
 
-    /// Every assistant turn after the last user turn, concatenated in record
-    /// order: the reply to the turn the client is waiting on, whether or not a
-    /// tool call split it.
-    private static func continuation(from records: [SessionRecord]) -> String {
-        var text = ""
-        var collecting = false
+    /// The reply to the turn the client is waiting on — every assistant turn
+    /// after the last user turn — as the text from each turn onward: the client's
+    /// partial may start at any of them, and each continuation extends into the
+    /// ones after it.
+    private static func replySuffixes(from records: [SessionRecord]) -> [String] {
+        var turns: [String] = []
         for record in records {
             switch record.kind {
             case "turn":
@@ -225,19 +234,18 @@ final class ChatSessionTranscriptStore {
                 if role == "user" {
                     // A new user turn starts a new reply; anything recorded for
                     // an earlier one is not the continuation being waited on.
-                    text = ""
-                    collecting = true
+                    turns.removeAll()
                     continue
                 }
-                guard collecting, let turn = record.text else { continue }
-                text += turn
+                guard let text = record.text else { continue }
+                turns.append(text)
             default:
                 // `tools_executed` between assistant segments does not split the
                 // reply; other record kinds carry no reply text.
                 continue
             }
         }
-        return text
+        return turns.indices.map { turns[$0...].joined() }
     }
 
     /// Marks the start of a history fetch (the previous result stays visible
