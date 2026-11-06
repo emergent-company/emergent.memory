@@ -22,7 +22,11 @@
 #
 # The scope is the schema-pack payload structs fixed by #156/#159/#161/#164
 # plus the schemaregistry request/response DTOs that #162 names. Together they
-# are the schema types published in swagger definitions. A domain-wide gate is
+# are the schema types published in swagger definitions. Definition-published
+# types are the rule: ProjectObjectSchemaRegistryVersion is deliberately
+# excluded because it is only registered for schema-drift
+# (internal/schemadrift/models.go:135), never a swagger definition, even though
+# its raw-JSON fields mirror ObjectTypeVersionDTO's. A domain-wide gate is
 # still avoided: the tree has 86 json.RawMessage fields with json tags (68 with
 # no swaggertype) across 40+ packages, most unrelated to schemas. The in-scope
 # fields that are still pre-existing debt are pinned in the allowlist with a
@@ -58,7 +62,7 @@ fi
 #     (#156/#159/#164)
 #   - the nested conflict DTOs those responses return
 #   - the schemaregistry type create/update/version/entry DTOs and the
-#     registered-type row that #162 names (pre-existing debt in #170)
+#     registered-type row that #162 names
 scope='
 apps/server/domain/schemas/entity.go domain_schemas GraphMemorySchema InstalledSchemaItem CreatePackRequest UpdatePackRequest MergePreviewPack MergePreviewConflict SchemaConflict PropertyConflict ObjectTypeSchema
 apps/server/domain/schemaregistry/dto.go domain_schemaregistry SchemaRegistryEntryDTO ObjectTypeVersionDTO CreateTypeRequest UpdateTypeRequest
