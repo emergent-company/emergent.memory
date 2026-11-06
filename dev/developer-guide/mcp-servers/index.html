@@ -3867,7 +3867,10 @@ matches the tools the backend currently offers.</p>
 returns <code>tools</code> plus a <code>templates</code> array (id, label, description, <code>tools</code>,
 <code>toolCount</code>, and <code>default</code> on the preselected one). Creating a share still sends
 an explicit <code>tools</code> list — a template is a UI convenience, not a new request
-field.</p>
+field. The list is required: a request with no <code>tools</code> (or an empty array) is
+rejected with HTTP 422. Shares created before the allowlist existed, and the
+legacy <code>POST /api/projects/{projectId}/mcp/share</code> endpoint, keep an unrestricted
+allowlist and remain read-only through their token scopes.</p>
 <p>The key is shown to <em>you</em> exactly once, on the creation screen. If you also
 entered recipients, they have their own copy; otherwise copy it before closing
 the dialog.</p>
