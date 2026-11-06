@@ -35,18 +35,23 @@ run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
 # cannot mint one.
 #
 # A push changes the head, so the automatic run has no marker that can name it.
-# That state is published as a **neutral** `merge-guard` check ("awaiting
-# review"), not a failure: red on every push put a red check on every in-flight
-# PR and taught lanes to ignore the guard. A trusted marker that rejects the head
-# still publishes a failure. The binding evaluation is the `workflow_dispatch`
-# run the merge wrapper dispatches, which stays red until a trusted marker names
-# the head and says `MERGE`. See the control-repository runbook
-# `docs/merge-guard.md`.
+# On that path the published `merge-guard` CHECK RUN stays **neutral** ("awaiting
+# review" / "awaiting re-review") so an in-flight PR does not collect a red check
+# run, but the `verify` JOB fails: the job conclusion mirrors the verdict. GitHub
+# credits a pinned required context to the job's own check (`verify`, app
+# `github-actions`), not to the Checks-API run this workflow publishes (#843), so
+# failing the job is what lets the platform backstop be restored once branch
+# protection pins it. The `workflow_dispatch` run the merge wrapper dispatches
+# keeps its stricter semantics: it publishes a failure in both states. See the
+# control-repository runbook `docs/merge-guard.md`.
 #
 # Runs from the base branch (`pull_request_target`) so a PR cannot rewrite the
-# verification logic, and publishes an explicit check run on the PR head (the
-# job's own check is attached to the base ref). It never checks out or executes
-# pull-request code: it reads comments through the API and compares strings.
+# verification logic. It also publishes an explicit `merge-guard` check run on
+# the PR head so the human-facing verdict output can stay neutral while the job
+# fails. The job's own `verify` check is attached to the PR head, not the base
+# ref: its `details_url` is `.../actions/runs/<run>/job/<job>`, which is the fact
+# #843 relies on. It never checks out or executes pull-request code: it reads
+# comments through the API and compares strings.
 
 on:
   pull_request_target:
@@ -94,8 +99,10 @@ jobs:
 
           # "No marker yet" and "the marker names an older head" are what a push
           # looks like, not defects. On the automatic run they publish a neutral
-          # check; on the dispatched run they stay failures, because that run
-          # only happens when someone is trying to merge.
+          # check run while the job fails (the check run carries the verdict; the
+          # job conclusion is what a pinned required context credits); on the
+          # dispatched run they publish a failure, because that run only happens
+          # when someone is trying to merge.
           awaiting_review() {
             [[ "${MODE}" == "pull_request_target" ]] || return 1
             echo "awaiting=true" >>"${GITHUB_OUTPUT}"
@@ -359,7 +366,12 @@ jobs:
             | gh api -X POST "repos/${REPO}/check-runs" --input - >/dev/null
 
           echo "merge-guard: published ${conclusion} on ${HEAD}"
-          if [[ "${conclusion}" == "failure" ]]; then
-            echo "::error::merge-guard failed for ${HEAD}; see the check run."
+          # The check run may be neutral ("awaiting review"), but the JOB must
+          # fail: a pinned required context credits the job's own check, not this
+          # Checks-API run (#843). Exit non-zero for any verdict that is not a
+          # pass, neutral included. `continue-on-error: true` on the verify step
+          # keeps this step running.
+          if [[ "${conclusion}" != "success" ]]; then
+            echo "::error::merge-guard verdict for ${HEAD} is ${conclusion}; see the check run."
             exit 1
           fi

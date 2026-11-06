@@ -895,11 +895,6 @@ func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.Bread
 	return crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj)))
 }
 
-// objectDetailHeader intentionally does NOT use the shared detailHeader: it
-// renders a rich chip row (type chip + status/embedding badges) ABOVE the title
-// and uses items-start alignment, neither of which detailHeader models (kicker is
-// a plain string, TitleLeading is inline-before-title, Actions sit on the right,
-// and the flex is hardcoded items-center/items-end).
 // objectDetailHeader renders the object detail page header through the shared
 // detail header: the page's type chip, branch, status and embedding state are
 // chips under the description (never inline with, or above, the title), and the

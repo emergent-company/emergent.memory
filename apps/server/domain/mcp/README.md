@@ -1079,7 +1079,7 @@ POST /api/projects/:projectId/mcp/share
 
 **Implementation notes (`share.go`):**
 
-- Calls `apitokenSvc.Create` with `readOnlyMCPScopes` (`documents:read`, `search`, `graph:read`, `journal:read`, `schema:read`, `agents:read`, `projects:read`, `chat:use`) — the fine-grained read set; the coarse `data:read` umbrella it used to carry is retired from token creation
+- Calls `apitokenSvc.Create` with `readOnlyMCPScopes` (the fine-grained read set: `documents:read`, `chunks:read`, `search`, `search:read`, `graph:read`, `graph:search:read`, `journal:read`, `extraction:read`, `tasks:read`, `user-activity:read`, `notifications:read`, `schema:read`, `agents:read`, `projects:read`, `chat:use`) — the coarse `data:read` umbrella it used to carry is retired from token creation
 - Enforces `project_admin` role via `apitokenSvc.GetUserProjectRole` — returns 403 for non-admins
 - Email addresses are validated (RFC 5322 regex) before token creation — invalid address → 422, no token created
 - Emails dispatched via `emailSvc.Enqueue` (async, non-blocking) using the `mcp-invite` Handlebars template

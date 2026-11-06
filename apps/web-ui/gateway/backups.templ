@@ -49,8 +49,7 @@ templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error
 // backupsHeader is the page header. The restore marker stays visible in every
 // state so the "not yet available" truth never disappears (design D5).
 templ backupsHeader() {
-	@pageHeaderWithMeta("Memory Browser", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.", backupsRestoreMeta()) {
-	}
+	@pageHeaderWithMeta("Project", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.", backupsRestoreMeta())
 }
 
 // backupsRestoreMeta is the page's state chip: restore is deliberately not
@@ -367,42 +366,31 @@ templ backupHeaderMeta(b *Backup) {
 
 // backupDetailHeader is the detail header: title, status/type chips, and the
 // back/download/delete actions. Download is offered only for ready backups.
+//
+// A ready backup carries three actions, so they render through headerActions:
+// the back link stays inline and download/delete collapse behind the More menu
+// instead of pushing a wall of buttons into the header.
 templ backupDetailHeader(b *Backup) {
+	{{ actions := []headerAction{
+		{Label: "Back to backups", Href: "/backups", Variant: ui.ButtonGhost, Icon: "lucide--arrow-left"},
+	}
+	if b.Status == backupStatusReady {
+		actions = append(actions, headerAction{
+			Label:    "Download",
+			Href:     "/backups/" + url.PathEscape(b.ID) + "/download",
+			Variant:  ui.ButtonGhost,
+			Icon:     "lucide--download",
+		})
+	}
+	actions = append(actions, headerAction{
+		Label:   "Delete",
+		Variant: ui.ButtonGhost,
+		Icon:    "lucide--trash-2",
+		Danger:  true,
+		OnClick: templ.JSFuncCall("openDialogByID", "backup-delete-"+b.ID),
+	}) }}
 	@detailHeader(crumbsActive(nav.Crumbs("Backups", "/backups", backupTitle(*b))), "", backupTitle(*b), "A snapshot of the active project's documents, objects, and chat.", detailHeaderOpts{Margin: "mb-6", Meta: backupHeaderMeta(b)}) {
-		<div class="flex flex-wrap items-center gap-2">
-			<div class="flex flex-wrap items-center gap-1">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    "/backups",
-					Variant: ui.ButtonGhost,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--arrow-left",
-				}) {
-					Back to backups
-				}
-				if b.Status == backupStatusReady {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/backups/" + url.PathEscape(b.ID) + "/download",
-						Variant: ui.ButtonGhost,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--download",
-					}) {
-						Download
-					}
-				}
-				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeButton,
-					Variant:    ui.ButtonGhost,
-					Size:       ui.ButtonSM,
-					Icon:       "lucide--trash-2",
-					ExtraClass: "text-error hover:text-error",
-					OnClick:    templ.JSFuncCall("openDialogByID", "backup-delete-"+b.ID),
-				}) {
-					Delete
-				}
-			</div>
-		</div>
+		@headerActions(actions)
 	}
 }
 

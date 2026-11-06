@@ -37,7 +37,7 @@ templ DocumentsPage(data documentPageData) {
 }
 
 templ documentsHeader(ok bool) {
-	@pageHeader("Memory Browser", "Documents", "Source documents ingested into memory — upload new ones, preview chunks, and trigger extraction.") {
+	@pageHeader("Memory", "Documents", "Source documents ingested into memory — upload new ones, preview chunks, and trigger extraction.") {
 		if ok {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,
@@ -160,7 +160,7 @@ templ documentsToolbar(data documentPageData) {
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeSubmit,
 							Variant: ui.ButtonPrimary,
-							Size:    ui.ButtonSM,
+							Size:    ui.ButtonMD,
 							Icon:    "lucide--search",
 						}) {
 							Search
@@ -606,7 +606,7 @@ templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, 
 			@pageError("Document unavailable", loadErr)
 		} else {
 			@documentDetailHeader(doc, "overview")
-			@layout.Rail(documentSubNav(doc.ID, "overview"), nil) {
+			@layout.Rail(documentSubNav(doc, "overview"), nil) {
 				@extractionCard(doc, flashMsg, flashErr, extractionBlocked)
 				@documentDiscoveryCard(doc)
 				@documentPreviewCard(doc, preview)
@@ -616,12 +616,24 @@ templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, 
 }
 
 // documentSubNav is the vertical sub-navigation rail shared by the document
-// Overview, Chunks, and Extraction history views, mirroring agentSubNav.
-templ documentSubNav(documentID, active string) {
-	{{ base := "/documents/" + url.PathEscape(documentID) }}
+// Overview, Chunks, and Extraction history views, mirroring agentSubNav. The
+// chunk count rides on the Chunks entry (rather than a page-header badge) so it
+// stays visible on every document sub-page without taking header space.
+templ documentSubNav(doc *Document, active string) {
+	{{ base := "/documents/" + url.PathEscape(doc.ID)
+	chunksBadge := templ.Component(nil)
+	if doc.Chunks > 0 {
+		chunksBadge = ui.Badge(ui.BadgeProps{
+			Label:   strconv.Itoa(doc.Chunks),
+			Variant: ui.BadgeNeutral,
+			Style:   ui.BadgeStyleSoft,
+			Size:    ui.BadgeSizeXS,
+			Attrs:   templ.Attributes{"data-testid": "document-chunks-count"},
+		})
+	} }}
 	@components.SettingsRail("Document sections", active, []components.RailItem{
 		{Key: "overview", Href: base, Icon: "lucide--file-text", Label: "Overview"},
-		{Key: "chunks", Href: base + "/chunks", Icon: "lucide--braces", Label: "Chunks"},
+		{Key: "chunks", Href: base + "/chunks", Icon: "lucide--braces", Label: "Chunks", Badge: chunksBadge},
 		{Key: "extractions", Href: base + "/extractions", Icon: "lucide--history", Label: "Extraction history"},
 		{Key: "versions", Href: base + "/versions", Icon: "lucide--layers", Label: "Versions"},
 	})
@@ -739,6 +751,7 @@ func documentSectionCrumbs(doc *Document, section string) []nav.BreadcrumbItem {
 templ documentDetailHeader(doc *Document, section string) {
 	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6", Meta: documentHeaderMeta(doc)}) {
 		<div class="flex flex-wrap items-center gap-2">
+
 			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeSubmit,
@@ -853,7 +866,7 @@ templ DocumentChunksPage(doc *Document, chunks []Chunk, loadErr error) {
 			@pageError("Document unavailable", loadErr)
 		} else {
 			@documentDetailHeader(doc, "chunks")
-			@layout.Rail(documentSubNav(doc.ID, "chunks"), nil) {
+			@layout.Rail(documentSubNav(doc, "chunks"), nil) {
 				@chunksSection(chunks)
 				@chunkRollbackDialog()
 			}
@@ -872,7 +885,7 @@ templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error
 			@pageError("Failed to load extraction history", loadErr)
 		} else {
 			@documentDetailHeader(doc, "extractions")
-			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
+			@layout.Rail(documentSubNav(doc, "extractions"), nil) {
 				@flashToastsWarn(flashMsg, warnMsg, flashErr)
 				@extractionHistory(doc.ID, jobs, hint)
 			}
@@ -891,7 +904,7 @@ templ DocumentExtractionPage(doc *Document, d extractionJobDetail, loadErr error
 			@pageError("Extraction run unavailable", loadErr)
 		} else {
 			@documentDetailHeader(doc, "extractions")
-			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
+			@layout.Rail(documentSubNav(doc, "extractions"), nil) {
 				@extractionRunHeader(doc, d)
 				@components.PanelCard("", nil) {
 					@extractionRunBody(doc.ID, d.Job.ID, d, extractionJobActive(d.Job.Status), false)

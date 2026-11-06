@@ -236,7 +236,7 @@ templ schemaDiscoveryJobState(job *discoveryJob) {
 // schemaHeader is the Schema page header: title, subtitle, and the two primary
 // actions (Add schema, Save as blueprint).
 templ schemaHeader(compiled *CompiledSchemaTypes) {
-	@pageHeader("Memory Browser", "Schema", "Compiled object and relationship types from active schema packs and built-in system types.") {
+	@pageHeader("Memory", "Schema", "Compiled object and relationship types from active schema packs and built-in system types.") {
 		<div class="flex flex-wrap items-center gap-2">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,

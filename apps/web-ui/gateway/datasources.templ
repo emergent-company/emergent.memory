@@ -22,7 +22,7 @@ import (
 // state.
 templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@dataSourcesHeader(loadErr == nil)
+		@dataSourcesHeader()
 		if loadErr != nil {
 			@pageError("Failed to load data sources", loadErr)
 		} else {
@@ -57,8 +57,8 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 	}
 }
 
-templ dataSourcesHeader(ok bool) {
-	@pageHeader("Memory Browser", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
+templ dataSourcesHeader() {
+	@pageHeader("Memory", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
 		<div class="flex flex-wrap items-center gap-2">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
@@ -1214,10 +1214,14 @@ templ dsFolderPickerModal(src *DSIntegration) {
 	<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-folder-picker.js")) }></script>
 }
 
+// dataSourceHeaderMeta is the source's state chip row: connection/sync status.
+templ dataSourceHeaderMeta(src *DSIntegration) {
+	@dsStatusBadge(src.Status)
+}
+
 templ dataSourceDetailHeader(src *DSIntegration, providerName string, canSync bool) {
-	@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsSourceName(*src), providerName) {
+	@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsSourceName(*src), providerName, detailHeaderOpts{Margin: "mb-6", Meta: dataSourceHeaderMeta(src)}) {
 		<div class="flex flex-wrap items-center gap-2">
-			@dsStatusBadge(src.Status)
 			if canSync {
 				<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/sync") }>
 					@ui.Button(ui.ButtonProps{
@@ -1518,7 +1522,7 @@ templ DocumentVersionsPage(doc *Document, versions []DocumentVersion, loadErr er
 			@pageError("Document unavailable", loadErr)
 		} else {
 			@documentDetailHeader(doc, "versions")
-			@layout.Rail(documentSubNav(doc.ID, "versions"), nil) {
+			@layout.Rail(documentSubNav(doc, "versions"), nil) {
 				@dsVersionHistory(versions)
 			}
 		}

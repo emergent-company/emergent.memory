@@ -246,10 +246,13 @@ templ memoryLogo() {
 	</div>
 }
 
-// pageError is the shared fetch-failure state.
+// pageError is the shared fetch-failure state. It renders the page's heading in
+// its own right — an error state replaces the header, it does not sit under one
+// — so the title carries the same scale as pageHead's h1 and the two never read
+// as different page sizes.
 templ pageError(heading string, err error) {
 	<div class="mb-4">
-		<h1 class="text-2xl font-semibold tracking-tight">{ heading }</h1>
+		<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ heading }</h1>
 	</div>
 	@ui.Alert(ui.AlertProps{
 		Type:    ui.AlertError,
@@ -652,36 +655,43 @@ templ deleteConfirmDialog() {
 // --- shared page chrome (extracted from repeated inline markup) ---
 
 // navGroupHref maps a nav-group label to the landing page that the first
-// breadcrumb links to. The labels mirror the sidebar groups in sidebarGroups so
-// the header trail and the navigation cannot drift; this map is the only place
-// a group's landing URL is written down.
-var navGroupHref = map[string]string{
-	"Work":           "/work/board",
-	"Agents":         "/agents",
-	"Memory Browser": "/objects",
-	"Settings":       "/settings",
-	"Organizations":  "/orgs",
+// breadcrumb links to. It is **derived from the sidebar** rather than written
+// down here, so a regrouped sidebar cannot leave a header pointing at a page no
+// group lands on (#180 renamed Memory Browser → Memory and Settings → Project;
+// a hand-written map silently kept rendering the retired vocabulary).
+var navGroupHref = groupLandings()
+
+// sectionGroup maps a trail's root label to the nav group that owns it. Every
+// sidebar item is a section, and its group is the group it is listed under, so
+// this is derived from the same source. Labels missing from it are ungrouped
+// surfaces (Chat, Search, Sessions, Approvals, Inbox, Organizations): their
+// trail starts at the page itself.
+var sectionGroup = sectionGroups()
+
+// groupLandings builds navGroupHref from sidebarGroups: a group's landing page
+// is its first item. isOrgAdmin is true so admin-gated entries (Backups) still
+// resolve to their group in headers a non-admin never sees.
+func groupLandings() map[string]string {
+	out := map[string]string{}
+	for _, g := range sidebarGroups("", true) {
+		if len(g.Items) == 0 {
+			continue
+		}
+		out[g.Label] = g.Items[0].Href
+	}
+	return out
 }
 
-// sectionGroup maps the first crumb of a detail trail to the nav group it
-// belongs to. Detail headers pass "" for their group and inherit it from their
-// trail root, so a page names its section once. Labels missing from this map
-// are ungrouped top-level surfaces (Chat, Search, Sessions, Usage, Inbox):
-// their trail starts at the page itself.
-var sectionGroup = map[string]string{
-	"Objects":       "Memory Browser",
-	"Documents":     "Memory Browser",
-	"Embeddings":    "Memory Browser",
-	"Schema":        "Memory Browser",
-	"Data Sources":  "Memory Browser",
-	"Backups":       "Memory Browser",
-	"Agents":        "Agents",
-	"Schedules":     "Agents",
-	"Skills":        "Agents",
-	"Work":          "Work",
-	"Settings":      "Settings",
-	"Blueprints":    "Settings",
-	"Organizations": "Organizations",
+// sectionGroups builds sectionGroup from sidebarGroups: each item is a section
+// owned by the group it is listed under.
+func sectionGroups() map[string]string {
+	out := map[string]string{}
+	for _, g := range sidebarGroups("", true) {
+		for _, it := range g.Items {
+			out[it.Label] = g.Label
+		}
+	}
+	return out
 }
 
 // headerCrumbs builds the trail every page header renders: the nav group (as a
@@ -702,14 +712,20 @@ func headerCrumbs(group string, trail []nav.BreadcrumbItem, markActive bool) []n
 		group = sectionGroup[trail[0].Label]
 	}
 	out := make([]nav.BreadcrumbItem, 0, len(trail)+1)
+	groupHref, known := navGroupHref[group]
 	switch {
-	case group == "":
-	case len(trail) > 0 && trail[0].Label == group:
-		// The group is the trail's own root: keep its link, drop the duplicate.
+	case group == "" || !known:
+		// Ungrouped (or a label the sidebar does not own): the trail stands
+		// alone. Emitting a group crumb with no destination would render a
+		// dead first crumb, so a stale group label degrades to "ungrouped".
+	case len(trail) > 0 && (trail[0].Label == group || (groupHref != "" && trail[0].Href == groupHref)):
+		// The group is the trail's own root — by label, or by destination when
+		// the section item lands on the same page (Objects → Memory): keep the
+		// trail's more specific label, drop the duplicate crumb.
 		out = append(out, trail[0])
 		trail = trail[1:]
 	default:
-		out = append(out, nav.BreadcrumbItem{Label: group, Href: navGroupHref[group]})
+		out = append(out, nav.BreadcrumbItem{Label: group, Href: groupHref})
 	}
 	out = append(out, trail...)
 	if markActive {
@@ -799,6 +815,8 @@ type headerAction struct {
 	OnClick   templ.ComponentScript
 	AriaLabel string
 	Variant   ui.ButtonVariant
+	// Danger tints a destructive entry, in the slot or inside the menu.
+	Danger bool
 }
 
 // headerActions renders a header's actions: none, one, or two render inline in
@@ -826,14 +844,14 @@ templ headerActions(actions []headerAction) {
 					for _, a := range actions[1:] {
 						<li role="none">
 							if a.Href != "" {
-								<a href={ templ.URL(a.Href) } role="menuitem" class="min-w-0">
+								<a href={ templ.URL(a.Href) } role="menuitem" class={ "min-w-0", templ.KV("text-error", a.Danger) }>
 									if a.Icon != "" {
 										@ui.IconSpan(a.Icon, "size-4 shrink-0")
 									}
 									{ a.Label }
 								</a>
 							} else {
-								<button type="button" role="menuitem" class="min-w-0" onclick={ a.OnClick }>
+								<button type="button" role="menuitem" class={ "min-w-0", templ.KV("text-error", a.Danger) } onclick={ a.OnClick }>
 									if a.Icon != "" {
 										@ui.IconSpan(a.Icon, "size-4 shrink-0")
 									}
@@ -848,26 +866,36 @@ templ headerActions(actions []headerAction) {
 	</div>
 }
 
+// headerActionClass tints a destructive action, in the slot and in the menu.
+func headerActionClass(a headerAction) string {
+	if a.Danger {
+		return "text-error hover:text-error"
+	}
+	return ""
+}
+
 templ headerActionButton(a headerAction) {
 	if a.Href != "" {
 		@ui.Button(ui.ButtonProps{
-			Type:      ui.ButtonTypeLink,
-			Href:      a.Href,
-			Variant:   a.Variant,
-			Size:      ui.ButtonSM,
-			Icon:      a.Icon,
-			AriaLabel: a.AriaLabel,
+			Type:       ui.ButtonTypeLink,
+			Href:       a.Href,
+			Variant:    a.Variant,
+			Size:       ui.ButtonSM,
+			Icon:       a.Icon,
+			AriaLabel:  a.AriaLabel,
+			ExtraClass: headerActionClass(a),
 		}) {
 			{ a.Label }
 		}
 	} else {
 		@ui.Button(ui.ButtonProps{
-			Type:      ui.ButtonTypeButton,
-			Variant:   a.Variant,
-			Size:      ui.ButtonSM,
-			Icon:      a.Icon,
-			OnClick:   a.OnClick,
-			AriaLabel: a.AriaLabel,
+			Type:       ui.ButtonTypeButton,
+			Variant:    a.Variant,
+			Size:       ui.ButtonSM,
+			Icon:       a.Icon,
+			OnClick:    a.OnClick,
+			AriaLabel:  a.AriaLabel,
+			ExtraClass: headerActionClass(a),
 		}) {
 			{ a.Label }
 		}

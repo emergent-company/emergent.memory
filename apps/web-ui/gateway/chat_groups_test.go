@@ -190,3 +190,25 @@ func TestMemoryClientListConversationsWithAncestors(t *testing.T) {
 		t.Errorf("includeArchived = %q, want true", got)
 	}
 }
+
+// TestSessionRailSubchatToggleSitsInGrowColumn pins #51: the sub-chat count
+// indicator lives on the row's second line (inside the grow column, next to the
+// subtitle) instead of the trailing action cluster, where it stole width from
+// the session title.
+func TestSessionRailSubchatToggleSitsInGrowColumn(t *testing.T) {
+	c := Conversation{ID: "parent", Title: "Parent", UpdatedAt: railTime(-time.Hour), CreatedAt: railTime(-time.Hour)}
+	html := renderHTML(t, sessionRailGroupParent(c, agentAppearance{}, false, 3, false))
+
+	grow := strings.Index(html, `class="list-col-grow"`)
+	actions := strings.Index(html, `<div class="flex items-center gap-1">`)
+	toggle := strings.Index(html, `data-testid="session-subchats-toggle"`)
+	if grow < 0 || actions < 0 || toggle < 0 {
+		t.Fatalf("row markup missing grow column / actions / toggle (grow=%d actions=%d toggle=%d)", grow, actions, toggle)
+	}
+	if toggle < grow || toggle > actions {
+		t.Errorf("sub-chat toggle must render inside the grow column before the trailing actions (grow=%d toggle=%d actions=%d)", grow, toggle, actions)
+	}
+	if !strings.Contains(html, ">3<") {
+		t.Error("sub-chat toggle should show the count")
+	}
+}

@@ -122,8 +122,8 @@ that also has a text field, `submitFilterFormAttrs` for a query form). Never wir
 a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
 page.
 
-**Source:** `ui.templ:249` (`AgentsPage`), `ui.templ:885` (`pageHeader`),
-`ui.templ:224` (`pageError`), `components/table.templ:10`,
+**Source:** `ui.templ:249` (`AgentsPage`), `ui.templ:913` (`pageHeader`),
+`ui.templ:253` (`pageError`), `components/table.templ:10`,
 `components/list.templ:10`, `ui.templ:385` (`agentsTable`),
 `gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
 `documentsResults`, `documentsResultsFragment`).
@@ -172,7 +172,7 @@ rather than the path to it (`KeepTrailLinks`, e.g. a run opened from its
 schedule), every crumb stays a link and nothing is marked active — the `h1`
 names the page.
 
-**Source:** `ui.templ:760` (`pageHead`), `ui.templ:930` (`detailHeader`),
+**Source:** `ui.templ:776` (`pageHead`), `ui.templ:958` (`detailHeader`),
 `components/nav.templ:10-53`, `schedules.templ:197,212`.
 
 ---

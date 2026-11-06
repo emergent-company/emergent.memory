@@ -39,8 +39,7 @@ templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, 
 }
 
 templ usageHeader() {
-	@pageHeader("", "Usage", "LLM token consumption and session activity for this project — costs are retail-price estimates.") {
-	}
+	@pageHeader("Project", "Usage", "LLM token consumption and session activity for this project — costs are retail-price estimates.")
 }
 
 // usageRangeSelector renders the 7/30/90-day links; the active range is

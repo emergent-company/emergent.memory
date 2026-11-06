@@ -505,6 +505,10 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 // The array format allows multiple entries with the same relationship name but different
 // sourceType/targetType pairs. These are merged into a single RelationshipSchema with
 // combined SourceTypes/TargetTypes slices (avoiding last-one-wins overwriting).
+//
+// Keys are canonicalised with normalizeRelationType: relationship rows are stored
+// lower_snake_case, so the registry must be keyed the same way or a declared
+// `knows` schema is skipped by a `KNOWS` write (#176).
 func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.RelationshipSchema {
 	if len(data) == 0 {
 		return nil
@@ -552,12 +556,12 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 				}
 			}
 
-			existing, alreadySeen := result[entry.Name]
+			existing, alreadySeen := result[normalizeRelationType(entry.Name)]
 			if alreadySeen {
 				// Merge source/target types from this entry into the existing schema.
 				existing.SourceTypes = appendUnique(existing.SourceTypes, filteredSrc...)
 				existing.TargetTypes = appendUnique(existing.TargetTypes, filteredTgt...)
-				result[entry.Name] = existing
+				result[normalizeRelationType(entry.Name)] = existing
 			} else {
 				schema := agents.RelationshipSchema{
 					Name:        entry.Name,
@@ -572,7 +576,7 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 					}
 				}
 				schema.Required = entry.Required
-				result[entry.Name] = schema
+				result[normalizeRelationType(entry.Name)] = schema
 			}
 		}
 		if len(result) > 0 {
@@ -619,7 +623,7 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 					schema.Properties = propMap
 				}
 			}
-			result[name] = schema
+			result[normalizeRelationType(name)] = schema
 		}
 		if len(result) > 0 {
 			return result

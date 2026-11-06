@@ -61,10 +61,24 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
 |---|---|
 | `documents:read` | Read documents |
 | `documents:write` | Create and update documents |
+| `documents:delete` | Delete documents |
+| `ingest:write` | Trigger document ingestion/parsing |
+| `chunks:read` | Read document chunks |
+| `chunks:write` | Create and update chunks |
 | `graph:read` | Read graph objects |
 | `graph:write` | Create and update graph objects |
-| `search` | Run hybrid and semantic search |
+| `graph:search:read` | Graph vector search |
+| `search` | Run hybrid and semantic search (MCP) |
+| `search:read` | Unified REST search |
 | `journal:read` | Read the project journal |
+| `extraction:read` | View extraction jobs |
+| `extraction:write` | Manage extraction jobs |
+| `tasks:read` | Read tasks |
+| `tasks:write` | Resolve and cancel tasks |
+| `notifications:read` | Read notifications |
+| `notifications:write` | Mark notifications as read |
+| `user-activity:read` | View the activity log |
+| `user-activity:write` | Write activity entries |
 | `schema:read` | Read type definitions and template packs |
 | `schema:write` | Install and modify schemas |
 | `agents:read` | Read agents, runs, definitions, questions |
@@ -76,10 +90,10 @@ Assign only the scopes your integration needs. The full list, including
 branch, skill and admin scopes, is in
 [Security and Scopes](../developer-guide/security-scopes.md).
 
-The CLI also accepts two presets: `--scopes read` (documents, graph, search,
-journal, schema, agents and project metadata, read-only) and `--scopes write`
-(documents, graph, schema, agents and project writes). Combine them with
-`--scopes read,write`.
+The CLI also accepts two presets: `--scopes read` (the read-only set above) and
+`--scopes write` (documents, graph, schema, agents and project writes, plus the
+REST write scopes the retired `data:write` umbrella used to imply). Combine them
+with `--scopes read,write`.
 
 !!! note "`data:read` and `data:write` are retired"
     The coarse `data:read` / `data:write` umbrellas can no longer be requested
@@ -90,10 +104,8 @@ journal, schema, agents and project metadata, read-only) and `--scopes write`
     update its scopes through the API, which accepts a set that drops the
     umbrella).
 
-    A new token is also **narrower** than the umbrella it replaces: the reads
-    `data:read` granted for chunks, the unified search endpoint, extraction and
-    tasks are not in the mintable catalogue, so a token created now cannot call
-    those REST endpoints. MCP tools are unaffected. See
+    Every fine-grained scope the umbrellas implied is mintable, so a replacement
+    token can request the exact REST scopes it needs. See
     [Security and Scopes](../developer-guide/security-scopes.md#umbrella-scopes).
 
 ---

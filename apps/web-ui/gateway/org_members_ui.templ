@@ -19,7 +19,7 @@ import (
 // /orgs/new. A failed tree fetch renders the whole-page error state.
 templ OrgsPage(data orgsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Organizations", "Organizations", "The organizations you belong to and the projects inside them.") {
+		@pageHeader("", "Organizations", "The organizations you belong to and the projects inside them.") {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/orgs/new",
@@ -174,7 +174,7 @@ templ MembersPage(data membersPageData) {
 		subtitle = "People with access to " + data.ProjectName + "."
 	} }}
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Settings", title, subtitle) {
+		@pageHeader("Project", title, subtitle) {
 			if data.CanManage {
 				@addMemberButton(base)
 			}

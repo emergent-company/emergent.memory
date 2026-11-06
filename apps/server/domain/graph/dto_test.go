@@ -303,8 +303,9 @@ func TestSimilarObjectResult_MarshalJSON(t *testing.T) {
 
 // TestContributionReachesTheResponseJSON guards the read contract of slice 12.1:
 // a response that names a version carries that version's contributors under
-// `contributions`, and an entry keeps its state so a withdrawn one is reported
-// as no longer present rather than disappearing.
+// `contributions` — on every page-shaped object response (detail, history, list
+// and search), not only object detail — and an entry keeps its state so a
+// withdrawn one is reported as no longer present rather than disappearing.
 func TestContributionReachesTheResponseJSON(t *testing.T) {
 	objID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
 	canID := uuid.MustParse("55555555-5555-5555-5555-555555555555")

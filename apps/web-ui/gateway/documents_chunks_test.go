@@ -103,12 +103,14 @@ func TestRenderDocumentDetailChunkEditor(t *testing.T) {
 	html := renderHTML(t, DocumentChunksPage(doc, chunks, nil))
 
 	for _, want := range []string{
-		"2 chunks", // the collection carries its own count
 		`data-testid="chunk-row-0"`, `data-testid="chunk-row-1"`,
 		`data-chunk-id="c0"`, `data-chunk-id="c1"`,
 		`id="chunk-editor-0"`, `id="chunk-editor-1"`,
 		`data-chunk-action="edit"`, `data-chunk-action="history"`,
 		`id="chunk-rollback-confirm"`,
+		// the chunk count belongs to the document's Chunks rail entry, not the
+		// page header: it stays visible on every document sub-page.
+		`data-testid="document-chunks-count"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("chunks sub-page missing %q", want)

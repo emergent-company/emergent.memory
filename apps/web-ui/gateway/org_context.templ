@@ -1012,7 +1012,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 		if data.LoadErr != nil {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
-			@pageHeader("Organizations", "Settings", "Organization-level tool overrides for "+data.Org.Name+".") {}
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Settings", "/orgs/"+url.PathEscape(data.Org.ID)+"/settings", "Tools"), "", "Tools", "Organization-level tool overrides for "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"})
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "tools", data.IsOrgAdmin), nil) {
 			if len(data.Settings) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{

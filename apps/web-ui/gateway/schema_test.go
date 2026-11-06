@@ -143,7 +143,7 @@ func TestRenderSchemaObjectTypePage(t *testing.T) {
 	rels := []RelationshipTypeDetail{{Name: "assigned_to", SourceType: "task", TargetType: "person"}}
 	html := renderHTML(t, SchemaObjectTypePage(&SchemaObjectTypeView{Detail: detail, Relationships: rels}, nil))
 	for _, want := range []string{
-		"Memory Browser", "Person", "a person", "Properties",
+		"Memory", "Person", "a person", "Properties",
 		"first_name", "string", "required",
 		"Relationships", "assigned_to", "task → person",
 		`href="/schema"`,
@@ -254,7 +254,7 @@ func TestRenderSchemaObjectTypePageTypeUI(t *testing.T) {
 	detail := &ObjectTypeDetail{Name: "note", Label: "Note"}
 	rels := []RelationshipTypeDetail{{Name: "annotates", SourceType: "note", TargetType: "document"}}
 	html := renderHTML(t, SchemaObjectTypePage(&SchemaObjectTypeView{Detail: detail, Relationships: rels, Icon: "📝", Color: "#4F46E5"}, nil))
-	for _, want := range []string{"Memory Browser", "note", "📝", "color:#4F46E5", "text-base-content"} {
+	for _, want := range []string{"Memory", "note", "📝", "color:#4F46E5", "text-base-content"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("object type page header chip missing %q in:\n%s", want, html)
 		}

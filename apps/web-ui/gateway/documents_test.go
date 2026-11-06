@@ -579,6 +579,18 @@ func TestRenderDocumentsPage(t *testing.T) {
 			t.Errorf("documents page missing %q", want)
 		}
 	}
+	// #57: the search-form submit button uses the default (md) size, not btn-sm.
+	searchAt := strings.Index(html, `data-testid="documents-search-form"`)
+	if searchAt < 0 {
+		t.Fatal("search form missing")
+	}
+	searchForm := html[searchAt:]
+	if end := strings.Index(searchForm, "</form>"); end >= 0 {
+		searchForm = searchForm[:end]
+	}
+	if strings.Contains(searchForm, "btn-sm") {
+		t.Error("documents search button should not be btn-sm (it uses ui.ButtonMD)")
+	}
 }
 
 // TestRenderDocumentsBrowser pins the browser's contract: a truthful header
@@ -821,8 +833,9 @@ func TestRenderDocumentDetailPage(t *testing.T) {
 		"Spec.md", "completed", "15 objects extracted",
 		`action="/documents/d1/extract"`, `href="/documents"`,
 		`action="/documents/d1/delete"`, "Delete this document? This cannot be undone.", "lucide--trash-2", ">Delete<",
-		// sub-navigation rail
+		// sub-navigation rail (the chunk count is a badge on its Chunks entry)
 		`aria-label="Document sections"`, "Overview", "Chunks", "Extraction history",
+		`data-testid="document-chunks-count"`,
 		`href="/documents/d1/chunks"`, `href="/documents/d1/extractions"`,
 		// text preview
 		`data-testid="document-preview-text"`, "hello preview",
@@ -891,7 +904,7 @@ func TestDocumentPreviewEscapesHostileContent(t *testing.T) {
 // TestDocumentSubNavActive asserts the shared document sub-nav marks exactly the
 // active view current.
 func TestDocumentSubNavActive(t *testing.T) {
-	html := renderHTML(t, documentSubNav("d1", "chunks"))
+	html := renderHTML(t, documentSubNav(&Document{ID: "d1", Chunks: 2}, "chunks"))
 	if !strings.Contains(html, `aria-label="Document sections"`) {
 		t.Error("sub-nav label missing")
 	}
@@ -901,10 +914,22 @@ func TestDocumentSubNavActive(t *testing.T) {
 	if linkMarkedCurrent(html, "/documents/d1") || linkMarkedCurrent(html, "/documents/d1/extractions") {
 		t.Error("only the active sub-nav link should be current")
 	}
+	// The chunk count rides on the Chunks entry, not the page header.
+	if !strings.Contains(html, `data-testid="document-chunks-count"`) {
+		t.Error("chunks rail item should carry the chunk-count badge")
+	}
 
-	overview := renderHTML(t, documentSubNav("d1", "overview"))
+	overview := renderHTML(t, documentSubNav(&Document{ID: "d1", Chunks: 2}, "overview"))
 	if !linkMarkedCurrent(overview, "/documents/d1") {
 		t.Error("overview link should be current on the overview view")
+	}
+	if !strings.Contains(overview, `data-testid="document-chunks-count"`) {
+		t.Error("chunk count should stay visible on the overview view")
+	}
+
+	empty := renderHTML(t, documentSubNav(&Document{ID: "d1"}, "overview"))
+	if strings.Contains(empty, `data-testid="document-chunks-count"`) {
+		t.Error("a zero-chunk document should not render an empty count badge")
 	}
 }
 

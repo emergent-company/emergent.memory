@@ -29,7 +29,7 @@ templ MCPServerRegistryPage(data mcpRegistryPageData) {
 		} else if len(data.Servers) == 0 {
 			@mcpRegistryEmptyState(data.Query)
 		} else {
-			<div class="mb-2 text-[11px] font-semibold tracking-wide text-muted-faint uppercase">{ countLabel(len(data.Servers), "result", "results") }</div>
+			@sectionCount(countLabel(len(data.Servers), "result", "results"))
 			<div class="flex flex-col gap-2">
 				for _, entry := range data.Servers {
 					@mcpRegistryEntry(entry, data.Devices, data.DevicesErr)

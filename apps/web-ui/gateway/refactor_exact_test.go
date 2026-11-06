@@ -122,15 +122,15 @@ func TestRefactorOutputExact(t *testing.T) {
 	check("detailHeader meta", got, want)
 
 	// detailHeader infers the group from the trail root: a Blueprints page
-	// starts at SETTINGS, the group it lives in.
+	// starts at MEMORY, the group it lives in since #180.
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Schema migrations")), "", "Schema migrations", "Rename types and properties across live graph data when a blueprint version changes.", detailHeaderOpts{Margin: "mb-6"}))
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/settings" class="">Settings</a></li><li class=""><a href="/blueprints" class="">Blueprints</a></li><li class="font-medium text-base-content"><span class="">Schema migrations</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Schema migrations</h1></div><p class="text-base-content/55 mt-1 max-w-2xl text-sm">Rename types and properties across live graph data when a blueprint version changes.</p></div></div></div>`
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/objects" class="">Memory</a></li><li class=""><a href="/blueprints" class="">Blueprints</a></li><li class="font-medium text-base-content"><span class="">Schema migrations</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Schema migrations</h1></div><p class="text-base-content/55 mt-1 max-w-2xl text-sm">Rename types and properties across live graph data when a blueprint version changes.</p></div></div></div>`
 	check("detailHeader inferred group", got, want)
 
-	// detailHeader on a Schema page inherits Memory Browser; the old "Object
-	// type" eyebrow is gone — crumbs carry the context.
+	// detailHeader on a Schema page inherits Memory; the old "Object type"
+	// eyebrow is gone — crumbs carry the context.
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Person")), "", "Person", "", detailHeaderOpts{Margin: "mb-6"}))
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/objects" class="">Memory Browser</a></li><li class=""><a href="/schema" class="">Schema</a></li><li class="font-medium text-base-content"><span class="">Person</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Person</h1></div></div></div></div>`
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/objects" class="">Memory</a></li><li class=""><a href="/schema" class="">Schema</a></li><li class="font-medium text-base-content"><span class="">Person</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Person</h1></div></div></div></div>`
 	check("detailHeader object type", got, want)
 
 	// pageHeader: a group landing page collapses to one active crumb.
@@ -139,9 +139,15 @@ func TestRefactorOutputExact(t *testing.T) {
 	check("pageHeader landing", got, want)
 
 	// pageHeader: a section page links its group first and marks itself active.
-	got = render(pageHeader("Settings", "Blueprints", ""))
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/settings" class="">Settings</a></li><li class="font-medium text-base-content"><span class="">Blueprints</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Blueprints</h1></div></div></div></div>`
+	got = render(pageHeader("Memory", "Blueprints", ""))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/objects" class="">Memory</a></li><li class="font-medium text-base-content"><span class="">Blueprints</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Blueprints</h1></div></div></div></div>`
 	check("pageHeader section", got, want)
+
+	// A retired group label (pre-#180 vocabulary) must not render a crumb with
+	// no destination: it degrades to ungrouped rather than emitting a dead link.
+	got = render(pageHeader("Settings", "Blueprints", ""))
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class="font-medium text-base-content"><span class="">Blueprints</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Blueprints</h1></div></div></div></div>`
+	check("pageHeader retired group", got, want)
 
 	// pageHeader: an ungrouped page is a single active crumb.
 	got = render(pageHeader("", "Title", ""))

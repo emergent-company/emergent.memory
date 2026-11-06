@@ -61,18 +61,18 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write documents:delete ingest:write chunks:read chunks:write search:read graph:search:read extraction:read extraction:write tasks:read tasks:write user-activity:read user-activity:write notifications:read notifications:write admin admin:all project:admin"`
 }
 
 // CreateAccountTokenRequest is the request body for creating an account-level token (no project binding)
 type CreateAccountTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write documents:delete ingest:write chunks:read chunks:write search:read graph:search:read extraction:read extraction:write tasks:read tasks:write user-activity:read user-activity:write notifications:read notifications:write admin admin:all project:admin"`
 }
 
 // UpdateApiTokenScopesRequest is the request body for updating token scopes
 type UpdateApiTokenScopesRequest struct {
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write documents:delete ingest:write chunks:read chunks:write search:read graph:search:read extraction:read extraction:write tasks:read tasks:write user-activity:read user-activity:write notifications:read notifications:write admin admin:all project:admin"`
 }
 
 // ValidApiTokenScopes is every scope a stored token may carry, including the
@@ -109,6 +109,23 @@ var ValidApiTokenScopes = []string{
 	"skills:write",
 	"documents:read",
 	"documents:write",
+	// REST scopes the retired data:read/data:write umbrellas used to imply.
+	// They are mintable directly so a token minted after the umbrella
+	// retirement can still reach the REST routes gated on them (#80).
+	"documents:delete",
+	"ingest:write",
+	"chunks:read",
+	"chunks:write",
+	"search:read",
+	"graph:search:read",
+	"extraction:read",
+	"extraction:write",
+	"tasks:read",
+	"tasks:write",
+	"user-activity:read",
+	"user-activity:write",
+	"notifications:read",
+	"notifications:write",
 	"admin",
 	"admin:all",
 	// project:admin is a project-scoped admin umbrella, mintable by a project

@@ -32,9 +32,6 @@ func chunkHistoryID(index int) string { return "chunk-history-" + strconv.Itoa(i
 // chunksSection lists a document's chunks, each with an inline editor and a
 // lazily-loaded revision history.
 templ chunksSection(chunks []Chunk) {
-	if len(chunks) > 0 {
-		@sectionCount(countLabel(len(chunks), "chunk", "chunks"))
-	}
 	@cardList("Chunks", cardListProps{
 		Margin:    "mt-6",
 		Empty:     len(chunks) == 0,
