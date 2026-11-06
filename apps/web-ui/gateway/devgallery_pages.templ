@@ -84,8 +84,8 @@ templ GalleryPagePreviewDocument(page GalleryPagePreview, query url.Values, feed
 			<meta name="color-scheme" content="dark"/>
 			<meta name="robots" content="noindex,nofollow"/>
 			<title>{ page.Name } — page preview</title>
-			@behaviors.Tag()
 			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
+			@behaviors.Tag()
 		</head>
 		<body class="bg-base-200 text-base-content min-h-screen">
 			@page.Body(query)

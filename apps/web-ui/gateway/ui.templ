@@ -47,19 +47,23 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<link rel="icon" type="image/png" sizes="512x512" href="/assets/icon-512.png"/>
 			@appleSplashLinks()
 			<title>{ title }</title>
+			@foucBackgroundGuard()
+			<!-- The stylesheet MUST be in <head>, and ahead of every head script:
+			     it is render-blocking there, so a full navigation (every project
+			     switch, every hard reload) keeps painting the old document until
+			     the CSS is ready. Emitted at the end of <body> instead — where
+			     this used to sit — the first paint won the race and the user saw
+			     the shell unstyled for a moment on any cache miss (fresh deploy,
+			     changed ?v= hash, cold tab). It also sits before the go-daisy
+			     behaviour runtime and the Sentry block, so no parser-blocking
+			     same-origin script and no third-party fetch can delay its
+			     discovery. Nothing htmx-swaps it: it lives outside #main-content
+			     either way. -->
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<!-- go-daisy behaviour-init runtime: defines window.gdOnce/gdBehaviour/
 			     gdRescan before any component inline script runs (clipboard copy,
 			     spinners, sidebar, data-table, htmx after-settle rescan). -->
 			@behaviors.Tag()
-			@foucBackgroundGuard()
-			<!-- The stylesheet MUST be in <head>: it is render-blocking there, so a
-			     full navigation (every project switch, every hard reload) keeps
-			     painting the old document until the CSS is ready. Emitted at the
-			     end of <body> instead — where this used to sit — the first paint
-			     wins the race and the user sees the shell unstyled for a moment
-			     on any cache miss (fresh deploy, changed ?v= hash, cold tab).
-			     Nothing htmx-swaps it: it lives outside #main-content either way. -->
-			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<!-- Sentry sits after the stylesheet on purpose: the SDK is a ~281 kB
 			     third-party bundle and must never delay the parser reaching
 			     app.css (issue #209). Its script tag is deferred (see

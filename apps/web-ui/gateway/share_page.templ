@@ -113,13 +113,6 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			<meta name="robots" content="noindex,nofollow"/>
 			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
 			<title>{ shareDocTitle(props) }</title>
-			@sentryHead(sentryHeadOpts{
-				DSN:                     props.SentryDSN,
-				Environment:             props.SentryEnvironment,
-				TracesSampleRate:        props.SentryTracesSampleRate,
-				ReplaySessionSampleRate: props.SentryReplaySessionSampleRate,
-				ReplayOnErrorSampleRate: props.SentryReplayOnErrorSampleRate,
-			})
 			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
 			@foucBackgroundGuard()
 			<style>
@@ -219,6 +212,16 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			}
 			</style>
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- Sentry sits after the stylesheet, as in the app shell: the SDK is
+			     deferred today (see sentry_head.templ), so position blocks
+			     nothing — this keeps it behind app.css even if that regresses. -->
+			@sentryHead(sentryHeadOpts{
+				DSN:                     props.SentryDSN,
+				Environment:             props.SentryEnvironment,
+				TracesSampleRate:        props.SentryTracesSampleRate,
+				ReplaySessionSampleRate: props.SentryReplaySessionSampleRate,
+				ReplayOnErrorSampleRate: props.SentryReplayOnErrorSampleRate,
+			})
 		</head>
 		<body class="bg-base-200">
 			if props.State != ShareStateReady {
