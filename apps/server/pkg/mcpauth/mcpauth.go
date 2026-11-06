@@ -25,9 +25,11 @@ type Config struct {
 	Scopes []string
 	// RedirectURI is the OAuth callback the AS redirects to.
 	RedirectURI string
-	// HTTPClient is optional. When set it is used as-is (test injection or a
-	// caller-provided transport); when nil the resource's SSRF-guarded client is
-	// used.
+	// HTTPClient is optional. When set it is used as a template for every
+	// outbound request (its transport, redirect policy and cookie jar); the
+	// package owns the per-request timeout, so the caller's Timeout is not
+	// honoured and the client is not mutated. When nil the resource's
+	// SSRF-guarded client is used.
 	HTTPClient *http.Client
 }
 
@@ -97,8 +99,9 @@ func DiscoverAndRegister(ctx context.Context, cfg Config) (*Client, error) {
 	var validate ValidateFunc
 	if cfg.HTTPClient != nil {
 		// An injected transport means the caller owns destination safety (tests,
-		// or a caller with its own policy): use it as-is and skip the static
-		// check, exactly as before.
+		// or a caller with its own policy): use it as a template and skip the
+		// static check, exactly as before. The package still bounds the
+		// per-request timeout on its copy.
 		clientFor = func(string) *http.Client { return cfg.HTTPClient }
 		validate = func(context.Context, string) error { return nil }
 	} else {

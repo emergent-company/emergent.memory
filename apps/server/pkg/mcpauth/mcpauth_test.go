@@ -608,6 +608,10 @@ func TestDiscover_WellKnownProtectedResourceFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
+	// Current (pre-#2188) behaviour: the well-known URL is origin-only. RFC
+	// 9728 §3.1 wants the resource path inserted
+	// (<origin>/.well-known/oauth-protected-resource/api/mcp); a conformance
+	// fix must update this pin.
 	if want := srv.URL + "/.well-known/oauth-protected-resource"; req.ResourceMetadataURL != want {
 		t.Errorf("ResourceMetadataURL = %q, want %q", req.ResourceMetadataURL, want)
 	}
@@ -641,6 +645,44 @@ func TestDiscover_ResourceOriginAsAuthorizationServer(t *testing.T) {
 	}
 	if req.ResourceMetadataURL != "" {
 		t.Errorf("ResourceMetadataURL = %q, want empty (nothing was published)", req.ResourceMetadataURL)
+	}
+	if req.AuthorizationEndpoint != srv.URL+"/auth" || req.TokenEndpoint != srv.URL+"/token" {
+		t.Errorf("endpoints = (%q, %q), want the origin's metadata", req.AuthorizationEndpoint, req.TokenEndpoint)
+	}
+}
+
+// TestDiscover_ResourceMetadataWithoutAuthorizationServersUsesOrigin pins the
+// registry-reachable route into the resource-origin fallback: a
+// resource_metadata challenge whose document carries `resource` but omits
+// authorization_servers (RFC 9728 §2 permits the omission). The no-challenge
+// test above covers a different route into the same fallback.
+func TestDiscover_ResourceMetadataWithoutAuthorizationServersUsesOrigin(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/prm", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"resource": srv.URL + "/api/mcp"})
+	})
+	// The origin publishes authorization-server metadata, so the fallback can
+	// resolve an issuer and the walk can proceed.
+	mux.HandleFunc("/.well-known/oauth-authorization-server", writeASMetadata)
+
+	req, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		Challenge: Challenge{ResourceMetadataURL: srv.URL + "/prm"},
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if want := srv.URL + "/prm"; req.ResourceMetadataURL != want {
+		t.Errorf("ResourceMetadataURL = %q, want the advertised document %q", req.ResourceMetadataURL, want)
+	}
+	if req.AuthorizationServer != srv.URL {
+		t.Errorf("AuthorizationServer = %q, want the resource origin %q", req.AuthorizationServer, srv.URL)
 	}
 	if req.AuthorizationEndpoint != srv.URL+"/auth" || req.TokenEndpoint != srv.URL+"/token" {
 		t.Errorf("endpoints = (%q, %q), want the origin's metadata", req.AuthorizationEndpoint, req.TokenEndpoint)

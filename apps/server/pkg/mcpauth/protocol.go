@@ -466,9 +466,10 @@ func metadataAbsent(err error) bool {
 
 // transientMetadataFailure reports whether err is an upstream 5xx worth
 // surfacing rather than a definitive absence or an unusable document. The
-// optional well-known fallback treats everything else (401/403, a decode error
-// from an HTML catch-all) as "no usable document here" so a provider that does
-// not publish protected-resource metadata still reaches the
+// optional well-known fallback deliberately treats everything else — 401/403,
+// transport failures (timeout, connection refused, TLS), and a decode error
+// from an HTML catch-all — as "no usable document here", so a provider that
+// does not publish protected-resource metadata still reaches the
 // authorization-server walk.
 func transientMetadataFailure(err error) bool {
 	var httpErr *metadataHTTPError

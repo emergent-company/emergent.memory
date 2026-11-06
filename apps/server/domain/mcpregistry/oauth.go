@@ -130,11 +130,13 @@ func translateProtocolError(err error) error {
 //     reports only challenges carrying resource_metadata or authorization_uri;
 //     an advertised document is authoritative, and the authorization_uri-only
 //     form is the only registry-reachable route into this fallback;
-//   - when neither the protected-resource metadata nor an authorization_uri
-//     names a server, Discover uses the resource origin as the authorization
-//     server. Every challenge the probe reports names one of those two inputs,
-//     and both resolve an issuer before this point, so the fallback is only
-//     reached when a metadata document deliberately omits its issuer.
+//   - when the protected-resource document omits authorization_servers (RFC
+//     9728 §2 permits this) or the authorization_uri document omits issuer, no
+//     authorization server has been named and Discover uses the resource
+//     origin. Both routes are reachable from this adapter: a
+//     resource_metadata-only challenge whose document has `resource` but no
+//     authorization_servers, and an authorization_uri that is not a well-known
+//     URL whose document has no issuer.
 func discoverAuthRequirement(ctx context.Context, resourceURL string, ch authChallenge) (*authRequirement, error) {
 	req, err := mcpauth.Discover(ctx, mcpauth.DiscoveryConfig{
 		Resource:  resourceURL,
