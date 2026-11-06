@@ -162,13 +162,15 @@ jobs:
           #   go, gofmt      actions/setup-go; go run ./cmd/*-guard, swag generation,
           #                  `go mod tidy -diff`, and the gofmt step
           #   gitleaks       secret scan + scripts/preflight/gitleaks-env-files.sh
+          #   docker         the schema-documentation guard below, which starts a
+          #                  throwaway Postgres to introspect
           #   coreutils/gawk/sed/grep/find/tar/curl/install
           #                  preflight scripts, install-gitleaks.sh
-          # Nothing here needs `task`, `yq`, `goose`, `swag`, `docker` or node/npm:
+          # Nothing here needs `task`, `yq`, `goose`, `swag`, node or npm:
           # swag is `go run github.com/swaggo/swag/cmd/swag@<go.mod version>`, and
           # goose is only embedded in the server binary.
           missing=()
-          for cmd in git bash python3 jq go gofmt gitleaks \
+          for cmd in git bash python3 jq go gofmt gitleaks docker \
                      awk sed grep find sort uniq diff xargs mktemp \
                      tar curl sha256sum install; do
             command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
@@ -220,8 +222,14 @@ jobs:
       # is why it is scoped to the PRs where it can matter: a migration or the
       # document itself changing. Mirrors the db-backed job's sequence verbatim
       # (same pgvector image, because the migration chain creates the `vector`
-      # extension); measured there as start 3 s, migrate 1 s, check <1 s. The
-      # 216-353 s that job takes is the DB test suite, not this guard.
+      # extension).
+      #
+      # Cost, honestly: the guard's own work is seconds, but this runs on a
+      # hosted runner, so it also pulls the 168 MB image and compiles cmd/migrate
+      # cold -- ~30-60 s end to end, against the 216-353 s that job's timing
+      # showed for the database suite alone. The scope filter is what makes that
+      # acceptable: an unrelated PR starts no container, and a migration PR is
+      # already waiting 257-330 s on Unit Tests and 216-353 s on DB-backed Tests.
       - name: Detect schema documentation scope
         id: schema-doc-scope
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
