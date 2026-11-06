@@ -66,6 +66,19 @@ func TestInverseEntry(t *testing.T) {
 			wantKey: "has-employees", wantInv: "has-employees",
 		},
 		{
+			name:    "padded declaration is trimmed, not underscored",
+			relType: "  hasEmployees  ",
+			schema:  relationshipTypeSchema{InverseType: " has_employees "},
+			wantKey: "has_employees", wantInv: "has_employees",
+		},
+		{
+			name:    "whitespace-only inverse contributes no mapping",
+			relType: "hasEmployees",
+			schema:  relationshipTypeSchema{InverseType: "   "},
+			// Same outcome as an undeclared inverse: the entry is skipped rather
+			// than registered with an empty or "___" inverse type.
+		},
+		{
 			name:      "inverseLabel is human text, converted as a label",
 			relType:   "hasEmployees",
 			schema:    relationshipTypeSchema{InverseLabel: "Has Employees"},

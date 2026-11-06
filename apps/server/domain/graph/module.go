@@ -440,7 +440,12 @@ func inverseEntry(relType string, schema relationshipTypeSchema) (key, inverse s
 		return "", "", false
 	}
 	if schema.InverseType != "" {
-		return key, normalizeRelationType(schema.InverseType), false
+		// Trim first: a declaration padded with whitespace would otherwise become
+		// "_has_employees_" (normalizeRelationType only maps inner spaces), and a
+		// whitespace-only declaration would pass the empty guard below.
+		if inverse := normalizeRelationType(strings.TrimSpace(schema.InverseType)); inverse != "" {
+			return key, inverse, false
+		}
 	}
 	if schema.InverseLabel != "" {
 		if inv := labelToTypeKey(schema.InverseLabel); inv != "" {
