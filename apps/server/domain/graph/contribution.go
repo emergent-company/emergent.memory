@@ -390,22 +390,60 @@ func (r *Repository) copyContributions(
 		// The destination version's own rows are not foreign occupants: they
 		// are the ones this copy is here to write over (includeDestination), so
 		// only rows on some *other* live version of the branch can be in the way.
-		var holders []ProvenanceContribution
-		if err := db.NewSelect().
-			Model(&holders).
-			Where("project_id = ?", projectID).
-			Where("subject_kind = ?", kind).
-			Where("branch_id IS NOT DISTINCT FROM ?", toBranchID).
-			Where("subject_version_id <> ?", toVersionID).
-			Where("state = ?", ContributionStatePresent).
-			Scan(ctx); err != nil {
-			return 0, apperror.NewDatabase("Database operation failed", err)
+		//
+		// Only an address in hand can be occupied, so the lookup is narrowed to
+		// those addresses. A merge writes many objects in one transaction, and
+		// reading every present row of the destination branch made it cost
+		// O(merged objects × branch contributions); the row-wise IN is one index
+		// probe per candidate on uq_provenance_contributions_present_{main,branch}
+		// instead (#125).
+		addrs := make([]address, 0, len(bySource))
+		for _, cand := range bySource {
+			addrs = append(addrs, address{sourceID: cand.row.SourceID, externalID: cand.row.ExternalID})
 		}
-		for _, holder := range holders {
-			if _, moved := superseded[holder.ID]; moved {
-				continue
+		if len(addrs) > 0 {
+			placeholders := make([]string, len(addrs))
+			args := make([]any, 0, len(addrs)*2+5)
+			for i, a := range addrs {
+				placeholders[i] = "(?, ?)"
+				args = append(args, a.sourceID, a.externalID)
 			}
-			occupied[address{sourceID: holder.SourceID, externalID: holder.ExternalID}] = struct{}{}
+
+			// Both address indexes are partial, and the planner can only prove a
+			// partial predicate from a plain comparison: IS NOT DISTINCT FROM is
+			// semantically the same but hid the index and fell back to a full
+			// branch scan.
+			branchPredicate := "branch_id IS NULL"
+			if toBranchID != nil {
+				branchPredicate = "branch_id = ?"
+			}
+			args = append(args, projectID, kind)
+			if toBranchID != nil {
+				args = append(args, *toBranchID)
+			}
+			args = append(args, toVersionID, ContributionStatePresent)
+
+			var holders []struct {
+				ID         uuid.UUID `bun:"id"`
+				SourceID   uuid.UUID `bun:"source_id"`
+				ExternalID string    `bun:"external_id"`
+			}
+			query := `SELECT id, source_id, external_id
+				FROM kb.provenance_contributions
+				WHERE (source_id, external_id) IN (` + strings.Join(placeholders, ", ") + `)
+				  AND project_id = ? AND subject_kind = ?
+				  AND ` + branchPredicate + `
+				  AND subject_version_id <> ?
+				  AND state = ?`
+			if err := db.NewRaw(query, args...).Scan(ctx, &holders); err != nil {
+				return 0, apperror.NewDatabase("Database operation failed", err)
+			}
+			for _, holder := range holders {
+				if _, moved := superseded[holder.ID]; moved {
+					continue
+				}
+				occupied[address{sourceID: holder.SourceID, externalID: holder.ExternalID}] = struct{}{}
+			}
 		}
 	}
 
