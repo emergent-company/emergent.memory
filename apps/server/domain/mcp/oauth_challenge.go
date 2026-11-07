@@ -1,16 +1,13 @@
 package mcp
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-
-	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
-// oauthChallengeMiddleware decorates a 401 from the auth middleware on an MCP
-// route with the challenge required by the MCP authorization spec / RFC 9728:
+// oauthChallengeMiddleware attaches the challenge required by the MCP
+// authorization spec / RFC 9728 to a 401 on the /api/mcp group:
 //
 //	WWW-Authenticate: Bearer resource_metadata="https://host/.well-known/oauth-protected-resource/api/mcp"
 //
@@ -19,30 +16,27 @@ import (
 // the fallback (e.g. Google's Gemini connector) report the server as
 // unreachable instead of starting the authorization flow.
 //
-// The middleware must be registered before RequireAuth so it wraps the auth
-// failure: it sets the header on the response and re-returns the error, and
-// the server's error handler writes the body afterwards.
+// The header is set from Response.Before, not from the middleware's return
+// value: the auth middleware writes the 401 itself (authError -> c.JSON) and
+// returns nil, so by the time the chain unwinds the response is already
+// flushed and a plain Header().Set would be a no-op. Before runs inside
+// WriteHeader, after the status is recorded and before the headers are sent,
+// which covers both shapes — a handler that writes the 401 and one that
+// returns the error for the server's error handler.
+//
+// Register it before RequireAuth on the group so it also wraps the auth
+// middleware.
 func oauthChallengeMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		err := next(c)
-		if err == nil || !isUnauthorized(err) {
-			return err
-		}
-		c.Response().Header().Set("WWW-Authenticate",
-			`Bearer resource_metadata="`+protectedResourceMetadataURL(c)+`"`)
-		return err
+		res := c.Response()
+		res.Before(func() {
+			if res.Status == http.StatusUnauthorized {
+				res.Header().Set("WWW-Authenticate",
+					`Bearer resource_metadata="`+protectedResourceMetadataURL(c)+`"`)
+			}
+		})
+		return next(c)
 	}
-}
-
-// isUnauthorized reports whether err will be rendered as a 401. The auth
-// middleware returns *apperror.Error while some paths return *echo.HTTPError.
-func isUnauthorized(err error) bool {
-	var httpErr *echo.HTTPError
-	if errors.As(err, &httpErr) && httpErr.Code == http.StatusUnauthorized {
-		return true
-	}
-	var appErr *apperror.Error
-	return errors.As(err, &appErr) && appErr.HTTPStatus == http.StatusUnauthorized
 }
 
 // protectedResourceMetadataURL returns the RFC 9728 metadata URL for the
