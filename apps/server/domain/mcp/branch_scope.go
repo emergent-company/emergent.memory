@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/branchsql"
@@ -165,4 +166,78 @@ func (s *Service) branchAllowedByScope(ctx context.Context, projectID, branchID 
 		return fmt.Errorf("branch %q is outside this agent's branch scope", branch.Name)
 	}
 	return nil
+}
+
+// inScopeBranchIDs returns the IDs of the unmerged branches a non-main-only
+// scope admits, ordered by recency and capped by the scope's MaxBranches. It is
+// the raw-SQL counterpart of the graph repository's inScopeBranchIDs, used by the
+// MCP read paths that issue their own queries (#308).
+func (s *Service) inScopeBranchIDs(ctx context.Context, projectID uuid.UUID, scope *BranchScope) ([]uuid.UUID, error) {
+	var branches []struct {
+		ID     uuid.UUID `bun:"id"`
+		Name   string    `bun:"name"`
+		Origin string    `bun:"origin"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.branches AS b").
+		Column("b.id").
+		Column("b.name").
+		Column("b.origin").
+		Where("b.project_id = ?", projectID).
+		Where("b.merged_at IS NULL").
+		Where(branchsql.DeletedExtractionSourceExclusion).
+		OrderExpr("b.created_at DESC").
+		Scan(ctx, &branches)
+	if err != nil {
+		return nil, fmt.Errorf("list in-scope branches: %w", err)
+	}
+	ids := make([]uuid.UUID, 0, len(branches))
+	for _, b := range branches {
+		if !scope.AllowsOrigin(b.Origin) || !scope.AllowsName(b.Name) {
+			continue
+		}
+		ids = append(ids, b.ID)
+		if len(ids) >= scope.MaxBranches() {
+			break
+		}
+	}
+	return ids, nil
+}
+
+// branchScopeClause returns the SQL fragment and args bounding an object read to
+// the run's branch scope, for the raw-SQL read paths in this package (#308). The
+// fragment references the kb.graph_objects alias `go`.
+//
+// An explicit branch is honoured as-is (already validated in scope before this
+// point). A caller with no boundary keeps the pre-existing main-only default; a
+// main-only agent run reads main only; a scoped run reads main plus its in-scope
+// unmerged branches, deduplicated main-first so a forked canonical object is
+// returned once as its main head and a branch-only object is still reachable.
+func (s *Service) branchScopeClause(ctx context.Context, projectID string, branchID *uuid.UUID) (string, []any, error) {
+	if branchID != nil {
+		return " AND go.branch_id = ?", []any{*branchID}, nil
+	}
+	if !IsBranchScopeInstalled(ctx) {
+		return " AND go.branch_id IS NULL", nil, nil
+	}
+	scope := BranchScopeFromContext(ctx)
+	if scope.IsMainOnly() {
+		return " AND go.branch_id IS NULL", nil, nil
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	ids, err := s.inScopeBranchIDs(ctx, projectUUID, scope)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(ids) == 0 {
+		return " AND go.branch_id IS NULL", nil, nil
+	}
+	// Main-first dedup: keep the main head when it exists, else the branch head.
+	return " AND (go.branch_id IS NULL OR (go.branch_id IN (?) AND go.canonical_id NOT IN (" +
+			"SELECT canonical_id FROM kb.graph_objects WHERE project_id = ? " +
+			"AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL)))",
+		[]any{bun.In(ids), projectUUID}, nil
 }
