@@ -399,7 +399,7 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintImportPreview(ctx context.Cont
 	// Project-scoped previews report object-type collisions an apply would
 	// hit. Global previews have no registry to compare against.
 	if projectID != "" {
-		conflicts, cerr := h.svc.PreviewManifestConflicts(ctx, projectID, preview.Manifest)
+		conflicts, cerr := h.svc.PreviewManifestConflicts(ctx, projectID, preview.Manifest, OriginImport)
 		if cerr != nil {
 			return errResult("failed to preview type conflicts: " + cerr.Error())
 		}

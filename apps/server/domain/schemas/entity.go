@@ -423,6 +423,12 @@ type MergePreviewPack struct {
 	Author string `json:"author,omitempty"`
 	// Migrations is the manifest's upgrade-path block; tolerated, not read.
 	Migrations *SchemaMigrationHints `json:"migrations,omitempty"`
+	// Source is the pack's registry scope: "builtin" for a global builtin pack,
+	// nil/empty for a project-scoped pack. PreviewMerge uses it to apply the same
+	// same-scope ownership rule as AssignPackWithTypes, so a cross-scope
+	// same-name fork (a project copy of a builtin, or vice versa) is reported as
+	// a collision rather than silently ignored (#338).
+	Source *string `json:"source,omitempty"`
 	// ObjectTypes is a JSON array of {"name","label","properties",...} objects.
 	// The map-of-type-name → schema stored form is also accepted here and is
 	// read-compatible.

@@ -108,9 +108,11 @@ func TestAssignPackInPlaceUpgradeReplacesOwnTypes(t *testing.T) {
 	assert.NotContains(t, props, "legacy", "a removed property must be removed on upgrade")
 }
 
-// TestAssignPackSameFamilyNewVersionReplaces covers the version-resolved
-// version bump: a new pack row with the same name that declares migration hints
-// (a FromVersion) is an upgrade of its own lineage, so it replaces.
+// TestAssignPackSameFamilyNewVersionReplaces covers the same-name same-scope
+// version bump (#294): a new pack row with the same name and scope owns the
+// same type, so it replaces without a merge gate (dropped properties are
+// removed). No migration hints are required — name + scope is the lineage
+// signal.
 func TestAssignPackSameFamilyNewVersionReplaces(t *testing.T) {
 	ctx, repo, db, projectID := setupTypeRegistryTest(t)
 
@@ -123,9 +125,7 @@ func TestAssignPackSameFamilyNewVersionReplaces(t *testing.T) {
 	require.NoError(t, err)
 
 	v2, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
-		Name:                   "ot-core",
-		Version:                "0.2.0",
-		Migrations:             &schemas.SchemaMigrationHints{FromVersion: "0.1.0"},
+		Name: "ot-core", Version: "0.2.0",
 		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"},"email":{"type":"string"}}}]`),
 	})
 	require.NoError(t, err)
@@ -343,48 +343,49 @@ func TestPreviewMergeDetectsSameRunCollision(t *testing.T) {
 	assert.Equal(t, []string{"legal_name"}, c.AddedProperties)
 }
 
-// TestAssignPackSameScopeSameNameForkRequiresMerge is the #338 part-1
-// regression: a DIFFERENT pack (different id) that reuses the name within the
-// SAME project/source scope is not the same pack, so it must not capture the
-// type without a merge confirmation. Only an in-place re-assign (same id) or a
-// version-resolved upgrade (migration hints) replaces; a fork needs Merge=true.
-func TestAssignPackSameScopeSameNameForkRequiresMerge(t *testing.T) {
+// TestAssignPackCrossScopeSameNameForkRequiresMerge is the #338 regression: a
+// project-scoped pack that reuses a builtin's name (a different lineage in a
+// different registry scope) must not capture the type without Merge=true. A
+// same-name same-scope pack is a version bump (#294) and replaces; a
+// cross-scope reuse is the one fork case observable without a lineage column.
+func TestAssignPackCrossScopeSameNameForkRequiresMerge(t *testing.T) {
 	ctx, repo, db, projectID := setupTypeRegistryTest(t)
 
-	original, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
-		Name: "ot-core", Version: "0.1.0",
-		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"}}}]`),
-	})
+	// A global builtin owns Person (project_id NULL, source 'builtin').
+	builtinID := uuid.NewString()
+	_, err := db.NewRaw(`
+		INSERT INTO kb.graph_schemas (id, name, version, source, project_id, object_type_schemas)
+		VALUES (?, 'ot-core', '1.0.0', 'builtin', NULL,
+		        '[{"name":"Person","properties":{"name":{"type":"string"}}}]'::jsonb)
+	`, builtinID).Exec(ctx)
 	require.NoError(t, err)
-	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: original.ID})
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: builtinID})
 	require.NoError(t, err)
 
-	// A fork reuses the name and declares the same type, but carries no
-	// migration hints linking it to the original — so it is NOT a
-	// version-resolved upgrade and must not replace.
+	// A project-scoped pack reuses the builtin's name in a different scope.
 	fork, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
-		Name: "ot-core", Version: "0.2.0",
+		Name: "ot-core", Version: "0.1.0",
 		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"},"legal_name":{"type":"string"}}}]`),
 	})
 	require.NoError(t, err)
 
-	// No merge: the same-scope same-name fork must not capture the type.
+	// No merge: the cross-scope same-name fork must not capture the type.
 	skipped, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: fork.ID})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Person"}, skipped.SkippedTypes)
-	assert.Empty(t, skipped.ReplacedTypes, "a same-scope fork is not a same-pack upgrade")
+	assert.Empty(t, skipped.ReplacedTypes, "a cross-scope name reuse is not a same-pack upgrade")
 	require.Len(t, skipped.ShadowedTypes, 1)
 	assert.Equal(t, "Person", skipped.ShadowedTypes[0].TypeName)
-	assert.Equal(t, original.ID, skipped.ShadowedTypes[0].RegistryOwnerSchemaID)
+	assert.Equal(t, builtinID, skipped.ShadowedTypes[0].RegistryOwnerSchemaID)
 	assert.Equal(t, fork.ID, skipped.ShadowedTypes[0].ShadowingSchemaID)
 
-	// The original still owns the type in the registry.
+	// The builtin still owns the type in the registry.
 	var ownerSchemaID string
 	require.NoError(t, db.NewRaw(`
 		SELECT schema_id FROM kb.project_object_schema_registry
 		WHERE project_id = ? AND type_name = 'Person'
 	`, projectID).Scan(ctx, &ownerSchemaID))
-	assert.Equal(t, original.ID, ownerSchemaID, "an unconfirmed fork must not re-point the registry row")
+	assert.Equal(t, builtinID, ownerSchemaID, "an unconfirmed cross-scope fork must not re-point the registry row")
 
 	// Merge confirmed: the fork takes over additively.
 	merged, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: fork.ID, Merge: true})
@@ -395,55 +396,4 @@ func TestAssignPackSameScopeSameNameForkRequiresMerge(t *testing.T) {
 	props := propsOf(t, got)
 	assert.Contains(t, props, "name")
 	assert.Contains(t, props, "legal_name")
-}
-
-// TestAssignPackSameNameForkWithMismatchedFromVersionRequiresMerge is the
-// companion #338 regression: a same-name different-id pack that carries
-// migration hints whose FromVersion does NOT match the owning pack's installed
-// version is not a version-resolved upgrade, so it must not replace without
-// Merge=true. (A FromVersion that matches the owner still replaces — see
-// TestAssignPackSameFamilyNewVersionReplaces.)
-func TestAssignPackSameNameForkWithMismatchedFromVersionRequiresMerge(t *testing.T) {
-	ctx, repo, db, projectID := setupTypeRegistryTest(t)
-
-	v1, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
-		Name: "ot-core", Version: "0.1.0",
-		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"}}}]`),
-	})
-	require.NoError(t, err)
-	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: v1.ID})
-	require.NoError(t, err)
-
-	// A fork reuses the name and declares migration hints, but FromVersion
-	// (0.9.0) does not match the installed owner's version (0.1.0), so it is
-	// NOT a version-resolved upgrade of v1.
-	fork, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
-		Name:                   "ot-core",
-		Version:                "0.2.0",
-		Migrations:             &schemas.SchemaMigrationHints{FromVersion: "0.9.0"},
-		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"},"legal_name":{"type":"string"}}}]`),
-	})
-	require.NoError(t, err)
-
-	skipped, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: fork.ID})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"Person"}, skipped.SkippedTypes)
-	assert.Empty(t, skipped.ReplacedTypes, "a mismatched FromVersion is not a version-resolved upgrade")
-	require.Len(t, skipped.ShadowedTypes, 1)
-	assert.Equal(t, "Person", skipped.ShadowedTypes[0].TypeName)
-	assert.Equal(t, v1.ID, skipped.ShadowedTypes[0].RegistryOwnerSchemaID)
-	assert.Equal(t, fork.ID, skipped.ShadowedTypes[0].ShadowingSchemaID)
-
-	// The original still owns the type in the registry.
-	var ownerSchemaID string
-	require.NoError(t, db.NewRaw(`
-		SELECT schema_id FROM kb.project_object_schema_registry
-		WHERE project_id = ? AND type_name = 'Person'
-	`, projectID).Scan(ctx, &ownerSchemaID))
-	assert.Equal(t, v1.ID, ownerSchemaID, "a mismatched-FromVersion fork must not re-point the registry row")
-
-	// Merge confirmed: the fork takes over additively.
-	merged, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: fork.ID, Merge: true})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"Person"}, merged.MergedTypes)
 }

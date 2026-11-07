@@ -448,7 +448,7 @@ func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprint
 	// leaving version state behind despite a conflict failure. Apply keeps its
 	// own gate as defense in depth for every other apply entrypoint.
 	if !mergeTypeConflicts {
-		conflicts, err := s.PreviewManifestConflicts(ctx, projectID, manifest)
+		conflicts, err := s.PreviewManifestConflicts(ctx, projectID, manifest, OriginImport)
 		if err != nil {
 			return nil, err
 		}
@@ -529,7 +529,7 @@ func (s *Service) PreviewBlueprintUpdate(ctx context.Context, projectID, bluepri
 		return nil, err
 	}
 
-	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, manifest)
+	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, manifest, OriginImport)
 	if err != nil {
 		return nil, err
 	}
