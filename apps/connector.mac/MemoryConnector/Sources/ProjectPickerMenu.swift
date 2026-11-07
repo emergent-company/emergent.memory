@@ -22,10 +22,6 @@ struct ProjectPickerMenu: View {
     @SwiftUI.Environment(RecentProjectsStore.self) private var recentProjects
     @SwiftUI.Environment(AppState.self) private var appState
 
-    /// Called after a successful switch, so a host (the Project page card) can
-    /// react; the toolbar picker needs nothing.
-    var onSwitch: ((String) -> Void)?
-
     /// The web console only shows its Recent section beyond this many projects;
     /// the connector keeps the same threshold so the two switchers read alike.
     static let recentSectionThreshold = 10
@@ -71,15 +67,16 @@ struct ProjectPickerMenu: View {
 
     /// One project row. `Toggle` gives the native checkmark, the reserved
     /// leading gutter, type-ahead selection and an accessible "selected"
-    /// state; switching off is meaningless (switching is pick-one), so the
-    /// setter only acts on `true`.
+    /// state. A click on the ACTIVE row must still reach `selectProject`: for a
+    /// connected project that is the documented "refresh/reassert" path
+    /// (`ProjectStore.selectProject` re-runs `projects use` and restarts the
+    /// child), and a menu toggle reports the click as `false` — so the setter
+    /// acts on either value and the row is a pick-one, not a real on/off.
     private func row(_ project: ProjectInfo) -> some View {
         Toggle(isOn: Binding(
             get: { project.id == projectStore.activeProjectID },
-            set: { isOn in
-                if isOn {
-                    switchProject(to: project.id)
-                }
+            set: { _ in
+                switchProject(to: project.id)
             }
         )) {
             projectLabel(project)
@@ -107,6 +104,11 @@ struct ProjectPickerMenu: View {
             Button("Retry") { retry() }
         case .loaded:
             Text("No projects")
+            // The footer stays reachable with an empty list: "Manage projects…"
+            // opens the page where the account's projects are listed, and a
+            // refresh re-checks after a project was created elsewhere.
+            Divider()
+            actions
         }
     }
 
@@ -161,7 +163,9 @@ struct ProjectPickerMenu: View {
     // MARK: - Actions
 
     private func switchProject(to id: String) {
-        guard id != projectStore.activeProjectID else { return }
+        // No "already active" short-circuit: re-picking the active project is a
+        // refresh (it re-runs `projects use` for a connected project), which is
+        // covered by `ProjectStoreTests`.
         Task {
             let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.selectProject(id, accessToken: token)
@@ -171,7 +175,6 @@ struct ProjectPickerMenu: View {
                 return
             }
             recentProjects.record(id)
-            onSwitch?(id)
         }
     }
 

@@ -39,10 +39,18 @@ final class RecentProjectsStore {
     }
 
     /// Points the store at an account's list (called from the same scope swap
-    /// that repoints `ProjectStore`).
+    /// that repoints `ProjectStore`). The stored list is deduplicated and
+    /// trimmed on load: a hand-edited or legacy defaults value must never put
+    /// the same id in a `ForEach` twice (duplicate SwiftUI identities) or grow
+    /// past the cap.
     func applyScope(accountID: String?) {
         self.accountID = accountID
-        ids = defaults.stringArray(forKey: key) ?? []
+        var seen = Set<String>()
+        ids = Array(
+            (defaults.stringArray(forKey: key) ?? [])
+                .filter { seen.insert($0).inserted }
+                .prefix(Self.maxEntries)
+        )
     }
 
     /// Records an explicit project switch as recently used: newest first, one

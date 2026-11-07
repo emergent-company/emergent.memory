@@ -3,7 +3,9 @@ import Foundation
 import XCTest
 
 /// Recent-project bookkeeping behind the project switcher's "Recent" section.
-@MainActor
+/// The store is `@MainActor`; each test takes the hop rather than the class, so
+/// the nonisolated `setUpWithError`/`tearDownWithError` XCTest overrides never
+/// touch actor-isolated state.
 final class RecentProjectsStoreTests: XCTestCase {
     private var suite = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
@@ -19,6 +21,7 @@ final class RecentProjectsStoreTests: XCTestCase {
 
     // MARK: - Recording
 
+    @MainActor
     func testRecordKeepsNewestFirstWithoutDuplicates() {
         let store = RecentProjectsStore(defaults: defaults)
 
@@ -30,6 +33,7 @@ final class RecentProjectsStoreTests: XCTestCase {
         XCTAssertEqual(defaults.stringArray(forKey: store.key), ["p1", "p2"])
     }
 
+    @MainActor
     func testRecordIsCapped() {
         let store = RecentProjectsStore(defaults: defaults)
 
@@ -41,6 +45,7 @@ final class RecentProjectsStoreTests: XCTestCase {
         XCTAssertEqual(store.ids.first, "p\(RecentProjectsStore.maxEntries + 3)")
     }
 
+    @MainActor
     func testRecordIgnoresBlankIDs() {
         let store = RecentProjectsStore(defaults: defaults)
 
@@ -52,6 +57,7 @@ final class RecentProjectsStoreTests: XCTestCase {
 
     // MARK: - Scoping
 
+    @MainActor
     func testApplyScopeLoadsThatAccountsListOnly() {
         let store = RecentProjectsStore(defaults: defaults)
         store.applyScope(accountID: "acct-a")
@@ -67,6 +73,20 @@ final class RecentProjectsStoreTests: XCTestCase {
         XCTAssertEqual(store.ids, ["p2"])
     }
 
+    @MainActor
+    func testApplyScopeDeduplicatesAndCapsAHandEditedList() {
+        let store = RecentProjectsStore(defaults: defaults)
+        store.applyScope(accountID: "acct-a")
+        // A hand-edited or legacy blob must not put one id in the list twice
+        // (duplicate SwiftUI identities) or exceed the cap on load.
+        defaults.set(["p1", "p1", "p2", "p3", "p4", "p5", "p6"], forKey: store.key)
+
+        store.applyScope(accountID: "acct-a")
+
+        XCTAssertEqual(store.ids, ["p1", "p2", "p3", "p4", "p5"])
+    }
+
+    @MainActor
     func testUnscopedListUsesTheSharedKey() {
         let store = RecentProjectsStore(defaults: defaults)
 
@@ -78,6 +98,7 @@ final class RecentProjectsStoreTests: XCTestCase {
 
     // MARK: - Resolution
 
+    @MainActor
     func testResolvedDropsProjectsThatNoLongerExist() {
         let store = RecentProjectsStore(defaults: defaults)
         store.record("p1")
@@ -91,6 +112,7 @@ final class RecentProjectsStoreTests: XCTestCase {
         XCTAssertEqual(store.resolved(in: projects).map(\.id), ["p1"])
     }
 
+    @MainActor
     func testResolvedKeepsRecordOrder() {
         let store = RecentProjectsStore(defaults: defaults)
         store.record("p1")

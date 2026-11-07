@@ -57,9 +57,49 @@ final class EnvironmentTests: XCTestCase {
         XCTAssertNil(Environment.prod.projectWebURL(orgID: "org-1", projectID: ""))
     }
 
-    func testOrgWebURLUsesConsoleRoute() {
-        XCTAssertEqual(Environment.prod.orgWebURL(orgID: "org-1")?.absoluteString,
-                       "https://memory.emergent-company.ai/orgs/org-1")
-        XCTAssertNil(Environment.prod.orgWebURL(orgID: " "))
+    /// Prod serves the console from the API origin.
+    func testProdConsoleURLMatchesServerURL() {
+        XCTAssertEqual(Environment.prod.consoleURL, Environment.prod.serverURL)
+    }
+
+    /// The hosted dev deployment splits them (`admin.dev…` fronts `api.dev…`),
+    /// so a deep link must not reuse the API host.
+    func testDevConsoleURLMapsAPIHostToAdminHost() {
+        let dev = Environment.makeDev(environment: [
+            "MEMORY_DEV_SERVER_URL": "https://api.dev.emergent-company.ai",
+        ])
+
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.dev.emergent-company.ai")
+        XCTAssertEqual(dev.projectWebURL(orgID: "org-1", projectID: "p2")?.absoluteString,
+                       "https://admin.dev.emergent-company.ai/o/org-1/p/p2/agents")
+    }
+
+    /// A local gateway serves API and console on one origin.
+    func testDevConsoleURLKeepsANonAPILocalOrigin() {
+        let dev = Environment.makeDev(environment: [
+            "MEMORY_DEV_SERVER_URL": "http://localhost:3002",
+        ])
+
+        XCTAssertEqual(dev.consoleURL.absoluteString, "http://localhost:3002")
+    }
+
+    func testDevConsoleURLCanBeOverridden() {
+        let dev = Environment.makeDev(environment: [
+            "MEMORY_DEV_SERVER_URL": "https://api.dev.emergent-company.ai",
+            "MEMORY_DEV_CONSOLE_URL": "https://console.internal.example",
+        ])
+
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://console.internal.example")
+    }
+
+    /// A blank or unparseable override falls back to the derived host, like
+    /// every other dev value.
+    func testDevConsoleURLIgnoresBlankOverride() {
+        let dev = Environment.makeDev(environment: [
+            "MEMORY_DEV_SERVER_URL": "https://api.dev.emergent-company.ai",
+            "MEMORY_DEV_CONSOLE_URL": "  ",
+        ])
+
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.dev.emergent-company.ai")
     }
 }

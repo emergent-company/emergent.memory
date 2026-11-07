@@ -194,9 +194,6 @@
     "Select a project to connect." : {
 
     },
-    "Selecting a project views it; connect to serve its tools" : {
-
-    },
     "Server" : {
 
     },
@@ -240,9 +237,6 @@
 
     },
     "Switch project" : {
-
-    },
-    "Switch projects from the menu at the top of the window." : {
 
     },
     "The connector runs only for the connected project." : {

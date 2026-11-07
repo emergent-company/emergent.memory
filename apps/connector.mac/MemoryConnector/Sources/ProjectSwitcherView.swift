@@ -73,7 +73,11 @@ struct ProjectSwitcherView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .accessibilityLabel(Text(AccessibleNames.project))
+        .accessibilityValue(accessibilityValue)
         .help(switchHelp)
+        // One switch at a time: the rows and the trigger both key off the
+        // store's `.loading`, so a second click can never race the first.
+        .disabled(projectStore.state == .loading)
     }
 
     // MARK: - Trigger label
@@ -195,6 +199,44 @@ struct ProjectSwitcherView: View {
             return Text(verbatim: name)
         }
         return Text("Select project")
+    }
+
+    /// VoiceOver value for the trigger. The accessible NAME stays the stable
+    /// action ("Switch project"); the live context travels as the value, so
+    /// unlike a replaced label it keeps the organisation and project name the
+    /// previous control announced.
+    private var accessibilityValue: Text {
+        if !accountStore.isEffectivelySignedIn {
+            return Text("Signed out")
+        }
+        if projectStore.projects.isEmpty {
+            switch projectStore.state {
+            case .idle, .loading:
+                return Text("Loading projects…")
+            case .signedOut:
+                return Text("Signed out")
+            case .error:
+                return Text("Couldn't load projects")
+            case .loaded:
+                return Text("No projects")
+            }
+        }
+        guard let summary = contextSummary else {
+            return Text("Select project")
+        }
+        return Text(verbatim: summary)
+    }
+
+    /// "Org, Project" for the active context, or the project alone when its
+    /// organisation is unresolvable. Both parts are runtime data.
+    private var contextSummary: String? {
+        guard let name = projectStore.activeProjectName?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        else {
+            return nil
+        }
+        guard let org = activeOrganizationName else { return name }
+        return "\(org), \(name)"
     }
 
     /// Tooltip for the trigger: the server's error text when the load failed
