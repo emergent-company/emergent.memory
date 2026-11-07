@@ -17,7 +17,9 @@ import { defineConfig, devices } from '@playwright/test';
 // gateway/mock pair, writes it to a file and prints it; this config builds its
 // baseURL from that selection and hands the same file to `run-e2e.sh` as
 // E2E_PORTS_FILE, so the config and the servers cannot disagree. Two concurrent
-// runs of this job on one host therefore get different pairs.
+// runs of this job on one host choose independently; if they still collide, the
+// runner proves port ownership before accepting health and fails loudly instead
+// of attaching to the other lane.
 const { gateway: port, mock, file: portsFile } = JSON.parse(
   execFileSync(process.execPath, [path.join(__dirname, 'ports.mjs'), '--lane', 'datasources'], {
     encoding: 'utf8',
