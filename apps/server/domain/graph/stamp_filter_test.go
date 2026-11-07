@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,9 +60,14 @@ func TestWriteStampFilterRendersSQL(t *testing.T) {
 	kind := auth.CredentialAPIKey
 	class := DataClassSource
 
+	render := func(params ListParams) string {
+		q, err := repo.buildObjectBaseQueryWith(context.Background(), repo.db, params)
+		require.NoError(t, err)
+		return q.String()
+	}
+
 	t.Run("no filters means no stamp predicates", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid})
-		where := whereClause(q.String())
+		where := whereClause(render(ListParams{ProjectID: pid}))
 		require.NotEmpty(t, where)
 		require.NotContains(t, where, "run_id")
 		require.NotContains(t, where, "credential_id")
@@ -70,24 +76,22 @@ func TestWriteStampFilterRendersSQL(t *testing.T) {
 	})
 
 	t.Run("run filter matches either run column", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, Stamp: WriteStampFilters{RunID: &runID}})
-		require.Contains(t, q.String(),
+		require.Contains(t, render(ListParams{ProjectID: pid, Stamp: WriteStampFilters{RunID: &runID}}),
 			"(run_id = '"+runID.String()+"' OR root_run_id = '"+runID.String()+"')")
 	})
 
 	t.Run("credential filters are independent equalities", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+		sql := render(ListParams{
 			ProjectID: pid,
 			Stamp:     WriteStampFilters{CredentialID: &credID, CredentialKind: &kind},
 		})
-		sql := q.String()
 		require.Contains(t, sql, "credential_id = '"+credID.String()+"'")
 		require.Contains(t, sql, "credential_kind = '"+auth.CredentialAPIKey+"'")
 	})
 
 	t.Run("data class filter is an equality", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, Stamp: WriteStampFilters{DataClass: &class}})
-		require.Contains(t, q.String(), "data_class = '"+DataClassSource+"'")
+		require.Contains(t, render(ListParams{ProjectID: pid, Stamp: WriteStampFilters{DataClass: &class}}),
+			"data_class = '"+DataClassSource+"'")
 	})
 
 	t.Run("relationships filter credential and run but never data class", func(t *testing.T) {
@@ -105,24 +109,22 @@ func TestWriteStampFilterRendersSQL(t *testing.T) {
 
 	t.Run("the default scope matches the current version only", func(t *testing.T) {
 		for _, mode := range []string{"", ProvenanceUpdated} {
-			q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+			sql := render(ListParams{
 				ProjectID:  pid,
 				Stamp:      WriteStampFilters{RunID: &runID},
 				Provenance: mode,
 			})
-			sql := q.String()
 			require.Contains(t, sql, "(run_id = '"+runID.String()+"' OR root_run_id = '"+runID.String()+"')")
 			require.NotContains(t, sql, "version = 1", "mode %q must not widen to the creator version", mode)
 		}
 	})
 
 	t.Run("created scope requires the root version to carry the stamp", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+		sql := render(ListParams{
 			ProjectID:  pid,
 			Stamp:      WriteStampFilters{RunID: &runID},
 			Provenance: ProvenanceCreated,
 		})
-		sql := q.String()
 		require.Contains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE")
 		require.Contains(t, sql, "(run_id = '"+runID.String()+"' OR root_run_id = '"+runID.String()+"')")
 		require.Contains(t, sql, "version = 1")
@@ -133,25 +135,23 @@ func TestWriteStampFilterRendersSQL(t *testing.T) {
 	})
 
 	t.Run("any scope unions the current version and the creator version", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+		sql := render(ListParams{
 			ProjectID:  pid,
 			Stamp:      WriteStampFilters{CredentialID: &credID},
 			Provenance: ProvenanceAny,
 		})
-		sql := q.String()
 		require.Contains(t, sql, "credential_id = '"+credID.String()+"') OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects")
 		require.Contains(t, sql, "version = 1")
 	})
 
 	t.Run("created scope is scoped to the caller's branch", func(t *testing.T) {
 		branchID := uuid.New()
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+		sql := render(ListParams{
 			ProjectID:  pid,
 			BranchID:   &branchID,
 			Stamp:      WriteStampFilters{RunID: &runID},
 			Provenance: ProvenanceCreated,
 		})
-		sql := q.String()
 		require.Contains(t, sql, "project_id = '"+pid.String()+"' AND branch_id = '"+branchID.String()+"'")
 		require.NotContains(t, sql, "branch_id IS NULL")
 	})

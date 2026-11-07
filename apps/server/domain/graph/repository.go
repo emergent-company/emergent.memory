@@ -398,14 +398,14 @@ func propertyFilterPredicates(filters []PropertyFilter) []bulkFilterPredicate {
 // ListParams filters applied (project, branch, IDs, types, labels, status, key,
 // extraction job, namespace, deleted, property filters, and related-to).
 // Cursor, ordering, and LIMIT are NOT applied — callers add those as needed.
-func (r *Repository) buildObjectBaseQuery(params ListParams) *bun.SelectQuery {
-	return r.buildObjectBaseQueryWith(r.db, params)
+func (r *Repository) buildObjectBaseQuery(ctx context.Context, params ListParams) (*bun.SelectQuery, error) {
+	return r.buildObjectBaseQueryWith(ctx, r.db, params)
 }
 
 // buildObjectBaseQueryWith is buildObjectBaseQuery against a caller-supplied
 // handle (a *bun.DB or a bun.Tx), so batch iterators can run their scans inside
 // an existing transaction.
-func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bun.SelectQuery {
+func (r *Repository) buildObjectBaseQueryWith(ctx context.Context, db bun.IDB, params ListParams) (*bun.SelectQuery, error) {
 	q := db.NewSelect().
 		Model((*GraphObject)(nil)).
 		Where("project_id = ?", params.ProjectID).
@@ -417,10 +417,16 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 		q = q.Where("migration_archive <> '[]'::jsonb")
 	}
 
+	// An explicit branch is always honoured as-is; a read that names no branch
+	// is bounded by the run's branch scope (main only by default, main plus the
+	// in-scope unmerged branches for a scoped run), deduplicated main-first so a
+	// forked canonical object is returned once (#308).
 	if params.BranchID != nil {
 		q = q.Where("branch_id = ?", *params.BranchID)
+	} else if predicate, args, err := r.branchScopeDedupPredicate(ctx, params.ProjectID); err != nil {
+		return nil, err
 	} else {
-		q = q.Where("branch_id IS NULL")
+		q = q.Where(predicate, args...)
 	}
 
 	// Filter by specific IDs (accepts both physical id and canonical_id)
@@ -538,7 +544,7 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 	// version row must carry the stamp (created|updated|any, default updated).
 	q = applyWriteStampFilters(q, params.Stamp, params.Provenance, params.ProjectID, params.BranchID)
 
-	return q
+	return q, nil
 }
 
 // List returns graph objects matching the given parameters.
@@ -577,7 +583,11 @@ func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([
 		// column is omitted and obj.MigrationArchive always scans as empty.
 		columns = append(columns, "migration_archive")
 	}
-	q := r.buildObjectBaseQueryWith(db, params).Column(columns...).
+	baseQuery, err := r.buildObjectBaseQueryWith(ctx, db, params)
+	if err != nil {
+		return nil, err
+	}
+	q := baseQuery.Column(columns...).
 		ColumnExpr(embeddingStatusExpr + " AS embedding_status")
 
 	// Property-based ordering: ORDER BY the JSONB property accessor with id as a
@@ -707,7 +717,11 @@ func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphOb
 // Count returns the total count of graph objects matching the given parameters.
 // This is used for pagination to return the true total, not just the page count.
 func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) {
-	count, err := r.buildObjectBaseQuery(params).Count(ctx)
+	q, err := r.buildObjectBaseQuery(ctx, params)
+	if err != nil {
+		return 0, err
+	}
+	count, err := q.Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count graph objects", logger.Error(err))
 		return 0, apperror.ErrDatabase.WithInternal(err)
@@ -813,18 +827,29 @@ func (r *Repository) GetObjectIdentity(ctx context.Context, projectID, id uuid.U
 // physical id, or resolve with GetHeadByCanonicalID(branchID), to target a
 // branch explicitly. See resolveObjectByID for the full priority.
 func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	// Bound the read to the run's branch boundary (#308): a caller with no
+	// boundary keeps the pre-existing unbounded-but-main-preferred resolution, a
+	// main-only agent run reads main only (and can no longer reach a branch-only
+	// object), and a scoped run reads main plus its in-scope branches.
+	branchPredicate, branchArgs, err := r.branchReadPredicate(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
 	var objects []GraphObject
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		Model(&objects).
 		Column(graphObjectDetailColumns...).
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
-		Where("deleted_at IS NULL").
-		// HEAD-first with a deterministic id tie-break so the non-HEAD fallback
-		// (objects[0]) is stable when multiple non-HEAD rows match.
-		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
-		Scan(ctx)
+		Where("deleted_at IS NULL")
+	if branchPredicate != "" {
+		q = q.Where(branchPredicate, branchArgs...)
+	}
+	// HEAD-first with a deterministic id tie-break so the non-HEAD fallback
+	// (objects[0]) is stable when multiple non-HEAD rows match.
+	err = q.OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").Scan(ctx)
 
 	if err != nil {
 		r.log.Error("failed to get graph object", logger.Error(err), slog.String("id", id.String()))
@@ -840,15 +865,22 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 
 // GetByIDIncludeDeleted returns a graph object by ID or canonical ID, including soft-deleted objects.
 func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	branchPredicate, branchArgs, err := r.branchReadPredicate(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
 	var objects []GraphObject
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		Model(&objects).
 		Column(graphObjectDetailColumns...).
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
-		Where("project_id = ?", projectID).
-		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC"). // HEAD first, id tie-break
-		Scan(ctx)
+		Where("project_id = ?", projectID)
+	if branchPredicate != "" {
+		q = q.Where(branchPredicate, branchArgs...)
+	}
+	err = q.OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").Scan(ctx) // HEAD first, id tie-break
 
 	if err != nil {
 		r.log.Error("failed to get graph object (include deleted)", logger.Error(err), slog.String("id", id.String()))
@@ -1202,6 +1234,36 @@ func (r *Repository) GetHistory(ctx context.Context, projectID, canonicalID uuid
 	return versions, nil
 }
 
+// inScopeBranchIDs returns the IDs of the unmerged branches a non-main-only
+// scope admits, ordered by recency and capped by the scope's MaxBranches, or an
+// empty slice when none match. It is the shared fan-out target computation for
+// every branch-scoped read (#265, #308).
+func (r *Repository) inScopeBranchIDs(ctx context.Context, projectID uuid.UUID, scope *branchscope.Scope) ([]uuid.UUID, error) {
+	var branches []Branch
+	err := r.db.NewSelect().
+		Model(&branches).
+		ColumnExpr("b.id, b.name, b.origin").
+		Where("b.project_id = ?", projectID).
+		Where("b.merged_at IS NULL").
+		Where(branchsql.DeletedExtractionSourceExclusion).
+		OrderExpr("b.created_at DESC").
+		Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	ids := make([]uuid.UUID, 0, len(branches))
+	for _, b := range branches {
+		if !scope.AllowsOrigin(b.Origin) || !scope.AllowsName(b.Name) {
+			continue
+		}
+		ids = append(ids, b.ID)
+		if len(ids) >= scope.MaxBranches() {
+			break
+		}
+	}
+	return ids, nil
+}
+
 // branchReadPredicate returns a SQL predicate (and its args) bounding a
 // relationship query to the branches this run may read, or an empty predicate
 // when no boundary applies. A run with no branch boundary installed — a human API
@@ -1216,32 +1278,62 @@ func (r *Repository) branchReadPredicate(ctx context.Context, projectID uuid.UUI
 	if scope.IsMainOnly() {
 		return "branch_id IS NULL", nil, nil
 	}
-	var branches []Branch
-	err := r.db.NewSelect().
-		Model(&branches).
-		ColumnExpr("b.id, b.name, b.origin").
-		Where("b.project_id = ?", projectID).
-		Where("b.merged_at IS NULL").
-		Where(branchsql.DeletedExtractionSourceExclusion).
-		OrderExpr("b.created_at DESC").
-		Scan(ctx)
-	if err != nil && err != sql.ErrNoRows {
-		return "", nil, apperror.ErrDatabase.WithInternal(err)
-	}
-	ids := make([]uuid.UUID, 0, len(branches))
-	for _, b := range branches {
-		if !scope.AllowsOrigin(b.Origin) || !scope.AllowsName(b.Name) {
-			continue
-		}
-		ids = append(ids, b.ID)
-		if len(ids) >= scope.MaxBranches() {
-			break
-		}
+	ids, err := r.inScopeBranchIDs(ctx, projectID, scope)
+	if err != nil {
+		return "", nil, err
 	}
 	if len(ids) == 0 {
 		return "branch_id IS NULL", nil, nil
 	}
 	return "(branch_id IS NULL OR branch_id IN (?))", []any{bun.In(ids)}, nil
+}
+
+// branchScopePredicate returns a SQL predicate (and its args) bounding an object
+// or relationship read that names no explicit branch. It is the object/read-side
+// counterpart of branchReadPredicate: where a relationship read is unbounded for
+// a caller with no boundary, these reads keep their pre-existing main-only
+// default for that caller, and only a scoped agent run fans out to main plus its
+// in-scope unmerged branches (#308). A main-only agent run reads main only.
+func (r *Repository) branchScopePredicate(ctx context.Context, projectID uuid.UUID) (string, []any, error) {
+	if !branchscope.Installed(ctx) {
+		return "branch_id IS NULL", nil, nil
+	}
+	scope := branchscope.FromContext(ctx)
+	if scope.IsMainOnly() {
+		return "branch_id IS NULL", nil, nil
+	}
+	ids, err := r.inScopeBranchIDs(ctx, projectID, scope)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(ids) == 0 {
+		return "branch_id IS NULL", nil, nil
+	}
+	return "(branch_id IS NULL OR branch_id IN (?))", []any{bun.In(ids)}, nil
+}
+
+// branchScopeDedupPredicate is branchScopePredicate plus a main-preferred dedup:
+// a canonical object that exists on main AND on an in-scope branch is returned
+// once, as its main head, while a branch-only object is still returned. It is a
+// plain WHERE clause (no DISTINCT ON), so it composes with the keyset cursor and
+// property ordering used by List/Count. The `NOT IN (main canonical ids)` probe
+// keeps exactly one row per canonical id — main when present, the branch head
+// otherwise (#308).
+func (r *Repository) branchScopeDedupPredicate(ctx context.Context, projectID uuid.UUID) (string, []any, error) {
+	predicate, args, err := r.branchScopePredicate(ctx, projectID)
+	if err != nil {
+		return "", nil, err
+	}
+	if predicate == "branch_id IS NULL" {
+		// Main-only (or no boundary, or an empty scope): nothing to dedup.
+		return predicate, args, nil
+	}
+	// predicate == "(branch_id IS NULL OR branch_id IN (?))". Replace the
+	// branch-IN arm with the deduped form.
+	dedup := "branch_id IS NULL OR (branch_id IN (?) AND canonical_id NOT IN (" +
+		"SELECT canonical_id FROM kb.graph_objects WHERE project_id = ? " +
+		"AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL))"
+	return dedup, append(args, projectID), nil
 }
 
 // GetEdges returns incoming and outgoing relationships for an object by its canonical_id.
@@ -1888,8 +1980,10 @@ func (r *Repository) CountRelationships(ctx context.Context, params Relationship
 
 	if params.BranchID != nil {
 		q = q.Where("branch_id = ?", *params.BranchID)
+	} else if predicate, args, err := r.branchScopePredicate(ctx, params.ProjectID); err != nil {
+		return 0, err
 	} else {
-		q = q.Where("branch_id IS NULL")
+		q = q.Where(predicate, args...)
 	}
 
 	if params.Type != nil {
@@ -1943,8 +2037,10 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 
 	if params.BranchID != nil {
 		q = q.Where("branch_id = ?", *params.BranchID)
+	} else if predicate, args, err := r.branchScopePredicate(ctx, params.ProjectID); err != nil {
+		return nil, err
 	} else {
-		q = q.Where("branch_id IS NULL")
+		q = q.Where(predicate, args...)
 	}
 
 	if params.Type != nil {
@@ -3204,14 +3300,28 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 	currentLevel := make([]uuid.UUID, 0, len(params.RootIDs))
 	visited := make(map[uuid.UUID]bool)
 
-	// Fetch root objects — accept physical id or canonical_id
+	// Fetch root objects — accept physical id or canonical_id. The read is
+	// bounded by the run's branch scope, deduplicated main-first, so a root that
+	// is forked to an in-scope branch resolves to main and a branch-only root is
+	// still reachable by a scoped run (#308).
 	var rootObjects []*GraphObject
+	rootBranchPredicate := "branch_id IS NULL"
+	rootBranchArgs := []any(nil)
+	if params.BranchID != nil {
+		rootBranchPredicate = "branch_id = ?"
+		rootBranchArgs = []any{*params.BranchID}
+	} else if p, a, err := r.branchScopeDedupPredicate(ctx, params.ProjectID); err != nil {
+		return nil, err
+	} else {
+		rootBranchPredicate, rootBranchArgs = p, a
+	}
 	err := r.db.NewSelect().
 		Model(&rootObjects).
 		Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.RootIDs), bun.In(params.RootIDs)).
 		Where("project_id = ?", params.ProjectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
+		Where(rootBranchPredicate, rootBranchArgs...).
 		Scan(ctx)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -3265,8 +3375,10 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 
 		if params.BranchID != nil {
 			q = q.Where("branch_id = ?", *params.BranchID)
+		} else if predicate, args, err := r.branchScopePredicate(ctx, params.ProjectID); err != nil {
+			return nil, err
 		} else {
-			q = q.Where("branch_id IS NULL")
+			q = q.Where(predicate, args...)
 		}
 
 		switch params.Direction {
@@ -3390,8 +3502,10 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			// resolved to a different branch's version of the same canonical id.
 			if params.BranchID != nil {
 				nq = nq.Where("branch_id = ?", *params.BranchID)
+			} else if predicate, args, err := r.branchScopeDedupPredicate(ctx, params.ProjectID); err != nil {
+				return nil, err
 			} else {
-				nq = nq.Where("branch_id IS NULL")
+				nq = nq.Where(predicate, args...)
 			}
 
 			if len(params.ObjectTypes) > 0 {

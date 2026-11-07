@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -49,52 +50,51 @@ func TestProvenanceFilterRendersSQL(t *testing.T) {
 	actorType := "agent"
 	actorID := uuid.New()
 
+	render := func(params ListParams) string {
+		q, err := repo.buildObjectBaseQueryWith(context.Background(), repo.db, params)
+		require.NoError(t, err)
+		return q.String()
+	}
+
 	t.Run("no actor_type means no filter", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorID: &actorID})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, ActorID: &actorID})
 		require.NotContains(t, sql, "actor_type = ")
 		require.NotContains(t, sql, "version = 1")
 		require.NotContains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE")
 	})
 
 	t.Run("created mode scopes subquery to project and main branch", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceCreated})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceCreated})
 		require.Contains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL AND project_id = '"+pid.String()+"' AND branch_id IS NULL)")
 		require.NotContains(t, sql, "OR canonical_id IN")
 	})
 
 	t.Run("created mode scopes subquery to a specific branch", func(t *testing.T) {
 		branchID := uuid.New()
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, BranchID: &branchID, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceCreated})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, BranchID: &branchID, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceCreated})
 		require.Contains(t, sql, "branch_id = '"+branchID.String()+"'")
 		require.NotContains(t, sql, "branch_id IS NULL")
 	})
 
 	t.Run("updated mode filters the head pair only", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceUpdated})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceUpdated})
 		require.Contains(t, sql, "actor_type = 'agent' AND actor_id = '"+actorID.String()+"'")
 		require.NotContains(t, sql, "version = 1")
 		require.NotContains(t, sql, "canonical_id IN (SELECT")
 	})
 
 	t.Run("any mode is creator OR updater", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceAny})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceAny})
 		require.Contains(t, sql, "(actor_type = 'agent' AND actor_id = '"+actorID.String()+"') OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL AND project_id = '"+pid.String()+"' AND branch_id IS NULL)")
 	})
 
 	t.Run("default (empty) provenance behaves like any", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID})
 		require.Contains(t, sql, "OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL AND project_id = '"+pid.String()+"' AND branch_id IS NULL)")
 	})
 
 	t.Run("nil actor_id (system) uses actor_id IS NULL", func(t *testing.T) {
-		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, Provenance: ProvenanceCreated})
-		sql := q.String()
+		sql := render(ListParams{ProjectID: pid, ActorType: &actorType, Provenance: ProvenanceCreated})
 		require.Contains(t, sql, "actor_id IS NULL")
 		require.NotContains(t, sql, "actor_id = ")
 		require.Contains(t, sql, "project_id = '"+pid.String()+"'")
