@@ -183,10 +183,27 @@
 @source not "../../vendor/google.golang.org/**";
 @source not "../../vendor/gopkg.in/**";
 
-/* go-daisy's co-located custom component CSS (sidebar/layout/topbar/alpine/
-   view-transition rules) — see gateway/godaisy_css.go (blank-import forces the
-   package dir, and with it custom.css, into vendor). */
+/* go-daisy's co-located CSS — see gateway/godaisy_css.go (blank-import forces
+   the package dir, and with it these files, into vendor).
+
+   tokens.css first: it registers the semantic text-tone ladder (text-body …
+   text-faint) and `.eyebrow`. Since go-daisy v0.19.0 custom.css @applies those
+   tones, so a consumer compile that imports custom.css alone fails with
+   "Cannot apply unknown utility class `text-body`". custom.css second: the
+   sidebar/layout/topbar/alpine/view-transition rules (and the line ladder). */
+@import "../../vendor/github.com/emergent-company/go-daisy/components/css/tokens.css";
 @import "../../vendor/github.com/emergent-company/go-daisy/components/css/custom.css";
+
+/* go-daisy tokens.css also declares `--color-muted`, but at 60% (its own tone
+   ladder), in an `@theme inline` block. Because that import comes after
+   Memory's muted scale above, upstream's value would win and silently brighten
+   every `text-muted`/`var(--color-muted)` use app-wide. Re-assert Memory's
+   canonical 50% step after the import so the product scale stays
+   authoritative; the rest of the product scale (muted-subtle/-faint/-strong/
+   -bright) does not collide with go-daisy's names. */
+@theme inline {
+  --color-muted: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+}
 
 /* ---------------------------------------------------------------------------
  * Memory brand layer — atmosphere, chat polish, session rail, motion.
@@ -1386,44 +1403,26 @@ main#main-content {
   background-color: currentColor;
 }
 
-/* Chip inputs (go-daisy form/TagList → daisyUI .badge). A chip is a
-   fixed-height badge and daisyUI's .badge sets height but not overflow, so a
-   value that wraps — a long label, or an array element written as a JSON
-   document — escaped the badge and painted over every field below it, which is
-   what made an object with a JSON document property unreadable. Clamp the label
-   to one line and let long unbroken tokens break, so a chip can neither grow
-   taller than its badge nor widen the field that holds it; the full value still
-   travels in the submitted hidden input.
-   (A hard `white-space: nowrap` is not the fix here: with no width of its own
-   the chip's intrinsic width is the whole value, which widens the grid track
-   instead of clipping.)
-   TEMPORARY: remove once go-daisy's TagList clamps its label itself
-   (emergent-company/go-daisy — chip overflow guard). */
-.memory-chip-list .badge {
-  max-width: 100%;
-  overflow: hidden;
-}
-.memory-chip-list .badge > span {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
+/* Chip inputs (go-daisy form/TagList → daisyUI .badge). go-daisy v0.19.0
+   clamps the chip label itself (form/tags-list.templ: `min-w-0 max-w-full` on
+   the badge, `line-clamp-1 overflow-hidden wrap-anywhere` on the label span),
+   so the temporary call-site-class guard this project carried is gone — the
+   component owns it now. */
 
 /* TagList field outline (#2311). go-daisy's form/TagList wrapper hardcodes
    `border-line-strong` (--color-base-300), a near-black edge on the dark theme,
    while the daisyUI fields it sits beside (.input / .select / .textarea) draw
    their outline from --input-color: --color-base-content at 20%. Paint the
    wrapper with that same token so the chip field reads as one of the fields
-   instead of a darker, unrelated box.
-   :not(.absolute) leaves the suggestion popover on the `border-line` surface
-   token it was designed for, and :not(:focus-within) keeps the component's own
-   focus-within:border-primary — this rule is unlayered, so without that guard
-   it would beat both the layered utilities and the popover's edge.
+   instead of a darker, unrelated box. go-daisy v0.19.0 still hardcodes the
+   strong step, so the override stays; it is keyed structurally (a .relative
+   wrapper directly containing the border-line-strong field box) rather than on
+   a call-site class, so the templates no longer pass a styling hook.
+   :not(:focus-within) keeps the component's own focus-within:border-primary —
+   this rule is unlayered, so without that guard it would beat it.
    TEMPORARY: remove once go-daisy's TagList borders itself with the input
-   token (needs an upstream go-daisy sync; the vendor pin stays put here). */
-.memory-chip-list > div > div:not(.absolute):not(:focus-within) {
+   token (needs an upstream go-daisy change). */
+div.relative > div.border-line-strong:not(:focus-within) {
   border-color: color-mix(in oklab, var(--color-base-content) 20%, transparent);
 }
 

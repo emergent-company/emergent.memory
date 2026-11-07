@@ -59,15 +59,15 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// eyebrow (now ui.Eyebrow) — muted class owned by go-daisy upstream
 	got := render(ui.Eyebrow("Allowed tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"}))
-	want := `<p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-2">Allowed tools</p>`
+	want := `<p class="eyebrow text-[11px] mb-2">Allowed tools</p>`
 	check("eyebrow", got, want)
 
 	got = render(ui.Eyebrow("Tools", ui.EyebrowProps{Size: "text-[10px]", Margin: "mt-4 mb-2"}))
-	want = `<p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[10px] mt-4 mb-2">Tools</p>`
+	want = `<p class="eyebrow text-[10px] mt-4 mb-2">Tools</p>`
 	check("eyebrow mt", got, want)
 
 	got = render(ui.Eyebrow("Key", ui.EyebrowProps{Size: "text-[11px]"}))
-	want = `<p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px]">Key</p>`
+	want = `<p class="eyebrow text-[11px]">Key</p>`
 	check("eyebrow nomargin", got, want)
 
 	// countBadge / countBadgeLabel
@@ -82,17 +82,17 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// cardList — titled Section variant
 	got = render(cardList("Chunks", cardListProps{Margin: "mt-6", Empty: false}), "<p>row1</p>")
-	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 border border-line overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>row1</p></div></div></div></section>`
+	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 edge-line overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>row1</p></div></div></div></section>`
 	check("cardList titled", got, want)
 
 	// cardList — bare CardRaw variant
 	got = render(cardList("", cardListProps{}), "<p>r1</p>", "<p>r2</p>")
-	want = `<div class="card bg-base-100 border border-line overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>r1</p><p>r2</p></div></div></div>`
+	want = `<div class="card bg-base-100 edge-line overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>r1</p><p>r2</p></div></div></div>`
 	check("cardList bare", got, want)
 
 	// cardList — empty state
 	got = render(cardList("Installed", cardListProps{Margin: "mb-8", Empty: true, EmptyIcon: "lucide--library", EmptyTitle: "No blueprints installed", EmptyDesc: "Install a blueprint to extend the graph schema."}), "<p>row</p>")
-	want = `<section class="mb-8"><h2 class="mb-3 text-lg font-semibold tracking-tight">Installed</h2><div class="card bg-base-100 border border-line"><div class="card-body"><div class="flex flex-col items-center justify-center py-16 text-center px-4"><span class="iconify size-12 text-base-content/20 mb-4 lucide--library"></span><h3 class="text-base font-semibold text-base-content mb-1">No blueprints installed</h3><p class="text-sm text-base-content/50 mb-4">Install a blueprint to extend the graph schema.</p></div></div></div></section>`
+	want = `<section class="mb-8"><h2 class="mb-3 text-lg font-semibold tracking-tight">Installed</h2><div class="card bg-base-100 edge-line"><div class="card-body"><div class="flex flex-col items-center justify-center py-16 text-center px-4"><span class="iconify size-12 text-base-content/20 mb-4 lucide--library"></span><h3 class="text-base font-semibold text-base-content mb-1">No blueprints installed</h3><p class="text-sm text-subtle mb-4">Install a blueprint to extend the graph schema.</p></div></div></div></section>`
 	check("cardList empty", got, want)
 
 	// ui.Dialog (was the local modalShell — same markup)
@@ -107,7 +107,7 @@ func TestRefactorOutputExact(t *testing.T) {
 	// ui.ConfirmDialog (was the local confirmDeleteDialog — same markup)
 	got = render(ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()),
 		`<div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div>`)
-	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-base-content/50 text-sm mt-1">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
+	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-subtle text-sm mt-1">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
 	check("ui.ConfirmDialog", got, want)
 
 	// detailHeader: the nav group is prepended to the page's own trail, the
@@ -160,7 +160,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 	}))
-	want = `<p id="agent-skills-empty" class="text-base-content/40 text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p>`
+	want = `<p id="agent-skills-empty" class="text-faint text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p>`
 	check("checkboxPicker skill empty", got, want)
 
 	// checkboxPicker — skill, with items + hidden duplicate note
@@ -171,7 +171,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, nil),
 	}))
-	want = `<div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-base-content/40 hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
+	want = `<div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-faint hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
 	check("checkboxPicker skill items", got, want)
 
 	// checkboxPicker — skill, settings style (checked + no id)
@@ -191,7 +191,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "", nil),
 	}))
-	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-base-content/40 hidden text-sm">No other agents to delegate to.</p></div></div>`
+	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-faint hidden text-sm">No other agents to delegate to.</p></div></div>`
 	check("checkboxPicker delegate modal", got, want)
 
 	// checkboxPicker — delegate, settings style (exclude self, checked, no ids)
@@ -206,17 +206,17 @@ func TestRefactorOutputExact(t *testing.T) {
 	// modelSelect — modal style (no current, data-testid)
 	models := []Model{{Provider: "openai", ModelName: "gpt-4o", DisplayName: "GPT-4o"}}
 	got = render(modelSelect("agent-model", models, nil, "", templ.Attributes{"data-testid": "model-select"}))
-	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-model" data-testid="model-select" name="modelName" class="select w-full"><option value="">Auto — default model</option><optgroup label="openai"><option value="openai/gpt-4o">openai/gpt-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-base-content/60">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
+	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-model" data-testid="model-select" name="modelName" class="select w-full"><option value="">Auto — default model</option><optgroup label="openai"><option value="openai/gpt-4o">openai/gpt-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-muted">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
 	check("modelSelect modal", got, want)
 
 	// modelSelect — settings style (current selected)
 	got = render(modelSelect("agent-settings-model", models, &ModelConfig{Name: "openai/gpt-4o"}, "", nil))
-	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-settings-model" name="modelName" class="select w-full"><option value="">Auto — default model</option><optgroup label="openai"><option value="openai/gpt-4o" selected>openai/gpt-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-base-content/60">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
+	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-settings-model" name="modelName" class="select w-full"><option value="">Auto — default model</option><optgroup label="openai"><option value="openai/gpt-4o" selected>openai/gpt-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-muted">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
 	check("modelSelect settings", got, want)
 
 	// modelSelect — resolved default names the Auto option (value stays "")
 	got = render(modelSelect("agent-settings-model", models, nil, "openai/deepseek-v4-flash", nil))
-	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-settings-model" name="modelName" class="select w-full"><option value="">Auto — openai/deepseek-v4-flash (default)</option><optgroup label="openai"><option value="openai/gpt-4o">openai/gpt-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-base-content/60">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
+	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-settings-model" name="modelName" class="select w-full"><option value="">Auto — openai/deepseek-v4-flash (default)</option><optgroup label="openai"><option value="openai/gpt-4o">openai/gpt-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-muted">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
 	check("modelSelect named default", got, want)
 
 	// modelParamsGrid — modal (no values)
@@ -253,6 +253,6 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// chipRow — wrapped variant (migration plan grid cells)
 	got = render(chipRow("Type renames", "mb-1.5", true), "<span>a</span>")
-	want = `<div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[10px] mb-1.5">Type renames</p><div class="flex flex-wrap gap-1.5"><span>a</span></div></div>`
+	want = `<div><p class="eyebrow text-[10px] mb-1.5">Type renames</p><div class="flex flex-wrap gap-1.5"><span>a</span></div></div>`
 	check("chipRow wrapped", got, want)
 }
