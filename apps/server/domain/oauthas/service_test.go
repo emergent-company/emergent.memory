@@ -380,7 +380,7 @@ func TestRegisterClientNameTooLong(t *testing.T) {
 }
 
 func TestRegisterClientValidation(t *testing.T) {
-	manyURIs := make([]string, 6)
+	manyURIs := make([]string, 11)
 	for i := range manyURIs {
 		manyURIs[i] = "https://app.feedback.example/cb" + string(rune('a'+i))
 	}
@@ -457,6 +457,36 @@ func TestRegisterClientAllowedHost(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"https://APP.feedback.example:8443/cb"}, resp.RedirectURIs)
+}
+
+func TestRegisterClientGeminiConnectorPayload(t *testing.T) {
+	// The Gemini app's custom MCP connector registers six redirect URIs in one
+	// request (sandbox/test/production x /r/ and /a/), asks for the
+	// refresh_token grant and a confidential auth method. It must register as a
+	// public client with all six URIs kept, or the connector fails with
+	// "The Google redirect URL was rejected by the server" and falls back to
+	// asking the user for a client id/secret (#390).
+	svc, _, _, _, _ := newServiceFixture(t, config.OAuthASConfig{
+		RegistrationEnabled: true,
+	})
+	uris := []string{
+		"https://oauth-redirect-sandbox.googleusercontent.com/r/user_bound_custom-mcp-1-conn",
+		"https://oauth-redirect-test.googleusercontent.com/r/user_bound_custom-mcp-1-conn",
+		"https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-1-conn",
+		"https://oauth-redirect-sandbox.googleusercontent.com/a/user_bound_custom-mcp-1-conn",
+		"https://oauth-redirect-test.googleusercontent.com/a/user_bound_custom-mcp-1-conn",
+		"https://oauth-redirect.googleusercontent.com/a/user_bound_custom-mcp-1-conn",
+	}
+	resp, err := svc.RegisterClient(context.Background(), ClientRegistrationRequest{
+		ClientName:              "Google",
+		RedirectURIs:            uris,
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		TokenEndpointAuthMethod: "client_secret_post",
+	})
+	require.NoError(t, err)
+	require.Equal(t, uris, resp.RedirectURIs)
+	require.Equal(t, "none", resp.TokenEndpointAuthMethod)
+	require.Equal(t, []string{"authorization_code"}, resp.GrantTypes)
 }
 
 func TestAuthorizeAndExchangeSuccess(t *testing.T) {

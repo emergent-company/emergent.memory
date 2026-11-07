@@ -24,8 +24,11 @@ import (
 const (
 	// authorizationCodeTTL is the code lifetime mandated by the design.
 	authorizationCodeTTL = 5 * time.Minute
-	// maxRedirectURIsPerClient is the registration cap.
-	maxRedirectURIsPerClient = 5
+	// maxRedirectURIsPerClient is the registration cap. It must stay above the
+	// number Google's Gemini connector sends: Gemini registers a sandbox/test/
+	// production triple for both the /r/ and /a/ redirect shapes, i.e. six URIs
+	// in one request, and a lower cap rejects the registration outright (#390).
+	maxRedirectURIsPerClient = 10
 	// tokenTypeBearer is the only token type this AS issues.
 	tokenTypeBearer = "Bearer"
 )
@@ -602,7 +605,7 @@ func (s *Service) validateRedirectURIs(uris []string) ([]string, *OAuthError) {
 		return nil, newOAuthError(400, "invalid_redirect_uri", "redirect_uris is required")
 	}
 	if len(uris) > maxRedirectURIsPerClient {
-		return nil, newOAuthError(400, "invalid_redirect_uri", "at most 5 redirect_uris are allowed")
+		return nil, newOAuthError(400, "invalid_redirect_uri", "at most 10 redirect_uris are allowed")
 	}
 
 	allowedHosts := s.allowedRedirectHosts()
