@@ -151,6 +151,55 @@ func TestValidateManifest_StaticErrors(t *testing.T) {
 		})
 		require.Error(t, err)
 	})
+
+	// #354: the server-side apply path must reject a cron the trigger service
+	// refuses, with the agent name and value in the error, before materializing
+	// anything.
+	t.Run("6-field cron on schedule agent rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "nightly", TriggerType: "schedule", CronSchedule: "0 0 5 * * *"}},
+		})
+		require.Error(t, err)
+		assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+		assert.Contains(t, err.Error(), `agent "nightly"`)
+		assert.Contains(t, err.Error(), "0 0 5 * * *")
+		assert.Contains(t, err.Error(), "expected exactly 5 fields")
+	})
+
+	t.Run("implicit schedule cron rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "nightly", CronSchedule: "not-a-cron"}},
+		})
+		require.Error(t, err)
+		assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+	})
+
+	t.Run("sub-minimum cron rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "chatty", TriggerType: "schedule", CronSchedule: "* * * * *"}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "minimum")
+	})
+
+	t.Run("cron on reaction agent ignored", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{
+				Name:           "triager",
+				TriggerType:    "reaction",
+				ReactionConfig: &agents.ReactionConfig{Events: []agents.ReactionEventType{agents.EventTypeCreated}},
+				CronSchedule:   "0 0 5 * * *",
+			}},
+		})
+		require.NoError(t, err, "reaction agents store the cron unused; the agents API skips it too")
+	})
+
+	t.Run("valid 5-field cron accepted", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "nightly", TriggerType: "schedule", CronSchedule: "0 3 * * *"}},
+		})
+		require.NoError(t, err)
+	})
 }
 
 func derefString(s *string) string {
@@ -517,6 +566,73 @@ func TestApplyAgents_UpdatesExistingRuntimeAgent(t *testing.T) {
 	assert.Equal(t, "bp-1", rt.Config["sourceBlueprintId"])
 	assert.Len(t, fake.updatedAgents, 1, "existing runtime agent updated, not duplicated")
 	assert.Len(t, fake.createdAgents, 0)
+}
+
+// TestApplyAgents_InvalidCronRejectedAndNotPersisted is the #354 regression test:
+// a blueprint that declares a cron the trigger service refuses (a 6-field
+// expression, the form the docs used to show) must fail the apply with a clear
+// BadRequest naming the agent and the value, and must NOT persist a scheduled
+// runtime agent that would silently never fire.
+func TestApplyAgents_InvalidCronRejectedAndNotPersisted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		am   AgentManifest
+		want string
+	}{
+		{
+			name: "6-field cron",
+			am:   AgentManifest{Name: "nightly", TriggerType: "schedule", CronSchedule: "0 0 5 * * *"},
+			want: "expected exactly 5 fields",
+		},
+		{
+			name: "implicit schedule, malformed",
+			am:   AgentManifest{Name: "nightly", CronSchedule: "not-a-cron"},
+			want: "invalid cron expression",
+		},
+		{
+			name: "below minimum interval",
+			am:   AgentManifest{Name: "nightly", TriggerType: "schedule", CronSchedule: "* * * * *"},
+			want: "below minimum",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeAgentRepo()
+			svc := &Service{agentRepo: fake, log: testLogger()}
+
+			counts, err := svc.applyAgents(context.Background(), "proj-1", "bp-1", "bp", []AgentManifest{tc.am})
+			require.Error(t, err)
+			assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+			assert.Contains(t, err.Error(), `agent "nightly"`, "error must name the agent")
+			assert.Contains(t, err.Error(), tc.am.CronSchedule, "error must quote the cron value")
+			assert.Contains(t, err.Error(), tc.want)
+
+			assert.Empty(t, fake.createdAgents, "no scheduled agent may be persisted")
+			assert.Empty(t, fake.agentsByName)
+			assert.Empty(t, fake.updatedAgents)
+			assert.Zero(t, counts.Created)
+		})
+	}
+}
+
+// TestApplyAgents_ValidCronPersistsScheduledAgent verifies the accepted path: a
+// standard 5-field cron still materializes an enabled scheduled runtime agent.
+func TestApplyAgents_ValidCronPersistsScheduledAgent(t *testing.T) {
+	fake := newFakeAgentRepo()
+	svc := &Service{agentRepo: fake, log: testLogger()}
+
+	counts, err := svc.applyAgents(context.Background(), "proj-1", "bp-1", "bp", []AgentManifest{{
+		Name:         "nightly",
+		TriggerType:  "schedule",
+		CronSchedule: "0 3 * * *",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, counts.Created)
+
+	rt := fake.agentsByName["nightly"]
+	require.NotNil(t, rt, "runtime agent must be created")
+	assert.Equal(t, "0 3 * * *", rt.CronSchedule)
+	assert.Equal(t, agents.TriggerTypeSchedule, rt.TriggerType)
+	assert.True(t, rt.Enabled)
 }
 
 // TestApplyWorkConfig_MalformedInput verifies a malformed workConfig map returns
