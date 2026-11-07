@@ -283,17 +283,31 @@ func TestInstanceAllowsFamilyAndPerVerbCalls(t *testing.T) {
 }
 
 // TestShareTemplatesPermitTheirOwnCalls is the positive half of the template
-// contract: every tool a preset resolves to must actually be callable through
-// that preset's allowlist. Listing without calling was the pre-fix bug.
+// contract: every capability a preset resolves to must actually be callable
+// through that preset's allowlist, resolved the way a call is — including one
+// concrete action per consolidated family, which is where listing and calling
+// used to disagree.
 func TestShareTemplatesPermitTheirOwnCalls(t *testing.T) {
 	for _, tmpl := range ResolveShareTemplates(testShareCatalog(t)) {
 		scope := &InstanceScope{HasToolAllowlist: true, AllowedTools: tmpl.Tools}
 		for _, name := range tmpl.Tools {
-			resolved := legacyDispatchName(name, nil)
-			assert.False(t, InstanceDeniesTool(scope, resolved),
-				"template %q lists %q (resolving to %q) but its own allowlist refuses it", tmpl.ID, name, resolved)
-			assert.True(t, InstanceAllowsTool(scope, name), "template %q must permit %q", tmpl.ID, name)
+			fam, isFamily := familyByName[name]
+			if !isFamily {
+				resolved := legacyDispatchName(name, nil)
+				assert.False(t, InstanceDeniesTool(scope, resolved),
+					"template %q lists per-verb %q (resolves to %q) but its allowlist refuses it", tmpl.ID, name, resolved)
+				continue
+			}
+			for _, act := range fam.Actions {
+				resolved := legacyDispatchName(name, map[string]any{"action": act.Action})
+				assert.False(t, InstanceDeniesTool(scope, resolved),
+					"template %q lists %q but refuses action=%s (resolves to %q)", tmpl.ID, name, act.Action, resolved)
+			}
 		}
+		// And the allowlist still restricts: no preset includes the
+		// projects:write scope, so token minting stays denied.
+		assert.True(t, InstanceDeniesTool(scope, legacyDispatchName("token-write", map[string]any{"action": "create"})),
+			"template %q must not permit a tool outside its scopes", tmpl.ID)
 	}
 }
 

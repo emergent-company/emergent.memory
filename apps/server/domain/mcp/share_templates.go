@@ -16,8 +16,10 @@ package mcp
 //
 //   - a new tool under an included scope joins every preset that includes that
 //     scope (no code change here);
-//   - a renamed or removed tool drops out silently instead of breaking a
-//     create;
+//   - an explicit tool name is passed through as declared, so a preset grants
+//     exactly what it names and never widens to a family, a renamed name is
+//     caught by `normalizeToolAllowlist` at share creation (and by the template
+//     test) rather than silently disappearing here;
 //   - a template that resolves to no tools is omitted from the response, so the
 //     UI never offers an empty preset.
 //
@@ -153,9 +155,10 @@ type ShareTemplateDTO struct {
 }
 
 // ResolveShareTemplates expands every preset against catalog (already filtered
-// to shareable tools) and drops presets that resolve to nothing. Tool order
-// follows the catalog, which is category then name sorted, so the same share
-// renders identically everywhere.
+// to shareable tools) and drops presets that resolve to nothing. Scope-derived
+// tools follow the catalog, which is category then name sorted; explicit tool
+// names keep the preset's own order after them, so the same share renders
+// identically everywhere.
 func ResolveShareTemplates(catalog []CatalogToolDTO) []ShareTemplateDTO {
 	out := make([]ShareTemplateDTO, 0, len(shareTemplates))
 	for _, t := range shareTemplates {

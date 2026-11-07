@@ -256,17 +256,6 @@ var consolidatedFamilies = []consolidatedFamily{
 		},
 	},
 	{
-		Name:  "remember",
-		Scope: "graph:write",
-		Description: "Ingest or remove knowledge in natural language. action=add runs the extraction pipeline " +
-			"(text -> document -> classify -> extract -> embed -> graph) and accepts mode=async, returning a run_id to " +
-			"poll with remember-status; action=forget soft-deletes matching entities and relationships.",
-		Actions: []consolidatedAction{
-			{Action: "add", Handler: "remember", Description: "ingest knowledge"},
-			{Action: "forget", Handler: "forget", Description: "remove knowledge by description"},
-		},
-	},
-	{
 		Name:        "document",
 		Scope:       "documents:read",
 		Description: "Read project documents. action=list lists document metadata; action=get returns one document's metadata.",
@@ -501,14 +490,6 @@ func resolveConsolidatedHandler(name string, args map[string]any) (string, bool,
 	}
 	action, _ := actionArg(args)
 	if action == "" {
-		// A name can be both a family and one of its own legacy handlers
-		// (`remember`). Such a call predates the action discriminator, so it
-		// keeps the action that handler used to perform instead of failing.
-		if alias, ok := toolAliases[name]; ok && alias.Tool == name {
-			action = alias.Action
-		}
-	}
-	if action == "" {
 		return "", true, fmt.Errorf("%s: 'action' is required (one of: %s)", name, familyActionList(fam))
 	}
 	for _, act := range fam.Actions {
@@ -536,15 +517,13 @@ func familyActionList(fam *consolidatedFamily) string {
 // surfaces that key on tool names keep their pre-consolidation granularity.
 // It returns the name unchanged when the call is not a consolidated tool.
 func legacyDispatchName(name string, args map[string]any) string {
-	// A deprecated name carries its action implicitly, unless the caller chose
-	// one explicitly: `remember` is both a family and a legacy handler name, so
-	// `remember` + action=forget must resolve to forget and not to the implied
-	// add — otherwise a share instance that allows one action permits the other.
-	if _, explicit := actionArg(args); !explicit {
-		if alias, ok := toolAliases[name]; ok {
-			if handler, ok, err := resolveConsolidatedHandler(alias.Tool, map[string]any{"action": alias.Action}); err == nil && ok {
-				return handler
-			}
+	// A deprecated per-verb name carries its action implicitly. It cannot also be
+	// a family name (the catalog shape test enforces that), so a per-verb name
+	// always identifies exactly one handler and the caller's own arguments can
+	// never be mistaken for an action choice.
+	if alias, ok := toolAliases[name]; ok {
+		if handler, ok, err := resolveConsolidatedHandler(alias.Tool, map[string]any{"action": alias.Action}); err == nil && ok {
+			return handler
 		}
 	}
 	if handler, ok, err := resolveConsolidatedHandler(name, args); err == nil && ok {

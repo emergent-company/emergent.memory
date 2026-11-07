@@ -25,6 +25,15 @@ func TestConsolidatedCatalogShape(t *testing.T) {
 		if fam.Description == "" {
 			t.Errorf("%s: empty description", fam.Name)
 		}
+		// No family may be named after one of its own handlers. Such a name is
+		// ambiguous: a share allowlist entry would have to mean either the
+		// pre-merge per-verb tool or the whole family, and a new share could not
+		// grant the family's other actions by selecting the advertised name.
+		for _, act := range fam.Actions {
+			if act.Handler == fam.Name {
+				t.Errorf("%s: family is named after its own handler %q; keep that tool standalone", fam.Name, act.Handler)
+			}
+		}
 		// A family either exposes several actions or folds an alternate entry
 		// point into one action (agent-question list by run vs by project). A
 		// family with neither is churn, not a merge.
@@ -73,19 +82,9 @@ func TestEveryLegacyAliasResolves(t *testing.T) {
 	}
 
 	for name, alias := range toolAliases {
-		// A tool whose name is kept (remember, agent-question-list) maps to
-		// itself on purpose: the name is the family name and one action of it.
 		if alias.Tool == name {
-			found := false
-			for _, act := range familyByName[alias.Tool].Actions {
-				if act.Action == alias.Action && act.Handler == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("alias %q maps to itself but is not one of its family's handlers", name)
-			}
+			t.Errorf("%s is an alias of its own family; the shape test forbids that", name)
+			continue
 		}
 		if !advertisedNames[alias.Tool] {
 			t.Errorf("alias %q maps to %q, which the catalog does not advertise", name, alias.Tool)
@@ -236,19 +235,20 @@ func TestConsolidatedDispatchContract(t *testing.T) {
 		t.Errorf("non-consolidated name must pass through: handler=%q ok=%v err=%v", handler, ok, err)
 	}
 
-	// A family whose name is also one of its own legacy handlers keeps the
-	// pre-consolidation call working: `remember` carried no action, so it must
-	// still mean action=add rather than failing with "'action' is required".
-	// Anything else breaks every saved client that calls it with `message`.
-	handler, ok, err := resolveConsolidatedHandler("remember", map[string]any{"message": "x"})
-	if err != nil || !ok || handler != "remember" {
-		t.Errorf("remember without action resolved to %q (ok=%v err=%v), want remember", handler, ok, err)
+	// `remember` is deliberately not a family. Its name is also the name of one
+	// of its handlers, so a family would make a share allowlist entry ambiguous:
+	// `["remember"]` would either grant the whole family (including the
+	// soft-delete) or only the ingest action, and no allowlist could express the
+	// difference. It stays a standalone tool, so `remember {message}` keeps its
+	// old call shape and `forget` stays separately grantable.
+	if _, ok, err := resolveConsolidatedHandler("remember", map[string]any{"message": "x"}); ok || err != nil {
+		t.Errorf("remember must not be advertised as a family: ok=%v err=%v", ok, err)
 	}
 	if got := legacyDispatchName("remember", map[string]any{"message": "x"}); got != "remember" {
 		t.Errorf("legacyDispatchName(remember) = %q, want remember", got)
 	}
-	if got := legacyDispatchName("remember", map[string]any{"action": "forget"}); got != "forget" {
-		t.Errorf("legacyDispatchName(remember, action=forget) = %q, want forget", got)
+	if got := legacyDispatchName("forget", map[string]any{"action": "forget"}); got != "forget" {
+		t.Errorf("legacyDispatchName(forget) = %q, want forget", got)
 	}
 }
 

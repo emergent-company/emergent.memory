@@ -455,7 +455,6 @@ Consolidated tools (`action` selects the operation):
 | `branch` | `graph:read` | `list`, `get`, `readiness` |
 | `branch-write` | `graph:write` | `create`, `update`, `fork`, `merge`, `delete` |
 | `search` | `search` | `hybrid`, `semantic`, `similar` |
-| `remember` | `graph:write` | `add`, `forget` |
 | `document` | `documents:read` | `list`, `get` |
 | `document-write` | `documents:write` | `upload`, `delete` |
 | `skill` | `skills:read` | `list`, `get` |
@@ -473,12 +472,12 @@ Consolidated tools (`action` selects the operation):
 | `token` | `projects:write` | `list`, `get` |
 | `token-write` | `projects:write` | `create`, `revoke` |
 
-That is 30 consolidated tools. 135 per-verb definitions collapse to 55; the
-project endpoint advertises 40 of them (the operator tools stay superadmin-only
+That is 29 consolidated tools. 135 per-verb definitions collapse to 56; the
+project endpoint advertises 41 of them (the operator tools stay superadmin-only
 and are listed per-verb on the admin surface).
 
 Tools that had no sibling keep their name: `relationship-list`,
-`session-get-messages`, `remember-status`, `search-knowledge`, `journal-list`,
+`session-get-messages`, `remember`, `forget`, `remember-status`, `search-knowledge`, `journal-list`,
 `journal-add-note`, `agent-hook-list`, `agent-question-respond`,
 `web-search-brave`, `web-fetch`, `web-search-reddit`, the `embedding-*`,
 `provider-*` and `trace-*` operator tools (their surface is the admin endpoint,
@@ -493,8 +492,12 @@ keeps that bar for the whole family.
 legacy tools carry them as ordinary parameters, so reading them as an action
 would misroute a legacy call.
 
-A name that is both a family and one of its own legacy handlers keeps the old
-call working: `remember` without an action means `remember action=add`.
+A family is never named after one of its own handlers. `remember` and `forget`
+would otherwise be one family called `remember`, and a share allowlist entry
+`["remember"]` could then mean either the pre-merge ingest tool or the whole
+family — including the soft-delete. They stay two standalone tools, so
+`remember {message}` keeps its exact old call shape and `forget` stays separately
+grantable. A shape test enforces the rule for future merges.
 
 ### Share instances and the consolidated catalog
 
