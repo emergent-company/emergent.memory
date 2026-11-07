@@ -2231,6 +2231,15 @@ func dsOAuthClientsSubtitle(orgName string) string {
 	return "OAuth client credentials, used when connecting providers with OAuth. A project client overrides these for that project only."
 }
 
+// dsOrgOAuthClientSubtitle describes the org per-provider editor without
+// assuming the org name resolved (GetOrg is best-effort on that page).
+func dsOrgOAuthClientSubtitle(orgName string) string {
+	if orgName != "" {
+		return "Used by every project in " + orgName + " that does not set up its own app."
+	}
+	return "Used by every project that does not set up its own app."
+}
+
 // dsResourceStepTitle is the provider-driven heading for the resource step.
 func dsResourceStepTitle(src DSIntegration) string {
 	if src.ProviderType == dsProviderTypeGoogleDrive {

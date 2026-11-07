@@ -238,7 +238,7 @@ templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients
 // /settings/credentials/:providerType.
 templ OrgOAuthClientDetailPage(orgID, orgName string, provider DSProvider, config DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients", "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", dsCredentialAppLabel(provider)), "", dsCredentialAppLabel(provider), "Used by every project in "+orgName+" that does not set up its own app.", detailHeaderOpts{Margin: "mb-6"}) {
+		@detailHeader(orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients", "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", dsCredentialAppLabel(provider)), "", dsCredentialAppLabel(provider), dsOrgOAuthClientSubtitle(orgName), detailHeaderOpts{Margin: "mb-6"}) {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients",

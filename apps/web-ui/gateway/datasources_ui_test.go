@@ -2654,6 +2654,32 @@ func TestRenderCredentialDetailPage(t *testing.T) {
 	if strings.Contains(bare, `data-testid="ds-oauth-console-guide"`) {
 		t.Error("console guide must not render without resolved callback values")
 	}
+
+	// Neither scope configured: the note still carries the org-editor link for an
+	// org admin, which is the route the project table no longer provides (the
+	// unconfigured organization row is hidden).
+	neither := renderHTML(t, CredentialDetailPage(dsCredentialDetailData{
+		Nav:           settingsNavCommon{IsProjectAdmin: true},
+		Provider:      provider,
+		OrgManageHref: "/orgs/o1/settings/oauth-clients/google_drive",
+	}))
+	for _, want := range []string{
+		"No project or organization app is configured",
+		`data-testid="ds-credential-org-link"`,
+		`href="/orgs/o1/settings/oauth-clients/google_drive"`,
+	} {
+		if !strings.Contains(neither, want) {
+			t.Errorf("neither-configured note missing %q", want)
+		}
+	}
+	// A caller without org admin gets no org link.
+	noOrgAdmin := renderHTML(t, CredentialDetailPage(dsCredentialDetailData{
+		Nav:      settingsNavCommon{IsProjectAdmin: true},
+		Provider: provider,
+	}))
+	if strings.Contains(noOrgAdmin, `data-testid="ds-credential-org-link"`) {
+		t.Error("the org-editor link must not render without an org admin")
+	}
 }
 
 // TestRenderSettingsRailCredentials asserts the Credentials entry is visible to

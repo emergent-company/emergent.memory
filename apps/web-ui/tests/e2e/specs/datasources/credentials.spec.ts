@@ -221,9 +221,11 @@ test.describe('project credentials', () => {
     await expect(orgRow.getByTestId('ds-credential-in-use')).toBeVisible();
     await expect(orgRow.getByTestId('ds-credential-client-id')).toHaveAttribute('title', 'e2e-gmail-org-client-id');
 
-    // Removing the org app drops the row again.
+    // Removing the org app drops the row again. Wait for the delete PRG before
+    // navigating, so the assertion cannot race the removal.
     await page.goto('/orgs/org-1/settings/oauth-clients/gmail');
     await page.getByTestId('ds-oauth-client-delete').getByRole('button', { name: 'Remove client' }).click();
+    await expect(page).toHaveURL(/oauth-clients\?deleted=1/);
     await page.goto('/settings/credentials');
     await expect(page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' })).toHaveCount(0);
   });
