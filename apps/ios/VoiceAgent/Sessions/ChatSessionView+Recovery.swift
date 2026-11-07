@@ -29,6 +29,7 @@ extension ChatSessionView {
             let conversationID = openConversationID
         else { return }
         let baseline = transcript.lastRecordCount
+        let scope = TranscriptWaitScope(conversationID: conversationID, baseline: baseline)
         let recovery = InterruptedTurnRecovery(client: SessionLogClient(config: MemoryConfig()))
         await recovery.run(
             conversationID: conversationID,
@@ -36,15 +37,16 @@ extension ChatSessionView {
             baseline: baseline,
             isCurrent: {
                 transport.interruptedTurn?.liveMessageID == interrupted.liveMessageID
-                    && openConversationID == conversationID
-                    && transcript.lastRecordCount == baseline
+                    && scopeIsCurrent(scope)
             },
             apply: { detail in
                 transcript.loadHistory(from: detail)
-                // Also clears the drop's banner: the record now supersedes the
+                // Also clears this drop's banner: the record now supersedes the
                 // partial, so the failure message would be the only thing still
-                // claiming the turn was cut short. A drop that never recovers
-                // keeps it — that is the signal the reply was lost.
+                // claiming the turn was cut short. Only this drop's — a later
+                // turn may have failed over the same slot meanwhile (#213). A
+                // drop that never recovers keeps it: that is the signal the
+                // reply was lost.
                 transport.discardInterruptedLiveCopy(in: transcript)
             }
         )

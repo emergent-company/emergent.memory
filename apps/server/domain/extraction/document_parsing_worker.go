@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -285,7 +284,7 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 
 	// Check processing path
 	isEmail := xberg.IsEmailFile(mimeType, filename)
-	isAudio := !isEmail && isAudioFile(mimeType, filename)
+	isAudio := !isEmail && xberg.IsAudioFile(mimeType, filename)
 	useXberg := !isEmail && !isAudio && xberg.ShouldUseXberg(mimeType, filename)
 
 	var parsedContent string
@@ -349,6 +348,22 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		w.markFailed(ctx, job, err)
+		return
+	}
+
+	// An empty parse is not transient: retrying a parser cannot turn a file
+	// with no text into one with text. Completing the job here stores empty
+	// content, chunking then fails (logged only), and the document renders
+	// Ready with zero chunks until extraction fails permanently (#243). Fail
+	// the document now, immediately, with a message the user can act on.
+	if strings.TrimSpace(parsedContent) == "" {
+		err = fmt.Errorf("document has no extractable text content")
+		jobLog.Error("document extraction returned empty content",
+			slog.String("method", extractionMethod),
+		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		w.markFailedPermanent(ctx, job, err)
 		return
 	}
 
@@ -441,28 +456,6 @@ func (w *DocumentParsingWorker) extractWithXberg(ctx context.Context, storageKey
 	return result.Content, nil
 }
 
-// audioExtensions is the set of file extensions treated as audio regardless of MIME type
-var audioExtensions = map[string]bool{
-	".mp3":  true,
-	".wav":  true,
-	".m4a":  true,
-	".ogg":  true,
-	".flac": true,
-	".aac":  true,
-	".opus": true,
-	".webm": true,
-}
-
-// isAudioFile returns true if the file should be treated as audio.
-// It checks the MIME type prefix first, then falls back to the file extension.
-func isAudioFile(mimeType, filename string) bool {
-	if strings.HasPrefix(mimeType, "audio/") {
-		return true
-	}
-	ext := strings.ToLower(filepath.Ext(filename))
-	return audioExtensions[ext]
-}
-
 // extractWithWhisper downloads an audio file and sends it to Whisper for transcription.
 // fileSizeBytes is the known file size (from the job record); if 0, the actual downloaded
 // size is used as a fallback for computing the per-request timeout.
@@ -535,9 +528,27 @@ func (w *DocumentParsingWorker) downloadFile(ctx context.Context, storageKey str
 	return content, nil
 }
 
-// markFailed marks a job as failed
+// markFailed marks a job as failed, scheduling a retry while budget remains.
 func (w *DocumentParsingWorker) markFailed(ctx context.Context, job *DocumentParsingJob, err error) {
 	deadLettered, markErr := w.jobsService.MarkFailed(ctx, job.ID, err)
+	w.afterMarkFailed(ctx, job, err, deadLettered, markErr)
+}
+
+// markFailedPermanent marks a job as failed and dead-letters it without a
+// retry: the cause cannot be fixed by trying again (#243).
+func (w *DocumentParsingWorker) markFailedPermanent(ctx context.Context, job *DocumentParsingJob, err error) {
+	deadLettered, markErr := w.jobsService.MarkFailedPermanent(ctx, job.ID, err)
+	if markErr != nil {
+		// The update failed, so the job's state is unknown; the document must
+		// still reflect the permanent failure we already know about.
+		deadLettered = true
+	}
+	w.afterMarkFailed(ctx, job, err, deadLettered, markErr)
+}
+
+// afterMarkFailed updates the document status and notifies members once the job
+// is terminal. A scheduled retry touches neither.
+func (w *DocumentParsingWorker) afterMarkFailed(ctx context.Context, job *DocumentParsingJob, err error, deadLettered bool, markErr error) {
 	if markErr != nil {
 		w.log.Error("failed to mark job as failed",
 			slog.String("job_id", job.ID),
@@ -545,7 +556,7 @@ func (w *DocumentParsingWorker) markFailed(ctx context.Context, job *DocumentPar
 		)
 		// The job's new state is unknown; fall back to the in-memory retry count
 		// so a document cannot stay stuck in 'pending' because the update failed.
-		deadLettered = job.RetryCount >= job.MaxRetries
+		deadLettered = deadLettered || job.RetryCount >= job.MaxRetries
 	}
 
 	if !deadLettered {

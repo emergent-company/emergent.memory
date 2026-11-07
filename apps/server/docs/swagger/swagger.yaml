@@ -2638,8 +2638,25 @@ definitions:
         type: string
       namespace:
         type: string
-    required:
-    - message
+      surfaceAction:
+        allOf:
+        - $ref: '#/definitions/domain_chat.SurfaceAction'
+        description: |-
+          SurfaceAction is an A2UI surface action the user took. The server frames it
+          as the user message the agent receives
+          (agents.A2UIActionMessage), so no client invents that wording; Message may
+          then be empty, or carry free-form text typed alongside the action.
+    type: object
+  domain_chat.SurfaceAction:
+    properties:
+      action:
+        description: |-
+          The clicked component's payload: `{componentId, response}` for the cards
+          the shared renderer builds. Typed as an object, not free JSON, so the
+          published schema says what clients actually send.
+        type: object
+      surfaceId:
+        type: string
     type: object
   domain_chat.UpdateConversationRequest:
     properties:
@@ -2652,12 +2669,28 @@ definitions:
     type: object
   domain_chunking.ChunkingConfigResponse:
     properties:
+      autoProfile:
+        description: |-
+          AutoProfile selects chunking parameters per document from its detected
+          document shape instead of applying Strategy/MaxChunkSize/Overlap/
+          ParentChild project-wide. Writing the configuration is a full
+          replacement: turning it on stores the other fields as given (they are
+          then unused), so turning it off later lands on those stored values, not
+          on the ones in force before it was enabled.
+        type: boolean
       maxChunkSize:
         type: integer
       overlap:
         type: integer
       parentChild:
         type: boolean
+      profiles:
+        description: |-
+          Profiles lists the per-shape parameters auto-profile will use. Present
+          only when AutoProfile is true.
+        items:
+          $ref: '#/definitions/domain_chunking.ShapeProfile'
+        type: array
       strategy:
         type: string
     type: object
@@ -2670,6 +2703,8 @@ definitions:
     type: object
   domain_chunking.RecreateChunksSummary:
     properties:
+      autoProfile:
+        type: boolean
       config:
         additionalProperties: {}
         type: object
@@ -2685,11 +2720,28 @@ definitions:
         type: boolean
       preservedEdited:
         type: integer
+      shape:
+        type: string
+      strategy:
+        type: string
+    type: object
+  domain_chunking.ShapeProfile:
+    properties:
+      maxChunkSize:
+        type: integer
+      overlap:
+        type: integer
+      parentChild:
+        type: boolean
+      shape:
+        type: string
       strategy:
         type: string
     type: object
   domain_chunking.UpdateChunkingConfigRequest:
     properties:
+      autoProfile:
+        type: boolean
       maxChunkSize:
         type: integer
       overlap:
@@ -2800,6 +2852,9 @@ definitions:
     type: object
   domain_chunks.ChunkMetadata:
     properties:
+      autoProfile:
+        description: parameters came from the shape profile, not the project config
+        type: boolean
       boundaryType:
         description: sentence, paragraph, character, section
         type: string
@@ -2815,6 +2870,9 @@ definitions:
       oversized:
         description: atomic protected segment larger than the chunk size
         type: boolean
+      shape:
+        description: detected document shape when auto-profile chose the parameters
+        type: string
       stale:
         description: preserved edited chunk whose source span no longer exists
         type: boolean
@@ -11701,7 +11759,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.90.1
+  version: 0.91.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -14222,6 +14280,47 @@ paths:
       security:
       - bearerAuth: []
       summary: Create conversation
+      tags:
+      - chat
+  /api/chat/runs/{runId}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Stops an agent-backed run that belongs to one of the caller's own
+        conversations.
+      parameters:
+      - description: Agent run ID (UUID)
+        in: path
+        name: runId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Run cancellation requested
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid run id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Run not found or not owned by the caller
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Cancel a chat run
       tags:
       - chat
   /api/chat/stream:

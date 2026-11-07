@@ -16,15 +16,18 @@ func (c *Client) RecreateChunks(ctx context.Context, documentID string) (*Recrea
 
 ```go
 type RecreateChunksResponse struct {
-    JobID   string
+    Status  string
     Summary RecreateChunksSummary
 }
 
 type RecreateChunksSummary struct {
-    DocumentID    string
-    OldChunkCount int
-    NewChunkCount int
-    Status        string
+    OldChunks   int
+    NewChunks   int
+    Strategy    string
+    ParentChild bool
+    AutoProfile bool
+    Shape       string
+    Config      map[string]any
 }
 ```
 
@@ -35,12 +38,14 @@ resp, err := client.Chunking.RecreateChunks(ctx, "doc_abc123")
 if err != nil {
     return err
 }
-fmt.Printf("Re-chunked %s: %d → %d chunks (job: %s)\n",
-    resp.Summary.DocumentID,
-    resp.Summary.OldChunkCount,
-    resp.Summary.NewChunkCount,
-    resp.JobID,
+fmt.Printf("re-chunked with %s: %d → %d chunks\n",
+    resp.Summary.Strategy,
+    resp.Summary.OldChunks,
+    resp.Summary.NewChunks,
 )
+if resp.Summary.AutoProfile {
+    fmt.Printf("shape detected: %s\n", resp.Summary.Shape)
+}
 ```
 
 !!! note "When to use"

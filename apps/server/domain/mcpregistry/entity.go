@@ -561,7 +561,9 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 	tools := make([]MCPServerToolDTO, 0, len(s.Tools))
 	for _, t := range s.Tools {
 		toolCount++
-		tools = append(tools, *t.ToDTO())
+		// Summary shape: the list payload is a catalogue, and the schemas are
+		// most of its bytes (#210). ToDetailDTO still carries the full rows.
+		tools = append(tools, *t.ToSummaryDTO())
 	}
 	missing := missingRequiredConfigKeys(s)
 	return &MCPServerDTO{
@@ -712,7 +714,29 @@ func (s *MCPServer) ToDetailDTO() *MCPServerDetailDTO {
 	return dto
 }
 
-// ToDTO converts an MCPServerTool entity to MCPServerToolDTO.
+// ToSummaryDTO converts an MCPServerTool entity to the tool shape the *list*
+// endpoints embed: identity, presentation and enabled state, without the JSON
+// schemas.
+//
+// The schemas are the bulk of a tool row (measured on production: 57 kB of
+// input schemas for 141 builtin tools, against 25 kB of descriptions) and no
+// list consumer reads them — the list is a catalogue, and a caller that needs a
+// schema fetches the tool through GET /api/admin/mcp-servers/:id/tools, which
+// keeps returning the full DTO (#210).
+func (t *MCPServerTool) ToSummaryDTO() *MCPServerToolDTO {
+	return &MCPServerToolDTO{
+		ID:          t.ID,
+		ServerID:    t.ServerID,
+		ToolName:    t.ToolName,
+		Description: t.Description,
+		Enabled:     t.Enabled,
+		CreatedAt:   t.CreatedAt,
+	}
+}
+
+// ToDTO converts an MCPServerTool entity to the full MCPServerToolDTO,
+// including the JSON schemas. Detail endpoints use it; list endpoints embed
+// ToSummaryDTO instead.
 func (t *MCPServerTool) ToDTO() *MCPServerToolDTO {
 	return &MCPServerToolDTO{
 		ID:           t.ID,

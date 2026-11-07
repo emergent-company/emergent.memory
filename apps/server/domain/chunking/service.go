@@ -64,6 +64,8 @@ type RecreateChunksSummary struct {
 	NewChunks       int            `json:"newChunks"`
 	Strategy        string         `json:"strategy"`
 	ParentChild     bool           `json:"parentChild,omitempty"`
+	AutoProfile     bool           `json:"autoProfile,omitempty"`
+	Shape           string         `json:"shape,omitempty"`
 	PreservedEdited int            `json:"preservedEdited,omitempty"`
 	DiscardedEdited int            `json:"discardedEdited,omitempty"`
 	Force           bool           `json:"force,omitempty"`
@@ -119,14 +121,48 @@ func (s *Service) RecreateChunks(ctx context.Context, projectID, documentID stri
 		ChunkOverlap: s.defaultChunkOverlap,
 	}
 	projCfg := s.loadProjectChunkingConfig(ctx, projectID)
-	if projCfg.ChunkSize != nil && *projCfg.ChunkSize > 0 {
-		cfg.ChunkSize = *projCfg.ChunkSize
-	}
-	if projCfg.ChunkOverlap != nil && *projCfg.ChunkOverlap >= 0 {
-		cfg.ChunkOverlap = *projCfg.ChunkOverlap
-	}
 	strategy := textsplitter.NormalizeStrategy(derefString(projCfg.Strategy))
 	parentChild := projCfg.ParentChild != nil && *projCfg.ParentChild
+	autoProfile := projCfg.AutoProfile != nil && *projCfg.AutoProfile
+	var shape textsplitter.Shape
+
+	if autoProfile {
+		// Auto-profile replaces the project parameters instead of layering
+		// on them: the point is per-document sizing, and a project-wide
+		// strategy is exactly what it exists to avoid. Explicit project
+		// settings still apply when autoProfile is off, so existing projects
+		// behave byte-for-byte as before.
+		detected, signals := textsplitter.DetectShape(content.String)
+		shape = detected
+		profile := textsplitter.ProfileFor(detected)
+		cfg = profile.Config
+		strategy = profile.Options.Strategy
+		parentChild = profile.Options.ParentChild
+		if detected == textsplitter.ShapeProse {
+			// Prose has no structure to exploit, so keep the deployment's own
+			// defaults (CHUNK_SIZE/CHUNK_OVERLAP) rather than the package
+			// default: turning auto-profile on must be a no-op for plain prose.
+			cfg = textsplitter.Config{
+				ChunkSize:    s.defaultChunkSize,
+				ChunkOverlap: s.defaultChunkOverlap,
+			}
+		}
+		s.log.Debug("detected document shape",
+			slog.String("documentId", documentID),
+			slog.String("shape", string(detected)),
+			slog.Int("lines", signals.Lines),
+			slog.Int("headings", signals.Headings),
+			slog.Int("fences", signals.Fences),
+			slog.Int("tableRows", signals.TableRows),
+			slog.Int("speakerLines", signals.SpeakerLines))
+	} else {
+		if projCfg.ChunkSize != nil && *projCfg.ChunkSize > 0 {
+			cfg.ChunkSize = *projCfg.ChunkSize
+		}
+		if projCfg.ChunkOverlap != nil && *projCfg.ChunkOverlap >= 0 {
+			cfg.ChunkOverlap = *projCfg.ChunkOverlap
+		}
+	}
 	pieces, err := textsplitter.SplitDocument(content.String, cfg, textsplitter.Options{
 		Strategy:    strategy,
 		ParentChild: parentChild,
@@ -158,6 +194,10 @@ func (s *Service) RecreateChunks(ctx context.Context, projectID, documentID stri
 		meta := &chunks.ChunkMetadata{
 			Strategy: string(strategy),
 			IsParent: piece.IsParent,
+		}
+		if autoProfile {
+			meta.AutoProfile = true
+			meta.Shape = string(shape)
 		}
 		if piece.Oversized {
 			meta.Oversized = true
@@ -328,7 +368,9 @@ func (s *Service) RecreateChunks(ctx context.Context, projectID, documentID stri
 		slog.Int("newChunks", len(chunkRows)),
 		slog.Int("preservedEdited", len(preserved)),
 		slog.Int("discardedEdited", discardedEdited),
-		slog.Int("embeddingJobs", len(jobRows)))
+		slog.Int("embeddingJobs", len(jobRows)),
+		slog.Bool("autoProfile", autoProfile),
+		slog.String("shape", string(shape)))
 
 	return &RecreateChunksResponse{
 		Status: "success",
@@ -337,6 +379,8 @@ func (s *Service) RecreateChunks(ctx context.Context, projectID, documentID stri
 			NewChunks:       len(chunkRows),
 			Strategy:        string(strategy),
 			ParentChild:     parentChild,
+			AutoProfile:     autoProfile,
+			Shape:           string(shape),
 			PreservedEdited: len(preserved),
 			DiscardedEdited: discardedEdited,
 			Force:           force,
@@ -435,11 +479,13 @@ type projectChunkingConfig struct {
 	ChunkOverlap *int
 	Strategy     *string
 	ParentChild  *bool
+	AutoProfile  *bool
 }
 
 // loadProjectChunkingConfig reads the project-level kb.projects.chunking_config
 // JSONB. The JSON carries maxChunkSize (chunk size), overlap (chunk overlap),
-// and strategy (chunking strategy name).
+// strategy (chunking strategy name), parentChild, and autoProfile (per-document
+// shape detection replaces those values).
 func (s *Service) loadProjectChunkingConfig(ctx context.Context, projectID string) projectChunkingConfig {
 	var raw []byte
 	err := s.db.NewSelect().
@@ -455,6 +501,7 @@ func (s *Service) loadProjectChunkingConfig(ctx context.Context, projectID strin
 		Overlap      *int    `json:"overlap"`
 		Strategy     *string `json:"strategy"`
 		ParentChild  *bool   `json:"parentChild"`
+		AutoProfile  *bool   `json:"autoProfile"`
 	}
 	if jsonErr := json.Unmarshal(raw, &projCfg); jsonErr != nil {
 		return projectChunkingConfig{}
@@ -464,6 +511,7 @@ func (s *Service) loadProjectChunkingConfig(ctx context.Context, projectID strin
 		ChunkOverlap: projCfg.Overlap,
 		Strategy:     projCfg.Strategy,
 		ParentChild:  projCfg.ParentChild,
+		AutoProfile:  projCfg.AutoProfile,
 	}
 }
 

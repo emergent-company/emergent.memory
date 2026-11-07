@@ -20,6 +20,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 const (
@@ -155,6 +156,9 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	mimeType := detectMIMEType(file.Header, fileBytes, file.Filename)
 
 	if err := h.validateMIMEType(mimeType); err != nil {
+		return err
+	}
+	if err := ValidateUploadContent(mimeType, file.Filename, n); err != nil {
 		return err
 	}
 
@@ -315,6 +319,10 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 		errMsg := "file type not allowed: " + mimeType
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
 	}
+	if err := ValidateUploadContent(mimeType, filename, n); err != nil {
+		errMsg := err.Error()
+		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
+	}
 
 	fileHash := computeFileHash(fileBytes)
 
@@ -403,6 +411,9 @@ func (h *UploadHandler) UploadForRemember(ctx context.Context, orgID, projectID,
 	if err := h.validateMIMEType(mimeType); err != nil {
 		return nil, err
 	}
+	if err := ValidateUploadContent(mimeType, filename, n); err != nil {
+		return nil, err
+	}
 
 	fileHash := computeFileHash(fileBytes)
 
@@ -476,6 +487,27 @@ func detectMIMEType(header interface{ Get(string) string }, data []byte, filenam
 
 // Ensure textproto.MIMEHeader satisfies the detectMIMEType interface at compile time.
 var _ interface{ Get(string) string } = textproto.MIMEHeader{}
+
+// ValidateUploadContent rejects files the parsing pipeline cannot turn into
+// text: an empty file, or a binary no parser supports. Without this guard the
+// upload is stored, parsing "succeeds" with empty content, and the document
+// renders Ready with zero chunks — the failure surfaces much later as a
+// permanent extraction error, with nothing pointing at the upload (#243).
+func ValidateUploadContent(mimeType, filename string, size int64) error {
+	if size <= 0 {
+		return apperror.New(http.StatusBadRequest, "empty_file",
+			"file is empty: upload a file with text content")
+	}
+	// Audio is transcribed by Whisper; every other format must be readable by
+	// the text pipeline (plain text, email, or an Xberg-supported document).
+	// Both predicates live in pkg/xberg so this guard cannot disagree with the
+	// worker about what it will accept.
+	if xberg.CanExtract(mimeType, filename) || xberg.IsAudioFile(mimeType, filename) {
+		return nil
+	}
+	return apperror.New(http.StatusUnsupportedMediaType, "unsupported_media_type",
+		"unsupported file type: "+mimeType+" — the file has no readable text")
+}
 
 // validateMIMEType returns a 415 error if the MIME type is not in the allowlist.
 // When allowedMIMETypes is nil (no allowlist configured) all types are permitted.

@@ -148,13 +148,14 @@ type fakeMemory struct {
 	created          []AgentDefinition
 	updatedAgent     *AgentDefinition // last agent passed to UpdateAgentDefinition
 	chatMsg          string
-	chatStream       string        // SSE body returned by ChatStream when non-empty
-	chatStreamReader io.ReadCloser // overrides ChatStream's return body when non-nil
-	chatErr          error         // ChatStream failure
-	questionID       string        // question id received via RespondQuestion
-	questionResponse string        // response received via RespondQuestion
-	questionMessage  string        // optional reject message received via RespondQuestion
-	questionCancelID string        // question id received via CancelQuestion
+	chatSurface      *ChatSurfaceAction // surface action received via ChatStream
+	chatStream       string             // SSE body returned by ChatStream when non-empty
+	chatStreamReader io.ReadCloser      // overrides ChatStream's return body when non-nil
+	chatErr          error              // ChatStream failure
+	questionID       string             // question id received via RespondQuestion
+	questionResponse string             // response received via RespondQuestion
+	questionMessage  string             // optional reject message received via RespondQuestion
+	questionCancelID string             // question id received via CancelQuestion
 	approvals        []ToolApprovalItem
 	questions        []AgentQuestionItem
 	convErr          error // ListConversations failure
@@ -520,7 +521,6 @@ type fakeMemory struct {
 	sessionTodos             []SessionTodo                  // returned by ListSessionTodos
 	sessionTodosErr          error                          // failure for ListSessionTodos
 	lastTodosSessionID       string                         // last session id passed to ListSessionTodos
-	cancelAgentID            string                         // last agent id passed to CancelAgentRun
 	cancelRunID              string                         // last run id passed to CancelAgentRun
 	cancelAgentRunErr        error                          // failure for CancelAgentRun
 	// cancelAgentRunCancelled overrides the "row actually cancelled" result of
@@ -894,6 +894,7 @@ func (f *fakeMemory) ListSandboxImages(ctx context.Context) ([]SandboxImage, err
 
 func (f *fakeMemory) ChatStream(ctx context.Context, req ChatRequest) (io.ReadCloser, error) {
 	f.chatMsg = req.Message
+	f.chatSurface = req.SurfaceAction
 	if f.chatErr != nil {
 		return nil, f.chatErr
 	}
@@ -925,8 +926,7 @@ func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem,
 	return f.approvals, nil
 }
 
-func (f *fakeMemory) CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error) {
-	f.cancelAgentID = agentID
+func (f *fakeMemory) CancelAgentRun(ctx context.Context, runID string) (bool, error) {
 	f.cancelRunID = runID
 	if f.cancelAgentRunErr != nil {
 		return false, f.cancelAgentRunErr
@@ -2642,6 +2642,51 @@ func TestChatStreams(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
 		t.Fatalf("content-type = %q", ct)
+	}
+}
+
+// A surface action is a turn whose message the server frames, so the gateway
+// accepts it with no message and forwards it untouched.
+func TestChatForwardsSurfaceActionWithoutAMessage(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newTestServer(f)
+	body := `{"surfaceAction":{"surfaceId":"s1","action":{"componentId":"c1","response":"approve"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if f.chatMsg != "" {
+		t.Fatalf("message = %q, want empty", f.chatMsg)
+	}
+	if f.chatSurface == nil || f.chatSurface.SurfaceID != "s1" {
+		t.Fatalf("surface action not forwarded: %+v", f.chatSurface)
+	}
+	action, ok := f.chatSurface.Action.(map[string]any)
+	if !ok {
+		t.Fatalf("action = %T, want an object", f.chatSurface.Action)
+	}
+	if action["componentId"] != "c1" || action["response"] != "approve" {
+		t.Fatalf("action payload = %v", action)
+	}
+}
+
+func TestChatRejectsATurnWithNoMessageAndNoSurfaceAction(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newTestServer(f)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if f.chatMsg != "" || f.chatSurface != nil {
+		t.Fatal("a rejected turn must not reach the memory API")
 	}
 }
 

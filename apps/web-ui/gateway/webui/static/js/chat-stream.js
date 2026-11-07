@@ -1168,7 +1168,7 @@
 
     /* ---------- streaming ---------- */
 
-    async function streamChat(agent, text) {
+    async function streamChat(agent, text, surfaceAction) {
       ctx.onStreamStart(); // page hook: each host clears/restarts its thinking state
       // The shared wire transport (chat-transport.js) owns fetch + the
       // ReadableStream/TextDecoder/`data:`-frame loop and JSON-parses each
@@ -1187,6 +1187,9 @@
         : (function () {
             var p = { agentDefinitionId: agent, message: text };
             if (ctx.conversationId) p.conversationId = ctx.conversationId;
+            // An A2UI surface action is a turn whose message the server frames;
+            // text is then empty and the action carries the click.
+            if (surfaceAction) p.surfaceAction = surfaceAction;
             return p;
           })();
 

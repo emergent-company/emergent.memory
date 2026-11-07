@@ -134,7 +134,7 @@ struct ProjectCard: View {
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 activeProjectDetails
-                switchHint
+                switchControl
 
                 if case .signedOut = state {
                     signedOutState
@@ -145,14 +145,18 @@ struct ProjectCard: View {
         }
     }
 
-    private var switchHint: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.up.to.line")
-                .font(.caption)
-            Text("Switch projects from the menu at the top of the window.")
+    private var switchControl: some View {
+        // The page hosts the same picker the toolbar uses, so switching is not
+        // a dead end here and there is no sentence explaining where the control
+        // lives.
+        Menu {
+            ProjectPickerMenu()
+        } label: {
+            Label("Switch project…", systemImage: "arrow.left.arrow.right")
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        .menuStyle(.button)
+        .controlSize(.small)
+        .accessibilityLabel(Text(AccessibleNames.project))
     }
 
     private var activeProjectDetails: some View {

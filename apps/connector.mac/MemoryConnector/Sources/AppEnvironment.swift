@@ -16,6 +16,10 @@ final class AppEnvironment {
     let settings: ConnectorSettings
     let accountStore: AccountStore
     let projectStore: ProjectStore
+    /// Most-recently-used project ids for the active account: the project
+    /// switcher's "Recent" shortcut. Scoped with `projectStore` in
+    /// `applyScope(for:)`.
+    let recentProjects: RecentProjectsStore
     let appState = AppState()
     let identity = IdentityStore()
     let avatarStore = AvatarStore()
@@ -91,6 +95,8 @@ final class AppEnvironment {
             },
             stop: { engine.stopAll() }
         )
+
+        recentProjects = RecentProjectsStore(defaults: defaults)
 
         wireStoreHooks()
         observeProjectStore()
@@ -257,6 +263,7 @@ final class AppEnvironment {
         // config. The single reconcile below runs after the rewrite.
         scopeSwapGate.begin()
         projectStore.applyScope(scope)
+        recentProjects.applyScope(accountID: account.id)
         // Rewrite every engine config from this account's own CLI session so a
         // previous account's config can never linger into this scope, then
         // reconcile the engine set exactly once. The CLI calls are async, so

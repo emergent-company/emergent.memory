@@ -53,10 +53,13 @@ type RecreateChunksResponse struct {
 
 // RecreateChunksSummary contains details about the re-chunking operation.
 type RecreateChunksSummary struct {
-	OldChunks int            `json:"oldChunks"`
-	NewChunks int            `json:"newChunks"`
-	Strategy  string         `json:"strategy"`
-	Config    map[string]any `json:"config,omitempty"`
+	OldChunks   int            `json:"oldChunks"`
+	NewChunks   int            `json:"newChunks"`
+	Strategy    string         `json:"strategy"`
+	ParentChild bool           `json:"parentChild,omitempty"`
+	AutoProfile bool           `json:"autoProfile,omitempty"`
+	Shape       string         `json:"shape,omitempty"`
+	Config      map[string]any `json:"config,omitempty"`
 }
 
 // --- Methods ---

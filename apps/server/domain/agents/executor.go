@@ -771,7 +771,13 @@ func (ae *AgentExecutor) SetWorkObjectStore(store WorkObjectStore) {
 // explicit cancel request (POST …/runs/:runId/cancel) rather than by a server
 // fault. It distinguishes a user-initiated stop from a watchdog/doom-loop
 // cancellation so the run is reported as cancelled, not errored.
-const userCancelReason = "Run cancelled by user"
+const userCancelReason = UserCancelReason
+
+// UserCancelReason is the terminal reason recorded when a run is stopped by an
+// explicit user cancel. Exported for callers outside this package (the
+// device-scoped chat cancel route) so the reason cannot drift from the agents
+// handler's.
+const UserCancelReason = "Run cancelled by user"
 
 // DetachedRunContext returns a context carrying every value from parent (auth,
 // project/namespace, trace span) but not its cancellation. An HTTP surface uses

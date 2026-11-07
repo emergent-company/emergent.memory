@@ -27,6 +27,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Streaming endpoint - POST /api/chat/stream
 	g.POST("/stream", h.StreamChat)
 
+	// Device-scoped run cancellation - POST /api/chat/runs/:runId/cancel.
+	// chat:use, but owner-checked: the run must belong to a conversation owned
+	// by the caller's user (a device credential's project binding alone is not
+	// enough). Registered under the static `runs` segment so it cannot be
+	// shadowed by the /:id conversation routes.
+	g.POST("/runs/:runId/cancel", h.CancelRun)
+
 	// Conversation CRUD
 	g.GET("/conversations", h.ListConversations)
 	g.POST("/conversations", h.CreateConversation)

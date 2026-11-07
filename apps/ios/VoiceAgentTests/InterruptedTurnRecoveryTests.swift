@@ -132,6 +132,59 @@ struct InterruptedTurnRecoveryTests {
 
         #expect(ChatSessionTranscriptStore.recordedReply(extending: "hi there", in: detail, since: 2))
     }
+
+    /// A reply that called a tool between two assistant segments renders as two
+    /// entries, so the second one does not start with what the client saw. The
+    /// reply itself does, and that is what the wait recognises (#213).
+    @Test func recognisesAReplyASplitToolCallInterrupts() {
+        let records = [
+            turn("user", "hello"),
+            turn("assistant", "hi the"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+            turn("assistant", "re"),
+        ]
+        let detail = SessionDetail(room: "conv-1", records: records)
+
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
+    }
+
+    /// The gateway records a function-call-only step as an assistant turn of its
+    /// own — `"(calls: …)"`, `messageRecord` in `apps/web-ui/gateway/client_api.go`
+    /// — so a reply that opened with a tool call is stored as the placeholder and
+    /// *then* the answer. The text the client saw starts after the placeholder,
+    /// and the wait has to find it there (#213 review).
+    @Test func recognisesAReplyBehindTheGatewaysToolPlaceholder() {
+        let placeholder = turn("assistant", "(calls: entity-create)")
+        let detail = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            placeholder,
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+            turn("assistant", "hi there"),
+        ])
+
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
+
+        // The placeholder on its own is not the answer.
+        let parked = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            placeholder,
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+        ])
+        #expect(!ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: parked, since: 2))
+    }
+
+    /// The tool record is not itself the reply: with only the truncated copy
+    /// recorded, a tool call in between must not look like progress.
+    @Test func aToolCallDoesNotMakeTheTruncatedCopyLookFinished() {
+        let records = [
+            turn("user", "hello"),
+            turn("assistant", "hi the"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+        ]
+        let detail = SessionDetail(room: "conv-1", records: records)
+
+        #expect(!ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
+    }
 }
 
 /// Answers `true` for the first `limit` checks, then `false`.

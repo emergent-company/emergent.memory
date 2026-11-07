@@ -147,8 +147,24 @@ type Citation struct {
 // StreamRequest is the request body for starting a stream
 type StreamRequest struct {
 	ConversationID    *string `json:"conversationId,omitempty" validate:"omitempty,uuid"`
-	Message           string  `json:"message" validate:"required,max=100000"`
+	Message           string  `json:"message" validate:"max=100000"`
 	CanonicalID       *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
 	AgentDefinitionID *string `json:"agentDefinitionId,omitempty" validate:"omitempty,uuid"`
 	Namespace         string  `json:"namespace,omitempty"`
+	// SurfaceAction is an A2UI surface action the user took. The server frames it
+	// as the user message the agent receives
+	// (agents.A2UIActionMessage), so no client invents that wording; Message may
+	// then be empty, or carry free-form text typed alongside the action.
+	SurfaceAction *SurfaceAction `json:"surfaceAction,omitempty"`
+}
+
+// SurfaceAction is an A2UI surface action: which surface the user acted on, and
+// the payload its component carries. It mirrors the A2A metadata shape so both
+// transports reach the agent with the same message.
+type SurfaceAction struct {
+	SurfaceID string `json:"surfaceId"`
+	// The clicked component's payload: `{componentId, response}` for the cards
+	// the shared renderer builds. Typed as an object, not free JSON, so the
+	// published schema says what clients actually send.
+	Action any `json:"action" swaggertype:"object"`
 }

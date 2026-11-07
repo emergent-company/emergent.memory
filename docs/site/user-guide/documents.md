@@ -241,15 +241,20 @@ Documents are split into overlapping text segments (**chunks**) for retrieval. C
 
 | Setting | Description |
 |---|---|
-| `strategy` | `character` (default), `sentence`, or `paragraph` |
+| `strategy` | `recursive_character` (default) or `markdown_structure` (splits on headings and paragraphs, keeping code, math, and table blocks intact) |
 | `maxChunkSize` | Maximum characters per chunk |
-| `minChunkSize` | Minimum characters per chunk |
 | `overlap` | Character overlap between consecutive chunks |
+| `parentChild` | `markdown_structure` only: store a parent chunk per section alongside its children |
+| `autoProfile` | Detect each document's shape (prose, markdown, code-heavy, tabular, transcript, email) and use that shape's parameters instead of the project-wide `strategy`/`maxChunkSize`/`overlap` |
 
-Configure via **Project Settings → Chunking** or via `PATCH /api/projects/{id}` with the `chunking_config` field.
+Configure with `PUT /api/chunking/config`, and read the effective settings back with `GET /api/chunking/config`. The write is a full replacement: turning `autoProfile` on stores the other fields as sent (they are then unused), so turning it back off lands on those stored values rather than the ones that were in force beforehand.
+
+`autoProfile` is opt-in and replaces the project-wide size and strategy settings; it never blends with them. Documents with no dominant structure are split with the deployment's `CHUNK_SIZE`/`CHUNK_OVERLAP` defaults (1000/200 when unset) — not with a project-level `maxChunkSize` — so opting in changes nothing for plain prose unless the project had overridden those values. A read of the project's chunking configuration returns the per-shape profile table when `autoProfile` is on, reporting the effective prose defaults.
 
 To re-chunk a specific document after changing the config:
 
 ```http
 POST /api/documents/{id}/recreate-chunks
 ```
+
+The response summary reports the `strategy` actually used, plus `autoProfile` and the detected `shape` when auto-profile chose it. Chunk metadata records the same, so a chunk can be audited back to the rule that produced it.
