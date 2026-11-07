@@ -85,9 +85,11 @@ func TestAppShellSentrySDKIsDeferredAndAfterStylesheet(t *testing.T) {
 	}
 }
 
-// TestEveryDocumentHeadDefersSentry pins the same contract on all three documents
-// that wire Sentry — the app shell, the sign-in page, and the public share page.
-// They share sentryHead(), but each could reintroduce a blocking tag inline.
+// TestEveryDocumentHeadDefersSentry pins the same contract on both documents
+// that wire Sentry — the app shell and the sign-in page. They share sentryHead(),
+// but each could reintroduce a blocking tag inline. The public share page is
+// deliberately not in this map: its CSP forbids third-party scripts, so it emits
+// no Sentry at all (issue #219, asserted by TestSharePageEmitsNoSentry).
 func TestEveryDocumentHeadDefersSentry(t *testing.T) {
 	opts := sentryTestOpts()
 
@@ -98,13 +100,6 @@ func TestEveryDocumentHeadDefersSentry(t *testing.T) {
 			opts.TracesSampleRate, opts.ReplaySessionSampleRate, opts.ReplayOnErrorSampleRate,
 			"/",
 		)),
-		"share": renderHTML(t, ShareAgentPage(ShareAgentPageProps{
-			SentryDSN:                     opts.DSN,
-			SentryEnvironment:             opts.Environment,
-			SentryTracesSampleRate:        opts.TracesSampleRate,
-			SentryReplaySessionSampleRate: opts.ReplaySessionSampleRate,
-			SentryReplayOnErrorSampleRate: opts.ReplayOnErrorSampleRate,
-		})),
 	}
 	for name, html := range docs {
 		t.Run(name, func(t *testing.T) { assertSentryHeadNonBlocking(t, html) })
