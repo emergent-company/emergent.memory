@@ -352,6 +352,22 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		return
 	}
 
+	// An empty parse is not transient: retrying a parser cannot turn a file
+	// with no text into one with text. Completing the job here stores empty
+	// content, chunking then fails (logged only), and the document renders
+	// Ready with zero chunks until extraction fails permanently (#243). Fail
+	// the document now, immediately, with a message the user can act on.
+	if strings.TrimSpace(parsedContent) == "" {
+		err = fmt.Errorf("document has no extractable text content")
+		jobLog.Error("document extraction returned empty content",
+			slog.String("method", extractionMethod),
+		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		w.markFailedPermanent(ctx, job, err)
+		return
+	}
+
 	// Mark job as completed
 	result := MarkCompletedResult{
 		ParsedContent: parsedContent,
@@ -535,9 +551,27 @@ func (w *DocumentParsingWorker) downloadFile(ctx context.Context, storageKey str
 	return content, nil
 }
 
-// markFailed marks a job as failed
+// markFailed marks a job as failed, scheduling a retry while budget remains.
 func (w *DocumentParsingWorker) markFailed(ctx context.Context, job *DocumentParsingJob, err error) {
 	deadLettered, markErr := w.jobsService.MarkFailed(ctx, job.ID, err)
+	w.afterMarkFailed(ctx, job, err, deadLettered, markErr)
+}
+
+// markFailedPermanent marks a job as failed and dead-letters it without a
+// retry: the cause cannot be fixed by trying again (#243).
+func (w *DocumentParsingWorker) markFailedPermanent(ctx context.Context, job *DocumentParsingJob, err error) {
+	deadLettered, markErr := w.jobsService.MarkFailedPermanent(ctx, job.ID, err)
+	if markErr != nil {
+		// The update failed, so the job's state is unknown; the document must
+		// still reflect the permanent failure we already know about.
+		deadLettered = true
+	}
+	w.afterMarkFailed(ctx, job, err, deadLettered, markErr)
+}
+
+// afterMarkFailed updates the document status and notifies members once the job
+// is terminal. A scheduled retry touches neither.
+func (w *DocumentParsingWorker) afterMarkFailed(ctx context.Context, job *DocumentParsingJob, err error, deadLettered bool, markErr error) {
 	if markErr != nil {
 		w.log.Error("failed to mark job as failed",
 			slog.String("job_id", job.ID),
@@ -545,7 +579,7 @@ func (w *DocumentParsingWorker) markFailed(ctx context.Context, job *DocumentPar
 		)
 		// The job's new state is unknown; fall back to the in-memory retry count
 		// so a document cannot stay stuck in 'pending' because the update failed.
-		deadLettered = job.RetryCount >= job.MaxRetries
+		deadLettered = deadLettered || job.RetryCount >= job.MaxRetries
 	}
 
 	if !deadLettered {

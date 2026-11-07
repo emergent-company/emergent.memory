@@ -521,6 +521,48 @@ var EmailExtensions = map[string]bool{
 	".msg": true,
 }
 
+// XbergSupportedExtensions are the file extensions the extraction service can
+// read. Content sniffing cannot name legacy Office files (Go reports
+// application/octet-stream for OLE containers), so the extension is the only
+// evidence that such an upload is a document rather than an unknown blob.
+var XbergSupportedExtensions = map[string]bool{
+	// Documents
+	".pdf": true, ".doc": true, ".docx": true, ".odt": true,
+	// Spreadsheets
+	".xls": true, ".xlsx": true, ".xlsm": true, ".xlsb": true, ".ods": true,
+	// Presentations
+	".ppt": true, ".pptx": true,
+	// Images (OCR)
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true,
+	".tif": true, ".tiff": true, ".webp": true, ".jp2": true, ".jpx": true,
+	".pnm": true, ".pbm": true, ".pgm": true, ".ppm": true, ".svg": true,
+	// Web & markup
+	".html": true, ".htm": true, ".rtf": true,
+	// Archives
+	".zip": true, ".tar": true, ".gz": true, ".tgz": true, ".7z": true,
+}
+
+// CanExtract reports whether the parsing pipeline has a reader for an upload:
+// plain text (by MIME type or extension), an email, or a binary format Xberg
+// supports by MIME type or extension. An unrecognised binary — random bytes,
+// or a renamed blob — returns false, because storing it only produces a
+// document that is Ready with zero chunks and fails extraction later.
+func CanExtract(mimeType, filename string) bool {
+	if !ShouldUseXberg(mimeType, filename) {
+		return true // plain text, read directly
+	}
+	if IsEmailFile(mimeType, filename) {
+		return true
+	}
+	if IsXbergSupported(mimeType) {
+		return true
+	}
+	if filename != "" && XbergSupportedExtensions[strings.ToLower(filepath.Ext(filename))] {
+		return true
+	}
+	return false
+}
+
 // ShouldUseXberg determines if a file should be processed by Xberg
 func ShouldUseXberg(mimeType, filename string) bool {
 	// Check MIME type first

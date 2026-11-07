@@ -188,6 +188,84 @@ func TestReadFileBytes_Empty(t *testing.T) {
 	assert.Equal(t, int64(0), n)
 }
 
+func TestValidateUploadContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		mimeType string
+		filename string
+		size     int64
+		wantCode int // 0 = accepted
+	}{
+		{"empty file", "text/plain", "empty.txt", 0, http.StatusBadRequest},
+		{"plain text", "text/plain", "notes.txt", 11, 0},
+		{"pdf", "application/pdf", "report.pdf", 12, 0},
+		{"legacy office on a generic sniff", "application/octet-stream", "legacy.doc", 900, 0},
+		{"audio is transcribed", "audio/mpeg", "call.mp3", 900, 0},
+		{"random binary", "application/octet-stream", "data.bin", 4096, http.StatusUnsupportedMediaType},
+		{"binary without extension", "application/octet-stream", "blob", 4096, http.StatusUnsupportedMediaType},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUploadContent(tt.mimeType, tt.filename, tt.size)
+			if tt.wantCode == 0 {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			var appErr *apperror.Error
+			require.ErrorAs(t, err, &appErr)
+			assert.Equal(t, tt.wantCode, appErr.HTTPStatus)
+		})
+	}
+}
+
+func TestUpload_EmptyFile_Returns400(t *testing.T) {
+	stor := &fakeStorage{enabled: true}
+	h := newTestUploadHandler(t, stor, "")
+
+	body, ct := multipartBody(t, "file", "empty.txt", nil)
+	c, rec := echoCtxWithUser(t, http.MethodPost, "/upload", body, ct)
+
+	err := h.Upload(c)
+	assertHandlerStatus(t, err, rec, http.StatusBadRequest)
+	assert.Empty(t, stor.deletedKeys)
+}
+
+func TestUpload_UnknownBinary_Returns415(t *testing.T) {
+	stor := &fakeStorage{enabled: true}
+	h := newTestUploadHandler(t, stor, "")
+
+	body, ct := multipartBody(t, "file", "data.bin", bytes.Repeat([]byte{0x00, 0x01, 0x02, 0x03}, 1024))
+	c, rec := echoCtxWithUser(t, http.MethodPost, "/upload", body, ct)
+
+	err := h.Upload(c)
+	assertHandlerStatus(t, err, rec, http.StatusUnsupportedMediaType)
+}
+
+func TestUploadBatch_EmptyFile_IsPerFileFailure(t *testing.T) {
+	stor := &fakeStorage{enabled: true}
+	h := newTestUploadHandler(t, stor, "")
+
+	body, ct := batchMultipartBody(t, map[string][]byte{"empty.txt": {}})
+	req := httptest.NewRequest(http.MethodPost, "/upload/batch", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	c := e.NewContext(req, rec)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "u", OrgID: "o", ProjectID: "p"})
+
+	require.NoError(t, h.UploadBatch(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got BatchUploadResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, 1, got.Summary.Failed)
+	require.Len(t, got.Results, 1)
+	require.NotNil(t, got.Results[0].Error)
+	assert.Contains(t, *got.Results[0].Error, "file is empty")
+}
+
 func TestComputeFileHash_KnownSHA256(t *testing.T) {
 	// SHA-256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
 	h := computeFileHash([]byte("hello world"))

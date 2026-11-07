@@ -326,6 +326,38 @@ func TestShouldUseXberg(t *testing.T) {
 	}
 }
 
+func TestCanExtract(t *testing.T) {
+	tests := []struct {
+		name     string
+		mimeType string
+		filename string
+		want     bool
+	}{
+		{"plain text by mime", "text/plain", "notes.txt", true},
+		{"markdown by extension only", "application/octet-stream", "notes.md", true},
+		{"csv with generic mime", "application/octet-stream", "rows.csv", true},
+		{"pdf", "application/pdf", "report.pdf", true},
+		{"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "report.docx", true},
+		// Go's content sniffing reports application/octet-stream for OLE
+		// containers, so the extension is the only evidence of a document.
+		{"legacy doc by extension", "application/octet-stream", "legacy.doc", true},
+		{"legacy xls by extension", "application/octet-stream", "sheet.xls", true},
+		{"image for OCR", "image/png", "scan.png", true},
+		{"email", "message/rfc822", "mail.eml", true},
+		{"unknown binary", "application/octet-stream", "data.bin", false},
+		{"unknown binary without extension", "application/octet-stream", "blob", false},
+		{"unknown text-ish type", "application/x-made-up", "thing.xyz", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CanExtract(tt.mimeType, tt.filename); got != tt.want {
+				t.Errorf("CanExtract(%q, %q) = %v, want %v", tt.mimeType, tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsEmailFile(t *testing.T) {
 	tests := []struct {
 		name     string
