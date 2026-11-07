@@ -193,7 +193,13 @@ templ blueprintPropertyConflictRow(typeSlug string, conflict BlueprintPropertyCo
 					</tbody>
 				</table>
 				if unchanged > 0 {
-					<p class="text-base-content/50 border-t border-base-content/10 px-3 py-2 text-xs" data-testid={ "blueprint-conflict-def-unchanged-" + typeSlug + "-" + propSlug }>{ blueprintConflictUnchangedLabel(unchanged) }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{
+						Size:  ui.EmptyNoteSizeXS,
+						Class: "border-t border-base-content/10 px-3 py-2",
+						Attrs: templ.Attributes{"data-testid": "blueprint-conflict-def-unchanged-" + typeSlug + "-" + propSlug},
+					}) {
+						{ blueprintConflictUnchangedLabel(unchanged) }
+					}
 				}
 			</div>
 		} else {
