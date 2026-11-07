@@ -1593,6 +1593,7 @@ Table "kb"."mcp_server_oauth" {
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
   "user_id" uuid [note: 'Owning user for a personal OAuth credential; NULL is the project-wide shared credential']
+  "requested_scope" text [not null, default: '', note: 'Operator-configured scope set to request on connect; overrides the challenge scope (RFC 9728 §7.2). Empty means discover.']
 
   Indexes {
     (project_id) [name: "idx_mcp_server_oauth_project_id"]

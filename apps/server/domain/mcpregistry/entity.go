@@ -140,8 +140,15 @@ type MCPServerOAuth struct {
 	TokenEndpoint        string  `bun:"token_endpoint,notnull,default:''" json:"-"`
 	RegistrationEndpoint string  `bun:"registration_endpoint,notnull,default:''" json:"-"`
 	Resource             string  `bun:"resource,notnull,default:''" json:"-"`
-	Scope                string  `bun:"scope,notnull,default:''" json:"scope"`
-	ClientID             string  `bun:"client_id,notnull,default:''" json:"-"`
+	// Scope is the scope set the authorization server granted (as returned by
+	// the token endpoint), or the requested set when the server omits it.
+	Scope string `bun:"scope,notnull,default:''" json:"scope"`
+	// RequestedScope is the operator-configured scope set sent to the
+	// authorization server (space-delimited). It overrides discovery on every
+	// connect: the provider's advertised scopes_supported is a capability list,
+	// not a request default (RFC 9728 §7.2).
+	RequestedScope string `bun:"requested_scope,notnull,default:''" json:"requestedScope,omitempty"`
+	ClientID       string `bun:"client_id,notnull,default:''" json:"-"`
 	// ClientSecret / AccessToken / RefreshToken are nil until issued.
 	ClientSecret *EncryptedSecret `bun:"client_secret,type:jsonb,nullzero" json:"-"`
 	AccessToken  *EncryptedSecret `bun:"access_token,type:jsonb,nullzero" json:"-"`
@@ -232,6 +239,7 @@ type MCPServerOAuthSummaryDTO struct {
 	UserID              *string    `json:"userId,omitempty"`
 	AuthorizationServer *string    `json:"authorizationServer,omitempty"`
 	Scope               *string    `json:"scope,omitempty"`
+	RequestedScope      *string    `json:"requestedScope,omitempty"`
 	ExpiresAt           *time.Time `json:"expiresAt,omitempty"`
 }
 
@@ -251,16 +259,23 @@ type MCPServerOAuthStatusDTO struct {
 	RegistrationSupported bool       `json:"registrationSupported"`
 	Scopes                []string   `json:"scopes"`
 	Scope                 *string    `json:"scope,omitempty"`
+	RequestedScope        *string    `json:"requestedScope,omitempty"`
 	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
 	UpdatedAt             *time.Time `json:"updatedAt,omitempty"`
 }
 
 // ProvisionMCPOAuthClientDTO is the request body for provisioning a
-// pre-registered OAuth client identity on a remote MCP server. ClientSecret is
-// optional (public clients have none); it is encrypted at rest and never echoed.
+// pre-registered OAuth client identity or choosing requested scopes on a remote
+// MCP server. ClientSecret is optional (public clients have none); it is
+// encrypted at rest and never echoed. Scope is the optional space-delimited set
+// of scopes to request; it overrides discovery for both dynamic registration
+// and the authorization URL. Note the asymmetry with the status response: here
+// `scope` means requested, while MCPServerOAuthStatusDTO.Scope is the granted
+// set and RequestedScope is the configured one.
 type ProvisionMCPOAuthClientDTO struct {
 	ClientID     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
+	Scope        string `json:"scope,omitempty"`
 }
 
 // StartMCPOAuthResponseDTO is the response to starting an authorization flow.
@@ -485,9 +500,16 @@ type MCPServerInspectDTO struct {
 // InspectAuthDTO describes an authorization requirement discovered from an
 // OAuth challenge. It never carries credentials.
 type InspectAuthDTO struct {
-	ResourceMetadataURL   string   `json:"resourceMetadataUrl,omitempty"`
-	AuthorizationServer   string   `json:"authorizationServer,omitempty"`
-	Scopes                []string `json:"scopes"`
+	ResourceMetadataURL string `json:"resourceMetadataUrl,omitempty"`
+	AuthorizationServer string `json:"authorizationServer,omitempty"`
+	// Scopes are the scopes the provider names in its OAuth challenge. A scope
+	// set configured on the server overrides them when the flow starts; the
+	// inspect path has no requesting user, so it reports the discovered set.
+	Scopes []string `json:"scopes"`
+	// ScopesAvailable is what the provider advertises as supported
+	// (scopes_supported). Informational only: it is never requested implicitly
+	// (RFC 9728 §7.2).
+	ScopesAvailable       []string `json:"scopesAvailable,omitempty"`
 	RegistrationSupported bool     `json:"registrationSupported"`
 	// Unavailable is true when the server requires authorization but its
 	// provider publishes no discoverable OAuth metadata, so the browser connect

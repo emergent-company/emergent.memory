@@ -107,6 +107,7 @@ type MCPInspectAuth struct {
 	ResourceMetadataURL   string   `json:"resourceMetadataUrl"`
 	AuthorizationServer   string   `json:"authorizationServer"`
 	Scopes                []string `json:"scopes"`
+	ScopesAvailable       []string `json:"scopesAvailable"`
 	RegistrationSupported bool     `json:"registrationSupported"`
 	// Unavailable is true when the server requires authorization but its
 	// provider publishes no discoverable OAuth metadata, so the browser connect
@@ -231,6 +232,7 @@ type MCPServerOAuth struct {
 	ClientConfigured    bool    `json:"clientConfigured"`
 	AuthorizationServer *string `json:"authorizationServer,omitempty"`
 	Scope               *string `json:"scope,omitempty"`
+	RequestedScope      *string `json:"requestedScope,omitempty"`
 	ExpiresAt           *string `json:"expiresAt,omitempty"`
 }
 
@@ -244,6 +246,7 @@ type MCPOAuthStatus struct {
 	ClientConfigured      bool     `json:"clientConfigured"`
 	AuthorizationServer   *string  `json:"authorizationServer,omitempty"`
 	Scope                 *string  `json:"scope,omitempty"`
+	RequestedScope        *string  `json:"requestedScope,omitempty"`
 	Scopes                []string `json:"scopes"`
 	RegistrationSupported bool     `json:"registrationSupported"`
 	ExpiresAt             *string  `json:"expiresAt,omitempty"`
@@ -281,14 +284,19 @@ func (m *MemoryClient) DisconnectMCPServer(ctx context.Context, id string) error
 	return m.do(ctx, http.MethodDelete, "/api/admin/mcp-servers/"+id+"/oauth", nil, nil)
 }
 
-// SetMCPServerOAuthClient stores a pre-registered OAuth client (client id +
-// optional secret) for a server whose authorization provider rejects dynamic
-// client registration. Memory answers 200 with the refreshed status DTO; only
-// the transport/status error matters otherwise.
-func (m *MemoryClient) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error) {
+// SetMCPServerOAuthClient stores a pre-registered OAuth client (client id,
+// optional secret) and/or the scope set to request for a server whose challenge
+// names no scopes. A blank client id with a scope sets the requested set only
+// (creating a configuration-only row when none exists); a blank client id and
+// blank scope clears an existing requested set. Memory answers 200 with the
+// refreshed status DTO; only the transport/status error matters otherwise.
+func (m *MemoryClient) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret, scope string) (*MCPOAuthStatus, error) {
 	body := map[string]string{"clientId": clientID}
 	if clientSecret != "" {
 		body["clientSecret"] = clientSecret
+	}
+	if scope != "" {
+		body["scope"] = scope
 	}
 	var env successEnvelope[MCPOAuthStatus]
 	if err := m.do(ctx, http.MethodPut, "/api/admin/mcp-servers/"+id+"/oauth/client", body, &env); err != nil {

@@ -140,6 +140,7 @@ type mcpTestBackend struct {
 	lastClientServer  string
 	lastClientID      string
 	lastClientSecret  string
+	lastClientScope   string
 }
 
 func newMCPTestBackend(servers []MCPServer) *mcpTestBackend {
@@ -328,10 +329,11 @@ func (b *mcpTestBackend) DisconnectMCPServer(ctx context.Context, id string) err
 	return b.disconnectErr
 }
 
-func (b *mcpTestBackend) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error) {
+func (b *mcpTestBackend) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret, scope string) (*MCPOAuthStatus, error) {
 	b.lastClientServer = id
 	b.lastClientID = clientID
 	b.lastClientSecret = clientSecret
+	b.lastClientScope = scope
 	if b.oauthClientErr != nil {
 		return nil, b.oauthClientErr
 	}
@@ -1324,7 +1326,7 @@ func TestUIMCPOAuthClientRedirectsWithFlash(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpServerTestServer(s)
 
-	body := "client_id=client-abc&client_secret=secret-xyz"
+	body := "client_id=client-abc&client_secret=secret-xyz&scope=repo+read%3Aorg"
 	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", body)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
 		t.Fatalf("oauth/client = %d %q, want 303 /settings/mcp-servers?oauthClient=1", rec.Code, rec.Header().Get("Location"))
@@ -1332,19 +1334,40 @@ func TestUIMCPOAuthClientRedirectsWithFlash(t *testing.T) {
 	if f.lastClientServer != "srv-http" || f.lastClientID != "client-abc" || f.lastClientSecret != "secret-xyz" {
 		t.Errorf("backend record = %s %q %q, want srv-http client-abc secret-xyz", f.lastClientServer, f.lastClientID, f.lastClientSecret)
 	}
+	if f.lastClientScope != "repo read:org" {
+		t.Errorf("backend scope = %q, want the submitted scope set", f.lastClientScope)
+	}
 }
 
-func TestUIMCPOAuthClientBlankIDRedirectsWithError(t *testing.T) {
+func TestUIMCPOAuthClientBlankIDAndScopeForward(t *testing.T) {
 	f := newMCPTestBackend(mcpTestRegistryFixture())
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpServerTestServer(s)
 
-	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&client_secret=secret-xyz")
-	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
-		t.Fatalf("blank-id oauth/client = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	// A blank client id and blank scope is the "request no scopes" path: the
+	// backend decides whether there is a configured set to clear.
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&scope=")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
+		t.Fatalf("blank oauth/client = %d %q, want 303 success", rec.Code, rec.Header().Get("Location"))
 	}
-	if f.lastClientServer != "" {
-		t.Error("blank client id must not reach the backend")
+	if f.lastClientServer != "srv-http" || f.lastClientID != "" || f.lastClientScope != "" {
+		t.Errorf("backend record = %s %q %q, want srv-http blank/blank forwarded", f.lastClientServer, f.lastClientID, f.lastClientScope)
+	}
+}
+
+func TestUIMCPOAuthClientScopeOnlyUpdate(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	// A blank client id with a scope is the DCR-provider remedy: keep the
+	// stored client, change only what the next connect requests.
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&scope=repo+read%3Aorg")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
+		t.Fatalf("scope-only oauth/client = %d %q, want 303 success", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastClientServer != "srv-http" || f.lastClientID != "" || f.lastClientScope != "repo read:org" {
+		t.Errorf("backend record = %s %q %q, want srv-http blank-client repo read:org", f.lastClientServer, f.lastClientID, f.lastClientScope)
 	}
 }
 
