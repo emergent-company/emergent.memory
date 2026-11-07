@@ -2483,6 +2483,50 @@ type RememberStreamRequest struct {
 	// the content (e.g. "this is my shopping list for my birthday party").
 	// It is injected as a prefix in the agent message for both text and file paths.
 	Guide string `json:"guide,omitempty"`
+	// SourceURL is the link a shared capture came from (the iOS share extension
+	// posts a Safari link here). It is recorded on the document as source_url
+	// with source_type "share", so the document points at its origin instead of
+	// only carrying the URL as prose.
+	SourceURL string `json:"source_url,omitempty"`
+}
+
+// rememberDocumentParams builds the document a text remember call persists.
+// A shared capture carries a source URL, so it becomes a "share" document that
+// points at its origin (a shared link is a document with a source, not prose
+// that happens to contain a URL) instead of the anonymous "manual" document an
+// ordinary remember creates.
+func rememberDocumentParams(projectID, userID, message, sourceURL string) documents.CreateParams {
+	filename := "remember.txt"
+	sourceType := "manual"
+	params := documents.CreateParams{
+		ProjectID:       projectID,
+		CreatedByUserID: documents.OptionalUserID(userID),
+		Filename:        &filename,
+		Content:         &message,
+		SourceType:      &sourceType,
+	}
+	if origin := strings.TrimSpace(sourceURL); origin != "" {
+		sharedType := "share"
+		sharedName := "shared-link.txt"
+		params.SourceType = &sharedType
+		params.SourceURL = &origin
+		params.Filename = &sharedName
+	}
+	return params
+}
+
+// rememberFileText resolves the text a file remember runs on: the converted
+// content when the parser produced any, otherwise the caller's guide/comment.
+// A photo with no OCR text (a picture rather than a document photo) is still a
+// capture the user meant to keep, and the comment is the only text there is;
+// returning "" means neither exists, which is the no_content failure.
+func rememberFileText(content *string, guide string) string {
+	if content != nil {
+		if converted := strings.TrimSpace(*content); converted != "" {
+			return converted
+		}
+	}
+	return strings.TrimSpace(guide)
 }
 
 // RememberStream handles POST /api/projects/:projectId/remember.
@@ -2594,15 +2638,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	// documents.Service.Create deduplicates by content hash, so repeated identical calls are safe.
 	var documentID string
 	if h.docSvc != nil {
-		filename := "remember.txt"
-		sourceType := "manual"
-		doc, _, docErr := h.docSvc.Create(ctx, documents.CreateParams{
-			ProjectID:       projectID,
-			CreatedByUserID: documents.OptionalUserID(user.ID),
-			Filename:        &filename,
-			Content:         &message,
-			SourceType:      &sourceType,
-		})
+		doc, _, docErr := h.docSvc.Create(ctx, rememberDocumentParams(projectID, user.ID, message, req.SourceURL))
 		if docErr != nil {
 			return apperror.NewInternal("failed to create document for remember", docErr)
 		}
@@ -3049,16 +3085,18 @@ func (h *Handler) RememberFile(c echo.Context) error {
 		}
 	}
 
-	// Fetch parsed plaintext content.
+	// Fetch parsed plaintext content. A read failure is not fatal here: the
+	// caller's guide is a valid capture on its own, so an unreadable conversion
+	// degrades to the guide rather than failing an upload the user already made.
 	var message string
 	if h.docSvc != nil {
-		content, contentErr := h.docSvc.GetContent(ctx, projectID, documentID)
-		if contentErr != nil || content == nil || strings.TrimSpace(*content) == "" {
+		content, _ := h.docSvc.GetContent(ctx, projectID, documentID)
+		message = rememberFileText(content, req.Guide)
+		if message == "" {
 			return apperror.New(http.StatusUnprocessableEntity, "no_content",
 				"File was uploaded but no text content could be extracted. "+
 					"Ensure the file is a supported format and not empty.")
 		}
-		message = strings.TrimSpace(*content)
 	}
 
 	ctx, span := tracing.Start(ctx, "remember.run",

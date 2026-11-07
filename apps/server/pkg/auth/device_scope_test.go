@@ -73,6 +73,15 @@ func TestRejectDeviceTokenOutsideSurface(t *testing.T) {
 		{"agent run read stays closed", "GET", "/api/projects/p1/agent-runs/r1", deviceScopes, true},
 		{"agent-scoped cancel stays closed", "POST", "/api/projects/p1/agents/a1/runs/r1/cancel", deviceScopes, true},
 
+		// Capture writes (iOS share extension): exactly two shapes, one project id.
+		{"remember text allowed", "POST", "/api/projects/p1/remember", deviceScopes, false},
+		{"remember file allowed", "POST", "/api/projects/p1/remember/file", deviceScopes, false},
+		{"remember without project rejected", "POST", "/api/projects//remember", deviceScopes, true},
+		{"remember deeper path rejected", "POST", "/api/projects/p1/remember/file/x", deviceScopes, true},
+		{"remember trailing slash rejected", "POST", "/api/projects/p1/remember/", deviceScopes, true},
+		{"remember wrong method rejected", "GET", "/api/projects/p1/remember", deviceScopes, true},
+		{"remember sibling write rejected", "POST", "/api/projects/p1/forget", deviceScopes, true},
+
 		{"conversation archive allowed", "POST", "/api/chat/c1/archive", deviceScopes, false},
 		{"conversation unarchive allowed", "POST", "/api/chat/c1/unarchive", deviceScopes, false},
 		{"conversation delete allowed", "DELETE", "/api/chat/c1", deviceScopes, false},

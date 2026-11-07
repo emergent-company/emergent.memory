@@ -122,8 +122,11 @@ type CreateParams struct {
 	Content         *string
 	StorageKey      *string
 	SourceType      *string
-	MimeType        *string
-	FileSizeBytes   *int64
+	// SourceURL records where a document came from when it has an origin the
+	// user can revisit (a shared link). Nil for uploads and synced sources.
+	SourceURL     *string
+	MimeType      *string
+	FileSizeBytes *int64
 }
 
 // OptionalUserID is the uploader recorded on a created document (#2260): the
@@ -191,6 +194,9 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (*Document, b
 	}
 	if params.SourceType != nil {
 		doc.SourceType = params.SourceType
+	}
+	if params.SourceURL != nil {
+		doc.SourceURL = params.SourceURL
 	}
 	if params.MimeType != nil {
 		doc.MimeType = params.MimeType
