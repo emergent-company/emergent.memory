@@ -3049,6 +3049,10 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	var types []typeRow
 	var relTypes []relTypeRow
+	// Untyped objects (type = '') have no registry row, so the registry-driven
+	// query below can never surface them. Count them separately and fold the
+	// result into a synthetic bucket after the transaction (issue #323).
+	var untypedCount int
 
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Set RLS context
@@ -3117,6 +3121,22 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			}
 		}
 
+		// Count legacy untyped objects. They have no schema-registry row and no
+		// namespace (the namespace filter is a registry column), so they are
+		// always reported irrespective of the requested namespace.
+		err = tx.NewRaw(`
+			SELECT COUNT(*)::int
+			FROM kb.graph_objects go
+			WHERE go.project_id = ?
+				AND go.deleted_at IS NULL
+				AND go.supersedes_id IS NULL
+				AND (go.type IS NULL OR go.type = '')
+				`+branchClause+`
+		`, append([]any{projectUUID}, branchArgs...)...).Scan(ctx, &untypedCount)
+		if err != nil {
+			return err
+		}
+
 		// Relationship type counts are opt-in (include_relationships=true): the
 		// aggregation is expensive on large graphs and only needed for questions
 		// about relationship types. When disabled, relTypes stays nil so the
@@ -3165,6 +3185,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	if err != nil {
 		return nil, fmt.Errorf("query entity types: %w", err)
+	}
+
+	// Fold legacy untyped objects into one visible bucket. Drop any empty-name
+	// row the branch fallback may have discovered so they are counted once.
+	kept := types[:0]
+	for _, t := range types {
+		if t.Name != "" {
+			kept = append(kept, t)
+		}
+	}
+	types = kept
+	if untypedCount > 0 {
+		types = append(types, typeRow{
+			Name:          UntypedEntityTypeBucket,
+			Description:   "Objects with an empty type",
+			InstanceCount: untypedCount,
+		})
 	}
 
 	scope := TypeScopeFromContext(ctx)
