@@ -366,18 +366,46 @@ func TestNormalizeInferredSchema_UnwrapsWithoutTypeMarker(t *testing.T) {
 }
 
 func TestNormalizeInferredSchema_KeepsFlatMapWithWrapperNamedProperty(t *testing.T) {
-	// A genuine type with a property named "properties" must not be unwrapped:
-	// the flat form holds a descriptor object there, not a top-level type or a
-	// required array.
+	// A genuine type with properties named after schema keywords must not be
+	// unwrapped: the flat form holds a descriptor object under each of them,
+	// never a top-level "object" type or a required array.
 	schema := map[string]any{
 		"properties": map[string]any{"type": "string"},
+		"type":       map[string]any{"type": "string"},
+		"required":   map[string]any{"type": "boolean"},
 	}
 	props, required := normalizeInferredSchema(schema)
-	if props["properties"] == nil {
-		t.Fatalf("property named 'properties' was lost: %#v", props)
+	for _, name := range []string{"properties", "type", "required"} {
+		if props[name] == nil {
+			t.Fatalf("property named %q was lost: %#v", name, props)
+		}
 	}
 	if len(required) != 0 {
 		t.Errorf("required = %v, want empty", required)
+	}
+}
+
+func TestNormalizeInferredSchema_HybridWrapperWithoutPropertiesMap(t *testing.T) {
+	// A wrapper that declares `required` but keeps the properties at the top
+	// level must still yield the properties, and drop the structural keywords.
+	schema := map[string]any{
+		"type":     "object",
+		"title":    map[string]any{"type": "string"},
+		"required": []any{"title"},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["title"] == nil {
+		t.Fatalf("properties = %#v, want title", props)
+	}
+	if _, present := props["type"]; present {
+		t.Errorf("schema keyword 'type' leaked into properties: %#v", props)
+	}
+	if _, present := props["required"]; present {
+		t.Errorf("schema keyword 'required' leaked into properties: %#v", props)
+	}
+	if len(required) != 1 || required[0] != "title" {
+		t.Errorf("required = %v, want [title]", required)
 	}
 }
 
@@ -388,6 +416,54 @@ func TestPropertyNames_DropsNonStrings(t *testing.T) {
 	}
 	if got := propertyNames(nil); len(got) != 0 {
 		t.Errorf("nil = %v, want empty", got)
+	}
+	if got := propertyNames("title, guest"); len(got) != 2 || got[0] != "title" || got[1] != "guest" {
+		t.Errorf("comma-separated string = %v, want [title guest]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// mergeTypeSchemas
+// ---------------------------------------------------------------------------
+
+func TestMergeTypeSchemas_UnionsRequiredAndDropsDepartedProperties(t *testing.T) {
+	svc := testService()
+	props := func(names ...string) map[string]any {
+		out := make(map[string]any, len(names))
+		for _, name := range names {
+			out[name] = map[string]any{"type": "string"}
+		}
+		return out
+	}
+
+	merged := svc.mergeTypeSchemas([]*DiscoveryTypeCandidate{
+		{
+			TypeName:           "Episode",
+			Confidence:         0.9,
+			InferredSchema:     JSONMap(props("title", "guest")),
+			RequiredProperties: JSONArray{"title"},
+			ExampleInstances:   JSONArray{"first"},
+		},
+		{
+			TypeName:           "Episode",
+			Confidence:         0.7,
+			InferredSchema:     JSONMap(props("title", "date")),
+			RequiredProperties: JSONArray{"title", "date", "absent"},
+			ExampleInstances:   JSONArray{"second"},
+		},
+	})
+
+	if len(merged.Properties) != 3 {
+		t.Errorf("properties = %#v, want title/guest/date", merged.Properties)
+	}
+	// Union of the candidates' lists, de-duplicated, minus anything the merged
+	// schema cannot offer ("absent").
+	want := []string{"title", "date"}
+	if len(merged.RequiredProperties) != len(want) {
+		t.Fatalf("required = %v, want %v", merged.RequiredProperties, want)
+	}
+	if merged.RequiredProperties[0] != "title" || merged.RequiredProperties[1] != "date" {
+		t.Errorf("required = %v, want %v", merged.RequiredProperties, want)
 	}
 }
 

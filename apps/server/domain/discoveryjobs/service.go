@@ -1319,20 +1319,21 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 	for _, group := range groups {
 		for _, t := range group.Types {
 			candidate := &DiscoveryTypeCandidate{
-				ID:                uuid.New(),
-				JobID:             jobID,
-				BatchNumber:       batchNum,
-				TypeName:          t.TypeName,
-				Description:       &t.Description,
-				Confidence:        t.Confidence,
-				InferredSchema:    t.Properties,
-				ExampleInstances:  toJSONArray(t.ExampleInstances),
-				Frequency:         len(t.ExampleInstances),
-				SourceDocumentIDs: group.DocumentIDs,
-				ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(group.DocumentIDs))),
-				Status:            CandidateStatusCandidate,
-				CreatedAt:         time.Now(),
-				UpdatedAt:         time.Now(),
+				ID:                 uuid.New(),
+				JobID:              jobID,
+				BatchNumber:        batchNum,
+				TypeName:           t.TypeName,
+				Description:        &t.Description,
+				Confidence:         t.Confidence,
+				InferredSchema:     t.Properties,
+				RequiredProperties: toJSONStringArray(t.RequiredProperties),
+				ExampleInstances:   toJSONArray(t.ExampleInstances),
+				Frequency:          len(t.ExampleInstances),
+				SourceDocumentIDs:  group.DocumentIDs,
+				ExtractionContext:  strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(group.DocumentIDs))),
+				Status:             CandidateStatusCandidate,
+				CreatedAt:          time.Now(),
+				UpdatedAt:          time.Now(),
 			}
 			if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
 				s.log.Error("failed to store type candidate", logger.Error(err))
@@ -1601,12 +1602,31 @@ func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
 	}
 
 	properties := schema
-	required := []string{}
+	required := propertyNames(schema["required"])
 	if inner, ok := jsonSchemaObjectProperties(schema); ok {
 		properties = inner
-		required = propertyNames(schema["required"])
+	} else if len(required) > 0 {
+		// A wrapper that lists `required` but no nested `properties` map, e.g.
+		// {"type":"object","title":{"type":"string"},"required":["title"]}.
+		// Drop only the structural keywords; everything else is a property.
+		properties = withoutSchemaKeywords(schema)
 	}
 	return normalizePropertyCrossRefs(properties), required
+}
+
+// withoutSchemaKeywords removes the JSON Schema structural keywords from a
+// wrapper that declared `required` without a nested `properties` map, leaving
+// the property descriptors behind.
+func withoutSchemaKeywords(schema map[string]any) map[string]any {
+	out := make(map[string]any, len(schema))
+	for key, value := range schema {
+		switch key {
+		case "type", "required", "properties", "$schema", "additionalProperties", "definitions", "$defs":
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 // jsonSchemaObjectProperties reports whether schema is a JSON Schema object
@@ -1642,6 +1662,11 @@ func propertyNames(value any) []string {
 		items = make([]any, len(v))
 		for i, name := range v {
 			items[i] = name
+		}
+	case string:
+		// Models sometimes answer with one comma-separated string.
+		for _, part := range strings.Split(v, ",") {
+			items = append(items, strings.TrimSpace(part))
 		}
 	default:
 		return []string{}
@@ -1848,15 +1873,28 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 		}
 	}
 
-	// Merge properties
+	// Merge properties. A required name only survives if the property itself
+	// did: requiring a field the merged schema cannot offer would make the
+	// extraction prompt demand a value nothing defines (#234).
 	allProperties := make(map[string]any)
 	allExamples := make([]any, 0)
+	requiredUnion := make([]string, 0)
 
 	for _, c := range candidates {
 		for k, v := range c.InferredSchema {
 			allProperties[k] = v
 		}
 		allExamples = append(allExamples, c.ExampleInstances...)
+		requiredUnion = append(requiredUnion, propertyNames([]any(c.RequiredProperties))...)
+	}
+	required := make([]string, 0, len(requiredUnion))
+	seenRequired := make(map[string]bool, len(requiredUnion))
+	for _, name := range requiredUnion {
+		if _, present := allProperties[name]; !present || seenRequired[name] {
+			continue
+		}
+		seenRequired[name] = true
+		required = append(required, name)
 	}
 
 	// Calculate average confidence
@@ -1883,7 +1921,7 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 		Description:        description,
 		Confidence:         avgConfidence,
 		Properties:         allProperties,
-		RequiredProperties: []string{},
+		RequiredProperties: required,
 		ExampleInstances:   allExamples,
 		Frequency:          totalFrequency,
 	}
@@ -2321,6 +2359,18 @@ func toJSONArray(items []any) JSONArray {
 		return JSONArray{}
 	}
 	return JSONArray(items)
+}
+
+// toJSONStringArray converts names into the jsonb array a candidate row stores.
+func toJSONStringArray(names []string) JSONArray {
+	if len(names) == 0 {
+		return JSONArray{}
+	}
+	out := make(JSONArray, len(names))
+	for i, name := range names {
+		out[i] = name
+	}
+	return out
 }
 
 // extractionPrompts is a local mirror of extraction.SchemaExtractionPrompts
