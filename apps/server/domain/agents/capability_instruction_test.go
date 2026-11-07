@@ -111,6 +111,53 @@ func TestResolveInstructionCapabilityDisclosure(t *testing.T) {
 		}
 	})
 
+	t.Run("default-deny policy makes a whitelisted group unavailable", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt:      &empty,
+				Tools:             []string{"entity-create"},
+				DefaultToolPolicy: ToolPolicyDefaultDeny,
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() listed a group the default deny policy blocks: %q", got)
+		}
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() did not disclose the blocked write capability: %q", got)
+		}
+	})
+
+	t.Run("per-tool deny makes a whitelisted group unavailable", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"entity-create"},
+				ToolPolicies: map[string]ToolPolicy{"entity-create": {Disabled: true}},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() listed a group whose only member is policy-disabled: %q", got)
+		}
+	})
+
+	t.Run("glob whitelist degrades to the rule-only variant", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"graph-*"},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if !strings.Contains(got, "determined by the tools you are actually offered") {
+			t.Fatalf("resolveInstruction() did not use the glob-safe variant: %q", got)
+		}
+		if strings.Contains(got, "no write tool is enabled") {
+			t.Fatalf("resolveInstruction() falsely claimed no write tool under a glob whitelist: %q", got)
+		}
+	})
+
 	t.Run("block is not duplicated when the prompt already carries it", func(t *testing.T) {
 		def := &AgentDefinition{SystemPrompt: &empty, Tools: []string{"entity-create"}}
 		block := capabilityDisclosureInstruction(def, nil)

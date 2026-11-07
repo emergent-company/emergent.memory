@@ -4609,6 +4609,10 @@ func capabilityDisclosureInstruction(def *AgentDefinition, catalog []mcp.ToolDef
 	}
 
 	groups := def.ToolGroupsWithCatalog(catalog)
+	scopes := make(map[string]string, len(catalog))
+	for _, td := range catalog {
+		scopes[td.Name] = td.RequiredScope
+	}
 	available := make([]string, 0, len(groups))
 	writeCapable := false
 	graphWriteCapable := false
@@ -4616,9 +4620,11 @@ func capabilityDisclosureInstruction(def *AgentDefinition, catalog []mcp.ToolDef
 		if !g.Enabled {
 			continue
 		}
-		// A group whose stored policy hard-denies it is unavailable even though
-		// its member tools are still whitelisted; the executor blocks the call.
-		if p, ok := def.ToolPolicies[toolGroupPolicyPrefix+g.ID]; ok && p.Disabled {
+		// A group is only available when at least one member tool survives the
+		// definition's effective policy (explicit → group → default). This covers
+		// a stored @group: deny, a per-tool deny, and DefaultToolPolicy=deny — the
+		// same resolution the executor's before-tool gate uses.
+		if !groupHasCallableTool(def, g.Tools, scopes) {
 			continue
 		}
 		available = append(available, g.Label)
@@ -4642,6 +4648,19 @@ func capabilityDisclosureInstruction(def *AgentDefinition, catalog []mcp.ToolDef
 		b += " You cannot save a new fact to the knowledge graph because Graph · Write is not enabled: say plainly that you cannot persist it instead of claiming it was saved."
 	}
 	return b + capabilityWriteRule
+}
+
+// groupHasCallableTool reports whether at least one member tool survives the
+// definition's effective tool policy. scopes is the catalog's name→scope map
+// (nil entries fall back to the static lookup inside effectiveToolPolicyFor).
+func groupHasCallableTool(def *AgentDefinition, members []string, scopes map[string]string) bool {
+	for _, t := range members {
+		p, has := def.effectiveToolPolicyFor(t, scopes[t])
+		if !toolPolicyBlocks(p, has) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasToolWhitelistGlob reports whether the tools whitelist uses glob metacharacters
