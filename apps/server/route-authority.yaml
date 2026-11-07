@@ -1638,6 +1638,22 @@ routes:
       level: project-token
       note: RequireAuth, RequireProjectTokenScope
     - method: GET
+      path: /api/projects/:projectId/skills/proposals
+      level: project-token
+      note: RequireAuth, RequireProjectTokenScope
+    - method: GET
+      path: /api/projects/:projectId/skills/proposals/:proposalId
+      level: project-token
+      note: RequireAuth, RequireProjectTokenScope
+    - method: POST
+      path: /api/projects/:projectId/skills/proposals/:proposalId/approve
+      level: project-token
+      note: RequireAuth, RequireProjectTokenScope
+    - method: POST
+      path: /api/projects/:projectId/skills/proposals/:proposalId/reject
+      level: project-token
+      note: RequireAuth, RequireProjectTokenScope
+    - method: GET
       path: /api/projects/:projectId/tokens
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember

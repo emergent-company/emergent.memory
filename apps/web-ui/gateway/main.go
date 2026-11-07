@@ -646,6 +646,9 @@ func main() {
 	// Org-level OAuth clients for data-source providers (org-admin only; the
 	// handler 404s for anyone else).
 	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
+	// Per-provider org OAuth app editor: the same shared card the project editor
+	// uses, so each provider is edited on its own page instead of a stacked form.
+	e.GET("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientDetail)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
 	// Rename is a native PRG form (hx-boost="false"): POST then redirect to the

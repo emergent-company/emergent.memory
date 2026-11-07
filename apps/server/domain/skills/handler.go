@@ -15,8 +15,9 @@ import (
 
 // Handler handles HTTP requests for skills.
 type Handler struct {
-	repo *Repository
-	log  *slog.Logger
+	repo      *Repository
+	proposals *ProposalService
+	log       *slog.Logger
 	// superadmin gates global skill create/update/delete; nil when the superadmin
 	// feature is disabled. A nil module FAILS CLOSED — absence of the dependency
 	// is not permission, so global mutations are denied rather than let through.
@@ -27,6 +28,7 @@ type Handler struct {
 func NewHandler(repo *Repository, log *slog.Logger, superadmin *superadmin.Repository) *Handler {
 	return &Handler{
 		repo:       repo,
+		proposals:  NewProposalService(repo, log),
 		log:        log.With(logger.Scope("skills.handler")),
 		superadmin: superadmin,
 	}

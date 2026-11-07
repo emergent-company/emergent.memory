@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/activity"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -385,6 +386,14 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 
 	if req.AutoExtractConfig != nil {
 		project.AutoExtractConfig = req.AutoExtractConfig
+		hasUpdates = true
+	}
+
+	if req.SkillCapture != nil {
+		if err := skills.ValidateProjectSkillCapture(req.SkillCapture); err != nil {
+			return nil, err
+		}
+		project.SkillCapture = req.SkillCapture.Normalized()
 		hasUpdates = true
 	}
 
@@ -970,4 +979,24 @@ func validateBudgetAlertThreshold(threshold float64) error {
 		})
 	}
 	return nil
+}
+
+// SkillCaptureConfigForProject returns the project's skill-capture policy.
+// It implements skills.ProjectSkillCaptureReader so the capture loop can read
+// the master switch without importing the projects domain.
+func (s *Service) SkillCaptureConfigForProject(ctx context.Context, projectID string) (*skills.ProjectSkillCaptureConfig, error) {
+	project, err := s.repo.GetByID(ctx, projectID, false)
+	if err != nil {
+		return nil, err
+	}
+	if project == nil {
+		return nil, apperror.ErrNotFound.WithMessage("Project not found")
+	}
+	cfg := project.SkillCapture
+	return &cfg, nil
+}
+
+// ListSkillCaptureProjects returns the ids of live projects that have opted in.
+func (s *Service) ListSkillCaptureProjects(ctx context.Context) ([]string, error) {
+	return s.repo.ListSkillCaptureProjectIDs(ctx)
 }

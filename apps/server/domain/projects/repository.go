@@ -648,3 +648,19 @@ func containsErrorCode(err error, code string) bool {
 	errStr := err.Error()
 	return len(errStr) > 0 && (strings.Contains(errStr, code) || strings.Contains(errStr, "SQLSTATE "+code))
 }
+
+// ListSkillCaptureProjectIDs returns live projects whose skill-capture mode is
+// suggest or auto. The curator iterates only opted-in projects.
+func (r *Repository) ListSkillCaptureProjectIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.db.NewSelect().
+		Model((*Project)(nil)).
+		Column("id").
+		Where("deleted_at IS NULL").
+		Where("COALESCE(skill_capture->>'mode', '') IN ('suggest', 'auto')").
+		Scan(ctx, &ids)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return ids, nil
+}

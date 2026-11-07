@@ -206,7 +206,18 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await page.goto('/orgs/org-1/settings/oauth-clients');
 
     // The org-admin gate passes (mock /api/user/orgs-and-projects marks org-1
-    // org_admin), so the page renders the provider card form.
+    // org_admin), so the page renders the provider table — with no credential
+    // form on it — and each row opens that provider's editor.
+    await expect(page.getByTestId('ds-oauth-apps-table')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-client-form')).toHaveCount(0);
+    await page
+      .getByTestId('ds-oauth-app-row')
+      .filter({ hasText: 'Google Drive' })
+      .getByTestId('ds-oauth-app-manage')
+      .click();
+    await expect(page).toHaveURL(/\/o\/org-1\/settings\/oauth-clients\/google_drive$/);
+    await expect(page.getByTestId('ds-oauth-app-back')).toBeVisible();
+
     const secret = page.getByTestId('ds-field-client_secret').first();
     await expect(secret).toBeVisible();
     await expect(secret).toHaveAttribute('type', 'password');
@@ -227,7 +238,15 @@ test.describe('provider-generic OAuth data-source connect', () => {
 
     // The submitted secret is never echoed back into the page.
     expect(await page.content()).not.toContain('super-secret-e2e-value');
-    // And the freshly re-rendered secret field is still blank.
+    // The table now shows the provider as configured.
+    await expect(page.getByTestId('ds-oauth-app-row').filter({ hasText: 'Google Drive' })).toContainText('Configured');
+    // Re-opening the editor renders a blank secret field: write-only, not stored in the page.
+    await page
+      .getByTestId('ds-oauth-app-row')
+      .filter({ hasText: 'Google Drive' })
+      .getByTestId('ds-oauth-app-manage')
+      .click();
     await expect(page.getByTestId('ds-field-client_secret').first()).toHaveValue('');
+    await expect(page.getByTestId('ds-field-client_id').first()).toHaveValue('e2e-oauth-client-id');
   });
 });
