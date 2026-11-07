@@ -1298,6 +1298,21 @@ func convertToRelationshipSchema(m map[string]any) agents.RelationshipSchema {
 	if g, ok := m["extraction_guidelines"].(string); ok {
 		schema.ExtractionGuidelines = g
 	}
+	if props, ok := m["properties"].(map[string]any); ok && len(props) > 0 {
+		schema.Properties = make(map[string]agents.PropertyDef, len(props))
+		for propName, raw := range props {
+			if pm, ok := raw.(map[string]any); ok {
+				schema.Properties[propName] = agents.PropertyDefFromMap(pm)
+			}
+		}
+	}
+	if required, ok := m["required"].([]any); ok {
+		for _, item := range required {
+			if s, ok := item.(string); ok {
+				schema.Required = append(schema.Required, s)
+			}
+		}
+	}
 
 	return schema
 }

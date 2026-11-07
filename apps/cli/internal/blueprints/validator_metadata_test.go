@@ -162,12 +162,12 @@ func TestValidateObjectMetadata_StructuralErrors(t *testing.T) {
 	t.Run("property type is required and constrained", func(t *testing.T) {
 		p := validMetadataPack()
 		p.ObjectTypes[0].Properties["noType"] = map[string]any{}
-		p.ObjectTypes[0].Properties["badType"] = map[string]any{"type": "currency"}
+		p.ObjectTypes[0].Properties["badType"] = map[string]any{"type": "uuid"}
 		report := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
 		if !hasIssue(report.Warnings(), "properties.noType.type", "type is not declared") {
 			t.Fatalf("expected a missing-type warning, got: %v", report.Warnings())
 		}
-		if !hasIssue(report.Warnings(), "properties.badType.type", `unknown type "currency"`) {
+		if !hasIssue(report.Warnings(), "properties.badType.type", `unknown type "uuid"`) {
 			t.Fatalf("expected an unknown-type warning, got: %v", report.Warnings())
 		}
 		if report.HasErrors() {

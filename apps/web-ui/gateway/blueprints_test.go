@@ -1024,20 +1024,25 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 // propertyTypeIntent is the schema property-type colour scheme.
 func TestPropertyTypeIntent(t *testing.T) {
 	cases := map[string]ui.BadgeIntent{
-		"string":  ui.BadgeInfo,
-		"url":     propertyTypeBadgeIdentifier,
-		"number":  ui.BadgeSuccess,
-		"integer": ui.BadgeSuccess,
-		"boolean": propertyTypeBadgeBoolean,
-		"date":    ui.BadgeWarning,
-		"md5":     propertyTypeBadgeIdentifier,
-		"sha1":    propertyTypeBadgeIdentifier,
-		"sha256":  propertyTypeBadgeIdentifier,
-		"sha512":  propertyTypeBadgeIdentifier,
-		"array":   propertyTypeBadgeArray,
-		"object":  propertyTypeBadgeObject,
-		"":        ui.BadgeNeutral,
-		"future":  ui.BadgeNeutral,
+		"string":   ui.BadgeInfo,
+		"url":      propertyTypeBadgeIdentifier,
+		"email":    propertyTypeBadgeIdentifier,
+		"phone":    propertyTypeBadgeIdentifier,
+		"country":  propertyTypeBadgeIdentifier,
+		"currency": propertyTypeBadgeIdentifier,
+		"number":   ui.BadgeSuccess,
+		"integer":  ui.BadgeSuccess,
+		"boolean":  propertyTypeBadgeBoolean,
+		"date":     ui.BadgeWarning,
+		"time":     ui.BadgeWarning,
+		"md5":      propertyTypeBadgeIdentifier,
+		"sha1":     propertyTypeBadgeIdentifier,
+		"sha256":   propertyTypeBadgeIdentifier,
+		"sha512":   propertyTypeBadgeIdentifier,
+		"array":    propertyTypeBadgeArray,
+		"object":   propertyTypeBadgeObject,
+		"":         ui.BadgeNeutral,
+		"future":   ui.BadgeNeutral,
 	}
 	for in, want := range cases {
 		if got := propertyTypeIntent(in); got != want {
@@ -1120,7 +1125,8 @@ func TestPropertyTypeToneHuesSeparated(t *testing.T) {
 	// whose intent has no measured tone; it does not compare per-type hues (two
 	// aliases may share a tone deliberately).
 	accepted := []string{
-		"string", "url", "number", "integer", "boolean", "date",
+		"string", "url", "email", "phone", "country", "currency",
+		"number", "integer", "boolean", "date", "time",
 		"md5", "sha1", "sha256", "sha512", "array", "object",
 	}
 	for _, typ := range accepted {
