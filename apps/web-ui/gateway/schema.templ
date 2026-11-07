@@ -63,6 +63,23 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 	@deriveBlueprintDialog()
 }
 
+// schemaDiscoveryStartAction is the discovery card's header action. It is a
+// component so components.CardHeader can place it in the header's second column
+// (and below the title on mobile) instead of it being a flex-wrap sibling.
+templ schemaDiscoveryStartAction() {
+	<form method="post" action="/schema/discovery/start">
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeSubmit,
+			Variant: ui.ButtonAccent,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--scan-search",
+			Attrs:   templ.Attributes{"data-testid": "schema-discovery-start"},
+		}) {
+			Discover entity types
+		}
+	</form>
+}
+
 // schemaDiscoveryCard is the Schema page's discovery control: the newest job's
 // state, the project-wide "discover" action, and a retry after a failure. The
 // anchor id="discovery" is what /schema#discovery links to from the Documents
@@ -102,7 +119,7 @@ templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
 	} }}
 	<div { cardAttrs... }>
 		@components.PanelCard("", nil) {
-			<div class="flex flex-wrap items-start justify-between gap-3">
+			@components.CardHeader(components.CardHeaderProps{Action: schemaDiscoveryStartAction()}) {
 				<div class="flex items-center gap-3">
 					@ui.IconTile("lucide--scan-search", ui.IconTileProps{Tone: "accent"})
 					<div>
@@ -112,18 +129,7 @@ templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
 						}
 					</div>
 				</div>
-				<form method="post" action="/schema/discovery/start">
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonAccent,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--scan-search",
-						Attrs:   templ.Attributes{"data-testid": "schema-discovery-start"},
-					}) {
-						Discover entity types
-					}
-				</form>
-			</div>
+			}
 			if loadErr != nil {
 				<div class="mt-3">
 					@ui.Alert(ui.AlertProps{
@@ -691,6 +697,23 @@ templ schemaEditorHeader(view *SchemaEditView) {
 	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(view.Detail), "Edit")), "", "Edit "+objectTypeLabel(view.Detail), "The type name is immutable; edit the description and typed properties.", detailHeaderOpts{Margin: "mb-4"})
 }
 
+// schemaPropertiesAddAction is the Properties header's action: a client-wired
+// button that appends a row from the hidden property-row template.
+templ schemaPropertiesAddAction() {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: ui.ButtonOutline,
+		Size:    ui.ButtonSM,
+		Attrs: templ.Attributes{
+			"data-add-property":  "property-row-template",
+			"data-property-rows": "property-rows",
+		},
+	}) {
+		@ui.IconSpan("lucide--plus", "size-4")
+		Add property
+	}
+}
+
 templ schemaEditorForm(view *SchemaEditView) {
 	<form
 		id="object-type-form"
@@ -759,26 +782,14 @@ templ schemaEditorForm(view *SchemaEditView) {
 			</div>
 		}
 		@components.PanelCard("", nil) {
-			<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+			@components.CardHeader(components.CardHeaderProps{Action: schemaPropertiesAddAction(), Class: "mb-4"}) {
 				<div>
 					<h2 class="text-lg font-semibold tracking-tight">Properties</h2>
 					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) {
 						Each property is a typed field on this object type.
 					}
 				</div>
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeButton,
-					Variant: ui.ButtonOutline,
-					Size:    ui.ButtonSM,
-					Attrs: templ.Attributes{
-						"data-add-property":  "property-row-template",
-						"data-property-rows": "property-rows",
-					},
-				}) {
-					@ui.IconSpan("lucide--plus", "size-4")
-					Add property
-				}
-			</div>
+			}
 			<div class="mb-2 hidden gap-2 text-[11px] font-medium tracking-wide text-muted-faint uppercase sm:grid sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
 				<span>Label / key</span>
 				<span>Type</span>
