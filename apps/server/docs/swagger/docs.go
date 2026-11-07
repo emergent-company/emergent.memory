@@ -5917,7 +5917,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.",
+                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped and a cross-owner item the caller holds no grant for is refused, both reported per item and never applied.",
                 "consumes": [
                     "application/json"
                 ],
@@ -31619,9 +31619,6 @@ const docTemplate = `{
         },
         "domain_chat.StreamRequest": {
             "type": "object",
-            "required": [
-                "message"
-            ],
             "properties": {
                 "agentDefinitionId": {
                     "type": "string"
@@ -31637,6 +31634,26 @@ const docTemplate = `{
                     "maxLength": 100000
                 },
                 "namespace": {
+                    "type": "string"
+                },
+                "surfaceAction": {
+                    "description": "SurfaceAction is an A2UI surface action the user took. The server frames it\nas the user message the agent receives\n(agents.A2UIActionMessage), so no client invents that wording; Message may\nthen be empty, or carry free-form text typed alongside the action.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_chat.SurfaceAction"
+                        }
+                    ]
+                }
+            }
+        },
+        "domain_chat.SurfaceAction": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "The clicked component's payload: ` + "`" + `{componentId, response}` + "`" + ` for the cards\nthe shared renderer builds. Typed as an object, not free JSON, so the\npublished schema says what clients actually send.",
+                    "type": "object"
+                },
+                "surfaceId": {
                     "type": "string"
                 }
             }
@@ -31657,6 +31674,10 @@ const docTemplate = `{
         "domain_chunking.ChunkingConfigResponse": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "description": "AutoProfile selects chunking parameters per document from its detected\ndocument shape instead of applying Strategy/MaxChunkSize/Overlap/\nParentChild project-wide. Writing the configuration is a full\nreplacement: turning it on stores the other fields as given (they are\nthen unused), so turning it off later lands on those stored values, not\non the ones in force before it was enabled.",
+                    "type": "boolean"
+                },
                 "maxChunkSize": {
                     "type": "integer"
                 },
@@ -31665,6 +31686,13 @@ const docTemplate = `{
                 },
                 "parentChild": {
                     "type": "boolean"
+                },
+                "profiles": {
+                    "description": "Profiles lists the per-shape parameters auto-profile will use. Present\nonly when AutoProfile is true.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_chunking.ShapeProfile"
+                    }
                 },
                 "strategy": {
                     "type": "string"
@@ -31685,6 +31713,9 @@ const docTemplate = `{
         "domain_chunking.RecreateChunksSummary": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "type": "boolean"
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -31707,6 +31738,29 @@ const docTemplate = `{
                 "preservedEdited": {
                     "type": "integer"
                 },
+                "shape": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunking.ShapeProfile": {
+            "type": "object",
+            "properties": {
+                "maxChunkSize": {
+                    "type": "integer"
+                },
+                "overlap": {
+                    "type": "integer"
+                },
+                "parentChild": {
+                    "type": "boolean"
+                },
+                "shape": {
+                    "type": "string"
+                },
                 "strategy": {
                     "type": "string"
                 }
@@ -31715,6 +31769,9 @@ const docTemplate = `{
         "domain_chunking.UpdateChunkingConfigRequest": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "type": "boolean"
+                },
                 "maxChunkSize": {
                     "type": "integer"
                 },
@@ -31881,6 +31938,10 @@ const docTemplate = `{
         "domain_chunks.ChunkMetadata": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "description": "parameters came from the shape profile, not the project config",
+                    "type": "boolean"
+                },
                 "boundaryType": {
                     "description": "sentence, paragraph, character, section",
                     "type": "string"
@@ -31900,6 +31961,10 @@ const docTemplate = `{
                 "oversized": {
                     "description": "atomic protected segment larger than the chunk size",
                     "type": "boolean"
+                },
+                "shape": {
+                    "description": "detected document shape when auto-profile chose the parameters",
+                    "type": "string"
                 },
                 "stale": {
                     "description": "preserved edited chunk whose source span no longer exists",
@@ -44325,7 +44390,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.90.1",
+	Version:          "0.91.0",
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

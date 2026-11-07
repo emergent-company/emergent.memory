@@ -5,7 +5,7 @@ import Foundation
 /// A dynamic A2UI component prop. Component props are open-ended (each card
 /// keeps extra keys beyond its catalog-required ones), so every value decodes
 /// into this JSON-shaped enum and is coerced to display text on demand.
-enum ChatUIPropValue: Equatable {
+enum ChatUIPropValue: Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)

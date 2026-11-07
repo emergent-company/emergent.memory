@@ -249,6 +249,12 @@ func (s *Service) executeUploadDocument(ctx context.Context, projectID string, a
 		mimeType = inferMIMEType(filename)
 	}
 
+	// Same guard as the HTTP upload paths: an empty or unreadable file would
+	// otherwise become a document that is Ready with zero chunks (#243).
+	if err := documents.ValidateUploadContent(mimeType, filename, int64(len(decoded))); err != nil {
+		return nil, fmt.Errorf("upload_document: %w", err)
+	}
+
 	// Compute file hash for deduplication
 	hashSum := sha256.Sum256(decoded)
 	fileHash := hex.EncodeToString(hashSum[:])

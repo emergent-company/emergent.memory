@@ -100,38 +100,48 @@ func a2aSkillIDFromMetadata(metadata map[string]any) string {
 // surface action ({"surfaceId": "...", "action": {...}}).
 const a2uiActionMetadataKey = "a2uiAction"
 
-// a2uiAction is the parsed client→server surface action carried in
-// message.metadata under a2uiActionMetadataKey.
-type a2uiAction struct {
+// A2UIAction is a client→server surface action: which UI surface the user acted
+// on, and the payload that surface's component carries.
+//
+// The A2A metadata path and the chat stream both carry it, and both frame it
+// with A2UIActionMessage below, so the agent sees one wording whichever
+// transport delivered the click.
+type A2UIAction struct {
 	SurfaceID string `json:"surfaceId"`
 	Action    any    `json:"action"`
 }
 
 // a2uiActionFromMetadata extracts a surface action from message metadata. It
 // reports ok=false when the metadata carries no valid surface action.
-func a2uiActionFromMetadata(metadata map[string]any) (a2uiAction, bool) {
+func a2uiActionFromMetadata(metadata map[string]any) (A2UIAction, bool) {
 	if metadata == nil {
-		return a2uiAction{}, false
+		return A2UIAction{}, false
 	}
 	raw, ok := metadata[a2uiActionMetadataKey]
 	if !ok || raw == nil {
-		return a2uiAction{}, false
+		return A2UIAction{}, false
 	}
 	obj, ok := raw.(map[string]any)
 	if !ok {
-		return a2uiAction{}, false
+		return A2UIAction{}, false
 	}
 	surfaceID, _ := obj["surfaceId"].(string)
 	if surfaceID == "" {
-		return a2uiAction{}, false
+		return A2UIAction{}, false
 	}
-	return a2uiAction{SurfaceID: surfaceID, Action: obj["action"]}, true
+	return A2UIAction{SurfaceID: surfaceID, Action: obj["action"]}, true
 }
 
-// a2uiActionMessage formats a surface action as the user message the agent
+// A2UIActionMessage formats a surface action as the user message the agent
 // receives, so it can respond with updated surfaces for the same surfaceId.
-func a2uiActionMessage(action a2uiAction, userText string) string {
-	actionJSON, err := json.Marshal(action.Action)
+func A2UIActionMessage(action A2UIAction, userText string) string {
+	// An action with no payload (the A2A metadata path tolerates one) must not
+	// reach the agent as `null`, which reads as a bug rather than a click.
+	payload := action.Action
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	actionJSON, err := json.Marshal(payload)
 	if err != nil {
 		actionJSON = []byte("{}")
 	}
@@ -612,7 +622,7 @@ func (h *A2AHandler) SendMessage(c echo.Context) error {
 		if a2aErr != nil {
 			return writeA2AError(c, a2aErr)
 		}
-		return h.startA2ATask(c, projectID, userID, a2uiActionMessage(surfaceAction, userMessage), contextID, a2aSkillIDFromMetadata(req.Message.Metadata), req.Configuration)
+		return h.startA2ATask(c, projectID, userID, A2UIActionMessage(surfaceAction, userMessage), contextID, a2aSkillIDFromMetadata(req.Message.Metadata), req.Configuration)
 	}
 
 	if req.Message.TaskID == "" {

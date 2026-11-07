@@ -205,7 +205,7 @@ func (s *Server) chat(c echo.Context) error {
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 	}
-	if in.Message == "" {
+	if in.Message == "" && in.SurfaceAction == nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "message required"})
 	}
 	body, err := s.memory.ChatStream(c.Request().Context(), in)

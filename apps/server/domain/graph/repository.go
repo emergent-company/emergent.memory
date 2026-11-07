@@ -994,12 +994,13 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	if newVersion.DataClass == "" {
 		newVersion.DataClass = prevHead.DataClass
 	}
-	if newVersion.DataClass == DataClassSource {
+	if newVersion.DataClass == DataClassSource || newVersion.DataClass == DataClassAdopted {
 		if newVersion.OwnerSourceID == nil {
 			newVersion.OwnerSourceID = prevHead.OwnerSourceID
 		}
 	} else {
-		// The CHECK constraint allows an owner only on source-owned rows.
+		// The CHECK constraint allows an owner only on source- or adopted-owned
+		// rows.
 		newVersion.OwnerSourceID = nil
 	}
 

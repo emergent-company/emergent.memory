@@ -85,9 +85,11 @@ way (`objectTypes`/`objectTypeSchemas`).
 ```
 
 Property keywords the registry validates: `type` (`string`, `number`, `integer`,
-`boolean`, `date`, `url`, `md5`/`sha1`/`sha256`/`sha512`, `array`, `object`),
-`title` (display label), `description`, `items` (array element schema), and a
-type-level `required` list. See the Schema Creation Guide for details.
+`boolean`, `date`, `time`, `url`, `email`, `phone`, `country`, `currency`,
+`md5`/`sha1`/`sha256`/`sha512`, `array`, `object`), `title` (display label),
+`description`, `items` (array element schema), `format` (semantic string
+format), `minimum`/`maximum` (enforced on `number`/`integer`), and a type-level
+`required` list. See the Schema Creation Guide for details.
 
 ## MCP workflow
 

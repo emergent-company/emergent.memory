@@ -19,6 +19,25 @@ type ChunkingConfigResponse struct {
 	MaxChunkSize int    `json:"maxChunkSize"`
 	Overlap      int    `json:"overlap"`
 	ParentChild  bool   `json:"parentChild"`
+	// AutoProfile selects chunking parameters per document from its detected
+	// document shape instead of applying Strategy/MaxChunkSize/Overlap/
+	// ParentChild project-wide. Writing the configuration is a full
+	// replacement: turning it on stores the other fields as given (they are
+	// then unused), so turning it off later lands on those stored values, not
+	// on the ones in force before it was enabled.
+	AutoProfile bool `json:"autoProfile"`
+	// Profiles lists the per-shape parameters auto-profile will use. Present
+	// only when AutoProfile is true.
+	Profiles []ShapeProfile `json:"profiles,omitempty"`
+}
+
+// ShapeProfile is one document shape's chunking parameters.
+type ShapeProfile struct {
+	Shape        string `json:"shape"`
+	Strategy     string `json:"strategy"`
+	MaxChunkSize int    `json:"maxChunkSize"`
+	Overlap      int    `json:"overlap"`
+	ParentChild  bool   `json:"parentChild"`
 }
 
 // UpdateChunkingConfigRequest is the body for writing a project's chunking
@@ -28,6 +47,7 @@ type UpdateChunkingConfigRequest struct {
 	MaxChunkSize *int    `json:"maxChunkSize"`
 	Overlap      *int    `json:"overlap"`
 	ParentChild  *bool   `json:"parentChild"`
+	AutoProfile  *bool   `json:"autoProfile"`
 }
 
 // validateChunkingConfig applies defaults and validates strategy and ranges.
@@ -67,6 +87,19 @@ func validateChunkingConfig(req UpdateChunkingConfigRequest) (strategy string, s
 	return strategy, size, overlap, parentChild, nil
 }
 
+// validateChunkingUpdate applies auto-profile semantics on top of
+// validateChunkingConfig: under auto-profile the stored strategy and
+// parent-child switch are unused, so their cross-field rule must not reject
+// the write. Pure, so it is unit-testable without a database.
+func validateChunkingUpdate(req UpdateChunkingConfigRequest) (strategy string, size, overlap int, parentChild, autoProfile bool, err error) {
+	autoProfile = req.AutoProfile != nil && *req.AutoProfile
+	if autoProfile {
+		req.ParentChild = nil
+	}
+	strategy, size, overlap, parentChild, err = validateChunkingConfig(req)
+	return strategy, size, overlap, parentChild, autoProfile, err
+}
+
 // GetChunkingConfig returns the effective chunking configuration for a project.
 func (s *Service) GetChunkingConfig(ctx context.Context, projectID string) (*ChunkingConfigResponse, error) {
 	proj := s.loadProjectChunkingConfig(ctx, projectID)
@@ -81,12 +114,47 @@ func (s *Service) GetChunkingConfig(ctx context.Context, projectID string) (*Chu
 		overlap = *proj.ChunkOverlap
 	}
 	parentChild := proj.ParentChild != nil && *proj.ParentChild
-	return &ChunkingConfigResponse{Strategy: strategy, MaxChunkSize: size, Overlap: overlap, ParentChild: parentChild}, nil
+	autoProfile := proj.AutoProfile != nil && *proj.AutoProfile
+	resp := &ChunkingConfigResponse{
+		Strategy:     strategy,
+		MaxChunkSize: size,
+		Overlap:      overlap,
+		ParentChild:  parentChild,
+		AutoProfile:  autoProfile,
+	}
+	if autoProfile {
+		resp.Profiles = s.shapeProfiles()
+	}
+	return resp, nil
+}
+
+// shapeProfiles exposes the built-in per-shape parameters for discovery. The
+// prose row reports the deployment's own defaults rather than the package
+// constant, because those are what a prose document is actually chunked with
+// (see RecreateChunks): a client reading the table must not be told 1000/200
+// when the deployment runs CHUNK_SIZE=4000.
+func (s *Service) shapeProfiles() []ShapeProfile {
+	profiles := textsplitter.DefaultProfiles()
+	out := make([]ShapeProfile, 0, len(profiles))
+	for _, p := range profiles {
+		size, overlap := p.Config.ChunkSize, p.Config.ChunkOverlap
+		if p.Shape == textsplitter.ShapeProse {
+			size, overlap = s.defaultChunkSize, s.defaultChunkOverlap
+		}
+		out = append(out, ShapeProfile{
+			Shape:        string(p.Shape),
+			Strategy:     string(p.Options.Strategy),
+			MaxChunkSize: size,
+			Overlap:      overlap,
+			ParentChild:  p.Options.ParentChild,
+		})
+	}
+	return out
 }
 
 // UpdateChunkingConfig validates and persists a project's chunking configuration.
 func (s *Service) UpdateChunkingConfig(ctx context.Context, projectID string, req UpdateChunkingConfigRequest) (*ChunkingConfigResponse, error) {
-	strategy, size, overlap, parentChild, err := validateChunkingConfig(req)
+	strategy, size, overlap, parentChild, autoProfile, err := validateChunkingUpdate(req)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +164,7 @@ func (s *Service) UpdateChunkingConfig(ctx context.Context, projectID string, re
 		"maxChunkSize": size,
 		"overlap":      overlap,
 		"parentChild":  parentChild,
+		"autoProfile":  autoProfile,
 	})
 	if err != nil {
 		return nil, apperror.NewInternal("failed to encode chunking config", err)
@@ -114,5 +183,15 @@ func (s *Service) UpdateChunkingConfig(ctx context.Context, projectID string, re
 		return nil, apperror.NewNotFound("project", projectID)
 	}
 
-	return &ChunkingConfigResponse{Strategy: strategy, MaxChunkSize: size, Overlap: overlap, ParentChild: parentChild}, nil
+	resp := &ChunkingConfigResponse{
+		Strategy:     strategy,
+		MaxChunkSize: size,
+		Overlap:      overlap,
+		ParentChild:  parentChild,
+		AutoProfile:  autoProfile,
+	}
+	if autoProfile {
+		resp.Profiles = s.shapeProfiles()
+	}
+	return resp, nil
 }

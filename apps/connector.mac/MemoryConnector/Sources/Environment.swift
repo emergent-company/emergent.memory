@@ -18,6 +18,10 @@ struct Environment: Identifiable, Hashable, Sendable {
     let name: String
     /// Memory API base URL (no trailing slash).
     let serverURL: URL
+    /// Web-console base URL. The console shares the API origin in prod and on a
+    /// local dev gateway, but the hosted dev deployment serves it from its own
+    /// ingress on a sibling host, so a deep link must never assume the API host.
+    let consoleURL: URL
     /// OIDC issuer used for discovery + sign-in.
     let issuer: URL
     /// Native (public) OIDC client id registered for this environment.
@@ -31,6 +35,21 @@ struct Environment: Identifiable, Hashable, Sendable {
     /// `serverURL` as the string API/settings call sites expect.
     var serverURLString: String {
         serverURL.absoluteString
+    }
+
+    /// Canonical web-console URL for a project, mirroring the console's own
+    /// scoped routing (`/o/{org}/p/{project}/agents`). Built on `consoleURL`,
+    /// not `serverURL`: on the hosted dev deployment the console and the API
+    /// are different hosts. `nil` when either id is missing — the console has no
+    /// org-less project route.
+    func projectWebURL(orgID: String?, projectID: String) -> URL? {
+        let org = (orgID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let project = projectID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !org.isEmpty, !project.isEmpty else { return nil }
+        return consoleURL
+            .appending(path: "o").appending(path: org)
+            .appending(path: "p").appending(path: project)
+            .appending(path: "agents")
     }
 
     /// Compact badge label shown next to an account so prod/dev are never
@@ -51,6 +70,7 @@ struct Environment: Identifiable, Hashable, Sendable {
         id: "prod",
         name: "Memory",
         serverURL: URL(string: "https://memory.emergent-company.ai")!,
+        consoleURL: URL(string: "https://memory.emergent-company.ai")!,
         issuer: URL(string: "https://auth.emergent-company.ai")!,
         clientID: "390138006318678019"
     )
@@ -106,16 +126,39 @@ struct Environment: Identifiable, Hashable, Sendable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// Dev console URL for an API base URL: the hosted dev deployment fronts the
+    /// console from a sibling host that carries the `admin.` label where the API
+    /// carries `api.`, so that label is rewritten. Any other host (a local
+    /// gateway serving both, or a bare domain) keeps the API origin.
+    static func devConsoleURL(for serverURL: URL) -> URL {
+        guard
+            var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false),
+            let host = components.host,
+            host.lowercased().hasPrefix("api.")
+        else {
+            return serverURL
+        }
+        // Rewrite only the label: the rest of the host keeps its own case.
+        components.host = "admin." + host.dropFirst("api.".count)
+        return components.url ?? serverURL
+    }
+
     /// Builds the Dev entry from a launch environment. A function (rather than
     /// inline in the `static let`) so every value shape is testable without
     /// mutating the process environment.
     static func makeDev(environment: [String: String]) -> Environment {
-        Environment(
+        let serverURL = devURL(
+            "MEMORY_DEV_SERVER_URL",
+            fallback: devServerFallback,
+            environment: environment
+        )
+        return Environment(
             id: "dev",
             name: "Memory Dev",
-            serverURL: devURL(
-                "MEMORY_DEV_SERVER_URL",
-                fallback: devServerFallback,
+            serverURL: serverURL,
+            consoleURL: devURL(
+                "MEMORY_DEV_CONSOLE_URL",
+                fallback: devConsoleURL(for: serverURL),
                 environment: environment
             ),
             issuer: devURL(

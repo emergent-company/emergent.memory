@@ -326,14 +326,20 @@ func TestA2UIActionFromMetadata(t *testing.T) {
 }
 
 func TestA2UIActionMessage(t *testing.T) {
-	action := a2uiAction{SurfaceID: "s1", Action: map[string]any{"name": "approve"}}
+	action := A2UIAction{SurfaceID: "s1", Action: map[string]any{"name": "approve"}}
 
-	msg := a2uiActionMessage(action, "")
+	msg := A2UIActionMessage(action, "")
 	assert.Contains(t, msg, `"s1"`)
 	assert.Contains(t, msg, "approve")
 
-	withText := a2uiActionMessage(action, "please proceed")
+	withText := A2UIActionMessage(action, "please proceed")
 	assert.Contains(t, withText, "please proceed")
+
+	// A missing payload frames an empty object, never `null`: the agent should
+	// read "clicked, no payload", not a broken value.
+	bare := A2UIActionMessage(A2UIAction{SurfaceID: "s2"}, "")
+	assert.Contains(t, bare, "{}")
+	assert.NotContains(t, bare, "null")
 }
 
 func TestA2ASendMessage_SurfaceAction_NoTextPart_ReachesRepo(t *testing.T) {
