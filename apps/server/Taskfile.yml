@@ -89,6 +89,11 @@ tasks:
     # Go file is enough: the generator reads annotations from .go sources only.
     # docs/ is excluded from the comparison so the artifacts cannot make
     # themselves look stale.
+    #
+    # Limitation: mtime cannot see a *deleted* handler, so deleting one needs
+    # `task server:swagger --force` (or any edit to a .go file) to refresh the
+    # spec. Regenerating unconditionally on every build costs ~6 s and this task
+    # is in the inner loop, so the trade is deliberate.
     status:
       - |
         test -f docs/swagger/swagger.json &&

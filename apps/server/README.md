@@ -394,8 +394,12 @@ bash ./scripts/check-swagger-annotations.sh
 
 ### Documentation
 
-- **[Quick Start Guide](docs/SWAGGER_QUICK_START.md)** - Copy-paste templates and 5-minute intro
-- **[Complete Guide](docs/SWAGGER_ANNOTATIONS.md)** - Comprehensive annotation reference and patterns
+The handler annotations are the only source for the spec, so the guards below
+are the reference:
+
+- `scripts/check-swagger-annotations.sh` — every handler carries an `@Router`
+- `scripts/preflight/swagger-raw-json.sh` — `json.RawMessage` fields carry a
+  `swaggertype`, so a generated client does not decode them as `[]int`
 
 ### Generated Files
 

@@ -16,6 +16,9 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      # The OpenAPI spec is generated, not committed (#270), and this workflow
+      # generates it — so a change to the generator wiring must exercise it.
+      - '.github/actions/generate-openapi/**'
       # Self-change so a runner/build migration is exercised by its own PR and
       # by the merge, instead of silently waiting for the next docs edit.
       - '.github/workflows/docs.yml'
@@ -30,6 +33,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      - '.github/actions/generate-openapi/**'
       - '.github/workflows/docs.yml'
 
 jobs:

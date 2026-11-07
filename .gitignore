@@ -116,6 +116,10 @@ apps/server/tmp/
 # They were committed until #270: `swag init` rewrites all three wholesale, so
 # any two server PRs touching annotations conflicted on 4 MB of generated text.
 /apps/server/docs/swagger/
+# Same output when a developer follows docs/public/README.md and symlinks
+# `apps/server/docs -> ../../docs`, which redirects the generator to the
+# repo-root docs/ tree.
+/docs/swagger/
 
 # Go build artifacts and temporary files
 *.exe
