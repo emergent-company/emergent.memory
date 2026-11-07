@@ -253,6 +253,52 @@ func TestToggleFieldTipIsDescribedBySwitch(t *testing.T) {
 	}
 }
 
+// TestToggleFieldWiringStaysOnTheSwitch pins the handoff to form.ToggleInput
+// (#314). The wrapper now passes one Attrs map to a bare control that forces no
+// id, so the wiring the hand-rolled markup used to emit is assembled in the
+// wrapper: the name-derived id, the tip reference and the caller's htmx wiring
+// must all land on the <input> itself, exactly once.
+func TestToggleFieldWiringStaysOnTheSwitch(t *testing.T) {
+	html := renderHTML(t, ToggleField("enabled", "Enable voice", "Master switch for voice.", true,
+		templ.Attributes{
+			"hx-post":    "/settings/voice/enabled",
+			"hx-trigger": "change",
+			// A caller-supplied id must not win: the component owns the
+			// name-derived one, which is what the old markup produced too.
+			"id": "caller-supplied",
+		}))
+
+	start := strings.Index(html, "<input")
+	if start == -1 {
+		t.Fatalf("no switch rendered:\n%s", html)
+	}
+	end := strings.Index(html[start:], ">")
+	if end == -1 {
+		t.Fatalf("switch tag is not terminated:\n%s", html)
+	}
+	tag := html[start : start+end]
+	for _, want := range []string{
+		`type="checkbox"`,
+		`name="enabled"`,
+		`id="enabled"`,
+		`checked`,
+		`aria-describedby="toggle-tip-enabled"`,
+		`hx-post="/settings/voice/enabled"`,
+		`hx-trigger="change"`,
+	} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("switch tag lacks %s:\n%s", want, tag)
+		}
+	}
+	if strings.Contains(html, "caller-supplied") {
+		t.Error("a caller-supplied id must not replace the component's name-derived id")
+	}
+	// The switch id and the tip's description id; nothing else may carry one.
+	if got := strings.Count(html, `id="`); got != 2 {
+		t.Errorf("want exactly 2 id attributes (switch + tip description), got %d:\n%s", got, html)
+	}
+}
+
 func TestSelectOptionGroups(t *testing.T) {
 	groups := []SelectOptionGroup{
 		{Label: "openai", Options: []SelectOption{
