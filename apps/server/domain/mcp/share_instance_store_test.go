@@ -79,6 +79,15 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 	assert.Equal(t, inst.Name, got.Name)
 	assert.Equal(t, []string{"entity-search"}, got.AllowedTools)
 
+	// The attribution column round-trips. The create above deliberately leaves
+	// RecipientEmails nil: the column is NOT NULL, so this also proves an insert
+	// of a share with no invitees does not try to write NULL.
+	assert.Empty(t, got.RecipientEmails)
+	require.NoError(t, store.SetRecipientEmails(ctx, projectID, inst.ID, []string{"alice@example.com", "bob@example.com"}))
+	withRecipients, err := store.GetByID(ctx, projectID, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alice@example.com", "bob@example.com"}, withRecipients.RecipientEmails)
+
 	byToken, err := store.GetByTokenID(ctx, tokenID)
 	require.NoError(t, err)
 	require.NotNil(t, byToken)

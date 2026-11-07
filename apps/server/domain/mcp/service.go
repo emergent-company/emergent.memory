@@ -174,6 +174,13 @@ type Service struct {
 	// the server's own address (e.g. containerised deployments).
 	internalBaseURL string
 
+	// publicBaseURL is the deployment's externally reachable API origin
+	// (MCP_PUBLIC_URL). Share invite emails and client snippets must use it:
+	// a request proxied from the web UI carries the internal compose service
+	// name in Host, which a recipient's MCP client cannot resolve. Empty falls
+	// back to the request-derived base URL.
+	publicBaseURL string
+
 	// Built-in OAuth authorization server advertisement (RFC 9728). When
 	// enabled, the protected-resource metadata lists this issuer so MCP clients
 	// can run the OAuth flow instead of being told to use a static token.
@@ -275,6 +282,7 @@ func NewService(p ServiceParams) *Service {
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
 		internalBaseURL:           cfg.InternalBaseURL,
+		publicBaseURL:             strings.TrimRight(strings.TrimSpace(cfg.MCP.PublicURL), "/"),
 		oauthASEnabled:            cfg.OAuthAS.Enabled,
 		oauthASIssuer:             strings.TrimRight(cfg.OAuthAS.IssuerURL, "/"),
 		journalSvc:                p.JournalSvc,
@@ -2254,6 +2262,13 @@ func expandScopesSet(scopes []string) map[string]bool {
 // (GetToolByName does so lazily via ensureToolIndex).
 var toolIndexMu sync.RWMutex
 var toolIndex = map[string]*ToolDefinition{}
+
+// toolIndexReady reports whether the tool index has been built in this process.
+func toolIndexReady() bool {
+	toolIndexMu.RLock()
+	defer toolIndexMu.RUnlock()
+	return len(toolIndex) > 0
+}
 
 // buildToolIndex rebuilds the tool index from the provided tool list.
 func buildToolIndex(tools []ToolDefinition) {

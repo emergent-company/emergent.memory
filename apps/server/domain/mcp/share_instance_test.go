@@ -102,6 +102,15 @@ func (f *fakeShareStore) Update(_ context.Context, inst *MCPShareInstance) error
 	return nil
 }
 
+func (f *fakeShareStore) SetRecipientEmails(_ context.Context, projectID, id string, emails []string) error {
+	inst := f.byID[id]
+	if inst == nil || inst.ProjectID != projectID {
+		return nil
+	}
+	inst.RecipientEmails = append([]string(nil), emails...)
+	return nil
+}
+
 func (f *fakeShareStore) ListLegacyTokens(_ context.Context, _ string) ([]*LegacyTokenRef, error) {
 	return f.legacy, nil
 }
@@ -1275,4 +1284,92 @@ func TestSetSessionTitleEnforcesInstanceAllowlist(t *testing.T) {
 	// Unrestricted (nil scope) keeps working: dispatch reaches the handler.
 	_, err = svc.ExecuteTool(context.Background(), "proj", "set_session_title", nil)
 	require.NoError(t, err)
+}
+
+// ============================================================================
+// Invite attribution tests
+// ============================================================================
+
+// TestMergeRecipientEmails pins the recipient normalisation the share row and
+// the audit trail depend on: addresses are trimmed, lowercased and de-duplicated
+// across the existing and newly invited sets, in first-seen order.
+func TestMergeRecipientEmails(t *testing.T) {
+	got := mergeRecipientEmails(
+		[]string{"Alice@Example.com", " bob@example.com "},
+		[]string{"alice@example.com", "", "carol@example.com"},
+	)
+	assert.Equal(t, []string{"alice@example.com", "bob@example.com", "carol@example.com"}, got)
+	assert.Equal(t, []string{"x@y.z"}, mergeRecipientEmails(nil, []string{"X@Y.Z"}))
+	assert.Empty(t, mergeRecipientEmails(nil, nil))
+}
+
+// TestShareIsReadOnly pins the capability the invite email advertises. Getting
+// this wrong sends a recipient a key that can write while the email promises it
+// cannot, so an unresolvable allowlist is deliberately reported as NOT
+// read-only: the email may under-promise, never over-promise.
+func TestShareIsReadOnly(t *testing.T) {
+	svc := newTestService(newFakeShareStore(), &fakeTokenSvc{}, &fakeAgentDir{})
+	// The tool index is populated by GetToolDefinitions, not at init; without
+	// this every lookup misses and the capability check has nothing to resolve.
+	svc.GetToolDefinitions()
+
+	assert.True(t, svc.shareIsReadOnly(nil, false), "an unrestricted allowlist is minted with read-only scopes")
+	assert.True(t, svc.shareIsReadOnly([]string{"entity-search"}, false))
+	assert.False(t, svc.shareIsReadOnly([]string{"remember"}, false), "a graph:write tool grants writes")
+	assert.False(t, svc.shareIsReadOnly([]string{"entity-search", "remember"}, false))
+	assert.True(t, svc.shareIsReadOnly([]string{"remember"}, true), "a legacy share is read-only regardless of its list")
+	assert.False(t, svc.shareIsReadOnly([]string{"no-such-tool"}, false), "an unresolvable allowlist must not claim read-only")
+}
+
+// TestRecordShareRecipients pins that invitees are merged onto the share rather
+// than replaced, that an empty invite writes nothing, and that only project
+// admins may record them.
+func TestRecordShareRecipients(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeShareStore()
+	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
+	require.NoError(t, store.Create(ctx, &MCPShareInstance{ID: "s1", ProjectID: "proj", Name: "analyst", TokenID: "tok-1"}))
+
+	merged, err := svc.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"Alice@Example.com", "bob@example.com"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"alice@example.com", "bob@example.com"}, merged)
+	assert.Equal(t, []string{"alice@example.com", "bob@example.com"}, store.byID["s1"].RecipientEmails)
+
+	// A later invite merges rather than replaces.
+	merged, err = svc.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"bob@example.com", "carol@example.com"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"alice@example.com", "bob@example.com", "carol@example.com"}, merged)
+	assert.Equal(t, []string{"alice@example.com", "bob@example.com", "carol@example.com"}, store.byID["s1"].RecipientEmails)
+
+	// No addresses means no write at all.
+	merged, err = svc.RecordShareRecipients(ctx, "proj", "user", "s1", nil)
+	require.NoError(t, err)
+	require.Nil(t, merged)
+	assert.Len(t, store.byID["s1"].RecipientEmails, 3)
+
+	// Non-admins cannot write share metadata.
+	denied := newTestService(store, &fakeTokenSvc{role: "member"}, &fakeAgentDir{})
+	_, err = denied.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"dave@example.com"})
+	require.Error(t, err)
+	assert.Len(t, store.byID["s1"].RecipientEmails, 3)
+}
+
+// TestShareInstanceDTOAlwaysCarriesRecipientEmails pins the field's shape: an
+// array, never null or absent, because the share row reads it directly and a
+// "no invitees" share should not need a special case in every client.
+func TestShareInstanceDTOAlwaysCarriesRecipientEmails(t *testing.T) {
+	now := time.Now().UTC()
+
+	plain := (&MCPShareInstance{
+		ID: "s1", ProjectID: "proj", Name: "analyst", TokenID: "tok-1",
+		CreatedAt: now, UpdatedAt: now,
+	}).toDTO(now)
+	b, err := json.Marshal(plain)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"recipientEmails":[]`)
+
+	legacy := legacyTokenToDTO("proj", &LegacyTokenRef{ID: "tok-2", Name: "MCP Share"}, now)
+	b, err = json.Marshal(legacy)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"recipientEmails":[]`)
 }

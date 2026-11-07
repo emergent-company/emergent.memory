@@ -219,6 +219,12 @@ type ObjectListParams struct {
 	ActorType  string
 	ActorID    string
 	Provenance string
+	// CredentialID narrows the list to rows whose write stamp names this
+	// credential (an API token id). It is how "objects written via this MCP
+	// share" is expressed: a share owns exactly one token. Combined with a
+	// credential the server filters write stamps in "any" mode, so the page must
+	// not also carry an actor pair.
+	CredentialID string
 	// Order is the created_at direction the browse list sorts by: "asc", or ""
 	// for the endpoint's default (newest first). It is the only sort the list
 	// endpoint supports together with its (created_at, id) cursor; property
@@ -261,6 +267,13 @@ func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, p ObjectListPar
 	// former).
 	if p.ActorType != "" && p.Provenance != "" && p.Provenance != defaultObjectProvenance {
 		q.Set("provenance", p.Provenance)
+	}
+	// A credential filter overrides the actor provenance above: the server
+	// defaults write-stamp filters to "updated", which would hide objects the
+	// credential created but no longer last wrote, so ask for "any" explicitly.
+	if p.CredentialID != "" {
+		q.Set("credential_id", p.CredentialID)
+		q.Set("provenance", "any")
 	}
 	var out struct {
 		Items      []GraphObject `json:"items"`
