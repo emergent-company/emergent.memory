@@ -30,10 +30,15 @@ struct MainWindowView: View {
             .frame(minWidth: 780, minHeight: 520)
             .toolbar {
                 // Trailing group: project picker immediately LEFT of the account
-                // (person) control, which is the far-right item. Trailing
+                // (avatar) control, which is the far-right item. Trailing
                 // ToolbarItems render in declaration order.
                 ToolbarItem(placement: .primaryAction) {
                     ProjectSwitcherView()
+                }
+                if #available(macOS 26, *) {
+                    // Two unrelated contexts (project vs account): the system
+                    // spacer keeps them visually separate in the glass toolbar.
+                    ToolbarSpacer(.fixed)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     AccountToolbarView()

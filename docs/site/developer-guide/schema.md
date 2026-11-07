@@ -141,10 +141,12 @@ round-trip.
 
 | Keyword | Behaviour |
 |---|---|
-| `type` | Coerced on write for `number`, `boolean`, `date`, `url`, `md5`/`sha1`/`sha256`/`sha512`, `array` (see below). `string` and `integer` are accepted but not coerced — `integer: 1.5` is stored as sent; `object` is type-checked but not converted. An unknown type is stored as-is |
+| `type` | Coerced on write for `number`, `integer`, `boolean`, `date`, `time`, `url`, `email`, `phone`, `country`, `currency`, `md5`/`sha1`/`sha256`/`sha512`, `array` (see below). `string` is stored as sent unless `format` names a semantic format; `object` is type-checked but not converted. An unknown type is stored as-is |
 | `title` | Display label. The UI shows it in place of the key, which stays visible beneath it |
 | `description` | Help text shown with the field |
 | `items` | Element schema for `array`; every element is coerced (a wrong element fails with its index) |
+| `format` | On a `string` property, validates like the matching type for `email`, `phone`, `country`, `currency` and `time`. Any other format is documentation only |
+| `minimum` / `maximum` | Enforced on `number` and `integer`: a value outside the bound fails the write |
 | `required` | Type-level list of property names that must be present on a write |
 
 Type-specific validation:
@@ -154,6 +156,17 @@ Type-specific validation:
   length; stored lower-case.
 - **`date`** — RFC 3339, `2006-01-02`, `2006-01-02 15:04:05`,
   `2006-01-02T15:04:05`, `01/02/2006`, or `02-01-2006`; stored as RFC 3339.
+- **`time`** — 24-hour `HH:MM` (or `HH:MM:SS`, whose seconds are dropped);
+  stored as `HH:MM`.
+- **`email`** — one bare RFC 5322 address; a display form
+  (`Alice <alice@example.com>`) is rejected. Stored lower-case.
+- **`phone`** — an optional leading `+`, then digits with spaces, dashes, dots
+  or parentheses; 7–15 digits in total. Stored as typed.
+- **`country`** — ISO 3166-1 alpha-2 or alpha-3 country code; stored as the
+  canonical two-letter upper-case code.
+- **`currency`** — ISO 4217 currency code; stored upper-case.
+- **`number` / `integer`** — `minimum`/`maximum`, when declared, are enforced;
+  `integer` also rejects a fractional value.
 
 ```yaml
 properties:
@@ -169,6 +182,17 @@ properties:
   tags:
     type: array
     items: { type: string }
+  contact_email:
+    type: email
+    title: Contact email
+  home_country:
+    type: country
+    title: Home country
+  latitude:
+    type: number
+    minimum: -90
+    maximum: 90
+    title: Latitude
 ```
 
 Label every key a reader cannot scan at a glance — any `snake_case` key, or one
