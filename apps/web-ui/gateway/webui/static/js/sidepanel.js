@@ -277,6 +277,17 @@
       input.addEventListener("input", autoGrow);
       autoGrow();
     }
+    // An A2UI card inside THIS panel's transcript reports its click; the drawer
+    // turns it into the conversation's next turn. Bound to the transcript (not
+    // document), so a card in the /chat page's transcript, or one left over from
+    // a session this panel has navigated away from, stays inert here.
+    if (messages) {
+      messages.addEventListener("a2ui:action", function (evt) {
+        var detail = evt && evt.detail;
+        if (!detail) return;
+        dispatchSurfaceAction(detail.surfaceId, detail.action);
+      });
+    }
     if (stopBtn) {
       stopBtn.addEventListener("click", function () {
         if (aborter) aborter.abort();
@@ -639,6 +650,29 @@
 
   function currentAgent() {
     return assistantAgent;
+  }
+
+  // dispatchSurfaceAction sends an A2UI surface action as the panel's
+  // conversation's next turn through the same streaming engine typed text uses.
+  // The server frames the message the agent receives, so the page reports the
+  // click rather than prose about it. No user bubble is added: the card that was
+  // clicked is the visible action.
+  function dispatchSurfaceAction(surfaceId, action) {
+    if (!surfaceId || streaming) return false;
+    if (!currentAgent()) {
+      notify("error", "Pick an agent first.");
+      return false;
+    }
+    // A surface belongs to the conversation that rendered it; the server rejects
+    // a surface-action turn that would open a new one.
+    if (!conversationId) {
+      notify("error", "Open a conversation before answering a card.");
+      return false;
+    }
+    setStreaming(true);
+    openAssistantBubble();
+    streamChat(currentAgent(), "", { surfaceId: surfaceId, action: action });
+    return true;
   }
 
   function currentAgentName() {

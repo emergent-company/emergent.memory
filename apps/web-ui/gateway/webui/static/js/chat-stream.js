@@ -1183,7 +1183,7 @@
       // defaults here; chat.js and sidepanel.js omit them and stay byte-identical.
       var path = (typeof ctx.streamPath === "function" && ctx.streamPath(agent, text)) || "/api/chat";
       var payload = (typeof ctx.streamPayload === "function")
-        ? ctx.streamPayload(agent, text)
+        ? ctx.streamPayload(agent, text, surfaceAction)
         : (function () {
             var p = { agentDefinitionId: agent, message: text };
             if (ctx.conversationId) p.conversationId = ctx.conversationId;
