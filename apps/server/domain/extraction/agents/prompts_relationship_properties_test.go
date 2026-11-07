@@ -59,6 +59,8 @@ func TestBuildRelationshipPrompt_RendersDeclaredProperties(t *testing.T) {
 
 // A relationship type without declared properties must not gain an empty
 // section (which would spend prompt budget telling the model nothing).
+// This is a guard, not a red proof: it passes at the base commit. The matching
+// red proof is TestBuildRelationshipPrompt_RendersDeclaredProperties.
 func TestBuildRelationshipPrompt_NoPropertySectionWithoutProperties(t *testing.T) {
 	schemas := map[string]RelationshipSchema{
 		"KNOWS": {Name: "KNOWS", Description: "Person knows person"},
