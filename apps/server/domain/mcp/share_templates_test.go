@@ -68,17 +68,16 @@ func TestResolveShareTemplatesAgainstRealCatalog(t *testing.T) {
 	templates := ResolveShareTemplates(catalog)
 	require.Len(t, templates, len(shareTemplates), "every preset must resolve against the real catalog")
 
-	has := map[string]bool{}
-	for _, tool := range catalog {
-		has[tool.Name] = true
-	}
-
+	// A resolved tool must be resolvable, not necessarily advertised: a preset
+	// may name a per-verb tool (classify-document) whose family the catalog
+	// shows instead. Resolving it to the family would widen the grant.
+	svc := shareTestService()
 	for _, tmpl := range templates {
 		assert.NotEmpty(t, tmpl.Tools, "template %q resolved to no tools", tmpl.ID)
 		assert.Equal(t, len(tmpl.Tools), tmpl.ToolCount, "template %q count must mirror its tools", tmpl.ID)
 		seen := map[string]bool{}
 		for _, name := range tmpl.Tools {
-			assert.True(t, has[name], "template %q names %q, which is not in the shareable catalog", tmpl.ID, name)
+			assert.NotNilf(t, svc.GetToolByName(name), "template %q names %q, which is not a callable tool", tmpl.ID, name)
 			assert.False(t, seen[name], "template %q lists %q twice", tmpl.ID, name)
 			seen[name] = true
 		}
@@ -102,15 +101,18 @@ func TestShareTemplatesNeverCarryNonShareableScopes(t *testing.T) {
 			assert.False(t, isNonShareableScope(scope), "template %q includes non-shareable scope %q", tmpl.ID, scope)
 		}
 	}
-	// And through resolution, no resolved tool may itself be unshareable.
+	// And through resolution, no resolved tool may itself be unshareable. The
+	// check reads the definition, so a per-verb preset entry is validated just
+	// like an advertised family.
 	catalog := testShareCatalog(t)
-	shareable := map[string]bool{}
-	for _, tool := range catalog {
-		shareable[tool.Name] = true
-	}
+	svc := shareTestService()
 	for _, tmpl := range ResolveShareTemplates(catalog) {
 		for _, name := range tmpl.Tools {
-			assert.True(t, shareable[name], "template %q leaked unshareable tool %q", tmpl.ID, name)
+			def := svc.GetToolByName(name)
+			require.NotNilf(t, def, "template %q names %q", tmpl.ID, name)
+			assert.False(t, def.AgentOnly, "template %q leaked agent-only tool %q", tmpl.ID, name)
+			assert.False(t, def.SuperadminOnly, "template %q leaked operator tool %q", tmpl.ID, name)
+			assert.False(t, isNonShareableScope(def.RequiredScope), "template %q leaked unshareable scope for %q", tmpl.ID, name)
 			assert.False(t, agentExecutionTools[name], "template %q leaked agent-execution tool %q", tmpl.ID, name)
 			assert.False(t, agentMutationTools[name], "template %q leaked agent-mutation tool %q", tmpl.ID, name)
 		}
@@ -261,7 +263,7 @@ func TestShareTemplateDerivedScopesStayWithinDocumentedSet(t *testing.T) {
 	}
 }
 
-func TestResolveShareTemplatesDropsUnknownTools(t *testing.T) {
+func TestResolveShareTemplatesKeepsPerVerbEntries(t *testing.T) {
 	catalog := []CatalogToolDTO{
 		{Name: "entity-search", RequiredScope: "graph:read"},
 		{Name: "entity-create", RequiredScope: "graph:write"},
@@ -274,10 +276,13 @@ func TestResolveShareTemplatesDropsUnknownTools(t *testing.T) {
 		byID[tmpl.ID] = tmpl
 	}
 
-	// documents-only names tools the catalog lacks: it resolves to nothing and is
-	// therefore omitted rather than offered as an empty preset.
-	_, ok := byID["documents-only"]
-	assert.False(t, ok, "a preset that resolves to no catalog tools must be omitted")
+	// documents-only names per-verb tools the consolidated catalog does not list
+	// (classify-document, search-hybrid, search-semantic). They are kept verbatim:
+	// canonicalising classify-document to `schema` would grant the whole family
+	// and add its schema:read scope to a Documents share.
+	docs, ok := byID["documents-only"]
+	require.True(t, ok, "documents-only must resolve from its per-verb tools")
+	assert.ElementsMatch(t, []string{"classify-document", "search-hybrid", "search-semantic"}, docs.Tools)
 
 	assert.ElementsMatch(t, []string{"entity-search"}, byID["read-only"].Tools)
 	assert.ElementsMatch(t, []string{"entity-search"}, byID["schema-admin"].Tools)

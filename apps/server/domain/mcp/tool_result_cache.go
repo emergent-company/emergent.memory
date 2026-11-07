@@ -209,6 +209,23 @@ var cacheableReadOnlyTools = map[string]bool{
 	"schema-list":           true,
 	"schema-get":            true,
 	"schema-compiled-types": true,
+
+	// Consolidated read-only families (see consolidated_catalog.go). Their write
+	// siblings are separate tools, so the whole tool is a read.
+	"project":        true,
+	"entity":         true,
+	"schema-types":   true,
+	"schema":         true,
+	"blueprint":      true,
+	"branch":         true,
+	"search":         true,
+	"document":       true,
+	"skill":          true,
+	"agent-def":      true,
+	"agent":          true,
+	"agent-run":      true,
+	"agent-question": true,
+	"adk-session":    true,
 }
 
 // isCacheableReadOnlyTool reports whether toolName is on the read-only allowlist.

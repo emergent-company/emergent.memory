@@ -158,7 +158,11 @@ func (s *Service) EnsureBuiltinServer(ctx context.Context, projectID string) err
 	}
 
 	// Sync all current tool definitions
-	builtinDefs := s.mcpService.GetToolDefinitions()
+	// The builtin registry backs the in-process agent tool pool, whose whitelists,
+	// banned-tool lists and per-tool enable flags are keyed on per-verb names.
+	// Seed it from the internal (legacy) catalog so those controls keep their
+	// granularity; the external MCP surface is the consolidated catalog.
+	builtinDefs := s.mcpService.GetInternalToolDefinitions()
 	tools := make([]*MCPServerTool, 0, len(builtinDefs))
 	for _, td := range builtinDefs {
 		inputSchema := schemaToMap(td.InputSchema)

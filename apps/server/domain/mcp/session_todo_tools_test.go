@@ -134,8 +134,12 @@ func TestSessionTodoToolsRegistered(t *testing.T) {
 	for _, d := range svc.GetToolDefinitions() {
 		names[d.Name] = true
 	}
-	require.True(t, names["session-todo-list"], "session-todo-list must be in GetToolDefinitions")
-	require.True(t, names["session-todo-update"], "session-todo-update must be in GetToolDefinitions")
+	require.True(t, names["session-todo"], "session-todo must be in GetToolDefinitions")
+	def := svc.GetToolByName("session-todo")
+	require.NotNil(t, def)
+	action, ok := def.InputSchema.Properties["action"]
+	require.True(t, ok, "session-todo must expose the action discriminator")
+	assert.ElementsMatch(t, []string{"list", "update"}, action.Enum)
 }
 
 // TestExecuteToolDispatchesSessionTodoList proves the ExecuteTool switch routes

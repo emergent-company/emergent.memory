@@ -204,6 +204,39 @@ var internalToolNames = map[string]struct{}{
 	// ── Session todos ───────────────────────────────────────────────────────
 	"session-todo-list":   {},
 	"session-todo-update": {},
+
+	// ── Consolidated catalog ────────────────────────────────────────────────
+	// One entry per resource-and-permission pair; the per-verb names above stay
+	// reserved too, so a client can never shadow either spelling.
+	"project":            {},
+	"entity":             {},
+	"entity-write":       {},
+	"relationship-write": {},
+	"branch":             {},
+	"branch-write":       {},
+	"schema-types":       {},
+	"schema":             {},
+	"schema-write":       {},
+	"schema-migrate":     {},
+	"blueprint":          {},
+	"blueprint-write":    {},
+	"search":             {},
+	"document":           {},
+	"document-write":     {},
+	"skill":              {},
+	"skill-write":        {},
+	"session-todo":       {},
+	"agent-def":          {},
+	"agent-def-write":    {},
+	"agent":              {},
+	"agent-write":        {},
+	"agent-run":          {},
+	"project-write":      {},
+	"token":              {},
+	"token-write":        {},
+	"agent-question":     {},
+	"agent-hook-write":   {},
+	"adk-session":        {},
 }
 
 // ExposedName returns the external name used in the OpenAI API for an internal

@@ -36,6 +36,10 @@ const instanceScopeBaseline = "projects:read"
 // from any non-null allowlist.
 var agentExecutionTools = map[string]bool{
 	"trigger_agent": true,
+	// Consolidated family that folds trigger_agent: a family-level grant would
+	// hand back the same out-of-context execution, so the whole tool is refused
+	// from an allowlist (agentMutationTools lists it for the same reason).
+	"agent-write": true,
 }
 
 // agentMutationTools create/update/delete agents, definitions, hooks, or answer
@@ -51,6 +55,11 @@ var agentMutationTools = map[string]bool{
 	"agent-hook-create":       true,
 	"agent-hook-delete":       true,
 	"agent-question-respond":  true,
+	// Consolidated write families: each carries the actions above, so the whole
+	// tool is non-shareable rather than silently shareable at family level.
+	"agent-write":      true,
+	"agent-def-write":  true,
+	"agent-hook-write": true,
 }
 
 // ============================================================================
@@ -518,12 +527,21 @@ func shareInstanceStatus(instanceRevokedAt, tokenRevokedAt, tokenExpiresAt *time
 
 // InstanceAllowsTool reports whether a tool may be listed and called under the
 // given scope. A nil scope or a scope without a tool allowlist allows all.
+//
+// Callers pass the resolved legacy dispatch name (see legacyDispatchName), so a
+// consolidated call is matched against the per-verb name it replaced and a share
+// instance keeps exactly the granularity it was created with: allowing
+// `agent-create` does not also allow `agent-write` action=delete. The allowlist
+// may also name the consolidated tool — that is what the share catalog and the
+// presets emit since consolidation — so a family entry permits the whole family
+// and nothing outside it.
 func InstanceAllowsTool(scope *InstanceScope, toolName string) bool {
 	if scope == nil || !scope.HasToolAllowlist {
 		return true
 	}
+	canonical := canonicalToolName(toolName)
 	for _, t := range scope.AllowedTools {
-		if t == toolName {
+		if t == toolName || t == canonical {
 			return true
 		}
 	}
@@ -551,22 +569,76 @@ func InstanceRestrictsContent(scope *InstanceScope) bool {
 
 // FilterToolsForInstance applies the instance tool allowlist on top of scope
 // filtering. Order is preserved.
+//
+// An allowlist saved before the catalog consolidation names per-verb tools, so
+// those entries select the consolidated tool that replaced them. When only some
+// actions of a family are allowlisted, the advertised tool narrows its `action`
+// enum to them: the share must not advertise an action that InstanceAllowsTool
+// (which sees the resolved per-verb name) would refuse.
 func FilterToolsForInstance(tools []ToolDefinition, scope *InstanceScope) []ToolDefinition {
 	if scope == nil || !scope.HasToolAllowlist {
 		return tools
 	}
+	exact := make(map[string]bool, len(scope.AllowedTools))
 	allowed := make(map[string]bool, len(scope.AllowedTools))
+	actions := make(map[string]map[string]bool, len(scope.AllowedTools))
 	for _, t := range scope.AllowedTools {
+		exact[t] = true
 		allowed[t] = true
+		canonical := canonicalToolName(t)
+		allowed[canonical] = true
+		if alias, ok := toolAliases[t]; ok && alias.Tool == canonical {
+			if actions[canonical] == nil {
+				actions[canonical] = make(map[string]bool, 2)
+			}
+			actions[canonical][alias.Action] = true
+		}
 	}
 	out := make([]ToolDefinition, 0, len(tools))
 	for _, t := range tools {
 		if !allowed[t.Name] {
 			continue
 		}
+		if !exact[t.Name] {
+			t = narrowToolActions(t, actions[t.Name])
+		}
 		out = append(out, t)
 	}
 	return out
+}
+
+// narrowToolActions restricts an advertised family's action enum to the actions
+// an allowlist actually grants. It returns the definition unchanged when the
+// filter would not narrow anything.
+func narrowToolActions(def ToolDefinition, allowed map[string]bool) ToolDefinition {
+	fam, ok := familyByName[def.Name]
+	if !ok || len(allowed) == 0 || len(allowed) >= len(fam.Actions) {
+		return def
+	}
+	enum := make([]string, 0, len(allowed))
+	help := make([]string, 0, len(allowed))
+	for _, act := range fam.Actions {
+		if !allowed[act.Action] {
+			continue
+		}
+		enum = append(enum, act.Action)
+		help = append(help, act.Action+" "+act.Description)
+	}
+	prop, ok := def.InputSchema.Properties["action"]
+	if !ok {
+		return def
+	}
+	prop.Enum = enum
+	prop.Description = "Operation to perform. " + strings.Join(help, "; ")
+	// Copy the map: the definitions are also held by the tool index, and a
+	// narrowed enum for one share must not linger there.
+	props := make(map[string]PropertySchema, len(def.InputSchema.Properties))
+	for k, v := range def.InputSchema.Properties {
+		props[k] = v
+	}
+	props["action"] = prop
+	def.InputSchema.Properties = props
+	return def
 }
 
 // ============================================================================

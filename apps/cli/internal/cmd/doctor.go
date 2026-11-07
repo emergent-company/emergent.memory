@@ -1136,18 +1136,13 @@ func runDockerCompose(installDir string, args ...string) error {
 // full catalog exactly reported a mismatch on every healthy install (#2005).
 // Extra tools are expected and are never treated as an error.
 var requiredMCPTools = []string{
-	"entity-create",
-	"entity-query",
-	"entity-search",
-	"forget",
-	"graph-traverse",
-	"relationship-create",
+	"entity",
+	"entity-write",
+	"relationship-write",
 	"remember",
-	"schema-get",
-	"schema-list",
-	"schema-version",
-	"search-hybrid",
-	"search-semantic",
+	"schema",
+	"schema-types",
+	"search",
 }
 
 // missingRequiredMCPTools returns the required tools the server does not

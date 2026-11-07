@@ -14,17 +14,16 @@ import (
 // single JSON text object with a top-level boolean "ok" (issue #319). New
 // structured-result tools must be produced through envelopeResult and should
 // be added here.
+// phase1ResultTools are the advertised consolidated tools that carry the
+// Phase-1 envelope results. The per-verb names they replaced (entity-create,
+// search-hybrid, forget, ...) stay callable as aliases and keep their own
+// envelope shapes, pinned by TestPhase1EnvelopeShapes.
 var phase1ResultTools = []string{
-	"entity-create",
-	"entity-update",
-	"entity-delete",
-	"relationship-create",
-	"relationship-delete",
-	"search-hybrid",
-	"search-semantic",
-	"entity-query",
+	"entity-write",
+	"relationship-write",
+	"search",
+	"entity",
 	"remember",
-	"forget",
 }
 
 func TestPhase1ToolsAreRegistered(t *testing.T) {
