@@ -2669,12 +2669,25 @@ definitions:
     type: object
   domain_chunking.ChunkingConfigResponse:
     properties:
+      autoProfile:
+        description: |-
+          AutoProfile selects chunking parameters per document from its detected
+          document shape instead of applying Strategy/MaxChunkSize/Overlap/
+          ParentChild project-wide.
+        type: boolean
       maxChunkSize:
         type: integer
       overlap:
         type: integer
       parentChild:
         type: boolean
+      profiles:
+        description: |-
+          Profiles lists the per-shape parameters auto-profile will use. Present
+          only when AutoProfile is true.
+        items:
+          $ref: '#/definitions/domain_chunking.ShapeProfile'
+        type: array
       strategy:
         type: string
     type: object
@@ -2687,6 +2700,8 @@ definitions:
     type: object
   domain_chunking.RecreateChunksSummary:
     properties:
+      autoProfile:
+        type: boolean
       config:
         additionalProperties: {}
         type: object
@@ -2702,11 +2717,28 @@ definitions:
         type: boolean
       preservedEdited:
         type: integer
+      shape:
+        type: string
+      strategy:
+        type: string
+    type: object
+  domain_chunking.ShapeProfile:
+    properties:
+      maxChunkSize:
+        type: integer
+      overlap:
+        type: integer
+      parentChild:
+        type: boolean
+      shape:
+        type: string
       strategy:
         type: string
     type: object
   domain_chunking.UpdateChunkingConfigRequest:
     properties:
+      autoProfile:
+        type: boolean
       maxChunkSize:
         type: integer
       overlap:
@@ -2817,6 +2849,9 @@ definitions:
     type: object
   domain_chunks.ChunkMetadata:
     properties:
+      autoProfile:
+        description: parameters came from the shape profile, not the project config
+        type: boolean
       boundaryType:
         description: sentence, paragraph, character, section
         type: string
@@ -2832,6 +2867,9 @@ definitions:
       oversized:
         description: atomic protected segment larger than the chunk size
         type: boolean
+      shape:
+        description: detected document shape when auto-profile chose the parameters
+        type: string
       stale:
         description: preserved edited chunk whose source span no longer exists
         type: boolean

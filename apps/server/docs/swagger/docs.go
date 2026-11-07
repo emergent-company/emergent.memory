@@ -31674,6 +31674,10 @@ const docTemplate = `{
         "domain_chunking.ChunkingConfigResponse": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "description": "AutoProfile selects chunking parameters per document from its detected\ndocument shape instead of applying Strategy/MaxChunkSize/Overlap/\nParentChild project-wide.",
+                    "type": "boolean"
+                },
                 "maxChunkSize": {
                     "type": "integer"
                 },
@@ -31682,6 +31686,13 @@ const docTemplate = `{
                 },
                 "parentChild": {
                     "type": "boolean"
+                },
+                "profiles": {
+                    "description": "Profiles lists the per-shape parameters auto-profile will use. Present\nonly when AutoProfile is true.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_chunking.ShapeProfile"
+                    }
                 },
                 "strategy": {
                     "type": "string"
@@ -31702,6 +31713,9 @@ const docTemplate = `{
         "domain_chunking.RecreateChunksSummary": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "type": "boolean"
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -31724,6 +31738,29 @@ const docTemplate = `{
                 "preservedEdited": {
                     "type": "integer"
                 },
+                "shape": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunking.ShapeProfile": {
+            "type": "object",
+            "properties": {
+                "maxChunkSize": {
+                    "type": "integer"
+                },
+                "overlap": {
+                    "type": "integer"
+                },
+                "parentChild": {
+                    "type": "boolean"
+                },
+                "shape": {
+                    "type": "string"
+                },
                 "strategy": {
                     "type": "string"
                 }
@@ -31732,6 +31769,9 @@ const docTemplate = `{
         "domain_chunking.UpdateChunkingConfigRequest": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "type": "boolean"
+                },
                 "maxChunkSize": {
                     "type": "integer"
                 },
@@ -31898,6 +31938,10 @@ const docTemplate = `{
         "domain_chunks.ChunkMetadata": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "description": "parameters came from the shape profile, not the project config",
+                    "type": "boolean"
+                },
                 "boundaryType": {
                     "description": "sentence, paragraph, character, section",
                     "type": "string"
@@ -31917,6 +31961,10 @@ const docTemplate = `{
                 "oversized": {
                     "description": "atomic protected segment larger than the chunk size",
                     "type": "boolean"
+                },
+                "shape": {
+                    "description": "detected document shape when auto-profile chose the parameters",
+                    "type": "string"
                 },
                 "stale": {
                     "description": "preserved edited chunk whose source span no longer exists",

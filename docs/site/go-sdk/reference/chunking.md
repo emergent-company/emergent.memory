@@ -16,15 +16,18 @@ func (c *Client) RecreateChunks(ctx context.Context, documentID string) (*Recrea
 
 ```go
 type RecreateChunksResponse struct {
-    JobID   string
+    Status  string
     Summary RecreateChunksSummary
 }
 
 type RecreateChunksSummary struct {
-    DocumentID    string
-    OldChunkCount int
-    NewChunkCount int
-    Status        string
+    OldChunks   int
+    NewChunks   int
+    Strategy    string
+    ParentChild bool
+    AutoProfile bool
+    Shape       string
+    Config      map[string]any
 }
 ```
 
