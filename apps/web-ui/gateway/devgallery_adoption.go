@@ -25,19 +25,24 @@ type AdoptionViewSummary struct {
 // an author can exempt a file's known, acceptable ad-hoc markup without
 // regenerating the derived data file.
 var adoptionAllowlist = map[string][]string{
-	// link-styled badges (<a class="badge" href>); ui.Badge renders a <span> with no href
+	// link-styled ghost badges: ui.Badge has Href and DirectLabel, but no Class prop, so the
+	// hover:opacity-70 affordance cannot be expressed
 	"runs.templ": {"badge"},
-	// rich children (icon + text + button); ui.Alert has no children slot
+	// chat.js reveals the banner by toggling the hidden class on #chat-model-warning; ui.Alert has
+	// a Body slot but no Class prop, so a client-side hidden toggle cannot be expressed
 	"chat.templ": {"alert"},
-	// share-inline-terminal rich children; ui.Alert has no children slot
+	// the inline terminal is role=status, not role=alert, and needs its own
+	// share-inline-terminal/items-start/gap-3/hidden classes; ui.Alert hardcodes role=alert and has
+	// no Class prop
 	"share_page.templ": {"alert"},
-	// <form class="card border border-line">; ui.CardRaw has no <form> element variant (As: div/a/button/section/article/li)
+	// <form class="card border border-line">; ui.CardRaw has no <form> element variant
+	// (As: div/a/button/section/article/li), so the form element itself cannot be the card
 	"share_manage.templ": {"card"},
-	// tab count badge renders the count as direct text (pinned by TestInboxPageTabsAndCounts);
-	// ui.Badge wraps the label in a nested <span>, which changes that markup
+	// tab count badge needs tabular-nums so the digits do not jitter when a live refresh changes the
+	// count; ui.Badge has DirectLabel for the direct-text count but no Class prop
 	"inbox.templ": {"badge"},
-	// unread indicator badge: indicator-item positioning classes + direct-text count that
-	// ui.Badge cannot reproduce (it always emits gap-1 and nests the label in a <span>)
+	// unread indicator badge: ui.Badge has Position, DirectLabel and Attrs for indicator-item
+	// positioning and the data-notifications-badge hook, but no Class prop for tabular-nums
 	"notifications_bell.templ": {"badge"},
 }
 

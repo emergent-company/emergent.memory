@@ -53,7 +53,8 @@ func (s *Service) GetCompiledTypes(ctx context.Context, projectID string) (*Comp
 }
 
 // GetAvailablePacks returns schemas available for a project to install.
-// Returns schemas owned by the project that are not yet installed.
+// Returns schemas owned by the project that are not yet installed and have not
+// been deprecated.
 func (s *Service) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
 	return s.repo.GetAvailablePacks(ctx, projectID)
 }
