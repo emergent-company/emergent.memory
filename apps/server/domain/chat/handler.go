@@ -736,8 +736,9 @@ func pendingQuestionAnswer(req *StreamRequest, message string) string {
 
 // surfaceAnswerFromAction extracts the answer value a surface action carries: a
 // non-empty `componentId` names the card the user acted on, and a scalar
-// `response` is the value they picked. Anything else is not a decision — it is
-// an ordinary click on a proposal/code card, which stays a chat turn.
+// `response` is the value they picked (approval and proposal cards both emit
+// `{componentId, response}`). A click without that shape — e.g. a code card's
+// copy button — is not a decision and stays a chat turn.
 func surfaceAnswerFromAction(action any) (string, bool) {
 	m, ok := action.(map[string]any)
 	if !ok {
@@ -748,7 +749,8 @@ func surfaceAnswerFromAction(action any) (string, bool) {
 	}
 	switch v := m["response"].(type) {
 	case string:
-		if strings.TrimSpace(v) == "" {
+		v = strings.TrimSpace(v)
+		if v == "" {
 			return "", false
 		}
 		return v, true

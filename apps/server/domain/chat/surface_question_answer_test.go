@@ -35,6 +35,14 @@ func TestPendingQuestionAnswer(t *testing.T) {
 			want: "yes",
 		},
 		{
+			name: "a padded option value answers trimmed",
+			req: &StreamRequest{SurfaceAction: &SurfaceAction{
+				SurfaceID: "s1",
+				Action:    map[string]any{"componentId": "q-1", "response": "  yes\n"},
+			}},
+			want: "yes",
+		},
+		{
 			name: "a boolean response answers as its text form",
 			req: &StreamRequest{SurfaceAction: &SurfaceAction{
 				SurfaceID: "s1",
