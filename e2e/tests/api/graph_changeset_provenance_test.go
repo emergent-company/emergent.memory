@@ -84,7 +84,16 @@ func outcomeFor(t *testing.T, resp *changesetPushResult, externalID string) chan
 // pushChangeset posts an apply and requires the documented 201.
 func pushChangeset(t *testing.T, rl *runLog, projectID string, body map[string]any) *changesetPushResult {
 	t.Helper()
-	resp := doAPILogged(t, rl, "POST", "/api/graph/changesets", e2eTestToken(), projectID, jsonBody(body))
+	return pushChangesetAs(t, rl, projectID, e2eTestToken(), body)
+}
+
+// pushChangesetAs posts an apply with an explicit bearer token. The provenance
+// e2e pushes with the same project token that created the source, so the push
+// succeeds through the exact source grant the server recorded at creation rather
+// than through a backfill wildcard.
+func pushChangesetAs(t *testing.T, rl *runLog, projectID, token string, body map[string]any) *changesetPushResult {
+	t.Helper()
+	resp := doAPILogged(t, rl, "POST", "/api/graph/changesets", token, projectID, jsonBody(body))
 	raw := mustStatus(t, resp, http.StatusCreated)
 	var out changesetPushResult
 	parseBodyJSON(t, raw, &out)
@@ -109,13 +118,24 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 
+	// The source is created and pushed with the SAME project token. A new source
+	// carries no backfill wildcard, so the server records an exact grant for the
+	// creating credential; the push below then succeeds through that grant rather
+	// than through a wildcard. This states the slice-2 contract on the wire: a
+	// session-created source cannot be pushed over HTTP at all.
+	tokenID, rawToken := createToken(t, projectID, "e2e-changeset-source-token", []string{"documents:read", "documents:write"})
+	if tokenID == "" || rawToken == "" {
+		t.Fatalf("createToken returned an incomplete token: id=%q token=%q", tokenID, rawToken)
+	}
+	rl.Printf("project token credential id: %s", tokenID)
+
 	// ── 1. A source to push as ────────────────────────────────────────────────
 	// A changeset names a kb.sources row. The web provider is config-only: it
 	// needs no OAuth consent and does no network work on create, so it is the
-	// one a hermetic test can register. createWebSource (datasources_web_test.go)
+	// one a hermetic test can register. createWebSourceAs (datasources_web_test.go)
 	// pins syncMode=manual so the admit sweep cannot run a sync mid-test.
 	rl.Section("Register the pushing source")
-	sourceID := createWebSource(t, rl, projectID, map[string]any{"start_urls": []string{"https://example.com"}})
+	sourceID := createWebSourceAs(t, rl, projectID, rawToken, map[string]any{"start_urls": []string{"https://example.com"}})
 	// Cleanup runs after the test returns, i.e. after rl.Close(), so it must not
 	// write to the runlog (doAPI, not doAPILogged).
 	t.Cleanup(func() {
@@ -134,7 +154,7 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 
 	// ── 2. First push: two objects and the relationship between them ─────────
 	rl.Section("Push a changeset: two objects and a relationship")
-	pushed := pushChangeset(t, rl, projectID, map[string]any{
+	pushed := pushChangesetAs(t, rl, projectID, rawToken, map[string]any{
 		"source_id": sourceID,
 		"objects": []map[string]any{
 			{
@@ -221,7 +241,7 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 
 	// ── 4. A revision moves the contribution onto the new version ────────────
 	rl.Section("Push a revision of the object")
-	revised := pushChangeset(t, rl, projectID, map[string]any{
+	revised := pushChangesetAs(t, rl, projectID, rawToken, map[string]any{
 		"source_id": sourceID,
 		"objects": []map[string]any{{
 			"type":                  changesetE2EObjectType,
@@ -290,7 +310,7 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 
 	// ── 5. A stale re-push applies nothing ───────────────────────────────────
 	rl.Section("Re-push a stale revision")
-	stale := pushChangeset(t, rl, projectID, map[string]any{
+	stale := pushChangesetAs(t, rl, projectID, rawToken, map[string]any{
 		"source_id": sourceID,
 		"objects": []map[string]any{{
 			"type":                  changesetE2EObjectType,
@@ -309,7 +329,7 @@ func TestGraphChangesetProvenance_HTTP(t *testing.T) {
 
 	// ── 6. Withdrawal is a contribution state, not a delete ──────────────────
 	rl.Section("Withdraw one source record")
-	withdrawn := pushChangeset(t, rl, projectID, map[string]any{
+	withdrawn := pushChangesetAs(t, rl, projectID, rawToken, map[string]any{
 		"source_id":   sourceID,
 		"withdrawals": []map[string]any{{"external_id": "e2e-bob"}},
 	})

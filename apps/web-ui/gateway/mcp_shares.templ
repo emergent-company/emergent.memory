@@ -214,20 +214,16 @@ templ mcpShareStatusBadge(inst MCPShareInstance) {
 	})
 }
 
+// mcpShareRevokeDescription is the share-revoke detail paragraph.
+templ mcpShareRevokeDescription(name string) {
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+		This immediately invalidates <span class="font-medium text-base-content">{ name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
+	}
+}
+
 // mcpShareRevokeDialog confirms revocation before POST .../shares/:id/revoke.
 templ mcpShareRevokeDialog(inst MCPShareInstance) {
-	@ui.Dialog(ui.DialogProps{ID: "mcp-share-revoke-" + inst.ID, BoxClass: "max-w-sm"}) {
-		<div class="mb-4 flex items-start gap-3">
-			@components.ConfirmIcon("")
-			<div>
-				@ui.DialogTitle() {
-					Revoke share? 
-				}
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
-					This immediately invalidates <span class="font-medium text-base-content">{ inst.Name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
-				}
-			</div>
-		</div>
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "mcp-share-revoke-" + inst.ID, Title: "Revoke share?"}, mcpShareRevokeDescription(inst.Name)) {
 		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/revoke") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
@@ -255,9 +251,7 @@ templ mcpShareRevokeDialog(inst MCPShareInstance) {
 templ mcpShareRotateDialog(inst MCPShareInstance) {
 	@ui.Dialog(ui.DialogProps{ID: "mcp-share-rotate-" + inst.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--refresh-cw", "size-5")
-			</div>
+			@components.IconCircle("lucide--refresh-cw", components.IconCircleToneWarning)
 			<div>
 				@ui.DialogTitle() {
 					Rotate key? 
@@ -304,9 +298,7 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 templ mcpShareInviteDialog(inst MCPShareInstance) {
 	@ui.Dialog(ui.DialogProps{ID: "mcp-share-invite-" + inst.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--mail-plus", "size-5")
-			</div>
+			@components.IconCircle("lucide--mail-plus", components.IconCircleTonePrimary)
 			<div>
 				@ui.DialogTitle() {
 					Email the share key? 

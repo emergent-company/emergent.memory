@@ -12,6 +12,10 @@ tasks:
   build:
     desc: Build the server binary
     cmds:
+      # The spec is not committed (#270), and the server serves it from
+      # docs/swagger at request time, so a build must generate it first — the
+      # Makefile has done `build: swagger` all along.
+      - task: swagger
       - go build -o dist/server ./cmd/server
 
   build:swiftbridge:
@@ -74,7 +78,28 @@ tasks:
       # Dockerfiles). awk keeps Task's own {{...}} templating out of the -f flag.
       SWAG_VERSION:
         sh: go list -m github.com/swaggo/swag | awk '{print $2}'
+    # The spec is build output, not source (#270): `swag init` rewrites
+    # swagger.json/swagger.yaml/docs.go wholesale, so committing it made any two
+    # server PRs touching annotations conflict on 4 MB of generated text and
+    # forced each one to merge main and re-earn its review marker.
+    #
+    # `status` keeps the regeneration off every build that cannot have changed
+    # it, because swag is a full re-parse (~5 s warm, ~15 s cold) and `task dev`
+    # is the inner loop. Comparing the generated JSON's mtime against the newest
+    # Go file is enough: the generator reads annotations from .go sources only.
+    # docs/ is excluded from the comparison so the artifacts cannot make
+    # themselves look stale.
+    #
+    # Limitation: mtime cannot see a *deleted* handler, so deleting one needs
+    # `task server:swagger --force` (or any edit to a .go file) to refresh the
+    # spec. Regenerating unconditionally on every build costs ~6 s and this task
+    # is in the inner loop, so the trade is deliberate.
+    status:
+      - |
+        test -f docs/swagger/swagger.json &&
+        test -z "$(find . -name '*.go' -newer docs/swagger/swagger.json -not -path './docs/*' -print -quit)"
     cmds:
+      - mkdir -p docs/swagger
       - go run github.com/swaggo/swag/cmd/swag@{{.SWAG_VERSION}} init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
 
   swagger:check:
@@ -85,6 +110,7 @@ tasks:
   dev:
     desc: Start server with hot reload (air)
     cmds:
+      - task: swagger
       - air
     env:
       PATH: /usr/local/go/bin:/usr/local/bin:{{.PATH}}

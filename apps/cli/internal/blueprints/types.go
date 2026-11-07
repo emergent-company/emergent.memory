@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"gopkg.in/yaml.v3"
 )
 
@@ -167,6 +168,11 @@ type PackFile struct {
 	RelationshipTypeSchemas []RelationshipTypeDef `json:"relationshipTypeSchemas,omitempty" yaml:"relationshipTypeSchemas,omitempty"`
 	UIConfigs               JSONBlob              `json:"uiConfigs"        yaml:"uiConfigs"`
 	ExtractionPrompts       JSONBlob              `json:"extractionPrompts" yaml:"extractionPrompts"`
+
+	// Migrations carries the pack's optional migration-hint block. The server
+	// accepts and validates it; without this field the CLI silently dropped it,
+	// so a blueprint's type/property renames never reached an upgrade.
+	Migrations *sdkschemas.SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
 
 	// SourceFile is the path from which this pack was loaded (not serialised).
 	SourceFile string `json:"-" yaml:"-"`

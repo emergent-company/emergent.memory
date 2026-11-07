@@ -741,15 +741,15 @@ type ClaimingBlueprint struct {
 
 // TypeRename specifies an object/edge type rename for migration.
 type TypeRename struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From string `json:"from" yaml:"from"`
+	To   string `json:"to" yaml:"to"`
 }
 
 // PropertyRename specifies a property rename within a type for migration.
 type PropertyRename struct {
-	TypeName string `json:"type_name"`
-	From     string `json:"from"`
-	To       string `json:"to"`
+	TypeName string `json:"type_name" yaml:"type_name"`
+	From     string `json:"from" yaml:"from"`
+	To       string `json:"to" yaml:"to"`
 }
 
 // MigrateRequest is the request body for POST /api/schemas/projects/:projectId/migrate.

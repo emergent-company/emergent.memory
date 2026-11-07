@@ -18,7 +18,7 @@ name: Meta CI
 #     calls migration-number.sh -> migration-immutability.sh --base origin/main),
 #   * migration workspace hygiene (stray untracked files / duplicate versions),
 #   * the route-authority guard,
-#   * the swagger spec drift guard (#2082).
+#   * the swagger raw-JSON guard (#162).
 # The heavy suites still run for the PRs that touch their paths; they stay
 # advisory. See emergent-company/emergent.memory#1673.
 #
@@ -158,17 +158,20 @@ jobs:
           #   git            checkout, every preflight/migration diff, tree-hygiene
           #   bash           every scripts/preflight/*.sh and .github/scripts/*.test.sh
           #   python3        .github/scripts/check-injection.py (stdlib only)
-          #   jq             scripts/preflight/version-drift.sh, release-versions.test.sh
+          #   jq             scripts/preflight/swagger-raw-json.sh,
+          #                  .github/scripts/release-versions.test.sh
           #   go, gofmt      actions/setup-go; go run ./cmd/*-guard, swag generation,
           #                  `go mod tidy -diff`, and the gofmt step
           #   gitleaks       secret scan + scripts/preflight/gitleaks-env-files.sh
+          #   docker         the schema-documentation guard below, which starts a
+          #                  throwaway Postgres to introspect
           #   coreutils/gawk/sed/grep/find/tar/curl/install
           #                  preflight scripts, install-gitleaks.sh
-          # Nothing here needs `task`, `yq`, `goose`, `swag`, `docker` or node/npm:
+          # Nothing here needs `task`, `yq`, `goose`, `swag`, node or npm:
           # swag is `go run github.com/swaggo/swag/cmd/swag@<go.mod version>`, and
           # goose is only embedded in the server binary.
           missing=()
-          for cmd in git bash python3 jq go gofmt gitleaks \
+          for cmd in git bash python3 jq go gofmt gitleaks docker \
                      awk sed grep find sort uniq diff xargs mktemp \
                      tar curl sha256sum install; do
             command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
@@ -208,6 +211,84 @@ jobs:
       - name: Guard migration workspace
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/migration-workspace.sh
+      # Schema documentation drift (#757 in the control repository). The guard
+      # exists -- server.yml runs `schema-dbml -check` after migrating a real
+      # Postgres -- but it lives in the path-filtered advisory workflow, so #2500
+      # merged a migration without regenerating docs/schema.dbml, the job's own
+      # run went red on that exact step, and every PR that merged main afterwards
+      # inherited the staleness (#2501 had to carry the fix).
+      #
+      # docs/schema.dbml is produced by INTROSPECTING a migrated database, so
+      # this is the only guard in this workflow that needs a live Postgres. That
+      # is why it is scoped to the PRs where it can matter: a migration or the
+      # document itself changing. Mirrors the db-backed job's sequence verbatim
+      # (same pgvector image, because the migration chain creates the `vector`
+      # extension).
+      #
+      # Cost, honestly: the guard's own work is seconds, but this runs on a
+      # hosted runner, so it also pulls the 168 MB image and compiles cmd/migrate
+      # cold -- ~30-60 s end to end, against the 216-353 s that job's timing
+      # showed for the database suite alone. The scope filter is what makes that
+      # acceptable: an unrelated PR starts no container, and a migration PR is
+      # already waiting 257-330 s on Unit Tests and 216-353 s on DB-backed Tests.
+      - name: Detect schema documentation scope
+        id: schema-doc-scope
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Three-dot diff: files this branch changed since it diverged from the
+          # base, so merging main into the branch does not widen the scope.
+          # The generator is in scope too: a change to cmd/schema-dbml can change
+          # the document without any migration changing.
+          changed=$(git diff --name-only "${BASE_SHA}...HEAD" -- \
+            apps/server/migrations apps/server/cmd/schema-dbml docs/schema.dbml)
+          if [ -n "$changed" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            printf 'schema documentation is in scope:\n%s\n' "$changed"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Schema documentation is current
+        if: steps.schema-doc-scope.outputs.changed == 'true'
+        env:
+          PG_CONTAINER: schema-doc-pg-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # 127.0.0.1::5432 publishes the container port on a free host port.
+          docker run -d --name "$PG_CONTAINER" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=emergent \
+            -p 127.0.0.1::5432 \
+            pgvector/pgvector:pg18-trixie
+          trap 'docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true' EXIT
+          HOST_PORT=$(docker port "$PG_CONTAINER" 5432/tcp | head -1 | awk -F: '{print $NF}')
+          if [ -z "$HOST_PORT" ]; then
+            echo "::error::could not determine the Postgres host port"
+            docker logs "$PG_CONTAINER" || true
+            exit 1
+          fi
+          # 60 × 2 s = 120 s of patience, the same as server.yml's DB-backed
+          # job; both are the shipped image starting cold on a hosted runner.
+          for _ in $(seq 1 60); do
+            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec "$PG_CONTAINER" pg_isready -U postgres \
+            || { echo "::error::Postgres did not become ready"; docker logs "$PG_CONTAINER" || true; exit 1; }
+          # cmd/migrate gives DATABASE_URL precedence over POSTGRES_* and a
+          # DATABASE_URL bypasses the -allow-localhost guard, which is why the
+          # flag is still passed: this DSN is the throwaway container.
+          export DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${HOST_PORT}/emergent?sslmode=disable"
+          cd apps/server
+          go run ./cmd/migrate -c up -allow-localhost
+          # A migration that changes the schema must regenerate the document in
+          # the same PR, or it silently rots.
+          go run ./cmd/schema-dbml -check -out ../../docs/schema.dbml
       - name: Guard route authority
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         working-directory: apps/server
@@ -217,37 +298,40 @@ jobs:
           # needed: an undeclared route, a vanished route, or a drifted tier all
           # fail. Same invocation as server.yml's `route-authority-guard` job.
           go run ./cmd/route-authority-guard
-      # Swagger spec drift guard (#2082). apps/server/docs/swagger/{docs.go,
-      # swagger.json,swagger.yaml} are generated from the handler/DTO
-      # annotations, committed, and published by docs.yml — but nothing
-      # regenerated them, so a stale artifact shipped silently. #2057 had to
-      # regenerate and picked up three source changes that had gone
-      # unregenerated (+220 lines); #931 was closed with "no CI verifies
-      # either". The script derives the swag version from go.mod (no second pin,
-      # per #2057), re-runs the generator, and fails on any difference —
-      # including an untracked docs_<handler>.go, which a bare `git diff` misses.
-      # It runs here rather than in server.yml because server.yml is
-      # path-filtered and advisory, so a guard there cannot gate. Measured cost
-      # ~5 s warm, ~14 s from an empty Go build cache. It is deliberately not in
-      # scripts/preflight/all.sh (run by the step below) so it runs exactly once.
-      - name: Swagger spec drift guard
+      # The generated swagger spec is no longer committed (#270): `task
+      # server:swagger` and both Dockerfiles regenerate it at build time, so
+      # there is no artifact left to drift from its annotations and the old
+      # #2082 drift guard is gone. It is still generated *here* because the
+      # swagger raw-JSON guard below reads the spec (spec-level half of #162),
+      # and that was previously satisfied as a side effect of the drift guard.
+      # Same generator invocation (and go.mod-derived version) as before.
+      - name: Generate swagger spec
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        run: bash scripts/preflight/swagger-drift.sh
+        working-directory: apps/server
+        run: |
+          set -euo pipefail
+          version="$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+          if [ -z "$version" ]; then
+            echo "ERROR: could not read github.com/swaggo/swag from apps/server/go.mod" >&2
+            exit 1
+          fi
+          mkdir -p docs/swagger
+          go run "github.com/swaggo/swag/cmd/swag@${version}" \
+            init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
       # Swagger raw-JSON guard (#162). swag cannot type a json.RawMessage, so
       # without a swaggertype tag it publishes the field as items:{type:integer}
       # and a generated client decodes []int. The same lie was fixed by hand in
       # #156/#158/#159 and reintroduced by #136 and #164 within hours. This
       # guard checks the schema-pack structs at the source level first, so a new
       # raw-JSON field fails while it is being written rather than only when a
-      # PR happens to regenerate swagger, then asserts the committed
-      # swagger.json does not render any of those fields as arrays of integers
-      # (a present-but-wrong tag must not pass). Waivers are reason-pinned in
-      # scripts/preflight/swagger-raw-json.allow. It runs here next to the drift
-      # guard because the branch-protection-required `ci` job is the only place
-      # it can gate: server.yml is path-filtered and advisory, so a step there
-      # would surface after merge. Cheap (~0.2 s: awk + jq, no Go build) and
-      # deliberately not in scripts/preflight/all.sh (run by the step below) so
-      # each check runs once.
+      # PR happens to regenerate swagger, then asserts the swagger.json generated
+      # by the step above does not render any of those fields as arrays of
+      # integers (a present-but-wrong tag must not pass). Waivers are reason-pinned
+      # in scripts/preflight/swagger-raw-json.allow. It runs here in the
+      # branch-protection-required `ci` job, which is the only place it can gate:
+      # server.yml is path-filtered and advisory, so a step there would surface
+      # after merge. Cheap (~0.2 s: awk + jq, no Go build) and deliberately not in
+      # scripts/preflight/all.sh (run by the step below) so each check runs once.
       - name: Swagger raw-JSON guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/swagger-raw-json.sh

@@ -97,6 +97,17 @@ properties:
   last_used:
     type: date                # RFC 3339, validated on write
     title: Last used
+  contact_email:
+    type: email               # one bare address, stored lower-case
+    title: Contact email
+  home_country:
+    type: country             # ISO 3166-1, stored as the two-letter code
+    title: Home country
+  latitude:
+    type: number              # minimum/maximum are enforced on write
+    minimum: -90
+    maximum: 90
+    title: Latitude
 ```
 
 - **Label every key a reader cannot scan at a glance** — any `snake_case` key or
@@ -110,6 +121,14 @@ properties:
   write. Use `url` only for absolute `http`/`https` values — a route
   (`/dashboard`), a host name or an env-var key stays `string`. These types have
   no "empty" value: leave an unknown one out (or send `null`), never `""`.
+- **Use the semantic types for values with a fixed shape** rather than `string`:
+  `email`, `phone`, `country` (ISO 3166-1), `currency` (ISO 4217) and `time`
+  (24-hour `HH:MM`) are validated and normalized on write, and the editor
+  renders a matching input. `format: email` on a `string` property is the same
+  validation under the JSON-Schema spelling.
+- **Bound a `number`/`integer` where the domain has a range** — `minimum` and
+  `maximum` are enforced on write, so latitude is `-90..90` and a 1–5 rating
+  cannot store `9`. A bound of `0` is real, not "unset".
 - **Use `date` for timestamps you are adding** rather than a `string` documented
   as ISO 8601, and `number`/`integer`/`boolean` rather than strings — both are
   validated on write. A few older packs still carry string timestamps;

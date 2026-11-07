@@ -141,18 +141,16 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 	</div>
 }
 
+// agentMCPEndpointRevokeDescription is the endpoint-revoke detail paragraph.
+templ agentMCPEndpointRevokeDescription() {
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+		This immediately invalidates every key on the endpoint. Any MCP client connected with those keys stops working. You can create a new endpoint afterwards.
+	}
+}
+
 // agentMCPEndpointRevokeDialog confirms endpoint revocation before POSTing.
 templ agentMCPEndpointRevokeDialog(agentID string) {
-	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-endpoint-revoke-dialog", BoxClass: "max-w-sm"}) {
-		<div class="mb-4 flex items-start gap-3">
-			@components.ConfirmIcon("")
-			<div>
-				@ui.DialogTitle() { Revoke MCP endpoint? }
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
-					This immediately invalidates every key on the endpoint. Any MCP client connected with those keys stops working. You can create a new endpoint afterwards.
-				}
-			</div>
-		</div>
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "agent-mcp-endpoint-revoke-dialog", Title: "Revoke MCP endpoint?"}, agentMCPEndpointRevokeDescription()) {
 		<form method="post" action={ templ.URL("/agents/" + url.PathEscape(agentID) + "/mcp-endpoint/revoke") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
@@ -318,6 +316,14 @@ templ agentMCPKeyRow(k AgentMCPKey) {
 	</tr>
 }
 
+// agentMCPKeyRevokeDescription is the key-revoke detail paragraph; label names
+// the key (or the "this key" fallback).
+templ agentMCPKeyRevokeDescription(label string) {
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+		This immediately invalidates the secret for <span class="text-base-content font-medium">{ label }</span>. Other keys on this endpoint keep working. This cannot be undone.
+	}
+}
+
 // agentMCPKeyRevokeDialog confirms revoking one key without affecting the
 // endpoint or its other keys.
 templ agentMCPKeyRevokeDialog(agentID string, k AgentMCPKey) {
@@ -325,16 +331,7 @@ templ agentMCPKeyRevokeDialog(agentID string, k AgentMCPKey) {
 	if label == "" {
 		label = "this key"
 	} }}
-	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-key-revoke-" + k.ID, BoxClass: "max-w-sm"}) {
-		<div class="mb-4 flex items-start gap-3">
-			@components.ConfirmIcon("")
-			<div>
-				@ui.DialogTitle() { Revoke key? }
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
-					This immediately invalidates the secret for <span class="text-base-content font-medium">{ label }</span>. Other keys on this endpoint keep working. This cannot be undone.
-				}
-			</div>
-		</div>
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "agent-mcp-key-revoke-" + k.ID, Title: "Revoke key?"}, agentMCPKeyRevokeDescription(label)) {
 		<form method="post" action={ templ.URL("/agents/" + url.PathEscape(agentID) + "/mcp-endpoint/keys/" + url.PathEscape(k.ID) + "/revoke") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
@@ -366,9 +363,7 @@ templ agentMCPKeyRotateDialog(agentID string, k AgentMCPKey) {
 	} }}
 	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-key-rotate-" + k.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--refresh-cw", "size-5")
-			</div>
+			@components.IconCircle("lucide--refresh-cw", components.IconCircleToneWarning)
 			<div>
 				@ui.DialogTitle() { Rotate key? }
 				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
