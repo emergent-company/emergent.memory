@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -1602,7 +1603,10 @@ func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
 	}
 
 	properties := schema
-	required := propertyNames(schema["required"])
+	required := []string{}
+	if schemaKeywordShaped(schema, "required") {
+		required = propertyNames(schema["required"])
+	}
 	if inner, ok := jsonSchemaObjectProperties(schema); ok {
 		properties = inner
 	} else if len(required) > 0 {
@@ -1620,13 +1624,88 @@ func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
 func withoutSchemaKeywords(schema map[string]any) map[string]any {
 	out := make(map[string]any, len(schema))
 	for key, value := range schema {
-		switch key {
-		case "type", "required", "properties", "$schema", "additionalProperties", "definitions", "$defs":
+		if schemaKeywordShaped(schema, key) {
 			continue
 		}
 		out[key] = value
 	}
 	return out
+}
+
+// schemaKeywordShaped reports whether the value under key has the shape the
+// JSON Schema keyword of that name carries. In the flat form the prompt
+// defines, every top-level value is a property descriptor, so a key whose
+// value does not look like the keyword is a genuine property that happens to
+// share its name (e.g. a property called "type" or "definitions").
+func schemaKeywordShaped(schema map[string]any, key string) bool {
+	value, ok := schema[key]
+	if !ok {
+		return false
+	}
+	switch key {
+	case "type":
+		name, ok := value.(string)
+		return ok && name == "object"
+	case "properties", "definitions", "$defs":
+		_, ok := value.(map[string]any)
+		return ok
+	case "$schema":
+		_, ok := value.(string)
+		return ok
+	case "additionalProperties":
+		switch value.(type) {
+		case bool, map[string]any:
+			return true
+		}
+		return false
+	case "required":
+		return requiredKeywordShaped(schema, value)
+	}
+	return false
+}
+
+// requiredKeywordShaped reports whether value is a required list rather than
+// the value of a property literally named "required". A list arrives as an
+// array of names; a model that answers with one comma-separated string is
+// believed only when every name in it is a property the schema defines, so
+// {"required": "yes"} stays a property (#258).
+func requiredKeywordShaped(schema map[string]any, value any) bool {
+	switch v := value.(type) {
+	case []any, []string:
+		return true
+	case string:
+		defined := schemaPropertyKeys(schema)
+		parts := strings.Split(v, ",")
+		for _, part := range parts {
+			name := strings.TrimSpace(part)
+			if name == "" {
+				return false
+			}
+			if _, ok := defined[name]; !ok {
+				return false
+			}
+		}
+		return len(parts) > 0
+	}
+	return false
+}
+
+// schemaPropertyKeys returns the names a `required` list could legitimately
+// refer to: the keys of the nested `properties` map when the schema has one,
+// otherwise the flat map's own keys.
+func schemaPropertyKeys(schema map[string]any) map[string]struct{} {
+	if properties, ok := schema["properties"].(map[string]any); ok {
+		keys := make(map[string]struct{}, len(properties))
+		for name := range properties {
+			keys[name] = struct{}{}
+		}
+		return keys
+	}
+	keys := make(map[string]struct{}, len(schema))
+	for name := range schema {
+		keys[name] = struct{}{}
+	}
+	return keys
 }
 
 // jsonSchemaObjectProperties reports whether schema is a JSON Schema object
@@ -1635,17 +1714,14 @@ func withoutSchemaKeywords(schema map[string]any) map[string]any {
 // The wrapper is recognised only by markers that cannot occur in the flat form
 // the prompt defines: a top-level `type` of "object" (flat maps hold descriptors
 // under each property name, never a scalar type at the top) or a `required`
-// array. A flat schema that happens to contain a property literally named
+// list. A flat schema that happens to contain a property literally named
 // "properties" or "type" therefore stays flat.
 func jsonSchemaObjectProperties(schema map[string]any) (map[string]any, bool) {
 	properties, ok := schema["properties"].(map[string]any)
 	if !ok {
 		return nil, false
 	}
-	if typeName, _ := schema["type"].(string); typeName == "object" {
-		return properties, true
-	}
-	if _, isArray := schema["required"].([]any); isArray {
+	if schemaKeywordShaped(schema, "type") || schemaKeywordShaped(schema, "required") {
 		return properties, true
 	}
 	return nil, false
@@ -1896,6 +1972,10 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 		seenRequired[name] = true
 		required = append(required, name)
 	}
+	// The list is rendered into the extraction prompt, and the union order
+	// follows the candidates (which can tie on confidence), so sort it to keep
+	// the same document producing the same prompt (#258).
+	sort.Strings(required)
 
 	// Calculate average confidence
 	var totalConfidence float32
