@@ -64,6 +64,9 @@ The agent controls *when* the definition runs.
 
     Cron format: `minute hour dom month dow` (standard 5-field).
 
+    The server also rejects a schedule that fires more often than every 15
+    minutes (its default safeguard).
+
 === "Reaction (graph events)"
     ```bash
     memory agents create \

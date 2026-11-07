@@ -61,7 +61,9 @@ func TestValidateObjectMetadata_CanonicalExtendedTypes(t *testing.T) {
 // the server coerces (apps/server/domain/graph/validation.go coercePropertyValue)
 // and docs/site/developer-guide/schema.md documents, in both accepted spellings:
 // the bare type and `type: string` + `format`. A blueprint that followed the
-// docs used to fail --strict (#319).
+// docs used to fail --strict (#319). The validator treats `format` as inert
+// (the server enforces it on write), so the format half pins that the offline
+// gate accepts the documented spelling rather than re-checking the values.
 func TestValidateObjectMetadata_SemanticStringTypes(t *testing.T) {
 	p := validMetadataPack()
 	props := p.ObjectTypes[0].Properties

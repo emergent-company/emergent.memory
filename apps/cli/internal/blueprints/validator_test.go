@@ -116,6 +116,16 @@ func TestValidateAgents_CronSchedule(t *testing.T) {
 		}
 	})
 
+	t.Run("whitespace-only cron is rejected", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "blank", Description: "d", TriggerType: "schedule", CronSchedule: "   "},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		if !hasIssue(report.Errors(), "cronSchedule", "expected exactly 5 fields") {
+			t.Fatalf("expected a whitespace-only cron error, got: %v", report.Issues)
+		}
+	})
+
 	t.Run("5-field cron passes", func(t *testing.T) {
 		agents := []blueprints.AgentFile{
 			{Name: "daily", Description: "d", CronSchedule: "0 2 * * *"},
