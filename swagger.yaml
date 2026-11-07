@@ -3189,6 +3189,12 @@ definitions:
           type: string
         type: array
       include_relationships:
+        description: |-
+          IncludeRelationships controls whether the run also proposes relationship
+          types. It is a pointer so an omitted field means "yes": a document that
+          names entities also relates them, and clients that never sent the field
+          (the web UI's document and project discovery actions) produced packs with
+          zero relationship types (#234). An explicit `false` opts out.
         type: boolean
       limit:
         description: |-
@@ -6366,6 +6372,8 @@ definitions:
         type: string
       registrationSupported:
         type: boolean
+      requestedScope:
+        type: string
       scope:
         type: string
       scopes:
@@ -6392,6 +6400,8 @@ definitions:
       connected:
         type: boolean
       expiresAt:
+        type: string
+      requestedScope:
         type: string
       scope:
         type: string
@@ -6456,6 +6466,8 @@ definitions:
       clientId:
         type: string
       clientSecret:
+        type: string
+      scope:
         type: string
     type: object
   domain_mcpregistry.RequiredConfigKey:
@@ -7509,7 +7521,8 @@ definitions:
         - $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig'
         description: |-
           SkillCapture is the project-level automatic skill-capture policy (added in
-          migration 00269). The zero value means "off", so the feature is opt-in.
+          migration 00270_add_agent_skill_capture.sql). The zero value means "off",
+          so the feature is opt-in.
       stats:
         allOf:
         - $ref: '#/definitions/domain_projects.ProjectStats'
@@ -9143,6 +9156,15 @@ definitions:
         type: string
       schema_name:
         type: string
+      shadowed_types:
+        description: |-
+          ShadowedTypes details each skipped cross-pack type: the registry still
+          names the old owner while the read paths resolve the type from this newer
+          assignment (#338). Only populated when the type is owned by another pack
+          and merge was not confirmed.
+        items:
+          $ref: '#/definitions/domain_schemas.ShadowedType'
+        type: array
       skipped_types:
         description: SkippedTypes are type names that already existed and were not
           merged.
@@ -9973,6 +9995,25 @@ definitions:
       to_version:
         type: string
     type: object
+  domain_schemas.ShadowedType:
+    properties:
+      registry_owner_pack:
+        description: |-
+          RegistryOwnerPack is the pack the registry row still points at. Empty when
+          the row's schema_id is NULL or dangles.
+        type: string
+      registry_owner_schema_id:
+        type: string
+      shadowing_pack:
+        description: |-
+          ShadowingPack is the pack just assigned, whose declaration wins in the
+          last-wins read ordering.
+        type: string
+      shadowing_schema_id:
+        type: string
+      type_name:
+        type: string
+    type: object
   domain_schemas.TypeRename:
     properties:
       from:
@@ -10303,6 +10344,12 @@ definitions:
       branch_name:
         type: string
       canonical_id:
+        type: string
+      contextText:
+        description: |-
+          ContextText is the small-to-big parent chunk text for a text result, when
+          the matched child belongs to a parent chunk. Snippet stays the matched
+          child's text; consumers that want the surrounding section read this.
         type: string
       document_id:
         type: string
@@ -12112,7 +12159,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.91.1
+  version: 0.92.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -12982,8 +13029,12 @@ paths:
     put:
       consumes:
       - application/json
-      description: Stores a pre-registered client id (and optional secret) for a remote
-        server, clearing any token set issued to a previous client
+      description: Stores a pre-registered client id (and optional secret) plus the
+        optional scope set to request for a remote server, clearing any token set
+        issued to a previous client. A blank clientId with a scope selects the requested
+        scope set only, creating a configuration-only row when none exists; a blank
+        clientId and blank scope clears an existing requested set. A changing scope
+        set invalidates any current connection.
       parameters:
       - description: Server ID
         in: path
@@ -13004,7 +13055,8 @@ paths:
           schema:
             $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO'
         "400":
-          description: Server is not remote or clientId is blank
+          description: Server is not remote, both clientId and scope are blank with
+            no stored scope set, or a secret was sent without a clientId
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
@@ -13017,7 +13069,7 @@ paths:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
-      summary: Provision a pre-registered OAuth client for an MCP server
+      summary: Provision a pre-registered OAuth client or choose requested scopes
       tags:
       - mcp-registry
   /api/admin/mcp-servers/{id}/oauth/status:
