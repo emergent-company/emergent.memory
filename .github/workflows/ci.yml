@@ -158,7 +158,8 @@ jobs:
           #   git            checkout, every preflight/migration diff, tree-hygiene
           #   bash           every scripts/preflight/*.sh and .github/scripts/*.test.sh
           #   python3        .github/scripts/check-injection.py (stdlib only)
-          #   jq             scripts/preflight/version-drift.sh, release-versions.test.sh
+          #   jq             scripts/preflight/swagger-raw-json.sh,
+          #                  .github/scripts/release-versions.test.sh
           #   go, gofmt      actions/setup-go; go run ./cmd/*-guard, swag generation,
           #                  `go mod tidy -diff`, and the gofmt step
           #   gitleaks       secret scan + scripts/preflight/gitleaks-env-files.sh

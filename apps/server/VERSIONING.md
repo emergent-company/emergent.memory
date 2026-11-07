@@ -11,14 +11,15 @@ version. Two checked-in references must match it exactly:
 - every `MARKETING_VERSION` in `apps/ios/VoiceAgent.xcodeproj/project.pbxproj`
   (VoiceAgent app, Debug + Release configs)
 
-`apps/server/docs/swagger/` is a third, derived carrier: its `info.version` is
-regenerated from the `@version` annotation by `task server:swagger`, so it must
-also match `VERSION`.
+`apps/server/docs/swagger/` is not a third carrier any more: the spec is build
+output (gitignored, #270) and its `info.version` is produced *from* the
+`@version` annotation by `task server:swagger`, so it tracks `VERSION` by
+construction rather than by comparison.
 
 A release bumps all of them together — the `release` task in `Taskfile.yml`
 does this atomically, and CI enforces it with a version-drift guard
 (`scripts/preflight/version-drift.sh`, wired into `.github/workflows/ci.yml`)
-that fails when any of them diverge from `VERSION`.
+that fails when `VERSION` and either authored reference diverge.
 
 ## Version Components
 

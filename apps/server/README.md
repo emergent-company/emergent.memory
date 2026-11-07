@@ -395,9 +395,10 @@ bash ./scripts/check-swagger-annotations.sh
 ### Documentation
 
 The handler annotations are the only source for the spec, so the guards below
-are the reference:
+are the reference (paths from the repo root):
 
-- `scripts/check-swagger-annotations.sh` — every handler carries an `@Router`
+- `apps/server/scripts/check-swagger-annotations.sh` — every handler carries an
+  `@Router`
 - `scripts/preflight/swagger-raw-json.sh` — `json.RawMessage` fields carry a
   `swaggertype`, so a generated client does not decode them as `[]int`
 
