@@ -14,13 +14,15 @@ import (
 
 // --- Backups ---
 
-// BackupsPage renders the backups browser: an inline create form plus the
-// active project's backups (most recent first). State precedence mirrors the
-// skills page: a real load failure (Memory unreachable, project with no org)
-// renders the whole-page error state; a gated Memory (list 404 → unavailable)
-// degrades to an "unavailable" state instead of an error (design D6); an empty
-// list renders the "no backups" empty state. flashMsg/flashErr surface PRG
-// feedback from the create/download/delete flows.
+// BackupsPage renders the backups browser: the active project's backups (most
+// recent first) plus a header action that opens the create page. Creating a
+// backup is a separate page (GET /backups/new), matching the mcp-servers list
+// → /settings/mcp-servers/new pattern. State precedence mirrors the skills
+// page: a real load failure (Memory unreachable, project with no org) renders
+// the whole-page error state; a gated Memory (list 404 → unavailable) degrades
+// to an "unavailable" state instead of an error (design D6); an empty list
+// renders the "no backups" empty state. flashMsg/flashErr surface PRG feedback
+// from the create/download/delete flows.
 templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, scheduleUnavailable bool, unavailable string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@backupsHeader()
@@ -31,7 +33,7 @@ templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, schedul
 			@backupsUnavailable(unavailable)
 		} else {
 			@backupScheduleCard(schedule, scheduleUnavailable)
-			@backupCreateForm()
+			@backupsListHeader()
 			if len(backups) == 0 {
 				@backupsEmpty()
 			} else {
@@ -45,6 +47,26 @@ templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, schedul
 		}
 		@restoreUnavailableNote()
 	}
+}
+
+// backupsListHeader is the backups list section header: ui.Section's own title
+// markup plus the right-aligned create action. ui.SectionProps has no action
+// slot, so the title row is rendered here (a flex row) rather than inventing a
+// shared header+action component — the sibling header-action issue can replace
+// this once it lands.
+templ backupsListHeader() {
+	<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+		<h2 class="text-lg font-semibold tracking-tight">All backups</h2>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/backups/new",
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--plus",
+		}) {
+			Create a backup
+		}
+	</div>
 }
 
 // backupsHeader is the page header. The restore marker stays visible in every
@@ -76,7 +98,20 @@ templ restoreUnavailableNote() {
 	</div>
 }
 
-// backupCreateForm is the inline create form (PRG → POST /backups). Every
+// BackupNewPage renders the create form as its own page (GET /backups/new):
+// retention + archive includes, posting to POST /backups. It is the create
+// page the list's header action opens, mirroring /settings/mcp-servers/new.
+// ?err= surfaces PRG feedback; validation failures redirect back to the list
+// (POST /backups keeps its original PRG behaviour).
+templ BackupNewPage(flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Backups", "/backups", "New backup")), "", "New backup", "Start a full backup of the active project's documents, objects, and chat, and choose how long its archive is kept.", detailHeaderOpts{Margin: "mb-6"}) {}
+		@flashToasts("", flashErr)
+		@backupCreateForm()
+	}
+}
+
+// backupCreateForm is the create form (PRG → POST /backups). Every
 // gateway-created backup is a full backup (the create endpoint has no type or
 // parent selectors); the toggles cover what the archive includes and how long
 // memory keeps it.
@@ -87,7 +122,7 @@ templ backupCreateForm() {
 	}) {
 		<form class="flex flex-col gap-4" method="post" action="/backups">
 			@form.FormControl("backup-retention", "Retention", form.LabelAbove, "How many days to keep the archive before it expires. Default 30, valid 1–365.", "", nil) {
-				<input id="backup-retention" name="retentionDays" type="number" min="1" max="365" value="30" class="input w-full sm:max-w-40"/>
+				<input id="backup-retention" name="retentionDays" type="number" min="1" max="365" value="30" class="input w-full"/>
 			}
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-box border border-base-content/10 p-3">

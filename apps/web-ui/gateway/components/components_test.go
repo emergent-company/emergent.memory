@@ -112,7 +112,7 @@ func TestDeleteWarningRendersSentence(t *testing.T) {
 
 func TestTableCardWrapsChildren(t *testing.T) {
 	html := renderHTML(t, TableCard(nil))
-	assertContains(t, html, "border border-line overflow-hidden shadow-sm", "card-body memory-density-flush")
+	assertContains(t, html, "edge-line overflow-hidden shadow-sm", "card-body memory-density-flush")
 
 	withChild := renderHTML(t, tableCardFixture())
 	assertContains(t, withChild, "<table", "child-table")
@@ -386,13 +386,13 @@ func TestMetaChipRendersIconAndText(t *testing.T) {
 
 func TestPanelCardRendersStandardTreatment(t *testing.T) {
 	html := renderHTML(t, PanelCard("", nil))
-	assertContains(t, html, `class="card bg-base-100 border border-line"`, "card-body memory-density-comfortable")
+	assertContains(t, html, `class="card bg-base-100 edge-line"`, "card-body memory-density-comfortable")
 }
 
 func TestPanelCardAppendsAccentClass(t *testing.T) {
 	html := renderHTML(t, PanelCard("border-primary/20", templ.Attributes{"data-testid": "token-secret-panel"}))
 	assertContains(t, html,
-		`class="card bg-base-100 border border-line border-primary/20"`,
+		`class="card bg-base-100 edge-line border-primary/20"`,
 		`data-testid="token-secret-panel"`,
 	)
 }

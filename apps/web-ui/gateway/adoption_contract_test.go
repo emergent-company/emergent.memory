@@ -65,8 +65,8 @@ func TestAgentMCPListsRenderTableCardShell(t *testing.T) {
 
 	body := agentMCPGet(e, "/agents/a1/settings/mcp").Body.String()
 	assertContainsHTML(t, body,
-		`class="card bg-base-100 border border-line overflow-hidden shadow-sm" data-testid="agent-mcp-key-list"`,
-		`class="card bg-base-100 border border-line overflow-hidden shadow-sm" data-testid="agent-mcp-session-list"`,
+		`class="card bg-base-100 edge-line overflow-hidden shadow-sm" data-testid="agent-mcp-key-list"`,
+		`class="card bg-base-100 edge-line overflow-hidden shadow-sm" data-testid="agent-mcp-session-list"`,
 		`card-body memory-density-flush`,
 		`class="mt-4"`,
 		`class="mt-3"`,

@@ -121,8 +121,10 @@ func TestPropertyDefPromptTypeLabel_Constraints(t *testing.T) {
 	assert.Equal(t, "integer, max 10", PropertyDef{Type: "integer", Maximum: &ten}.promptTypeLabel())
 	assert.Equal(t, "number, min 0, max 10", PropertyDef{Type: "number", Minimum: &zero, Maximum: &ten}.promptTypeLabel())
 	assert.Equal(t, "string, format email, min 0", PropertyDef{Type: "string", Format: "email", Minimum: &zero}.promptTypeLabel())
-	assert.Equal(t, "array of string", PropertyDef{
-		Type:  "array",
-		Items: &PropertyDef{Type: "string"},
-	}.promptTypeLabel(), "element type label is unaffected by bounds on the array")
+	assert.Equal(t, "array of string, min 0, max 10", PropertyDef{
+		Type:    "array",
+		Items:   &PropertyDef{Type: "string"},
+		Minimum: &zero,
+		Maximum: &ten,
+	}.promptTypeLabel(), "bounds declared on the array render after its element type")
 }

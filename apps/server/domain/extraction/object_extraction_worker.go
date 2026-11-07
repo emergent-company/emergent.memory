@@ -1537,19 +1537,22 @@ func convertToRelationshipSchema(m map[string]any) agents.RelationshipSchema {
 }
 
 // relationshipPersistProperties assembles the properties map written for one
-// extracted relationship: its description and extraction provenance, plus every
-// relationship-level property the model emitted. The emitted properties are
-// merged last so a declared property named `description` wins, mirroring the
-// object-side loop in persistResults; graph.CreateRelationship's schema
-// validation (validateRelationshipProperties) then coerces and enforces them.
+// extracted relationship: its description, every relationship-level property the
+// model emitted, and finally extraction provenance. The emitted properties are
+// merged over the derived description so a declared property named
+// `description` wins, mirroring the object-side loop in persistResults. The
+// provenance key is stamped last, as that loop does, because it is server-owned:
+// a model-emitted `_extraction_job_id` must not overwrite it (issue #310).
+// graph.CreateRelationship's schema validation (validateRelationshipProperties)
+// then coerces and enforces the emitted ones.
 func relationshipPersistProperties(rel agents.ExtractedRelationship, jobID string) map[string]any {
 	properties := map[string]any{
-		"description":        rel.Description,
-		"_extraction_job_id": jobID,
+		"description": rel.Description,
 	}
 	for name, value := range rel.Properties {
 		properties[name] = value
 	}
+	properties["_extraction_job_id"] = jobID
 	return properties
 }
 
