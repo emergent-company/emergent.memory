@@ -14,18 +14,20 @@ import Foundation
 /// print, take seconds, or assume an interactive terminal), so the child's PATH
 /// is composed from *locations* instead:
 ///
-/// 1. the app's own PATH, unchanged and in order — nothing the user or launchd
-///    set is dropped or reordered;
+/// 1. the app's own PATH first, in its own order — blank entries dropped and
+///    duplicates collapsed, otherwise untouched;
 /// 2. the system list (`/etc/paths` + `/etc/paths.d/*`), which is what macOS's
 ///    `path_helper` gives login shells;
 /// 3. the well-known per-user bin directories that exist on disk.
 ///
-/// A configured MCP server command may also be an absolute path, which keeps
-/// working regardless of this list.
+/// Everything appended comes after what the app already had, so a tool installed
+/// system-wide still wins over a home-directory copy — this widens the search
+/// path, it does not re-prioritise it. A configured MCP server command may also
+/// be an absolute path, which works regardless of this list.
 enum ChildEnvironment {
-    /// Home-relative directories where user-installed CLI tools land. Ordered by
-    /// how likely a Mac developer has one, so `which uvx` resolves the copy the
-    /// user expects when more than one exists.
+    /// Home-relative directories where user-installed CLI tools land, appended
+    /// in this order. The order is part of the contract only among themselves —
+    /// all of them come after the system list.
     static let userBinDirectories = [
         ".local/bin",
         ".local/share/memory/bin",
@@ -44,10 +46,15 @@ enum ChildEnvironment {
         fileManager: FileManager = .default
     ) -> [String: String] {
         var environment = base
-        environment["PATH"] = path(existing: base["PATH"],
-                                   home: home,
-                                   systemDirectories: systemDirectories,
-                                   fileManager: fileManager)
+        let widened = path(existing: base["PATH"],
+                           home: home,
+                           systemDirectories: systemDirectories,
+                           fileManager: fileManager)
+        // Never blank a PATH that had nothing to widen: an empty `PATH` means
+        // "current directory only" to exec, which is worse than inheriting.
+        if !widened.isEmpty {
+            environment["PATH"] = widened
+        }
         return environment
     }
 

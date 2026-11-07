@@ -107,6 +107,26 @@ struct ChildEnvironmentTests {
 
     // MARK: - Environment
 
+    @Test func appendsUserBinDirectoriesInTheirDeclaredOrder() throws {
+        let home = try makeHome([".local/bin", ".cargo/bin"])
+        defer { cleanup(home) }
+
+        let path = ChildEnvironment.path(existing: "/usr/bin", home: home.path,
+                                         systemDirectories: [])
+        #expect(path == "/usr/bin:\(home.path)/.local/bin:\(home.path)/.cargo/bin")
+    }
+
+    @Test func emptyCompositionLeavesPathUntouched() {
+        // Nothing inherited, nothing to add: an empty PATH would mean "current
+        // directory only", so the variable must survive as it was.
+        let environment = ChildEnvironment.launchEnvironment(
+            base: ["PATH": ""],
+            home: "/nonexistent-home",
+            systemDirectories: []
+        )
+        #expect(environment["PATH"] == "")
+    }
+
     @Test func launchEnvironmentKeepsEveryOtherVariable() throws {
         let home = try makeHome([".local/bin"])
         defer { cleanup(home) }
@@ -136,6 +156,10 @@ struct ChildEnvironmentTests {
                              atomically: true, encoding: .utf8)
         try "/opt/a\n".write(to: pathsDirectory.appendingPathComponent("10-a"),
                              atomically: true, encoding: .utf8)
+
+        // macOS and its tools drop dotfiles from these lists; so do we.
+        try "/opt/hidden\n".write(to: pathsDirectory.appendingPathComponent(".hidden"),
+                                  atomically: true, encoding: .utf8)
 
         let directories = ChildEnvironment.systemPathDirectories(
             pathsFile: pathsFile.path,
