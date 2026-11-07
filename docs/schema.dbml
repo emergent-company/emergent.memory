@@ -698,6 +698,30 @@ Table "kb"."auth_introspection_cache" {
   }
 }
 
+Table "kb"."backup_schedules" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "organization_id" uuid [not null]
+  "project_id" uuid [not null, unique]
+  "enabled" boolean [not null, default: true]
+  "cron_schedule" text [not null, note: 'Standard 5-field cron expression evaluated in UTC, e.g. "0 2 * * *" for 02:00 UTC daily']
+  "timezone" text [not null, default: 'UTC']
+  "retention_days" integer [not null, default: 30, note: 'Retention applied to every backup the schedule creates: expires_at = created_at + retention_days']
+  "include_chat" boolean [not null, default: false]
+  "include_journal" boolean [not null, default: false]
+  "include_deleted" boolean [not null, default: false]
+  "next_run_at" timestamptz [not null, note: 'Next due instant; the runner claims rows where enabled AND next_run_at <= now()']
+  "last_run_at" timestamptz
+  "last_backup_id" uuid
+  "created_by" uuid
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (next_run_at) [name: "idx_backup_schedules_due", note: 'enabled']
+  }
+}
+// kb.backup_schedules: Per-project recurring backup schedule; one row per project, executed by the backups:project_schedules scheduler task
+
 Table "kb"."backups" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "organization_id" uuid [not null]
@@ -2861,6 +2885,10 @@ Ref: "kb"."agent_tool_approvals"."share_link_id" > "kb"."agent_share_links"."id"
 Ref: "kb"."agent_webhook_hooks"."agent_id" > "kb"."agents"."id"
 Ref: "kb"."agents"."agent_definition_id" > "kb"."agent_definitions"."id"
 Ref: "kb"."agents"."project_id" > "kb"."projects"."id"
+Ref: "kb"."backup_schedules"."created_by" > "core"."user_profiles"."id"
+Ref: "kb"."backup_schedules"."last_backup_id" > "kb"."backups"."id"
+Ref: "kb"."backup_schedules"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."backup_schedules"."project_id" > "kb"."projects"."id"
 Ref: "kb"."backups"."baseline_backup_id" > "kb"."backups"."id"
 Ref: "kb"."backups"."created_by" > "core"."user_profiles"."id"
 Ref: "kb"."backups"."organization_id" > "kb"."orgs"."id"
