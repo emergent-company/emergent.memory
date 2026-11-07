@@ -39,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -544,7 +545,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"branch": {
 						Type:        "string",
-						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query across all branches.",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to search the main graph; branches are only readable when the agent definition declares a branchScope that covers them.",
 					},
 					"type_name": {
 						Type:        "string",
@@ -3004,7 +3005,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 	}
 
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil {
 		return nil, err
 	}
@@ -3415,7 +3416,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(queryCtx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(queryCtx, projectID, branchRef)
 	if err != nil {
 		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
@@ -4044,6 +4045,9 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	}
 	// Try parsing as UUID first.
 	if id, err := uuid.Parse(branchRef); err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, id); err != nil {
+			return nil, err
+		}
 		return &id, nil
 	}
 	// Look up by name within the project.
@@ -4061,7 +4065,44 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	if err != nil {
 		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
 	}
+	if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
+		return nil, err
+	}
 	return &row.ID, nil
+}
+
+// resolveReadableBranchID resolves a branch reference for a tool that READS branch
+// content, so it also enforces the read boundary: an agent run with no declared
+// scope reads the main graph only and cannot name a branch at all, while a run
+// inside a scope may name only its own branches. A caller with no boundary (a human
+// MCP client) keeps the pre-existing argument (#265).
+func (s *Service) resolveReadableBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	id, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || id == nil {
+		return id, err
+	}
+	if err := s.branchReadAllowedByScope(ctx, projectID, *id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+// branchRefAllowedByScope applies the run's branch scope to an already-resolved
+// branch reference, so no tool can name a branch outside the boundary the run
+// declared. It is the choke point for every read and every write that takes a
+// branch argument (entity query/search, type list, merge, delete), which is why
+// it lives here rather than in each tool. A nil scope — the main-only default,
+// and what a human MCP client carries — is not enforced: the boundary this
+// enforces is a scoped run's own declaration (#265).
+func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string, branchID uuid.UUID) error {
+	if BranchScopeFromContext(ctx).IsMainOnly() {
+		return nil
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("invalid project_id: %w", err)
+	}
+	return s.branchAllowedByScope(ctx, projectUUID, branchID)
 }
 
 // resolveOrCreateBranchID resolves a branch name or UUID to a branch UUID.
@@ -4073,6 +4114,9 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	}
 	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
 	if id, err := uuid.Parse(branchRef); err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, id); err != nil {
+			return nil, err
+		}
 		return &id, nil
 	}
 	// Look up by name.
@@ -4088,9 +4132,15 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 		Limit(1).
 		Scan(ctx, &row)
 	if err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
+			return nil, err
+		}
 		return &row.ID, nil
 	}
-	// Branch not found — auto-create it.
+	// Branch not found — auto-create it. A branch this run is creating itself is
+	// not gated by the read scope: the scope says which existing branches the run
+	// may read, and refusing a branch it just created would make the tool unusable
+	// without protecting anything.
 	if s.branchSvc == nil {
 		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
 	}
@@ -4131,7 +4181,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil {
 		return nil, err
 	}
@@ -4165,7 +4215,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			return err
 		}
 
-		branchFilter := ""
+		// Build the branch filter the same way every other read tool does: no
+		// branch named is the MAIN graph, never "all branches". An unfiltered scan
+		// would hand a main-only run (including a delegated child) unmerged work,
+		// and hand a scoped run branches outside its scope (#265).
+		branchFilter := " AND go.branch_id IS NULL"
 		branchArgs := []any{}
 		if branchID != nil {
 			branchFilter = " AND go.branch_id = ?"
@@ -4877,6 +4931,10 @@ func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string
 	req := &branches.CreateBranchRequest{
 		ProjectID: &projectID,
 		Name:      name,
+		// A branch created through an MCP tool was created by an agent, not a
+		// person. Attribution is server-derived (it is json:"-" on the request),
+		// so this is the only place that can say so.
+		Attribution: &branchorigin.Attribution{Origin: branchorigin.Agent},
 	}
 	if desc, ok := args["description"].(string); ok && desc != "" {
 		req.Description = &desc
@@ -5034,7 +5092,7 @@ func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectI
 	if branchRef == "" {
 		return nil, fmt.Errorf("missing required parameter: branch")
 	}
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil || branchID == nil {
 		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
@@ -6688,6 +6746,11 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 
 	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {
 		if id, err := uuid.Parse(branchIDStr); err == nil {
+			// Reading another branch's journal is a read: a main-only run cannot
+			// name one, and a scoped run may name only its own (#265).
+			if err := s.branchReadAllowedByScope(ctx, projectUUID.String(), id); err != nil {
+				return nil, err
+			}
 			params.BranchID = &id
 		}
 	}

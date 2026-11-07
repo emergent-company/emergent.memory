@@ -1835,6 +1835,14 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	if dto.RelationshipTypes != nil {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
 	}
+	// Branch reads are a typed setting as well: validate it here so a bad origin
+	// or glob is a 400 rather than a run that silently reads less than asked
+	// (#265).
+	if dto.BranchScope != nil {
+		if err := def.SetBranchScope(dto.BranchScope); err != nil {
+			return apperror.NewBadRequest(err.Error())
+		}
+	}
 
 	// Write-path secret handling: a workspace config must never persist a
 	// plaintext git token supplied by the client — it must use
@@ -1976,6 +1984,14 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.RelationshipTypes != nil {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
+	}
+	// Branch reads are a typed setting as well: validate it here so a bad origin
+	// or glob is a 400 rather than a run that silently reads less than asked
+	// (#265).
+	if dto.BranchScope != nil {
+		if err := def.SetBranchScope(dto.BranchScope); err != nil {
+			return apperror.NewBadRequest(err.Error())
+		}
 	}
 	if dto.SandboxConfig != nil {
 		// Write-path secret handling against the stored config: carry forward the

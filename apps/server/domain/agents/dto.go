@@ -9,6 +9,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
@@ -366,8 +367,12 @@ type AgentDefinitionDTO struct {
 	// offered (searched, queried, traversed, listed). Empty/omitted means all
 	// types (backwards compatible); stored in Config under keys "objectTypes"
 	// and "relationshipTypes" (#1695).
-	ObjectTypes       []string              `json:"objectTypes,omitempty"`
-	RelationshipTypes []string              `json:"relationshipTypes,omitempty"`
+	ObjectTypes       []string `json:"objectTypes,omitempty"`
+	RelationshipTypes []string `json:"relationshipTypes,omitempty"`
+	// BranchScope declares which unmerged graph branches this agent may read
+	// (#265). Absent means main only, which is the default; stored in Config under
+	// key "branchScope".
+	BranchScope       *branchscope.Config   `json:"branchScope,omitempty"`
 	SandboxConfig     map[string]any        `json:"workspaceConfig,omitempty"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
@@ -439,8 +444,11 @@ type CreateAgentDefinitionDTO struct {
 	IncludeProjectInfo *bool `json:"includeProjectInfo"`
 	// ObjectTypes / RelationshipTypes bound the graph data types this agent is
 	// offered. Absent or empty means all types (#1695).
-	ObjectTypes       []string              `json:"objectTypes"`
-	RelationshipTypes []string              `json:"relationshipTypes"`
+	ObjectTypes       []string `json:"objectTypes"`
+	RelationshipTypes []string `json:"relationshipTypes"`
+	// BranchScope opts into reading unmerged graph branches (#265). Absent or
+	// unmerged=false means main only.
+	BranchScope       *branchscope.Config   `json:"branchScope,omitempty"`
 	SandboxConfig     map[string]any        `json:"workspaceConfig"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
@@ -474,8 +482,11 @@ type UpdateAgentDefinitionDTO struct {
 	// ObjectTypes / RelationshipTypes bound the graph data types this agent is
 	// offered. Omitted (nil) leaves the stored value unchanged; an explicit
 	// empty list clears the allowlist (all types) (#1695).
-	ObjectTypes       []string              `json:"objectTypes"`
-	RelationshipTypes []string              `json:"relationshipTypes"`
+	ObjectTypes       []string `json:"objectTypes"`
+	RelationshipTypes []string `json:"relationshipTypes"`
+	// BranchScope opts into reading unmerged graph branches (#265). Omitted (nil)
+	// leaves the stored value unchanged; Unmerged=false removes it.
+	BranchScope       *branchscope.Config   `json:"branchScope,omitempty"`
 	SandboxConfig     map[string]any        `json:"workspaceConfig"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy *ToolPolicyDefault    `json:"defaultToolPolicy,omitempty"`
@@ -554,6 +565,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		IncludeProjectInfo: d.IncludeProjectInfo(),
 		ObjectTypes:        d.ObjectTypes(),
 		RelationshipTypes:  d.RelationshipTypes(),
+		BranchScope:        d.branchScopeConfigOrNil(),
 		SandboxConfig:      sandbox.RedactSandboxConfigMap(d.SandboxConfig),
 		ToolPolicies:       d.ToolPolicies,
 		DefaultToolPolicy:  d.DefaultToolPolicy,

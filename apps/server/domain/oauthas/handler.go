@@ -71,7 +71,7 @@ func (h *Handler) Metadata(c echo.Context) error {
 
 // Register implements RFC 7591 dynamic client registration.
 // @Summary      Register an OAuth client
-// @Description  RFC 7591 dynamic client registration. Only public clients (token_endpoint_auth_method=none) using the authorization_code grant are accepted.
+// @Description  RFC 7591 dynamic client registration. Clients are always registered public (token_endpoint_auth_method=none, PKCE); a requested confidential method is downgraded. grant_types are narrowed to authorization_code and unknown scopes are dropped.
 // @Tags         oauth
 // @Accept       json
 // @Produce      json

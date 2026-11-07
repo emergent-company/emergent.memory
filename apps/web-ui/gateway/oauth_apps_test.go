@@ -119,6 +119,94 @@ func postConsent(t *testing.T, s *Server, form url.Values) *httptest.ResponseRec
 	return rec
 }
 
+func TestClampScopes(t *testing.T) {
+	supported := []string{"graph:read", "graph:write", "projects:read"}
+	tests := []struct {
+		name string
+		want []string
+		in   []string
+		out  []string
+	}{
+		{name: "keeps supported order", in: []string{"graph:write", "graph:read"}, out: []string{"graph:write", "graph:read"}},
+		{name: "drops unknown", in: []string{"offline_access", "graph:read", "ACCESS_VIEW_MANAGE_MCP_CONTENT"}, out: []string{"graph:read"}},
+		{name: "deduplicates", in: []string{"graph:read", "graph:read"}, out: []string{"graph:read"}},
+		{name: "all unknown", in: []string{"offline_access"}, out: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := clampScopes(tt.in, supported)
+			if strings.Join(got, " ") != strings.Join(tt.out, " ") {
+				t.Fatalf("clampScopes(%v) = %v, want %v", tt.in, got, tt.out)
+			}
+		})
+	}
+}
+
+// A client that asks for scopes this server does not implement must still get
+// a working consent flow with the supported subset (OAuth 2.1 permits a partial
+// grant); rejecting the request breaks clients like Gemini's connector.
+func TestOAuthConsentClampsUnsupportedScope(t *testing.T) {
+	f := &fakeOAuthBackend{
+		ctx: &OAuthConsentContext{
+			ClientID:        "client-1",
+			ClientName:      "gemini",
+			RedirectURI:     "https://oauth-redirect.googleusercontent.com/r/project-1",
+			ScopesSupported: []string{"graph:read", "graph:write", "schema:read", "projects:read", "chat:use"},
+		},
+		res: OAuthAuthorizeResult{RedirectURL: "https://oauth-redirect.googleusercontent.com/r/project-1?code=abc"},
+	}
+	rec := postConsent(t, newOAuthDecisionServer(f), url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://oauth-redirect.googleusercontent.com/r/project-1"},
+		"state":          {"state-1"},
+		"scope":          {"graph:read offline_access ACCESS_VIEW_MANAGE_MCP_CONTENT"},
+		"project_id":     {"p1"},
+		"code_challenge": {"challenge-1"}, "code_challenge_method": {"S256"},
+		"decision": {"approve"},
+	})
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !f.called {
+		t.Fatal("consent must authorize with the clamped scope")
+	}
+	if got := strings.Join(f.auth.Scopes, " "); got != "graph:read" {
+		t.Fatalf("scopes = %q, want %q", got, "graph:read")
+	}
+}
+
+// A request that names only unsupported scopes must be refused, not widened to
+// the server's full scope set: that would grant more than the client asked for.
+func TestOAuthConsentRejectsOnlyUnsupportedScopes(t *testing.T) {
+	f := &fakeOAuthBackend{ctx: &OAuthConsentContext{
+		ClientID:        "client-1",
+		ClientName:      "gemini",
+		RedirectURI:     "https://oauth-redirect.googleusercontent.com/r/project-1",
+		ScopesSupported: []string{"graph:read", "graph:write"},
+	}}
+	s := newOAuthDecisionServer(f)
+	e := echo.New()
+	e.GET("/oauth/authorize", s.uiOAuthAuthorize)
+
+	q := url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://oauth-redirect.googleusercontent.com/r/project-1"},
+		"response_type":  {"code"},
+		"code_challenge": {"challenge-1"},
+		"scope":          {"offline_access ACCESS_VIEW_MANAGE_MCP_CONTENT"},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "None of the requested scopes are supported") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestOAuthConsentDenyRedirectsWithError(t *testing.T) {
 	f := &fakeOAuthBackend{ctx: &OAuthConsentContext{
 		ClientID: "client-1", ClientName: "app", RedirectURI: "https://client.example/cb",

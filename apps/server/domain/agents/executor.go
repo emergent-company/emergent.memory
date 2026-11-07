@@ -2711,6 +2711,18 @@ func (ae *AgentExecutor) runPipeline(
 	// the internal graph-query-agent) could silently widen an inherited caller
 	// boundary.
 	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
+	// The branch read scope is derived at the same seam, and narrowed by any
+	// inherited (delegated caller) scope for the same reason: a child definition
+	// must never widen the boundary its parent ran under (#265). A run that
+	// declares nothing is main only, and installing that CLEARS an inherited
+	// scope, so a delegated child cannot inherit reads its caller did not give it.
+	//
+	// One exception: an internal loopback run (the /query hand-off behind
+	// search-knowledge) executes on the originating run's behalf, so its boundary
+	// is fixed by that caller and must be preserved — the internal definition
+	// declares nothing, which would otherwise reset the whole hand-off to main
+	// only. A definition that does declare a scope still narrows it.
+	ctx = ae.withBranchScope(ctx, req.AgentDefinition)
 	ctx = mcp.ContextWithAgentWriteRules(ctx, resolveAgentWriteRules(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
 
@@ -4570,6 +4582,59 @@ func knowledgeBaseContextBlock(projectInfo string) string {
 // scope (issue #1695).
 func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 	return mcp.NewTypeScope(def.ObjectTypes(), def.RelationshipTypes())
+}
+
+// resolveBranchScope derives the per-agent-run branch read scope from the
+// definition's config (#265). It returns nil (main only) when the definition is
+// nil or configures no scope. A stored value that fails validation is an error:
+// the caller degrades to main only — a tampered or legacy value must fail
+// closed, never widen — while the definition API reports the same error on write.
+// withBranchScope derives the run's branch read boundary and installs it on the
+// context. A definition that declares nothing yields main only, and installing
+// that CLEARS an inherited scope, so a delegated child cannot inherit reads its
+// caller did not give it. A boundary the caller already fixed (an internal
+// loopback executing on the originating run's behalf) is kept, and a definition
+// that declares a scope still narrows it. A hand-off restating an ABSENT boundary
+// is left alone. An unreadable setting fails closed to main only, never to the
+// caller's inherited boundary.
+func (ae *AgentExecutor) withBranchScope(ctx context.Context, def *AgentDefinition) context.Context {
+	declared, err := resolveBranchScope(def)
+	if err != nil {
+		if ae.log != nil {
+			id := ""
+			if def != nil {
+				id = def.ID
+			}
+			ae.log.Warn("agent branch scope is invalid; running main only",
+				slog.String("agent_definition_id", id),
+				slog.String("error", err.Error()))
+		}
+		return mcp.ContextWithBranchScope(ctx, nil)
+	}
+	if mcp.IsAbsentBranchScope(ctx) {
+		// A hand-off that restates an ABSENT boundary (its originating caller had
+		// no boundary at all — a human MCP client, a direct /query caller) must not
+		// be narrowed to main only here: that caller could name branches before
+		// branch scopes existed, and this run is executing its request. A
+		// definition that declares a scope of its own is narrower and wins.
+		if declared.IsMainOnly() {
+			return ctx
+		}
+		return mcp.ContextWithBranchScope(ctx, declared)
+	}
+	if mcp.IsFixedBranchScope(ctx) && declared.IsMainOnly() {
+		// The caller decided this boundary and the internal definition says
+		// nothing, which must not reset the hand-off to main only. Re-install the
+		// same scope WITHOUT the fixed marker so anything this run delegates gets
+		// the ordinary rules — an undeclared child is main only, never an inherited
+		// branch read.
+		return mcp.ContextWithBranchScope(ctx, mcp.BranchScopeFromContext(ctx))
+	}
+	return mcp.ContextWithBranchScope(ctx, mcp.NarrowBranchScope(mcp.BranchScopeFromContext(ctx), declared))
+}
+
+func resolveBranchScope(def *AgentDefinition) (*mcp.BranchScope, error) {
+	return def.BranchScope()
 }
 
 // resolveAgentWriteRules derives the per-run object write policy from the
