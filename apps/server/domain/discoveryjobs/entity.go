@@ -40,6 +40,7 @@ type DiscoveryTypeCandidate struct {
 	Description           *string     `bun:"description" json:"description,omitempty"`
 	Confidence            float32     `bun:"confidence,notnull" json:"confidence"`
 	InferredSchema        JSONMap     `bun:"inferred_schema,type:jsonb,notnull" json:"inferredSchema"`
+	RequiredProperties    JSONArray   `bun:"required_properties,type:jsonb,notnull,default:'[]'::jsonb" json:"requiredProperties"`
 	ExampleInstances      JSONArray   `bun:"example_instances,type:jsonb,default:'[]'::jsonb" json:"exampleInstances"`
 	Frequency             int         `bun:"frequency,default:1" json:"frequency"`
 	ProposedRelationships JSONArray   `bun:"proposed_relationships,type:jsonb,default:'[]'::jsonb" json:"proposedRelationships"`

@@ -134,7 +134,7 @@ struct ProjectCard: View {
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 activeProjectDetails
-                switchHint
+                switchControl
 
                 if case .signedOut = state {
                     signedOutState
@@ -145,14 +145,16 @@ struct ProjectCard: View {
         }
     }
 
-    private var switchHint: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.up.to.line")
-                .font(.caption)
-            Text("Switch projects from the menu at the top of the window.")
+    private var switchControl: some View {
+        // The page hosts the same list the toolbar panel shows, inline instead
+        // of in a popover: here the list is page content, not a menu. The
+        // panel's own header is off because the active project is rendered
+        // above it, and "Manage projects…" is pointless on the page that does
+        // exactly that.
+        VStack(alignment: .leading, spacing: 2) {
+            SwitcherSectionHeader("Projects")
+            ProjectSwitcherPanel(showsManageAction: false, showsHeader: false)
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
     }
 
     private var activeProjectDetails: some View {

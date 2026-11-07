@@ -2558,6 +2558,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeCreateSkill(ctx, projectID, args)
 	case "skill-update":
 		return s.executeUpdateSkill(ctx, args)
+	case "skill-patch":
+		return s.executePatchSkill(ctx, args)
 	case "skill-delete":
 		return s.executeDeleteSkill(ctx, args)
 

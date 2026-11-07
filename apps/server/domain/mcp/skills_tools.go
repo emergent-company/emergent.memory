@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ============================================================================
@@ -88,6 +90,30 @@ func skillsToolDefinitions() []ToolDefinition {
 					},
 				},
 				Required: []string{"skill_id"},
+			},
+		},
+		{
+			Name:          "skill-patch",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "skills:write",
+			Description:   "Extend an existing learned skill by replacing an exact, unique substring of its content. Prefer this over skill-update for learned skills: `old` must occur exactly once.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"skill_id": {
+						Type:        "string",
+						Description: "UUID of the skill to patch",
+					},
+					"old": {
+						Type:        "string",
+						Description: "Exact substring of the current content to replace. Must occur exactly once.",
+					},
+					"new": {
+						Type:        "string",
+						Description: "Replacement text",
+					},
+				},
+				Required: []string{"skill_id", "old", "new"},
 			},
 		},
 		{
@@ -191,12 +217,24 @@ func (s *Service) executeCreateSkill(ctx context.Context, projectID string, args
 	if err := skills.ValidateCreateSkill(*dto, s.skillsRepo.MaxContentSize()); err != nil {
 		return nil, fmt.Errorf("create_skill: %w", err)
 	}
+	// The scan is a hard gate on the agent write surface. A credential or a
+	// prompt-injection payload must never enter the shared skill library.
+	if scan := skills.ScanSkill(name, content); !scan.Passed() {
+		return nil, fmt.Errorf("create_skill: security scan failed: %s", scan.Findings[0].Message)
+	}
 
 	sk := &skills.Skill{
 		Name:        name,
 		Description: description,
 		Content:     content,
 		ProjectID:   &projectID,
+	}
+	if isAgentActor(ctx) {
+		sk.Metadata = &skills.SkillMetadata{
+			Source:         skills.SourceAgent,
+			CreatedBy:      "agent",
+			LifecycleState: skills.SkillLifecycleActive,
+		}
 	}
 	if err := s.skillsRepo.Create(ctx, sk); err != nil {
 		return nil, fmt.Errorf("create_skill: %w", err)
@@ -224,6 +262,9 @@ func (s *Service) executeUpdateSkill(ctx context.Context, args map[string]any) (
 	if err := s.skillsRepo.AuthorizeSkillWrite(ctx, sk); err != nil {
 		return nil, fmt.Errorf("update_skill: %w", err)
 	}
+	if sk.IsLocked() {
+		return nil, fmt.Errorf("update_skill: skill is locked; unlock it before editing")
+	}
 
 	dto := &skills.UpdateSkillDTO{}
 
@@ -237,6 +278,11 @@ func (s *Service) executeUpdateSkill(ctx context.Context, args map[string]any) (
 	// Shared validation (same rules as the REST handlers).
 	if err := skills.ValidateUpdateSkill(*dto, s.skillsRepo.MaxContentSize()); err != nil {
 		return nil, fmt.Errorf("update_skill: %w", err)
+	}
+	if dto.Content != nil {
+		if scan := skills.ScanSkill(sk.Name, *dto.Content); !scan.Passed() {
+			return nil, fmt.Errorf("update_skill: security scan failed: %s", scan.Findings[0].Message)
+		}
 	}
 
 	updated, err := s.skillsRepo.Update(ctx, id, dto)
@@ -266,9 +312,74 @@ func (s *Service) executeDeleteSkill(ctx context.Context, args map[string]any) (
 	if err := s.skillsRepo.AuthorizeSkillWrite(ctx, sk); err != nil {
 		return nil, fmt.Errorf("delete_skill: %w", err)
 	}
+	if sk.IsLocked() {
+		return nil, fmt.Errorf("delete_skill: skill is locked; unlock it before deleting")
+	}
 
 	if err := s.skillsRepo.Delete(ctx, id); err != nil {
 		return nil, fmt.Errorf("delete_skill: %w", err)
 	}
 	return s.wrapResult(map[string]any{"success": true, "skill_id": idStr})
+}
+
+// executePatchSkill replaces one exact, unique substring of a skill's content.
+// It is the low-risk write the capture prompt teaches: the model quotes the
+// text it is extending, so a concurrent edit fails closed instead of
+// overwriting the base.
+func (s *Service) executePatchSkill(ctx context.Context, args map[string]any) (*ToolResult, error) {
+	idStr, _ := args["skill_id"].(string)
+	if idStr == "" {
+		return nil, fmt.Errorf("patch_skill: 'skill_id' is required")
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("patch_skill: invalid skill_id UUID: %w", err)
+	}
+	oldText, _ := args["old"].(string)
+	newText, _ := args["new"].(string)
+	if strings.TrimSpace(oldText) == "" {
+		return nil, fmt.Errorf("patch_skill: 'old' is required and must be a unique substring")
+	}
+	if newText == "" {
+		return nil, fmt.Errorf("patch_skill: 'new' is required")
+	}
+
+	sk, err := s.skillsRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("patch_skill: %w", err)
+	}
+	if err := s.skillsRepo.AuthorizeSkillWrite(ctx, sk); err != nil {
+		return nil, fmt.Errorf("patch_skill: %w", err)
+	}
+	if sk.IsLocked() {
+		return nil, fmt.Errorf("patch_skill: skill is locked; unlock it before editing")
+	}
+
+	content, err := skills.ApplyPatch(sk.Content, oldText, newText)
+	if err != nil {
+		return nil, fmt.Errorf("patch_skill: %w", err)
+	}
+	if scan := skills.ScanSkill(sk.Name, content); !scan.Passed() {
+		return nil, fmt.Errorf("patch_skill: security scan failed: %s", scan.Findings[0].Message)
+	}
+	dto := &skills.UpdateSkillDTO{Content: &content}
+	if err := skills.ValidateUpdateSkill(*dto, s.skillsRepo.MaxContentSize()); err != nil {
+		return nil, fmt.Errorf("patch_skill: %w", err)
+	}
+	updated, err := s.skillsRepo.Update(ctx, id, dto)
+	if err != nil {
+		return nil, fmt.Errorf("patch_skill: %w", err)
+	}
+	if updated.ProjectID != nil {
+		s.skillsRepo.RecordSkillPatch(ctx, updated.ID, *updated.ProjectID)
+	}
+	return s.wrapResult(updated.ToDTO())
+}
+
+// isAgentActor reports whether the call is attributed to an agent rather than a
+// human user, so a tool-created skill is marked agent-created (and therefore
+// eligible for the curator). Unknown attribution stays manual.
+func isAgentActor(ctx context.Context) bool {
+	actorType, _, ok := auth.ActorFromContext(ctx)
+	return ok && strings.EqualFold(actorType, "agent")
 }

@@ -104,6 +104,7 @@ var models = []any{
 	(*graph.BranchLineage)(nil),
 	(*graph.ProvenanceContribution)(nil),
 	(*graph.SourceGeneration)(nil),
+	(*graph.SourceGrant)(nil),
 
 	// domain/apitoken
 	(*apitoken.ApiToken)(nil),
@@ -194,6 +195,9 @@ var models = []any{
 
 	// domain/skills
 	(*skills.Skill)(nil),
+	(*skills.SkillReview)(nil),
+	(*skills.SkillProposal)(nil),
+	(*skills.SkillUsage)(nil),
 
 	// domain/documents
 	(*documents.Document)(nil),

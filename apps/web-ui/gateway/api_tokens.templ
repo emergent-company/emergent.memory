@@ -448,9 +448,7 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 			}
 			if len(retired) > 0 {
 				<div class="flex items-start gap-3" data-testid="retired-scopes-notice">
-					<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
-						@ui.IconSpan("lucide--alert-triangle", "size-5")
-					</div>
+					@components.IconCircle("lucide--alert-triangle", components.IconCircleToneWarning)
 					<div class="min-w-0">
 						<p class="text-sm font-semibold">This token's scopes can no longer be edited</p>
 						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {

@@ -18,6 +18,7 @@ struct MemoryConnectorApp: App {
                 .environment(environment.settings)
                 .environment(environment.accountStore)
                 .environment(environment.projectStore)
+                .environment(environment.recentProjects)
                 .environment(environment.appState)
                 .environment(environment.identity)
                 .environment(environment.avatarStore)
@@ -41,7 +42,149 @@ struct MemoryConnectorApp: App {
                     openMainWindow(page: .about)
                 }
             }
+
+            // Every toolbar control is also a menu command: the toolbar panels
+            // can be narrowed into overflow or customised away, and this is the
+            // only keyboard-driven path to switching context. Toggles give the
+            // system's own checkmark for the active item, the same state the
+            // panel rows show.
+            CommandMenu("Project") {
+                // Sorted, not the CLI's order: the shortcuts are positional, so a
+                // refresh that reorders the list must not move which project ⌘3
+                // selects.
+                ForEach(Array(sortedProjects.prefix(9).enumerated()), id: \.element.id) { index, project in
+                    Toggle(isOn: Binding(
+                        get: { project.id == environment.projectStore.activeProjectID },
+                        set: { _ in switchProject(project.id) }
+                    )) {
+                        Text(verbatim: projectName(project))
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                }
+                if !environment.projectStore.projects.isEmpty {
+                    Divider()
+                }
+                Button("Manage Projects…") {
+                    openMainWindow(page: .project)
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                Button("Open in Memory Web") {
+                    openWebProject()
+                }
+                .disabled(activeProjectWebURL == nil)
+                Divider()
+                Button("Refresh Projects") {
+                    refreshProjects()
+                }
+                .disabled(environment.projectStore.state == .loading)
+            }
+
+            CommandMenu("Account") {
+                ForEach(environment.accountStore.accounts) { account in
+                    Toggle(isOn: Binding(
+                        get: { account.id == environment.accountStore.activeAccountID },
+                        set: { _ in switchAccount(account.id) }
+                    )) {
+                        Text(verbatim: accountMenuTitle(account))
+                    }
+                }
+                if environment.accountStore.accounts.count > 1 {
+                    Divider()
+                }
+                Button("Add Account…") {
+                    addAccount()
+                }
+                .disabled(environment.accountStore.isSigningIn)
+                Button("Manage Accounts…") {
+                    openMainWindow(page: .project)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                if let active = environment.accountStore.activeAccount {
+                    Divider()
+                    // A menu command is explicit: it names the account and acts.
+                    // The toolbar keeps its confirmation because that control is
+                    // one stray click away.
+                    Button(role: .destructive) {
+                        signOut(active)
+                    } label: {
+                        Text(SignOutConfirmation.confirmButtonTitle(displayTitle: active.displayTitle))
+                    }
+                }
+            }
         }
+    }
+
+    // MARK: - Menu actions
+
+    private func projectName(_ project: ProjectInfo) -> String {
+        let name = (project.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? String(localized: "Untitled project") : name
+    }
+
+    /// Projects in name order, which is the order the ⌘1…⌘9 shortcuts bind to.
+    private var sortedProjects: [ProjectInfo] {
+        environment.projectStore.projects.sorted {
+            projectName($0).localizedStandardCompare(projectName($1)) == .orderedAscending
+        }
+    }
+
+    /// An account id is `<environmentID>:<sub-or-email>`, so the same email
+    /// signed in to Prod and Dev is two accounts. The menu labels them apart with
+    /// the environment — the same rule the account panel uses, applied to the
+    /// third surface that lists accounts.
+    private func accountMenuTitle(_ account: Account) -> String {
+        let spansEnvironments = Set(environment.accountStore.accounts.map(\.environmentID)).count > 1
+        guard spansEnvironments else { return account.switcherTitle }
+        return "\(account.switcherTitle) · \(account.environmentLabel)"
+    }
+
+    private func switchProject(_ id: String) {
+        Task {
+            let token = await (try? environment.accountStore.currentAccessToken()) ?? ""
+            await environment.projectStore.selectProject(id, accessToken: token)
+            if case .error = environment.projectStore.state {
+                return
+            }
+            environment.recentProjects.record(id)
+        }
+    }
+
+    private func switchAccount(_ id: String) {
+        guard id != environment.accountStore.activeAccountID else { return }
+        Task { try? await environment.accountStore.switchTo(accountID: id) }
+    }
+
+    private func addAccount() {
+        Task {
+            let target = Environment.signInEnvironments(for: .windowHeader).first ?? Environment.primary
+            guard await (try? environment.accountStore.signIn(environment: target)) != nil else {
+                return
+            }
+            let token = await (try? environment.accountStore.currentAccessToken()) ?? ""
+            await environment.projectStore.loadProjects(accessToken: token)
+        }
+    }
+
+    private func signOut(_ account: Account) {
+        Task { await environment.accountStore.signOut(accountID: account.id) }
+    }
+
+    private func refreshProjects() {
+        Task {
+            let token = await (try? environment.accountStore.currentAccessToken()) ?? ""
+            await environment.projectStore.loadProjects(accessToken: token)
+        }
+    }
+
+    private var activeProjectWebURL: URL? {
+        guard let project = environment.projectStore.activeProject else { return nil }
+        return environment.accountStore.activeAccount?.environment?
+            .projectWebURL(orgID: project.orgID, projectID: project.id)
+    }
+
+    private func openWebProject() {
+        guard let url = activeProjectWebURL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Raises the main window (opening it if needed) on the given sidebar page.

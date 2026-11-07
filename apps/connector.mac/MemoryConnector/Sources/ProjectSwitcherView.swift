@@ -1,51 +1,183 @@
 import SwiftUI
 
-/// Project switcher at the leading edge of the window toolbar: a plain,
-/// single-line menu showing the active project name with a small chevron (a
-/// dropdown, not a bordered button). Mirrors `ProjectStore` state: signed-out,
-/// loading, empty, error, and ready (checkmark on the active project).
+/// Project switcher at the leading edge of the window toolbar.
+///
+/// The trigger is one compact line — active project name, connection dot,
+/// disclosure chevron — the shape a Mac toolbar expects. The organisation used
+/// to be stacked above the name in a two-line label, which is a browser-navbar
+/// pattern: it was the only two-line item in the titlebar and it crowded the
+/// toolbar's baseline. The organisation now lives in the panel header, where
+/// there is room for it.
+///
+/// The panel itself is `ProjectSwitcherPanel`, a real view in a `.popover`
+/// rather than a `Menu` (see that type for why).
 struct ProjectSwitcherView: View {
     @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
 
-    @State private var switching: String?
+    @State private var showsPanel = false
+
+    /// Width the project name may occupy before it tail-truncates, so a long
+    /// name cannot widen the toolbar.
+    private static let labelMaxWidth: CGFloat = 220
 
     var body: some View {
-        content
+        trigger
             .accessibilityIdentifier("toolbar.project")
             // Self-heal: if bootstrap ran before the session was restored (or
             // failed), load once when the picker appears with no projects.
             .task { await ensureProjectsLoaded() }
+            .popover(isPresented: $showsPanel, arrowEdge: .bottom) {
+                ProjectSwitcherPanel(onDismiss: { showsPanel = false })
+                    .padding(10)
+                    .frame(width: 320)
+            }
+    }
+
+    // MARK: - Trigger
+
+    private var trigger: some View {
+        Button {
+            showsPanel.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                if hasError {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                triggerTitle
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                connectionGlyph
+                trailingSlot
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(Text(AccessibleNames.project))
+        .accessibilityValue(accessibilityValue)
+        .help(switchHelp)
+        // One switch at a time: the first load has no list to show yet.
+        .disabled(projectStore.state == .loading && projectStore.projects.isEmpty)
     }
 
     @ViewBuilder
-    private var content: some View {
-        if !accountStore.isEffectivelySignedIn {
-            statusLabel(icon: "person.crop.circle.badge.questionmark",
-                        text: "Sign in to switch projects")
-        } else if !projectStore.projects.isEmpty {
-            projectsMenu
-        } else {
-            switch projectStore.state {
-            case .idle, .loading:
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading projects…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                // Same horizontal rhythm as `switcherLabel` so the loading row
-                // does not shift when it becomes the project dropdown.
-                .padding(.horizontal, 10)
-            case .signedOut:
-                signedOutMenu
-            case .error:
-                errorMenu
-            case .loaded:
-                statusLabel(icon: "folder", text: "No projects")
-            }
+    private var connectionGlyph: some View {
+        if let id = projectStore.activeProjectID, projectStore.isConnected(id) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(.green)
+                .accessibilityLabel(Text("Connected"))
+                .help(Text("Connected — serving local tools"))
         }
     }
+
+    /// Chevron, or a spinner while a list load is in flight, always in the same
+    /// reserved width so the toolbar does not jitter.
+    @ViewBuilder
+    private var trailingSlot: some View {
+        if projectStore.state == .loading {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 11, height: 11)
+        } else {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 11, height: 11)
+        }
+    }
+
+    // MARK: - Derived
+
+    /// Active project name (runtime data), or the state that stands in for it —
+    /// all on the localizable path.
+    private var triggerTitle: Text {
+        if !accountStore.isEffectivelySignedIn {
+            return Text("Sign in")
+        }
+        if let name = projectStore.activeProjectName?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        {
+            return Text(verbatim: name)
+        }
+        switch projectStore.state {
+        case .idle, .loading:
+            return Text("Loading projects…")
+        case .signedOut:
+            return Text("Signed out")
+        case .error:
+            return Text("Couldn't load projects")
+        case .loaded:
+            return Text("No projects")
+        }
+    }
+
+    private var activeOrganizationName: String? {
+        guard let project = projectStore.activeProject else { return nil }
+        return projectStore.organizationName(for: project)
+    }
+
+    /// VoiceOver value for the trigger. The accessible NAME stays the stable
+    /// action ("Switch project"); the live context travels as the value.
+    private var accessibilityValue: Text {
+        if !accountStore.isEffectivelySignedIn {
+            return Text("Signed out")
+        }
+        if projectStore.projects.isEmpty {
+            switch projectStore.state {
+            case .idle, .loading:
+                return Text("Loading projects…")
+            case .signedOut:
+                return Text("Signed out")
+            case .error:
+                return Text("Couldn't load projects")
+            case .loaded:
+                return Text("No projects")
+            }
+        }
+        guard let summary = contextSummary else {
+            return Text("Select project")
+        }
+        return Text(verbatim: summary)
+    }
+
+    /// "Org, Project" for the active context, or the project alone when its
+    /// organisation is unresolvable. Both parts are runtime data.
+    private var contextSummary: String? {
+        guard let name = projectStore.activeProjectName?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        else {
+            return nil
+        }
+        guard let org = activeOrganizationName else { return name }
+        return "\(org), \(name)"
+    }
+
+    /// Tooltip for the trigger: the server's error text when the load failed
+    /// (data, shown verbatim), otherwise the localized action label.
+    private var switchHelp: Text {
+        if case let .error(message) = projectStore.state {
+            return Text(verbatim: message)
+        }
+        return Text("Switch project")
+    }
+
+    /// A failed switch keeps the loaded list usable but must stay visible, so
+    /// the trigger carries a warning glyph rather than only a tooltip.
+    private var hasError: Bool {
+        if case .error = projectStore.state {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Loading
 
     private func ensureProjectsLoaded() async {
         guard accountStore.isEffectivelySignedIn,
@@ -59,215 +191,6 @@ struct ProjectSwitcherView: View {
             await projectStore.loadProjects(accessToken: token)
         case .loading, .loaded:
             return
-        }
-    }
-
-    // MARK: - Ready
-
-    private var projectsMenu: some View {
-        Menu {
-            // Every project lives inside a Section with a guaranteed non-empty
-            // header ("Other" for unknown orgs) so the whole list renders
-            // uniformly indented under its organisation.
-            ForEach(projectStore.projectsByOrganization) { group in
-                Section {
-                    ForEach(group.projects, id: \.id) { project in
-                        Button {
-                            switchProject(to: project.id)
-                        } label: {
-                            // Fixed-width leading slot keeps names aligned
-                            // whether or not the row is the active project.
-                            // A `Menu` drops `.opacity` on its item labels, so
-                            // the glyph is included only for the active project
-                            // rather than hidden with opacity.
-                            HStack(spacing: 6) {
-                                if project.id == projectStore.activeProjectID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .frame(width: 12, alignment: .center)
-                                } else {
-                                    Color.clear.frame(width: 12)
-                                }
-                                project.name.map { Text($0) } ?? Text("Untitled project")
-                                if projectStore.isConnected(project.id) {
-                                    Image(systemName: "bolt.fill")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(.green)
-                                        .help("Connected — serving local tools")
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    // Never tail-truncate the organisation name.
-                    Text(group.sectionTitle)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Divider()
-            Text("Selecting a project views it; connect to serve its tools")
-        } label: {
-            switcherLabel {
-                Image(systemName: hasError ? "exclamationmark.triangle" : "shippingbox")
-                    .foregroundStyle(hasError ? Color.orange : Color.secondary)
-                activeProjectLabel
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                if let activeID = projectStore.activeProjectID,
-                   projectStore.isConnected(activeID)
-                {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.green)
-                        .help("Connected — serving local tools")
-                }
-                if switching != nil {
-                    ProgressView().controlSize(.small)
-                } else {
-                    chevron
-                }
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .disabled(switching != nil)
-        .help(switchHelp)
-    }
-
-    // MARK: - Error / empty
-
-    private var errorMenu: some View {
-        Menu {
-            Button("Retry") { retry() }
-        } label: {
-            switcherLabel {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text("Couldn't load projects")
-                    .lineLimit(1)
-                chevron
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(switchHelp)
-    }
-
-    private var signedOutMenu: some View {
-        Menu {
-            Button("Sign in") { signIn() }
-            Button("Retry") { retry() }
-        } label: {
-            switcherLabel {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                Text("Signed out")
-                    .lineLimit(1)
-                chevron
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Signed out — sign in to load projects")
-    }
-
-    private func statusLabel(icon: String, text: LocalizedStringResource) -> some View {
-        switcherLabel {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-            Text(text)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .help(Text(text))
-    }
-
-    /// Borderless, single-line chrome: spacing + a small chevron and horizontal
-    /// padding, so it reads as a dropdown rather than a second toolbar button.
-    /// The padding matches the account control next door (10pt) so the two
-    /// trailing toolbar items read as a pair; it is the single chrome entry
-    /// point, so every label state gets the same left/right space.
-    private func switcherLabel(@ViewBuilder content: () -> some View) -> some View {
-        HStack(spacing: 5) {
-            content()
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 10)
-    }
-
-    private var chevron: some View {
-        Image(systemName: "chevron.down")
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.secondary)
-    }
-
-    // MARK: - Derived
-
-    /// Active project name (runtime data), or a localized placeholder when none
-    /// is selected. Returning `Text` keeps the placeholder on the localizable
-    /// path instead of folding it into a verbatim `String`.
-    private var activeProjectLabel: Text {
-        projectStore.activeProjectName.map { Text($0) } ?? Text("Select project")
-    }
-
-    private var hasError: Bool {
-        if case .error = projectStore.state {
-            return true
-        }
-        return false
-    }
-
-    /// Tooltip for the switcher label: the server's error text when the load
-    /// failed (data, shown verbatim), otherwise the localized action label.
-    private var switchHelp: Text {
-        if case let .error(message) = projectStore.state {
-            return Text(verbatim: message)
-        }
-        return Text("Switch project")
-    }
-
-    // MARK: - Actions
-
-    private func switchProject(to id: String) {
-        guard !id.isEmpty, switching == nil else { return }
-        switching = id
-        Task {
-            defer { switching = nil }
-            do {
-                let token = try await accountStore.currentAccessToken()
-                await projectStore.selectProject(id, accessToken: token)
-            } catch {
-                // ProjectStore surfaces its own failures via `state`; a thrown
-                // token error leaves the previous state, shown by the label.
-            }
-        }
-    }
-
-    private func retry() {
-        Task {
-            // Project listing runs through the CLI; the app token is optional.
-            // `loadProjects` owns the auth classification and repair.
-            let token = await (try? accountStore.currentAccessToken()) ?? ""
-            await projectStore.loadProjects(accessToken: token)
-        }
-    }
-
-    /// Re-authenticates the active account (or Prod when none is active) and
-    /// reloads projects through the connector CLI.
-    private func signIn() {
-        Task {
-            let environment = accountStore.activeEnvironment ?? .prod
-            guard await (try? accountStore.signIn(environment: environment)) != nil else {
-                return
-            }
-            let token = await (try? accountStore.currentAccessToken()) ?? ""
-            await projectStore.loadProjects(accessToken: token)
         }
     }
 }

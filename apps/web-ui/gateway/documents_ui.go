@@ -275,10 +275,14 @@ func (s *Server) assembleExtractionJobDetail(ctx context.Context, job Extraction
 	d.Objects = objects
 	d.Relationships = s.collectExtractionRelationships(ctx, branchID, objects)
 
-	if readiness, err := s.memory.GetMergeReadiness(ctx, branchID); err != nil {
-		captureError(err)
-	} else {
-		d.Readiness = readiness
+	// Readiness only answers "can this merge now?" — a merged branch has
+	// nothing to merge, so skip the extra request and leave it nil.
+	if branch == nil || branch.MergedAt == "" {
+		if readiness, err := s.memory.GetMergeReadiness(ctx, branchID); err != nil {
+			captureError(err)
+		} else {
+			d.Readiness = readiness
+		}
 	}
 	return d
 }

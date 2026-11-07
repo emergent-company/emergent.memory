@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/skills"
 )
 
 // Project represents a project in the kb.projects table
@@ -33,6 +35,10 @@ type Project struct {
 	// project keeps the behaviour it had before the flag existed; when false,
 	// discovery only runs through the explicit start/retry endpoints.
 	AutoDiscoveryEnabled bool `bun:"auto_discovery_enabled,notnull,default:true" json:"auto_discovery_enabled"`
+
+	// SkillCapture is the project-level automatic skill-capture policy (added in
+	// migration 00269). The zero value means "off", so the feature is opt-in.
+	SkillCapture skills.ProjectSkillCaptureConfig `bun:"skill_capture,type:jsonb,notnull,default:'{}'" json:"skill_capture"`
 
 	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
 	DeletedBy *string    `bun:"deleted_by,type:uuid" json:"deleted_by,omitempty"`
@@ -111,16 +117,17 @@ type ProjectStats struct {
 
 // ProjectDTO is the response DTO for project endpoints
 type ProjectDTO struct {
-	ID                   string         `json:"id"`
-	Name                 string         `json:"name"`
-	OrgID                string         `json:"orgId"`
-	ProjectInfo          *string        `json:"project_info,omitempty"`
-	ChatPromptTemplate   *string        `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects   *bool          `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig    map[string]any `json:"auto_extract_config,omitempty"`
-	BudgetUSD            *float64       `json:"budget_usd,omitempty"`
-	BudgetAlertThreshold *float64       `json:"budget_alert_threshold,omitempty"`
-	Stats                *ProjectStats  `json:"stats,omitempty"`
+	ID                   string                           `json:"id"`
+	Name                 string                           `json:"name"`
+	OrgID                string                           `json:"orgId"`
+	ProjectInfo          *string                          `json:"project_info,omitempty"`
+	ChatPromptTemplate   *string                          `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects   *bool                            `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig    map[string]any                   `json:"auto_extract_config,omitempty"`
+	SkillCapture         skills.ProjectSkillCaptureConfig `json:"skill_capture"`
+	BudgetUSD            *float64                         `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold *float64                         `json:"budget_alert_threshold,omitempty"`
+	Stats                *ProjectStats                    `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
 	// AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
@@ -187,6 +194,9 @@ type UpdateProjectRequest struct {
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
+	// SkillCapture replaces the project capture policy when present. An object
+	// with mode "off" disables capture; omitting the field leaves it untouched.
+	SkillCapture *skills.ProjectSkillCaptureConfig `json:"skill_capture,omitempty"`
 }
 
 // ToDTO converts a Project entity to ProjectDTO
@@ -201,6 +211,7 @@ func (p *Project) ToDTO() ProjectDTO {
 		BudgetUSD:            p.BudgetUSD,
 		BudgetAlertThreshold: &p.BudgetAlertThreshold,
 		Stats:                p.Stats,
+		SkillCapture:         p.SkillCapture,
 	}
 
 	// Only include boolean fields if they are true

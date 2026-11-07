@@ -185,7 +185,7 @@ templ objectsFilterControls(data objectsPageData) {
 			@objectsFilterSelect("objects-filter-branch", "branch", "Branch", objectBranchOptionLabel(data.Branches, data.BranchID), templ.Attributes{"data-stats-refresh": "true"}) {
 				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
 				for _, b := range data.Branches {
-					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
+					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ branchDisplayName(b) }</option>
 				}
 			}
 		}
@@ -598,7 +598,9 @@ templ objectStatusField(id string, current string, ctrl *objectStatusControl) {
 // chip per value) while every value is short and single-line and the declared
 // element type is one a chip can carry, else a JSON text field for the whole
 // array (an object or array element type always takes the JSON field); url →
-// url input; md5/sha1/sha256/sha512 → a
+// url input; email → email input; phone → tel input; country/currency → a short
+// upper-cased code field; time → time picker;
+// md5/sha1/sha256/sha512 → a
 // single-line hex input constrained to the digest length; string with a declared
 // enum → native select of the allowed values; string with widget: "input" →
 // single-line input; any other string/unknown → an auto-growing textarea (string
@@ -631,6 +633,16 @@ templ propertyInput(def objectPropertyDef, vals []string, stored any, submittedJ
 		<input name={ "prop_" + def.Name } type="number" step="1" value={ v } class="input w-full"/>
 	} else if def.Type == "url" {
 		<input name={ "prop_" + def.Name } type="url" value={ v } placeholder="https://…" spellcheck="false" autocapitalize="off" class="input w-full"/>
+	} else if def.Type == "email" {
+		<input name={ "prop_" + def.Name } type="email" value={ v } placeholder="name@example.com" spellcheck="false" autocapitalize="off" autocomplete="off" class="input w-full"/>
+	} else if def.Type == "phone" {
+		<input name={ "prop_" + def.Name } type="tel" value={ v } placeholder="+1 555 123 4567" spellcheck="false" autocapitalize="off" autocomplete="off" class="input w-full"/>
+	} else if def.Type == "country" {
+		<input name={ "prop_" + def.Name } type="text" value={ v } placeholder="ISO code, e.g. DE" maxlength="2" pattern="[A-Za-z]{2}" spellcheck="false" autocapitalize="characters" autocomplete="off" class="input w-full uppercase"/>
+	} else if def.Type == "currency" {
+		<input name={ "prop_" + def.Name } type="text" value={ v } placeholder="ISO code, e.g. EUR" maxlength="3" pattern="[A-Za-z]{3}" spellcheck="false" autocapitalize="characters" autocomplete="off" class="input w-full uppercase"/>
+	} else if def.Type == "time" {
+		<input name={ "prop_" + def.Name } type="time" value={ v } class="input w-full"/>
 	} else if isHashPropertyType(def.Type) {
 		<input name={ "prop_" + def.Name } type="text" value={ v } placeholder={ hashInputHint(def.Type) } pattern={ hashInputPattern(def.Type) } maxlength={ hashInputMaxLength(def.Type) } spellcheck="false" autocapitalize="off" autocomplete="off" class="input w-full font-mono"/>
 	} else if def.Type == "object" {

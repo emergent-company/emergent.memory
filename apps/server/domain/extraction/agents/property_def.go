@@ -44,6 +44,17 @@ func PropertyDefFromMap(m map[string]any) PropertyDef {
 	if d, ok := m["description"].(string); ok {
 		def.Description = d
 	}
+	if f, ok := m["format"].(string); ok {
+		def.Format = f
+	}
+	// JSON numbers decode as float64 here; a bound may legitimately be 0, so
+	// only a decoded number sets the pointer.
+	if v, ok := m["minimum"].(float64); ok {
+		def.Minimum = &v
+	}
+	if v, ok := m["maximum"].(float64); ok {
+		def.Maximum = &v
+	}
 	if items, ok := m["items"].(map[string]any); ok {
 		itemDef := PropertyDefFromMap(items)
 		def.Items = &itemDef

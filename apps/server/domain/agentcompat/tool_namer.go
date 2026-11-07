@@ -102,6 +102,7 @@ var internalToolNames = map[string]struct{}{
 	"skill-get":    {},
 	"skill-create": {},
 	"skill-update": {},
+	"skill-patch":  {},
 	"skill-delete": {},
 
 	// ── Blueprints ──────────────────────────────────────────────────────────

@@ -638,31 +638,47 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 		// Azure OpenAI's legacy dated endpoint requires ?api-version=<v> on the
 		// request URL; other vendors leave the extra unset and the URL unchanged.
 		requestURL := AppendQueryParam(m.baseURL+"/chat/completions", "api-version", extraValue(m.extra, "api_version"))
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			requestURL,
-			bytes.NewReader(bodyBytes))
-		if err != nil {
-			yield(nil, fmt.Errorf("openai-compatible: failed to create request: %w", err))
-			return
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		if err := ApplyAuth(httpReq, m.auth, m.apiKey); err != nil {
-			yield(nil, fmt.Errorf("openai-compatible: %w", err))
-			return
-		}
-		ApplyExtraHeaders(httpReq, m.extraHeaders)
+		// Answer a rate limit here rather than letting it reach the job that
+		// owns this call: the extraction job's retry is immediate, so a 429
+		// would otherwise consume its whole budget in seconds (#237).
+		var (
+			resp     *http.Response
+			respBody []byte
+		)
+		for attempt := 0; ; attempt++ {
+			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost,
+				requestURL,
+				bytes.NewReader(bodyBytes))
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("openai-compatible: failed to create request: %w", reqErr))
+				return
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			if authErr := ApplyAuth(httpReq, m.auth, m.apiKey); authErr != nil {
+				yield(nil, fmt.Errorf("openai-compatible: %w", authErr))
+				return
+			}
+			ApplyExtraHeaders(httpReq, m.extraHeaders)
 
-		resp, err := m.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai-compatible: request failed: %w", err))
-			return
-		}
-		defer resp.Body.Close()
+			resp, err = m.client.Do(httpReq)
+			if err != nil {
+				yield(nil, fmt.Errorf("openai-compatible: request failed: %w", err))
+				return
+			}
 
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai-compatible: failed to read response: %w", err))
-			return
+			respBody, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				yield(nil, fmt.Errorf("openai-compatible: failed to read response: %w", err))
+				return
+			}
+
+			if !isRetryableProviderStatus(resp.StatusCode) || attempt >= maxProviderRetries {
+				break
+			}
+			if !sleepWithContext(ctx, providerRetryDelay(attempt, resp.Header.Get("Retry-After"))) {
+				break // context ended during the wait; report the response we have
+			}
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
