@@ -238,6 +238,18 @@ jobs:
         continue-on-error: true
         run: bash scripts/provenance-race-test.sh
 
+      # The two invariants #205 asks for, read from source: no hermetic suite
+      # pins a port or shares a lane with another (so the `datasources` and
+      # `share` steps of this one job cannot want the same port — #810's fix,
+      # which nothing else would notice being reverted), and no softened suite
+      # step can fail or never run without the `Report` step below going red.
+      # Static, sub-second, no browser and no gateway.
+      - name: 'Contract: e2e suite gates'
+        id: ci_contract
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
+        run: node scripts/ci-contract-check.mjs
+
       # ── Suite 1: static-JS wiring (no gateway) ─────────────────────────────
       # Hermetic DOM gate. The full Playwright suite (playwright.config.ts) needs
       # a live gateway in session mode + a Zitadel test user + the real memory
@@ -369,9 +381,18 @@ jobs:
       # Turns the run red when any check or suite above did not succeed, and
       # names which ones — this is what keeps the `continue-on-error` steps from
       # reading as a partial green. `steps.<id>.outcome` holds the real result
-      # even when `conclusion` was softened by `continue-on-error`. A step that
-      # never ran (because `Build` failed) reports `skipped`; the job is already
-      # red in that case from `Build`.
+      # even when `conclusion` was softened by `continue-on-error`.
+      #
+      # `success` is the ONLY pass. None of the steps listed below is
+      # conditional, so `skipped` means an earlier *hard* step (checkout,
+      # `npm ci`, templ generate, the Playwright install) stranded the run before
+      # the suites — and a suite that never ran is not a suite that passed
+      # (#205). The job is already red from that stranding step, but the verdict
+      # must not depend on the coupling: an `if:` on a suite step would otherwise
+      # let the job read green while that suite never ran.
+      #
+      # `scripts/ci-contract-check.mjs` asserts this shape — every softened step
+      # has an id the report reads, and `skipped` is not accepted.
       - name: Report
         if: always()
         run: |
@@ -379,7 +400,7 @@ jobs:
           report() {
             printf '%-24s %s\n' "$1" "$2"
             case "$2" in
-              success|skipped) ;;
+              success) ;;
               *) failed+=("$1") ;;
             esac
           }
@@ -388,6 +409,7 @@ jobs:
           report "gateway test"       "${{ steps.test.outcome }}"
           report "gateway lint"       "${{ steps.lint.outcome }}"
           report "port provenance"    "${{ steps.ports_provenance.outcome }}"
+          report "e2e contract"       "${{ steps.ci_contract.outcome }}"
           report "js syntax"          "${{ steps.js_syntax.outcome }}"
           report "js wiring"          "${{ steps.js.outcome }}"
           report "datasources e2e"    "${{ steps.datasources.outcome }}"
