@@ -479,8 +479,14 @@ func requiresProject(toolName string, args map[string]any) bool {
 		// three read a project-scoped surface, so a context-less call must get
 		// the documented invalid-params error, not an internal tool error.
 		// blueprint-import-preview is deliberately absent: it supports a global
-		// (superadmin) preview with no project.
-		"schema-pack-claims", "blueprint-updates-status", "blueprint-model-overrides-get":
+		// (superadmin) preview with no project. The write-side #18 tools that
+		// mirror a RequireProjectID REST route (updates check/apply, model
+		// overrides PUT, github-credentials PUT) require project the same way;
+		// blueprint-import/blueprint-deprecate stay absent because they support
+		// a global (superadmin) write, matching create/publish/new-version.
+		"schema-pack-claims", "blueprint-updates-status", "blueprint-model-overrides-get",
+		"blueprint-updates-check", "blueprint-updates-apply",
+		"blueprint-model-overrides-put", "blueprint-github-credentials-put":
 		return true
 	default:
 		return false
