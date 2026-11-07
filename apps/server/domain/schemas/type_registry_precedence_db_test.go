@@ -170,12 +170,78 @@ func TestAssignPackCrossPackMergeMovesOwnership(t *testing.T) {
 	merged, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: b.ID, Merge: true})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Person"}, merged.MergedTypes)
+	assert.Empty(t, merged.ShadowedTypes, "a merge owns the type, so there is no registry/read-path divergence")
 
 	owner, got := registryRowAndOwner(t, ctx, db, projectID, "Person")
 	assert.Equal(t, "bb-companies", owner, "the newest install must define the type")
 	props := propsOf(t, got)
 	assert.Contains(t, props, "name")
 	assert.Contains(t, props, "legal_name")
+}
+
+// TestAssignPackCrossPackSkipReportsShadowing is the #338 part-2 regression.
+// A non-merge install of a pack that declares a type owned by another pack
+// skips the registry write, but assigning the pack still makes it the newest
+// assignment, so the last-wins read paths resolve the type from the incoming
+// declaration. The result must report that divergence explicitly instead of
+// leaving the registry owner and the compiled types naming different packs.
+func TestAssignPackCrossPackSkipReportsShadowing(t *testing.T) {
+	ctx, repo, db, projectID := setupTypeRegistryTest(t)
+
+	a, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name: "aa-core", Version: "0.1.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"}}}]`),
+	})
+	require.NoError(t, err)
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: a.ID})
+	require.NoError(t, err)
+
+	b, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name: "bb-companies", Version: "0.1.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"legal_name":{"type":"string"}}}]`),
+	})
+	require.NoError(t, err)
+
+	// The dry run predicts the same divergence without touching the database.
+	preview, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: b.ID, DryRun: true})
+	require.NoError(t, err)
+	require.Len(t, preview.ShadowedTypes, 1)
+
+	skipped, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: b.ID})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Person"}, skipped.SkippedTypes)
+	require.Len(t, skipped.ShadowedTypes, 1, "a cross-pack skip must name the shadowed type")
+
+	shadowed := skipped.ShadowedTypes[0]
+	assert.Equal(t, "Person", shadowed.TypeName)
+	assert.Equal(t, "aa-core", shadowed.RegistryOwnerPack)
+	assert.Equal(t, a.ID, shadowed.RegistryOwnerSchemaID)
+	assert.Equal(t, "bb-companies", shadowed.ShadowingPack)
+	assert.Equal(t, b.ID, shadowed.ShadowingSchemaID)
+
+	// The registry still names the old owner...
+	owner, _ := registryRowAndOwner(t, ctx, db, projectID, "Person")
+	assert.Equal(t, "aa-core", owner, "a skip must not re-point the registry row")
+
+	// ...while the read paths resolve Person from the newer pack. This is the
+	// divergence the result now reports.
+	compiled, err := repo.GetCompiledTypesByProject(ctx, projectID)
+	require.NoError(t, err)
+	var effective, superseded *schemas.ObjectTypeSchema
+	for i := range compiled.ObjectTypes {
+		if compiled.ObjectTypes[i].Name != "Person" {
+			continue
+		}
+		if compiled.ObjectTypes[i].Shadowed {
+			superseded = &compiled.ObjectTypes[i]
+		} else {
+			effective = &compiled.ObjectTypes[i]
+		}
+	}
+	require.NotNil(t, effective, "the newer pack must define Person in the compiled view")
+	require.NotNil(t, superseded, "the older pack's Person must be marked shadowed")
+	assert.Equal(t, "bb-companies", effective.SchemaName)
+	assert.Equal(t, "aa-core", superseded.SchemaName)
 }
 
 // TestAssignPackUpgradePreservesProjectTypeCustomisation pins the config-column

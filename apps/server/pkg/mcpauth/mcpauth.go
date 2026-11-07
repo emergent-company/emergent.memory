@@ -86,7 +86,8 @@ func (t Tokens) ExpiresAt(now time.Time) time.Time {
 //
 //  1. Discover the protected-resource metadata (RFC 9728): probe the resource
 //     for a 401/403 Bearer challenge advertising `resource_metadata`, else fetch
-//     `/.well-known/oauth-protected-resource` on the resource origin.
+//     the well-known document — the §3.1 path-inserted URL first and the
+//     origin-only URL as the compatibility fallback.
 //  2. Resolve the authorization-server metadata (RFC 8414 / OpenID discovery)
 //     from the issuer advertised in the protected-resource metadata (or the
 //     resource origin when none is advertised). See Discover.

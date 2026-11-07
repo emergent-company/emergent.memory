@@ -4546,6 +4546,15 @@ const toolPolicyResultInstruction = `Tool policy: some of your tool calls may re
 // resolveInstruction path.
 const citationInstruction = `Citing sources: cite every graph object you use as [Name](/objects/<object-id>) and every relationship as [Source —type→ Target](/objects/<source-id>#relationship-<relationship-id>). Use the exact ids from the tool results — never invent an id.`
 
+// groundingInstruction is appended to the system prompt of knowledge-base-backed
+// agents so an answer stays bound to the sources it actually retrieved: claims
+// the sources do not support are withheld, a difference the sources do not
+// explain is reported as unexplained rather than guessed at, and content read
+// from an unmerged branch is labelled as pending work instead of settled fact
+// (issue #245). An agent with an empty user system prompt otherwise receives
+// only the citation block and no behavioural guidance at all.
+const groundingInstruction = `Grounding: answer only from the tool results and source text you retrieved, and do not state a reason, number or fact those sources do not contain. When two sources disagree or the sources do not explain a difference, say plainly that they do not explain it — do not present a guess as fact. When an answer uses unmerged branch content, name the branch it came from (tool results carry branch_name/origin per item and branch_scope_note in meta) and say that it is pending, not merged main-graph memory.`
+
 // isKnowledgeBaseAgent reports whether the agent definition is KB-backed, i.e.
 // it can retrieve graph objects/relationships and should therefore cite them.
 func isKnowledgeBaseAgent(d *AgentDefinition) bool {
@@ -4714,6 +4723,13 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 	// include it) so it is never injected twice.
 	if isKnowledgeBaseAgent(req.AgentDefinition) && !strings.Contains(inst, citationInstruction) {
 		inst += "\n\n" + citationInstruction
+	}
+
+	// KB-backed agents answer from retrieved sources, so they must also be told
+	// what to do when those sources are silent or disagree. Skip when a literal
+	// prompt already carries the block so it is never injected twice.
+	if isKnowledgeBaseAgent(req.AgentDefinition) && !strings.Contains(inst, groundingInstruction) {
+		inst += "\n\n" + groundingInstruction
 	}
 
 	// If tool policies can reject or cancel a tool call, tell the model how to

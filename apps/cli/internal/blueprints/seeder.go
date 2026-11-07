@@ -14,10 +14,11 @@ const seedBatchSize = 100
 
 // Seeder applies seed objects and relationships to a project.
 type Seeder struct {
-	graph   *sdkgraph.Client
-	dryRun  bool
-	upgrade bool
-	out     io.Writer
+	graph    *sdkgraph.Client
+	dryRun   bool
+	upgrade  bool
+	branchID string
+	out      io.Writer
 }
 
 // NewSeeder creates a Seeder. out receives progress lines; if nil, os.Stdout is used.
@@ -31,6 +32,22 @@ func NewSeeder(graph *sdkgraph.Client, dryRun, upgrade bool, out io.Writer) *See
 		upgrade: upgrade,
 		out:     out,
 	}
+}
+
+// SetBranchID scopes key lookups and all writes to a graph branch. An empty
+// value (the default) targets the main graph. The caller resolves a branch
+// name to its ID before calling this.
+func (s *Seeder) SetBranchID(branchID string) {
+	s.branchID = branchID
+}
+
+// branchPtr returns the branch ID for a request, or nil for the main graph.
+func (s *Seeder) branchPtr() *string {
+	if s.branchID == "" {
+		return nil
+	}
+	id := s.branchID
+	return &id
 }
 
 // Run applies objects then relationships. It returns a SeedResult summary.
@@ -106,8 +123,9 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 		for _, key := range keys {
 			if strings.Contains(key, ",") || key != strings.TrimSpace(key) {
 				resp, err := s.graph.ListObjects(ctx, &sdkgraph.ListObjectsOptions{
-					Key:   key,
-					Limit: 1,
+					Key:      key,
+					Limit:    1,
+					BranchID: s.branchID,
 				})
 				if err != nil {
 					// Non-fatal: treat this key as not-found, attempt create later.
@@ -129,8 +147,9 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 			cursor := ""
 			for {
 				opts := &sdkgraph.ListObjectsOptions{
-					Keys:  batchKeys,
-					Limit: len(batchKeys),
+					Keys:     batchKeys,
+					Limit:    len(batchKeys),
+					BranchID: s.branchID,
 				}
 				if cursor != "" {
 					opts.Cursor = cursor
@@ -208,6 +227,7 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 				Type:       rec.Type,
 				Properties: rec.Properties,
 				Labels:     rec.Labels,
+				BranchID:   s.branchPtr(),
 			}
 			if rec.Key != "" {
 				req.Key = &rec.Key
@@ -257,6 +277,7 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 				Key:        &keyVal,
 				Properties: rec.Properties,
 				Labels:     rec.Labels,
+				BranchID:   s.branchPtr(),
 			}
 			if rec.Status != "" {
 				req.Status = &rec.Status
@@ -359,6 +380,7 @@ func (s *Seeder) applyRelationshipBatch(ctx context.Context, batch []SeedRelatio
 				DstID:      dstID,
 				Properties: rec.Properties,
 				Weight:     rec.Weight,
+				BranchID:   s.branchPtr(),
 			},
 		})
 	}

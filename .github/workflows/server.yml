@@ -390,9 +390,18 @@ jobs:
           # are configured with. Set inline because the self-hosted pool spans
           # hosts whose configuration this workflow cannot read, so the number is
           # kept here as well.
+          #
+          # `[registry."docker.io"] mirrors` routes `golang:*` / `alpine:*` and
+          # their blobs through Google's public Docker Hub mirror instead of the
+          # anonymous per-IP quota that kills builds with `429 Too Many Requests`
+          # (#211, same block as e2e.yml). BuildKit falls through to Docker Hub
+          # when the mirror is down or a tag is missing.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
+
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build Docker image
         uses: docker/build-push-action@v5

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
@@ -1849,10 +1851,318 @@ func runSubgraphChunked(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput
 // graph objects create-batch
 // ─────────────────────────────────────────────
 
+// batchBranchPtr returns a branch ID pointer, or nil for the main graph.
+func batchBranchPtr(branchID string) *string {
+	if branchID == "" {
+		return nil
+	}
+	id := branchID
+	return &id
+}
+
+// bulkErrorMessage renders an optional per-item error from a bulk response.
+func bulkErrorMessage(err *string) string {
+	if err != nil && *err != "" {
+		return *err
+	}
+	return "unknown error"
+}
+
+// runSeedImport reads a `memory blueprints dump` layout (dump root, seed
+// directory, or .jsonl file) and applies it to a branch or the main graph.
+// Records with a key are upserted, so the import is safe to re-run; unreadable
+// rows are reported individually and the remaining rows are still applied.
+func runSeedImport(cmd *cobra.Command, path string) error {
+	imp, err := blueprints.LoadSeedPath(path)
+	if err != nil {
+		return err
+	}
+
+	g, err := getGraphClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	branchID := ""
+	if graphBranchFlag != "" {
+		branchID, err = resolveBranchNameOrID(cmd, graphBranchFlag)
+		if err != nil {
+			return err
+		}
+	}
+
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+
+	for _, issue := range imp.Issues {
+		fmt.Fprintf(errOut, "ERROR\t%s\t%v\n", issue.Name, issue.Error)
+	}
+
+	// The seeder's progress and per-row error lines are diagnostics, so they
+	// go to stderr and leave stdout clean for --output json.
+	seeder := blueprints.NewSeeder(g, false, true /* upsert by key */, errOut)
+	seeder.SetBranchID(branchID)
+	result, runErr := seeder.Run(context.Background(), imp.Objects, imp.Relationships)
+	if runErr != nil {
+		return fmt.Errorf("seed import: %w", runErr)
+	}
+
+	failedRows := imp.FailedRows()
+	if graphOutputFlag == "json" {
+		payload := map[string]any{
+			"branch_id":             branchID,
+			"rows_failed":           failedRows,
+			"objects_created":       result.ObjectsCreated,
+			"objects_updated":       result.ObjectsUpdated,
+			"objects_skipped":       result.ObjectsSkipped,
+			"objects_failed":        result.ObjectsFailed,
+			"relationships_created": result.RelsCreated,
+			"relationships_failed":  result.RelsFailed,
+		}
+		if err := json.NewEncoder(out).Encode(payload); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(out, "Imported %d objects created, %d updated, %d skipped, %d failed; %d relationships created, %d failed\n",
+			result.ObjectsCreated, result.ObjectsUpdated, result.ObjectsSkipped, result.ObjectsFailed,
+			result.RelsCreated, result.RelsFailed,
+		)
+	}
+
+	if failedRows > 0 || result.ObjectsFailed > 0 || result.RelsFailed > 0 {
+		return fmt.Errorf("import completed with errors: %d unreadable row(s), %d object(s) and %d relationship(s) failed",
+			failedRows, result.ObjectsFailed, result.RelsFailed)
+	}
+	return nil
+}
+
+// subgraphObjectRequest converts one subgraph object into a bulk create
+// request scoped to a branch.
+func subgraphObjectRequest(o subgraphObjectInput, branchID string) sdkgraph.CreateObjectRequest {
+	props := make(map[string]any)
+	for k, v := range o.Properties {
+		props[k] = v
+	}
+	if o.Name != "" {
+		props["name"] = o.Name
+	}
+	if o.Description != "" {
+		props["description"] = o.Description
+	}
+
+	req := sdkgraph.CreateObjectRequest{
+		Type:     o.Type,
+		BranchID: batchBranchPtr(branchID),
+	}
+	if o.Key != nil && *o.Key != "" {
+		req.Key = o.Key
+	}
+	if len(props) > 0 {
+		req.Properties = props
+	}
+	return req
+}
+
+// runSubgraphOnBranch imports subgraph objects and relationships into a branch.
+// The atomic subgraph endpoint has no branch parameter, so this sends the same
+// data through the branch-aware bulk endpoints: objects with a key are upserted
+// by (type, key), keyless objects are created, and relationships are upserted by
+// (type, src, dst) after their _ref placeholders are resolved to entity IDs.
+// Per-row failures are reported and counted; the import continues.
+func runSubgraphOnBranch(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput, branchID string, out io.Writer) error {
+	ctx := context.Background()
+	errOut := cmd.ErrOrStderr()
+	const maxItems = 100
+
+	type indexedObject struct {
+		input subgraphObjectInput
+	}
+
+	var keyed, keyless []indexedObject
+	for _, o := range sg.Objects {
+		if o.Key != nil && *o.Key != "" {
+			keyed = append(keyed, indexedObject{input: o})
+		} else {
+			keyless = append(keyless, indexedObject{input: o})
+		}
+	}
+
+	entityByRef := make(map[string]string, len(sg.Objects))
+	objectFailed := 0
+
+	recordEntity := func(slot indexedObject, obj *sdkgraph.GraphObject) {
+		if slot.input.Ref != "" {
+			entityByRef[slot.input.Ref] = obj.EntityID
+		}
+		if graphOutputFlag != "json" {
+			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, nameFromProps(obj.Properties))
+		}
+	}
+
+	chunkEnd := func(start, total int) int {
+		end := start + maxItems
+		if end > total {
+			end = total
+		}
+		return end
+	}
+
+	// Keyed objects: create-or-update by (type, key) on the branch.
+	for start := 0; start < len(keyed); start += maxItems {
+		batch := keyed[start:chunkEnd(start, len(keyed))]
+		items := make([]sdkgraph.CreateObjectRequest, len(batch))
+		for i, slot := range batch {
+			items[i] = subgraphObjectRequest(slot.input, branchID)
+		}
+
+		resp, err := g.BulkUpsertObjects(ctx, &sdkgraph.BulkUpsertObjectsRequest{Items: items})
+		if err != nil {
+			fmt.Fprintf(errOut, "  error: bulk upsert objects failed: %v\n", err)
+			objectFailed += len(batch)
+			continue
+		}
+		for i, r := range resp.Results {
+			if i >= len(batch) {
+				break
+			}
+			if r.Success && r.Object != nil {
+				recordEntity(batch[i], r.Object)
+			} else {
+				objectFailed++
+				fmt.Fprintf(errOut, "  error: object type=%s key=%q: %s\n",
+					batch[i].input.Type, *batch[i].input.Key, bulkErrorMessage(r.Error))
+			}
+		}
+	}
+
+	// Keyless objects: plain create on the branch.
+	for start := 0; start < len(keyless); start += maxItems {
+		batch := keyless[start:chunkEnd(start, len(keyless))]
+		items := make([]sdkgraph.CreateObjectRequest, len(batch))
+		for i, slot := range batch {
+			items[i] = subgraphObjectRequest(slot.input, branchID)
+		}
+
+		resp, err := g.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: items})
+		if err != nil {
+			fmt.Fprintf(errOut, "  error: bulk create objects failed: %v\n", err)
+			objectFailed += len(batch)
+			continue
+		}
+		for i, r := range resp.Results {
+			if i >= len(batch) {
+				break
+			}
+			if r.Success && r.Object != nil {
+				recordEntity(batch[i], r.Object)
+			} else {
+				objectFailed++
+				fmt.Fprintf(errOut, "  error: object type=%s: %s\n",
+					batch[i].input.Type, bulkErrorMessage(r.Error))
+			}
+		}
+	}
+
+	// Relationships: resolve refs to the entity IDs recorded above, then upsert.
+	type indexedRel struct {
+		index int
+		req   sdkgraph.CreateRelationshipRequest
+	}
+	var rels []indexedRel
+	relFailed := 0
+
+	for i, rel := range sg.Relationships {
+		srcID, dstID := rel.SrcID, rel.DstID
+		if rel.SrcRef != "" {
+			id, ok := entityByRef[rel.SrcRef]
+			if !ok {
+				relFailed++
+				fmt.Fprintf(errOut, "  error: relationship[%d] type=%s: src_ref %q was not created\n", i, rel.Type, rel.SrcRef)
+				continue
+			}
+			srcID = id
+		}
+		if rel.DstRef != "" {
+			id, ok := entityByRef[rel.DstRef]
+			if !ok {
+				relFailed++
+				fmt.Fprintf(errOut, "  error: relationship[%d] type=%s: dst_ref %q was not created\n", i, rel.Type, rel.DstRef)
+				continue
+			}
+			dstID = id
+		}
+		if srcID == "" || dstID == "" {
+			relFailed++
+			fmt.Fprintf(errOut, "  error: relationship[%d] type=%s: missing src/dst endpoint\n", i, rel.Type)
+			continue
+		}
+
+		rels = append(rels, indexedRel{
+			index: i,
+			req: sdkgraph.CreateRelationshipRequest{
+				Type:       rel.Type,
+				SrcID:      srcID,
+				DstID:      dstID,
+				Properties: rel.Properties,
+				BranchID:   batchBranchPtr(branchID),
+			},
+		})
+	}
+
+	relCreated := 0
+	for start := 0; start < len(rels); start += maxItems {
+		batch := rels[start:chunkEnd(start, len(rels))]
+		items := make([]sdkgraph.CreateRelationshipRequest, len(batch))
+		for i, entry := range batch {
+			items[i] = entry.req
+		}
+
+		resp, err := g.BulkUpsertRelationships(ctx, &sdkgraph.BulkUpsertRelationshipsRequest{Items: items})
+		if err != nil {
+			fmt.Fprintf(errOut, "  error: bulk upsert relationships failed: %v\n", err)
+			relFailed += len(batch)
+			continue
+		}
+		for i, r := range resp.Results {
+			if i >= len(batch) {
+				break
+			}
+			if r.Success {
+				relCreated++
+			} else {
+				relFailed++
+				fmt.Fprintf(errOut, "  error: relationship[%d] type=%s: %s\n",
+					batch[i].index, batch[i].req.Type, bulkErrorMessage(r.Error))
+			}
+		}
+	}
+
+	if graphOutputFlag == "json" {
+		payload := map[string]any{
+			"branch_id":             branchID,
+			"objects_created":       len(sg.Objects) - objectFailed,
+			"objects_failed":        objectFailed,
+			"relationships_created": relCreated,
+			"relationships_failed":  relFailed,
+		}
+		if err := json.NewEncoder(out).Encode(payload); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(out, "Created %d objects, %d relationships on branch %s\n",
+			len(sg.Objects)-objectFailed, relCreated, branchID)
+	}
+
+	if objectFailed > 0 || relFailed > 0 {
+		return fmt.Errorf("%d object(s) and %d relationship(s) failed to import", objectFailed, relFailed)
+	}
+	return nil
+}
+
 var graphObjectsCreateBatchCmd = &cobra.Command{
 	Use:   "create-batch",
-	Short: "Batch-create graph objects (and optionally relationships) from a JSON file",
-	Long: `Create multiple graph objects in one API call. Accepts two input formats:
+	Short: "Batch-create graph objects (and optionally relationships) from a JSON file or blueprint dump",
+	Long: `Create multiple graph objects in one API call. Accepts three input formats:
 
 FLAT ARRAY FORMAT (objects only):
   A JSON array of objects, each with:
@@ -1898,10 +2208,33 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
     }
 
   Output (text): one line per object, then "Created N objects, M relationships"
-  Output (--output json): full response including ref_map (placeholder → UUID)`,
+  Output (--output json): full response including ref_map (placeholder → UUID)
+
+BLUEPRINT SEED FORMAT (round-trip for 'memory blueprints dump'):
+  --file may point at a dump root (containing seed/objects/ and
+  seed/relationships/), a directory of *.jsonl seed files, or a single
+  .jsonl file. Records are upserted by key, "srcKey"/"dstKey" relationship
+  endpoints are resolved after the objects are written, and each unreadable
+  row is reported without aborting the import. Files named _untyped.jsonl are
+  read back as type "Untyped".
+
+BRANCHES:
+  Pass --branch to write into a graph branch instead of the main graph. The
+  value may be a branch name or UUID. For the subgraph format on a branch,
+  objects are upserted by key and relationships by (type, src, dst) through
+  the branch-aware bulk endpoints, because the subgraph endpoint has no
+  branch parameter.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if graphBatchFile == "" {
 			return fmt.Errorf("--file is required")
+		}
+
+		info, err := os.Stat(graphBatchFile)
+		if err != nil {
+			return fmt.Errorf("reading file: %w", err)
+		}
+		if info.IsDir() || strings.EqualFold(filepath.Ext(graphBatchFile), ".jsonl") {
+			return runSeedImport(cmd, graphBatchFile)
 		}
 
 		data, err := os.ReadFile(graphBatchFile)
@@ -1925,6 +2258,14 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
 
 		out := cmd.OutOrStdout()
 
+		branchID := ""
+		if graphBranchFlag != "" {
+			branchID, err = resolveBranchNameOrID(cmd, graphBranchFlag)
+			if err != nil {
+				return err
+			}
+		}
+
 		if firstByte == '{' {
 			// ── Subgraph format ──────────────────────────────────────────────
 			var sg subgraphInput
@@ -1933,6 +2274,10 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
 			}
 			if len(sg.Objects) == 0 {
 				return fmt.Errorf("subgraph contains no objects")
+			}
+
+			if branchID != "" {
+				return runSubgraphOnBranch(cmd, g, sg, branchID, out)
 			}
 
 			const maxObjects = 500
@@ -1986,7 +2331,8 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
 		reqs := make([]sdkgraph.CreateObjectRequest, 0, len(items))
 		for _, item := range items {
 			req := sdkgraph.CreateObjectRequest{
-				Type: item.Type,
+				Type:     item.Type,
+				BranchID: batchBranchPtr(branchID),
 			}
 			props := make(map[string]any)
 			for k, v := range item.Properties {
@@ -2052,6 +2398,15 @@ The input file must contain a JSON array of objects, each with:
 Use --upsert to make the operation idempotent: existing relationships (same
 type, from, to) are returned as-is instead of causing an error. Safe to retry.
 
+Pass --branch (a branch name or UUID) to create the relationships on a graph
+branch instead of the main graph. Both endpoint objects must already exist on
+that branch, because the server rejects an edge whose endpoints are not on the
+same branch as the edge.
+
+To import the JSONL files written by 'memory blueprints dump' (which reference
+objects by srcKey/dstKey and include the objects themselves), use
+'memory graph objects create-batch --file <dump-dir> --branch <name>'.
+
 Example relationships.json:
   [
     {"type": "knows", "from": "<entity-id-1>", "to": "<entity-id-2>"},
@@ -2077,6 +2432,14 @@ Output (one line per relationship): <entity-id>  <type>  <from> -> <to>`,
 			return fmt.Errorf("file contains no items")
 		}
 
+		branchID := ""
+		if graphBranchFlag != "" {
+			branchID, err = resolveBranchNameOrID(cmd, graphBranchFlag)
+			if err != nil {
+				return err
+			}
+		}
+
 		reqs := make([]sdkgraph.CreateRelationshipRequest, 0, len(items))
 		for _, item := range items {
 			if item.Type == "" {
@@ -2089,10 +2452,11 @@ Output (one line per relationship): <entity-id>  <type>  <from> -> <to>`,
 				return fmt.Errorf("item missing 'to' field")
 			}
 			req := sdkgraph.CreateRelationshipRequest{
-				Type:   item.Type,
-				SrcID:  item.From,
-				DstID:  item.To,
-				Upsert: graphUpsertFlag,
+				Type:     item.Type,
+				SrcID:    item.From,
+				DstID:    item.To,
+				Upsert:   graphUpsertFlag,
+				BranchID: batchBranchPtr(branchID),
 			}
 			if len(item.Properties) > 0 {
 				req.Properties = item.Properties
@@ -2220,7 +2584,8 @@ func init() {
 	graphObjectsCreateCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to create the object on (omit for main branch)")
 	graphObjectsCreateCmd.Flags().BoolVar(&graphUpsertFlag, "upsert", false, "Update existing object if key already exists (requires --key)")
 
-	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of objects (required)")
+	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "JSON file (array or subgraph), blueprint dump directory, or seed .jsonl file (required)")
+	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or UUID to import into (omit for main branch)")
 
 	graphObjectsUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object to merge")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Shorthand for --properties '{\"name\": \"...\"}' (subject to schema validation)")
@@ -2255,6 +2620,7 @@ func init() {
 
 	graphRelationshipsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of relationships (required)")
 	graphRelationshipsCreateBatchCmd.Flags().BoolVar(&graphUpsertFlag, "upsert", false, "Apply upsert semantics to all items: skip existing relationships instead of failing")
+	graphRelationshipsCreateBatchCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or UUID to create relationships on (omit for main branch)")
 
 	// Assemble objects subcommands
 	graphObjectsSimilarCmd.Flags().IntVar(&graphSimilarLimitFlag, "limit", 10, "Maximum number of similar objects to return")

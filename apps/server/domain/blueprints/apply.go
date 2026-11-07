@@ -283,6 +283,20 @@ func (s *Service) validateManifest(m *BlueprintManifest) error {
 				return apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", am.Name, err))
 			}
 		}
+		// A declared cronSchedule on a schedule-triggered agent must pass the
+		// SAME validator the agents create handler runs (#354): standard 5-field
+		// parse plus the minimum interval. The runtime trigger service refuses a
+		// schedule it cannot parse, so without this the server-side apply stores
+		// an enabled agent that silently never fires. Reaction/manual agents keep
+		// the value unused, so they are skipped — exactly like the agents API and
+		// `memory blueprints validate` (#320) do.
+		if am.DeclaresScheduleTrigger() && am.CronSchedule != "" {
+			if err := agents.ValidateCronInterval(am.CronSchedule, s.minCronInterval()); err != nil {
+				return apperror.NewBadRequest(fmt.Sprintf(
+					"agent %q: invalid cronSchedule: %v (runtime agents use standard 5-field cron — minute hour day-of-month month day-of-week; a seconds field is not accepted)",
+					am.Name, err))
+			}
+		}
 	}
 	for _, p := range m.Packs {
 		if p.Name == "" || p.Version == "" {
@@ -1150,6 +1164,19 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	cron := m.CronSchedule
 	if cron == "" {
 		cron = "0 0 * * *"
+	}
+	// Write-point guard (#354): the row below stores this cron verbatim and the
+	// trigger service refuses a schedule it cannot parse, leaving an enabled
+	// agent that never fires. Validate with the SAME validator the agents create
+	// handler uses, before any read/write, so the blueprint apply path can never
+	// persist a dead scheduled agent — including when the reaction trigger was
+	// derived from objectRules rather than declared.
+	if triggerType == agents.TriggerTypeSchedule {
+		if err := agents.ValidateCronInterval(cron, s.minCronInterval()); err != nil {
+			return apperror.NewBadRequest(fmt.Sprintf(
+				"agent %q: invalid cronSchedule: %v (runtime agents use standard 5-field cron — minute hour day-of-month month day-of-week; a seconds field is not accepted)",
+				m.Name, err))
+		}
 	}
 	defID := def.ID
 
