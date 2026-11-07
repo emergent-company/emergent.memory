@@ -98,6 +98,7 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternBorderTokenDrift, file: "ui.templ", count: 1, note: "normalise to border-base-content/10"},
 
 		// empty-note — the muted-paragraph note surface; canonical is ui.EmptyNote.
+		{pattern: patternEmptyNote, file: "blueprints_conflict.templ", count: 1, note: "table-footer count strip under the conflict diff (border-t + data-testid, no padding shape) — ui.EmptyNote renders a padded block, not a footer row"},
 		{pattern: patternEmptyNote, file: "object_preview.templ", count: 1, note: "normalise to ui.EmptyNote; 1 residual: icon-led note with gap-1 + size-3 — EmptyNote's icon gap is fixed at 1.5"},
 		{pattern: patternEmptyNote, file: "schema.templ", count: 1, note: "normalise to ui.EmptyNote; 1 residual: bordered centred empty-properties box (rounded-box border-dashed text-center) — not a note"},
 
