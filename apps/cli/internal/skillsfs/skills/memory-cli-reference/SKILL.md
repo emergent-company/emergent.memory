@@ -631,7 +631,7 @@ Create a new runtime agent for the current project.
 
 Examples:
   memory agents create --name "my-agent" --project <id>
-  memory agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
+  memory agents create --name "cron-agent" --trigger-type schedule --cron "0 2 * * *"
   memory agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document
 
 ```
@@ -641,7 +641,7 @@ memory agents create [flags]
 ### Options
 
 ```
-      --cron string                    Cron schedule (e.g., '0 */5 * * * *')
+      --cron string                    Cron schedule (standard 5-field, e.g. '0 2 * * *')
       --description string             Agent description
       --enabled string                 Enable agent (true/false)
       --execution-mode string          Execution mode
