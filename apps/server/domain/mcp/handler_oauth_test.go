@@ -81,6 +81,19 @@ func TestHandleOAuthProtectedResourceExactPathIdentity(t *testing.T) {
 	}
 }
 
+// The issuer fallback is the request origin, never the resource URL: entries in
+// authorization_servers are issuer identifiers (RFC 9728 §2), so a path-bearing
+// metadata request must still advertise https://host, not https://host/api/mcp.
+func TestHandleOAuthProtectedResourcePathInsertedIssuerIsOrigin(t *testing.T) {
+	svc := &Service{oauthASEnabled: true}
+	req := httptest.NewRequest(http.MethodGet, "https://api.example.com"+prmWellKnownPath+"/api/mcp", nil)
+	req.Host = "api.example.com"
+
+	body := protectedResourceMetadata(t, svc, req)
+	require.Equal(t, "https://api.example.com/api/mcp", body["resource"])
+	require.Equal(t, []any{"https://api.example.com"}, body["authorization_servers"])
+}
+
 func TestHandleOAuthProtectedResourceAdvertisesScopes(t *testing.T) {
 	svc := &Service{oauthASEnabled: true}
 	req := httptest.NewRequest(http.MethodGet, "https://api.example.com/.well-known/oauth-protected-resource", nil)

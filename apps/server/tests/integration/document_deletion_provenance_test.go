@@ -363,6 +363,28 @@ func (s *DocumentDeletionProvenanceSuite) TestDeleteRemovesExtractionBranches() 
 	// A main-graph object must survive.
 	mainObj := s.createObject("Person", map[string]any{"name": "Main"}, nil)
 
+	// A manual branch that merely carries the job id is not extraction work.
+	manualBranchID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin, origin_id)
+		VALUES (?, ?, 'manual/pending-branches.txt', 'manual', ?)
+	`, manualBranchID, s.projectID, jobUUID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// A surviving child branch forked from the origin branch: its parent link and
+	// its lineage row must be detached when the parent goes.
+	childBranchID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin, parent_branch_id)
+		VALUES (?, ?, 'manual/child', 'manual', ?)
+	`, childBranchID, s.projectID, originBranchID).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branch_lineage (branch_id, ancestor_branch_id, depth)
+		VALUES (?, ?, 1)
+	`, childBranchID, originBranchID).Exec(s.ctx)
+	s.Require().NoError(err)
+
 	// A merged branch for the same job is merge history, not pending work.
 	mergedBranchID := uuid.New()
 	_, err = s.testDB.DB.NewRaw(`
@@ -389,11 +411,15 @@ func (s *DocumentDeletionProvenanceSuite) TestDeleteRemovesExtractionBranches() 
 	s.Require().NoError(err)
 	s.Require().NotNil(impact)
 	s.Equal(2, impact.Impact.Branches, "both branches are counted in the impact")
+	s.Equal(2, impact.Impact.GraphObjects, "rows staged on the branches count as graph objects")
+	s.Equal(1, impact.Impact.GraphRelationships, "a staged relationship counts too")
 
 	summary, err := s.docsRepo.DeleteWithCascade(s.ctx, s.projectID, docID)
 	s.Require().NoError(err)
 	s.Require().NotNil(summary)
-	s.Equal(2, summary.Branches, "both of this document's branches are removed")
+	s.Equal(impact.Impact.Branches, summary.Branches, "the delete removes what the preview reported")
+	s.Equal(impact.Impact.GraphObjects, summary.GraphObjects)
+	s.Equal(impact.Impact.GraphRelationships, summary.GraphRelationships)
 
 	for _, id := range []uuid.UUID{originBranchID, stagingBranchID} {
 		s.False(s.branchExists(id), "branch %s should be deleted", id)
@@ -406,6 +432,90 @@ func (s *DocumentDeletionProvenanceSuite) TestDeleteRemovesExtractionBranches() 
 	s.True(s.objectExists(mainObj.ID), "a main-graph object must survive")
 	s.True(s.branchExists(mergedBranchID), "a merged branch is history and must survive")
 	s.True(s.branchExists(otherBranchID), "another document's branch must survive")
+	s.True(s.branchExists(manualBranchID), "a manual branch must survive")
+
+	s.True(s.branchExists(childBranchID), "a child branch must survive its parent")
+	s.Nil(s.branchParent(childBranchID), "the child must be detached from the deleted parent")
+	s.False(s.lineageExists(childBranchID, originBranchID), "lineage to the deleted branch must go")
+}
+
+// TestBulkDeleteRemovesExtractionBranches covers the bulk halves: the preview's
+// per-document and total branch counts, and the rule that a branch with a live
+// origin_id belongs to its own document even when another job stages onto it.
+func (s *DocumentDeletionProvenanceSuite) TestBulkDeleteRemovesExtractionBranches() {
+	docA := s.createDocument("bulk-a.txt")
+	jobA := s.createExtractionJob(docA)
+	jobAUUID, err := uuid.Parse(jobA)
+	s.Require().NoError(err)
+
+	branchAID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin, origin_id)
+		VALUES (?, ?, 'extraction/bulk-a.txt/1', 'extraction', ?)
+	`, branchAID, s.projectID, jobAUUID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	staged := s.createObject("Person", map[string]any{"name": "Bulk staged"}, nil)
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.graph_objects SET branch_id = ? WHERE id = ?`, branchAID, staged.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// Document B's job stages onto document A's branch. A branch that names its own
+	// job through origin_id is not matched through a staging link, so deleting B
+	// must leave A's pending work alone (the read boundary already sees it that
+	// way).
+	docB := s.createDocument("bulk-b.txt")
+	jobB := s.createExtractionJob(docB)
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.object_extraction_jobs SET staging_branch_id = ? WHERE id = ?`, branchAID, jobB).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	impactB, err := s.docsRepo.GetBulkDeletionImpact(s.ctx, s.projectID, []string{docB})
+	s.Require().NoError(err)
+	s.Require().NotNil(impactB)
+	s.Equal(0, impactB.Impact.Branches, "B does not own A's branch")
+	s.Equal(0, impactB.Impact.GraphObjects)
+
+	summaryB, notFound, err := s.docsRepo.BulkDeleteWithCascade(s.ctx, s.projectID, []string{docB})
+	s.Require().NoError(err)
+	s.Empty(notFound)
+	s.Equal(0, summaryB.Branches)
+	s.True(s.branchExists(branchAID), "deleting B must not remove A's branch")
+	s.True(s.objectExists(staged.ID), "nor A's staged object")
+
+	impactA, err := s.docsRepo.GetBulkDeletionImpact(s.ctx, s.projectID, []string{docA})
+	s.Require().NoError(err)
+	s.Require().NotNil(impactA)
+	s.Equal(1, impactA.Impact.Branches)
+	s.Equal(1, impactA.Impact.GraphObjects)
+	s.Equal(1, impactA.Documents[0].Impact.Branches, "per-document entry matches the total")
+
+	summaryA, notFound, err := s.docsRepo.BulkDeleteWithCascade(s.ctx, s.projectID, []string{docA})
+	s.Require().NoError(err)
+	s.Empty(notFound)
+	s.Equal(impactA.Impact.Branches, summaryA.Branches)
+	s.Equal(impactA.Impact.GraphObjects, summaryA.GraphObjects)
+	s.False(s.branchExists(branchAID))
+	s.False(s.objectExists(staged.ID))
+}
+
+// branchParent returns a branch's parent_branch_id, or nil when detached.
+func (s *DocumentDeletionProvenanceSuite) branchParent(id uuid.UUID) *string {
+	s.T().Helper()
+	var parent *string
+	s.Require().NoError(s.testDB.DB.NewRaw(
+		"SELECT parent_branch_id FROM kb.branches WHERE id = ?", id).Scan(s.ctx, &parent))
+	return parent
+}
+
+// lineageExists reports whether a branch_lineage row still exists.
+func (s *DocumentDeletionProvenanceSuite) lineageExists(branchID, ancestorID uuid.UUID) bool {
+	s.T().Helper()
+	var exists bool
+	s.Require().NoError(s.testDB.DB.NewRaw(
+		"SELECT EXISTS(SELECT 1 FROM kb.branch_lineage WHERE branch_id = ? AND ancestor_branch_id = ?)",
+		branchID, ancestorID).Scan(s.ctx, &exists))
+	return exists
 }
 
 // branchExists reports whether a kb.branches row still exists.

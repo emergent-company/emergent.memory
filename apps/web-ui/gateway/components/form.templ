@@ -1,6 +1,7 @@
 package components
 
 import (
+	form "github.com/emergent-company/go-daisy/components/form"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -109,7 +110,9 @@ templ StickyFormActions(props StickyFormActionsProps) {
 }
 
 // ToggleField renders a settings row that pairs a toggle with a label and an
-// optional explanatory tip. attrs carries the row's htmx wiring.
+// optional explanatory tip. attrs carries the row's htmx wiring, spread onto the
+// switch itself. The switch is go-daisy's bare form.ToggleInput: the row layout
+// stays here, the control does not.
 templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes) {
 	{{ // The tip must sit outside the <label>: its visually-hidden description
 	// would otherwise join the label's text and become part of the switch's
@@ -118,13 +121,22 @@ templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes)
 	if tip != "" {
 		tipID = "toggle-tip-" + name
 	}
+	// form.ToggleInput takes one Attrs map and forces no id, so the row's
+	// element id and the tip reference are merged in here. The caller's attrs go
+	// in first: a caller-supplied id must not win, because the hand-rolled markup
+	// this replaced emitted id={ name } ahead of { attrs... } and HTML resolves a
+	// duplicate attribute to the first one.
 	inputAttrs := templ.Attributes{}
+	for k, v := range attrs {
+		inputAttrs[k] = v
+	}
+	inputAttrs["id"] = name
 	if tipID != "" {
 		inputAttrs["aria-describedby"] = tipID
 	} }}
 	<div class="flex items-center gap-1.5">
 		<label class="cursor-pointer label justify-start gap-3">
-			<input type="checkbox" id={ name } name={ name } class="toggle" checked?={ checked } { inputAttrs... } { attrs... }/>
+			@form.ToggleInput(form.ToggleInputProps{Name: name, Checked: checked, Attrs: inputAttrs})
 			<span class="label-text">{ label }</span>
 		</label>
 		if tipID != "" {
