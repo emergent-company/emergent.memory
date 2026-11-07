@@ -247,9 +247,9 @@ Documents are split into overlapping text segments (**chunks**) for retrieval. C
 | `parentChild` | `markdown_structure` only: store a parent chunk per section alongside its children |
 | `autoProfile` | Detect each document's shape (prose, markdown, code-heavy, tabular, transcript, email) and use that shape's parameters instead of the project-wide `strategy`/`maxChunkSize`/`overlap` |
 
-Configure via **Project Settings → Chunking** or via `PATCH /api/projects/{id}` with the `chunking_config` field.
+Configure with `PUT /api/chunking/config`, and read the effective settings back with `GET /api/chunking/config`. The write is a full replacement: turning `autoProfile` on stores the other fields as sent (they are then unused), so turning it back off lands on those stored values rather than the ones that were in force beforehand.
 
-`autoProfile` is opt-in and replaces the project-wide size and strategy settings; it never blends with them. Documents with no dominant structure stay on the default 1000/200 character split, so enabling it is a no-op for plain prose. A read of the project's chunking configuration returns the per-shape profile table when `autoProfile` is on.
+`autoProfile` is opt-in and replaces the project-wide size and strategy settings; it never blends with them. Documents with no dominant structure stay on the deployment's default split (`CHUNK_SIZE`/`CHUNK_OVERLAP`, 1000/200 when unset), so enabling it is a no-op for plain prose. A read of the project's chunking configuration returns the per-shape profile table when `autoProfile` is on.
 
 To re-chunk a specific document after changing the config:
 

@@ -62,6 +62,51 @@ func TestDetectShape(t *testing.T) {
 			want: ShapeEmail,
 		},
 		{
+			// Review regression: a markdown page that quotes one header block
+			// must stay markdown, not fall to the character splitter (which
+			// would split fences and tables).
+			name: "markdown page quoting one email header block",
+			text: markdownWithQuotedHeaders(),
+			want: ShapeMarkdown,
+		},
+		{
+			// Review regression: labelled paragraphs are not speaker turns.
+			name: "notes document with label prefixes",
+			text: "Note: check the cache before restarting.\nWarning: the server restarts nightly.\n" +
+				"Tip: rotate keys quarterly.\nStep 1: install the CLI.\nExample: curl the endpoint.\n" +
+				"The rest of this note is one ordinary sentence with no further structure.\n",
+			want: ShapeProse,
+		},
+		{
+			// Review regression: a table of contents is not a transcript.
+			name: "table of contents with chapter labels",
+			text: "Chapter 1: Introduction\nChapter 2: Setup\nChapter 3: Usage\n" +
+				"Chapter 4: Deploy\nChapter 5: Troubleshooting\n",
+			want: ShapeProse,
+		},
+		{
+			// A document that is one fenced block plus a heading is code-heavy
+			// even though the fence count is only two.
+			name: "single dominant fenced block",
+			text: "# Example\n\n```go\n" + strings.Repeat("func f() { return }\n", 40) + "```\n",
+			want: ShapeCodeHeavy,
+		},
+		{
+			// A long thread has few headers per line but many in total.
+			name: "mailing-list thread with long bodies",
+			text: longEmailThread(),
+			want: ShapeEmail,
+		},
+		{
+			// One recurring speaker is still a transcript once there are
+			// enough turns.
+			name: "single-speaker monologue",
+			text: "Alice: the first point.\nAlice: the second point.\nAlice: the third point.\n" +
+				"Alice: the fourth point.\nAlice: the fifth point.\nAlice: the sixth point.\n" +
+				"Alice: the seventh point.\nAlice: the eighth point.\n",
+			want: ShapeTranscript,
+		},
+		{
 			name: "empty",
 			text: "",
 			want: ShapeProse,
@@ -198,11 +243,40 @@ func TestSplitDocumentWithProfileShapes(t *testing.T) {
 	}
 }
 
+func markdownWithQuotedHeaders() string {
+	var b strings.Builder
+	b.WriteString("# Mail integration\n\n## Setup\n\n")
+	b.WriteString("From: alice@example.com\nTo: bob@example.com\nSubject: Re: setup\n\n")
+	for i := 0; i < 80; i++ {
+		b.WriteString("This paragraph explains one step of the mail integration in ordinary prose.\n")
+	}
+	return b.String()
+}
+
+func longEmailThread() string {
+	var b strings.Builder
+	for i := 0; i < 10; i++ {
+		b.WriteString("From: alice@example.com\nTo: bob@example.com\nSubject: Re: plan\n\n")
+		for j := 0; j < 37; j++ {
+			b.WriteString("This message body is a long paragraph of ordinary discussion text.\n")
+		}
+	}
+	return b.String()
+}
+
 func TestIsSpeakerAndTimestampLines(t *testing.T) {
-	speakers := []string{"Alice: hi", "Speaker 1: hi", "BOB: hi", "Dr Smith: hi"}
-	for _, s := range speakers {
-		if !isSpeakerLine(s) {
-			t.Errorf("isSpeakerLine(%q) = false, want true", s)
+	speakers := map[string]string{
+		"Alice: hi":         "Alice",
+		"Speaker 1: hi":     "Speaker 1",
+		"BOB: hi":           "BOB",
+		"Dr Smith: hi":      "Dr Smith",
+		"Interviewer: hi":   "Interviewer",
+		"Moderator: hello":  "Moderator",
+		"Interviewee: sure": "Interviewee",
+	}
+	for line, want := range speakers {
+		if got := speakerName(line); got != want {
+			t.Errorf("speakerName(%q) = %q, want %q", line, got, want)
 		}
 	}
 	notSpeakers := []string{
@@ -210,10 +284,20 @@ func TestIsSpeakerAndTimestampLines(t *testing.T) {
 		"The following: is prose",
 		"a: too short",
 		"Note that the server: is down",
+		// Label prefixes, not people.
+		"Note: check the cache",
+		"Warning: nightly restart",
+		"Tip: rotate keys",
+		"Step 1: install",
+		"Step 12: deploy",
+		"Chapter 2: Setup",
+		"Example: curl it",
+		"Question: is it fast?",
+		"Answer: yes",
 	}
-	for _, s := range notSpeakers {
-		if isSpeakerLine(s) {
-			t.Errorf("isSpeakerLine(%q) = true, want false", s)
+	for _, line := range notSpeakers {
+		if got := speakerName(line); got != "" {
+			t.Errorf("speakerName(%q) = %q, want it rejected", line, got)
 		}
 	}
 

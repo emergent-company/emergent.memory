@@ -50,14 +50,6 @@ func IsSupportedShape(name string) bool {
 	return false
 }
 
-// NormalizeShape maps an empty shape to the default (prose).
-func NormalizeShape(name string) Shape {
-	if name == "" {
-		return ShapeProse
-	}
-	return Shape(name)
-}
-
 // shapeScanLimit caps how much text classification inspects. The head of a
 // document is representative of its layout and a single pass over 512 KiB is
 // cheap even for very large documents.
@@ -66,19 +58,22 @@ const shapeScanLimit = 512 * 1024
 // ShapeSignals carries the raw counts classification used, so a decision can
 // be logged and explained.
 type ShapeSignals struct {
-	Lines          int     // non-empty lines scanned
-	Chars          int     // characters in those lines
-	Headings       int     // ATX markdown headings
-	Fences         int     // fence markers (open + close)
-	FencedChars    int     // characters inside fences
-	TableRows      int     // lines shaped like pipe-table rows
-	SpeakerLines   int     // lines shaped like "Name: text" turns
-	TimestampLines int     // lines starting with a clock timestamp
-	EmailHeaders   int     // quoted email header lines (From:, To:, ...)
-	EmailKinds     int     // distinct email header kinds seen
-	TableRatio     float64 // TableRows / Lines
-	SpeakerRatio   float64 // SpeakerLines / Lines
-	FencedRatio    float64 // FencedChars / Chars
+	Lines             int     // non-empty lines scanned
+	Chars             int     // characters in those lines
+	Headings          int     // ATX markdown headings
+	Fences            int     // fence markers (open + close)
+	FencedChars       int     // characters inside fences
+	TableRows         int     // lines shaped like pipe-table rows
+	SpeakerLines      int     // lines shaped like "Name: text" turns
+	SpeakerNames      int     // distinct speaker names seen
+	RecurringSpeakers int     // speaker names that appear at least twice
+	TimestampLines    int     // lines starting with a clock timestamp
+	EmailHeaders      int     // quoted email header lines (From:, To:, ...)
+	EmailKinds        int     // distinct email header kinds seen
+	TableRatio        float64 // TableRows / Lines
+	SpeakerRatio      float64 // SpeakerLines / Lines
+	FencedRatio       float64 // FencedChars / Chars
+	EmailRatio        float64 // EmailHeaders / Lines
 }
 
 // DetectShape classifies text by layout. It is deterministic and allocation
@@ -91,6 +86,12 @@ func DetectShape(text string) (Shape, ShapeSignals) {
 	if len(text) > shapeScanLimit {
 		text = text[:shapeScanLimit]
 	}
+
+	// Speaker names are counted so a conversation (the same names recurring)
+	// is not confused with a list of one-off labels ("Step 1:", "Note:").
+	// Capped so a pathological document cannot grow the map without bound.
+	const speakerNameCap = 256
+	speakerCounts := make(map[string]int, 8)
 
 	inFence := false
 	emailKinds := 0
@@ -117,8 +118,11 @@ func DetectShape(text string) (Shape, ShapeSignals) {
 		if isPipeTableRow(line) {
 			sig.TableRows++
 		}
-		if isSpeakerLine(line) {
+		if name := speakerName(line); name != "" {
 			sig.SpeakerLines++
+			if len(speakerCounts) < speakerNameCap || speakerCounts[name] > 0 {
+				speakerCounts[name]++
+			}
 		}
 		if isTimestampLine(line) {
 			sig.TimestampLines++
@@ -132,30 +136,45 @@ func DetectShape(text string) (Shape, ShapeSignals) {
 		}
 	}
 
+	sig.SpeakerNames = len(speakerCounts)
+	for _, n := range speakerCounts {
+		if n >= 2 {
+			sig.RecurringSpeakers++
+		}
+	}
 	if sig.Lines > 0 {
 		sig.TableRatio = float64(sig.TableRows) / float64(sig.Lines)
 		sig.SpeakerRatio = float64(sig.SpeakerLines) / float64(sig.Lines)
+		sig.EmailRatio = float64(sig.EmailHeaders) / float64(sig.Lines)
 	}
 	if total := sig.Chars + sig.FencedChars; total > 0 {
 		sig.FencedRatio = float64(sig.FencedChars) / float64(total)
 	}
 
 	switch {
-	// Two or more distinct header kinds is a thread, not prose that happens
-	// to open a line with "From:".
-	case sig.EmailKinds >= 2:
+	// A thread is more than two header lines: it needs a meaningful share of
+	// the document, or enough headers that the body must be long (a 30-message
+	// thread has three headers per message but hundreds of body lines).
+	// Without this gate a markdown page quoting one header snippet is read as
+	// email and loses the structure-aware strategy.
+	case sig.EmailKinds >= 2 && sig.EmailHeaders >= 3 &&
+		(sig.EmailRatio >= 0.1 || sig.EmailHeaders >= 8):
 		return ShapeEmail, sig
 	// A table has to dominate the document; markdown docs commonly carry one
 	// or two tables without being tabular.
 	case sig.TableRows >= 5 && sig.TableRatio >= 0.5:
 		return ShapeTabular, sig
-	// Timestamped lines are decisive; bare "Name: text" lines need a quarter
-	// of the document before they are treated as turns.
-	case sig.TimestampLines >= 5 || (sig.SpeakerLines >= 5 && sig.SpeakerRatio >= 0.25):
+	// Timestamped lines are decisive. Bare "Name: text" lines need a quarter
+	// of the document AND recurring names: a conversation repeats its
+	// speakers, a list of labels does not.
+	case sig.TimestampLines >= 5 ||
+		(sig.SpeakerLines >= 5 && sig.SpeakerRatio >= 0.25 && sig.RecurringSpeakers >= 2) ||
+		(sig.SpeakerLines >= 8 && sig.SpeakerRatio >= 0.25 && sig.RecurringSpeakers >= 1):
 		return ShapeTranscript, sig
-	// Fence markers come in pairs, so six markers is three blocks; the bulk
-	// threshold stops a doc with one example snippet being read as code.
-	case sig.Fences >= 6 && sig.FencedRatio >= 0.3:
+	// Three or more fenced blocks, or a document that is one fence plus
+	// almost nothing else. The bare ratio is not enough on its own: a stray
+	// unclosed fence would make the rest of the document look fenced.
+	case (sig.Fences >= 6 && sig.FencedRatio >= 0.3) || (sig.Fences >= 2 && sig.FencedRatio >= 0.6):
 		return ShapeCodeHeavy, sig
 	case sig.Headings >= 2:
 		return ShapeMarkdown, sig
@@ -243,27 +262,30 @@ func isPipeTableRow(line string) bool {
 	return strings.HasPrefix(line, "|") || strings.HasSuffix(line, "|")
 }
 
-// isSpeakerLine reports whether line looks like a transcript turn:
-// "Alice: ..." or "Speaker 1: ...". A colon inside punctuation or a longer
-// prefix (a sentence) does not qualify.
-func isSpeakerLine(line string) bool {
+// speakerName returns the speaker label of a transcript turn ("Alice",
+// "Speaker 1", "Dr Smith"), or "" when the line is not a turn.
+//
+// Labels that are structural rather than people — "Note:", "Step 1:",
+// "Chapter 2:" — are rejected: they are how documents label sections, and
+// treating them as turns is what makes a notes page look like a transcript.
+func speakerName(line string) string {
 	i := strings.IndexByte(line, ':')
 	if i < 2 || i > 40 {
-		return false
+		return ""
 	}
 	name := line[:i]
 	if strings.ContainsAny(name, ".,;!?()[]{}<>\"'/\\&*|") {
-		return false
+		return ""
 	}
 	words := strings.Fields(name)
 	if len(words) == 0 || len(words) > 3 {
-		return false
+		return ""
 	}
 	c := name[0]
 	upper := c >= 'A' && c <= 'Z'
 	digit := c >= '0' && c <= '9'
 	if !upper && !digit {
-		return false
+		return ""
 	}
 	// Every further word must be capitalised or numeric ("Speaker 1",
 	// "Dr Smith"). A lowercase continuation means a prose lead-in such as
@@ -273,9 +295,32 @@ func isSpeakerLine(line string) bool {
 		if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
 			continue
 		}
-		return false
+		return ""
 	}
-	return true
+	if isLabelPrefix(strings.ToLower(words[0])) {
+		return ""
+	}
+	return name
+}
+
+// labelPrefixes are words that introduce a labelled paragraph or list item
+// rather than a speaker. Matching is on the first word, so "Step 1" and
+// "Chapter 3" are caught by their head word.
+var labelPrefixes = map[string]struct{}{
+	"action": {}, "agenda": {}, "answer": {}, "appendix": {}, "assumption": {},
+	"background": {}, "caution": {}, "caveat": {}, "chapter": {}, "conclusion": {},
+	"danger": {}, "definition": {}, "description": {}, "detail": {}, "details": {},
+	"example": {}, "exercise": {}, "fig": {}, "figure": {}, "fixme": {}, "goal": {},
+	"important": {}, "input": {}, "intro": {}, "introduction": {}, "note": {},
+	"notes": {}, "output": {}, "part": {}, "question": {}, "requirement": {},
+	"result": {}, "results": {}, "section": {}, "step": {}, "steps": {},
+	"summary": {}, "table": {}, "task": {}, "tip": {}, "tips": {}, "todo": {},
+	"warning": {}, "warnings": {},
+}
+
+func isLabelPrefix(word string) bool {
+	_, ok := labelPrefixes[word]
+	return ok
 }
 
 // isTimestampLine reports whether line begins with a clock timestamp such as

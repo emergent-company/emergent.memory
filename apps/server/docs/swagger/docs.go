@@ -31675,7 +31675,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "autoProfile": {
-                    "description": "AutoProfile selects chunking parameters per document from its detected\ndocument shape instead of applying Strategy/MaxChunkSize/Overlap/\nParentChild project-wide.",
+                    "description": "AutoProfile selects chunking parameters per document from its detected\ndocument shape instead of applying Strategy/MaxChunkSize/Overlap/\nParentChild project-wide. Writing the configuration is a full\nreplacement: turning it on stores the other fields as given (they are\nthen unused), so turning it off later lands on those stored values, not\non the ones in force before it was enabled.",
                     "type": "boolean"
                 },
                 "maxChunkSize": {

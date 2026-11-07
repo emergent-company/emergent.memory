@@ -138,6 +138,15 @@ func (s *Service) RecreateChunks(ctx context.Context, projectID, documentID stri
 		cfg = profile.Config
 		strategy = profile.Options.Strategy
 		parentChild = profile.Options.ParentChild
+		if detected == textsplitter.ShapeProse {
+			// Prose has no structure to exploit, so keep the deployment's own
+			// defaults (CHUNK_SIZE/CHUNK_OVERLAP) rather than the package
+			// default: turning auto-profile on must be a no-op for plain prose.
+			cfg = textsplitter.Config{
+				ChunkSize:    s.defaultChunkSize,
+				ChunkOverlap: s.defaultChunkOverlap,
+			}
+		}
 		s.log.Debug("detected document shape",
 			slog.String("documentId", documentID),
 			slog.String("shape", string(detected)),

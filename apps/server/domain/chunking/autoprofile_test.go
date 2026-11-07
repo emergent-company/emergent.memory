@@ -61,6 +61,41 @@ func (s *AutoProfileSuite) recreateChunks(docID uuid.UUID) chunking.RecreateChun
 	return out
 }
 
+// TestAutoProfileConfigAPIRoundTrip covers the write/read surface: an
+// auto-profile write persists and the read echoes the profile table, so a
+// client can discover what will be applied without reading the source.
+func (s *AutoProfileSuite) TestAutoProfileConfigAPIRoundTrip() {
+	resp := s.Client.PUT("/api/chunking/config",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithProjectID(s.ProjectID),
+		testutil.WithJSONBody(map[string]any{"autoProfile": true, "maxChunkSize": 4000, "overlap": 400}))
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "PUT chunking config failed: %s", resp.String())
+
+	var put chunking.ChunkingConfigResponse
+	s.Require().NoError(resp.JSON(&put))
+	s.True(put.AutoProfile)
+	s.Require().NotEmpty(put.Profiles, "an auto-profile write must echo the profile table")
+
+	byShape := map[string]chunking.ShapeProfile{}
+	for _, p := range put.Profiles {
+		byShape[p.Shape] = p
+	}
+	md, ok := byShape["markdown"]
+	s.Require().True(ok, "markdown profile missing from the echoed table: %+v", put.Profiles)
+	s.Equal("markdown_structure", md.Strategy)
+	s.Equal(1200, md.MaxChunkSize)
+
+	got := s.Client.GET("/api/chunking/config",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, got.StatusCode, "GET chunking config failed: %s", got.String())
+
+	var read chunking.ChunkingConfigResponse
+	s.Require().NoError(got.JSON(&read))
+	s.True(read.AutoProfile, "autoProfile did not persist")
+	s.Len(read.Profiles, len(put.Profiles))
+}
+
 // TestAutoProfileSelectsShapeStrategy proves a markdown document gets the
 // structure-aware strategy even though the project's stored strategy is the
 // character splitter.

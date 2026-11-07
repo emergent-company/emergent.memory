@@ -21,7 +21,10 @@ type ChunkingConfigResponse struct {
 	ParentChild  bool   `json:"parentChild"`
 	// AutoProfile selects chunking parameters per document from its detected
 	// document shape instead of applying Strategy/MaxChunkSize/Overlap/
-	// ParentChild project-wide.
+	// ParentChild project-wide. Writing the configuration is a full
+	// replacement: turning it on stores the other fields as given (they are
+	// then unused), so turning it off later lands on those stored values, not
+	// on the ones in force before it was enabled.
 	AutoProfile bool `json:"autoProfile"`
 	// Profiles lists the per-shape parameters auto-profile will use. Present
 	// only when AutoProfile is true.
