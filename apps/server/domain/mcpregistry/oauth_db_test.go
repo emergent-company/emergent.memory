@@ -325,17 +325,55 @@ func (s *MCPOAuthDBSuite) TestDisconnectPreservesRequestedScope() {
 func (s *MCPOAuthDBSuite) TestDisconnectAsUserDoesNotTouchSharedCredential() {
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	s.seedCredential(server, "access-token-value")
-	s.Require().NoError(s.repo.UpsertOAuthRequestedScope(s.Ctx, server.ID, s.ProjectID, "", "repo read:org"))
+	s.Require().NoError(s.repo.UpsertOAuthRequestedScope(s.Ctx, server.ID, s.ProjectID, "", "repo read:org", false))
 
 	// A signed-in user with no personal row resolves the shared row, but the
-	// shared credential is not theirs to disconnect.
-	s.Require().NoError(s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, server.ID, "11111111-1111-1111-1111-111111111111"))
+	// shared credential is not theirs to disconnect: the request is rejected
+	// rather than silently doing nothing.
+	err := s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, server.ID, "11111111-1111-1111-1111-111111111111")
+	s.ErrorIs(err, mcpregistry.ErrOAuthSharedConnection)
 
 	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Require().NotNil(row)
 	s.Equal("client-abc", row.ClientID)
 	s.NotNil(row.AccessToken)
+	s.Equal("repo read:org", row.RequestedScope)
+}
+
+func (s *MCPOAuthDBSuite) TestScopeOnlyUpdateAsUserKeepsSharedToken() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	s.seedCredential(server, "access-token-value")
+	s.Require().NoError(s.repo.UpsertOAuthRequestedScope(s.Ctx, server.ID, s.ProjectID, "", "repo read:org", false))
+
+	// Editing the project-wide configuration is allowed, but a signed-in user
+	// must not invalidate the shared token everyone is using.
+	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "11111111-1111-1111-1111-111111111111", "", "", "repo read:user")
+	s.Require().NoError(err)
+	s.True(status.Connected, "the shared token must survive a configuration edit by a user")
+
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
+	s.Require().NoError(err)
+	s.Require().NotNil(row)
+	s.Equal("repo read:user", row.RequestedScope)
+	s.Equal("client-abc", row.ClientID)
+	s.NotNil(row.AccessToken)
+}
+
+func (s *MCPOAuthDBSuite) TestDisconnectPreservesRequestedScopeForPersonalRow() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	const userID = "11111111-1111-1111-1111-111111111111"
+	s.seedPersonalCredential(server, userID, "access-personal")
+	s.Require().NoError(s.repo.UpsertOAuthRequestedScope(s.Ctx, server.ID, s.ProjectID, userID, "repo read:org", false))
+
+	s.Require().NoError(s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, server.ID, userID))
+
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, userID)
+	s.Require().NoError(err)
+	s.Require().NotNil(row)
+	s.Equal(userID, *row.UserID)
+	s.Empty(row.ClientID)
+	s.Nil(row.AccessToken)
 	s.Equal("repo read:org", row.RequestedScope)
 }
 
@@ -557,7 +595,7 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientScopeOnlyCreatesConfigurationR
 func (s *MCPOAuthDBSuite) TestProvisionOAuthClientScopeOnlyClearsConfiguredSet() {
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	s.seedCredential(server, "access-token-value")
-	s.Require().NoError(s.repo.UpsertOAuthRequestedScope(s.Ctx, server.ID, s.ProjectID, "", "repo read:org"))
+	s.Require().NoError(s.repo.UpsertOAuthRequestedScope(s.Ctx, server.ID, s.ProjectID, "", "repo read:org", false))
 
 	// A blank client id and blank scope clears the configured set (the form's
 	// "request no scopes" path). It is a change like any other, so the token

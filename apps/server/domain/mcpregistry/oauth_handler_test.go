@@ -77,7 +77,7 @@ func TestMCPOAuthError_ClientRequiredRegistrationUnavailable(t *testing.T) {
 // scope-configuration guards: an empty submission with no row to clear and a
 // secret sent without a client id are both actionable 400s, not 500s.
 func TestMCPOAuthError_ClientConfigIncompleteMapsToBadRequest(t *testing.T) {
-	for _, err := range []error{ErrOAuthClientIDRequired, ErrOAuthClientSecretRequiresClientID} {
+	for _, err := range []error{ErrOAuthClientIDRequired, ErrOAuthClientSecretRequiresClientID, ErrOAuthSharedConnection} {
 		mapped := mcpOAuthError(err)
 		status, body := apperror.ToHTTPError(mapped)
 		require.Equal(t, http.StatusBadRequest, status)

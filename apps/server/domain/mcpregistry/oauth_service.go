@@ -42,6 +42,10 @@ var (
 	// request that also carried a client secret: a secret has no owner without a
 	// client id, and silently dropping it would misrepresent what was saved.
 	ErrOAuthClientSecretRequiresClientID = errors.New("a client secret requires a client id")
+	// ErrOAuthSharedConnection marks a disconnect of a project-wide (shared)
+	// credential by a signed-in user. Only an administrative disconnect
+	// (empty user id) may remove it.
+	ErrOAuthSharedConnection = errors.New("this OAuth connection is shared; an administrator must disconnect it")
 	// ErrOAuthClientRequired marks an authorization server that will not issue
 	// us a client: dynamic client registration is unavailable or was rejected.
 	// It is the sentinel behind both a registration-endpoint-free metadata
@@ -515,9 +519,14 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, u
 	if err != nil {
 		return fmt.Errorf("loading MCP server authorization: %w", err)
 	}
+	// A signed-in user may resolve the project-wide row, but it is not theirs to
+	// disconnect: report it instead of silently doing nothing (the old path
+	// deleted no row yet still closed pooled connections).
+	if userID != "" && row != nil && row.UserID == nil {
+		return ErrOAuthSharedConnection
+	}
 	// Only the row this caller may delete is affected: their personal row, or
-	// the shared row for an empty userID. A shared row resolved for a signed-in
-	// user is not theirs to disconnect.
+	// the shared row for an empty userID.
 	if row != nil && oauthUserID(row) == userID && strings.TrimSpace(row.RequestedScope) != "" {
 		if err := s.repo.ClearOAuthClient(ctx, serverID, oauthUserID(row)); err != nil {
 			return err
@@ -540,10 +549,11 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, u
 // were issued to). It returns the server's refreshed authorization status,
 // which never carries token material.
 //
-// A blank clientID with a non-blank requestedScope updates only the stored
-// client's requested scope set (the path a provider that offers dynamic client
-// registration but names no challenge scope needs, since its registered client
-// id is never shown). That update leaves the current token set in place.
+// A blank clientID with a non-blank requestedScope sets the requested scope set
+// without a client (creating a configuration-only row when none exists, so
+// scopes can be chosen before the first connect); a blank clientID and blank
+// scope clears an existing set. A changed set clears the stored token, because
+// its grant was issued for the previous request.
 func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, userID, clientID, clientSecret, requestedScope string) (*MCPServerOAuthStatusDTO, error) {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
@@ -605,21 +615,24 @@ func (s *Service) updateRequestedScope(ctx context.Context, projectID, serverID,
 		if requestedScope == "" {
 			return nil, ErrOAuthClientIDRequired
 		}
-		if err := s.repo.UpsertOAuthRequestedScope(ctx, serverID, projectID, userID, requestedScope); err != nil {
+		if err := s.repo.UpsertOAuthRequestedScope(ctx, serverID, projectID, userID, requestedScope, false); err != nil {
 			return nil, err
 		}
 		return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
 	}
 
 	owner := oauthUserID(row)
+	// A signed-in user may resolve the project-wide row; editing its requested
+	// set is allowed, but dropping the shared token would disconnect every user
+	// of the project. The configuration applies on the next project-wide
+	// reconnect instead.
+	sharedForUser := userID != "" && row.UserID == nil
 	changed := strings.Join(strings.Fields(row.RequestedScope), " ") != requestedScope
-	if err := s.repo.UpsertOAuthRequestedScope(ctx, serverID, projectID, owner, requestedScope); err != nil {
+	clearTokens := changed && row.AccessToken != nil && !sharedForUser
+	if err := s.repo.UpsertOAuthRequestedScope(ctx, serverID, projectID, owner, requestedScope, clearTokens); err != nil {
 		return nil, err
 	}
-	if changed && row.AccessToken != nil {
-		if err := s.repo.ClearOAuthTokens(ctx, serverID, owner); err != nil {
-			return nil, err
-		}
+	if clearTokens {
 		s.proxy.CloseServer(serverID)
 		s.invalidateToolPool(projectID)
 	}

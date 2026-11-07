@@ -209,6 +209,7 @@ func mcpOAuthError(err error) error {
 		errors.Is(err, ErrOAuthNotRequired),
 		errors.Is(err, ErrOAuthClientIDRequired),
 		errors.Is(err, ErrOAuthClientSecretRequiresClientID),
+		errors.Is(err, ErrOAuthSharedConnection),
 		errors.Is(err, ErrOutboundURLNotAllowed):
 		return apperror.NewBadRequest(err.Error())
 	case errors.Is(err, ErrOAuthClientRequired):
