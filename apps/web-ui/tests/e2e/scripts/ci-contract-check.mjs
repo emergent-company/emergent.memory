@@ -38,16 +38,13 @@ const root = path.resolve(
 const e2eDir = path.join(root, 'apps/web-ui/tests/e2e');
 const workflowPath = path.join(root, '.github/workflows/web-ui.yml');
 
-// The hermetic suites: every config that boots `run-e2e.sh`. `playwright.config.ts`
-// (the live session-mode suite) is not one — it targets a developer's gateway via
-// E2E_BASE_URL, so a localhost default there is by design.
-const HERMETIC_CONFIGS = [
-  'share.config.ts',
-  'datasources.config.ts',
-  'gateway-smoke.config.ts',
-  'mcp-inspect.config.ts',
-  'dev-gallery.config.ts',
-];
+// The configs that legitimately select no port pair: `playwright.config.ts` drives
+// the live session-mode suite against a developer's gateway via E2E_BASE_URL, and
+// `js-dom.config.ts` loads the shipped JS into a bare page with no servers at all.
+// Everything else must boot the hermetic harness through `ports.mjs` — including a
+// config added later, which is why the list is derived from the directory and this
+// allowlist is the only way out.
+const NO_PORT_SELECTION = ['js-dom.config.ts', 'playwright.config.ts'];
 
 const failures = [];
 let checks = 0;
@@ -73,14 +70,29 @@ function read(file) {
   }
 }
 
-const configs = Object.fromEntries(
-  HERMETIC_CONFIGS.map((name) => [name, read(path.join(e2eDir, name))]),
-);
+const configNames = readdirSync(e2eDir)
+  .filter((name) => name.endsWith('.config.ts'))
+  .sort();
 
 // ── 1. No hermetic config may name a port ────────────────────────────────────
 check('hermetic configs pin no port and select through ports.mjs', () => {
   const lanes = [];
-  for (const [name, source] of Object.entries(configs)) {
+  for (const name of NO_PORT_SELECTION) {
+    assert(
+      configNames.includes(name),
+      `NO_PORT_SELECTION lists ${name}, which no longer exists — drop it so the allowlist cannot hide a real config.`,
+    );
+  }
+  for (const name of configNames) {
+    const source = read(path.join(e2eDir, name));
+    const selects = source.includes("'ports.mjs'") || source.includes('"ports.mjs"');
+    if (!selects) {
+      assert(
+        NO_PORT_SELECTION.includes(name),
+        `${name}: does not select through ports.mjs and is not in NO_PORT_SELECTION. A new suite must derive its own pair (#810); one that is neither would escape this gate.`,
+      );
+      continue;
+    }
     const numericFallback = /\?\?\s*['"]?\d{2,5}['"]?/.exec(source);
     assert(
       !numericFallback,
@@ -90,10 +102,6 @@ check('hermetic configs pin no port and select through ports.mjs', () => {
     assert(
       !literal,
       `${name}: literal gateway origin ${JSON.stringify(literal?.[0])} — derive the baseURL from the selected port.`,
-    );
-    assert(
-      source.includes("'ports.mjs'") || source.includes('"ports.mjs"'),
-      `${name}: does not invoke ports.mjs — ports are the single source of truth (#810).`,
     );
     const lane = /'--lane',\s*'([^']+)'/.exec(source)?.[1];
     assert(lane, `${name}: passes no --lane to ports.mjs; the lane names the reservation file.`);
@@ -107,7 +115,7 @@ check('hermetic configs pin no port and select through ports.mjs', () => {
     );
     seen.set(lane, name);
   }
-  return `${lanes.length} lanes: ${lanes.map(([, lane]) => lane).join(', ')}`;
+  return `${lanes.length} hermetic configs: ${lanes.map(([, lane]) => lane).join(', ')}`;
 });
 
 // ── 2. A lane's selection must skip a port another harness holds ─────────────
@@ -115,6 +123,12 @@ check('hermetic configs pin no port and select through ports.mjs', () => {
 // the probe is what makes it refuse the first suite's port. Bind a pair as a
 // foreign harness would, then assert the next selection neither returns nor
 // reuses it.
+//
+// Both selections are pinned to the same candidate start with E2E_PORT_SEED=0.
+// Without that the two calls start at independent random offsets in a 6000-wide
+// band, so they would differ whether or not the probe works and this check would
+// be green with a no-op probe. Pinned, the second selection starts at exactly
+// the held ports and can only return something else by probing past them.
 const { selectPorts } = await import(
   pathToFileURL(path.join(e2eDir, 'ports.mjs')).href
 );
@@ -134,6 +148,7 @@ function close(server) {
 // same explicit pair — the override is for humans, never for CI.
 delete process.env.MEMORY_PORT;
 delete process.env.MOCK_PORT;
+process.env.E2E_PORT_SEED = '0';
 
 const reservations = [];
 function reservation(lane) {
@@ -157,7 +172,7 @@ try {
         next.mock !== held.mock,
         `selected mock ${next.mock} is held by the other harness — the probe did not skip a busy port.`,
       );
-      return `held ${held.gateway}/${held.mock}, selected ${next.gateway}/${next.mock}`;
+      return `held ${held.gateway}/${held.mock}, selected ${next.gateway}/${next.mock} from the same seed`;
     });
   } finally {
     await close(gateway);
@@ -214,6 +229,14 @@ const softened = blocks.filter((block) => /^\s*continue-on-error:\s*true\s*$/m.t
 
 check('every continue-on-error step has an id the Report step reads', () => {
   assert(softened.length > 0, 'no continue-on-error steps found — the parser is wrong, not the job');
+  // Match the Report step's own invocation, not any mention of the id: a YAML
+  // comment or a different step naming `steps.<id>.outcome` must not satisfy
+  // this, or the row could be deleted and still read as covered.
+  const reports = (id) =>
+    new RegExp(
+      `^\\s*report\\s+"[^"]*"\\s+"\\$\\{\\{\\s*steps\\.${id}\\.outcome\\s*\\}\\}"\\s*$`,
+      'm',
+    ).test(report);
   const missing = [];
   const ids = [];
   for (const block of softened) {
@@ -224,7 +247,7 @@ check('every continue-on-error step has an id the Report step reads', () => {
       continue;
     }
     ids.push(id);
-    if (!report.includes(`steps.${id}.outcome`)) missing.push(`${name} (id ${id} not in Report)`);
+    if (!reports(id)) missing.push(`${name} (no \`report\` row reads steps.${id}.outcome)`);
   }
   assert(
     missing.length === 0,
