@@ -426,9 +426,9 @@ func wellKnownAppend(issuer, segment string) string {
 // The path-inserted URL is tried first because a conforming path-scoped server
 // publishes only there. The origin-only form
 // (<origin>/.well-known/oauth-protected-resource) stays as a fallback: existing
-// providers (Trale, Figma, …) publish only at the root. A resource with no path
-// yields the origin-only form alone — never a path-inserted URL with a trailing
-// slash doubled onto the segment.
+// providers (Trale, Figma, …) publish only at the root. A resource with neither
+// a path nor a query component yields the origin-only form alone — never a
+// path-inserted URL with a trailing slash doubled onto the segment.
 func protectedResourceMetadataCandidates(resource string) []string {
 	u, err := url.Parse(resource)
 	if err != nil || u.Host == "" {
@@ -442,19 +442,23 @@ func protectedResourceMetadataCandidates(resource string) []string {
 
 // wellKnownProtectedResourceURL builds the §3.1 path-inserted document URL:
 // <origin>/.well-known/oauth-protected-resource/<resource-path>?<query>, or ""
-// when the resource has no path component (the origin-only form is then the
-// conforming shape, per the §3.1 example for https://resource.example.com).
+// when the resource has neither a path nor a query component (the origin-only
+// form is then the conforming shape, per the §3.1 example for
+// https://resource.example.com).
 //
 // A trailing slash on the resource path is trimmed — the same normalisation
 // wellKnownInsert applies for RFC 8414 — so neither a bare "https://host/" nor
-// a path such as "/api/mcp/" can produce a doubled or dangling slash.
+// a path such as "/api/mcp/" can produce a doubled or dangling slash. A
+// query-only identifier (https://host?tenant=acme) still gets the well-known
+// segment inserted before its query, as §3.1's "path and/or query components"
+// requires.
 func wellKnownProtectedResourceURL(resource string) string {
 	u, err := url.Parse(resource)
 	if err != nil || u.Host == "" {
 		return ""
 	}
 	path := strings.TrimSuffix(u.Path, "/")
-	if path == "" {
+	if path == "" && u.RawQuery == "" {
 		return ""
 	}
 	inserted := *u
@@ -695,7 +699,7 @@ func (e *protectedResourceMetadataFailure) Error() string {
 	return "all candidates failed: " + e.detail
 }
 
-// Unwrap exposes every candidate's error to errors.Is/errors.As.
+// Unwrap exposes the transient candidate errors to errors.Is/errors.As.
 func (e *protectedResourceMetadataFailure) Unwrap() []error { return e.errs }
 
 // usableProtectedResourceMetadata reports whether a decoded document carries at
@@ -728,10 +732,12 @@ func usableProtectedResourceMetadata(prm *protectedResourceMetadata) bool {
 // challenge advertised. When no candidate yields a document, a 5xx from any of
 // them is a transient upstream failure and surfaces instead of degrading
 // silently into the authorization-server walk — the same 404/410-vs-5xx
-// distinction fetchAuthMetadata makes. Every other outcome (404/410, 401/403, a
-// transport failure, an HTML catch-all that fails to decode, a 200 that is not
-// a metadata document, or a URL the caller's guard rejected) means "no usable
-// document here" and moves on to the next candidate.
+// distinction fetchAuthMetadata makes, and deliberately symmetric across the
+// candidates: a 500 at either location means we cannot tell whether a document
+// exists, so absence is not trustworthy either. Every other outcome (404/410,
+// 401/403, a transport failure, an HTML catch-all that fails to decode, a 200
+// that is not a metadata document, or a URL the caller's guard rejected) means
+// "no usable document here" and moves on to the next candidate.
 func (d *discovery) fetchProtectedResourceMetadata(ctx context.Context, resource string) (*protectedResourceMetadata, string, error) {
 	candidates := protectedResourceMetadataCandidates(resource)
 	if len(candidates) == 0 {
