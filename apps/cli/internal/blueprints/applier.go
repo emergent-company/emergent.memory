@@ -291,18 +291,17 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 			Action: BlueprintsActionError, Error: fmt.Errorf("update pack: %w", err)}
 	}
 
-	// A merge-confirmed upgrade also re-assigns the updated pack so its type
-	// definitions land in the project registry (Merge=true keeps existing
-	// property definitions and adds new ones). Without merge confirmation the
-	// historical upgrade path is unchanged.
-	if b.mergeTypes {
-		if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
-			SchemaID: packID,
-			Merge:    true,
-		}); err != nil {
-			return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-				Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
-		}
+	// Re-assign after every upgrade so the updated pack's type definitions reach
+	// the project registry (an upgrade is an idempotent "refresh this pack"
+	// operation). The server replaces types this pack owns and follows
+	// Merge for types owned by other packs, so Merge only needs to be set when
+	// the caller confirmed a cross-pack merge in the preflight.
+	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+		SchemaID: packID,
+		Merge:    b.mergeTypes,
+	}); err != nil {
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
 	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionUpdated}

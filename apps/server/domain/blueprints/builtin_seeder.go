@@ -297,9 +297,12 @@ func (s *BuiltinSeeder) upsertBlueprint(ctx context.Context, desc *blueprintDesc
 // Shared by the built-in seeder and the builtin apply path so the two produce
 // identical registry rows.
 func upsertBuiltinSchemaPack(ctx context.Context, db bun.IDB, p PackManifest) (*schemas.GraphMemorySchema, error) {
-	objectTypes, relationshipTypes, err := packSchemaJSON(p)
+	objectTypes, relationshipTypes, uiConfigs, err := packSchemaJSON(p)
 	if err != nil {
 		return nil, err
+	}
+	if len(uiConfigs) == 0 {
+		uiConfigs = json.RawMessage(`{}`)
 	}
 
 	var migrationsJSON any
@@ -314,19 +317,20 @@ func upsertBuiltinSchemaPack(ctx context.Context, db bun.IDB, p PackManifest) (*
 	pack := &schemas.GraphMemorySchema{}
 	err = db.NewRaw(`
 		INSERT INTO kb.graph_schemas
-			(name, version, description, author, source, object_type_schemas, relationship_type_schemas, migrations, published_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, 'builtin', ?, ?, ?, now(), now(), now())
+			(name, version, description, author, source, object_type_schemas, relationship_type_schemas, ui_configs, migrations, published_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'builtin', ?, ?, ?, ?, now(), now(), now())
 		ON CONFLICT (name, version) WHERE source = 'builtin'
 		DO UPDATE SET
 			description = EXCLUDED.description,
 			author = EXCLUDED.author,
 			object_type_schemas = EXCLUDED.object_type_schemas,
 			relationship_type_schemas = EXCLUDED.relationship_type_schemas,
+			ui_configs = EXCLUDED.ui_configs,
 			migrations = EXCLUDED.migrations,
 			published_at = EXCLUDED.published_at,
 			updated_at = now()
 		RETURNING id
-	`, p.Name, p.Version, p.Description, p.Author, string(objectTypes), string(relationshipTypes), migrationsJSON).Scan(ctx, &pack.ID)
+	`, p.Name, p.Version, p.Description, p.Author, string(objectTypes), string(relationshipTypes), string(uiConfigs), migrationsJSON).Scan(ctx, &pack.ID)
 	if err != nil {
 		return nil, err
 	}
