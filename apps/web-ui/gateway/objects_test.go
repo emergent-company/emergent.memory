@@ -4958,3 +4958,80 @@ func countCheckedProvenance(html string) int {
 	}
 	return n
 }
+
+// TestListGraphObjectsPageCredentialFilter pins the credential-scoped query: the
+// credential id is forwarded and the write-stamp provenance is explicitly "any",
+// because the endpoint defaults write-stamp filters to "updated" and would hide
+// objects the credential created but no longer last wrote.
+func TestListGraphObjectsPageCredentialFilter(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[],"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	p := ObjectListParams{Limit: 25, CredentialID: "tok-9", Provenance: "created"}
+	if _, _, err := m.ListGraphObjectsPage(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := gotQuery.Get("credential_id"); got != "tok-9" {
+		t.Errorf("credential_id = %q, want tok-9", got)
+	}
+	if got := gotQuery.Get("provenance"); got != "any" {
+		t.Errorf("provenance = %q, want any (a credential filter must span created and updated)", got)
+	}
+	if got := gotQuery.Get("actor_type"); got != "" {
+		t.Errorf("actor_type = %q, want empty", got)
+	}
+}
+
+// TestUIObjectsCredentialScope pins a share's "View writes" link end to end
+// through the handler: the credential reaches the list call, the page names the
+// scope, and pagination keeps it.
+func TestUIObjectsCredentialScope(t *testing.T) {
+	f := &fakeMemory{
+		pageObjects:    []GraphObject{{ID: "o1", Type: "note", Key: "k1"}},
+		nextPageCursor: "cur-1",
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?credential_id=tok-9&via=analyst", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if f.lastPageCredentialID != "tok-9" {
+		t.Errorf("list credential id = %q, want tok-9", f.lastPageCredentialID)
+	}
+	if f.lastPageActorType != "" {
+		t.Errorf("list actor_type = %q, want empty (a share scope is not an actor filter)", f.lastPageActorType)
+	}
+	html := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="objects-credential-scope"`,
+		"Showing objects created or last updated with the key of the share",
+		"analyst",
+		"Show all objects",
+		"credential_id=tok-9",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("scoped page missing %q", want)
+		}
+	}
+
+	// Without a share name the notice still explains the scope generically.
+	plain := &fakeMemory{pageObjects: []GraphObject{{ID: "o1", Type: "note"}}}
+	s2 := &Server{cfg: Config{DefaultAgent: "memory"}, memory: plain}
+	e2 := echo.New()
+	e2.GET("/objects", s2.uiObjects)
+	rec2 := httptest.NewRecorder()
+	e2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/objects?credential_id=tok-9", nil))
+	if !strings.Contains(rec2.Body.String(), "an MCP share key") {
+		t.Error("anonymous credential scope must say it is an MCP share key")
+	}
+}

@@ -427,3 +427,129 @@ func TestMemoryClientListMCPShareInstancesError(t *testing.T) {
 		t.Fatal("expected an error for a 409 response")
 	}
 }
+
+// TestMCPShareInstanceAttributionFields pins the fields a share row needs to
+// attribute its work: the token id its writes are stamped with, the people it
+// was emailed to, and whether the key can write.
+func TestMCPShareInstanceAttributionFields(t *testing.T) {
+	raw := `{
+		"id": "s1",
+		"name": "analyst",
+		"tools": ["entity-search"],
+		"tokenId": "tok-9",
+		"recipientEmails": ["alice@example.com", "bob@example.com"],
+		"readOnly": false,
+		"status": "active",
+		"isLegacy": false,
+		"createdAt": "2026-01-02T03:04:05Z",
+		"toolCount": 1
+	}`
+	var inst MCPShareInstance
+	if err := json.Unmarshal([]byte(raw), &inst); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if inst.TokenID != "tok-9" {
+		t.Errorf("tokenId = %q", inst.TokenID)
+	}
+	if len(inst.RecipientEmails) != 2 || inst.RecipientEmails[0] != "alice@example.com" {
+		t.Errorf("recipientEmails = %v", inst.RecipientEmails)
+	}
+	if inst.ReadOnly {
+		t.Error("readOnly = true, want false")
+	}
+
+	// An older backend omits all three: zero values must still decode, and a
+	// share with no token id must render no activity link.
+	var legacy MCPShareInstance
+	if err := json.Unmarshal([]byte(`{"id":"s2","name":"old","tools":[]}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy: %v", err)
+	}
+	if legacy.TokenID != "" || legacy.RecipientEmails != nil {
+		t.Errorf("legacy decode = %+v", legacy)
+	}
+	if href := mcpShareActivityHref(legacy); href != "" {
+		t.Errorf("activity href = %q, want empty without a token id", href)
+	}
+}
+
+// TestMCPShareRowShowsInviteesAndWriteScope pins the share row's attribution:
+// who the key was emailed to, whether it can write, and a link to the objects
+// the share's key wrote.
+func TestMCPShareRowShowsInviteesAndWriteScope(t *testing.T) {
+	inst := MCPShareInstance{
+		ID:              "s1",
+		Name:            "analyst",
+		Status:          "active",
+		TokenID:         "tok-9",
+		RecipientEmails: []string{"alice@example.com", "bob@example.com"},
+		ReadOnly:        false,
+		CreatedAt:       "2026-01-02T03:04:05Z",
+	}
+	html := renderHTML(t, MCPSharesPage(mcpSharesPageData{Shares: []MCPShareInstance{inst}}))
+
+	for _, want := range []string{
+		"invited alice@example.com, bob@example.com",
+		`title="alice@example.com, bob@example.com"`,
+		"read &amp; write",
+		`data-testid="mcp-share-activity-link-s1"`,
+		"credential_id=tok-9",
+		"via=analyst",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("share row missing %q", want)
+		}
+	}
+
+	// A legacy token is not editable but its writes are still attributable: the
+	// row id is the token id, so the activity link renders beside Duplicate.
+	legacy := renderHTML(t, MCPSharesPage(mcpSharesPageData{Shares: []MCPShareInstance{{
+		ID: "tok-legacy", Name: "MCP Share", Status: "active", TokenID: "tok-legacy",
+		IsLegacy: true, ReadOnly: true,
+	}}}))
+	for _, want := range []string{
+		`data-testid="mcp-share-activity-link-tok-legacy"`,
+		"credential_id=tok-legacy",
+	} {
+		if !strings.Contains(legacy, want) {
+			t.Errorf("legacy row missing %q", want)
+		}
+	}
+	if strings.Contains(legacy, "read &amp; write") {
+		t.Error("legacy row advertised write access")
+	}
+
+	// A read-only share does not advertise write access, and a share nobody was
+	// emailed to renders no invitee chip.
+	quiet := renderHTML(t, MCPSharesPage(mcpSharesPageData{Shares: []MCPShareInstance{{
+		ID: "s2", Name: "reader", Status: "active", TokenID: "tok-10", ReadOnly: true,
+	}}}))
+	if strings.Contains(quiet, "read &amp; write") {
+		t.Error("read-only share advertised write access")
+	}
+	if strings.Contains(quiet, "invited ") {
+		t.Error("share with no recipients rendered an invitee chip")
+	}
+}
+
+// TestMCPShareRecipientsLabel pins the row label's summarisation: at most two
+// addresses are named, the tail is a count, and the title carries the full list
+// so the addresses the row had to drop are still reachable.
+func TestMCPShareRecipientsLabel(t *testing.T) {
+	cases := []struct {
+		emails []string
+		want   string
+	}{
+		{nil, ""},
+		{[]string{"a@example.com"}, "invited a@example.com"},
+		{[]string{"a@example.com", "b@example.com"}, "invited a@example.com, b@example.com"},
+		{[]string{"a@example.com", "b@example.com", "c@example.com"}, "invited a@example.com, b@example.com +1"},
+	}
+	for _, c := range cases {
+		if got := mcpShareRecipientsLabel(c.emails); got != c.want {
+			t.Errorf("label(%v) = %q, want %q", c.emails, got, c.want)
+		}
+	}
+	if got := mcpShareRecipientsTitle([]string{"a@example.com", "b@example.com", "c@example.com"}); got != "a@example.com, b@example.com, c@example.com" {
+		t.Errorf("title = %q", got)
+	}
+}

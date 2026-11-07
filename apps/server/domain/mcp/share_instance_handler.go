@@ -58,10 +58,15 @@ func (h *Handler) HandleCreateShareInstance(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	baseURL := requestBaseURL(c)
+	baseURL := h.svc.shareBaseURL(requestBaseURL(c))
 	resp, err := h.svc.CreateShareInstance(ctx, projectID, user.ID, baseURL, req.CreateShareInstanceRequest)
 	if err != nil {
 		return err
+	}
+	// Record before replying so the response already names the invitees it was
+	// sent to, instead of reporting an empty list for a share that has one.
+	if merged := h.recordShareRecipients(ctx, projectID, user.ID, resp.ID, emails); merged != nil {
+		resp.RecipientEmails = merged
 	}
 	h.sendShareInstanceInvites(ctx, user, projectID, baseURL, emails, resp)
 	return c.JSON(http.StatusCreated, resp)
@@ -75,9 +80,28 @@ func (h *Handler) sendShareInstanceInvites(ctx context.Context, user *auth.AuthU
 		return
 	}
 	senderName := h.senderDisplayName(ctx, user.ID, user.Email)
-	sent, problem := h.svc.SendShareInviteEmails(ctx, projectID, senderName, baseURL, resp.Token, emails)
+	sent, problem := h.svc.SendShareInviteEmails(ctx, projectID, resp.Name, resp.ReadOnly, senderName, baseURL, resp.Token, emails)
 	resp.EmailsSent = sent
 	resp.EmailError = problem
+}
+
+// recordShareRecipients stores the invite recipients on the share so the grant
+// records who holds it. It is best-effort: the key was already minted and the
+// invite is about to be queued, so a metadata failure must not fail the
+// request — it is logged so the loss is visible.
+func (h *Handler) recordShareRecipients(ctx context.Context, projectID, userID, id string, emails []string) []string {
+	if len(emails) == 0 {
+		return nil
+	}
+	merged, err := h.svc.RecordShareRecipients(ctx, projectID, userID, id, emails)
+	if err != nil {
+		h.log.Warn("failed to record mcp share invite recipients",
+			"share_id", id,
+			"project_id", projectID,
+			"error", err)
+		return nil
+	}
+	return merged
 }
 
 // HandleListShareInstances handles GET /api/projects/:projectId/mcp/shares.
@@ -181,10 +205,13 @@ func (h *Handler) HandleRotateShareInstance(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	baseURL := requestBaseURL(c)
+	baseURL := h.svc.shareBaseURL(requestBaseURL(c))
 	resp, err := h.svc.RotateShareInstance(ctx, projectID, user.ID, id, baseURL)
 	if err != nil {
 		return err
+	}
+	if merged := h.recordShareRecipients(ctx, projectID, user.ID, resp.ID, emails); merged != nil {
+		resp.RecipientEmails = merged
 	}
 	h.sendShareInstanceInvites(ctx, user, projectID, baseURL, emails, resp)
 	return c.JSON(http.StatusOK, resp)
@@ -230,12 +257,19 @@ func (h *Handler) HandleInviteShareInstance(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
+	// The instance supplies the share name and capability the email describes;
+	// reading it also proves the share exists before the key is recovered.
+	inst, err := h.svc.GetShareInstance(ctx, projectID, user.ID, id)
+	if err != nil {
+		return err
+	}
 	key, err := h.svc.RevealShareInstanceKey(ctx, projectID, user.ID, id)
 	if err != nil {
 		return err
 	}
+	h.recordShareRecipients(ctx, projectID, user.ID, id, emails)
 	senderName := h.senderDisplayName(ctx, user.ID, user.Email)
-	sent, problem := h.svc.SendShareInviteEmails(ctx, projectID, senderName, requestBaseURL(c), key, emails)
+	sent, problem := h.svc.SendShareInviteEmails(ctx, projectID, inst.Name, inst.ReadOnly, senderName, h.svc.shareBaseURL(requestBaseURL(c)), key, emails)
 	return c.JSON(http.StatusOK, InviteShareInstanceResponse{
 		TokenPrefix: shareKeyPrefix(key),
 		EmailsSent:  sent,

@@ -35,11 +35,20 @@ type MCPShareInstance struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Tools       []string `json:"tools"`
-	Status      string   `json:"status"`
-	IsLegacy    bool     `json:"isLegacy"`
-	CreatedAt   string   `json:"createdAt"`
-	LastUsedAt  *string  `json:"lastUsedAt"`
-	ToolCount   int      `json:"toolCount"`
+	// TokenID is the credential that authenticates the share. It is the value
+	// graph write stamps record as credential_id, so it is what the "writes via
+	// this share" link filters on. Omitted by older backends.
+	TokenID string `json:"tokenId,omitempty"`
+	// RecipientEmails are the addresses the share key was invited to. Empty for
+	// a share that was never emailed.
+	RecipientEmails []string `json:"recipientEmails,omitempty"`
+	// ReadOnly reports whether the share grants only read scopes.
+	ReadOnly   bool    `json:"readOnly"`
+	Status     string  `json:"status"`
+	IsLegacy   bool    `json:"isLegacy"`
+	CreatedAt  string  `json:"createdAt"`
+	LastUsedAt *string `json:"lastUsedAt"`
+	ToolCount  int     `json:"toolCount"`
 }
 
 // MCPShareInput is the create/update request body. Tools must hold at least one
@@ -616,4 +625,41 @@ func mcpShareGeneratedSnippet(key, mcpURL, token string) string {
 	default:
 		return mcpURL + "\nAuthorization: Bearer " + token
 	}
+}
+
+// mcpShareRecipientsLabel renders a share's invite recipients for the row's meta
+// line. It names the addresses so an admin can see who holds the share, showing
+// up to two and summarising the tail as "+N" to keep the row on one line; the
+// full list is in the title (mcpShareRecipientsTitle).
+func mcpShareRecipientsLabel(emails []string) string {
+	switch len(emails) {
+	case 0:
+		return ""
+	case 1:
+		return "invited " + emails[0]
+	case 2:
+		return "invited " + emails[0] + ", " + emails[1]
+	default:
+		return fmt.Sprintf("invited %s, %s +%d", emails[0], emails[1], len(emails)-2)
+	}
+}
+
+// mcpShareRecipientsTitle is the full recipient list, used as the chip's hover
+// text so the addresses the row had to summarise are still reachable.
+func mcpShareRecipientsTitle(emails []string) string {
+	return strings.Join(emails, ", ")
+}
+
+// mcpShareActivityHref links to the object browser scoped to the objects this
+// share's key created or last updated. The credential id is the value graph
+// write stamps record for the share's token; `via` carries the share name only
+// so the browser can label the scope (it never filters on it).
+func mcpShareActivityHref(inst MCPShareInstance) string {
+	if inst.TokenID == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("credential_id", inst.TokenID)
+	q.Set("via", inst.Name)
+	return "/objects?" + q.Encode()
 }
