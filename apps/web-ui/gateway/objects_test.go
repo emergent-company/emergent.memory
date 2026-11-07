@@ -3288,6 +3288,16 @@ func TestTagListWrapperMatchesInputBorder(t *testing.T) {
 	if strings.Contains(block, "--color-line-strong") {
 		t.Errorf("%s must not use the ladder's strong step — that is the #2311 divergence; got:\n%s", selector, block)
 	}
+
+	// The structural selector only works while the TagList render keeps this
+	// shape: a .relative wrapper directly containing the border-line-strong
+	// field box. Render it and pin the shape, so a future bump that changes the
+	// wrapper fails here instead of silently detaching the override.
+	html := renderHTML(t, propertyInput(objectPropertyDef{Name: "tags", Type: "array"}, []string{"x"}, nil, false))
+	const shape = `class="relative"><div class="flex flex-wrap items-center gap-1.5 border border-line-strong`
+	if !strings.Contains(html, shape) {
+		t.Errorf("TagList render no longer matches %s (the app.css override would detach):\n%s", shape, html)
+	}
 }
 
 // TestObjectStatusControl pins the visibility and option-source rules for the

@@ -194,6 +194,17 @@
 @import "../../vendor/github.com/emergent-company/go-daisy/components/css/tokens.css";
 @import "../../vendor/github.com/emergent-company/go-daisy/components/css/custom.css";
 
+/* go-daisy tokens.css also declares `--color-muted`, but at 60% (its own tone
+   ladder), in an `@theme inline` block. Because that import comes after
+   Memory's muted scale above, upstream's value would win and silently brighten
+   every `text-muted`/`var(--color-muted)` use app-wide. Re-assert Memory's
+   canonical 50% step after the import so the product scale stays
+   authoritative; the rest of the product scale (muted-subtle/-faint/-strong/
+   -bright) does not collide with go-daisy's names. */
+@theme inline {
+  --color-muted: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+}
+
 /* ---------------------------------------------------------------------------
  * Memory brand layer — atmosphere, chat polish, session rail, motion.
  * Plain CSS on purpose: these intentionally override daisyUI component
