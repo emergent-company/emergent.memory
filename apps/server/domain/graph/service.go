@@ -131,6 +131,41 @@ func envFloatDefault(key string, def float32) float32 {
 	return def
 }
 
+// resolveMaxDistance returns the max-distance to apply to a vector search. An
+// explicit caller value always wins; otherwise the similarity floor, when
+// enabled, is translated to its distance form (1 - floor); otherwise nil (no
+// bound).
+func resolveMaxDistance(explicit *float32, minSimilarity float32) *float32 {
+	if explicit != nil {
+		return explicit
+	}
+	if minSimilarity > 0 {
+		d := 1.0 - minSimilarity
+		return &d
+	}
+	return nil
+}
+
+// aboveSimilarityFloor reports whether a vector result's cosine similarity meets
+// the configured floor. A floor <= 0 disables the check (no floor).
+func aboveSimilarityFloor(distance, floor float32) bool {
+	return floor <= 0 || (1.0-distance) >= floor
+}
+
+// fusedLess reports whether a fused candidate with the given attributes should
+// sort before another: a lexical term match first (a result that actually
+// contains the query term outranks one the vector leg matched on similarity
+// alone), then higher fused score, then ascending id.
+func fusedLess(aHasLexical, bHasLexical bool, aScore, bScore float32, aID, bID uuid.UUID) bool {
+	if aHasLexical != bHasLexical {
+		return aHasLexical
+	}
+	if aScore != bScore {
+		return aScore > bScore
+	}
+	return slices.Compare(aID[:], bID[:]) < 0
+}
+
 // NewService creates a new graph service.
 func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, sink EventSink, branchStore branchStoreIface, eventsSvc *events.Service) *Service {
 	if sink == nil {
@@ -2931,11 +2966,7 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 
 	// Relevance floor: when the caller did not set an explicit max distance,
 	// apply the similarity floor so a weak semantic match is not surfaced (#244).
-	maxDistance := req.MaxDistance
-	if maxDistance == nil && s.minVectorSimilarity > 0 {
-		d := 1.0 - s.minVectorSimilarity
-		maxDistance = &d
-	}
+	maxDistance := resolveMaxDistance(req.MaxDistance, s.minVectorSimilarity)
 
 	params := VectorSearchParams{
 		ProjectID:      projectID,
@@ -3165,7 +3196,7 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		}
 		for _, r := range vecResults {
 			// Relevance floor on the semantic leg (#244).
-			if s.minVectorSimilarity > 0 && (1.0-r.Distance) < s.minVectorSimilarity {
+			if !aboveSimilarityFloor(r.Distance, s.minVectorSimilarity) {
 				continue
 			}
 			vectorResults[r.Object.ID] = r
@@ -3297,15 +3328,14 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	// id so the order is total and reproducible regardless of upstream map
 	// iteration order.
 	sort.Slice(fusedResults, func(i, j int) bool {
-		iLex := fusedResults[i].lexicalScore != nil
-		jLex := fusedResults[j].lexicalScore != nil
-		if iLex != jLex {
-			return iLex
-		}
-		if fusedResults[i].fusedScore != fusedResults[j].fusedScore {
-			return fusedResults[i].fusedScore > fusedResults[j].fusedScore
-		}
-		return slices.Compare(fusedResults[i].id[:], fusedResults[j].id[:]) < 0
+		return fusedLess(
+			fusedResults[i].lexicalScore != nil,
+			fusedResults[j].lexicalScore != nil,
+			fusedResults[i].fusedScore,
+			fusedResults[j].fusedScore,
+			fusedResults[i].id,
+			fusedResults[j].id,
+		)
 	})
 
 	// Exclude operational object types from default search (P4.2).
