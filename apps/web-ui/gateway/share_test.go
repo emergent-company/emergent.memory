@@ -227,6 +227,42 @@ func TestShareAgentPageLoadsPopoverRuntime(t *testing.T) {
 	}
 }
 
+// TestSharePageEmitsNoSentry pins issue #219: the public share page is served
+// under the strict CSP in shareSecurityHeaders, which disallows third-party
+// scripts and outbound reporting. Even with the deployment's SENTRY_DSN
+// configured, the page must ship neither the Sentry CDN bundle nor the five
+// sentry-* meta tags (nothing on this surface reads them).
+func TestSharePageEmitsNoSentry(t *testing.T) {
+	s := &Server{cfg: Config{
+		SentryDSN:         "https://key@sentry.example.com/1",
+		SentryEnvironment: "production",
+	}}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/share/agent", nil)
+	rec := httptest.NewRecorder()
+	if err := s.sharePage(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("sharePage: %v", err)
+	}
+	html := rec.Body.String()
+	if strings.TrimSpace(html) == "" {
+		t.Fatal("share page rendered empty — the absence assertions would pass vacuously")
+	}
+	if strings.Contains(html, sentryCDNScript) {
+		t.Error("Sentry CDN script emitted on the public share page, but its CSP blocks third-party scripts")
+	}
+	if strings.Contains(html, "Sentry.init") {
+		t.Error("Sentry init bootstrap emitted on the public share page, but its CSP blocks third-party scripts")
+	}
+	for _, meta := range []string{
+		"sentry-dsn", "sentry-environment", "sentry-traces-sample-rate",
+		"sentry-replay-session-sample-rate", "sentry-replay-on-error-sample-rate",
+	} {
+		if strings.Contains(html, `name="`+meta+`"`) {
+			t.Errorf("meta tag %q emitted on the public share page; Sentry must be absent from this surface", meta)
+		}
+	}
+}
+
 // --- unarchive / delete / cancel --------------------------------------------
 
 // TestShareUnarchiveDeleteCancelProxy asserts the three new lifecycle handlers
