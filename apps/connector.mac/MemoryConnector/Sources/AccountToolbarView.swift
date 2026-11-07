@@ -9,10 +9,12 @@ import SwiftUI
 /// "Sign in" button that starts Production sign-in directly; no environment
 /// choice and no stale account rows are shown.
 ///
-/// The trigger is the avatar plus a disclosure chevron. Two affordances matter
-/// here: the avatar says *which* account is active without opening anything, and
-/// the chevron says the control opens something. The previous version hid the
-/// menu indicator, so a borderless avatar gave no hint that it was a control.
+/// The trigger is the avatar alone. It already says *which* account is active,
+/// and it is the macOS context-switcher shape (Claude, Gemini, Xcode's own
+/// account row): identity glyph, no disclosure indicator, no capsule. The hover
+/// ring and the tooltip carry the "this opens something" signal, and the panel
+/// header repeats the identity at full size on the first line of the popover —
+/// a chevron next to a 22 pt face is clutter, not affordance.
 ///
 /// The panel is `AccountSwitcherPanel`, a real view in a `.popover` — a `Menu`
 /// flattens rows to `NSMenuItem`s, which is why the account list read as a bare
@@ -87,25 +89,21 @@ struct AccountToolbarView: View {
         }
     }
 
-    /// Avatar + disclosure chevron. The hover ring stands in for the browser's
-    /// `hover:ring-1`, so the control reads as clickable before it is opened.
+    /// The avatar, with a hover ring so it reads as a control before it is
+    /// opened. No chevron: the face is the affordance, and the panel header
+    /// states the identity at full size.
     private var avatarTrigger: some View {
-        HStack(spacing: 3) {
-            MemoryAvatar(initials: accountStore.activeAccount?.initials ?? "",
-                         size: 22,
-                         cacheKey: accountStore.activeAccount?.email)
-                .overlay(
-                    Circle()
-                        .strokeBorder(.primary.opacity(isHoveringTrigger ? 0.28 : 0), lineWidth: 1)
-                )
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 3)
-        .contentShape(Rectangle())
-        .onHover { isHoveringTrigger = $0 }
+        MemoryAvatar(initials: accountStore.activeAccount?.initials ?? "",
+                     size: 22,
+                     cacheKey: accountStore.activeAccount?.email)
+            .overlay(
+                Circle()
+                    .strokeBorder(.primary.opacity(isHoveringTrigger ? 0.28 : 0), lineWidth: 1)
+            )
+            .padding(.horizontal, 4)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+            .onHover { isHoveringTrigger = $0 }
     }
 
     /// VoiceOver value: the identity the control switches, not just "Account".
