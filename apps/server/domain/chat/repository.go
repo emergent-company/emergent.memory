@@ -291,6 +291,107 @@ func (r *Repository) Create(ctx context.Context, conv *Conversation) error {
 	return nil
 }
 
+// getToolSession reads the conversation for a deterministic tool-session id,
+// applying the same owner-or-shared access predicate as every other
+// conversation accessor. A nil result means the row does not exist (or is not
+// visible to the owner), never an error.
+func (r *Repository) getToolSession(ctx context.Context, conversationID uuid.UUID, projectID, ownerUserID string) (*Conversation, error) {
+	var conv Conversation
+	condition, args := ownerOrSharedScope("", ownerUserID)
+	err := r.db.NewSelect().
+		Model(&conv).
+		Where("id = ?", conversationID).
+		Where("project_id = ?", projectID).
+		Where(condition, args...).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get tool session: %w", err)
+	}
+
+	return &conv, nil
+}
+
+// GetOrCreateToolSession returns the single conversation used by stateless
+// tool calls for a deterministic tool-session id (see
+// chat.Service.GetOrCreateToolSession for the key). The conversation's primary
+// key IS the uniqueness constraint, so no extra column or index is needed:
+// a concurrent first call loses the insert race on the primary key and reuses
+// the winner's row instead of creating a duplicate.
+//
+// created reports whether this call inserted the conversation and its first
+// message. On reuse the caller's first message is not re-inserted (the reused
+// conversation already owns an initial turn; the new question is still passed
+// to the agent directly, exactly like a session-continuation call).
+func (r *Repository) GetOrCreateToolSession(ctx context.Context, conv *Conversation, msg *Message) (*Conversation, bool, error) {
+	if conv.ProjectID == nil {
+		return nil, false, apperror.New(400, "invalid-project-id", "Invalid project ID format")
+	}
+	projectID := conv.ProjectID.String()
+	ownerUserID := ""
+	if conv.OwnerUserID != nil {
+		ownerUserID = *conv.OwnerUserID
+	}
+
+	// Fast path: once the tool session exists, reuse it without writing.
+	existing, err := r.getToolSession(ctx, conv.ID, projectID, ownerUserID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		return existing, false, nil
+	}
+
+	created := false
+	err = r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, execErr := tx.NewInsert().
+			Model(conv).
+			On("CONFLICT (id) DO NOTHING").
+			Exec(ctx)
+		if execErr != nil {
+			if pgutils.IsForeignKeyViolation(execErr) {
+				return apperror.New(400, "invalid-reference", "Referenced project or object not found")
+			}
+			r.log.Error("failed to create tool session conversation", logger.Error(execErr))
+			return apperror.ErrDatabase.WithInternal(execErr)
+		}
+
+		rows, _ := res.RowsAffected()
+		if rows == 0 {
+			// Another concurrent first call won the insert race. Its INSERT
+			// completed before ours could return (we waited on the primary key),
+			// so the row is visible to the read below.
+			return nil
+		}
+
+		created = true
+		msg.ConversationID = conv.ID
+		if _, msgErr := tx.NewInsert().Model(msg).Exec(ctx); msgErr != nil {
+			return apperror.ErrDatabase.WithInternal(msgErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if created {
+		return conv, true, nil
+	}
+
+	// Lost the race: reuse the winner's row.
+	existing, err = r.getToolSession(ctx, conv.ID, projectID, ownerUserID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing == nil {
+		return nil, false, fmt.Errorf("tool session %s disappeared after insert conflict", conv.ID)
+	}
+	return existing, false, nil
+}
+
 // Update updates a conversation, scoped to the caller (owner or non-private).
 func (r *Repository) Update(ctx context.Context, projectID, ownerUserID string, conv *Conversation) error {
 	condition, args := ownerOrSharedScope("", ownerUserID)
