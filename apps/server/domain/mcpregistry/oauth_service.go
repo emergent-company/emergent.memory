@@ -47,8 +47,9 @@ var (
 	// flow cannot work without discoverable endpoints.
 	ErrOAuthMetadataUnavailable = errors.New("this MCP server's provider publishes no OAuth authorization metadata")
 	// ErrOAuthDiscoveryFailed marks a probe or metadata fetch that could not be
-	// completed (unreachable server, unusable metadata). Handler maps it to 502:
-	// the failure is upstream, not bad input.
+	// completed (unreachable server, unusable metadata). Handler maps it to 503
+	// (Service Unavailable): the failure is upstream, not bad input. A permanent
+	// absence of metadata is the separate ErrOAuthMetadataUnavailable → 422 case.
 	ErrOAuthDiscoveryFailed = errors.New("could not determine the MCP server's authorization requirement")
 	// ErrOAuthStateInvalid marks a callback whose state is unknown, expired, or
 	// already consumed. Handler redirects with an error indication.
@@ -180,9 +181,6 @@ func probeAuthChallenge(ctx context.Context, resourceURL string) (authChallenge,
 		Validate:  oauthValidateURL,
 	})
 	if err != nil {
-		if errors.Is(err, mcpauth.ErrURLNotAllowed) {
-			return authChallenge{}, fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
-		}
 		return authChallenge{}, fmt.Errorf("probing MCP server: %w", err)
 	}
 	if !found {

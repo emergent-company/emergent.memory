@@ -68,9 +68,18 @@ jobs:
   # stack: the mock is stateful and seeds per boot (share's "one active session"
   # timeline, gmail's seeded source `s2`, …) and `run-e2e.sh` refuses to attach
   # to a server it did not start, precisely so a suite never runs against
-  # another lane's state. Sequential steps give the same thing without that risk:
-  # only one stack is ever up in this job, so the per-job port pins (#810) are
-  # gone and every suite uses its config's own default ports.
+  # another lane's state.
+  #
+  # Ports are derived per run, never pinned (#810). Each config asks
+  # `apps/web-ui/tests/e2e/ports.mjs` for a free gateway+mock pair, that module
+  # writes the pair to E2E_PORTS_FILE, and `run-e2e.sh` boots from the same
+  # file. Nothing in this workflow may set a port constant: the `memory` pool
+  # runs concurrent jobs on shared hosts, so two runs of *this same job* can be
+  # in the same suite step at once. Safety comes from the probe plus the
+  # runner's provenance check (`ss` shows the gateway it started owns the port),
+  # not from arithmetic or from assuming only one lane is ever live on a host.
+  # `reuseExistingServer: false` only means Playwright launches the command; it
+  # is checked before launch, so it is not the attach guard.
   # ───────────────────────────────────────────────────────────────────────────
   web-ui:
     name: Web UI (gateway + Playwright)
@@ -218,6 +227,16 @@ jobs:
           else
             npx playwright install chromium
           fi
+
+      # Hermetic regression for #810's residual race: the pre-flight checks the
+      # ports before the build, so a foreign listener can take the gateway port
+      # mid-build and answer /api/health. Without a provenance check the runner
+      # would declare a stranger ready. It must exit non-zero naming the port.
+      - name: Port provenance guard
+        id: ports_provenance
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
+        run: bash scripts/provenance-race-test.sh
 
       # ── Suite 1: static-JS wiring (no gateway) ─────────────────────────────
       # Hermetic DOM gate. The full Playwright suite (playwright.config.ts) needs
@@ -368,6 +387,7 @@ jobs:
           report "gateway vet"        "${{ steps.vet.outcome }}"
           report "gateway test"       "${{ steps.test.outcome }}"
           report "gateway lint"       "${{ steps.lint.outcome }}"
+          report "port provenance"    "${{ steps.ports_provenance.outcome }}"
           report "js syntax"          "${{ steps.js_syntax.outcome }}"
           report "js wiring"          "${{ steps.js.outcome }}"
           report "datasources e2e"    "${{ steps.datasources.outcome }}"

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // ClientFactory returns the HTTP client to use for one absolute URL. A caller
@@ -150,7 +151,6 @@ func ProbeResource(ctx context.Context, cfg ProbeConfig) (challenge Challenge, f
 
 	const initBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"memory-mcp-oauth-probe","version":"1"}}}`
 	httpc := d.client(resource)
-	httpc.Timeout = requestTimeout
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resource, strings.NewReader(initBody))
 	if err != nil {
@@ -279,6 +279,12 @@ func Discover(ctx context.Context, cfg DiscoveryConfig) (*Requirement, error) {
 		fallback := resourceOrigin(resource) + "/.well-known/oauth-protected-resource"
 		if err := d.getJSON(ctx, fallback, prm); err != nil {
 			// Absence is not fatal: the challenge may name the server directly.
+			// A 5xx is different — a transient upstream outage must not degrade
+			// silently into the authorization-server walk, mirroring the
+			// 404/410-vs-5xx distinction fetchAuthMetadata makes.
+			if transientMetadataFailure(err) {
+				return nil, fmt.Errorf("fetching protected resource metadata: %w", err)
+			}
 			prm = &protectedResourceMetadata{}
 		} else {
 			req.ResourceMetadataURL = fallback
@@ -458,6 +464,18 @@ func metadataAbsent(err error) bool {
 	return errors.As(err, &httpErr) && (httpErr.Status == http.StatusNotFound || httpErr.Status == http.StatusGone)
 }
 
+// transientMetadataFailure reports whether err is an upstream 5xx worth
+// surfacing rather than a definitive absence or an unusable document. The
+// optional well-known fallback deliberately treats everything else — 401/403,
+// transport failures (timeout, connection refused, TLS), and a decode error
+// from an HTML catch-all — as "no usable document here", so a provider that
+// does not publish protected-resource metadata still reaches the
+// authorization-server walk.
+func transientMetadataFailure(err error) bool {
+	var httpErr *metadataHTTPError
+	return errors.As(err, &httpErr) && httpErr.Status >= http.StatusInternalServerError
+}
+
 // --- guarded fetch ---
 
 // discovery carries the caller's transport customisation for one operation.
@@ -480,15 +498,35 @@ func (d *discovery) check(ctx context.Context, rawURL string) error {
 	return nil
 }
 
-// client returns the HTTP client for one URL: the caller's when supplied, the
-// SSRF-guarded per-target client otherwise.
+// client returns the HTTP client to use for one URL: a private copy of the
+// caller's when supplied, the SSRF-guarded per-target client otherwise. The copy
+// lets the package bound its own request without mutating a client the caller
+// owns and may share across calls.
 func (d *discovery) client(rawURL string) *http.Client {
+	var c *http.Client
 	if d.clientFor != nil {
-		if c := d.clientFor(rawURL); c != nil {
-			return c
-		}
+		c = d.clientFor(rawURL)
 	}
-	return OutboundHTTPClient(rawURL)
+	if c == nil {
+		c = OutboundHTTPClient(rawURL)
+	}
+	return cloneClientWithTimeout(c, requestTimeout)
+}
+
+// cloneClientWithTimeout returns a new *http.Client carrying c's transport,
+// redirect policy and cookie jar, with timeout replacing c's. The struct is
+// rebuilt field by field rather than copied so none of the http.Client's
+// unexported mutex-bearing state is duplicated.
+func cloneClientWithTimeout(c *http.Client, timeout time.Duration) *http.Client {
+	if c == nil {
+		return &http.Client{Timeout: timeout}
+	}
+	return &http.Client{
+		Transport:     c.Transport,
+		CheckRedirect: c.CheckRedirect,
+		Jar:           c.Jar,
+		Timeout:       timeout,
+	}
 }
 
 // getJSON performs a guarded GET and decodes a JSON document into out.
@@ -497,7 +535,6 @@ func (d *discovery) getJSON(ctx context.Context, rawURL string, out any) error {
 		return err
 	}
 	client := d.client(rawURL)
-	client.Timeout = requestTimeout
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -521,6 +558,23 @@ func (d *discovery) getJSON(ctx context.Context, rawURL string, out any) error {
 	return nil
 }
 
+// authMetadataFailure summarizes a failed authorization-server metadata walk.
+// The per-candidate detail stays in the message; the underlying errors stay in
+// the chain so a caller can distinguish a blocked URL from an upstream outage
+// with errors.Is/errors.As.
+type authMetadataFailure struct {
+	detail string
+	errs   []error
+}
+
+func (e *authMetadataFailure) Error() string {
+	return "authorization-server metadata: all discovery endpoints failed: " + e.detail
+}
+
+// Unwrap exposes every candidate's error to errors.Is/errors.As (Go 1.20+
+// multi-error unwrapping).
+func (e *authMetadataFailure) Unwrap() []error { return e.errs }
+
 // fetchAuthMetadata fetches the authorization server metadata from the first
 // candidate URL that returns a usable document. It returns
 // ErrMetadataUnavailable when every candidate answers with a definitive "not
@@ -532,6 +586,7 @@ func (d *discovery) fetchAuthMetadata(ctx context.Context, candidates []string) 
 		return nil, fmt.Errorf("%w: no candidate metadata URL could be derived", ErrMetadataUnavailable)
 	}
 	var failures []string
+	var errs []error
 	allAbsent := true
 	for _, candidate := range candidates {
 		md := &authServerMetadata{}
@@ -547,12 +602,13 @@ func (d *discovery) fetchAuthMetadata(ctx context.Context, candidates []string) 
 			allAbsent = false
 		}
 		failures = append(failures, fmt.Sprintf("%s -> %s", candidate, failureReason(err)))
+		errs = append(errs, err)
 	}
 	detail := strings.Join(failures, "; ")
 	if allAbsent {
 		return nil, fmt.Errorf("%w: authorization-server metadata is absent at every candidate (%s)", ErrMetadataUnavailable, detail)
 	}
-	return nil, fmt.Errorf("authorization-server metadata: all discovery endpoints failed: %s", detail)
+	return nil, &authMetadataFailure{detail: detail, errs: errs}
 }
 
 // failureReason reduces a candidate failure to a compact outcome for the
@@ -655,7 +711,6 @@ func Register(ctx context.Context, cfg RegistrationConfig) (*Identity, error) {
 		return nil, err
 	}
 	client := d.client(endpoint)
-	client.Timeout = requestTimeout
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(payload)))
 	if err != nil {
@@ -880,7 +935,6 @@ func (c *TokenClient) postToken(ctx context.Context, form url.Values) (*Tokens, 
 	}
 
 	client := d.client(endpoint)
-	client.Timeout = requestTimeout
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body.Encode()))
 	if err != nil {

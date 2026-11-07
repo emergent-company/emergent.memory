@@ -1,15 +1,26 @@
 // mock-memory.mjs — STATEFUL mock of the Memory API for e2e tests.
-// The gateway points at this (MEMORY_URL=http://localhost:5301) so tests are
-// deterministic and never touch production memory.
+// The gateway points at this (MEMORY_URL=http://localhost:$MOCK_PORT) so tests
+// are deterministic and never touch production memory.
 import http from "node:http";
 
-const PORT = Number(process.env.MOCK_PORT || 5301);
+// Both ports are required. `run-e2e.sh` derives them per run and exports the
+// pair; a numeric fallback here would silently point OAuth metadata and
+// redirects at a stale origin (#810). Fail loudly instead.
+function requirePort(name) {
+  const raw = process.env[name];
+  const port = Number(raw);
+  if (!raw || !Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`mock-memory.mjs: ${name} is required (got ${JSON.stringify(raw)}); start this mock through run-e2e.sh.`);
+    process.exit(1);
+  }
+  return port;
+}
 
-// The gateway origin. `run-e2e.sh` boots the gateway on `MEMORY_PORT` (default
-// 8097), so OAuth metadata this mock returns must name the same origin — a
-// hardcoded 8097 would point a non-default-port run's authorize/redirect flows
-// at the wrong server.
-const GATEWAY_ORIGIN = `http://localhost:${process.env.MEMORY_PORT || 8097}`;
+const PORT = requirePort("MOCK_PORT");
+
+// The gateway origin must be the same one `run-e2e.sh` boots the gateway on, so
+// OAuth metadata this mock returns names the origin the run is actually using.
+const GATEWAY_ORIGIN = `http://localhost:${requirePort("MEMORY_PORT")}`;
 
 const agents = [
   { id: "agent-1", name: "memory", flowType: "single", visibility: "project", toolCount: 3, isDefault: false, createdAt: "2026-08-25T08:18:01Z", updatedAt: "2026-08-25T08:18:01Z" },
