@@ -32,16 +32,32 @@ struct MainWindowView: View {
                 // Trailing group: project picker immediately LEFT of the account
                 // (avatar) control, which is the far-right item. Trailing
                 // ToolbarItems render in declaration order.
-                ToolbarItem(placement: .primaryAction) {
-                    ProjectSwitcherView()
-                }
+                //
+                // Neither control wants the macOS 26 shared glass capsule. They
+                // are not buttons competing with the window's own actions: one
+                // is window context (project) and the other is identity (the
+                // avatar). A capsule around each reads as two toolbars; the
+                // name, the chevron, the avatar and the hover highlight are the
+                // affordances, and the panel header carries the identity. The
+                // pre-26 toolbar never drew one, so the fallback branch keeps
+                // the same shape.
                 if #available(macOS 26, *) {
-                    // Two unrelated contexts (project vs account): the system
-                    // spacer keeps them visually separate in the glass toolbar.
+                    ToolbarItem(placement: .primaryAction) {
+                        ProjectSwitcherView()
+                    }
+                    .sharedBackgroundVisibility(.hidden)
                     ToolbarSpacer(.fixed)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    AccountToolbarView()
+                    ToolbarItem(placement: .primaryAction) {
+                        AccountToolbarView()
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .primaryAction) {
+                        ProjectSwitcherView()
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        AccountToolbarView()
+                    }
                 }
             }
             .onAppear {
