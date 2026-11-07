@@ -766,6 +766,11 @@ type AgentExecutor struct {
 	// projectCapture reads the project's skill-capture policy so the executor
 	// can add the foreground capture policy block. Nil makes capture appear off.
 	projectCapture ProjectCaptureConfigReader
+
+	// now is the clock used to stamp the current date and time into each run's
+	// first user message (issue #330). Nil means time.Now. It is a field so
+	// tests can freeze it; runPipeline reads it exactly once per run.
+	now func() time.Time
 }
 
 // SkillCaptureHook is the post-run hook implemented by skills.CaptureService.
@@ -2351,6 +2356,41 @@ func reactionWorkStatusSubject(agent *Agent, def *AgentDefinition, subjectID *st
 	return *subjectID
 }
 
+// runClock returns the clock used to stamp each run's date and time. A nil
+// func falls back to time.Now so a zero-value executor (as built by tests) is
+// safe (issue #330).
+func (ae *AgentExecutor) runClock() time.Time {
+	if ae.now != nil {
+		return ae.now()
+	}
+	return time.Now()
+}
+
+// runContextPrefix builds the per-run context prepended to the run's first
+// user message. It carries the current date and time, read from the run clock
+// exactly once, plus the run's TriggerMetadata. Both live on the user turn
+// rather than the system instruction so the system prompt stays byte-identical
+// across runs and can be served from the provider's implicit prompt cache.
+//
+// The runtime has no per-project timezone setting, so the clock is rendered in
+// UTC and the zone is labelled explicitly: an agent must never have to guess
+// what day it is (issue #330).
+func (ae *AgentExecutor) runContextPrefix(run *AgentRun) string {
+	var b strings.Builder
+	now := ae.runClock().UTC()
+	b.WriteString("Current date and time: ")
+	b.WriteString(now.Format(time.RFC3339))
+	b.WriteString(" (UTC)\n\n")
+	if len(run.TriggerMetadata) > 0 {
+		if ctxJSON, err := json.Marshal(run.TriggerMetadata); err == nil {
+			b.WriteString("<context>\n")
+			b.WriteString(string(ctxJSON))
+			b.WriteString("\n</context>\n\n")
+		}
+	}
+	return b.String()
+}
+
 // runPipeline builds the ADK agent, resolves tools, creates the runner, and
 // iterates over events until the agent is done or a safety limit is reached.
 func (ae *AgentExecutor) runPipeline(
@@ -2742,16 +2782,14 @@ func (ae *AgentExecutor) runPipeline(
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
 	}
 
-	// TriggerMetadata is per-run dynamic context (e.g. title, source, caller-supplied keys).
-	// It is injected as a prefix on the first user-turn message rather than the system
-	// instruction, so the system instruction remains byte-identical across runs and can
-	// be served from Gemini's implicit prompt cache (requires a stable prefix).
-	var triggerContextPrefix string
-	if len(run.TriggerMetadata) > 0 {
-		if ctxJSON, err := json.Marshal(run.TriggerMetadata); err == nil {
-			triggerContextPrefix = "<context>\n" + string(ctxJSON) + "\n</context>\n\n"
-		}
-	}
+	// Per-run context (current date and time plus TriggerMetadata: title,
+	// source, caller-supplied keys) is prepended to the first user-turn
+	// message rather than the system instruction, so the system instruction
+	// remains byte-identical across runs and can be served from the provider's
+	// implicit prompt cache (requires a stable prefix). This is the single seam
+	// every surface shares: trigger, scheduled, A2A, chat, chat-completions,
+	// resume and sub-agent spawns.
+	triggerContextPrefix := ae.runContextPrefix(run)
 
 	// Inject namespace from TriggerMetadata into the context so that MCP tools
 	// (entity-create, relationship-create) scope writes to the correct namespace
