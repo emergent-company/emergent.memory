@@ -134,7 +134,13 @@ type extractionJobDetail struct {
 	// merge (carried on the lazy-detail URL as ?review=N). Zero when unknown or
 	// nothing is outstanding.
 	LeftForReview int
-	Err           error
+	// LeftForReviewObjects names the specific objects a partial merge left on
+	// the branch (resolution "skipped" or "suggested"), resolved to their
+	// display labels. Non-nil only when LeftForReview > 0 and the branch is
+	// still open, so the list — not just a count — is visible after a merge
+	// (#242).
+	LeftForReviewObjects []mergeReviewItem
+	Err                  error
 }
 
 // mergeReviewHint carries post-merge leftover state to the extraction history
@@ -429,6 +435,12 @@ func (s *Server) uiDocumentExtractionDetail(c echo.Context) error {
 	// the lazy-detail URL threads that count here so the merged job's action can
 	// show how many objects are still left on the branch for review.
 	detail.LeftForReview = atoiOrZero(c.QueryParam("review"))
+	// List the specific objects left for review, not just the count. The branch
+	// stays open after a partial merge, so re-running the dry-run preview yields
+	// the objects the merge did not apply, resolved against the branch's objects.
+	if detail.LeftForReview > 0 && detail.BranchID != "" && detail.Branch != nil && detail.Branch.MergedAt == "" {
+		detail.LeftForReviewObjects = s.loadLeftForReviewObjects(ctx, detail.BranchID, detail.Objects)
+	}
 	renderPartial(c.Response().Writer, c.Request(), ExtractionJobDetail(docID, detail))
 	return nil
 }
@@ -682,6 +694,88 @@ func mergePreviewConfirmLabel(res *BranchMergeResult) string {
 	return "Merge " + strconv.Itoa(n) + " object" + plural(n) + " into main"
 }
 
+// mergeReviewItem is one object a merge left (or would leave) on the source
+// branch for review, decorated with its resolved display label and any
+// similar/conflict target so the UI can name what needs attention instead of
+// showing only a count.
+type mergeReviewItem struct {
+	ObjectID      string // version id for the object-detail deep-link
+	Label         string // resolved display label (key, else type + short id)
+	Type          string
+	Resolution    string // "skipped" (conflict) | "suggested" (similar)
+	SimilarTarget string // display name of the matched similar object, when any
+	Conflicts     string // comma-joined conflicting keys, when any
+}
+
+// mergeReviewItems resolves a merge's left-for-review entries to display items,
+// joining each entry with the graph object (matched by canonical id, or version
+// id as a fallback) so the list reads like the extraction object list. The
+// resolved objects come from the caller's already-fetched branch object list.
+func mergeReviewItems(res *BranchMergeResult, objects []GraphObject) []mergeReviewItem {
+	if res == nil {
+		return nil
+	}
+	left := res.LeftForReviewObjects()
+	if len(left) == 0 {
+		return nil
+	}
+	byCanonical := make(map[string]GraphObject, len(objects))
+	for _, o := range objects {
+		if o.CanonicalID != "" {
+			byCanonical[o.CanonicalID] = o
+		}
+		byCanonical[o.ID] = o
+	}
+	items := make([]mergeReviewItem, 0, len(left))
+	for _, entry := range left {
+		item := mergeReviewItem{
+			ObjectID:      entry.CanonicalID,
+			Resolution:    entry.Resolution,
+			SimilarTarget: entry.SimilarTargetName,
+			Conflicts:     strings.Join(entry.Conflicts, ", "),
+		}
+		if o, ok := byCanonical[entry.CanonicalID]; ok {
+			item.ObjectID = o.ID
+			item.Label = graphObjectLabel(o)
+			item.Type = o.Type
+		} else {
+			item.Label = shortID(entry.CanonicalID)
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// loadLeftForReviewObjects re-derives the objects a partial merge left on an
+// open branch by re-running a dry-run preview and resolving their labels from
+// the branch's already-fetched object list. A preview failure degrades to nil
+// (the count-only badge remains). Used by the extraction detail after a merge
+// redirect so the specific items — not just the count — are listed (#242).
+func (s *Server) loadLeftForReviewObjects(ctx context.Context, branchID string, objects []GraphObject) []mergeReviewItem {
+	res, err := s.memory.PreviewMergeBranch(ctx, branchID, "partial")
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	return mergeReviewItems(res, objects)
+}
+
+// resolveMergePreviewItems decorates a merge preview's left-for-review entries
+// with their display labels by fetching the source branch's objects. It backs
+// the merge preview modal, which — unlike the extraction detail — has no
+// already-fetched object list to resolve against.
+func (s *Server) resolveMergePreviewItems(ctx context.Context, branchID string, res *BranchMergeResult) []mergeReviewItem {
+	if res == nil || len(res.LeftForReviewObjects()) == 0 {
+		return nil
+	}
+	objects, err := s.memory.ListGraphObjects(ctx, branchID, "", nil)
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	return mergeReviewItems(res, objects)
+}
+
 // uiDocumentMergePreview renders the merge preview modal for one extraction job:
 // the server's predicted split (added / merged / left-for-review) before the
 // user confirms. It is fetched lazily via HTMX and auto-opens once swapped in.
@@ -695,19 +789,19 @@ func (s *Server) uiDocumentMergePreview(c echo.Context) error {
 
 	job, err := s.findExtractionJob(ctx, docID, jobID)
 	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, nil, userFacingError(err)))
 		return nil
 	}
 	branchID, _, ok := s.extractionJobBranch(ctx, job)
 	if !ok {
-		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, fmt.Errorf("this extraction has no staging branch to merge")))
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, nil, fmt.Errorf("this extraction has no staging branch to merge")))
 		return nil
 	}
 	res, err := s.memory.PreviewMergeBranch(ctx, branchID, "partial")
 	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, nil, userFacingError(err)))
 		return nil
 	}
-	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, nil))
+	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, s.resolveMergePreviewItems(ctx, branchID, res), nil))
 	return nil
 }
