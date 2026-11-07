@@ -98,12 +98,37 @@ func TestDetectShape(t *testing.T) {
 			want: ShapeEmail,
 		},
 		{
-			// One recurring speaker is still a transcript once there are
-			// enough turns.
-			name: "single-speaker monologue",
+			// #271: one repeating label is not a conversation. A plan with
+			// eight "Objective:" lines, a glossary of "Term:" lines and a
+			// one-speaker monologue are indistinguishable from this signal, so
+			// the long form needs a second distinct name.
+			name: "single repeating label is not a transcript",
 			text: "Alice: the first point.\nAlice: the second point.\nAlice: the third point.\n" +
 				"Alice: the fourth point.\nAlice: the fifth point.\nAlice: the sixth point.\n" +
 				"Alice: the seventh point.\nAlice: the eighth point.\n",
+			want: ShapeProse,
+		},
+		{
+			name: "plan with repeated objective labels",
+			text: "Objective: cut latency.\nObjective: cut cost.\nObjective: ship the API.\n" +
+				"Objective: fix the flaky test.\nObjective: document the schema.\n" +
+				"Objective: onboard the team.\nObjective: close the audit.\n" +
+				"Objective: publish the release.\n",
+			want: ShapeProse,
+		},
+		{
+			name: "glossary with repeated term labels",
+			text: "Term: chunk.\nTerm: embedding.\nTerm: namespace.\nTerm: projection.\n" +
+				"Term: branch.\nTerm: journal.\nTerm: schema.\nTerm: retrieval.\n",
+			want: ShapeProse,
+		},
+		{
+			// A second distinct name is the evidence that makes the long form a
+			// conversation rather than a list.
+			name: "long form with a second speaker name",
+			text: "Alice: the first point.\nAlice: the second point.\nBob: agreed.\n" +
+				"Alice: the third point.\nAlice: the fourth point.\nAlice: the fifth point.\n" +
+				"Alice: the sixth point.\nAlice: the seventh point.\n",
 			want: ShapeTranscript,
 		},
 		{

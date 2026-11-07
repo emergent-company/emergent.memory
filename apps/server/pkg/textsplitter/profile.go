@@ -167,9 +167,17 @@ func DetectShape(text string) (Shape, ShapeSignals) {
 	// Timestamped lines are decisive. Bare "Name: text" lines need a quarter
 	// of the document AND recurring names: a conversation repeats its
 	// speakers, a list of labels does not.
+	//
+	// A single repeating label is not enough on its own (#271): "Objective:"
+	// eight times is a plan, and a glossary of "Term:" lines is a glossary, but
+	// both look exactly like a one-speaker monologue from this signal alone. So
+	// the long form needs a second distinct name somewhere in the document —
+	// with only one label in play we cannot tell a transcript from a labelled
+	// list, and prose is the safe reading (it keeps the deployment defaults and
+	// cannot mis-split a conversation).
 	case sig.TimestampLines >= 5 ||
 		(sig.SpeakerLines >= 5 && sig.SpeakerRatio >= 0.25 && sig.RecurringSpeakers >= 2) ||
-		(sig.SpeakerLines >= 8 && sig.SpeakerRatio >= 0.25 && sig.RecurringSpeakers >= 1):
+		(sig.SpeakerLines >= 8 && sig.SpeakerRatio >= 0.25 && sig.RecurringSpeakers >= 1 && sig.SpeakerNames >= 2):
 		return ShapeTranscript, sig
 	// Three or more fenced blocks, or a document that is one fence plus
 	// almost nothing else. The bare ratio is not enough on its own: a stray
