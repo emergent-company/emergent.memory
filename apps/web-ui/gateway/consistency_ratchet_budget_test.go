@@ -110,6 +110,7 @@ func patternBudget() []patternBudgetEntry {
 		// no canonical primitive for a bare section heading, so they are a
 		// recorded residual rather than an adoptable surface.
 		{pattern: patternDialogTitleSection, file: "agent.templ", count: 1, note: "h2 agent-name card heading — a section heading, not a dialog title; no canonical primitive"},
+		{pattern: patternDialogTitleSection, file: "backups.templ", count: 1, note: "h2 \"All backups\" list section heading with a right-aligned create action — ui.SectionProps has no action slot; adopt the shared header+action helper when it lands"},
 		{pattern: patternDialogTitleSection, file: "blueprints.templ", count: 1, note: "h2 \"Changes\" panel heading — a section heading, not a dialog title; no canonical primitive"},
 		{pattern: patternDialogTitleSection, file: "schema.templ", count: 2, note: "h2 \"Appearance\"/\"Properties\" section headings — not dialog titles; no canonical primitive"},
 		{pattern: patternDialogTitleSection, file: "share_manage.templ", count: 2, note: "h2 \"Share links\"/\"New share link\" section headings — not dialog titles; no canonical primitive"},

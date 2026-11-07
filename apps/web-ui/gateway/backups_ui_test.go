@@ -94,10 +94,15 @@ func TestRenderBackupsPage(t *testing.T) {
 			t.Errorf("delete affordance missing %q", want)
 		}
 	}
-	// create form
-	for _, want := range []string{`action="/backups"`, `name="retentionDays"`, `name="includeDeleted"`, `name="includeChat"`, "Start backup"} {
+	// create is a header action linking to the dedicated page, not an inline form
+	for _, want := range []string{`href="/backups/new"`, "Create a backup"} {
 		if !strings.Contains(html, want) {
-			t.Errorf("create form missing %q", want)
+			t.Errorf("list header action missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`action="/backups"`, `id="backup-retention"`, "Start backup"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("list page must not render the create form (%q found)", unwanted)
 		}
 	}
 	// restore is surfaced as unavailable, never a working action
@@ -131,8 +136,8 @@ func TestRenderBackupsPageEmpty(t *testing.T) {
 	if !strings.Contains(html, "No backups yet") {
 		t.Error("empty state missing")
 	}
-	if !strings.Contains(html, `action="/backups"`) {
-		t.Error("create form should still be offered when there are no backups")
+	if !strings.Contains(html, `href="/backups/new"`) {
+		t.Error("create action should still be offered when there are no backups")
 	}
 }
 
@@ -147,8 +152,8 @@ func TestRenderBackupsPageUnavailable(t *testing.T) {
 	if strings.Contains(html, "No backups yet") || strings.Contains(html, "Failed to load backups") {
 		t.Error("unavailable must not masquerade as empty or as an error")
 	}
-	if strings.Contains(html, `action="/backups"`) || strings.Contains(html, "Start backup") {
-		t.Error("create form should not render when backups are disabled")
+	if strings.Contains(html, `href="/backups/new"`) || strings.Contains(html, "Create a backup") || strings.Contains(html, "Start backup") {
+		t.Error("create action should not render when backups are disabled")
 	}
 }
 
@@ -160,8 +165,38 @@ func TestRenderBackupsPageError(t *testing.T) {
 			t.Errorf("error state missing %q", want)
 		}
 	}
-	if strings.Contains(html, `action="/backups"`) {
-		t.Error("create form should not render on the error state")
+	if strings.Contains(html, `href="/backups/new"`) {
+		t.Error("create action should not render on the error state")
+	}
+}
+
+func TestRenderBackupNewPage(t *testing.T) {
+	html := renderHTML(t, BackupNewPage(nil))
+
+	// the create page is its own page: header chrome + the form, posting to the
+	// existing create route
+	for _, want := range []string{
+		"New backup", `href="/backups"`,
+		`action="/backups"`, `method="post"`,
+		`id="backup-retention"`, `name="retentionDays"`,
+		`name="includeDeleted"`, `name="includeChat"`,
+		"Start backup",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("new-backup page missing %q", want)
+		}
+	}
+	// the standalone page uses the normal form width, not the narrow cap the
+	// inline list form carried
+	if strings.Contains(html, "sm:max-w-40") {
+		t.Error("new-backup page should not cap the retention input at sm:max-w-40")
+	}
+}
+
+func TestRenderBackupNewPageFlashError(t *testing.T) {
+	html := renderHTML(t, BackupNewPage(fmt.Errorf("retentionDays must be a number of days")))
+	if !strings.Contains(html, "retentionDays must be a number of days") {
+		t.Error("?err= feedback should render on the create page")
 	}
 }
 
@@ -250,6 +285,7 @@ func newBackupsEcho(f *fakeMemory) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/backups", s.uiBackups)
+	e.GET("/backups/new", s.uiBackupNewPage)
 	e.POST("/backups", s.uiBackupCreate)
 	e.GET("/backups/:id", s.uiBackupDetail)
 	e.GET("/backups/:id/download", s.uiBackupDownload)
@@ -277,10 +313,13 @@ func TestUIBackupsPage(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Backups", "Acme", "ready", "creating", "failed", `action="/backups"`, `href="/backups/b1/download"`, "3 backup"} {
+	for _, want := range []string{"Backups", "Acme", "ready", "creating", "failed", `href="/backups/new"`, `href="/backups/b1/download"`, "3 backup"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
+	}
+	if strings.Contains(body, `action="/backups"`) {
+		t.Error("list page must not render the create form; it lives on /backups/new")
 	}
 }
 
@@ -370,6 +409,38 @@ func TestUIBackupsPageNon404Error(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Failed to load backups") {
 		t.Error("non-404 error must surface as a real error state")
+	}
+}
+
+func TestUIBackupNewPage(t *testing.T) {
+	f := &fakeMemory{project: backupProject()}
+	_, e := newBackupsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/backups/new", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`id="backup-retention"`, `name="includeDeleted"`, `name="includeChat"`, `action="/backups"`, "Start backup"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("new-backup page missing %q", want)
+		}
+	}
+}
+
+// TestUIBackupNewPageFlashError covers the ?err= landing on the create page
+// (the POST flow still redirects to the list, but the page consumes the same
+// flash key for direct visits).
+func TestUIBackupNewPageFlashError(t *testing.T) {
+	f := &fakeMemory{project: backupProject()}
+	_, e := newBackupsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/backups/new?err=retentionDays+must+be+a+number+of+days", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "retentionDays must be a number of days") {
+		t.Error("?err= flash missing on the create page")
 	}
 }
 

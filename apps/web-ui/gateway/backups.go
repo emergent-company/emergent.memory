@@ -382,12 +382,22 @@ func (s *Server) projectOrgID(ctx context.Context, projectID string) (string, er
 
 // --- UI handlers ---
 
-// uiBackups renders the backups page: the create form plus the active
-// project's backups, most recent first. The list load is best-effort in the
-// skills-page style: a 404/not-found from Memory (feature gated off, design
-// D6) or an unresolved org degrades to an unavailable state; any other load
-// failure (Memory unreachable, etc.) renders an error state. ?created=1 /
-// ?deleted=1 / ?err=1 surface PRG feedback.
+// uiBackupNewPage renders the create form as its own page (GET
+// /backups/new): retention + archive includes, posting to POST /backups. It is
+// the page the list's header action opens, mirroring
+// /settings/mcp-servers/new. ?err= surfaces PRG feedback; the create flow's
+// validation failures still redirect back to the list.
+func (s *Server) uiBackupNewPage(c echo.Context) error {
+	return s.page(c, pageTitle("New backup"), BackupNewPage(flashError(c)))
+}
+
+// uiBackups renders the backups page: the active project's backups, most
+// recent first, with a header action linking to the create page
+// (GET /backups/new). The list load is best-effort in the skills-page style: a
+// 404/not-found from Memory (feature gated off, design D6) or an unresolved org
+// degrades to an unavailable state; any other load failure (Memory unreachable,
+// etc.) renders an error state. ?created=1 / ?deleted=1 / ?err=1 surface PRG
+// feedback.
 func (s *Server) uiBackups(c echo.Context) error {
 	ctx := c.Request().Context()
 	flashMsg := flashFromQuery(c, []flashParam{
