@@ -2455,6 +2455,69 @@ func TestUIOrgOAuthClientDelete(t *testing.T) {
 	}
 }
 
+// TestUIOrgOAuthClientWriteRejectsUnmanageableProviders covers the write-path
+// guard: the upsert and delete handlers must 404 for an unknown, non-OAuth
+// (credentials-only), or self-registering provider — before touching the memory
+// service — mirroring the GET editor route.
+func TestUIOrgOAuthClientWriteRejectsUnmanageableProviders(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fake     *fakeMemory
+		provider string
+	}{
+		{
+			name:     "unknown provider",
+			fake:     orgOAuthAdminFake(),
+			provider: "nope",
+		},
+		{
+			name: "credentials-only provider has no app",
+			fake: &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+				dsProviders:     []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}},
+			},
+			provider: "github",
+		},
+		{
+			name: "self-registering provider has no app",
+			fake: &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+				dsProviders:     []DSProvider{{Type: "trale", Name: "Trale", AuthMethods: []string{"oauth"}, SelfRegistering: true}},
+			},
+			provider: "trale",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := tc.fake
+			e := newDSUIServer(f)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/"+tc.provider, strings.NewReader("client_id=cid"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("upsert status = %d, want 404", rec.Code)
+			}
+			if f.dsUpsertedOAuthReq != nil {
+				t.Error("upsert must not reach the memory service for an unmanageable provider")
+			}
+
+			rec = httptest.NewRecorder()
+			req = httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/"+tc.provider+"/delete", nil)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("delete status = %d, want 404", rec.Code)
+			}
+			if f.dsDeletedOAuthOrg != "" || f.dsDeletedOAuthProv != "" {
+				t.Error("delete must not reach the memory service for an unmanageable provider")
+			}
+		})
+	}
+}
+
 // --- project credentials (member-readable table, admin-only editor) ---
 func projectCredentialsAdminFake() *fakeMemory {
 	return &fakeMemory{

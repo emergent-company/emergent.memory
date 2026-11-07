@@ -353,12 +353,12 @@ func TestRegisterClient_2xxErrorBodyMapsToClientRequired(t *testing.T) {
 	}
 }
 
-// TestDiscoverAuthRequirement_RejectsBlockedMetadataURL asserts a challenge
-// cannot steer the server at internal infrastructure: a protected-resource
-// metadata URL in a blocked range is rejected before any request, and the
-// rejection surfaces through the registry's ErrOutboundURLNotAllowed sentinel
-// (mapped to a 400 by the handler).
-func TestDiscoverAuthRequirement_RejectsBlockedMetadataURL(t *testing.T) {
+// TestDiscoverAuthRequirement_ProviderBlockedMetadataURLIsProviderSide asserts
+// a challenge cannot steer the server at internal infrastructure and that the
+// rejection is not blamed on the caller: the blocked protected-resource
+// metadata URL was advertised by the provider, so the failure takes the
+// provider-side 503 class, never the caller-facing ErrOutboundURLNotAllowed.
+func TestDiscoverAuthRequirement_ProviderBlockedMetadataURLIsProviderSide(t *testing.T) {
 	// The resource is a public IP literal, so it passes the guard without a DNS
 	// lookup; only the challenge-supplied URL is rejected.
 	ch := authChallenge{ResourceMetadataURL: "http://169.254.169.254/latest/meta-data"}
@@ -366,15 +366,45 @@ func TestDiscoverAuthRequirement_RejectsBlockedMetadataURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the blocked metadata URL to be rejected")
 	}
+	if errors.Is(err, ErrOutboundURLNotAllowed) {
+		t.Errorf("err = %v, must not blame the caller's URL", err)
+	}
+	if !errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, want the provider-side ErrOAuthDiscoveryFailed class", err)
+	}
+	status, _ := apperror.ToHTTPError(mcpOAuthError(err))
+	if status != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", status)
+	}
+}
+
+// TestDiscoverAuthRequirement_BlockedResourceURLStaysCallerSide pins the one
+// blocked URL in the discovery walk the caller did supply: the resource URL
+// itself keeps the caller-facing 400, so the provider-side classification above
+// is scoped to provider-derived candidates.
+func TestDiscoverAuthRequirement_BlockedResourceURLStaysCallerSide(t *testing.T) {
+	ch := authChallenge{ResourceMetadataURL: "https://1.1.1.1/.well-known/oauth-protected-resource"}
+	_, err := discoverAuthRequirement(context.Background(), "http://169.254.169.254/mcp", ch)
+	if err == nil {
+		t.Fatal("expected the caller-supplied resource URL to be rejected")
+	}
 	if !errors.Is(err, ErrOutboundURLNotAllowed) {
-		t.Errorf("err = %v, want ErrOutboundURLNotAllowed", err)
+		t.Errorf("err = %v, want ErrOutboundURLNotAllowed for the caller's own URL", err)
+	}
+	if errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, must be the caller-facing class, not a provider failure", err)
+	}
+	status, _ := apperror.ToHTTPError(mcpOAuthError(err))
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
 	}
 }
 
 // TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe pins
 // that discoverServerAuthRequirement validates the resource URL before probing.
 // That ordering is why probeAuthChallenge needs no ErrURLNotAllowed arm of its
-// own: no rejected URL can reach the probe.
+// own: no rejected URL can reach the probe. It also pins the caller-facing 400
+// for a URL the caller did supply.
 func TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe(t *testing.T) {
 	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr("http://169.254.169.254/mcp")}
 	_, err := discoverServerAuthRequirement(context.Background(), server)
@@ -383,6 +413,14 @@ func TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe(t *
 	}
 	if errors.Is(err, ErrOAuthDiscoveryFailed) {
 		t.Errorf("err = %v, must be the pre-probe guard, not a probe failure", err)
+	}
+	status, body := apperror.ToHTTPError(mcpOAuthError(err))
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, ErrOutboundURLNotAllowed.Error()) {
+		t.Errorf("message = %q, want the caller-facing URL copy", msg)
 	}
 }
 

@@ -3,6 +3,7 @@ package adk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -856,5 +857,34 @@ func TestOpenAICompatibleModel_ZeroCompatLegacyKwargs(t *testing.T) {
 	assert.Nil(t, captured.Thinking, "legacy non-deepseek path must not set top-level thinking")
 	if captured.ToolChoice != "required" {
 		t.Errorf("tool_choice = %q, want %q (legacy tool_choice still sent)", captured.ToolChoice, "required")
+	}
+}
+
+// TestOpenAICompatibleModel_CancelDuringBackoffSurfacesCancellation verifies a
+// run cancelled while the client waits out a retryable response reports the
+// cancellation, not the provider's 429 (#254).
+func TestOpenAICompatibleModel_CancelDuringBackoffSurfacesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := &retryableResponseTransport{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":"rate limited"}`,
+		cancel: cancel,
+	}
+	m := NewOpenAICompatibleModel("http://provider.invalid/v1", "key", "deepseek")
+	m.(*openaiCompatibleModel).client = &http.Client{Transport: tr}
+
+	_, err := collectResponse(m.GenerateContent(ctx, &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	if err == nil {
+		t.Fatal("expected a cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("errors.Is(%v, context.Canceled) = false, want true", err)
+	}
+	if tr.calls != 1 {
+		t.Errorf("provider calls = %d, want 1 (no retry once the context ended)", tr.calls)
 	}
 }

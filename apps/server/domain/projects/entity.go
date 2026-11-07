@@ -37,7 +37,8 @@ type Project struct {
 	AutoDiscoveryEnabled bool `bun:"auto_discovery_enabled,notnull,default:true" json:"auto_discovery_enabled"`
 
 	// SkillCapture is the project-level automatic skill-capture policy (added in
-	// migration 00269). The zero value means "off", so the feature is opt-in.
+	// migration 00270_add_agent_skill_capture.sql). The zero value means "off",
+	// so the feature is opt-in.
 	SkillCapture skills.ProjectSkillCaptureConfig `bun:"skill_capture,type:jsonb,notnull,default:'{}'" json:"skill_capture"`
 
 	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`

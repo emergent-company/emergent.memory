@@ -77,6 +77,43 @@ GET /api/graph/objects?branch_id=branch_abc123
 
 Objects created on a branch are isolated — they are not visible in the main graph until you merge.
 
+### Bulk importing a dump into a branch
+
+`memory blueprints dump <dir>` exports the graph as JSONL seed files
+(`seed/objects/<Type>.jsonl` and `seed/relationships/<Type>.jsonl`). To stage a
+migration on a branch, edit the dump and import it in one call:
+
+```bash
+memory blueprints dump ./migration
+# review/edit ./migration/seed/objects/*.jsonl and seed/relationships/*.jsonl
+memory graph objects create-batch --file ./migration --branch migration-review
+```
+
+The importer:
+
+- accepts a dump root, a `seed/` directory, or a single `.jsonl` file;
+- upserts objects by `key` (so re-running is safe) and reads
+  `_untyped.jsonl` back as type `Untyped`;
+- resolves relationship `srcKey`/`dstKey` after the objects are written;
+- reports each unreadable row (bad JSON, missing type, unresolved key, server
+  rejection) and continues, then exits non-zero if anything failed.
+
+Everything lands on the named branch; the main graph is untouched until you
+[merge](#merging-a-branch).
+
+Both batch commands take the same flag:
+
+```bash
+# objects (and optionally relationships) from a JSON/subgraph file
+memory graph objects create-batch --file subgraph.json --branch migration-review
+
+# relationships only, by existing entity IDs
+memory graph relationships create-batch --file edges.json --branch migration-review
+```
+
+For `relationships create-batch`, both endpoint objects must already exist on
+the same branch — the server rejects a cross-branch edge.
+
 ---
 
 ## Listing Branches

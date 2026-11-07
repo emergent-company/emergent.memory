@@ -44,8 +44,38 @@ func TestIsPermanentEmbeddingError(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "lowercase openai-compatible api error 403",
+			err:  errors.New("api error 403: forbidden"),
+			want: true,
+		},
+		{
+			name: "lowercase openai-compatible api error 400",
+			err:  errors.New("api error 400: invalid model"),
+			want: true,
+		},
+		{
+			name: "generative ai googleapi error 403",
+			err:  errors.New("googleapi: Error 403: Permission denied on resource (or it may not exist)"),
+			want: true,
+		},
+		{
+			name: "generative ai googleapi error 404",
+			err:  errors.New("googleapi: Error 404: model not found"),
+			want: true,
+		},
+		{
 			name: "rate limit is transient",
 			err:  errors.New("API error 429: quota exceeded"),
+			want: false,
+		},
+		{
+			name: "lowercase api error 429 is transient",
+			err:  errors.New("api error 429: quota exceeded"),
+			want: false,
+		},
+		{
+			name: "generative ai googleapi error 429 is transient",
+			err:  errors.New("googleapi: Error 429: quota exceeded"),
 			want: false,
 		},
 		{

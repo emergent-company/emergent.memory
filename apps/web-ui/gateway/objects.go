@@ -667,6 +667,13 @@ const optionalFetchTimeout = 10 * time.Second
 // with a short timeout; on any failure the section degrades to its "unavailable"
 // state without affecting the already-rendered list.
 func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
+	// This route answers the browser's deferred HTMX stats strip. A full-page
+	// load (reload, bookmark, open-in-new-tab) sends no HX-Request header and
+	// must land on the objects page, not on a bare unstyled fragment with only
+	// the counters (issue #235).
+	if c.Request().Header.Get("HX-Request") != "true" {
+		return c.Redirect(http.StatusSeeOther, "/objects")
+	}
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
 	branchID := c.QueryParam("branch")
@@ -1340,6 +1347,28 @@ func objectTypeDisplayName(t CompiledType) string {
 		return t.Label
 	}
 	return t.Name
+}
+
+// objectTypeRequiresKey reports whether an object type is board-enabled and so
+// requires a non-empty key on create. It mirrors the server's
+// requireBoardEnabledKey rule: the claim lock keys on (project, type, key), so a
+// keyless board-enabled object could be dispatched but never claimed.
+func objectTypeRequiresKey(objectTypes []CompiledType, typeName string) bool {
+	for _, t := range visibleCompiledTypes(objectTypes) {
+		if t.Name == typeName {
+			return t.BoardEnabled
+		}
+	}
+	return false
+}
+
+// objectKeyHint is the Key field's help text on the create form: what the key
+// is for, and that a board-enabled object requires one.
+func objectKeyHint(required bool) string {
+	if required {
+		return "Required. A stable unique identifier used for API lookups and board work — a board-enabled object (like a Task) is claimed by its key."
+	}
+	return "A stable unique identifier used for API lookups. Optional for non-board objects."
 }
 
 // objectPropertyDef is one schema property of an object type, with the schema

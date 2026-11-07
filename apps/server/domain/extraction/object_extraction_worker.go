@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -80,11 +81,24 @@ type SchemaProvider interface {
 type ExtractionSchemas struct {
 	ObjectSchemas       map[string]agents.ObjectSchema
 	RelationshipSchemas map[string]agents.RelationshipSchema
+	// SkippedTypes names the object types loadSchemas removed because their
+	// installed schema sets skipExtraction, sorted so output is deterministic.
+	// The skip itself is intended; recording the names is what makes a run that
+	// omitted whole types distinguishable from one that found nothing (#233).
+	SkippedTypes []string
+}
+
+// previousRunFinder looks up the most recent comparable completed run for a
+// job. *ObjectExtractionJobsService implements it; tests use a fake so the
+// variance warning path is verifiable without a database.
+type previousRunFinder interface {
+	PreviousCompletedRunForDocument(ctx context.Context, job *ObjectExtractionJob) (*RunCountSnapshot, error)
 }
 
 // ObjectExtractionWorker processes object extraction jobs.
 type ObjectExtractionWorker struct {
 	jobsService           *ObjectExtractionJobsService
+	previousRuns          previousRunFinder
 	graphService          *graph.Service
 	branchService         *branches.Service
 	docService            *documents.Service
@@ -123,6 +137,7 @@ func NewObjectExtractionWorker(
 	}
 	return &ObjectExtractionWorker{
 		jobsService:    jobsService,
+		previousRuns:   jobsService,
 		graphService:   graphService,
 		branchService:  branchService,
 		docService:     docService,
@@ -174,6 +189,132 @@ func (w *ObjectExtractionWorker) WithNotifications(svc *notifications.Service) *
 func (w *ObjectExtractionWorker) WithRunRecorder(r *RunRecorder) *ObjectExtractionWorker {
 	w.runRecorder = r
 	return w
+}
+
+// WithPreviousRunFinder overrides the lookup the run-variance check uses. The
+// worker defaults to its jobs service; tests inject a fake so the warning path
+// is verifiable without a database.
+func (w *ObjectExtractionWorker) WithPreviousRunFinder(f previousRunFinder) *ObjectExtractionWorker {
+	w.previousRuns = f
+	return w
+}
+
+// applyRunVariance compares this run's object count with the most recent
+// completed run over the same document and schema configuration and, when the
+// deviation is strong, records a warning on the run (summary jsonb + transcript
+// message), on the job result (debug_info) and in the structured log. It never
+// fails the extraction: a missing comparison is not a job error.
+func (w *ObjectExtractionWorker) applyRunVariance(ctx context.Context, job *ObjectExtractionJob, runID string, result *ObjectExtractionResults) *RunVarianceWarning {
+	if w == nil || job == nil || result == nil || w.previousRuns == nil {
+		return nil
+	}
+	previous, err := w.previousRuns.PreviousCompletedRunForDocument(ctx, job)
+	if err != nil {
+		w.log.Warn("could not compare this extraction run with the previous one",
+			slog.String("job_id", job.ID),
+			logger.Error(err))
+		return nil
+	}
+	warning := planRunVariance(previous, result.ObjectsCreated)
+	if warning == nil {
+		return nil
+	}
+	result.VarianceWarning = warning
+	if result.DebugInfo == nil {
+		result.DebugInfo = JSON{}
+	}
+	result.DebugInfo["variance_warning"] = map[string]any{
+		"previous_job_id":   warning.PreviousJobID,
+		"previous_objects":  warning.PreviousObjects,
+		"objects":           warning.Objects,
+		"ratio":             warning.Ratio,
+		"direction":         warning.Direction,
+		"message":           warning.Message,
+		"threshold_factor":  runVarianceRatioFactor,
+		"min_objects_floor": runVarianceMinObjects,
+	}
+	w.log.Warn("extraction run object count deviates strongly from the previous run over the same document",
+		slog.String("job_id", job.ID),
+		slog.String("document_id", stringValue(job.DocumentID)),
+		slog.Int("objects", warning.Objects),
+		slog.Int("previous_objects", warning.PreviousObjects),
+		slog.String("previous_job_id", warning.PreviousJobID),
+		slog.Float64("ratio", warning.Ratio),
+		slog.String("direction", warning.Direction))
+	if runID != "" && w.runRecorder != nil {
+		if err := w.runRecorder.RecordVariance(ctx, runID, warning); err != nil {
+			w.log.Warn("failed to record run variance warning",
+				slog.String("run_id", runID),
+				logger.Error(err))
+		}
+	}
+	return warning
+}
+
+// applyRunOutcomeWarning makes the things an ordinary "Completed" run would
+// otherwise hide visible: object types removed by skipExtraction and runs that
+// produced no objects at all (#233). It always names skipped types on the
+// result (debug_info), warns when nothing was written, records the transcript
+// message and appends the structured log line. It rides the same fields and
+// notification helpers as the variance warning and never fails the extraction.
+func (w *ObjectExtractionWorker) applyRunOutcomeWarning(ctx context.Context, job *ObjectExtractionJob, runID string, result *ObjectExtractionResults, skippedTypes []string) *RunOutcomeWarning {
+	if w == nil || result == nil {
+		return nil
+	}
+	if result.DebugInfo == nil {
+		result.DebugInfo = JSON{}
+	}
+	if len(skippedTypes) > 0 {
+		sorted := append([]string(nil), skippedTypes...)
+		sort.Strings(sorted)
+		result.SkippedTypes = sorted
+		result.DebugInfo["skipped_types"] = sorted
+	}
+	// ObjectsCreated counts new rows; ObjectsMerged counts updates to existing
+	// ones. A re-run that only merges still produced the requested objects, so
+	// both count towards "the run produced something".
+	produced := result.ObjectsCreated + result.ObjectsMerged
+	warning := planRunOutcomeWarning(result.SkippedTypes, produced)
+	if warning == nil {
+		return nil
+	}
+	result.OutcomeWarning = warning
+	result.DebugInfo["outcome_warning"] = map[string]any{
+		"kind":          warning.Kind,
+		"skipped_types": warning.SkippedTypes,
+		"objects":       warning.Objects,
+		"severity":      warning.Severity,
+		"message":       warning.Message,
+	}
+	level := slog.LevelInfo
+	if warning.Severity == "warning" {
+		level = slog.LevelWarn
+	}
+	w.log.Log(ctx, level, "extraction run outcome is not a bare Completed",
+		slog.String("job_id", job.ID),
+		slog.String("document_id", stringValue(job.DocumentID)),
+		slog.String("kind", warning.Kind),
+		slog.Int("objects", warning.Objects),
+		slog.Int("objects_created", result.ObjectsCreated),
+		slog.Int("objects_merged", result.ObjectsMerged),
+		slog.String("message", warning.Message))
+	if runID != "" && w.runRecorder != nil {
+		if err := w.runRecorder.RecordOutcomeWarning(ctx, runID, warning); err != nil {
+			w.log.Warn("failed to record extraction outcome warning",
+				slog.String("run_id", runID),
+				logger.Error(err))
+		}
+	}
+	return warning
+}
+
+// stringValue dereferences an optional string for logging, returning "" when it
+// is nil.
+func stringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // startExtractionRun opens the job's transcript run and records the header
@@ -596,9 +737,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		if totalResult == nil {
 			totalResult = result
 		} else {
-			totalResult.ObjectsCreated += result.ObjectsCreated
-			totalResult.RelationshipsCreated += result.RelationshipsCreated
-			totalResult.CreatedObjectIDs = append(totalResult.CreatedObjectIDs, result.CreatedObjectIDs...)
+			accumulateBatchResults(totalResult, result)
 		}
 	}
 
@@ -612,9 +751,30 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		w.autoMergeExtractionBranch(ctx, job, *stagingBranchID)
 	}
 
+	// A skipExtraction type and a run that produced nothing are both legitimate
+	// outcomes, but presenting them as a bare "Completed" hides them (#233).
+	// Name the skipped types and warn when the run wrote no objects.
+	w.applyRunOutcomeWarning(ctx, job, runID, totalResult, schemas.SkippedTypes)
+
+	// A model in the loop cannot promise the same count twice; the run can still
+	// say when this result is wildly off the previous run over the same document
+	// before a reviewer merges it (#240).
+	w.applyRunVariance(ctx, job, runID, totalResult)
+
 	w.emitExtractionOutcome(ctx, job, stagingBranchID, totalResult)
 
 	return totalResult, nil
+}
+
+// accumulateBatchResults folds one extraction batch's counts into the run
+// total. It must add ObjectsMerged: persistResults upserts by (project, type,
+// name), so a later batch can merge what an earlier one created, and the
+// zero-object warning judges "produced" on created+merged (#233).
+func accumulateBatchResults(total, batch *ObjectExtractionResults) {
+	total.ObjectsCreated += batch.ObjectsCreated
+	total.ObjectsMerged += batch.ObjectsMerged
+	total.RelationshipsCreated += batch.RelationshipsCreated
+	total.CreatedObjectIDs = append(total.CreatedObjectIDs, batch.CreatedObjectIDs...)
 }
 
 // autoMergeEnabled reports whether the project has auto-merge enabled.
@@ -861,10 +1021,26 @@ func (w *ObjectExtractionWorker) loadSchemas(ctx context.Context, job *ObjectExt
 	// Per-type operational flag (P4.2): board-enabled / operational types marked
 	// skipExtraction are never produced by the extraction pipeline. Explicit
 	// inline schemas (converted above) carry no flag, so they are not skipped.
+	//
+	// Deleting silently made "0 <Type> objects, Completed" indistinguishable from
+	// a run that genuinely found nothing (#233). The skip stays, but it is named:
+	// the sorted list rides onto the run result (debug_info + notification) and a
+	// structured log line records it here.
+	var skippedTypes []string
 	for name, schema := range schemas.ObjectSchemas {
 		if schema.SkipExtraction {
+			skippedTypes = append(skippedTypes, name)
 			delete(schemas.ObjectSchemas, name)
 		}
+	}
+	if len(skippedTypes) > 0 {
+		sort.Strings(skippedTypes)
+		schemas.SkippedTypes = skippedTypes
+		w.log.Warn("object types skipped by skipExtraction",
+			slog.String("job_id", job.ID),
+			slog.String("project_id", job.ProjectID),
+			slog.Int("skipped_type_count", len(skippedTypes)),
+			slog.String("skipped_types", strings.Join(skippedTypes, ", ")))
 	}
 
 	return schemas, nil
@@ -1223,7 +1399,6 @@ func (w *ObjectExtractionWorker) emitReviewReadyNotification(ctx context.Context
 	if job.DocumentID != nil {
 		detail["document_id"] = *job.DocumentID
 	}
-	details, _ := json.Marshal(detail)
 
 	relatedType := "graph_branch"
 	relatedID := branchID
@@ -1235,12 +1410,23 @@ func (w *ObjectExtractionWorker) emitReviewReadyNotification(ctx context.Context
 	if filename != "" {
 		message = fmt.Sprintf("%s · %d objects, %d relationships", filename, result.ObjectsCreated, result.RelationshipsCreated)
 	}
+	severity := "info"
+	message, severity = withVarianceWarning(message, severity, detail, result.VarianceWarning)
+	message, severity = withOutcomeWarning(message, severity, detail, result.OutcomeWarning)
+	if result.VarianceWarning != nil {
+		title = fmt.Sprintf("Extraction ready for review (%d objects, %s than the previous run's %d)",
+			result.ObjectsCreated, result.VarianceWarning.Direction, result.VarianceWarning.PreviousObjects)
+	} else if result.OutcomeWarning != nil && len(result.OutcomeWarning.SkippedTypes) > 0 {
+		title = fmt.Sprintf("Extraction ready for review (%d objects, %d type(s) skipped)",
+			result.ObjectsCreated, len(result.OutcomeWarning.SkippedTypes))
+	}
+	details, _ := json.Marshal(detail)
 
 	if err := w.notificationsSvc.CreateForProjectMembers(ctx, job.ProjectID, notifications.CreateInput{
 		EventKey:            "extraction.review_ready",
 		Title:               title,
 		Message:             message,
-		Severity:            "info",
+		Severity:            severity,
 		Importance:          "important",
 		SourceType:          &sourceType,
 		SourceID:            &job.ID,

@@ -104,12 +104,21 @@ var (
 
 // translateProtocolError maps the shared package's sentinels onto the registry's
 // own, which the handler maps to HTTP statuses.
+//
+// Every URL mcpauth fetches in these operations was advertised by the remote
+// provider (a protected-resource document, an issuer, or a registration/token
+// endpoint); the caller's own server URL is validated before any of them (see
+// discoverAuthRequirement and discoverServerAuthRequirement). A URL the outbound
+// guard rejects here is therefore a provider-side failure — the caller cannot
+// fix it by editing its own server URL — so it takes the retryable 503 class,
+// never the caller-facing 400 reserved for ErrOutboundURLNotAllowed. The
+// mcpauth sentinel stays on the underlying aggregate for diagnostics.
 func translateProtocolError(err error) error {
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, mcpauth.ErrURLNotAllowed):
-		return fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
+		return fmt.Errorf("%w: the provider advertised an OAuth URL that is not allowed: %v", ErrOAuthDiscoveryFailed, err)
 	case errors.Is(err, mcpauth.ErrMetadataUnavailable):
 		return fmt.Errorf("%w: %v", ErrOAuthMetadataUnavailable, err)
 	default:
@@ -138,6 +147,14 @@ func translateProtocolError(err error) error {
 //     authorization_servers, and an authorization_uri that is not a well-known
 //     URL whose document has no issuer.
 func discoverAuthRequirement(ctx context.Context, resourceURL string, ch authChallenge) (*authRequirement, error) {
+	// The resource URL is the only URL in this walk the caller supplied, and
+	// discoverServerAuthRequirement already validated it before the probe. The
+	// re-check keeps the classification local to this boundary: a rejected
+	// resource URL stays the caller-facing 400, while every URL rejected further
+	// down came from provider metadata (see translateProtocolError).
+	if err := oauthValidateURL(ctx, resourceURL); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
+	}
 	req, err := mcpauth.Discover(ctx, mcpauth.DiscoveryConfig{
 		Resource:  resourceURL,
 		Challenge: ch,

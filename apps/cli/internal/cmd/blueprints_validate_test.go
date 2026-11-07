@@ -39,6 +39,23 @@ func TestValidationFailure(t *testing.T) {
 	}
 }
 
+// TestValidationFailure_InfoNotesNeverFail verifies the #321 definition-only
+// note is advisory: a report with only info issues must exit 0 both by default
+// and under --strict, so a valid blueprint with untriggered agents stays valid.
+func TestValidationFailure_InfoNotesNeverFail(t *testing.T) {
+	infoReport := &blueprints.ValidationReport{
+		Issues: []blueprints.ValidationIssue{
+			{Severity: blueprints.ValidationInfo, ResourceType: "agent", Message: "definition only; trigger manually or add triggerType"},
+		},
+	}
+	if err := validationFailure(infoReport, false); err != nil {
+		t.Fatalf("info-only report must pass by default, got: %v", err)
+	}
+	if err := validationFailure(infoReport, true); err != nil {
+		t.Fatalf("info-only report must pass under --strict, got: %v", err)
+	}
+}
+
 func TestValidateCommandHasStrictFlag(t *testing.T) {
 	flag := blueprintsValidateCmd.Flags().Lookup("strict")
 	if flag == nil {
