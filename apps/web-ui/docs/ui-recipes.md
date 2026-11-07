@@ -443,11 +443,12 @@ Two mechanisms:
   (`ui-patterns.md` §4, blueprint edit-gate).
 
 **Contract:** destructive control is omitted (role), not disabled; copy names
-the object; the page renders `ui.ConfirmDialog` and passes a description built
-from `components.DeleteWarning` (`components/confirm.templ`) for the shared
-warning body.
+the object; the page renders `ui.ConfirmDialog` and passes its own description
+component — `components.DeleteWarning` where the copy is the shared "This
+permanently removes …" sentence, a bespoke note where it differs (the MCP
+revoke dialogs).
 
-**Source:** `ui.templ:649` (`deleteConfirmDialog`), `ui.templ:644`
+**Source:** `ui.templ` (`deleteConfirmDialog`), `ui.templ`
 (`deleteAgentDescription`), `components/confirm.templ` (`DeleteWarning`),
 `webui/static/js/app.js:390,435,441`.
 

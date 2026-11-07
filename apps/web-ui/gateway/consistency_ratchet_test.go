@@ -178,13 +178,83 @@ var (
 	// body (navigator.clipboard). Any of them re-introduces the surface
 	// form.ClipboardCopy retires.
 	clipboardTokenRE = regexp.MustCompile(`data-copy-target|data-copy-link|data-reveal-url|apiTokenCopyScript|shareManageScriptOnce|navigator\.clipboard`)
-	// statusIconCircleRE matches a hand-rolled tinted status circle: an opened
-	// <div> whose static class is the tinted-circle shape. The class is matched
-	// through the tag so components.IconCircle — which passes a computed class
-	// attribute, and whose tone classes are the quoted strings of a switch — is
-	// not mistaken for a hand-rolled copy.
-	statusIconCircleRE = regexp.MustCompile(`<div class="bg-[a-z-]+/10 text-[a-z-]+ grid size-10 shrink-0 place-items-center rounded-full"`)
+	// statusIconCircleClassAttrRE extracts a static class="…" attribute from a
+	// line. It deliberately does not require the opening tag on the same line:
+	// templ puts a tag carrying a second attribute on its own line, which is the
+	// shape a copied circle normally has (`<div`, then `class="…"`, then the
+	// `data-testid`). The tokens are then matched order-independently by
+	// isStatusCircleSite, so a reordered class list cannot slip through.
+	statusIconCircleClassAttrRE = regexp.MustCompile(`class="([^"]*)"`)
+	// statusIconCircleTokens are the utilities that make up the circle's
+	// geometry, independent of its tone and of class order. A site is the circle
+	// only when it carries every one of them.
+	statusIconCircleTokens = []string{"grid", "size-10", "shrink-0", "place-items-center", "rounded-full"}
 )
+
+// isStatusCircleSite reports whether a class attribute is the tinted status
+// circle: the full geometry token set plus a tonal pair (a `bg-<tone>/10` and a
+// `text-<tone>`), order-independent. components.IconCircle passes a computed
+// class attribute and its tone classes are Go string literals, so neither the
+// component nor its tone switch matches.
+func isStatusCircleSite(class string) bool {
+	seen := make(map[string]bool, len(statusIconCircleTokens))
+	var bg, text bool
+	for _, token := range strings.Fields(class) {
+		seen[token] = true
+		if strings.HasPrefix(token, "bg-") && strings.HasSuffix(token, "/10") {
+			bg = true
+		}
+		if strings.HasPrefix(token, "text-") {
+			text = true
+		}
+	}
+	if !bg || !text {
+		return false
+	}
+	for _, token := range statusIconCircleTokens {
+		if !seen[token] {
+			return false
+		}
+	}
+	return true
+}
+
+// statusCircleHit reports whether a line carries a hand-rolled status circle.
+func statusCircleHit(line string) bool {
+	for _, m := range statusIconCircleClassAttrRE.FindAllStringSubmatch(line, -1) {
+		if isStatusCircleSite(m[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestStatusCircleDetector pins both directions of the status-icon-circle
+// pattern: it must fire on every shape a copied circle takes (including the
+// multi-attribute tag templ splits across lines, and a reordered class list) and
+// stay quiet on components.IconCircle's own computed attribute and on the tone
+// switch's Go string literals.
+func TestStatusCircleDetector(t *testing.T) {
+	const circle = "bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"one-line tag", `<div class="` + circle + `">`, true},
+		{"attribute on its own line (multi-attribute tag)", `class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full"`, true},
+		{"reordered class list", `class="rounded-full place-items-center shrink-0 size-10 grid bg-primary/10 text-primary"`, true},
+		{"computed class attribute", `<div class={ iconCircleClass(tone) }>`, false},
+		{"tone switch literal", `return "` + circle + `"`, false},
+		{"rounded-field geometry", `class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-field"`, false},
+		{"no tonal pair", `class="grid size-10 shrink-0 place-items-center rounded-full"`, false},
+	}
+	for _, c := range cases {
+		if got := statusCircleHit(c.line); got != c.want {
+			t.Errorf("%s: statusCircleHit(%q) = %v, want %v", c.name, c.line, got, c.want)
+		}
+	}
+}
 
 func TestTemplPatternConsistencyRatchet(t *testing.T) {
 	hits, err := scanPatternHits()
@@ -357,7 +427,7 @@ func scanPatternFile(path string, out map[string]map[string][]int, scanDrift boo
 		// status-icon-circle: a hand-rolled tinted status circle. The canonical
 		// forms are ui.ConfirmDialog (destructive confirm) and components.IconCircle
 		// (every other dialog/callout heading).
-		if statusIconCircleRE.MatchString(stripped) {
+		if statusCircleHit(stripped) {
 			addPatternHit(out, patternIconCircle, base, lineNo)
 		}
 	}
