@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"github.com/spf13/cobra"
@@ -151,24 +150,11 @@ func getSchemasClient(cmd *cobra.Command) (*sdkschemas.Client, error) {
 		return nil, err
 	}
 
-	// Resolve orgID: prefer config, then auto-detect from server.
-	orgID := ""
-	configPath, _ := cmd.Flags().GetString("config")
-	if configPath == "" {
-		configPath = config.DiscoverPath("")
-	}
-	if cfg, err := config.LoadWithEnv(configPath); err == nil && cfg.OrgID != "" {
-		orgID = cfg.OrgID
-	}
-	if orgID == "" {
-		// Auto-detect from server (same pattern as resolveProviderOrgID).
-		orgs, err := c.SDK.Orgs.List(context.Background())
-		if err == nil && len(orgs) > 0 {
-			orgID = orgs[0].ID
-		}
-	}
-
-	c.SetContext(orgID, projectID)
+	// Scope the client to the project and let the shared client resolve the
+	// org from that project when no org is configured. Guessing an org here
+	// (e.g. the account's first org) makes the server 403 with an X-Org-ID
+	// mismatch (issue #324).
+	c.ResolveProjectContext(context.Background(), projectID)
 	return c.SDK.Schemas, nil
 }
 

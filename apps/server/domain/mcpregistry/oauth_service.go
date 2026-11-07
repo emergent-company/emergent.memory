@@ -178,6 +178,12 @@ func discoverServerAuthRequirement(ctx context.Context, server *MCPServer) (*aut
 			// does not publish it), not an upstream outage.
 			return nil, fmt.Errorf("%w: %v", ErrOAuthMetadataUnavailable, err)
 		}
+		if errors.Is(err, ErrOAuthDiscoveryFailed) {
+			// Already the provider-side class, carrying its own wording (a
+			// provider-advertised URL the outbound guard rejected, for example).
+			// Re-wrapping would repeat the same sentence.
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %v", ErrOAuthDiscoveryFailed, err)
 	}
 	return req, nil
