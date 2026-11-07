@@ -495,6 +495,13 @@ type ObjectExtractionResults struct {
 	// configuration. It rides into the job's debug_info and the run's outcome
 	// notification so the operator sees it before merging (#240).
 	VarianceWarning *RunVarianceWarning
+	// SkippedTypes lists the object types omitted because their installed schema
+	// sets skipExtraction (sorted). They are also written to DebugInfo.
+	SkippedTypes []string
+	// OutcomeWarning is set when the run's outcome needs naming: types skipped
+	// by skipExtraction and/or a run that wrote no objects. It rides the same
+	// debug_info/notification path as VarianceWarning (#233).
+	OutcomeWarning *RunOutcomeWarning
 }
 
 // MarkFailed marks a job as failed with an error message
