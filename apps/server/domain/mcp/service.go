@@ -3143,16 +3143,31 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		// about relationship types. When disabled, relTypes stays nil so the
 		// result carries an empty relationships list.
 		if includeRelationships {
-			relBranchClause := "AND gr.branch_id IS NULL"
-			srcBranchClause := "AND src.branch_id IS NULL"
-			dstBranchClause := "AND dst.branch_id IS NULL"
-			relBranchArgs := []any{projectUUID, projectUUID, projectUUID}
-			if branchID != nil {
-				relBranchClause = "AND gr.branch_id = ?"
-				srcBranchClause = "AND src.branch_id = ?"
-				dstBranchClause = "AND dst.branch_id = ?"
-				relBranchArgs = []any{projectUUID, *branchID, projectUUID, *branchID, projectUUID, *branchID}
+			// Bound the relationship-side read by the run's branch scope exactly
+			// like the object-side read above, main-preferred so a relationship
+			// forked to an in-scope branch is counted once as its main head and a
+			// branch-only relationship is still counted (#308).
+			relBranchClause, relBranchArgs, err := s.branchScopeDedupClause(ctx, projectID, branchID, "gr", "kb.graph_relationships")
+			if err != nil {
+				return err
 			}
+			srcBranchClause, srcBranchArgs, err := s.branchScopeDedupClause(ctx, projectID, branchID, "src", "kb.graph_objects")
+			if err != nil {
+				return err
+			}
+			dstBranchClause, dstBranchArgs, err := s.branchScopeDedupClause(ctx, projectID, branchID, "dst", "kb.graph_objects")
+			if err != nil {
+				return err
+			}
+
+			// Args follow SQL placeholder order: gr.project, gr branch, src.project,
+			// src branch, dst.project, dst branch.
+			relQueryArgs := []any{projectUUID}
+			relQueryArgs = append(relQueryArgs, relBranchArgs...)
+			relQueryArgs = append(relQueryArgs, projectUUID)
+			relQueryArgs = append(relQueryArgs, srcBranchArgs...)
+			relQueryArgs = append(relQueryArgs, projectUUID)
+			relQueryArgs = append(relQueryArgs, dstBranchArgs...)
 
 			// Query relationship types with from/to type info
 			err = tx.NewRaw(`
@@ -3176,7 +3191,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 				`+dstBranchClause+`
 			GROUP BY gr.type, src.type, dst.type
 			ORDER BY gr.type, count DESC
-		`, relBranchArgs...).Scan(ctx, &relTypes)
+		`, relQueryArgs...).Scan(ctx, &relTypes)
 			if err != nil {
 				return err
 			}
@@ -3800,15 +3815,26 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		}
 		var relRows []relRow
 
-		relBranchClause := "AND gr.branch_id IS NULL"
-		dstBranchClause := "AND dst.branch_id IS NULL"
-		relQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
-		if branchID != nil {
-			relBranchClause = "AND gr.branch_id = ?"
-			dstBranchClause = "AND dst.branch_id = ?"
-			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
+		// Bound the relationship-side read by the run's branch scope exactly like
+		// the object-side read above, main-preferred so a relationship forked to an
+		// in-scope branch enriches an entity once as its main head and a
+		// branch-only relationship still enriches it (#308).
+		dstBranchClause, dstBranchArgs, err := s.branchScopeDedupClause(queryCtx, projectID, branchID, "dst", "kb.graph_objects")
+		if err != nil {
+			return nil, fmt.Errorf("query entities: enrich relationships: %w", err)
 		}
-		err := s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
+		relBranchClause, relBranchArgs, err := s.branchScopeDedupClause(queryCtx, projectID, branchID, "gr", "kb.graph_relationships")
+		if err != nil {
+			return nil, fmt.Errorf("query entities: enrich relationships: %w", err)
+		}
+
+		// Args follow SQL placeholder order: dst branch (JOIN), src IN, project,
+		// then gr branch (WHERE).
+		relQueryArgs := append([]any{}, dstBranchArgs...)
+		relQueryArgs = append(relQueryArgs, bun.In(canonicalIDs), projectUUID)
+		relQueryArgs = append(relQueryArgs, relBranchArgs...)
+
+		err = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 				return err
 			}

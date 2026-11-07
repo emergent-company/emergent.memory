@@ -205,24 +205,33 @@ func (s *Service) inScopeBranchIDs(ctx context.Context, projectID uuid.UUID, sco
 }
 
 // branchScopeClause returns the SQL fragment and args bounding an object read to
-// the run's branch scope, for the raw-SQL read paths in this package (#308). The
-// fragment references the kb.graph_objects alias `go`.
+// the run's branch scope, for the raw-SQL read paths in this package (#308). It
+// is the graph_objects-specific form (alias `go`) of branchScopeDedupClause.
+func (s *Service) branchScopeClause(ctx context.Context, projectID string, branchID *uuid.UUID) (string, []any, error) {
+	return s.branchScopeDedupClause(ctx, projectID, branchID, "go", "kb.graph_objects")
+}
+
+// branchScopeDedupClause returns the SQL fragment and args bounding a read of a
+// table that carries both branch_id and canonical_id to the run's branch scope,
+// deduplicated main-first. `alias` is that table's SQL alias (go, src, dst, gr)
+// and `table` its qualified name (kb.graph_objects, kb.graph_relationships);
+// both are internal literals, never caller input.
 //
 // An explicit branch is honoured as-is (already validated in scope before this
 // point). A caller with no boundary keeps the pre-existing main-only default; a
 // main-only agent run reads main only; a scoped run reads main plus its in-scope
-// unmerged branches, deduplicated main-first so a forked canonical object is
-// returned once as its main head and a branch-only object is still reachable.
-func (s *Service) branchScopeClause(ctx context.Context, projectID string, branchID *uuid.UUID) (string, []any, error) {
+// unmerged branches, deduplicated main-first so a forked canonical row is
+// returned once as its main head and a branch-only row is still reachable.
+func (s *Service) branchScopeDedupClause(ctx context.Context, projectID string, branchID *uuid.UUID, alias, table string) (string, []any, error) {
 	if branchID != nil {
-		return " AND go.branch_id = ?", []any{*branchID}, nil
+		return fmt.Sprintf(" AND %s.branch_id = ?", alias), []any{*branchID}, nil
 	}
 	if !IsBranchScopeInstalled(ctx) {
-		return " AND go.branch_id IS NULL", nil, nil
+		return fmt.Sprintf(" AND %s.branch_id IS NULL", alias), nil, nil
 	}
 	scope := BranchScopeFromContext(ctx)
 	if scope.IsMainOnly() {
-		return " AND go.branch_id IS NULL", nil, nil
+		return fmt.Sprintf(" AND %s.branch_id IS NULL", alias), nil, nil
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -233,11 +242,12 @@ func (s *Service) branchScopeClause(ctx context.Context, projectID string, branc
 		return "", nil, err
 	}
 	if len(ids) == 0 {
-		return " AND go.branch_id IS NULL", nil, nil
+		return fmt.Sprintf(" AND %s.branch_id IS NULL", alias), nil, nil
 	}
 	// Main-first dedup: keep the main head when it exists, else the branch head.
-	return " AND (go.branch_id IS NULL OR (go.branch_id IN (?) AND go.canonical_id NOT IN (" +
-			"SELECT canonical_id FROM kb.graph_objects WHERE project_id = ? " +
+	return fmt.Sprintf(" AND (%s.branch_id IS NULL OR (%s.branch_id IN (?) AND %s.canonical_id NOT IN ("+
+			"SELECT canonical_id FROM %s WHERE project_id = ? "+
 			"AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL)))",
+			alias, alias, alias, table),
 		[]any{bun.In(ids), projectUUID}, nil
 }
