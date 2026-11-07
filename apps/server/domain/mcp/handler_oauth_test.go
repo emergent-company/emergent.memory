@@ -61,6 +61,26 @@ func TestHandleOAuthProtectedResourcePathInserted(t *testing.T) {
 	require.Equal(t, []any{"https://api.example.com"}, body["authorization_servers"])
 }
 
+// A resource path that is not the unified endpoint (an SSE route) keeps its own
+// identifier, and a trailing slash is preserved so the value stays identical to
+// what the client addressed (RFC 9728 §3.3).
+func TestHandleOAuthProtectedResourceExactPathIdentity(t *testing.T) {
+	svc := &Service{oauthASEnabled: true}
+	for _, tt := range []struct {
+		requestPath string
+		want        string
+	}{
+		{"/.well-known/oauth-protected-resource/api/mcp/sse/p1", "https://api.example.com/api/mcp/sse/p1"},
+		{"/.well-known/oauth-protected-resource/api/mcp/", "https://api.example.com/api/mcp/"},
+		{"/.well-known/oauth-protected-resource/", "https://api.example.com"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "https://api.example.com"+tt.requestPath, nil)
+		req.Host = "api.example.com"
+		body := protectedResourceMetadata(t, svc, req)
+		require.Equal(t, tt.want, body["resource"], tt.requestPath)
+	}
+}
+
 func TestHandleOAuthProtectedResourceAdvertisesScopes(t *testing.T) {
 	svc := &Service{oauthASEnabled: true}
 	req := httptest.NewRequest(http.MethodGet, "https://api.example.com/.well-known/oauth-protected-resource", nil)

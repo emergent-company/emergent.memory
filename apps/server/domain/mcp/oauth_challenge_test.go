@@ -53,6 +53,29 @@ func TestOAuthChallengeMiddlewareUsesAddressedPath(t *testing.T) {
 		rec.Header().Get("WWW-Authenticate"))
 }
 
+// The middleware is registered before RequireAuth on the /api/mcp group; this
+// pins that ordering contract: when the auth middleware fails, the challenge is
+// still set before the server's error handler writes the response.
+func TestOAuthChallengeMiddlewareWrapsGroupAuth(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = apperror.HTTPErrorHandler(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	g := e.Group("/api/mcp")
+	g.Use(oauthChallengeMiddleware)
+	g.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error { return apperror.ErrMissingToken }
+	})
+	g.GET("", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "https://api.example.com/api/mcp", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t,
+		`Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/api/mcp"`,
+		rec.Header().Get("WWW-Authenticate"))
+}
+
 func TestOAuthChallengeMiddlewareIgnoresNonUnauthorized(t *testing.T) {
 	e := challengeServer(func(c echo.Context) error {
 		return &apperror.Error{HTTPStatus: http.StatusForbidden, Code: "forbidden", Message: "no"}

@@ -73,7 +73,11 @@ const prmWellKnownPath = "/.well-known/oauth-protected-resource"
 // @Router       /.well-known/oauth-protected-resource/{resourcePath} [get]
 func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
 	resourceURL := requestOrigin(c)
-	if rest := strings.TrimSuffix(strings.TrimPrefix(c.Request().URL.Path, prmWellKnownPath), "/"); rest != "" {
+	// Keep the addressed path verbatim: RFC 9728 §3.3 requires the returned
+	// "resource" to be identical to the identifier the client used, and a
+	// trailing slash makes it a different URI. Only the bare well-known path
+	// (which addresses the origin) collapses to the origin.
+	if rest := strings.TrimPrefix(c.Request().URL.Path, prmWellKnownPath); rest != "" && rest != "/" {
 		resourceURL += rest
 	}
 

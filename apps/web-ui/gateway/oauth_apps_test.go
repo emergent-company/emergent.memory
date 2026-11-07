@@ -175,6 +175,38 @@ func TestOAuthConsentClampsUnsupportedScope(t *testing.T) {
 	}
 }
 
+// A request that names only unsupported scopes must be refused, not widened to
+// the server's full scope set: that would grant more than the client asked for.
+func TestOAuthConsentRejectsOnlyUnsupportedScopes(t *testing.T) {
+	f := &fakeOAuthBackend{ctx: &OAuthConsentContext{
+		ClientID:        "client-1",
+		ClientName:      "gemini",
+		RedirectURI:     "https://oauth-redirect.googleusercontent.com/r/project-1",
+		ScopesSupported: []string{"graph:read", "graph:write"},
+	}}
+	s := newOAuthDecisionServer(f)
+	e := echo.New()
+	e.GET("/oauth/authorize", s.uiOAuthAuthorize)
+
+	q := url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://oauth-redirect.googleusercontent.com/r/project-1"},
+		"response_type":  {"code"},
+		"code_challenge": {"challenge-1"},
+		"scope":          {"offline_access ACCESS_VIEW_MANAGE_MCP_CONTENT"},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "None of the requested scopes are supported") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestOAuthConsentDenyRedirectsWithError(t *testing.T) {
 	f := &fakeOAuthBackend{ctx: &OAuthConsentContext{
 		ClientID: "client-1", ClientName: "app", RedirectURI: "https://client.example/cb",

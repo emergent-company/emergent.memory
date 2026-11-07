@@ -50,10 +50,17 @@ func (s *Server) uiOAuthAuthorize(c echo.Context) error {
 	// Grant the supported subset of the requested scope. OAuth permits a partial
 	// grant (RFC 6749 §3.3), and MCP clients routinely ask for scopes this server
 	// does not understand (offline_access, vendor-specific ones); rejecting the
-	// whole request would make the consent page unusable for them.
-	scopes := clampScopes(strings.Fields(q.Get("scope")), ctxResp.ScopesSupported)
-	if len(scopes) == 0 {
+	// whole request would make the consent page unusable for them. The
+	// all-supported fallback applies only when the client asked for no scope at
+	// all: a request that named only unsupported scopes must not widen to
+	// everything.
+	requested := strings.Fields(q.Get("scope"))
+	scopes := clampScopes(requested, ctxResp.ScopesSupported)
+	if len(requested) == 0 {
 		scopes = ctxResp.ScopesSupported
+	}
+	if len(scopes) == 0 {
+		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "None of the requested scopes are supported by this server.")
 	}
 	scope := strings.Join(scopes, " ")
 
@@ -113,10 +120,15 @@ func (s *Server) uiOAuthAuthorizeDecision(c echo.Context) error {
 		return c.Redirect(http.StatusFound, u.String())
 	}
 
-	// Same partial grant as the GET: keep the supported scopes, drop the rest.
-	scopes := clampScopes(strings.Fields(c.FormValue("scope")), ctxResp.ScopesSupported)
-	if len(scopes) == 0 {
+	// Same partial grant as the GET: keep the supported scopes, drop the rest,
+	// and only fall back to all supported scopes when the form carried none.
+	requested := strings.Fields(c.FormValue("scope"))
+	scopes := clampScopes(requested, ctxResp.ScopesSupported)
+	if len(requested) == 0 {
 		scopes = ctxResp.ScopesSupported
+	}
+	if len(scopes) == 0 {
+		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "None of the requested scopes are supported by this server.")
 	}
 	projectID := c.FormValue("project_id")
 	if projectID == "" {

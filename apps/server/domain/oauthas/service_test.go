@@ -354,6 +354,31 @@ func TestRegisterClientToleratesClientMetadata(t *testing.T) {
 	require.Equal(t, "none", stored.TokenEndpointAuthMethod)
 }
 
+// A client that asks only for the refresh_token grant still registers, and gets
+// authorization_code in the response (RFC 7591 subset grant).
+func TestRegisterClientRefreshOnlyGrantFallsBack(t *testing.T) {
+	svc, _, _, _, _ := newServiceFixture(t, config.OAuthASConfig{})
+	resp, err := svc.RegisterClient(context.Background(), ClientRegistrationRequest{
+		ClientName:   "app",
+		RedirectURIs: []string{"https://app.example/cb"},
+		GrantTypes:   []string{"refresh_token"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"authorization_code"}, resp.GrantTypes)
+}
+
+func TestRegisterClientNameTooLong(t *testing.T) {
+	svc, _, _, _, _ := newServiceFixture(t, config.OAuthASConfig{})
+	_, err := svc.RegisterClient(context.Background(), ClientRegistrationRequest{
+		ClientName:   strings.Repeat("a", 256),
+		RedirectURIs: []string{"https://app.example/cb"},
+	})
+	require.Error(t, err)
+	var oerr *OAuthError
+	require.ErrorAs(t, err, &oerr)
+	require.Equal(t, "invalid_client_metadata", oerr.Code)
+}
+
 func TestRegisterClientValidation(t *testing.T) {
 	manyURIs := make([]string, 6)
 	for i := range manyURIs {

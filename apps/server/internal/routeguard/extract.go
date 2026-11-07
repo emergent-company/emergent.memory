@@ -678,7 +678,10 @@ func (x *extractor) classifyMiddleware(expr ast.Expr) (middleware, bool) {
 	// `extended.Use(a2aErrorEnvelopeMiddleware)`.
 	if ident, ok := expr.(*ast.Ident); ok {
 		switch ident.Name {
-		case "a2aErrorEnvelopeMiddleware", "ToolAuditMiddleware", "ToolRestrictionMiddleware":
+		case "a2aErrorEnvelopeMiddleware", "ToolAuditMiddleware", "ToolRestrictionMiddleware",
+			// oauthChallengeMiddleware only decorates a 401 response (it adds the
+			// WWW-Authenticate challenge) and enforces no authority of its own.
+			"oauthChallengeMiddleware":
 			return middleware{ident.Name, ""}, true
 		}
 		return middleware{}, false

@@ -3,7 +3,6 @@ package mcp
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -51,8 +50,8 @@ func isUnauthorized(err error) bool {
 // request to /api/mcp points at .../.well-known/oauth-protected-resource/api/mcp
 // and the metadata handler answers with a matching "resource" value.
 func protectedResourceMetadataURL(c echo.Context) string {
-	path := strings.TrimSuffix(c.Request().URL.Path, "/")
-	if path == "" {
+	path := c.Request().URL.Path
+	if path == "" || path == "/" {
 		path = "/api/mcp"
 	}
 	return requestOrigin(c) + prmWellKnownPath + path
