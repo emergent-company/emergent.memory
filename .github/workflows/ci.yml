@@ -298,6 +298,26 @@ jobs:
           # needed: an undeclared route, a vanished route, or a drifted tier all
           # fail. Same invocation as server.yml's `route-authority-guard` job.
           go run ./cmd/route-authority-guard
+      # Go module file drift guard (#2193). apps/server/go.sum was 40 `/go.mod`
+      # hash lines short for months (#2083): a warm module cache hides that,
+      # because verification happens at download time, so only the first cold
+      # consumer — fresh container, new workstation, `docker build` — failed, with
+      # "missing go.sum entry for go.mod file". Nothing checked it; #2057 had
+      # papered one instance over with a second `go mod download` inside
+      # apps/server/Dockerfile. The script runs `go mod tidy -diff` over the
+      # modules that are clean today and fails on any diff, in go.mod or go.sum.
+      # It runs here rather than in server.yml because server.yml is
+      # path-filtered and advisory, so a guard there cannot gate. Measured cost
+      # ~0.2 s per module on a warm module cache (the guards above already warmed
+      # it); the first run on a cold runner downloads each graph once (~25 s for
+      # connector.linux, ~71 s for apps/server).
+      #
+      # It must stay *above* the swagger generate step (#312): this guard judges
+      # the checked-out tree, and a generated Go file written earlier in the job
+      # changes what `go mod tidy` considers part of the module graph.
+      - name: Go module file drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/go-mod-tidy.sh
       # The generated swagger spec is no longer committed (#270): `task
       # server:swagger` and both Dockerfiles regenerate it at build time, so
       # there is no artifact left to drift from its annotations and the old
@@ -305,6 +325,14 @@ jobs:
       # swagger raw-JSON guard below reads the spec (spec-level half of #162),
       # and that was previously satisfied as a side effect of the drift guard.
       # Same generator invocation (and go.mod-derived version) as before.
+      #
+      # ORDER MATTERS (#312): this step sits *below* the go module drift guard
+      # and writes JSON/YAML only. When it also emitted docs.go — a package
+      # importing github.com/swaggo/swag inside the module — the tidy guard ran
+      # on that polluted tree and demanded a direct require that no fresh
+      # checkout needs, so the two tidy gates asked for opposite go.mod files.
+      # Keep the guard first (it must see a clean tree) and keep
+      # `--outputTypes json,yaml` (generation must not import into the module).
       - name: Generate swagger spec
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         working-directory: apps/server
@@ -316,8 +344,13 @@ jobs:
             exit 1
           fi
           mkdir -p docs/swagger
+          # `--outputTypes json,yaml` and not the default `go,json,yaml`: the
+          # raw-JSON guard below reads swagger.json, and a docs.go would put a
+          # github.com/swaggo/swag importer into apps/server for the rest of the
+          # job (#312).
           go run "github.com/swaggo/swag/cmd/swag@${version}" \
-            init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+            init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal \
+            --outputTypes json,yaml
       # Swagger raw-JSON guard (#162). swag cannot type a json.RawMessage, so
       # without a swaggertype tag it publishes the field as items:{type:integer}
       # and a generated client decodes []int. The same lie was fixed by hand in
@@ -335,22 +368,6 @@ jobs:
       - name: Swagger raw-JSON guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/swagger-raw-json.sh
-      # Go module file drift guard (#2193). apps/server/go.sum was 40 `/go.mod`
-      # hash lines short for months (#2083): a warm module cache hides that,
-      # because verification happens at download time, so only the first cold
-      # consumer — fresh container, new workstation, `docker build` — failed, with
-      # "missing go.sum entry for go.mod file". Nothing checked it; #2057 had
-      # papered one instance over with a second `go mod download` inside
-      # apps/server/Dockerfile. The script runs `go mod tidy -diff` over the
-      # modules that are clean today and fails on any diff, in go.mod or go.sum.
-      # It runs here rather than in server.yml because server.yml is
-      # path-filtered and advisory, so a guard there cannot gate. Measured cost
-      # ~0.2 s per module on a warm module cache (the guards above already warmed
-      # it); the first run on a cold runner downloads each graph once (~25 s for
-      # connector.linux, ~71 s for apps/server).
-      - name: Go module file drift guard
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        run: bash scripts/preflight/go-mod-tidy.sh
       # Preflight guards: the same checks lanes run locally before pushing —
       # stale base, migration numbering + immutability (goose panics on duplicate
       # versions; migration-number.sh delegates the immutability rule to
