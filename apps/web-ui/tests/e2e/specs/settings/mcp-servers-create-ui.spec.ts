@@ -164,16 +164,16 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
   let serverId = '';
 
   try {
-    // 1. NAVIGATE (UI): the list page → New server form.
+    // 1. NAVIGATE (UI): the list page → the header "Add server" chooser → the
+    // manual create form (the chooser's first option). The old direct
+    // "New server" header link is gone: the header now opens a dialog offering
+    // the manual form and the MCP registry.
     await goto(page, MCP_BASE);
     await expectAppPage(page, /MCP Servers/);
-    const newLink = page.getByRole('link', { name: 'New server' });
-    if (await newLink.isVisible().catch(() => false)) {
-      await newLink.click();
-    } else {
-      // A project with zero servers renders the empty-state CTA instead.
-      await page.getByRole('link', { name: 'Register a server' }).click();
-    }
+    await page.getByTestId('mcp-server-add').click();
+    const addNew = page.getByTestId('mcp-server-add-new');
+    await expect(addNew).toBeVisible();
+    await addNew.click();
     await expectAppPage(page, /New MCP server/);
 
     // 2. CREATE (UI): http transport + name + URL (+ optional header row).

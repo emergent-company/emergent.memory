@@ -408,11 +408,11 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 
 	// Validate cron interval when trigger type is schedule.
 	if triggerType == TriggerTypeSchedule && dto.CronSchedule != "" {
-		minMinutes := 15 // safe default
+		minMinutes := DefaultMinCronIntervalMinutes
 		if h.executor != nil && h.executor.safeguards.MinCronIntervalMinutes > 0 {
 			minMinutes = h.executor.safeguards.MinCronIntervalMinutes
 		}
-		if err := validateCronInterval(dto.CronSchedule, minMinutes); err != nil {
+		if err := ValidateCronInterval(dto.CronSchedule, minMinutes); err != nil {
 			return apperror.NewBadRequest(fmt.Sprintf("invalid cron schedule: %s", err.Error()))
 		}
 	}
@@ -564,11 +564,11 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 	// Validate cron interval if cron schedule is being changed or trigger type is schedule.
 	if agent.TriggerType == TriggerTypeSchedule && agent.CronSchedule != "" {
 		if dto.CronSchedule != nil || dto.TriggerType != nil {
-			minMinutes := 15 // safe default
+			minMinutes := DefaultMinCronIntervalMinutes
 			if h.executor != nil && h.executor.safeguards.MinCronIntervalMinutes > 0 {
 				minMinutes = h.executor.safeguards.MinCronIntervalMinutes
 			}
-			if err := validateCronInterval(agent.CronSchedule, minMinutes); err != nil {
+			if err := ValidateCronInterval(agent.CronSchedule, minMinutes); err != nil {
 				return apperror.NewBadRequest(fmt.Sprintf("invalid cron schedule: %s", err.Error()))
 			}
 		}

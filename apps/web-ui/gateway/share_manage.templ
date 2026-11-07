@@ -158,26 +158,31 @@ templ ShareLinksListPanel(props ShareLinksPageProps) {
 	</section>
 }
 
+// shareLinksNewAction is the section header's primary action: the link that
+// opens the new-share-link dialog.
+templ shareLinksNewAction(props ShareLinksPageProps) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    props.NewLinkURL,
+		Variant: ui.ButtonPrimary,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--plus",
+		Attrs:   templ.Attributes{"data-testid": "share-new-link"},
+	}) {
+		New share link
+	}
+}
+
 // ShareLinksHeader labels the section and carries the primary call to action.
 templ ShareLinksHeader(props ShareLinksPageProps) {
-	<div class="flex flex-wrap items-start justify-between gap-3">
+	@components.CardHeader(components.CardHeaderProps{Action: shareLinksNewAction(props)}) {
 		<div>
 			<h2 id="share-links-heading" class="text-lg font-semibold tracking-tight">Share links</h2>
 			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1 max-w-xl"}) {
 				Let people outside your workspace chat with this agent. Each link has its own settings, and you can turn one off at any time.
 			}
 		</div>
-		@ui.Button(ui.ButtonProps{
-			Type:    ui.ButtonTypeLink,
-			Href:    props.NewLinkURL,
-			Variant: ui.ButtonPrimary,
-			Size:    ui.ButtonSM,
-			Icon:    "lucide--plus",
-			Attrs:   templ.Attributes{"data-testid": "share-new-link"},
-		}) {
-			New share link
-		}
-	</div>
+	}
 }
 
 // ShareLinksList renders the existing links or the empty state.

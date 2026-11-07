@@ -73,7 +73,7 @@ type MemoryBackend interface {
 	// MCP OAuth connect (see mcp_servers_client.go).
 	AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAuthAuthorize, error)
 	DisconnectMCPServer(ctx context.Context, id string) error
-	SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error)
+	SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret, scope string) (*MCPOAuthStatus, error)
 	ClearMCPServerOAuthClient(ctx context.Context, id string) error
 	// MCP share instances (project-scoped MCP exposure; see mcp_shares.go).
 	// The raw key is only ever present on Create/Rotate results.

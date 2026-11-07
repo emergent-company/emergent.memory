@@ -1,7 +1,9 @@
 package main
 
-// Sentry browser SDK wiring, shared by the three document heads (the app shell,
-// the sign-in page, and the public share page). It is a separate component
+// Sentry browser SDK wiring, shared by the two document heads that report
+// browser errors (the app shell and the sign-in page). The public share page
+// deliberately does not wire it: it is served under the strict share CSP, which
+// disallows third-party scripts (issue #219). It is a separate component
 // because the block used to be pasted into all three, and one copy drifting back
 // to a parse-blocking <script> would silently put a ~280 kB third-party fetch on
 // the critical path of that surface again.

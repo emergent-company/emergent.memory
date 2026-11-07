@@ -249,6 +249,7 @@ func classifyAuthRequired(ctx context.Context, pm *ProxyManager, server *MCPServ
 		ResourceMetadataURL:   req.ResourceMetadataURL,
 		AuthorizationServer:   req.AuthorizationServer,
 		Scopes:                nonNilStrings(req.Scopes),
+		ScopesAvailable:       nonNilStrings(req.ScopesAvailable),
 		RegistrationSupported: req.RegistrationSupported,
 	}
 }

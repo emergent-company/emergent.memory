@@ -196,6 +196,21 @@ type AgentManifest struct {
 	CronSchedule   string                 `json:"cronSchedule,omitempty"`
 }
 
+// DeclaresScheduleTrigger reports whether apply materializes this agent with a
+// schedule trigger: an explicit "schedule" type, or no explicit type and no
+// reaction config (the apply default). This mirrors the agents create handler
+// and `memory blueprints validate` (#320), which validate cronSchedule only for
+// schedule-triggered agents. It is deliberately the coarse pre-materialization
+// rule: ensureRuntimeAgent re-checks the exact resolved trigger type (apply can
+// also derive a reaction trigger from workConfig objectRules), so a bad cron can
+// never be persisted even in that corner (#354).
+func (m AgentManifest) DeclaresScheduleTrigger() bool {
+	if m.TriggerType != "" {
+		return m.TriggerType == string(agents.TriggerTypeSchedule)
+	}
+	return m.ReactionConfig == nil
+}
+
 // AgentUIManifest describes an agent's inline appearance block, mirroring the
 // object-type registry's inline ui block. Both fields optional.
 type AgentUIManifest struct {

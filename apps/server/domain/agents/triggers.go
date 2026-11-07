@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,26 +185,7 @@ func (ts *TriggerService) SyncAllTriggers(ctx context.Context) error {
 		slog.Int("reaction", len(reactionAgents)),
 	)
 
-	cronCount := 0
-	for _, agent := range cronAgents {
-		if agent.CronSchedule == "" {
-			ts.log.Warn("scheduled agent has no cron expression, skipping",
-				slog.String("agent", agent.Name),
-				slog.String("agent_id", agent.ID),
-			)
-			continue
-		}
-		if err := ts.registerCronTrigger(agent); err != nil {
-			ts.log.Error("failed to register cron trigger",
-				slog.String("agent", agent.Name),
-				slog.String("agent_id", agent.ID),
-				slog.String("schedule", agent.CronSchedule),
-				slog.String("error", err.Error()),
-			)
-			continue
-		}
-		cronCount++
-	}
+	cronCount, cronFailures := ts.syncCronTriggers(cronAgents)
 
 	eventCount := 0
 	for _, agent := range reactionAgents {
@@ -222,7 +204,54 @@ func (ts *TriggerService) SyncAllTriggers(ctx context.Context) error {
 		slog.Int("cron", cronCount),
 		slog.Int("event", eventCount),
 	)
+
+	// A scheduled agent whose trigger could not be registered stays
+	// enabled=true in kb.agents, so it looks healthy through the API while it
+	// never fires. kb.agents has no trigger-state column and there is no
+	// side-channel to degrade the row without a migration, so the returned
+	// aggregate (the caller logs it at startup) plus the per-agent Error log in
+	// syncCronTriggers is the whole surface. Returning it also means a silent
+	// skip can no longer look like a clean sync.
+	if len(cronFailures) > 0 {
+		return fmt.Errorf("failed to register cron triggers for %d scheduled agent(s): %s",
+			len(cronFailures), strings.Join(cronFailures, "; "))
+	}
 	return nil
+}
+
+// syncCronTriggers registers a cron trigger for every enabled scheduled agent.
+// One unregisterable agent must not stop the others, so failures are collected
+// instead of aborting: it returns the number registered and a human-readable
+// description (name + id + reason) of every agent left without a trigger.
+func (ts *TriggerService) syncCronTriggers(cronAgents []*Agent) (int, []string) {
+	var (
+		registered int
+		failures   []string
+	)
+	for _, agent := range cronAgents {
+		reason := ""
+		if agent.CronSchedule == "" {
+			reason = "no cron expression"
+		} else if err := ts.registerCronTrigger(agent); err != nil {
+			reason = err.Error()
+		}
+		if reason == "" {
+			registered++
+			continue
+		}
+
+		// Error, not Warn: this agent is enabled but will never fire, and the
+		// row itself carries no marker. The id names the row to fix.
+		ts.log.Error("scheduled agent trigger not registered; agent will never fire",
+			slog.String("agent", agent.Name),
+			slog.String("agent_id", agent.ID),
+			slog.String("project_id", agent.ProjectID),
+			slog.String("schedule", agent.CronSchedule),
+			slog.String("reason", reason),
+		)
+		failures = append(failures, fmt.Sprintf("%s (%s): %s", agent.Name, agent.ID, reason))
+	}
+	return registered, failures
 }
 
 // registerCronTrigger registers a cron schedule for an agent.
@@ -230,11 +259,11 @@ func (ts *TriggerService) registerCronTrigger(agent *Agent) error {
 	taskName := triggerTaskName(agent.ID)
 
 	// Validate minimum cron interval before registering.
-	minMinutes := ts.executor.safeguards.MinCronIntervalMinutes
-	if minMinutes <= 0 {
-		minMinutes = 15 // safe fallback
+	minMinutes := DefaultMinCronIntervalMinutes
+	if ts.executor != nil && ts.executor.safeguards.MinCronIntervalMinutes > 0 {
+		minMinutes = ts.executor.safeguards.MinCronIntervalMinutes
 	}
-	if err := validateCronInterval(agent.CronSchedule, minMinutes); err != nil {
+	if err := ValidateCronInterval(agent.CronSchedule, minMinutes); err != nil {
 		return fmt.Errorf("cron validation failed for agent %q: %w", agent.Name, err)
 	}
 
@@ -971,10 +1000,22 @@ func (ts *TriggerService) GetEventListeners(key string) []*Agent {
 	return ts.eventListeners[key]
 }
 
-// validateCronInterval parses the given cron expression and returns an error if
+// DefaultMinCronIntervalMinutes is the fallback minimum cron interval used when
+// no executor safeguard is configured. The agents HTTP handler and blueprint
+// apply both validate against this same floor (and against the configured
+// AGENT_MIN_CRON_INTERVAL_MINUTES when set) so neither can persist a schedule
+// the trigger service will refuse to register (#354). Note: the MCP
+// create/update-agent tools still write cron_schedule unvalidated.
+const DefaultMinCronIntervalMinutes = 15
+
+// ValidateCronInterval parses the given cron expression and returns an error if
 // the interval between consecutive executions is shorter than minMinutes.
 // This prevents agents from being scheduled too frequently and causing queue explosions.
-func validateCronInterval(cronExpr string, minMinutes int) error {
+//
+// Exported because blueprint apply validates the same way the agents create
+// handler does: the server-side apply path does not go through the handler, and
+// a schedule it cannot register leaves an enabled agent that never fires (#354).
+func ValidateCronInterval(cronExpr string, minMinutes int) error {
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	schedule, err := parser.Parse(cronExpr)
 	if err != nil {

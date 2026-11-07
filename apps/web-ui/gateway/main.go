@@ -504,6 +504,7 @@ func main() {
 	e.POST("/skills/:id/update", s.uiUpdateSkill)
 	e.POST("/skills/:id/delete", s.uiDeleteSkill)
 	e.GET("/backups", s.uiBackups)
+	e.GET("/backups/new", s.uiBackupNewPage)
 	e.POST("/backups", s.uiBackupCreate)
 	e.POST("/backups/schedule", s.uiBackupScheduleSave)
 	e.POST("/backups/schedule/delete", s.uiBackupScheduleDelete)

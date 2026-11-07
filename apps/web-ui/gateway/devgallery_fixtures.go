@@ -58,6 +58,21 @@ func gallerySeed() []GalleryEntry {
 			},
 		},
 		{
+			ID: "CardHeader", Slug: "card-header", Name: "CardHeader", Layer: LayerComposite,
+			Category: "Cards", Subcategory: "header", SourceFile: "components/card_header.templ",
+			PropsType:   "Action templ.Component, Class string, Attrs templ.Attributes",
+			Description: "A card/panel title-and-action header: the action sits in the second column from sm up and drops below the title, full width, on mobile.",
+			Render: func() templ.Component {
+				action := withChildren(ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+				}), templ.Raw("Action"))
+				return withChildren(components.CardHeader(components.CardHeaderProps{Action: action}),
+					templ.Raw(`<h2 class="text-base font-semibold">Card title</h2>`))
+			},
+		},
+		{
 			ID: "TableCard", Slug: "table-card", Name: "TableCard", Layer: LayerComposite,
 			Category: "Cards", Subcategory: "table", SourceFile: "components/table.templ",
 			PropsType:   "attrs templ.Attributes",
