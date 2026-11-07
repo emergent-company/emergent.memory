@@ -240,6 +240,17 @@ type MarkCompletedResult struct {
 // dead letter is worth a user-visible failure notification, because announcing
 // each retry would notify the same people once per attempt for one upload.
 func (s *DocumentParsingJobsService) MarkFailed(ctx context.Context, id string, jobErr error) (bool, error) {
+	return s.markFailed(ctx, id, jobErr, false)
+}
+
+// MarkFailedPermanent moves the job straight to the dead letter queue. Use it
+// for failures a retry cannot fix — an empty document stays empty, so retrying
+// only delays the failure the user needs to see (#243).
+func (s *DocumentParsingJobsService) MarkFailedPermanent(ctx context.Context, id string, jobErr error) (bool, error) {
+	return s.markFailed(ctx, id, jobErr, true)
+}
+
+func (s *DocumentParsingJobsService) markFailed(ctx context.Context, id string, jobErr error, permanent bool) (bool, error) {
 	job := &DocumentParsingJob{}
 	err := s.db.NewSelect().
 		Model(job).
@@ -256,7 +267,7 @@ func (s *DocumentParsingJobsService) MarkFailed(ctx context.Context, id string, 
 	}
 
 	errorMessage := truncateError(jobErr.Error())
-	shouldRetry := job.RetryCount < job.MaxRetries
+	shouldRetry := !permanent && job.RetryCount < job.MaxRetries
 
 	if shouldRetry {
 		// Schedule retry with exponential backoff
