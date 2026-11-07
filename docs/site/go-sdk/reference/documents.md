@@ -179,6 +179,7 @@ type DeleteResponse struct {
 }
 
 type DeleteSummary struct {
+    Branches           int
     Chunks             int
     ExtractionJobs     int
     GraphObjects       int
@@ -204,6 +205,7 @@ type DocumentInfo struct {
 }
 
 type ImpactSummary struct {
+    Branches           int
     Chunks             int
     ExtractionJobs     int
     GraphObjects       int

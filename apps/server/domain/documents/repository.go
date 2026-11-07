@@ -898,6 +898,125 @@ func (r *Repository) repairSurvivingVersionChains(ctx context.Context, db bun.ID
 	return nil
 }
 
+// documentExtractionBranchIDs returns the unmerged extraction branches a
+// document's extraction jobs created, in either link shape the jobs use: a branch
+// that names the job through origin_id, or an older branch a job still points at
+// through staging_branch_id. Deleting a document deletes its jobs, and nothing
+// else follows the link: origin_id has no foreign key, so the branch (and its
+// staged objects) survived and kept showing in the Objects list as if the
+// extraction were still pending (#246). The same two shapes the read boundary
+// treats as "source deleted" are collected here, so cleanup and reads cannot
+// disagree about which branches belong to the document.
+func documentExtractionBranchIDs(ctx context.Context, db bun.IDB, projectID string, jobIDs []string) ([]string, error) {
+	if len(jobIDs) == 0 {
+		return nil, nil
+	}
+	var branchIDs []string
+	err := db.NewSelect().
+		TableExpr("kb.branches AS b").
+		Column("b.id").
+		Where("b.project_id = ?", projectID).
+		Where("b.origin = 'extraction'").
+		Where("b.merged_at IS NULL").
+		Where("(b.origin_id IN (?) OR (b.origin_id IS NULL AND b.id IN (SELECT j.staging_branch_id FROM kb.object_extraction_jobs j WHERE j.id IN (?) AND j.staging_branch_id IS NOT NULL)))",
+			bun.In(jobIDs), bun.In(jobIDs)).
+		Scan(ctx, &branchIDs)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("resolve extraction branches: %w", err)
+	}
+	return branchIDs, nil
+}
+
+// deleteDocumentExtractionBranches removes those branches and everything staged
+// on them. Merged branches are left alone: their content was merged into the main
+// graph and the attribution cascade above already removes the rows it can
+// attribute to the jobs, so the branch row is merge history rather than pending
+// work.
+func deleteDocumentExtractionBranches(ctx context.Context, db bun.IDB, projectID string, jobIDs []string) (branches, objects, relationships int, err error) {
+	branchIDs, err := documentExtractionBranchIDs(ctx, db, projectID, jobIDs)
+	if err != nil || len(branchIDs) == 0 {
+		return 0, 0, 0, err
+	}
+
+	// Relationships first: they reference the objects by canonical id.
+	result, err := db.NewDelete().
+		TableExpr("kb.graph_relationships").
+		Where("project_id = ?", projectID).
+		Where("branch_id IN (?)", bun.In(branchIDs)).
+		Exec(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("delete branch relationships: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		relationships = int(n)
+	}
+
+	// Remember the rows first: a surviving version (a branch forked off this one)
+	// may point at them through supersedes_id, and a version chain must not carry a
+	// reference to a row that no longer exists.
+	var objectIDs []string
+	if err := db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("id").
+		Where("project_id = ?", projectID).
+		Where("branch_id IN (?)", bun.In(branchIDs)).
+		Scan(ctx, &objectIDs); err != nil && err != sql.ErrNoRows {
+		return 0, 0, 0, fmt.Errorf("load branch objects: %w", err)
+	}
+
+	result, err = db.NewDelete().
+		TableExpr("kb.graph_objects").
+		Where("project_id = ?", projectID).
+		Where("branch_id IN (?)", bun.In(branchIDs)).
+		Exec(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("delete branch objects: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		objects = int(n)
+	}
+	if len(objectIDs) > 0 {
+		if _, err := db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("supersedes_id = NULL").
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IN (?)", bun.In(objectIDs)).
+			Exec(ctx); err != nil {
+			return 0, 0, 0, fmt.Errorf("detach superseded branch objects: %w", err)
+		}
+	}
+
+	// Lineage rows and child links are metadata; drop the former and detach the
+	// latter so no branch is left pointing at a branch that no longer exists.
+	if _, err := db.NewDelete().
+		TableExpr("kb.branch_lineage").
+		Where("branch_id IN (?) OR ancestor_branch_id IN (?)", bun.In(branchIDs), bun.In(branchIDs)).
+		Exec(ctx); err != nil {
+		return 0, 0, 0, fmt.Errorf("delete branch lineage: %w", err)
+	}
+	if _, err := db.NewUpdate().
+		TableExpr("kb.branches").
+		Set("parent_branch_id = NULL").
+		Where("project_id = ?", projectID).
+		Where("parent_branch_id IN (?)", bun.In(branchIDs)).
+		Exec(ctx); err != nil {
+		return 0, 0, 0, fmt.Errorf("detach child branches: %w", err)
+	}
+
+	result, err = db.NewDelete().
+		TableExpr("kb.branches").
+		Where("project_id = ?", projectID).
+		Where("id IN (?)", bun.In(branchIDs)).
+		Exec(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("delete branches: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		branches = int(n)
+	}
+	return branches, objects, relationships, nil
+}
+
 // DeleteWithCascade deletes a document and all related entities in a transaction
 // Returns a summary of what was deleted
 func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentID string) (*DeleteSummary, error) {
@@ -977,6 +1096,17 @@ func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentI
 			if err := r.repairSurvivingVersionChains(ctx, tx, projectID, survivingCanonicals, objectRowIDs); err != nil {
 				return err
 			}
+
+			// 5b. Delete the branches these jobs created, with anything staged on
+			// them. Must run before the jobs, which are what link a branch to the
+			// document (#246).
+			branches, branchObjects, branchRelationships, err := deleteDocumentExtractionBranches(ctx, tx, projectID, jobIDs)
+			if err != nil {
+				return err
+			}
+			summary.Branches += branches
+			summary.GraphObjects += branchObjects
+			summary.GraphRelationships += branchRelationships
 
 			// 6. Delete extraction jobs
 			result, err = tx.NewDelete().
@@ -1139,6 +1269,17 @@ func (r *Repository) BulkDeleteWithCascade(ctx context.Context, projectID string
 			if err := r.repairSurvivingVersionChains(ctx, tx, projectID, survivingCanonicals, objectRowIDs); err != nil {
 				return err
 			}
+
+			// 5b. Delete the branches these jobs created, with anything staged on
+			// them. Must run before the jobs, which are what link a branch to the
+			// document (#246).
+			branches, branchObjects, branchRelationships, err := deleteDocumentExtractionBranches(ctx, tx, projectID, jobIDs)
+			if err != nil {
+				return err
+			}
+			summary.Branches += branches
+			summary.GraphObjects += branchObjects
+			summary.GraphRelationships += branchRelationships
 
 			// 6. Delete extraction jobs
 			result, err = tx.NewDelete().
@@ -1315,18 +1456,31 @@ func (r *Repository) GetDeletionImpact(ctx context.Context, projectID, documentI
 	if err != nil {
 		return nil, err
 	}
-	objectsCount := len(objectRowIDs)
 
-	// Count relationships referencing fully-removed canonicals.
-	var relationshipsCount int
-	if len(canonicalIDs) > 0 {
-		relationshipsCount, err = r.db.NewSelect().
-			TableExpr("kb.graph_relationships").
-			Where("src_id IN (?) OR dst_id IN (?)", bun.In(canonicalIDs), bun.In(canonicalIDs)).
-			Count(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("count relationships: %w", err)
-		}
+	// The pending extraction branches the cascade removes with the jobs.
+	branchIDs, err := documentExtractionBranchIDs(ctx, r.db, projectID, jobIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Count the graph rows deletion will remove: the rows attributable to the jobs
+	// plus everything staged on the branches, each row once (the cascade deletes
+	// attribution rows first, so the union is exactly what it removes).
+	objectsCount, err := r.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Where("project_id = ?", projectID).
+		Where("(id IN (?) OR branch_id IN (?))", bun.In(objectRowIDs), bun.In(branchIDs)).
+		Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count objects: %w", err)
+	}
+	relationshipsCount, err := r.db.NewSelect().
+		TableExpr("kb.graph_relationships").
+		Where("(src_id IN (?) OR dst_id IN (?) OR branch_id IN (?))",
+			bun.In(canonicalIDs), bun.In(canonicalIDs), bun.In(branchIDs)).
+		Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count relationships: %w", err)
 	}
 
 	// Count notifications
@@ -1354,6 +1508,7 @@ func (r *Repository) GetDeletionImpact(ctx context.Context, projectID, documentI
 			CreatedAt: doc.CreatedAt.Format(time.RFC3339),
 		},
 		Impact: ImpactSummary{
+			Branches:           len(branchIDs),
 			Chunks:             chunksCount,
 			ExtractionJobs:     len(jobIDs),
 			GraphObjects:       objectsCount,
@@ -1455,13 +1610,13 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 	var totalObjects, totalRelationships int
 	var unionRows []graphVersionRow
 	var unionCanonicalIDs []string
+	var unionObjectRowIDs []string
 	if len(allJobIDs) > 0 {
 		unionRows, err = r.loadGraphVersionRows(ctx, r.db, projectID, allJobIDs)
 		if err != nil {
 			return nil, err
 		}
-		unionObjectRowIDs, canonicals := resolveGraphRemovals(unionRows, allJobIDs)
-		unionCanonicalIDs = canonicals
+		unionObjectRowIDs, unionCanonicalIDs = resolveGraphRemovals(unionRows, allJobIDs)
 		totalObjects = len(unionObjectRowIDs)
 	}
 
@@ -1480,24 +1635,137 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 	}
 	totalRelationships = len(relEndpoints)
 
+	// Pending extraction branches, in both link shapes the jobs use: a branch that
+	// names the job through origin_id, or an older branch a job points at through
+	// staging_branch_id. A branch with a live origin_id is never matched through a
+	// staging link — the same rule pkg/branchsql applies to reads.
+	type branchLink struct {
+		BranchID   string `bun:"branch_id"`
+		DocumentID string `bun:"document_id"`
+	}
+	var branchLinks []branchLink
+	if len(existingIDs) > 0 {
+		err = r.db.NewSelect().
+			TableExpr("kb.branches AS b").
+			ColumnExpr("b.id AS branch_id, j.document_id AS document_id").
+			Join("JOIN kb.object_extraction_jobs AS j ON (j.id = b.origin_id OR (b.origin_id IS NULL AND j.staging_branch_id = b.id))").
+			Where("b.project_id = ?", projectID).
+			Where("b.origin = 'extraction'").
+			Where("b.merged_at IS NULL").
+			Where("j.document_id IN (?)", bun.In(existingIDs)).
+			Distinct().
+			Scan(ctx, &branchLinks)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("resolve extraction branches: %w", err)
+		}
+	}
+	branchIDsByDocument := make(map[string][]string)
+	branchIDSet := make(map[string]bool)
+	for _, link := range branchLinks {
+		branchIDsByDocument[link.DocumentID] = append(branchIDsByDocument[link.DocumentID], link.BranchID)
+		branchIDSet[link.BranchID] = true
+	}
+	unionBranchIDs := make([]string, 0, len(branchIDSet))
+	for id := range branchIDSet {
+		unionBranchIDs = append(unionBranchIDs, id)
+	}
+
+	// The rows staged on those branches. The branch cleanup removes them after the
+	// attribution pass, so a row is counted once when it matches either.
+	type branchObjectRow struct {
+		ID       string `bun:"id"`
+		BranchID string `bun:"branch_id"`
+	}
+	var branchObjectRows []branchObjectRow
+	type branchRelationshipRow struct {
+		BranchID string `bun:"branch_id"`
+		SrcID    string `bun:"src_id"`
+		DstID    string `bun:"dst_id"`
+	}
+	var branchRelationshipRows []branchRelationshipRow
+	if len(unionBranchIDs) > 0 {
+		err = r.db.NewSelect().
+			TableExpr("kb.graph_objects").
+			Column("id", "branch_id").
+			Where("project_id = ?", projectID).
+			Where("branch_id IN (?)", bun.In(unionBranchIDs)).
+			Scan(ctx, &branchObjectRows)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("load branch objects: %w", err)
+		}
+		err = r.db.NewSelect().
+			TableExpr("kb.graph_relationships").
+			Column("branch_id", "src_id", "dst_id").
+			Where("project_id = ?", projectID).
+			Where("branch_id IN (?)", bun.In(unionBranchIDs)).
+			Scan(ctx, &branchRelationshipRows)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("load branch relationships: %w", err)
+		}
+	}
+
+	// Union totals: branch rows that the attribution pass does not already remove.
+	unionObjectSet := make(map[string]bool, len(unionObjectRowIDs))
+	for _, id := range unionObjectRowIDs {
+		unionObjectSet[id] = true
+	}
+	for _, row := range branchObjectRows {
+		if !unionObjectSet[row.ID] {
+			totalObjects++
+		}
+	}
+	unionCanonicalSet := make(map[string]bool, len(unionCanonicalIDs))
+	for _, id := range unionCanonicalIDs {
+		unionCanonicalSet[id] = true
+	}
+	for _, rel := range branchRelationshipRows {
+		if !unionCanonicalSet[rel.SrcID] && !unionCanonicalSet[rel.DstID] {
+			totalRelationships++
+		}
+	}
+
 	// Per-document graph impact. Each entry reflects deleting that document
 	// alone, so entries for documents sharing entities may not sum to the
 	// summary totals above.
 	docObjects := make(map[string]int)
 	docRelationships := make(map[string]int)
+	branchesMap := make(map[string]int)
 	for _, doc := range docs {
 		jobIDs := docJobIDs[doc.ID]
+		docBranches := branchIDsByDocument[doc.ID]
+		branchesMap[doc.ID] = len(docBranches)
 		if len(jobIDs) == 0 {
 			continue
 		}
 		objectRowIDs, canonicalIDs := resolveGraphRemovals(unionRows, jobIDs)
-		docObjects[doc.ID] = len(objectRowIDs)
+		objectRowSet := make(map[string]bool, len(objectRowIDs))
+		for _, id := range objectRowIDs {
+			objectRowSet[id] = true
+		}
+		docBranchSet := make(map[string]bool, len(docBranches))
+		for _, id := range docBranches {
+			docBranchSet[id] = true
+		}
+
+		objects := len(objectRowIDs)
+		for _, row := range branchObjectRows {
+			if docBranchSet[row.BranchID] && !objectRowSet[row.ID] {
+				objects++
+			}
+		}
+		docObjects[doc.ID] = objects
 
 		canonicalSet := make(map[string]bool, len(canonicalIDs))
 		for _, c := range canonicalIDs {
 			canonicalSet[c] = true
 		}
-		docRelationships[doc.ID] = countRelationshipsTouching(relEndpoints, canonicalSet)
+		relationships := countRelationshipsTouching(relEndpoints, canonicalSet)
+		for _, rel := range branchRelationshipRows {
+			if docBranchSet[rel.BranchID] && !canonicalSet[rel.SrcID] && !canonicalSet[rel.DstID] {
+				relationships++
+			}
+		}
+		docRelationships[doc.ID] = relationships
 	}
 
 	// Count notifications per document
@@ -1529,6 +1797,7 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 		}
 
 		impact := ImpactSummary{
+			Branches:           branchesMap[doc.ID],
 			Chunks:             chunksMap[doc.ID],
 			ExtractionJobs:     jobsMap[doc.ID],
 			GraphObjects:       docObjects[doc.ID],
@@ -1552,6 +1821,7 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 
 	// Graph totals are exact (computed over the union of all jobs), not the sum
 	// of per-document entries (which reflect each document deleted in isolation).
+	totalImpact.Branches = len(unionBranchIDs)
 	totalImpact.GraphObjects = totalObjects
 	totalImpact.GraphRelationships = totalRelationships
 
