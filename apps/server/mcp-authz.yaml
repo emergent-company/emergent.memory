@@ -27,6 +27,11 @@
       "why": "read kb.branches joined to kb.object_extraction_jobs/kb.documents for ONE branch, project-scoped (b.id = ? AND b.project_id = ?) and only to apply the deleted-extraction-source exclusion the search fan-out already applies; read-only, and a missing or deleted-source branch fails closed as not readable (#265, #246)"
     },
     {
+      "file": "apps/server/domain/mcp/branch_scope.go",
+      "func": "inScopeBranchIDs",
+      "why": "read kb.branches (id, name, origin) for the project's unmerged branches, project-scoped (b.project_id = ?) and only to compute the run's declared branch-scope fan-out (main + in-scope branches) for the #308 read paths; read-only, filters merged_at and the deleted-extraction-source exclusion, and is capped by scope.MaxBranches so a typo cannot widen the fan-out"
+    },
+    {
       "file": "apps/server/domain/mcp/bundle.go",
       "func": "GenerateAgentMCPBundle",
       "why": "read core.api_tokens by token hash (the bearer validation itself; revoked/expired fails closed) + kb.projects name, read-only and keyed by the authorized endpoint's project; agent authorization is authorizeAgentBundle (401 unbound/revoked key, 403 wrong agent/revoked endpoint/disabled agent)"
