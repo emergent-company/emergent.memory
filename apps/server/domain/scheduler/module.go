@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	appcfg "github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -78,6 +79,7 @@ type TaskParams struct {
 	AppCfg             *appcfg.Config
 	UserSvc            *auth.UserProfileService
 	DeletionTask       *ProjectDeletionTask
+	SkillCurator       *skills.Curator
 }
 
 // RegisterTasks registers all scheduled tasks
@@ -172,6 +174,16 @@ func RegisterTasks(p TaskParams) error {
 		p.Cfg.EmbeddingJobPurgeSchedule, p.Cfg.EmbeddingJobPurgeInterval, p.EmbeddingPurgeTask.Run); err != nil {
 		p.Log.Error("failed to register embedding job purge task",
 			slog.String("error", err.Error()))
+	}
+
+	// Register the skill curator (daily at 3:30am by default). It only ages
+	// agent-created, unpinned, unlocked skills in opted-in projects.
+	if p.SkillCurator != nil {
+		if err := addScheduledTask(p.Scheduler, p.Log, "skill_curator",
+			p.Cfg.SkillCuratorSchedule, p.Cfg.SkillCuratorInterval, p.SkillCurator.Run); err != nil {
+			p.Log.Error("failed to register skill curator task",
+				slog.String("error", err.Error()))
+		}
 	}
 
 	p.Log.Info("registered scheduled tasks",

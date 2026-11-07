@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 )
 
@@ -761,28 +762,32 @@ func (d *AgentDefinition) TriggerAllowsStatus(objectType, status string) bool {
 type AgentDefinition struct {
 	bun.BaseModel `bun:"table:kb.agent_definitions,alias:ad"`
 
-	ID               string            `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProductID        *string           `bun:"product_id,type:uuid" json:"productId,omitempty"`
-	ProjectID        string            `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name             string            `bun:"name,notnull" json:"name"`
-	Description      *string           `bun:"description" json:"description,omitempty"`
-	SystemPrompt     *string           `bun:"system_prompt" json:"systemPrompt,omitempty"`
-	Model            *ModelConfig      `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
-	Tools            []string          `bun:"tools,array" json:"tools"`
-	BannedTools      []string          `bun:"banned_tools,array" json:"bannedTools,omitempty"`
-	Skills           []string          `bun:"skills,array" json:"skills"`
-	AutoLoadSkills   bool              `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
-	IsDefault        bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
-	Enabled          bool              `bun:"enabled,notnull,default:true" json:"enabled"`
-	MaxSteps         *int              `bun:"max_steps" json:"maxSteps,omitempty"`
-	DefaultTimeout   *int              `bun:"default_timeout" json:"defaultTimeout,omitempty"`
-	MaxSessionEvents *int              `bun:"max_session_events" json:"maxSessionEvents,omitempty"`
-	Visibility       AgentVisibility   `bun:"visibility,notnull,default:'project'" json:"visibility"`
-	ACPConfig        *ACPConfig        `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
-	Config           map[string]any    `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
-	UIConfig         json.RawMessage   `bun:"ui_config,type:jsonb,default:'{}'" json:"uiConfig,omitempty"`
-	SandboxConfig    map[string]any    `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
-	DispatchMode     AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
+	ID             string       `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProductID      *string      `bun:"product_id,type:uuid" json:"productId,omitempty"`
+	ProjectID      string       `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name           string       `bun:"name,notnull" json:"name"`
+	Description    *string      `bun:"description" json:"description,omitempty"`
+	SystemPrompt   *string      `bun:"system_prompt" json:"systemPrompt,omitempty"`
+	Model          *ModelConfig `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
+	Tools          []string     `bun:"tools,array" json:"tools"`
+	BannedTools    []string     `bun:"banned_tools,array" json:"bannedTools,omitempty"`
+	Skills         []string     `bun:"skills,array" json:"skills"`
+	AutoLoadSkills bool         `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
+	// SkillCapture is the typed per-agent override of the project's skill-capture
+	// policy (added in migration 00269). nil inherits the project policy; an
+	// explicit override may only constrain it.
+	SkillCapture     *skills.AgentSkillCapture `bun:"skill_capture,type:jsonb" json:"skillCapture,omitempty"`
+	IsDefault        bool                      `bun:"is_default,notnull,default:false" json:"isDefault"`
+	Enabled          bool                      `bun:"enabled,notnull,default:true" json:"enabled"`
+	MaxSteps         *int                      `bun:"max_steps" json:"maxSteps,omitempty"`
+	DefaultTimeout   *int                      `bun:"default_timeout" json:"defaultTimeout,omitempty"`
+	MaxSessionEvents *int                      `bun:"max_session_events" json:"maxSessionEvents,omitempty"`
+	Visibility       AgentVisibility           `bun:"visibility,notnull,default:'project'" json:"visibility"`
+	ACPConfig        *ACPConfig                `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
+	Config           map[string]any            `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
+	UIConfig         json.RawMessage           `bun:"ui_config,type:jsonb,default:'{}'" json:"uiConfig,omitempty"`
+	SandboxConfig    map[string]any            `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
+	DispatchMode     AgentDispatchMode         `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
 	// DefaultQueue binds this definition to a named work queue. Runs of a
 	// runtime agent instantiated from this definition are enqueued on this
 	// queue unless the runtime agent's Config overrides it with "queue".

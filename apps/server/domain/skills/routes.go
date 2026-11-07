@@ -35,4 +35,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	projects.POST("", h.CreateProjectSkill)
 	projects.PATCH("/:id", h.UpdateProjectSkill)
 	projects.DELETE("/:id", h.DeleteProjectSkill)
+
+	// Skill-capture proposal inbox. Kept under the skills group so project
+	// membership + token scope are enforced by the same middleware.
+	projects.GET("/proposals", h.ListSkillProposals)
+	projects.GET("/proposals/:proposalId", h.GetSkillProposal)
+	projects.POST("/proposals/:proposalId/approve", h.ApproveSkillProposal)
+	projects.POST("/proposals/:proposalId/reject", h.RejectSkillProposal)
 }

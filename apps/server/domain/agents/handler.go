@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
@@ -1775,6 +1776,17 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		dispatchMode = dto.DispatchMode
 	}
 
+	if err := skills.ValidateAgentSkillCapture(dto.SkillCapture); err != nil {
+		return err
+	}
+	// Capture is only useful when the agent will auto-load the "{agent}." prefix
+	// on its next run, so enabling the override turns AutoLoadSkills on. An
+	// explicit mode=off is inert and does not flip the flag back.
+	autoLoadSkills := dto.AutoLoadSkills != nil && *dto.AutoLoadSkills
+	if dto.SkillCapture != nil && dto.SkillCapture.Enabled() {
+		autoLoadSkills = true
+	}
+
 	defaultToolPolicy := dto.DefaultToolPolicy
 	if defaultToolPolicy == "" {
 		defaultToolPolicy = ToolPolicyDefaultAllow
@@ -1789,7 +1801,8 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		Tools:             tools,
 		BannedTools:       dto.BannedTools,
 		Skills:            skillNames,
-		AutoLoadSkills:    dto.AutoLoadSkills != nil && *dto.AutoLoadSkills,
+		AutoLoadSkills:    autoLoadSkills,
+		SkillCapture:      dto.SkillCapture,
 		IsDefault:         isDefault,
 		Enabled:           enabled,
 		MaxSteps:          dto.MaxSteps,
@@ -1902,6 +1915,15 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.AutoLoadSkills != nil {
 		def.AutoLoadSkills = *dto.AutoLoadSkills
+	}
+	if dto.SkillCapture != nil {
+		if err := skills.ValidateAgentSkillCapture(dto.SkillCapture); err != nil {
+			return err
+		}
+		def.SkillCapture = dto.SkillCapture
+		if dto.SkillCapture.Enabled() {
+			def.AutoLoadSkills = true
+		}
 	}
 	if dto.IsDefault != nil {
 		def.IsDefault = *dto.IsDefault
