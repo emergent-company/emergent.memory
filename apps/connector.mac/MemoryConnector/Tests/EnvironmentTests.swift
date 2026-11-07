@@ -40,4 +40,26 @@ final class EnvironmentTests: XCTestCase {
         XCTAssertNotEqual(Environment.prod.issuer, Environment.dev.issuer)
         XCTAssertNotEqual(Environment.prod.clientID, Environment.dev.clientID)
     }
+
+    // MARK: - Web console links
+
+    /// The connector mirrors the console's own scoped routing so "Open in
+    /// Memory web" lands on the same project the picker just switched to.
+    func testProjectWebURLUsesConsoleScope() {
+        let url = Environment.prod.projectWebURL(orgID: "org-1", projectID: "proj-2")
+        XCTAssertEqual(url?.absoluteString,
+                       "https://memory.emergent-company.ai/o/org-1/p/proj-2/agents")
+    }
+
+    func testProjectWebURLRequiresOrgAndProject() {
+        XCTAssertNil(Environment.prod.projectWebURL(orgID: nil, projectID: "proj-2"))
+        XCTAssertNil(Environment.prod.projectWebURL(orgID: "  ", projectID: "proj-2"))
+        XCTAssertNil(Environment.prod.projectWebURL(orgID: "org-1", projectID: ""))
+    }
+
+    func testOrgWebURLUsesConsoleRoute() {
+        XCTAssertEqual(Environment.prod.orgWebURL(orgID: "org-1")?.absoluteString,
+                       "https://memory.emergent-company.ai/orgs/org-1")
+        XCTAssertNil(Environment.prod.orgWebURL(orgID: " "))
+    }
 }

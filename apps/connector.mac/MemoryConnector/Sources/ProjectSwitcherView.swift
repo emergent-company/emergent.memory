@@ -1,14 +1,21 @@
 import SwiftUI
 
-/// Project switcher at the leading edge of the window toolbar: a plain,
-/// single-line menu showing the active project name with a small chevron (a
-/// dropdown, not a bordered button). Mirrors `ProjectStore` state: signed-out,
-/// loading, empty, error, and ready (checkmark on the active project).
+/// Project switcher at the leading edge of the window toolbar: a borderless
+/// dropdown showing the active project with its organisation above it — the
+/// same org-over-project hierarchy the web console's switcher uses, so a user
+/// who works in both surfaces reads the same label in the same place.
+///
+/// The list itself lives in `ProjectPickerMenu` (shared with the Project page
+/// card). This view only owns the trigger label and the loading/empty/error
+/// states that have no list to show.
 struct ProjectSwitcherView: View {
     @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
 
-    @State private var switching: String?
+    /// Width the project name may occupy before it tail-truncates. The web
+    /// console caps its trigger label the same way instead of letting a long
+    /// project name widen the whole navbar.
+    private static let labelMaxWidth: CGFloat = 200
 
     var body: some View {
         content
@@ -21,31 +28,195 @@ struct ProjectSwitcherView: View {
     @ViewBuilder
     private var content: some View {
         if !accountStore.isEffectivelySignedIn {
-            statusLabel(icon: "person.crop.circle.badge.questionmark",
-                        text: "Sign in to switch projects")
+            menu {
+                statusLabel(icon: "person.crop.circle.badge.questionmark",
+                            text: "Sign in to switch projects")
+            }
         } else if !projectStore.projects.isEmpty {
-            projectsMenu
+            menu { triggerLabel }
         } else {
             switch projectStore.state {
             case .idle, .loading:
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading projects…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                // Same horizontal rhythm as `switcherLabel` so the loading row
-                // does not shift when it becomes the project dropdown.
-                .padding(.horizontal, 10)
+                loadingLabel
             case .signedOut:
-                signedOutMenu
+                menu {
+                    statusLabel(icon: "person.crop.circle.badge.questionmark",
+                                text: "Signed out")
+                }
             case .error:
-                errorMenu
+                menu {
+                    statusLabel(icon: "exclamationmark.triangle",
+                                text: "Couldn't load projects", tint: .orange)
+                }
             case .loaded:
-                statusLabel(icon: "folder", text: "No projects")
+                menu {
+                    statusLabel(icon: "folder", text: "No projects")
+                }
             }
         }
     }
+
+    // MARK: - Menu chrome
+
+    /// One presentation for every state: the same label rhythm, the same
+    /// borderless menu chrome, and the same accessible name. The hand-rolled
+    /// horizontal padding per state is what made the old control read as a
+    /// loose glyph rather than a menu.
+    private func menu(@ViewBuilder label: () -> some View) -> some View {
+        Menu {
+            ProjectPickerMenu()
+        } label: {
+            label()
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel(Text(AccessibleNames.project))
+        .help(switchHelp)
+    }
+
+    // MARK: - Trigger label
+
+    /// Active project: organisation caption over the project name, with the
+    /// connected bolt kept only as a trailing status glyph. No leading icon —
+    /// the identity is the two words, and dropping the glyph is what stops the
+    /// symbol crowding the toolbar edge.
+    private var triggerLabel: some View {
+        switcherLabel {
+            VStack(alignment: .leading, spacing: 0) {
+                if let orgName = activeOrganizationName {
+                    Text(verbatim: orgName)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                HStack(spacing: 5) {
+                    if hasError {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                    activeProjectTitle
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    connectionGlyph
+                    trailingSlot
+                }
+            }
+            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
+        }
+    }
+
+    private func statusLabel(icon: String, text: LocalizedStringResource,
+                             tint: Color = .secondary) -> some View
+    {
+        switcherLabel {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .foregroundStyle(tint)
+                // The placeholder is a localization key, not runtime data.
+                Text(text)
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                trailingSlot
+            }
+            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
+        }
+    }
+
+    private var loadingLabel: some View {
+        switcherLabel {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Loading projects…")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
+        }
+    }
+
+    /// Single chrome entry point, so every label state shares one vertical and
+    /// horizontal rhythm. The trailing chevron/spinner sits in its own fixed
+    /// slot, so a switch in progress never changes the item's width.
+    private func switcherLabel(@ViewBuilder content: () -> some View) -> some View {
+        HStack(spacing: 5) {
+            content()
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var connectionGlyph: some View {
+        if let id = projectStore.activeProjectID, projectStore.isConnected(id) {
+            Image(systemName: "bolt.fill")
+                .font(.caption2)
+                .foregroundStyle(.green)
+                .accessibilityLabel(Text("Connected"))
+                .help(Text("Connected — serving local tools"))
+        }
+    }
+
+    /// Chevron, or a spinner while a switch/list load is in flight, always in
+    /// the same reserved width so the toolbar does not jitter.
+    @ViewBuilder
+    private var trailingSlot: some View {
+        if projectStore.state == .loading, !projectStore.projects.isEmpty {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 12, height: 12)
+        } else {
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 12, height: 12)
+        }
+    }
+
+    // MARK: - Derived
+
+    private var activeOrganizationName: String? {
+        guard let project = projectStore.activeProject else { return nil }
+        return projectStore.organizationName(for: project)
+    }
+
+    /// Active project name (runtime data), or a localized placeholder when none
+    /// is selected — kept on the localizable path rather than folded into a
+    /// verbatim string.
+    private var activeProjectTitle: Text {
+        if let name = projectStore.activeProjectName?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        {
+            return Text(verbatim: name)
+        }
+        return Text("Select project")
+    }
+
+    /// Tooltip for the trigger: the server's error text when the load failed
+    /// (data, shown verbatim), otherwise the localized action label.
+    private var switchHelp: Text {
+        if case let .error(message) = projectStore.state {
+            return Text(verbatim: message)
+        }
+        return Text("Switch project")
+    }
+
+    /// A failed switch keeps the loaded list usable but must stay visible, so
+    /// the trigger carries a warning glyph (as it did before) rather than only
+    /// a tooltip.
+    private var hasError: Bool {
+        if case .error = projectStore.state {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Loading
 
     private func ensureProjectsLoaded() async {
         guard accountStore.isEffectivelySignedIn,
@@ -59,215 +230,6 @@ struct ProjectSwitcherView: View {
             await projectStore.loadProjects(accessToken: token)
         case .loading, .loaded:
             return
-        }
-    }
-
-    // MARK: - Ready
-
-    private var projectsMenu: some View {
-        Menu {
-            // Every project lives inside a Section with a guaranteed non-empty
-            // header ("Other" for unknown orgs) so the whole list renders
-            // uniformly indented under its organisation.
-            ForEach(projectStore.projectsByOrganization) { group in
-                Section {
-                    ForEach(group.projects, id: \.id) { project in
-                        Button {
-                            switchProject(to: project.id)
-                        } label: {
-                            // Fixed-width leading slot keeps names aligned
-                            // whether or not the row is the active project.
-                            // A `Menu` drops `.opacity` on its item labels, so
-                            // the glyph is included only for the active project
-                            // rather than hidden with opacity.
-                            HStack(spacing: 6) {
-                                if project.id == projectStore.activeProjectID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .frame(width: 12, alignment: .center)
-                                } else {
-                                    Color.clear.frame(width: 12)
-                                }
-                                project.name.map { Text($0) } ?? Text("Untitled project")
-                                if projectStore.isConnected(project.id) {
-                                    Image(systemName: "bolt.fill")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(.green)
-                                        .help("Connected — serving local tools")
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    // Never tail-truncate the organisation name.
-                    Text(group.sectionTitle)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Divider()
-            Text("Selecting a project views it; connect to serve its tools")
-        } label: {
-            switcherLabel {
-                Image(systemName: hasError ? "exclamationmark.triangle" : "shippingbox")
-                    .foregroundStyle(hasError ? Color.orange : Color.secondary)
-                activeProjectLabel
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                if let activeID = projectStore.activeProjectID,
-                   projectStore.isConnected(activeID)
-                {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.green)
-                        .help("Connected — serving local tools")
-                }
-                if switching != nil {
-                    ProgressView().controlSize(.small)
-                } else {
-                    chevron
-                }
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .disabled(switching != nil)
-        .help(switchHelp)
-    }
-
-    // MARK: - Error / empty
-
-    private var errorMenu: some View {
-        Menu {
-            Button("Retry") { retry() }
-        } label: {
-            switcherLabel {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text("Couldn't load projects")
-                    .lineLimit(1)
-                chevron
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(switchHelp)
-    }
-
-    private var signedOutMenu: some View {
-        Menu {
-            Button("Sign in") { signIn() }
-            Button("Retry") { retry() }
-        } label: {
-            switcherLabel {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                Text("Signed out")
-                    .lineLimit(1)
-                chevron
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Signed out — sign in to load projects")
-    }
-
-    private func statusLabel(icon: String, text: LocalizedStringResource) -> some View {
-        switcherLabel {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-            Text(text)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .help(Text(text))
-    }
-
-    /// Borderless, single-line chrome: spacing + a small chevron and horizontal
-    /// padding, so it reads as a dropdown rather than a second toolbar button.
-    /// The padding matches the account control next door (10pt) so the two
-    /// trailing toolbar items read as a pair; it is the single chrome entry
-    /// point, so every label state gets the same left/right space.
-    private func switcherLabel(@ViewBuilder content: () -> some View) -> some View {
-        HStack(spacing: 5) {
-            content()
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 10)
-    }
-
-    private var chevron: some View {
-        Image(systemName: "chevron.down")
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.secondary)
-    }
-
-    // MARK: - Derived
-
-    /// Active project name (runtime data), or a localized placeholder when none
-    /// is selected. Returning `Text` keeps the placeholder on the localizable
-    /// path instead of folding it into a verbatim `String`.
-    private var activeProjectLabel: Text {
-        projectStore.activeProjectName.map { Text($0) } ?? Text("Select project")
-    }
-
-    private var hasError: Bool {
-        if case .error = projectStore.state {
-            return true
-        }
-        return false
-    }
-
-    /// Tooltip for the switcher label: the server's error text when the load
-    /// failed (data, shown verbatim), otherwise the localized action label.
-    private var switchHelp: Text {
-        if case let .error(message) = projectStore.state {
-            return Text(verbatim: message)
-        }
-        return Text("Switch project")
-    }
-
-    // MARK: - Actions
-
-    private func switchProject(to id: String) {
-        guard !id.isEmpty, switching == nil else { return }
-        switching = id
-        Task {
-            defer { switching = nil }
-            do {
-                let token = try await accountStore.currentAccessToken()
-                await projectStore.selectProject(id, accessToken: token)
-            } catch {
-                // ProjectStore surfaces its own failures via `state`; a thrown
-                // token error leaves the previous state, shown by the label.
-            }
-        }
-    }
-
-    private func retry() {
-        Task {
-            // Project listing runs through the CLI; the app token is optional.
-            // `loadProjects` owns the auth classification and repair.
-            let token = await (try? accountStore.currentAccessToken()) ?? ""
-            await projectStore.loadProjects(accessToken: token)
-        }
-    }
-
-    /// Re-authenticates the active account (or Prod when none is active) and
-    /// reloads projects through the connector CLI.
-    private func signIn() {
-        Task {
-            let environment = accountStore.activeEnvironment ?? .prod
-            guard await (try? accountStore.signIn(environment: environment)) != nil else {
-                return
-            }
-            let token = await (try? accountStore.currentAccessToken()) ?? ""
-            await projectStore.loadProjects(accessToken: token)
         }
     }
 }

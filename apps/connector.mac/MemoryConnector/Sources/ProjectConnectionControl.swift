@@ -11,6 +11,7 @@ import SwiftUI
 struct ProjectConnectionControl: View {
     @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(RecentProjectsStore.self) private var recentProjects
     @SwiftUI.Environment(AppState.self) private var appState
 
     /// In-flight connect/disconnect (token mint + engine restart).
@@ -141,7 +142,9 @@ struct ProjectConnectionControl: View {
                 case .signedOut:
                     error = "Your session expired. Sign in to connect a project."
                 default:
-                    break
+                    // Connecting makes the project active, so it belongs in the
+                    // switcher's Recent list just like an explicit switch.
+                    recentProjects.record(projectID)
                 }
             } catch {
                 self.error = error.localizedDescription

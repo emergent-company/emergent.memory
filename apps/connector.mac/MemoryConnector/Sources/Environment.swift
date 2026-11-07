@@ -33,6 +33,29 @@ struct Environment: Identifiable, Hashable, Sendable {
         serverURL.absoluteString
     }
 
+    /// Canonical web-console URL for a project, mirroring the console's own
+    /// scoped routing (`/o/{org}/p/{project}/agents`). The console lives on the
+    /// same host as the API, so a switch made here is reproducible in a browser
+    /// with one click. `nil` when either id is missing — the console has no
+    /// org-less project route.
+    func projectWebURL(orgID: String?, projectID: String) -> URL? {
+        let org = (orgID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let project = projectID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !org.isEmpty, !project.isEmpty else { return nil }
+        return serverURL
+            .appending(path: "o").appending(path: org)
+            .appending(path: "p").appending(path: project)
+            .appending(path: "agents")
+    }
+
+    /// Canonical web-console URL for an organization's landing page
+    /// (`/orgs/{org}`), or `nil` when the id is unknown.
+    func orgWebURL(orgID: String) -> URL? {
+        let org = orgID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !org.isEmpty else { return nil }
+        return serverURL.appending(path: "orgs").appending(path: org)
+    }
+
     /// Compact badge label shown next to an account so prod/dev are never
     /// confused in the switcher, account page, or menu-bar popover.
     var shortLabel: String {
