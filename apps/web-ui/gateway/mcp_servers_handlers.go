@@ -34,7 +34,7 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 			{key: "updated", msg: "MCP server updated."},
 			{key: "deleted", msg: "MCP server deleted."},
 			{key: "disconnected", msg: "MCP server disconnected."},
-			{key: "oauthClient", msg: "OAuth client configured."},
+			{key: "oauthClient", msg: "OAuth settings saved."},
 			{key: "oauthClientCleared", msg: "OAuth client cleared."},
 		}),
 	}
@@ -337,11 +337,15 @@ func (s *Server) uiMCPOAuthDisconnect(c echo.Context) error {
 }
 
 // uiMCPOAuthClient handles POST /settings/mcp-servers/:id/oauth/client (PRG).
-// It stores a pre-registered OAuth client (id + optional secret) for a server
-// whose authorization provider rejects dynamic registration. A blank client id
-// and a backend failure both redirect back to the list with an error flash;
-// success redirects with ?oauthClient=1. The client secret never round-trips
-// into any page: failures PRG with a fixed error message that never carries it.
+// It stores a pre-registered OAuth client (id + optional secret) and/or the
+// optional scope set to request for a server whose challenge names no scopes.
+// A blank client id with a scope sets the requested scope set only and creates a
+// configuration-only row when none exists, so scopes can be chosen before the
+// first connect; a blank client id and blank scope clears an existing requested
+// set (the backend rejects the request when there is no row to clear). A
+// backend failure redirects back to the list with an error flash; success
+// redirects with ?oauthClient=1. The client secret never round-trips into any
+// page: failures PRG with a fixed error message that never carries it.
 func (s *Server) uiMCPOAuthClient(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := strings.TrimSpace(c.Param("id"))
@@ -349,11 +353,9 @@ func (s *Server) uiMCPOAuthClient(c echo.Context) error {
 		return redirectWithError(c, mcpServerSettingsBase, errServerIDRequired())
 	}
 	clientID := strings.TrimSpace(c.FormValue("client_id"))
-	if clientID == "" {
-		return redirectWithError(c, mcpServerSettingsBase, errMCPOAuthClientIDRequired())
-	}
+	scope := strings.Join(strings.Fields(c.FormValue("scope")), " ")
 	clientSecret := c.FormValue("client_secret")
-	if _, err := s.memory.SetMCPServerOAuthClient(ctx, id, clientID, clientSecret); err != nil {
+	if _, err := s.memory.SetMCPServerOAuthClient(ctx, id, clientID, clientSecret, scope); err != nil {
 		return redirectWithError(c, mcpServerSettingsBase, err)
 	}
 	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?oauthClient=1")
@@ -546,8 +548,6 @@ func mcpToolCallJSONErr(c echo.Context, err error) error {
 }
 
 func errServerIDRequired() error { return fmt.Errorf("server id is required") }
-
-func errMCPOAuthClientIDRequired() error { return fmt.Errorf("OAuth client ID is required") }
 
 func builtinEditErr() error {
 	return fmt.Errorf("built-in servers cannot be edited — their configuration is managed by Memory")

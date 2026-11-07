@@ -382,12 +382,22 @@ func (s *Server) projectOrgID(ctx context.Context, projectID string) (string, er
 
 // --- UI handlers ---
 
-// uiBackups renders the backups page: the create form plus the active
-// project's backups, most recent first. The list load is best-effort in the
-// skills-page style: a 404/not-found from Memory (feature gated off, design
-// D6) or an unresolved org degrades to an unavailable state; any other load
-// failure (Memory unreachable, etc.) renders an error state. ?created=1 /
-// ?deleted=1 / ?err=1 surface PRG feedback.
+// uiBackupNewPage renders the create form as its own page (GET
+// /backups/new): retention + archive includes, posting to POST /backups. It is
+// the page the list's header action opens, mirroring
+// /settings/mcp-servers/new. ?err= surfaces PRG feedback; the create flow's
+// validation failures still redirect back to the list.
+func (s *Server) uiBackupNewPage(c echo.Context) error {
+	return s.page(c, pageTitle("New backup"), BackupNewPage(flashError(c)))
+}
+
+// uiBackups renders the backups page: the active project's backups, most
+// recent first, with a header action linking to the create page
+// (GET /backups/new). The list load is best-effort in the skills-page style: a
+// 404/not-found from Memory (feature gated off, design D6) or an unresolved org
+// degrades to an unavailable state; any other load failure (Memory unreachable,
+// etc.) renders an error state. ?created=1 / ?deleted=1 / ?err=1 surface PRG
+// feedback.
 func (s *Server) uiBackups(c echo.Context) error {
 	ctx := c.Request().Context()
 	flashMsg := flashFromQuery(c, []flashParam{
@@ -455,9 +465,12 @@ func (s *Server) uiBackupDetail(c echo.Context) error {
 }
 
 // uiBackupCreate handles the create form (PRG → POST /backups): it forwards
-// includeDeleted/includeChat/retentionDays to memory and redirects back to the
-// list. retentionDays defaults to 30 when blank (matching memory's default);
-// out-of-range values are rejected by memory and surface via the ?err= flash.
+// includeDeleted/includeChat/retentionDays to memory and, on success, redirects
+// back to the list. retentionDays defaults to 30 when blank (matching memory's
+// default). A malformed/out-of-range retention is a validation failure of the
+// create form, which now lives on GET /backups/new, so the error flashes there
+// (where the field and its message are visible) instead of on the list — the
+// same inline-feedback target as uiMCPCreate's re-render.
 func (s *Server) uiBackupCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	includeDeleted := c.FormValue("includeDeleted") != ""
@@ -466,12 +479,12 @@ func (s *Server) uiBackupCreate(c echo.Context) error {
 	if raw := c.FormValue("retentionDays"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			return redirectWithError(c, "/backups", fmt.Errorf("retentionDays must be a number of days"))
+			return redirectWithError(c, "/backups/new", fmt.Errorf("retentionDays must be a number of days"))
 		}
 		retentionDays = n
 	}
 	if _, err := s.memory.CreateBackup(ctx, includeDeleted, includeChat, retentionDays); err != nil {
-		return redirectWithError(c, "/backups", backupActionError(err))
+		return redirectWithError(c, "/backups/new", backupActionError(err))
 	}
 	return c.Redirect(http.StatusSeeOther, "/backups?created=1")
 }

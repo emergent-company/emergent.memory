@@ -421,11 +421,14 @@ templ mcpServerOAuthControls(srv MCPServer) {
 		}, mcpOAuthClientDisclosureLeading()) {
 			<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/client") } data-testid="mcp-oauth-client-form">
 				<div class="flex flex-col gap-3">
-					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued.", "", nil) {
-						<input id="mcp-oauth-client-id" name="client_id" type="text" required class="input w-full font-mono" autocomplete="off"/>
+					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued. Leave blank to set the scopes only.", "", nil) {
+						<input id="mcp-oauth-client-id" name="client_id" type="text" class="input w-full font-mono" autocomplete="off"/>
 					}
 					@form.FormControl("mcp-oauth-client-secret", "Client secret", form.LabelAbove, "Optional — leave blank if your provider issued only a client ID.", "", nil) {
 						<input id="mcp-oauth-client-secret" name="client_secret" type="password" class="input w-full font-mono" autocomplete="off"/>
+					}
+					@form.FormControl("mcp-oauth-scope", "Scopes", form.LabelAbove, "Optional, space-separated (for example: repo read:org). Leave blank to request no scopes; changing this set clears the current connection so the next Connect asks for the new one. The test result lists the scopes this server supports.", "", nil) {
+						<input id="mcp-oauth-scope" name="scope" type="text" value={ mcpOAuthRequestedScopeValue(srv) } class="input w-full font-mono" autocomplete="off"/>
 					}
 				</div>
 				<div class="flex items-center justify-end gap-2">
@@ -442,6 +445,15 @@ templ mcpServerOAuthControls(srv MCPServer) {
 			</form>
 		}
 	}
+}
+
+// mcpOAuthRequestedScopeValue returns the operator-configured requested scope
+// set for the client form, or "" when none is stored.
+func mcpOAuthRequestedScopeValue(srv MCPServer) string {
+	if srv.OAuth == nil || srv.OAuth.RequestedScope == nil {
+		return ""
+	}
+	return *srv.OAuth.RequestedScope
 }
 
 // mcpOAuthClientDisclosureLeading is the pre-registered-client disclosure's
@@ -1241,12 +1253,27 @@ templ mcpServersScript() {
 					var meta = [];
 					if (auth.authorizationServer) meta.push(auth.authorizationServer);
 					var scopes = auth.scopes || [];
-					if (scopes.length) meta.push('scopes: ' + scopes.join(', '));
+					var available = auth.scopesAvailable || [];
+					if (scopes.length) meta.push('challenge scopes: ' + scopes.join(', '));
 					if (meta.length) {
 						var mline = document.createElement('p');
 						mline.className = 'text-muted mt-0.5';
 						mline.textContent = meta.join(' · ');
 						box.appendChild(mline);
+					}
+					// Advertised scopes are informational (RFC 9728 §7.2): the flow
+					// never requests them implicitly, so name them as choices.
+					if (available.length) {
+						var aline = document.createElement('p');
+						aline.className = 'text-muted mt-0.5';
+						aline.textContent = 'Supported scopes: ' + available.join(', ');
+						box.appendChild(aline);
+						if (!scopes.length) {
+							var shint = document.createElement('p');
+							shint.className = 'text-muted-faint mt-0.5';
+							shint.textContent = 'No scopes are requested by default. Add the ones this server needs in its OAuth client settings.';
+							box.appendChild(shint);
+						}
 					}
 					var link = document.createElement('a');
 					link.className = 'link link-primary mt-1.5 inline-flex items-center gap-1.5';

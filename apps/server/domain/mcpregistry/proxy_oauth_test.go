@@ -419,6 +419,9 @@ func TestClassifyAuthRequired_ChallengeBecomesRequirement(t *testing.T) {
 	if len(auth.Scopes) != 1 || auth.Scopes[0] != "mcp:connect" {
 		t.Errorf("Scopes = %v", auth.Scopes)
 	}
+	if len(auth.ScopesAvailable) != 1 || auth.ScopesAvailable[0] != "mcp:connect" {
+		t.Errorf("ScopesAvailable = %v, want the advertised list", auth.ScopesAvailable)
+	}
 	if !auth.RegistrationSupported {
 		t.Error("RegistrationSupported = false, want true")
 	}
@@ -431,6 +434,32 @@ func TestClassifyAuthRequired_NonAuthErrorIsNotARequirement(t *testing.T) {
 
 	if auth := classifyAuthRequired(context.Background(), pm, server, context.DeadlineExceeded); auth != nil {
 		t.Errorf("auth = %+v, want nil for a non-auth error", auth)
+	}
+}
+
+// TestClassifyAuthRequired_AdvertisedScopesAreNotRequested pins the RFC 9728
+// §7.2 boundary at the inspect surface: a provider that advertises supported
+// scopes without naming one in its challenge reports them as available, and
+// the flow requests none.
+func TestClassifyAuthRequired_AdvertisedScopesAreNotRequested(t *testing.T) {
+	withTestOAuthHTTP(t)
+	ts := newOAuthTestServer(t)
+	ts.noChallengeScope = true
+	defer ts.Close()
+
+	repo := &fakeProxyRepo{}
+	pm := oauthTestProxy(t, repo)
+	server := remoteServer("s1", "p1", "github", ts.URL+"/mcp")
+
+	auth := classifyAuthRequired(context.Background(), pm, server, &ErrMCPAuthRejected{Status: http.StatusUnauthorized})
+	if auth == nil {
+		t.Fatal("expected an InspectAuthDTO")
+	}
+	if len(auth.Scopes) != 0 {
+		t.Errorf("Scopes = %v, want none requested", auth.Scopes)
+	}
+	if len(auth.ScopesAvailable) != 1 || auth.ScopesAvailable[0] != "mcp:connect" {
+		t.Errorf("ScopesAvailable = %v, want the advertised list", auth.ScopesAvailable)
 	}
 }
 

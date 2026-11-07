@@ -62,8 +62,8 @@ func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
 	// it rides above the object id in the Object cell.
 	for _, want := range []string{
 		`data-status="in_progress"`,
-		`uppercase">Status<`,
-		`uppercase">Embedding<`,
+		`text-sm font-medium text-muted" scope="col">Status<`,
+		`text-sm font-medium text-muted" scope="col">Embedding<`,
 		`>Created</span>`,
 		`>task<`,
 		`#9f1c0a2e`,
@@ -226,7 +226,7 @@ func TestObjectsBrowserUnifiedDropsUnavailableColumns(t *testing.T) {
 	if !strings.Contains(html, "0.94") {
 		t.Error("search table must render relevance scores")
 	}
-	for _, unwanted := range []string{`uppercase">Status<`, `uppercase">Embedding<`, `>Created</span>`, `aria-sort=`, `data-status=`} {
+	for _, unwanted := range []string{`text-sm font-medium text-muted" scope="col">Status<`, `text-sm font-medium text-muted" scope="col">Embedding<`, `>Created</span>`, `aria-sort=`, `data-status=`} {
 		if strings.Contains(html, unwanted) {
 			t.Errorf("unified table must not render %q", unwanted)
 		}

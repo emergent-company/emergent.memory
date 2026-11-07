@@ -549,7 +549,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 								}
 							}
 							@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
-								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label...", Class: "memory-chip-list"})
+								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
 							}
 							for _, p := range propDefs {
 								@fm.FormControl(p.Name, p.Label(), fm.LabelAbove, p.KeyHint(), "", nil) {
@@ -672,7 +672,7 @@ templ propertyInput(def objectPropertyDef, vals []string, stored any, submittedJ
 		// exact text — on a create form re-rendered after a rejected save.
 		@jsonTextarea("prop_"+def.Name, def.Label(), "JSON array", "one element per entry; invalid JSON is rejected on save", jsonArrayEditorValue(vals, stored, submittedJSON, def.ItemType != ""))
 	} else if def.Type == "array" {
-		@fm.TagList(fm.TagListProps{ID: "prop-" + def.Name, Name: "prop_" + def.Name, Values: vals, Placeholder: "Add an item...", Class: "memory-chip-list"})
+		@fm.TagList(fm.TagListProps{ID: "prop-" + def.Name, Name: "prop_" + def.Name, Values: vals, Placeholder: "Add an item..."})
 	} else if len(def.Enum) > 0 {
 		// enum-declared string → native select of the allowed values. A stored
 		// value outside the enum (agent-written data is not constrained) is
@@ -1056,7 +1056,7 @@ templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string) {
 				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
 			}
 			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
-				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label...", Class: "memory-chip-list"})
+				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
 			}
 		</div>
 	}

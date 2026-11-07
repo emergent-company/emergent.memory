@@ -21,6 +21,9 @@ func TestRelationshipPersistProperties_CarriesEmittedProperties(t *testing.T) {
 		Properties: map[string]any{
 			"role":       "chair",
 			"term_count": 2,
+			// A model can echo a key it saw in a prompt; provenance is
+			// server-owned and must survive that (issue #310).
+			"_extraction_job_id": "model-emitted-job",
 		},
 	}
 
@@ -29,7 +32,8 @@ func TestRelationshipPersistProperties_CarriesEmittedProperties(t *testing.T) {
 	assert.Equal(t, "chair", props["role"], "emitted edge property must be written")
 	assert.Equal(t, 2, props["term_count"], "emitted edge property must keep its value")
 	assert.Equal(t, "Alice chairs the board", props["description"])
-	assert.Equal(t, "job-123", props["_extraction_job_id"])
+	assert.Equal(t, "job-123", props["_extraction_job_id"],
+		"a model-emitted provenance key must not replace the server-stamped job id")
 }
 
 // A model-emitted property named `description` follows the object-side merge

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -329,4 +330,80 @@ func (s *Service) GetOrCreateConversation(ctx context.Context, projectID, ownerU
 	}
 
 	return conv, true, nil
+}
+
+// toolSessionNamespace is the fixed UUIDv5 namespace for deterministic
+// tool-session conversation ids. It must never change: a new namespace would
+// orphan every existing tool session and create a second conversation for the
+// same caller.
+var toolSessionNamespace = uuid.MustParse("6f1d2a4b-7c3e-5a90-8b21-4d6c9e0f3a57")
+
+// ToolSessionConversationID returns the deterministic conversation id for a
+// stateless tool session keyed on (project, caller identity, tool). The id is a
+// UUIDv5, so the conversation primary key is the uniqueness constraint: two
+// concurrent first calls compute the same id and race on INSERT, and the loser
+// reuses the winner's row (no check-then-insert window).
+func ToolSessionConversationID(projectID, callerIdentity, tool string) uuid.UUID {
+	return uuid.NewSHA1(toolSessionNamespace, []byte(projectID+"\x00"+callerIdentity+"\x00"+tool))
+}
+
+// toolSessionTitle is the stable rail label for a tool session, derived from
+// the tool kind so the reused conversation is identifiable at a glance.
+func toolSessionTitle(tool string) string {
+	return "Tool session: " + tool
+}
+
+// GetOrCreateToolSession returns the one conversation a stateless tool caller
+// reuses instead of creating a row per call.
+//
+// The reuse key is explicit and deterministic:
+//   - project: projectID.
+//   - caller identity: the resolved user id when there is one. Every auth shape
+//     used by search-knowledge resolves to the same internal user id — a human
+//     JWT, an emt_* API key owned by that user, and an agent MCP endpoint key —
+//     so one human/agent gets one tool session regardless of which credential
+//     it presents. An ownerless credential (API token with user_id NULL, e.g. a
+//     sandbox token) has no user id, so the caller passes its API token id
+//     instead; otherwise unrelated machine callers would share a conversation.
+//   - tool kind: the caller label (spawn_source), e.g. "search-knowledge".
+//
+// ownerUserID is the row owner for access scoping (empty for an ownerless
+// credential, which creates a project-shared conversation). callerIdentity is
+// the key component above. Creation is an upsert on the deterministic id:
+// concurrent first calls cannot create two rows.
+func (s *Service) GetOrCreateToolSession(ctx context.Context, projectID, ownerUserID, callerIdentity, tool, message string) (*Conversation, bool, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, false, apperror.New(400, "invalid-project-id", "Invalid project ID format")
+	}
+
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return nil, false, apperror.New(400, "invalid-tool", "Tool session requires a non-empty tool kind")
+	}
+	// Match the create-body cap so a caller-supplied label cannot store an
+	// unbounded string; truncate by rune, not byte, to keep valid UTF-8.
+	if runes := []rune(tool); len(runes) > 64 {
+		tool = string(runes[:64])
+	}
+
+	owner, isPrivate := ownerForCreate(ownerUserID, true)
+	now := time.Now()
+	conv := &Conversation{
+		ID:          ToolSessionConversationID(projectID, callerIdentity, tool),
+		Title:       toolSessionTitle(tool),
+		OwnerUserID: owner,
+		IsPrivate:   isPrivate,
+		ProjectID:   &projectUUID,
+		SpawnSource: &tool,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	msg := &Message{
+		Role:      RoleUser,
+		Content:   message,
+		CreatedAt: now,
+	}
+
+	return s.repo.GetOrCreateToolSession(ctx, conv, msg)
 }

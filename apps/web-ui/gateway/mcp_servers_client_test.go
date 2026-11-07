@@ -386,7 +386,7 @@ func TestGetMCPServerOAuthStatus(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"success":true,"data":{
 			"serverId":"srv-1","configured":true,"connected":true,"clientConfigured":true,
-			"authorizationServer":"https://auth.example.com","scope":"read:repo",
+			"authorizationServer":"https://auth.example.com","scope":"read:repo","requestedScope":"repo read:org",
 			"scopes":["read:repo","write:repo"],"registrationSupported":true,
 			"expiresAt":"2026-12-31T00:00:00Z"
 		}}`)
@@ -409,6 +409,9 @@ func TestGetMCPServerOAuthStatus(t *testing.T) {
 	}
 	if res.Scope == nil || *res.Scope != "read:repo" {
 		t.Errorf("scope = %v", res.Scope)
+	}
+	if res.RequestedScope == nil || *res.RequestedScope != "repo read:org" {
+		t.Errorf("requestedScope = %v, want the configured set", res.RequestedScope)
 	}
 	if len(res.Scopes) != 2 || res.Scopes[0] != "read:repo" {
 		t.Errorf("scopes = %v", res.Scopes)
@@ -515,7 +518,7 @@ func TestSetMCPServerOAuthClient(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	res, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "secret-xyz")
+	res, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "secret-xyz", "repo read:org")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,6 +527,9 @@ func TestSetMCPServerOAuthClient(t *testing.T) {
 	}
 	if gotBody["clientId"] != "client-abc" || gotBody["clientSecret"] != "secret-xyz" {
 		t.Errorf("body = %v, want clientId client-abc + clientSecret secret-xyz", gotBody)
+	}
+	if gotBody["scope"] != "repo read:org" {
+		t.Errorf("body.scope = %q, want the configured scope set", gotBody["scope"])
 	}
 	if !res.ClientConfigured {
 		t.Errorf("status = %+v, want clientConfigured true", res)
@@ -540,7 +546,7 @@ func TestSetMCPServerOAuthClientOmitsBlankSecret(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", ""); err != nil {
+	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "", "repo"); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody["clientId"] != "client-abc" {
@@ -548,6 +554,9 @@ func TestSetMCPServerOAuthClientOmitsBlankSecret(t *testing.T) {
 	}
 	if _, ok := gotBody["clientSecret"]; ok {
 		t.Errorf("body = %v, want clientSecret omitted when blank", gotBody)
+	}
+	if gotBody["scope"] != "repo" {
+		t.Errorf("body.scope = %q, want the configured scope set", gotBody["scope"])
 	}
 }
 
@@ -559,7 +568,7 @@ func TestSetMCPServerOAuthClientError(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "", ""); err == nil ||
+	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "", "", ""); err == nil ||
 		!strings.Contains(err.Error(), "memory 400 bad_request") {
 		t.Fatalf("error = %v, want memory 400 bad_request", err)
 	}
@@ -604,7 +613,7 @@ func TestInspectMCPServerAuthRequired(t *testing.T) {
 		_, _ = io.WriteString(w, `{"success":true,"data":{
 			"serverId":"srv-1","serverName":"github","serverType":"http",
 			"status":"auth_required","latencyMs":0,
-			"auth":{"resourceMetadataUrl":"https://api.githubcopilot.com/mcp/.well-known/oauth-protected-resource","authorizationServer":"https://github.com/login/oauth/authorize","scopes":["read:org"],"registrationSupported":false},
+			"auth":{"resourceMetadataUrl":"https://api.githubcopilot.com/mcp/.well-known/oauth-protected-resource","authorizationServer":"https://github.com/login/oauth/authorize","scopes":["read:org"],"scopesAvailable":["repo","write:packages","project"],"registrationSupported":false},
 			"tools":[],"prompts":[],"resources":[],"resourceTemplates":[]
 		}}`)
 	}))
@@ -627,6 +636,9 @@ func TestInspectMCPServerAuthRequired(t *testing.T) {
 	}
 	if len(res.Auth.Scopes) != 1 || res.Auth.Scopes[0] != "read:org" {
 		t.Errorf("scopes = %v", res.Auth.Scopes)
+	}
+	if len(res.Auth.ScopesAvailable) != 3 || res.Auth.ScopesAvailable[1] != "write:packages" {
+		t.Errorf("scopesAvailable = %v, want the advertised list passed through", res.Auth.ScopesAvailable)
 	}
 	if res.Auth.RegistrationSupported {
 		t.Error("registrationSupported = true, want false")
