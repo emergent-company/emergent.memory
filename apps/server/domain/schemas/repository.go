@@ -1353,12 +1353,14 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		// so the read is ordered newest-row-first to stay deterministic if
 		// duplicates ever exist.
 		var existingRow struct {
-			JSONSchema json.RawMessage `bun:"json_schema"`
-			SchemaID   *string         `bun:"schema_id"`
-			SchemaName *string         `bun:"schema_name"`
+			JSONSchema   json.RawMessage `bun:"json_schema"`
+			SchemaID     *string         `bun:"schema_id"`
+			SchemaName   *string         `bun:"schema_name"`
+			OwnerVersion *string         `bun:"owner_version"`
 		}
 		scanErr := r.db.NewRaw(`
-			SELECT por.json_schema, por.schema_id, gs.name AS schema_name
+			SELECT por.json_schema, por.schema_id, gs.name AS schema_name,
+			       gs.version AS owner_version
 			FROM kb.project_object_schema_registry por
 			LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
 			WHERE por.project_id = ? AND por.type_name = ?
@@ -1380,14 +1382,16 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		// The pack owns the type — and an upgrade replaces the definition with no
 		// merge confirmation — only when it is the SAME pack (in-place re-assign
 		// or refresh: schema_id matches) or a version-resolved upgrade (same name
-		// family AND the incoming pack declares migration hints, the codebase's
-		// version-resolution signal). A DIFFERENT pack that reuses the name — a
-		// same-scope fork, a project-scoped copy, a renamed pack whose old row
-		// lingers — matches neither, so it falls through to the merge/skip branch
-		// and needs Merge=true to take over (#338).
+		// family AND the incoming pack's migration hints resolve FROM the owning
+		// pack's version). A DIFFERENT pack that reuses the name — a same-scope
+		// fork, a project-scoped copy, a renamed pack whose old row lingers, or a
+		// pack whose FromVersion does not match the owner — matches neither, so it
+		// falls through to the merge/skip branch and needs Merge=true (#338).
 		samePack := existingRow.SchemaID != nil && *existingRow.SchemaID == pack.ID
 		sameName := existingRow.SchemaName != nil && *existingRow.SchemaName == pack.Name
-		versionResolved := sameName && pack.Migrations != nil
+		versionResolved := sameName && pack.Migrations != nil &&
+			existingRow.OwnerVersion != nil &&
+			pack.Migrations.FromVersion == *existingRow.OwnerVersion
 		if samePack || versionResolved {
 			actions = append(actions, typeAction{
 				name:           typeName,
