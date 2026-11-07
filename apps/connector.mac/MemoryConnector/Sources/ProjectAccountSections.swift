@@ -146,17 +146,15 @@ struct ProjectCard: View {
     }
 
     private var switchControl: some View {
-        // The page hosts the same picker the toolbar uses, so switching is not
-        // a dead end here and there is no sentence explaining where the control
-        // lives.
-        Menu {
-            ProjectPickerMenu()
-        } label: {
-            Label("Switch project…", systemImage: "arrow.left.arrow.right")
+        // The page hosts the same list the toolbar panel shows, inline instead
+        // of in a popover: here the list is page content, not a menu. The
+        // panel's own header is off because the active project is rendered
+        // above it, and "Manage projects…" is pointless on the page that does
+        // exactly that.
+        VStack(alignment: .leading, spacing: 2) {
+            SwitcherSectionHeader("Projects")
+            ProjectSwitcherPanel(showsManageAction: false, showsHeader: false)
         }
-        .menuStyle(.button)
-        .controlSize(.small)
-        .accessibilityLabel(Text(AccessibleNames.project))
     }
 
     private var activeProjectDetails: some View {

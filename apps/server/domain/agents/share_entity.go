@@ -300,7 +300,7 @@ var defaultDangerousShareTools = []string{
 	"project-create",
 	"provider-configure-org", "provider-configure-project", "provider-test",
 	"token-create", "token-revoke", "token-delete",
-	"skill-create", "skill-update", "skill-delete",
+	"skill-create", "skill-update", "skill-patch", "skill-delete",
 	"blueprint-create", "blueprint-update", "blueprint-publish",
 	"blueprint-apply", "blueprint-unapply", "blueprint-new-version",
 	"embedding-config-update", "embedding-pause", "embedding-resume",

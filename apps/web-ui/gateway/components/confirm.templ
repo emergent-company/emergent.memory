@@ -1,19 +1,60 @@
 package components
 
 import (
-	"cmp"
-
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
-// ConfirmIcon renders the destructive-confirm icon circle: the error-tinted
-// rounded-field square holding an icon. It is the shared leading glyph for delete /
-// revoke / remove confirmation dialogs. The icon defaults to the trash glyph;
-// pass an override (for example "lucide--alert-triangle") for non-destructive
-// error confirmations.
-templ ConfirmIcon(icon string) {
-	<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-		@ui.IconSpan(cmp.Or(icon, "lucide--trash-2"), "size-5")
+// IconCircleTone selects the status circle's colour. It is a closed enum (not a
+// raw class string) so the circle's geometry and its tone live in one place: the
+// colour classes are emitted as literals because Tailwind's source scan cannot
+// see a class assembled at runtime.
+type IconCircleTone string
+
+const (
+	// IconCircleToneError is the destructive tone (delete / revoke / remove).
+	// It is the zero value, so an unspecified tone stays destructive rather than
+	// silently rendering a neutral circle.
+	IconCircleToneError IconCircleTone = ""
+	// IconCircleToneWarning is the caution tone (rotating a credential, an
+	// unsaved blueprint-derived agent, a retired-scope notice).
+	IconCircleToneWarning IconCircleTone = "warning"
+	// IconCircleTonePrimary is the affirmative/create tone.
+	IconCircleTonePrimary IconCircleTone = "primary"
+	// IconCircleToneInfo is the informational tone.
+	IconCircleToneInfo IconCircleTone = "info"
+	// IconCircleToneSuccess is the confirmation tone.
+	IconCircleToneSuccess IconCircleTone = "success"
+)
+
+// iconCircleClass maps a tone to its literal circle class list. Unknown values
+// fall back to the destructive tone, matching the zero value.
+func iconCircleClass(tone IconCircleTone) string {
+	switch tone {
+	case IconCircleToneWarning:
+		return "bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full"
+	case IconCircleTonePrimary:
+		return "bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full"
+	case IconCircleToneInfo:
+		return "bg-info/10 text-info grid size-10 shrink-0 place-items-center rounded-full"
+	case IconCircleToneSuccess:
+		return "bg-success/10 text-success grid size-10 shrink-0 place-items-center rounded-full"
+	default:
+		return "bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"
+	}
+}
+
+// IconCircle renders the tinted status circle the gateway pairs with a
+// ui.DialogTitle or a callout heading: a 10×10 tinted circle holding one icon.
+//
+// A destructive confirm renders ui.ConfirmDialog, which draws this same circle
+// from its own markup; IconCircle is the standalone form, for dialogs and
+// callouts that do not fit a canned shell (the provider save-error modal, the
+// rotate-key and save-as-version dialogs, the retired-scopes notice).
+//
+//	@components.IconCircle("lucide--refresh-cw", components.IconCircleToneWarning)
+templ IconCircle(icon string, tone IconCircleTone) {
+	<div class={ iconCircleClass(tone) }>
+		@ui.IconSpan(icon, "size-5")
 	</div>
 }
 

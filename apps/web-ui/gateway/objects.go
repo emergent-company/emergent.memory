@@ -2737,7 +2737,7 @@ func objectBranchOptionLabel(branches []Branch, id string) string {
 	}
 	for _, b := range branches {
 		if b.ID == id {
-			return b.Name
+			return branchDisplayName(b)
 		}
 	}
 	return id

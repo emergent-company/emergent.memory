@@ -25,6 +25,8 @@ func TestValidateSkillName(t *testing.T) {
 		"my-skill-name",
 		"abc123",
 		"x-y-z",
+		"a.b",
+		"code-review.lessons",
 		strings.Repeat("a", 64),
 	}
 	for _, name := range valid {
@@ -40,7 +42,9 @@ func TestValidateSkillName(t *testing.T) {
 		"trailing-",
 		"a--b",
 		"a_b",
-		"a.b",
+		".lead",
+		"trailing.",
+		"a..b",
 		"a b",
 		strings.Repeat("a", 65),
 	}

@@ -3,18 +3,20 @@ import SwiftUI
 
 /// Top-right account control in the window toolbar.
 ///
-/// Effectively signed in → the account avatar opens the account switcher: every
-/// signed-in account listed by EMAIL (environment badge when the accounts span
-/// more than one environment, active row checked by the menu's own checkmark)
-/// with switching, an "Add account" action (signs in to Production),
-/// "Manage accounts…" (the Project & Account page) and a confirmed sign-out.
-/// Not effectively signed in → a bordered "Sign in" button that starts
-/// Production sign-in directly; no environment choice and no stale account rows
-/// are shown.
+/// Effectively signed in → the avatar opens a context panel: the identity block
+/// (avatar, display name, email, environment), every signed-in account as a
+/// row, then Add account / Manage accounts / Sign out. Signed out → a bordered
+/// "Sign in" button that starts Production sign-in directly; no environment
+/// choice and no stale account rows are shown.
 ///
-/// The trigger is the user's avatar rather than a person glyph: it identifies
-/// *which* account is active without opening the menu, and it matches the web
-/// console's account menu, which is the same control in the same corner.
+/// The trigger is the avatar plus a disclosure chevron. Two affordances matter
+/// here: the avatar says *which* account is active without opening anything, and
+/// the chevron says the control opens something. The previous version hid the
+/// menu indicator, so a borderless avatar gave no hint that it was a control.
+///
+/// The panel is `AccountSwitcherPanel`, a real view in a `.popover` — a `Menu`
+/// flattens rows to `NSMenuItem`s, which is why the account list read as a bare
+/// column of email addresses with no padding and no avatar.
 ///
 /// Gating uses `AccountStore.isEffectivelySignedIn` (active account AND a
 /// valid connector CLI session), never the bare index lookup, so the control
@@ -25,12 +27,13 @@ struct AccountToolbarView: View {
     @SwiftUI.Environment(AppState.self) private var appState
 
     @State private var isHoveringTrigger = false
+    @State private var showsPanel = false
     @State private var accountToSignOut: Account?
 
     var body: some View {
         Group {
             if accountStore.isEffectivelySignedIn {
-                accountMenu
+                accountButton
             } else {
                 signInButton
             }
@@ -61,80 +64,60 @@ struct AccountToolbarView: View {
 
     // MARK: - Signed in
 
-    private var accountMenu: some View {
-        Menu {
-            Section("Accounts") {
-                ForEach(accountStore.accounts) { account in
-                    Toggle(isOn: Binding(
-                        get: { account.id == accountStore.activeAccountID },
-                        set: { isOn in
-                            if isOn {
-                                switchAccount(account.id)
-                            }
-                        }
-                    )) {
-                        accountRowLabel(account)
-                    }
-                }
-            }
-            Section {
-                Button {
-                    signIn(signInEnvironment)
-                } label: {
-                    Label("Add account", systemImage: "person.badge.plus")
-                }
-                Button {
-                    manageAccounts()
-                } label: {
-                    Label("Manage accounts…", systemImage: "gearshape")
-                }
-            }
-            Divider()
-            Button(role: .destructive) {
-                accountToSignOut = accountStore.activeAccount
-            } label: {
-                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-            }
+    private var accountButton: some View {
+        Button {
+            showsPanel.toggle()
         } label: {
             avatarTrigger
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .fixedSize()
-        .disabled(accountStore.isSigningIn)
         .accessibilityLabel(Text(AccessibleNames.account))
+        .accessibilityValue(accessibilityValue)
         .help("Account")
-    }
-
-    /// Avatar + hover ring. The ring stands in for the browser's
-    /// `hover:ring-1`, so the control reads as clickable without a chevron.
-    private var avatarTrigger: some View {
-        MemoryAvatar(initials: accountStore.activeAccount?.initials ?? "",
-                     size: 22,
-                     cacheKey: accountStore.activeAccount?.email)
-            .padding(3)
-            .overlay(
-                Circle()
-                    .strokeBorder(.primary.opacity(isHoveringTrigger ? 0.28 : 0), lineWidth: 1)
+        .disabled(accountStore.isSigningIn)
+        .popover(isPresented: $showsPanel, arrowEdge: .bottom) {
+            AccountSwitcherPanel(
+                onDismiss: { showsPanel = false },
+                onAddAccount: { signIn(signInEnvironment) },
+                onManageAccounts: manageAccounts,
+                onSignOut: { account in accountToSignOut = account }
             )
-            .contentShape(Circle())
-            .onHover { isHoveringTrigger = $0 }
+            .padding(10)
+            .frame(width: 300)
+        }
     }
 
-    /// Email first (never initials), with the environment only when the stored
-    /// accounts actually span more than one — otherwise "Prod" on every row is
-    /// noise. Both halves are runtime data, so the row is built from verbatim
-    /// text rather than a localization key.
-    private func accountRowLabel(_ account: Account) -> Text {
-        let title = Text(verbatim: account.switcherTitle)
-        guard showsEnvironmentLabels else { return title }
-        return title
-            + Text(verbatim: " · ")
-            + Text(verbatim: account.environmentLabel)
+    /// Avatar + disclosure chevron. The hover ring stands in for the browser's
+    /// `hover:ring-1`, so the control reads as clickable before it is opened.
+    private var avatarTrigger: some View {
+        HStack(spacing: 3) {
+            MemoryAvatar(initials: accountStore.activeAccount?.initials ?? "",
+                         size: 22,
+                         cacheKey: accountStore.activeAccount?.email)
+                .overlay(
+                    Circle()
+                        .strokeBorder(.primary.opacity(isHoveringTrigger ? 0.28 : 0), lineWidth: 1)
+                )
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onHover { isHoveringTrigger = $0 }
     }
 
-    private var showsEnvironmentLabels: Bool {
-        Set(accountStore.accounts.map(\.environmentID)).count > 1
+    /// VoiceOver value: the identity the control switches, not just "Account".
+    private var accessibilityValue: Text {
+        guard let account = accountStore.activeAccount else {
+            return Text("Signed out")
+        }
+        var parts = [account.switcherTitle]
+        if account.environmentLabel != account.switcherTitle {
+            parts.append(account.environmentLabel)
+        }
+        return Text(verbatim: parts.joined(separator: ", "))
     }
 
     // MARK: - Signed out
@@ -176,11 +159,6 @@ struct AccountToolbarView: View {
             let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }
-    }
-
-    private func switchAccount(_ id: String) {
-        guard id != accountStore.activeAccountID else { return }
-        Task { try? await accountStore.switchTo(accountID: id) }
     }
 
     private func signOut(_ account: Account) {
