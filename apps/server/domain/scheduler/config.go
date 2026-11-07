@@ -94,6 +94,15 @@ type Config struct {
 	// Default: 7.
 	EmbeddingJobRetentionDays int
 
+	// SkillCuratorSchedule is the cron schedule for the deterministic skill
+	// curator (agent-created skills: active -> stale -> archived). Default:
+	// "0 30 3 * * *" (daily at 3:30am, after session cleanup).
+	SkillCuratorSchedule string
+
+	// SkillCuratorInterval is the fallback interval when the cron schedule is
+	// unset or invalid. Default: 24h.
+	SkillCuratorInterval time.Duration
+
 	// EmbeddingJobPurgeSchedule is the cron schedule for purging old terminal
 	// embedding jobs. Default: "0 0 5 * * *" (daily at 5am).
 	EmbeddingJobPurgeSchedule string
@@ -136,6 +145,8 @@ func NewConfig() *Config {
 		EmbeddingJobRetentionDays:    getEnvInt("EMBEDDING_JOB_RETENTION_DAYS", 7),
 		EmbeddingJobPurgeSchedule:    getEnvString("EMBEDDING_JOB_PURGE_SCHEDULE", "0 0 5 * * *"),
 		EmbeddingJobPurgeInterval:    getEnvDuration("EMBEDDING_JOB_PURGE_INTERVAL", 24*time.Hour),
+		SkillCuratorSchedule:         getEnvString("SKILL_CURATOR_SCHEDULE", "0 30 3 * * *"),
+		SkillCuratorInterval:         getEnvDuration("SKILL_CURATOR_INTERVAL", 24*time.Hour),
 	}
 }
 

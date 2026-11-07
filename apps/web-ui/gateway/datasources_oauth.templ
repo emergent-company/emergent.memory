@@ -209,40 +209,141 @@ templ DataSourceResourceList(src *DSIntegration, providerName string, resources 
 	</div>
 }
 
-// --- OAuth-client settings (org- and project-scoped, §5.4) ---
+// --- OAuth-client settings (org settings) ---
 
-// OrgOAuthClientsPage renders the ORG's OAuth client configuration: one card per
-// provider that advertises the oauth method. A project-level client overrides
-// this org-wide one for that project; the same card serves both scopes.
+// OrgOAuthClientsPage renders the ORG's OAuth app settings as a table: one row
+// per provider that advertises the oauth method, with a link to that provider's
+// editor. A project-level client overrides this org-wide one for that project;
+// the same shared card serves both scopes, but each scope is edited on its own
+// page (this table is the org index, mirroring the project Credentials table).
 templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
-	@dsOAuthClientsPage(orgSettingsSubNav(orgID, "oauth-clients", true), orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients"), "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
-}
-
-// ProjectOAuthClientsPage was replaced by the project Credentials table
-// (CredentialsPage at /settings/credentials); the org page remains the
-// organization-wide editor.
-
-// dsOAuthClientsPage is the org-scoped OAuth-client settings page. It renders
-// one card per provider that advertises the oauth method, with the write-only
-// secret and the provider's console setup guide.
-templ dsOAuthClientsPage(rail templ.Component, crumbs []nav.BreadcrumbItem, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"})
+		@detailHeader(orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients"), "", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageErrorNotice("OAuth clients unavailable", loadErr)
 		} else {
-			@layout.Rail(rail, nil) {
+			@layout.Rail(orgSettingsSubNav(orgID, "oauth-clients", true), nil) {
 				<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">
-					for _, p := range providers {
-						if p.DSProviderSupportsOAuth() {
-							@dsOAuthClientCard(actionBase, p, clients[p.Type])
-						}
-					}
+					@dsOrgOAuthAppsTable(orgID, providers, clients)
 				</div>
 			}
 		}
 	}
+}
+
+// OrgOAuthClientDetailPage is the org per-provider OAuth app editor. It reuses
+// the shared scope-agnostic card (write-only secret + console guide) on its own
+// page, so the org surface matches the project editor at
+// /settings/credentials/:providerType.
+templ OrgOAuthClientDetailPage(orgID, orgName string, provider DSProvider, config DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients", "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", dsCredentialAppLabel(provider)), "", dsCredentialAppLabel(provider), dsOrgOAuthClientSubtitle(orgName), detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients",
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--arrow-left",
+				Attrs:   templ.Attributes{"data-testid": "ds-oauth-app-back"},
+			}) {
+				Back to OAuth apps
+			}
+		}
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageErrorNotice("OAuth client unavailable", loadErr)
+		} else {
+			@layout.Rail(orgSettingsSubNav(orgID, "oauth-clients", true), nil) {
+				<div class="flex flex-col gap-4" data-testid="ds-oauth-client-detail">
+					@dsOAuthClientCard("/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", provider, config)
+				</div>
+			}
+		}
+	}
+}
+
+// dsOrgOAuthAppsTable is the org OAuth-app index: one row per provider. The
+// status column reflects the organization-scope client only — there is no
+// per-project resolution to report on this page.
+templ dsOrgOAuthAppsTable(orgID string, providers []DSProvider, clients map[string]DSOAuthClientConfig) {
+	if len(providers) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--key-round",
+			Title:       "No OAuth providers",
+			Description: "The provider catalog does not offer any OAuth-capable data sources yet.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		@components.TableCard(nil) {
+			<div class="overflow-x-auto stacked-table" style="--h1:'App';--h2:'Data source';--h3:'Status';--h4:'Client ID';--h5:'Updated';--h6:''">
+				<table class="table table-sm" data-testid="ds-oauth-apps-table">
+					<thead>
+						<tr>
+							<th>App</th>
+							<th>Data source</th>
+							<th>Status</th>
+							<th>Client ID</th>
+							<th>Updated</th>
+							<th class="text-right">Actions</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, p := range providers {
+							@dsOrgOAuthAppRow(orgID, p, clients[p.Type])
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	}
+}
+
+// dsOrgOAuthAppRow is one provider at organization scope: metadata only, never a
+// secret. The action opens the per-provider editor; "Set up" is the label for a
+// provider with no organization app yet.
+templ dsOrgOAuthAppRow(orgID string, p DSProvider, cfg DSOAuthClientConfig) {
+	<tr data-testid="ds-oauth-app-row" data-provider={ p.Type }>
+		<td>
+			<div class="flex min-w-0 items-center gap-2">
+				@ui.IconSpan("lucide--key-round", "size-4 shrink-0 text-muted-faint")
+				<span class="truncate font-medium">{ dsCredentialAppLabel(p) }</span>
+			</div>
+		</td>
+		<td>{ p.Name }</td>
+		<td>
+			if cfg.Configured {
+				@components.StatusBadge("Configured", ui.BadgeSuccess, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "Not configured", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			}
+		</td>
+		<td>
+			if cfg.ClientID == "" {
+				@components.EmptyDash()
+			} else {
+				<span class="font-mono text-xs whitespace-nowrap text-muted" title={ cfg.ClientID } data-testid="ds-oauth-app-client-id">{ shortCredentialID(cfg.ClientID) }</span>
+			}
+		</td>
+		<td class="whitespace-nowrap text-muted">{ relTimeOrDash(cfg.UpdatedAt) }</td>
+		<td class="text-right">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    dsOrgOAuthClientHref(orgID, p.Type),
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--settings",
+				Attrs:   templ.Attributes{"data-testid": "ds-oauth-app-manage"},
+			}) {
+				if cfg.Configured {
+					Manage
+				} else {
+					Set up
+				}
+			}
+		</td>
+	</tr>
 }
 
 // dsOAuthClientCard is one provider's OAuth client config card. Saving posts the

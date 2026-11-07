@@ -8,6 +8,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
@@ -331,27 +332,28 @@ type ToolGroupDTO struct {
 
 // AgentDefinitionDTO is the full response DTO for an agent definition
 type AgentDefinitionDTO struct {
-	ID             string            `json:"id"`
-	ProductID      *string           `json:"productId,omitempty"`
-	ProjectID      string            `json:"projectId"`
-	Name           string            `json:"name"`
-	Description    *string           `json:"description,omitempty"`
-	SystemPrompt   *string           `json:"systemPrompt,omitempty"`
-	Model          *ModelConfig      `json:"model,omitempty"`
-	Tools          []string          `json:"tools"`
-	BannedTools    []string          `json:"bannedTools,omitempty"`
-	Skills         []string          `json:"skills"`
-	AutoLoadSkills bool              `json:"autoLoadSkills"`
-	IsDefault      bool              `json:"isDefault"`
-	Enabled        bool              `json:"enabled"`
-	MaxSteps       *int              `json:"maxSteps,omitempty"`
-	DefaultTimeout *int              `json:"defaultTimeout,omitempty"`
-	Visibility     AgentVisibility   `json:"visibility"`
-	DispatchMode   AgentDispatchMode `json:"dispatchMode"`
-	DefaultQueue   string            `json:"defaultQueue"`
-	WorkConfig     AgentWorkConfig   `json:"workConfig"`
-	ACPConfig      *ACPConfig        `json:"acpConfig,omitempty"`
-	Config         map[string]any    `json:"config,omitempty"`
+	ID             string                    `json:"id"`
+	ProductID      *string                   `json:"productId,omitempty"`
+	ProjectID      string                    `json:"projectId"`
+	Name           string                    `json:"name"`
+	Description    *string                   `json:"description,omitempty"`
+	SystemPrompt   *string                   `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig              `json:"model,omitempty"`
+	Tools          []string                  `json:"tools"`
+	BannedTools    []string                  `json:"bannedTools,omitempty"`
+	Skills         []string                  `json:"skills"`
+	AutoLoadSkills bool                      `json:"autoLoadSkills"`
+	SkillCapture   *skills.AgentSkillCapture `json:"skillCapture,omitempty"`
+	IsDefault      bool                      `json:"isDefault"`
+	Enabled        bool                      `json:"enabled"`
+	MaxSteps       *int                      `json:"maxSteps,omitempty"`
+	DefaultTimeout *int                      `json:"defaultTimeout,omitempty"`
+	Visibility     AgentVisibility           `json:"visibility"`
+	DispatchMode   AgentDispatchMode         `json:"dispatchMode"`
+	DefaultQueue   string                    `json:"defaultQueue"`
+	WorkConfig     AgentWorkConfig           `json:"workConfig"`
+	ACPConfig      *ACPConfig                `json:"acpConfig,omitempty"`
+	Config         map[string]any            `json:"config,omitempty"`
 	// SourceBlueprintID is the ID of the blueprint that created this definition
 	// (NULL for manual/pre-existing definitions). Exposed so the gateway can warn
 	// when editing a blueprint-derived agent.
@@ -413,24 +415,25 @@ type AgentDefinitionSummaryDTO struct {
 
 // CreateAgentDefinitionDTO is the request DTO for creating an agent definition
 type CreateAgentDefinitionDTO struct {
-	Name           string            `json:"name" validate:"required"`
-	Description    *string           `json:"description"`
-	SystemPrompt   *string           `json:"systemPrompt"`
-	Model          *ModelConfig      `json:"model"`
-	Tools          []string          `json:"tools"`
-	BannedTools    []string          `json:"bannedTools,omitempty"`
-	Skills         []string          `json:"skills"`
-	AutoLoadSkills *bool             `json:"autoLoadSkills"`
-	IsDefault      *bool             `json:"isDefault"`
-	Enabled        *bool             `json:"enabled"`
-	MaxSteps       *int              `json:"maxSteps"`
-	DefaultTimeout *int              `json:"defaultTimeout"`
-	Visibility     AgentVisibility   `json:"visibility"`
-	DispatchMode   AgentDispatchMode `json:"dispatchMode"`
-	DefaultQueue   string            `json:"defaultQueue"`
-	WorkConfig     *AgentWorkConfig  `json:"workConfig,omitempty"`
-	ACPConfig      *ACPConfig        `json:"acpConfig"`
-	Config         map[string]any    `json:"config"`
+	Name           string                    `json:"name" validate:"required"`
+	Description    *string                   `json:"description"`
+	SystemPrompt   *string                   `json:"systemPrompt"`
+	Model          *ModelConfig              `json:"model"`
+	Tools          []string                  `json:"tools"`
+	BannedTools    []string                  `json:"bannedTools,omitempty"`
+	Skills         []string                  `json:"skills"`
+	AutoLoadSkills *bool                     `json:"autoLoadSkills"`
+	SkillCapture   *skills.AgentSkillCapture `json:"skillCapture,omitempty"`
+	IsDefault      *bool                     `json:"isDefault"`
+	Enabled        *bool                     `json:"enabled"`
+	MaxSteps       *int                      `json:"maxSteps"`
+	DefaultTimeout *int                      `json:"defaultTimeout"`
+	Visibility     AgentVisibility           `json:"visibility"`
+	DispatchMode   AgentDispatchMode         `json:"dispatchMode"`
+	DefaultQueue   string                    `json:"defaultQueue"`
+	WorkConfig     *AgentWorkConfig          `json:"workConfig,omitempty"`
+	ACPConfig      *ACPConfig                `json:"acpConfig"`
+	Config         map[string]any            `json:"config"`
 	// IncludeProjectInfo opts into project-info injection (default false). When
 	// false the key is absent from the stored config.
 	IncludeProjectInfo *bool `json:"includeProjectInfo"`
@@ -446,24 +449,25 @@ type CreateAgentDefinitionDTO struct {
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
 type UpdateAgentDefinitionDTO struct {
-	Name           *string            `json:"name"`
-	Description    *string            `json:"description"`
-	SystemPrompt   *string            `json:"systemPrompt"`
-	Model          *ModelConfig       `json:"model"`
-	Tools          []string           `json:"tools"`
-	BannedTools    []string           `json:"bannedTools,omitempty"`
-	Skills         []string           `json:"skills"`
-	AutoLoadSkills *bool              `json:"autoLoadSkills"`
-	IsDefault      *bool              `json:"isDefault"`
-	Enabled        *bool              `json:"enabled"`
-	MaxSteps       *int               `json:"maxSteps"`
-	DefaultTimeout *int               `json:"defaultTimeout"`
-	Visibility     *AgentVisibility   `json:"visibility"`
-	DispatchMode   *AgentDispatchMode `json:"dispatchMode"`
-	DefaultQueue   *string            `json:"defaultQueue"`
-	WorkConfig     *AgentWorkConfig   `json:"workConfig,omitempty"`
-	ACPConfig      *ACPConfig         `json:"acpConfig"`
-	Config         map[string]any     `json:"config"`
+	Name           *string                   `json:"name"`
+	Description    *string                   `json:"description"`
+	SystemPrompt   *string                   `json:"systemPrompt"`
+	Model          *ModelConfig              `json:"model"`
+	Tools          []string                  `json:"tools"`
+	BannedTools    []string                  `json:"bannedTools,omitempty"`
+	Skills         []string                  `json:"skills"`
+	AutoLoadSkills *bool                     `json:"autoLoadSkills"`
+	SkillCapture   *skills.AgentSkillCapture `json:"skillCapture,omitempty"`
+	IsDefault      *bool                     `json:"isDefault"`
+	Enabled        *bool                     `json:"enabled"`
+	MaxSteps       *int                      `json:"maxSteps"`
+	DefaultTimeout *int                      `json:"defaultTimeout"`
+	Visibility     *AgentVisibility          `json:"visibility"`
+	DispatchMode   *AgentDispatchMode        `json:"dispatchMode"`
+	DefaultQueue   *string                   `json:"defaultQueue"`
+	WorkConfig     *AgentWorkConfig          `json:"workConfig,omitempty"`
+	ACPConfig      *ACPConfig                `json:"acpConfig"`
+	Config         map[string]any            `json:"config"`
 	// IncludeProjectInfo opts into project-info injection (default false). When
 	// false the key is removed from the stored config.
 	IncludeProjectInfo *bool `json:"includeProjectInfo"`
@@ -535,6 +539,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		BannedTools:        d.BannedTools,
 		Skills:             d.Skills,
 		AutoLoadSkills:     d.AutoLoadSkills,
+		SkillCapture:       d.SkillCapture,
 		IsDefault:          d.IsDefault,
 		Enabled:            d.Enabled,
 		MaxSteps:           d.MaxSteps,

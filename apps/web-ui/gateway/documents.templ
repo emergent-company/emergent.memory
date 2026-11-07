@@ -1200,12 +1200,17 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 				})
 				if d.Branch != nil {
 					@ui.Badge(ui.BadgeProps{
-						Label:   d.Branch.Name,
+						Label:   branchDisplayName(*d.Branch),
 						Variant: ui.BadgeGhost,
 						Size:    ui.BadgeSizeXS,
 						Icon:    "lucide--git-branch",
 					})
-					@extractionReadiness(d.Readiness)
+					// Readiness answers "can this merge now?", so it is only
+					// meaningful while the branch is open. A merged branch kept
+					// showing "Ready to merge" next to "Merged into main" (#242).
+					if d.Branch.MergedAt == "" {
+						@extractionReadiness(d.Readiness)
+					}
 				}
 				if d.BranchID != "" {
 					@ui.Button(ui.ButtonProps{
@@ -1234,7 +1239,7 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 			}
 			if d.Branch != nil {
 				if d.Branch.MergedAt == "" {
-					@extractionMergeAction(documentID, d.Job.ID, d.LeftForReview)
+					@extractionMergeAction(documentID, d.Job.ID, d.BranchID, d.LeftForReview)
 				} else {
 					@components.StatusBadge("Merged into main", ui.BadgeSuccess, "lucide--check", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 				}
@@ -1271,18 +1276,23 @@ templ extractionReadiness(r *MergeReadiness) {
 // not already merged (hide, don't disable). leftForReview is the count of
 // objects a prior partial merge left on the branch; when non-zero it renders a
 // "N left for review" badge.
-templ extractionMergeAction(documentID, jobID string, leftForReview int) {
+templ extractionMergeAction(documentID, jobID, branchID string, leftForReview int) {
 	<div class="mt-4 flex flex-row flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3 sm:flex-nowrap" data-testid="extraction-merge">
 		<div class="flex flex-wrap items-center gap-2">
 			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "text-right"}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
 			if leftForReview > 0 {
-				@ui.Badge(ui.BadgeProps{
-					Label:   strconv.Itoa(leftForReview) + " left for review",
-					Variant: ui.BadgeWarning,
-					Size:    ui.BadgeSizeXS,
-					Icon:    "lucide--git-branch",
-					Attrs:   templ.Attributes{"data-testid": "extraction-merge-left"},
-				})
+				{{ // The count without a way to see the items was the complaint in
+				   // #242: make the badge open the branch in the object browser.
+				   href := "/objects?branch=" + url.QueryEscape(branchID) }}
+				<a href={ templ.SafeURL(href) } class="shrink-0" title="Review the objects left on this branch">
+					@ui.Badge(ui.BadgeProps{
+						Label:   strconv.Itoa(leftForReview) + " left for review",
+						Variant: ui.BadgeWarning,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--git-branch",
+						Attrs:   templ.Attributes{"data-testid": "extraction-merge-left"},
+					})
+				</a>
 			}
 		</div>
 		@ui.Button(ui.ButtonProps{
@@ -1371,7 +1381,7 @@ templ mergePreviewSummary(preview *BranchMergeResult) {
 	@mergePreviewRow("lucide--refresh-cw", "Existing objects updated", strconv.Itoa(mergePreviewUpdated(preview)), false)
 	@mergePreviewRow("lucide--triangle-alert", "Conflicts", strconv.Itoa(mergePreviewConflicts(preview)), mergePreviewConflicts(preview) > 0)
 	@mergePreviewRow("lucide--git-branch", "Left for review", strconv.Itoa(mergePreviewLeft(preview)), mergePreviewLeft(preview) > 0)
-	@mergePreviewRow("lucide--box", "Total", mergePreviewTotal(preview), false)
+	@mergePreviewRow("lucide--box", "Total on branch", mergePreviewTotal(preview), false)
 }
 
 templ mergePreviewRow(icon, label, value string, warn bool) {

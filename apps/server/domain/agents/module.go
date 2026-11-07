@@ -75,8 +75,24 @@ var Module = fx.Module("agents",
 		registerWorkReconciler,
 		registerHandlerWorkActions,
 		registerHandlerTriggerService,
+		registerSkillCaptureAdapter,
 	),
 )
+
+// registerSkillCaptureAdapter installs the run-transcript reader on the capture
+// service and the capture hook on the executor. Both are optional setters so
+// unit tests build an executor without the whole skills module.
+func registerSkillCaptureAdapter(executor *AgentExecutor, capture *skills.CaptureService, repo *Repository, usage *provider.UsageService) {
+	if capture != nil {
+		capture.SetTranscriptReader(&skillTranscriptAdapter{repo: repo})
+		if usage != nil {
+			capture.SetBudgetChecker(usage)
+		}
+	}
+	if executor != nil && capture != nil {
+		executor.SetSkillCaptureHook(capture)
+	}
+}
 
 func provideSessionService(db *bun.DB) session.Service {
 	return bunsession.NewService(db)

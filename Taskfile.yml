@@ -68,11 +68,8 @@ tasks:
 
   dev:
     desc: Start server with hot reload (air, foreground)
-    dir: apps/server
     cmds:
-      - air
-    env:
-      PATH: /usr/local/go/bin:/usr/local/bin:{{.PATH}}
+      - task: server:dev
 
   start:
     desc: Build and start server in background
@@ -127,7 +124,7 @@ tasks:
         sed -i "s|MARKETING_VERSION = .*;|MARKETING_VERSION = {{.VERSION}};|" apps/ios/VoiceAgent.xcodeproj/project.pbxproj
       - task: server:swagger
       - |
-        git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md apps/server/docs/swagger
+        git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
         git status
         git commit -m "chore: bump version to {{.VERSION}}"
         git tag v{{.VERSION}}
