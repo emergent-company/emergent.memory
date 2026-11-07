@@ -600,9 +600,9 @@ var schemasInstallCmd = &cobra.Command{
 				}
 			}
 			if len(result.ShadowedTypes) > 0 {
-				fmt.Fprintf(out, "\nCross-pack shadows — registry owner keeps the type, reads use this pack (%d):\n", len(result.ShadowedTypes))
+				_, _ = fmt.Fprintf(out, "\nCross-pack shadows — registry owner keeps the type, reads use this pack (%d):\n", len(result.ShadowedTypes))
 				for _, s := range result.ShadowedTypes {
-					fmt.Fprintf(out, "  ! %s: registry owner %s, effective definition from %s\n",
+					_, _ = fmt.Fprintf(out, "  ! %s: registry owner %s, effective definition from %s\n",
 						s.TypeName, shadowedOwner(s), s.ShadowingPack)
 				}
 			}
@@ -649,9 +649,9 @@ var schemasInstallCmd = &cobra.Command{
 			fmt.Fprintf(out, "  Skipped types   (%d): %s\n", len(result.SkippedTypes), strings.Join(result.SkippedTypes, ", "))
 		}
 		if len(result.ShadowedTypes) > 0 {
-			fmt.Fprintf(out, "  Shadowed types  (%d):\n", len(result.ShadowedTypes))
+			_, _ = fmt.Fprintf(out, "  Shadowed types  (%d):\n", len(result.ShadowedTypes))
 			for _, s := range result.ShadowedTypes {
-				fmt.Fprintf(out, "    %s: registry owner %s, effective definition from %s\n",
+				_, _ = fmt.Fprintf(out, "    %s: registry owner %s, effective definition from %s\n",
 					s.TypeName, shadowedOwner(s), s.ShadowingPack)
 			}
 		}

@@ -596,7 +596,7 @@ func (b *Blueprinter) printResult(r BlueprintsResult) {
 		if owner == "" {
 			owner = "unknown"
 		}
-		fmt.Fprintf(b.out, "           shadowed type %q: registry owner %q, effective definition from %q (pass --merge-types to merge)\n",
+		_, _ = fmt.Fprintf(b.out, "           shadowed type %q: registry owner %q, effective definition from %q (pass --merge-types to merge)\n",
 			s.TypeName, owner, s.ShadowingPack)
 	}
 }
