@@ -4,15 +4,17 @@ import "testing"
 
 // toolByName returns the ToolDefinition with the given name from the package
 // catalog, or nil if absent.
+// toolByName resolves a definition through the catalog index, which holds both
+// the advertised consolidated tools and the deprecated per-verb aliases.
 func toolByName(t *testing.T, name string) *ToolDefinition {
 	t.Helper()
-	for _, tool := range (&Service{}).GetToolDefinitions() {
-		if tool.Name == name {
-			return &tool
-		}
+	svc := &Service{}
+	svc.GetToolDefinitions()
+	def := svc.GetToolByName(name)
+	if def == nil {
+		t.Fatalf("tool %q not found in catalog", name)
 	}
-	t.Fatalf("tool %q not found in catalog", name)
-	return nil
+	return def
 }
 
 // TestSuperadminOnlyToolClassification pins which deployment-wide / org-level
@@ -21,14 +23,13 @@ func toolByName(t *testing.T, name string) *ToolDefinition {
 // read-only.
 func TestSuperadminOnlyToolClassification(t *testing.T) {
 	superadminOnly := []string{
-		"embedding-status",
-		"embedding-pause",
-		"embedding-resume",
-		"embedding-config-update",
-		"provider-list-org",
+		// Consolidated families: the operator flag is the strictest of the
+		// per-verb tools each replaces.
+		"embedding",
+		"embedding-write",
+		"provider",
+		"trace",
 		"provider-configure-org",
-		"provider-test",
-		"provider-usage-get",
 	}
 	for _, name := range superadminOnly {
 		tool := toolByName(t, name)
@@ -37,6 +38,19 @@ func TestSuperadminOnlyToolClassification(t *testing.T) {
 		}
 		if tool.RequiredScope != "" {
 			t.Errorf("tool %q must not be scope-gated, got RequiredScope %q", name, tool.RequiredScope)
+		}
+	}
+
+	// The deprecated per-verb names must resolve to a definition that still
+	// carries the flag, so a saved client name cannot slip the operator gate.
+	for _, legacy := range []string{
+		"embedding-status", "embedding-progress", "embedding-retrigger",
+		"embedding-pause", "embedding-resume", "embedding-config-update",
+		"provider-list-org", "provider-test", "provider-usage-get",
+		"trace-list", "trace-get",
+	} {
+		if tool := toolByName(t, legacy); !tool.SuperadminOnly {
+			t.Errorf("legacy operator tool %q lost SuperadminOnly", legacy)
 		}
 	}
 

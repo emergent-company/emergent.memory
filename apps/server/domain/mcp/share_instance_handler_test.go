@@ -256,7 +256,9 @@ func TestHandlerToolsListAppliesInstanceAllowlist(t *testing.T) {
 	require.Nil(t, resp.Error)
 	result := resp.Result.(ToolsListResult)
 	require.Len(t, result.Tools, 1)
-	assert.Equal(t, "entity-search", result.Tools[0].Name)
+	// The allowlist names the deprecated per-verb tool; the advertised catalog
+	// lists the consolidated tool that replaced it.
+	assert.Equal(t, "entity", result.Tools[0].Name)
 }
 
 func TestHandlerToolsCallRejectsNonAllowlisted(t *testing.T) {
@@ -300,7 +302,9 @@ func TestStreamableToolsListAppliesInstanceAllowlist(t *testing.T) {
 	require.Nil(t, resp.Error)
 	result := resp.Result.(ToolsListResult)
 	require.Len(t, result.Tools, 1)
-	assert.Equal(t, "entity-search", result.Tools[0].Name)
+	// The allowlist names the deprecated per-verb tool; the advertised catalog
+	// lists the consolidated tool that replaced it.
+	assert.Equal(t, "entity", result.Tools[0].Name)
 }
 
 func TestStreamableToolsCallRejectsNonAllowlisted(t *testing.T) {
@@ -336,7 +340,9 @@ func TestSSEToolsListAppliesInstanceAllowlist(t *testing.T) {
 	require.Nil(t, resp.Error)
 	result := resp.Result.(ToolsListResult)
 	require.Len(t, result.Tools, 1)
-	assert.Equal(t, "entity-search", result.Tools[0].Name)
+	// The allowlist names the deprecated per-verb tool; the advertised catalog
+	// lists the consolidated tool that replaced it.
+	assert.Equal(t, "entity", result.Tools[0].Name)
 }
 
 func TestSSEToolsCallRejectsNonAllowlisted(t *testing.T) {

@@ -51,6 +51,11 @@ var agentMutationTools = map[string]bool{
 	"agent-hook-create":       true,
 	"agent-hook-delete":       true,
 	"agent-question-respond":  true,
+	// Consolidated write families: each carries the actions above, so the whole
+	// tool is non-shareable rather than silently shareable at family level.
+	"agent-write":      true,
+	"agent-def-write":  true,
+	"agent-hook-write": true,
 }
 
 // ============================================================================
@@ -499,6 +504,12 @@ func shareInstanceStatus(instanceRevokedAt, tokenRevokedAt, tokenExpiresAt *time
 
 // InstanceAllowsTool reports whether a tool may be listed and called under the
 // given scope. A nil scope or a scope without a tool allowlist allows all.
+//
+// The allowlist is expressed in the tool names a caller may use. Callers pass
+// the resolved legacy dispatch name (see legacyDispatchName), so a consolidated
+// call is matched against the per-verb name it replaced and a share instance
+// keeps exactly the granularity it was created with: allowing `agent-create`
+// does not also allow `agent-write` action=delete.
 func InstanceAllowsTool(scope *InstanceScope, toolName string) bool {
 	if scope == nil || !scope.HasToolAllowlist {
 		return true
@@ -538,7 +549,10 @@ func FilterToolsForInstance(tools []ToolDefinition, scope *InstanceScope) []Tool
 	}
 	allowed := make(map[string]bool, len(scope.AllowedTools))
 	for _, t := range scope.AllowedTools {
+		// An allowlist saved before the catalog consolidation names per-verb
+		// tools; match them to the consolidated tool that replaced them.
 		allowed[t] = true
+		allowed[canonicalToolName(t)] = true
 	}
 	out := make([]ToolDefinition, 0, len(tools))
 	for _, t := range tools {

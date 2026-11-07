@@ -205,8 +205,9 @@ func TestRetiredBareAdminAgentOnlyTools(t *testing.T) {
 // unscoped tool is a finding — the #1135 hole was exactly an unscoped,
 // implicitly-open registry tool.
 var unscopeableToolNames = map[string]bool{
-	"session-todo-list":   true,
-	"session-todo-update": true,
+	"session-todo":        true, // consolidated list+update
+	"session-todo-list":   true, // deprecated alias
+	"session-todo-update": true, // deprecated alias
 }
 
 // TestChangedToolScopesPinned asserts the declared scope of every tool changed
@@ -292,10 +293,10 @@ func TestRequiredScopeInProcessParity(t *testing.T) {
 
 	// Coverage guard: the catalog must include handler-provided and dynamic
 	// scoped tools, so a missing handler cannot silently shrink the parity set.
-	require.Contains(t, scoped, "agent-create", "agent handler must contribute scoped agent tools")
+	require.Contains(t, scoped, "agent-write", "agent handler must contribute scoped agent tools")
 	require.Contains(t, agentOnly, "mcp-server-create", "registry handler must contribute agent-only registry tools")
-	require.Contains(t, scoped, "blueprint-create", "blueprint tools must be in the scoped set")
-	require.Contains(t, scoped, "entity-query", "core graph tools must be in the scoped set")
+	require.Contains(t, scoped, "blueprint-write", "blueprint tools must be in the scoped set")
+	require.Contains(t, scoped, "entity", "core graph tools must be in the scoped set")
 
 	projectID := "00000000-0000-0000-0000-000000000000"
 	untrustedCtx := context.Background()

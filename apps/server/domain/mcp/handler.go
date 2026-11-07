@@ -357,7 +357,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		return NewErrorResponse(req.ID, ErrCodeInternalError,
 			"Failed to resolve share instance scope", nil)
 	}
-	if InstanceDeniesTool(scope, params.Name) {
+	if InstanceDeniesTool(scope, legacyDispatchName(params.Name, params.Arguments)) {
 		return NewErrorResponse(req.ID, ErrCodeForbidden,
 			"Tool not allowed: "+params.Name, nil)
 	}
@@ -372,7 +372,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 
 	if projectID == "" {
 		// Some tools require project ID
-		if requiresProject(params.Name) {
+		if requiresProject(params.Name, params.Arguments) {
 			return NewErrorResponse(req.ID, ErrCodeInvalidParams,
 				"Project ID is required. Provide project_id in initialize params or X-Project-Id header.",
 				map[string]string{"hint": "Call initialize with project_id parameter or set X-Project-Id header"},
@@ -428,9 +428,30 @@ func extractToken(c echo.Context) string {
 	return ""
 }
 
-// requiresProject returns true if the tool requires a project context
-func requiresProject(toolName string) bool {
+// requiresProject returns true if the call needs a project context. Most
+// per-project tools do; the exceptions are resolved per action where a
+// consolidated family mixes both (schema-write: create is project-less, the
+// assignment actions are not).
+func requiresProject(toolName string, args map[string]any) bool {
+	action, _ := actionArg(args)
+	if action == "" {
+		// A deprecated per-verb name carries its action implicitly.
+		if alias, ok := toolAliases[toolName]; ok {
+			action = alias.Action
+		}
+	}
+	toolName = canonicalToolName(toolName)
+	if toolName == "schema-write" && action == "create" {
+		return false
+	}
 	switch toolName {
+	case "entity", "relationship-list", "relationship-write", "entity-write",
+		"branch", "branch-write", "schema-types", "schema", "schema-write",
+		"schema-migrate", "blueprint", "blueprint-write",
+		"agent-def", "agent-def-write", "agent", "agent-write", "agent-run",
+		"document", "document-write", "skill", "skill-write":
+		return true
+		// Per-verb names stay callable, so they still need the same gate.
 	case "entity-type-list", "entity-query", "entity-search", "entity-edges-get",
 		"schema-version", "schema-list", "schema-get", "schema-delete",
 		"schema-list-available", "schema-list-installed",

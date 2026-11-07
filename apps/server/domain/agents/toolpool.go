@@ -217,7 +217,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 			)
 			// Fallback: load all builtin tools unconditionally from mcp.Service
 			if tp.mcpService != nil {
-				builtinDefs := tp.mcpService.GetToolDefinitions()
+				builtinDefs := tp.mcpService.GetInternalToolDefinitions()
 				for _, td := range builtinDefs {
 					cache.toolDefs[td.Name] = td
 					cache.toolNames = append(cache.toolNames, td.Name)
@@ -245,7 +245,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 		}
 	} else if tp.mcpService != nil {
 		// No registry service — fall back to unconditional mcp.Service load
-		builtinDefs := tp.mcpService.GetToolDefinitions()
+		builtinDefs := tp.mcpService.GetInternalToolDefinitions()
 		for _, td := range builtinDefs {
 			cache.toolDefs[td.Name] = td
 			cache.toolNames = append(cache.toolNames, td.Name)
@@ -1034,7 +1034,9 @@ func (tp *ToolPool) ToolScopes() map[string]string {
 	if tp.mcpService == nil {
 		return nil
 	}
-	defs := tp.mcpService.GetToolDefinitions()
+	// The pool's tool names are the per-verb builtin names (see the cache build
+	// above), so the scope source must be the same catalog.
+	defs := tp.mcpService.GetInternalToolDefinitions()
 	scopes := make(map[string]string, len(defs))
 	for _, td := range defs {
 		scopes[td.Name] = td.RequiredScope

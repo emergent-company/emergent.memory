@@ -177,8 +177,12 @@ func ResolveShareTemplates(catalog []CatalogToolDTO) []ShareTemplateDTO {
 			}
 		}
 		for _, name := range t.Tools {
-			if has[name] {
-				want[name] = true
+			// A preset may name a per-verb tool from before the catalog
+			// consolidation; resolve it to the consolidated tool the catalog
+			// advertises so the preset keeps the capability it describes.
+			canonical := CanonicalToolName(name)
+			if has[canonical] {
+				want[canonical] = true
 			}
 		}
 		tools := make([]string, 0, len(want))

@@ -139,15 +139,9 @@ func TestToolsListSerializesNoNullProperties(t *testing.T) {
 	}
 
 	// A tool with declared properties must keep them (omitempty only drops nil).
-	var query *ToolDefinition
-	for i := range tools {
-		if tools[i].Name == "entity-query" {
-			query = &tools[i]
-			break
-		}
-	}
-	require.NotNil(t, query, "entity-query must be registered")
-	require.NotEmpty(t, query.InputSchema.Properties, "entity-query must keep its input properties")
+	query := svc.GetToolByName("entity")
+	require.NotNil(t, query, "entity must be registered")
+	require.NotEmpty(t, query.InputSchema.Properties, "entity must keep its input properties")
 	assert.Contains(t, query.InputSchema.Properties, "limit")
 }
 

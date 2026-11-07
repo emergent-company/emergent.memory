@@ -88,6 +88,12 @@ func TestInternalToolNamesMatchCatalog(t *testing.T) {
 		if _, ok := catalog[name]; ok {
 			continue
 		}
+		// A deprecated per-verb name stays a legitimate internal name: it is
+		// still dispatched (as an alias of a consolidated tool), so the registry
+		// must keep reserving it.
+		if _, ok := catalog[mcp.CanonicalToolName(name)]; ok {
+			continue
+		}
 		if hiddenBuiltinTools[name] {
 			continue
 		}

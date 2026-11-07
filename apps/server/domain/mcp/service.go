@@ -344,8 +344,11 @@ var dynamicToolBuilders = []func() []ToolDefinition{
 	blueprintsToolDefinitions,
 }
 
-// GetToolDefinitions returns all available MCP tools
-func (s *Service) GetToolDefinitions() []ToolDefinition {
+// legacyToolDefinitions builds the per-verb tool catalog. It is the input to
+// consolidation: GetToolDefinitions and GetToolDefinitionsForProject fold these
+// definitions into the consolidated catalog (see consolidated_catalog.go) and
+// project-enrichment still works against the legacy names.
+func (s *Service) legacyToolDefinitions() []ToolDefinition {
 	tools := []ToolDefinition{
 		{
 			Name:        "project-get",
@@ -1740,8 +1743,42 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	// scope — see agentToolRequiredScope).
 	applyRequiredScopes(tools)
 
-	buildToolIndex(tools)
 	return tools
+}
+
+// GetToolDefinitions returns all available MCP tools, consolidated: one tool
+// per resource and permission pair with an `action` discriminator. The legacy
+// per-verb names remain callable as aliases (see consolidated_catalog.go) and
+// keep their own definitions in the lookup index, so authority checks and
+// internal callers that name them still resolve a precise schema.
+func (s *Service) GetToolDefinitions() []ToolDefinition {
+	legacy := s.legacyToolDefinitions()
+	consolidated := consolidateToolDefinitions(legacy)
+	buildToolIndex(indexableTools(consolidated, legacy))
+	return consolidated
+}
+
+// GetInternalToolDefinitions returns the per-verb catalog the in-process agent
+// runtime uses: the agent tool pool, its per-project tool enable flags and the
+// builtin MCP registry are all keyed on these names, and consolidating them
+// would coarsen per-tool authorisation (a ban on `entity-delete` would either
+// stop matching or have to ban all of `entity-write`). External MCP clients get
+// the consolidated catalog from GetToolDefinitions; both spellings dispatch
+// through the same handlers.
+func (s *Service) GetInternalToolDefinitions() []ToolDefinition {
+	legacy := s.legacyToolDefinitions()
+	buildToolIndex(indexableTools(consolidateToolDefinitions(legacy), legacy))
+	return legacy
+}
+
+// indexableTools is the lookup set for GetToolByName: the advertised catalog
+// plus the deprecated definitions it replaced. tools/list never sees the
+// deprecated entries.
+func indexableTools(advertised, legacy []ToolDefinition) []ToolDefinition {
+	out := make([]ToolDefinition, 0, len(advertised)+len(legacy))
+	out = append(out, advertised...)
+	out = append(out, legacy...)
+	return out
 }
 
 // GetToolDefinitionsForProject returns tool definitions with dynamic content (e.g. agent
@@ -1752,8 +1789,10 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 		return s.GetToolDefinitions()
 	}
 
-	// Start with the full static tool list (includes static agent tools)
-	tools := s.GetToolDefinitions()
+	// Start with the full static tool list (includes static agent tools). This
+	// must be the legacy list: project enrichment below matches agent tools by
+	// their legacy names, and consolidation runs after it.
+	tools := s.legacyToolDefinitions()
 
 	// Find the range of agent tools and replace them with project-enriched versions
 	enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
@@ -1781,7 +1820,9 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 		}
 	}
 
-	buildToolIndex(tools)
+	legacy := tools
+	tools = consolidateToolDefinitions(legacy)
+	buildToolIndex(indexableTools(tools, legacy))
 	return tools
 }
 
@@ -1861,6 +1902,32 @@ var toolRequiredScope = map[string]string{
 	// Journal (static tools; journal-list and journal-add-note are also appended below)
 	"journal-list":     "journal:read",
 	"journal-add-note": "journal:write",
+
+	// Consolidated catalog (see consolidated_catalog.go). These mirror the
+	// scopes of the legacy tools they replace, so LookupToolScope and
+	// tool-group derivation answer for the canonical names too.
+	"project":            "graph:read",
+	"entity":             "graph:read",
+	"entity-write":       "graph:write",
+	"relationship-write": "graph:write",
+	"branch":             "graph:read",
+	"branch-write":       "graph:write",
+	"schema-types":       "graph:read",
+	"schema":             "schema:read",
+	"schema-write":       "schema:write",
+	"schema-migrate":     "schema:migrate",
+	"blueprint":          "schema:read",
+	"blueprint-write":    "schema:write",
+	"search":             "search",
+	"document":           "documents:read",
+	"document-write":     "documents:write",
+	"skill":              "skills:read",
+	"skill-write":        "skills:write",
+	"project-write":      "projects:write",
+	"token":              "projects:write",
+	"token-write":        "projects:write",
+	// embedding*/provider/trace are SuperadminOnly operator tools with no token
+	// scope, so they have no entry here (the flag, not a scope, gates them).
 }
 
 // agentToolRequiredScope maps each agent-domain MCP tool name to the MCP scope
@@ -1896,6 +1963,16 @@ var agentToolRequiredScope = map[string]string{
 
 	// Agent catalog — derived from the agent-definitions read surface
 	"agent-list-available": "agents:read",
+
+	// Consolidated agent tools (see consolidated_catalog.go).
+	"agent-def":        "agents:read",
+	"agent-def-write":  "agents:write",
+	"agent":            "agents:read",
+	"agent-write":      "agents:write",
+	"agent-run":        "agents:read",
+	"agent-question":   "agents:read",
+	"agent-hook-write": "agents:write",
+	"adk-session":      "agents:read",
 }
 
 // applyRequiredScopes assigns RequiredScope to any tool that does not already
@@ -2034,7 +2111,17 @@ var superadminOnlyToolNames = func() map[string]bool {
 // IsSuperadminOnlyTool reports whether the named tool is a deployment-wide /
 // org-level operator tool gated on the superadmin_full authority.
 func (s *Service) IsSuperadminOnlyTool(name string) bool {
-	return superadminOnlyToolNames[name]
+	if superadminOnlyToolNames[name] {
+		return true
+	}
+	// A consolidated tool inherits the operator flag from the per-verb tools it
+	// replaces (see buildConsolidatedDefinition), so the static set — built from
+	// the pre-consolidation builders — does not cover the family name. Resolve
+	// the definition so the in-process gate and the transports agree.
+	if def := s.GetToolByName(name); def != nil {
+		return def.SuperadminOnly
+	}
+	return false
 }
 
 // sensitiveInProcessAdminTools is the set of privilege-sensitive tools whose
@@ -2067,6 +2154,12 @@ var sensitiveInProcessAdminTools = map[string]bool{
 	"project-create":             true,
 	"mcp-registry-install":       true,
 	"mcp-server-inspect":         true,
+	// Consolidated families that fold the sensitive tools above: the whole
+	// family carries the raised in-process bar, because the action is only known
+	// at dispatch and a family-level exemption would hand back the privilege.
+	"token":         true,
+	"token-write":   true,
+	"project-write": true,
 }
 
 // handlerProvidedToolScopes are the RequiredScope values declared only by
@@ -2154,10 +2247,44 @@ func buildToolIndex(tools []ToolDefinition) {
 }
 
 // GetToolByName returns the ToolDefinition for a given tool name, or nil if not found.
+// Deprecated legacy names resolve to the consolidated definition that replaced
+// them, so authority checks, share-instance allowlists and tool-group
+// derivation see one definition per resource regardless of which name the
+// caller used.
 func (s *Service) GetToolByName(name string) *ToolDefinition {
+	if def := lookupToolIndex(name); def != nil {
+		return def
+	}
+	// A caller can resolve a tool without ever listing the catalog (share
+	// template resolution does). Build the index on demand so a name lookup
+	// never silently reports "no such tool".
+	s.ensureToolIndex()
+	return lookupToolIndex(name)
+}
+
+func lookupToolIndex(name string) *ToolDefinition {
 	toolIndexMu.RLock()
 	defer toolIndexMu.RUnlock()
-	return toolIndex[name]
+	if def, ok := toolIndex[name]; ok {
+		return def
+	}
+	if canonical := canonicalToolName(name); canonical != name {
+		if def, ok := toolIndex[canonical]; ok {
+			return def
+		}
+	}
+	return nil
+}
+
+// ensureToolIndex builds the global tool index when it is empty.
+func (s *Service) ensureToolIndex() {
+	toolIndexMu.RLock()
+	empty := len(toolIndex) == 0
+	toolIndexMu.RUnlock()
+	if empty {
+		// GetToolDefinitions builds the index as a side effect.
+		s.GetToolDefinitions()
+	}
 }
 
 // ErrToolForbidden is returned by AuthorizeToolCall when a caller is not
@@ -2178,6 +2305,10 @@ var ErrToolForbidden = errors.New("tool not authorized")
 // failure returns a non-forbidden error (fail-closed) so the caller can map it
 // to a server error rather than a denial.
 func (s *Service) AuthorizeToolCall(ctx context.Context, toolName string, scopes []string) error {
+	// A deprecated legacy name carries the same authority as the consolidated
+	// tool that replaced it. Without this a legacy name would resolve to no
+	// definition and skip the scope gate entirely.
+	toolName = canonicalToolName(toolName)
 	toolDef := s.GetToolByName(toolName)
 	if toolDef == nil {
 		return nil
@@ -2262,7 +2393,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// during an agent run, which executes tools with the agent's context — and
 	// includes hidden built-ins such as set_session_title, which must not be
 	// reachable outside a restricted instance's allowlist.
-	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// Handle hidden built-in tools — these are always available, never listed,
@@ -2278,7 +2409,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// in the transports. This covers callers that do not pass through a transport
 	// pre-check — notably the ADK ToolPool during an agent run, which executes
 	// tools with the agent's context.
-	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// One authority decision for every transport. The three HTTP transports
@@ -2360,6 +2491,13 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 // authority checks — ExecuteTool applies those before dispatch — and is split
 // out so the intra-run result cache can wrap it (issue #1192).
 func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
+	// A consolidated tool dispatches through the legacy case that implements the
+	// requested action. Unknown actions fail here, before any handler runs.
+	if handler, ok, err := resolveConsolidatedHandler(toolName, args); err != nil {
+		return nil, err
+	} else if ok {
+		toolName = handler
+	}
 	switch toolName {
 	case "project-get":
 		return s.executeGetProjectInfo(ctx, projectID)
