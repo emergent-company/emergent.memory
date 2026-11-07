@@ -333,6 +333,78 @@ func TestOpenAICompatibleModel_Non2xxError(t *testing.T) {
 	}
 }
 
+// TestOpenAICompatibleModel_RetriesRateLimit verifies a provider 429 is answered
+// inside the call instead of being surfaced to the job above it (#237). The
+// header asks for a zero-second wait so the test does not sleep.
+func TestOpenAICompatibleModel_RetriesRateLimit(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"No deployments available for selected model, Try again in 5 seconds"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(makeOpenAIResponse("recovered")))
+	}))
+	defer srv.Close()
+
+	m := NewOpenAICompatibleModel(srv.URL, "key", "deepseek")
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "extract"}}},
+		},
+	}
+
+	resp, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	if err != nil {
+		t.Fatalf("GenerateContent() error = %v, want the retry to succeed", err)
+	}
+	if calls != 2 {
+		t.Errorf("provider calls = %d, want 2 (one 429 then one success)", calls)
+	}
+	if resp == nil || resp.Content == nil || len(resp.Content.Parts) == 0 || resp.Content.Parts[0].Text != "recovered" {
+		t.Fatalf("response = %+v, want the recovered body", resp)
+	}
+}
+
+// TestOpenAICompatibleModel_RateLimitExhaustsRetries verifies the retry is
+// bounded: a provider that keeps rate limiting still produces one error naming
+// the status and body, after maxProviderRetries extra attempts.
+func TestOpenAICompatibleModel_RateLimitExhaustsRetries(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+	}))
+	defer srv.Close()
+
+	m := NewOpenAICompatibleModel(srv.URL, "key", "deepseek")
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "extract"}}},
+		},
+	}
+
+	_, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	if err == nil {
+		t.Fatal("expected an error once the retries are spent")
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error %q should contain the status code", err.Error())
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error %q should contain the provider body", err.Error())
+	}
+	if want := maxProviderRetries + 1; calls != want {
+		t.Errorf("provider calls = %d, want %d", calls, want)
+	}
+}
+
 // TestOpenAICompatibleModel_NetworkError verifies a descriptive error is returned
 // for network failures (task 17.5 / 17.8).
 func TestOpenAICompatibleModel_NetworkError(t *testing.T) {

@@ -9,6 +9,11 @@ enum AccessibleNames {
     /// The icon-only account control in the window toolbar.
     static let account: LocalizedStringResource = "Account"
 
+    /// The project switcher in the window toolbar. The visible label is the
+    /// active project's name (runtime data), so the control needs a stable
+    /// action name of its own.
+    static let project: LocalizedStringResource = "Switch project"
+
     /// The "All local tools" master switch on the MCP Tools page.
     static let allLocalTools: LocalizedStringResource = "All local tools"
 
