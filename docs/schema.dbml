@@ -1022,6 +1022,7 @@ Table "kb"."discovery_type_candidates" {
   "status" text [not null, default: 'candidate']
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+  "required_properties" jsonb [not null, default: '[]', note: 'Property names the model marked as required for this type; unioned (and filtered to surviving properties) when candidates merge.']
 
   Indexes {
     (job_id) [name: "idx_discovery_type_candidates_job_id"]
