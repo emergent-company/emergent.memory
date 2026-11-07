@@ -49,8 +49,8 @@
       <p>Hi there,</p>
 
       <p>
-        <strong>{{senderName}}</strong> has granted you read-only access to the
-        <strong>{{projectName}}</strong> knowledge graph on Memory.
+        <strong>{{senderName}}</strong> has granted you access to the
+        <strong>{{projectName}}</strong> knowledge graph on Memory{{#if shareName}}, through a share named <strong>{{shareName}}</strong>{{/if}}.
       </p>
 
       <div class="what-is">
@@ -60,7 +60,7 @@
           (Claude, Cursor, Cloud Code, etc.) can query and search that knowledge directly, giving it context about
           <strong>{{projectName}}</strong> without you having to explain it every time.
           <br><br>
-          Your access is <strong>read-only</strong>: you can search and browse, but cannot modify anything.
+          {{#if readOnly}}Your access is <strong>read-only</strong>: you can search and browse, but cannot modify anything.{{else}}Your access lets you <strong>read and write</strong>: you can search and browse, and change the knowledge graph.{{/if}}
         </p>
       </div>
 
@@ -80,7 +80,7 @@
       <div class="key-box">
         <p class="label">Your API Key — keep this private</p>
         <code class="code">{{apiKey}}</code>
-        <p class="warning">⚠ This key grants read-only access to <strong>{{projectName}}</strong>. Do not forward this email or share the key publicly. It will not be shown again.</p>
+        <p class="warning">⚠ This key grants {{#if readOnly}}read-only {{/if}}access to <strong>{{projectName}}</strong>. Do not forward this email or share the key publicly. It will not be shown again.</p>
       </div>
 
       <hr class="divider">

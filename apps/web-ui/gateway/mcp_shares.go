@@ -35,11 +35,20 @@ type MCPShareInstance struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Tools       []string `json:"tools"`
-	Status      string   `json:"status"`
-	IsLegacy    bool     `json:"isLegacy"`
-	CreatedAt   string   `json:"createdAt"`
-	LastUsedAt  *string  `json:"lastUsedAt"`
-	ToolCount   int      `json:"toolCount"`
+	// TokenID is the credential that authenticates the share. It is the value
+	// graph write stamps record as credential_id, so it is what the "writes via
+	// this share" link filters on. Omitted by older backends.
+	TokenID string `json:"tokenId,omitempty"`
+	// RecipientEmails are the addresses the share key was invited to. Empty for
+	// a share that was never emailed.
+	RecipientEmails []string `json:"recipientEmails,omitempty"`
+	// ReadOnly reports whether the share grants only read scopes.
+	ReadOnly   bool    `json:"readOnly"`
+	Status     string  `json:"status"`
+	IsLegacy   bool    `json:"isLegacy"`
+	CreatedAt  string  `json:"createdAt"`
+	LastUsedAt *string `json:"lastUsedAt"`
+	ToolCount  int     `json:"toolCount"`
 }
 
 // MCPShareInput is the create/update request body. Tools must hold at least one
@@ -616,4 +625,31 @@ func mcpShareGeneratedSnippet(key, mcpURL, token string) string {
 	default:
 		return mcpURL + "\nAuthorization: Bearer " + token
 	}
+}
+
+// mcpShareRecipientsLabel renders a share's invite recipients for the row's meta
+// line: the first address plus a "+N" suffix, so a long invite list cannot push
+// the rest of the row meta out of line.
+func mcpShareRecipientsLabel(emails []string) string {
+	if len(emails) == 0 {
+		return ""
+	}
+	if len(emails) == 1 {
+		return "invited " + emails[0]
+	}
+	return fmt.Sprintf("invited %s +%d", emails[0], len(emails)-1)
+}
+
+// mcpShareActivityHref links to the object browser scoped to the objects this
+// share's key created or last updated. The credential id is the value graph
+// write stamps record for the share's token; `via` carries the share name only
+// so the browser can label the scope (it never filters on it).
+func mcpShareActivityHref(inst MCPShareInstance) string {
+	if inst.TokenID == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("credential_id", inst.TokenID)
+	q.Set("via", inst.Name)
+	return "/objects?" + q.Encode()
 }

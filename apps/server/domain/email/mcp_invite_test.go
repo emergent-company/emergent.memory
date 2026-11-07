@@ -198,3 +198,66 @@ func TestMCPInviteTemplate_HasTemplateAndRenders(t *testing.T) {
 		t.Error("rendered HTML missing project name")
 	}
 }
+
+// TestMCPInviteTemplate_ShareAndCapability pins the two facts a share invite
+// must not get wrong: which share the key belongs to, and whether the key can
+// write. The legacy /mcp/share flow sends neither field, so this also covers the
+// template's back-compat path.
+func TestMCPInviteTemplate_ShareAndCapability(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	svc := NewTemplateService(realTemplateDir(t), log)
+
+	base := TemplateContext{
+		"senderName":  "Alice",
+		"projectName": "Acme Knowledge Base",
+		"projectId":   "proj-123",
+		"mcpUrl":      "https://api.example.com/api/mcp",
+		"apiKey":      "emt_testtoken123",
+		"snippets":    map[string]interface{}{},
+	}
+
+	t.Run("named read-write share", func(t *testing.T) {
+		ctx := TemplateContext{}
+		for k, v := range base {
+			ctx[k] = v
+		}
+		ctx["shareName"] = "analyst"
+		ctx["readOnly"] = false
+
+		html, err := svc.Render("mcp-invite", ctx, "default")
+		if err != nil {
+			t.Fatalf("Render() error: %v", err)
+		}
+		if !strings.Contains(html.HTML, "analyst") {
+			t.Error("email must name the share the key belongs to")
+		}
+		if !strings.Contains(html.HTML, "read and write") {
+			t.Error("a read-write share must say the key can write")
+		}
+		if strings.Contains(html.HTML, "read-only") {
+			t.Error("a read-write invite must not claim read-only access")
+		}
+	})
+
+	t.Run("legacy unnamed read-only share", func(t *testing.T) {
+		ctx := TemplateContext{}
+		for k, v := range base {
+			ctx[k] = v
+		}
+		ctx["readOnly"] = true
+
+		html, err := svc.Render("mcp-invite", ctx, "default")
+		if err != nil {
+			t.Fatalf("Render() error: %v", err)
+		}
+		if !strings.Contains(html.HTML, "read-only") {
+			t.Error("a read-only invite must say the key is read-only")
+		}
+		if strings.Contains(html.HTML, "read and write") {
+			t.Error("a read-only invite must not claim write access")
+		}
+		if strings.Contains(html.HTML, "through a share named") {
+			t.Error("an unnamed legacy share must not render a share sentence")
+		}
+	})
+}

@@ -44,6 +44,9 @@ templ ObjectsPage(data objectsPageData) {
 			if data.LoadErr != nil {
 				@pageErrorNotice("Failed to load objects", data.LoadErr)
 			} else {
+				if data.Query == "" && data.AgentID == "" && data.CredentialID != "" {
+					@objectsCredentialScopeNotice(data)
+				}
 				if data.Query == "" && data.AgentID == "" {
 					@objectsBrowserStats(data)
 				}

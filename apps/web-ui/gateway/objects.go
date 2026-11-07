@@ -67,6 +67,13 @@ type objectsPageData struct {
 	ActorID    string
 	Provenance string
 
+	// CredentialID scopes the browse list to rows whose write stamp names this
+	// credential — an MCP share's token id, so a share row can link straight to
+	// "what this share wrote". ViaShare is the display-only label for that scope
+	// (the share's name); it is never forwarded as a filter.
+	CredentialID string
+	ViaShare     string
+
 	// ActorOptions lists the selectable identities for the generic browser's
 	// actor filter: project members as "user" options and agent definitions as
 	// "agent" options. Empty when the sources could not be fetched; the filter
@@ -96,14 +103,15 @@ type objectsPageData struct {
 // at one cursor position.
 func (d objectsPageData) listParams(cursor string) ObjectListParams {
 	return ObjectListParams{
-		BranchID:   d.BranchID,
-		TypeFilter: d.TypeFilter,
-		Cursor:     cursor,
-		Limit:      25,
-		ActorType:  d.ActorType,
-		ActorID:    d.ActorID,
-		Provenance: d.Provenance,
-		Order:      d.Order,
+		BranchID:     d.BranchID,
+		TypeFilter:   d.TypeFilter,
+		Cursor:       cursor,
+		Limit:        25,
+		ActorType:    d.ActorType,
+		ActorID:      d.ActorID,
+		Provenance:   d.Provenance,
+		CredentialID: d.CredentialID,
+		Order:        d.Order,
 	}
 }
 
@@ -150,6 +158,18 @@ func normalizeObjectOrder(raw string) string {
 		return "asc"
 	}
 	return ""
+}
+
+// objectViaShareLabel normalizes the display-only `via` param carried by a
+// share's "view writes" link. The value is the share's user-authored name, so it
+// is trimmed and rune-capped before it reaches the page; it is rendered as text
+// and never used as a filter.
+func objectViaShareLabel(raw string) string {
+	label := strings.TrimSpace(raw)
+	if runes := []rune(label); len(runes) > 80 {
+		label = string(runes[:80]) + "…"
+	}
+	return label
 }
 
 // objectsSortDir is the effective created_at direction for the table header:
@@ -415,16 +435,18 @@ func (s *Server) uiObjects(c echo.Context) error {
 	actorType, actorID := objectActorFilter(c)
 
 	data := objectsPageData{
-		Query:      query,
-		Mode:       mode,
-		TypeFilter: typeFilter,
-		BranchID:   branchID,
-		ActorType:  actorType,
-		ActorID:    actorID,
-		Provenance: effectiveObjectProvenance(c.QueryParam("provenance"), actorType),
-		Order:      normalizeObjectOrder(c.QueryParam("order")),
-		FlashMsg:   objectsBulkFlash(c),
-		FlashErr:   flashError(c),
+		Query:        query,
+		Mode:         mode,
+		TypeFilter:   typeFilter,
+		BranchID:     branchID,
+		ActorType:    actorType,
+		ActorID:      actorID,
+		Provenance:   effectiveObjectProvenance(c.QueryParam("provenance"), actorType),
+		CredentialID: strings.TrimSpace(c.QueryParam("credential_id")),
+		ViaShare:     objectViaShareLabel(c.QueryParam("via")),
+		Order:        normalizeObjectOrder(c.QueryParam("order")),
+		FlashMsg:     objectsBulkFlash(c),
+		FlashErr:     flashError(c),
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -541,14 +563,16 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 	}
 
 	data := objectsPageData{
-		Query:      query,
-		Mode:       mode,
-		TypeFilter: typeFilter,
-		BranchID:   branchID,
-		ActorType:  actorType,
-		ActorID:    actorID,
-		Provenance: provenance,
-		Order:      order,
+		Query:        query,
+		Mode:         mode,
+		TypeFilter:   typeFilter,
+		BranchID:     branchID,
+		ActorType:    actorType,
+		ActorID:      actorID,
+		Provenance:   provenance,
+		CredentialID: strings.TrimSpace(c.QueryParam("credential_id")),
+		ViaShare:     objectViaShareLabel(c.QueryParam("via")),
+		Order:        order,
 	}
 	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
 		captureError(err)
@@ -591,6 +615,12 @@ func objectsPartialURL(data objectsPageData) string {
 	}
 	if data.Provenance != "" && data.Provenance != defaultObjectProvenance {
 		q.Set("provenance", data.Provenance)
+	}
+	if data.CredentialID != "" {
+		q.Set("credential_id", data.CredentialID)
+		if data.ViaShare != "" {
+			q.Set("via", data.ViaShare)
+		}
 	}
 	if data.Order != "" {
 		q.Set("order", data.Order)
