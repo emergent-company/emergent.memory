@@ -142,6 +142,51 @@ func TestAssignSchemaToolDeclaresOnlyWiredArgs(t *testing.T) {
 		"only schema_id is mandatory; force is the optional escape hatch")
 }
 
+// TestCatalogParityReadOnlyToolsRegistered pins the tools added for the
+// blueprint/schema catalog parity work (#18): each must be discoverable in the
+// served catalog with the read scope it was documented under. A definition with
+// no dispatch case is a tool a client can discover and never run, so dispatch is
+// covered separately by TestBlueprintReadToolsReachTheHandler.
+func TestCatalogParityReadOnlyToolsRegistered(t *testing.T) {
+	svc := fullCatalog(t)
+
+	cases := map[string]string{
+		"blueprint-updates-status":      "schema:read",
+		"blueprint-import-preview":      "schema:read",
+		"blueprint-model-overrides-get": "schema:read",
+		"schema-pack-claims":            "schema:read",
+	}
+	for name, wantScope := range cases {
+		def := svc.GetToolByName(name)
+		require.NotNil(t, def, "tool %q must be registered in the catalog", name)
+		require.Equal(t, wantScope, def.RequiredScope,
+			"tool %q must declare the read scope it was documented under", name)
+		require.NotEmpty(t, def.Description, "tool %q needs a description an agent can act on", name)
+	}
+
+	// #18's "no pack list" premise was wrong: schema-list IS the project
+	// catalog (same rows as GET /api/schemas/projects/:id), so a second
+	// schema-pack-list tool over the same rows with a different response key was
+	// exactly the drift this work exists to remove. Pin that there is one
+	// catalog tool, and that it advertises the retirement audit flag.
+	require.Nil(t, svc.GetToolByName("schema-pack-list"),
+		"schema-pack-list must not return as a duplicate of schema-list")
+	list := svc.GetToolByName("schema-list")
+	require.NotNil(t, list)
+	prop, ok := list.InputSchema.Properties["include_deprecated"]
+	require.True(t, ok, "schema-list must advertise include_deprecated")
+	require.Equal(t, "boolean", prop.Type)
+
+	// The preview accepts a token to fetch with and declares no named output
+	// keys (the generic object envelope), so the response contract cannot promise
+	// to echo it; the preview value itself carries no token field, which the
+	// handler tests pin.
+	preview := svc.GetToolByName("blueprint-import-preview")
+	require.Contains(t, preview.InputSchema.Properties, "url")
+	require.Contains(t, preview.InputSchema.Properties, "modelOverrides")
+	require.Nil(t, preview.OutputSchema.Properties)
+}
+
 // TestSchemaToolDeclaredArgsAreWired pins #2377: every property these two tools
 // advertise now has a reader (or a writer, for schema-create), so the catalogue
 // stops promising knobs nothing consumes.

@@ -19,6 +19,9 @@ type BlueprintToolHandler interface {
 	ExecuteBlueprintListApplied(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintNewVersion(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintUpdate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintUpdatesStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintImportPreview(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintModelOverridesGet(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 }
 
 // ============================================================================
@@ -232,6 +235,66 @@ func blueprintsToolDefinitions() []ToolDefinition {
 					},
 				},
 				Required: []string{"id"},
+			},
+		},
+		{
+			Name:          "blueprint-updates-status",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Report the latest upstream-update status for an applied blueprint by name: the last check result plus the latest check/apply job, when one exists. This is a read — it does not contact GitHub and does not enqueue a check or apply an update.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Blueprint name to report update status for",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:          "blueprint-import-preview",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Fetch and validate a blueprint from https://github.com/<org>/<repo>[#ref] and return its metadata and manifest WITHOUT creating, publishing, or applying anything. The optional token is used only for a private-repo fetch and is never stored or returned. In project scope the preview also reports the object-type collisions an apply would hit.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"url": {
+						Type:        "string",
+						Description: "GitHub repository URL, optionally with a #ref suffix",
+					},
+					"ref": {
+						Type:        "string",
+						Description: "Optional git ref (branch, tag, or commit) to fetch",
+					},
+					"token": {
+						Type:        "string",
+						Description: "Optional GitHub token for a private repository; used only for this fetch and never stored",
+					},
+					"modelOverrides": {
+						Type:        "object",
+						Description: "Optional agent-name → provider/model overrides applied to the previewed manifest in memory",
+					},
+				},
+				Required: []string{"url"},
+			},
+		},
+		{
+			Name:          "blueprint-model-overrides-get",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Get the project-scoped model overrides stored for a blueprint name (agent-name → provider/model map). Read-only; use the REST PUT /api/blueprints/model-overrides to change them.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Blueprint name whose stored model overrides to return",
+					},
+				},
+				Required: []string{"name"},
 			},
 		},
 	}

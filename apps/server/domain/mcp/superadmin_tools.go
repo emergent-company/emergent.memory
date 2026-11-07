@@ -507,6 +507,21 @@ func (s *Service) IsAdminOperatorTool(name string) bool {
 	return superadminCatalogToolNames[name]
 }
 
+// superadminToolDefinition returns the definition of an admin/operator tool, or
+// nil when the name is not in the admin catalogue. Admin tools are served only
+// by the admin endpoint and are deliberately absent from toolIndex, so
+// GetToolByName cannot see them; anything that needs their definitions (the
+// strict-boolean boundary, for one) must look them up here.
+func (s *Service) superadminToolDefinition(name string) *ToolDefinition {
+	for _, def := range s.GetSuperadminToolDefinitions() {
+		if def.Name == name {
+			d := def
+			return &d
+		}
+	}
+	return nil
+}
+
 // superadminMutationToolNames is the authoritative set of operator tools that
 // perform a mutation and therefore require confirm=true. It covers the NEW
 // mutation tools (whose handlers enforce confirm after identifier validation)
@@ -588,6 +603,17 @@ func (s *Service) ExecuteSuperadminTool(ctx context.Context, toolName string, ar
 	}
 	if !ok {
 		return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+	}
+	// Same strict-boolean boundary as ExecuteTool (#24): the operator catalogue
+	// declares `confirm` and `has_error` as booleans and the handlers read them
+	// with silent casts, so {"confirm": "true"} would degrade a mutation to a
+	// dry-run instead of being refused. Validate before either dispatch branch.
+	//
+	// The lookup must go through the admin catalogue, not GetToolByName: admin
+	// tools are deliberately absent from toolIndex, so GetToolByName returns nil
+	// and validation would silently do nothing (round-1 review).
+	if err := validateBooleanArgs(s.superadminToolDefinition(toolName), args); err != nil {
+		return nil, err
 	}
 	if superadminOperatorToolNames[toolName] {
 		return s.dispatchSuperadminTool(ctx, toolName, args)
