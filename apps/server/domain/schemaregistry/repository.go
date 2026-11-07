@@ -211,7 +211,7 @@ func (r *Repository) getTypesFromInstalledPacks(ctx context.Context, projectID s
 		FROM kb.project_schemas ps
 		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
 		WHERE ps.project_id = ? AND ps.active = true AND ps.removed_at IS NULL
-		ORDER BY ps.installed_at DESC, ps.id DESC
+		ORDER BY ps.installed_at DESC, ps.created_at DESC, ps.id DESC
 	`, projectID).Exec(ctx, &packs)
 	if err != nil {
 		return nil, err

@@ -1212,16 +1212,6 @@ func nullableUUID(id string) any {
 	return id
 }
 
-// sameSchemaScope reports whether two nullable graph_schemas scope columns
-// (project_id or source) name the same scope. NULL == NULL is treated as equal,
-// so a global builtin (NULL project_id) never matches a project-scoped pack.
-func sameSchemaScope(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
 // AssignPackWithTypes assigns a schema to a project AND populates the type registry.
 // When req.DryRun is true, no database changes are made — only the preview is returned.
 //
@@ -1356,27 +1346,23 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	var actions []typeAction
 
 	for typeName, incomingSchema := range objectTypeSchemas {
-		// Read the existing registry entry and the pack that owns it. A pack
-		// owns a type when the registry row's schema_id points at a pack with
-		// the same name (versions of one pack share the name), so an upgrade of
-		// the owning pack replaces the definition instead of being treated as a
-		// cross-pack collision. There is no unique index on
-		// (project_id, type_name), so the read is ordered newest-row-first to
-		// stay deterministic if duplicates ever exist.
+		// Read the existing registry entry and the pack that owns it (schema_id
+		// -> graph_schemas). Ownership — and therefore the replace/skip decision
+		// below — is by pack identity (schema_id) or a version-resolved upgrade,
+		// not by name alone. There is no unique index on (project_id, type_name),
+		// so the read is ordered newest-row-first to stay deterministic if
+		// duplicates ever exist.
 		var existingRow struct {
-			JSONSchema     json.RawMessage `bun:"json_schema"`
-			SchemaID       *string         `bun:"schema_id"`
-			SchemaName     *string         `bun:"schema_name"`
-			OwnerProjectID *string         `bun:"owner_project_id"`
-			OwnerSource    *string         `bun:"owner_source"`
+			JSONSchema json.RawMessage `bun:"json_schema"`
+			SchemaID   *string         `bun:"schema_id"`
+			SchemaName *string         `bun:"schema_name"`
 		}
 		scanErr := r.db.NewRaw(`
-			SELECT por.json_schema, por.schema_id, gs.name AS schema_name,
-			       gs.project_id AS owner_project_id, gs.source AS owner_source
+			SELECT por.json_schema, por.schema_id, gs.name AS schema_name
 			FROM kb.project_object_schema_registry por
 			LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
 			WHERE por.project_id = ? AND por.type_name = ?
-			ORDER BY por.updated_at DESC, por.created_at DESC, por.id DESC
+			ORDER BY por.updated_at DESC, por.id DESC
 			LIMIT 1
 		`, projectID, typeName).Scan(ctx, &existingRow)
 
@@ -1391,18 +1377,18 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			continue
 		}
 
-		// Same pack family (same name, same project/source scope, possibly a new
-		// version): the pack owns the type, so an upgrade replaces the registered
-		// definition. This is what makes `memory blueprints install --upgrade` and
-		// a builtin pack refresh actually reach the registry, and it needs no
-		// merge confirmation because no other pack's definition is involved.
-		// Scope is checked too (#338): a DIFFERENT pack that reuses the name
-		// across a project/source boundary (a fork, a project-scoped copy of a
-		// builtin, a renamed pack whose old row lingers) no longer silently
-		// captures the type — it falls through to the merge/skip branch below.
-		if existingRow.SchemaName != nil && *existingRow.SchemaName == pack.Name &&
-			sameSchemaScope(existingRow.OwnerProjectID, pack.ProjectID) &&
-			sameSchemaScope(existingRow.OwnerSource, pack.Source) {
+		// The pack owns the type — and an upgrade replaces the definition with no
+		// merge confirmation — only when it is the SAME pack (in-place re-assign
+		// or refresh: schema_id matches) or a version-resolved upgrade (same name
+		// family AND the incoming pack declares migration hints, the codebase's
+		// version-resolution signal). A DIFFERENT pack that reuses the name — a
+		// same-scope fork, a project-scoped copy, a renamed pack whose old row
+		// lingers — matches neither, so it falls through to the merge/skip branch
+		// and needs Merge=true to take over (#338).
+		samePack := existingRow.SchemaID != nil && *existingRow.SchemaID == pack.ID
+		sameName := existingRow.SchemaName != nil && *existingRow.SchemaName == pack.Name
+		versionResolved := sameName && pack.Migrations != nil
+		if samePack || versionResolved {
 			actions = append(actions, typeAction{
 				name:           typeName,
 				incomingSchema: incomingSchema,
