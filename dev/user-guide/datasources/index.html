@@ -1345,6 +1345,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-organization-oauth-apps-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The organization OAuth apps table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#create-the-app-in-the-vendor-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3271,6 +3282,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-organization-oauth-apps-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The organization OAuth apps table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#create-the-app-in-the-vendor-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3585,8 +3607,11 @@ do not need to be reconnected.</p>
 </div>
 <hr />
 <h2 id="saved-credentials">Saved credentials<a class="headerlink" href="#saved-credentials" title="Permanent link">&para;</a></h2>
-<p>The <strong>Credentials</strong> page also lists the project's <strong>saved credentials</strong> above the OAuth apps table. A
-saved credential is a token — today, a GitHub personal access token — stored once, encrypted, and
+<p>The <strong>Credentials</strong> page has two sections, each with its own heading. <strong>Saved credentials</strong> lists the
+project's reusable tokens; <strong>OAuth apps</strong> lists the vendor apps available to the project. The two are
+different things: a saved credential is a token you paste, an OAuth app is a client id/secret created
+in the vendor console — adding one never changes the other's status.</p>
+<p>A saved credential is a token — today, a GitHub personal access token — stored once, encrypted, and
 reused by any number of data sources in the project. The list shows the name, the provider, how many
 sources use it, and when it was last changed; the token itself is never displayed again.</p>
 <ul>
@@ -3620,14 +3645,15 @@ you which connection type the app backs.</p>
 <li><strong>Project</strong> — a project-level app, managed by a <code>project_admin</code> on the project's
    <strong>Settings → Credentials</strong> page. It overrides everything else for that project.</li>
 <li><strong>Organization</strong> — an org-level app, managed by an <code>org_admin</code> under
-   <strong>Organization Settings → Data source OAuth clients</strong>.</li>
+   <strong>Organization Settings → Data source OAuth clients</strong>. That page is a table of providers, and each
+   row opens that provider's editor — the same editor shape as the project page.</li>
 <li><strong>Deployment default</strong> — a centrally configured app set via <code>SOURCES_OAUTH_GOOGLE_CLIENT_ID</code> /
    <code>SOURCES_OAUTH_GOOGLE_CLIENT_SECRET</code> (no setup needed by users).</li>
 </ol>
 <p>If none is configured, connecting fails with an actionable message linking to the credentials page.</p>
 <h3 id="the-credentials-table">The Credentials table<a class="headerlink" href="#the-credentials-table" title="Permanent link">&para;</a></h3>
-<p><strong>Project Settings → Credentials</strong> lists every OAuth-capable vendor as a table. Each provider has one
-row per scope, project first, then organization:</p>
+<p><strong>Project Settings → Credentials</strong> lists every OAuth-capable vendor as a table. Each provider has a
+project row, and gains an organization row only once an organization app is configured:</p>
 <table>
 <thead>
 <tr>
@@ -3666,9 +3692,19 @@ row per scope, project first, then organization:</p>
 </tr>
 </tbody>
 </table>
+<p>A provider with no project and no organization app still shows its project row, so <strong>Set up</strong> stays
+reachable. The organization row appears only when that org app exists, which keeps the table one row
+per provider until someone configures the org scope. An admin's organization-row action opens the
+org's per-provider editor.</p>
 <p>Every project member can view the table and see which app is in use. Only a <code>project_admin</code> can open
 the per-provider editor and change the project app; organization-wide apps are managed by org admins.
 Opening a per-provider editor as a non-admin returns 404.</p>
+<h3 id="the-organization-oauth-apps-table">The organization OAuth apps table<a class="headerlink" href="#the-organization-oauth-apps-table" title="Permanent link">&para;</a></h3>
+<p><strong>Organization Settings → Data source OAuth clients</strong> lists each OAuth-capable provider as a row — app,
+data source, status, client id, updated — with a <strong>Set up</strong> or <strong>Manage</strong> action. That action opens
+<code>/o/&lt;org&gt;/settings/oauth-clients/&lt;provider&gt;</code>: the same OAuth-client card the project editor uses
+(client id, write-only secret, scopes, strategy, and the vendor console guide), with a back link to the
+table. Saving returns you to the table with a confirmation, and the stored secret is never shown again.</p>
 <p>When no project or organization app exists and the deployment does not provide one, the page carries
 a note naming the providers that fall back to the deployment default.</p>
 <p>The <strong>Data Sources</strong> page is a plain connections table (name, provider, status, sync mode, last sync)
