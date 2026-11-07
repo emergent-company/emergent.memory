@@ -1345,7 +1345,9 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		// owns a type when the registry row's schema_id points at a pack with
 		// the same name (versions of one pack share the name), so an upgrade of
 		// the owning pack replaces the definition instead of being treated as a
-		// cross-pack collision.
+		// cross-pack collision. There is no unique index on
+		// (project_id, type_name), so the read is ordered newest-row-first to
+		// stay deterministic if duplicates ever exist.
 		var existingRow struct {
 			JSONSchema json.RawMessage `bun:"json_schema"`
 			SchemaName *string         `bun:"schema_name"`
@@ -1355,6 +1357,7 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			FROM kb.project_object_schema_registry por
 			LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
 			WHERE por.project_id = ? AND por.type_name = ?
+			ORDER BY por.updated_at DESC, por.id DESC
 			LIMIT 1
 		`, projectID, typeName).Scan(ctx, &existingRow)
 
@@ -1455,8 +1458,12 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			// A re-assign refreshes the pack's definitions; bump installed_at so
 			// the refreshed pack is the newest assignment in the last-wins
 			// ordering used by the compiled-types and graph-validation reads.
+			// Re-activate too: assigning a pack is a request to use it, and an
+			// assignment deactivated through UpdateAssignment would otherwise
+			// refresh the registry while staying invisible to compiled types.
 			if _, err := tx.NewUpdate().
 				Model((*ProjectMemorySchema)(nil)).
+				Set("active = ?", true).
 				Set("installed_at = ?", now).
 				Set("updated_at = ?", now).
 				Where("id = ?", existingAssignment.ID).
@@ -1493,6 +1500,29 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 
 	result.AssignmentID = assignment.ID
 	return result, nil
+}
+
+// appendDeclaredConfigColumns extends an UPDATE's SET list with the config
+// columns the incoming pack actually declares for typeName. Columns the pack
+// does not mention are left alone, so a refresh or a cross-pack merge never
+// wipes a per-project customisation of a type whose pack carries no ui/extraction
+// data for it.
+func appendDeclaredConfigColumns(
+	set string,
+	args []any,
+	typeName string,
+	uiConfigs, extractionPrompts map[string]json.RawMessage,
+	uiJSON, extractionJSON string,
+) (string, []any) {
+	if _, ok := uiConfigs[typeName]; ok {
+		set += ", ui_config = ?"
+		args = append(args, uiJSON)
+	}
+	if _, ok := extractionPrompts[typeName]; ok {
+		set += ", extraction_config = ?"
+		args = append(args, extractionJSON)
+	}
+	return set, args
 }
 
 // assignPackWithTypesTx applies precomputed per-type registry actions inside an
@@ -1540,18 +1570,22 @@ func (r *Repository) assignPackWithTypesTx(
 
 		case "replace":
 			// The pack owns the type (an upgrade): the incoming definition is
-			// authoritative, so removed properties are removed too.
-			_, err := tx.NewRaw(`
+			// authoritative, so removed properties are removed too, and the type
+			// is re-enabled — re-installing a pack is a request for its types to
+			// be available, and a stale per-type disable would otherwise leave an
+			// upgraded type invisible. Config columns the pack does not declare
+			// keep their current value: a per-project customisation
+			// (schemaregistry.UpdateType) must not be wiped by a version bump
+			// that carries no appearance/extraction data.
+			set := "json_schema = ?, schema_id = ?, enabled = true, updated_at = ?"
+			args := []any{string(a.incomingSchema), schemaID, now}
+			set, args = appendDeclaredConfigColumns(set, args, a.name, uiConfigs, extractionPrompts, uiConfigJSON, extractionConfigJSON)
+			args = append(args, projectID, a.name)
+			if _, err := tx.NewRaw(`
 				UPDATE kb.project_object_schema_registry
-				SET json_schema = ?,
-				    ui_config = ?,
-				    extraction_config = ?,
-				    schema_id = ?,
-				    enabled = true,
-				    updated_at = ?
+				SET `+set+`
 				WHERE project_id = ? AND type_name = ?
-			`, string(a.incomingSchema), uiConfigJSON, extractionConfigJSON, schemaID, now, projectID, a.name).Exec(ctx)
-			if err != nil {
+			`, args...).Exec(ctx); err != nil {
 				return err
 			}
 
@@ -1564,14 +1598,7 @@ func (r *Repository) assignPackWithTypesTx(
 				// win over incoming ones (mergeSchemas), so a merge is additive.
 				set := "json_schema = ?, schema_id = ?, enabled = true, updated_at = ?"
 				args := []any{string(a.mergedSchema), schemaID, now}
-				if _, ok := uiConfigs[a.name]; ok {
-					set += ", ui_config = ?"
-					args = append(args, uiConfigJSON)
-				}
-				if _, ok := extractionPrompts[a.name]; ok {
-					set += ", extraction_config = ?"
-					args = append(args, extractionConfigJSON)
-				}
+				set, args = appendDeclaredConfigColumns(set, args, a.name, uiConfigs, extractionPrompts, uiConfigJSON, extractionConfigJSON)
 				args = append(args, projectID, a.name)
 				if _, err := tx.NewRaw(`
 					UPDATE kb.project_object_schema_registry

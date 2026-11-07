@@ -178,6 +178,82 @@ func TestAssignPackCrossPackMergeMovesOwnership(t *testing.T) {
 	assert.Contains(t, props, "legal_name")
 }
 
+// TestAssignPackUpgradePreservesProjectTypeCustomisation pins the config-column
+// rule for the "replace" action: a refresh rewrites the definition, but a
+// ui_config the incoming pack does not declare keeps the value the project set
+// (via the type-registry editor), instead of being reset to '{}'.
+func TestAssignPackUpgradePreservesProjectTypeCustomisation(t *testing.T) {
+	ctx, repo, db, projectID := setupTypeRegistryTest(t)
+
+	pack, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name: "ot-core", Version: "0.1.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"}}}]`),
+	})
+	require.NoError(t, err)
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: pack.ID})
+	require.NoError(t, err)
+
+	// The project customises the type's appearance in the registry.
+	_, err = db.NewRaw(`
+		UPDATE kb.project_object_schema_registry
+		SET ui_config = '{"icon":"project-icon"}', extraction_config = '{"enabled":false}'
+		WHERE project_id = ? AND type_name = 'Person'
+	`, projectID).Exec(ctx)
+	require.NoError(t, err)
+
+	newVersion := "0.2.0"
+	_, err = repo.UpdatePack(ctx, pack.ID, projectID, &schemas.UpdatePackRequest{
+		Version: &newVersion,
+		ObjectTypeSchemas: json.RawMessage(
+			`[{"name":"Person","properties":{"name":{"type":"string"},"email":{"type":"string"}}}]`),
+	})
+	require.NoError(t, err)
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: pack.ID})
+	require.NoError(t, err)
+
+	var row struct {
+		UIConfig         json.RawMessage `bun:"ui_config"`
+		ExtractionConfig json.RawMessage `bun:"extraction_config"`
+	}
+	require.NoError(t, db.NewRaw(`
+		SELECT ui_config, extraction_config FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND type_name = 'Person'
+	`, projectID).Scan(ctx, &row))
+	assert.JSONEq(t, `{"icon":"project-icon"}`, string(row.UIConfig),
+		"an upgrade must not wipe a project's type appearance")
+	assert.JSONEq(t, `{"enabled":false}`, string(row.ExtractionConfig),
+		"an upgrade must not wipe a project's extraction config")
+}
+
+// TestAssignPackReassignReactivatesAssignment pins the companion of the
+// in-place upgrade: re-assigning a pack whose assignment was deactivated must
+// bring it back, or the registry refresh stays invisible to the compiled-types
+// and validation reads that filter on active.
+func TestAssignPackReassignReactivatesAssignment(t *testing.T) {
+	ctx, repo, db, projectID := setupTypeRegistryTest(t)
+
+	pack, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name: "ot-core", Version: "0.1.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"}}}]`),
+	})
+	require.NoError(t, err)
+	first, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: pack.ID})
+	require.NoError(t, err)
+	require.NotEmpty(t, first.AssignmentID)
+
+	inactive := false
+	require.NoError(t, repo.UpdateAssignment(ctx, projectID, first.AssignmentID, &schemas.UpdateAssignmentRequest{Active: &inactive}))
+
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: pack.ID})
+	require.NoError(t, err)
+
+	var active bool
+	require.NoError(t, db.NewRaw(
+		`SELECT active FROM kb.project_schemas WHERE id = ?`, first.AssignmentID,
+	).Scan(ctx, &active))
+	assert.True(t, active, "re-assigning a pack must reactivate its assignment")
+}
+
 // TestPreviewMergeDetectsSameRunCollision is the #293 regression: two packs in
 // the same install declaring the same type must be reported before anything is
 // materialized, even when the type is not registered yet.

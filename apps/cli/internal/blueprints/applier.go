@@ -909,6 +909,12 @@ func expandedRelationshipTypeCount(d RelationshipTypeDef) int64 {
 
 // marshalPackSchemas converts the typed ObjectTypes / RelationshipTypes slices
 // to the raw JSON blobs expected by the API.
+//
+// uiCfgs is the type-keyed appearance map the registry stores per type. It must
+// carry the pack-level uiConfigs blob AND every object type's inline `ui:`
+// block, with the inline block winning (mirroring ObjectTypeDef.UI's contract),
+// or a pack that only declares inline `ui:` installs with ui_config='{}' and
+// its icons/colours never reach the registry (issue #291).
 func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts json.RawMessage, err error) {
 	if len(p.ObjectTypes) > 0 {
 		objSchemas, err = json.Marshal(p.ObjectTypes)
@@ -926,13 +932,41 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 			return nil, nil, nil, nil, fmt.Errorf("marshal relationshipTypes: %w", err)
 		}
 	}
-	if raw := p.UIConfigs.Raw(); len(raw) > 0 {
-		uiCfgs = raw
+	uiCfgs, err = mergePackUIConfigs(p)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 	if raw := p.ExtractionPrompts.Raw(); len(raw) > 0 {
 		exPrompts = raw
 	}
 	return objSchemas, relSchemas, uiCfgs, exPrompts, nil
+}
+
+// mergePackUIConfigs builds the type-keyed uiConfigs map sent to the API from
+// the pack-level uiConfigs blob overlaid with each object type's inline `ui:`
+// block (inline wins). Returns nil when the pack declares neither, so the
+// request omits the field instead of sending an empty map.
+func mergePackUIConfigs(p PackFile) (json.RawMessage, error) {
+	ui := make(map[string]json.RawMessage, len(p.ObjectTypes))
+	if raw := p.UIConfigs.Raw(); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &ui); err != nil {
+			return nil, fmt.Errorf("parse uiConfigs: %w", err)
+		}
+	}
+	for _, ot := range p.ObjectTypes {
+		if ot.Name == "" || len(ot.UI) == 0 {
+			continue
+		}
+		raw, err := json.Marshal(ot.UI)
+		if err != nil {
+			return nil, fmt.Errorf("marshal ui block for object type %s: %w", ot.Name, err)
+		}
+		ui[ot.Name] = raw
+	}
+	if len(ui) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(ui)
 }
 
 func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequest {

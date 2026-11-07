@@ -408,10 +408,11 @@ func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p P
 // seeder and the apply path produce identical payloads.
 //
 // It also returns the pack's top-level ui_configs map (type name → UI config)
-// built from each object type's inline `ui:` block. Appearance lives in a
-// schema-level ui_configs map keyed by type name in the registry, so a pack
-// that declares `ui:` must have it promoted here or the icons/colours never
-// reach the registry (issue #291).
+// built from the pack-level uiConfigs block overlaid with each object type's
+// inline `ui:` block (inline wins). Appearance lives in a schema-level
+// ui_configs map keyed by type name in the registry, so a pack that declares
+// either form must have it promoted here or the icons/colours never reach the
+// registry (issue #291).
 func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes, uiConfigs json.RawMessage, err error) {
 	objectTypes, err = json.Marshal(p.ObjectTypes)
 	if err != nil {
@@ -426,7 +427,13 @@ func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes, uiConfigs j
 		return nil, nil, nil, apperror.NewBadRequest("invalid relationshipTypes in pack " + p.Name)
 	}
 
-	ui := make(map[string]json.RawMessage, len(p.ObjectTypes))
+	ui := make(map[string]json.RawMessage, len(p.UIConfigs)+len(p.ObjectTypes))
+	for typeName, cfg := range p.UIConfigs {
+		if typeName == "" || len(cfg) == 0 {
+			continue
+		}
+		ui[typeName] = cfg
+	}
 	for _, ot := range p.ObjectTypes {
 		if ot.Name == "" || len(ot.UI) == 0 {
 			continue
