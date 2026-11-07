@@ -320,7 +320,9 @@ func TestMCP_RPC_ToolsList(t *testing.T) {
 		tool := tt.(map[string]any)
 		toolNames[tool["name"].(string)] = true
 	}
-	for _, name := range []string{"schema-version", "entity-type-list", "entity-query", "entity-search"} {
+	// The consolidated catalog advertises one tool per resource (#305); the
+	// per-verb names these replaced remain callable as deprecated aliases.
+	for _, name := range []string{"schema-types", "entity", "project"} {
 		if !toolNames[name] {
 			t.Errorf("expected tool %q", name)
 		}

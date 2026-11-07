@@ -610,6 +610,12 @@ var schemasInstallCmd = &cobra.Command{
 					fmt.Fprintf(out, "  ↑ %s\n", t)
 				}
 			}
+			if len(result.ReplacedTypes) > 0 {
+				fmt.Fprintf(out, "\nTypes to replace — already owned by this pack (%d):\n", len(result.ReplacedTypes))
+				for _, t := range result.ReplacedTypes {
+					fmt.Fprintf(out, "  ↻ %s\n", t)
+				}
+			}
 			if len(result.Conflicts) > 0 {
 				fmt.Fprintf(out, "\nConflicts (%d):\n", len(result.Conflicts))
 				for _, c := range result.Conflicts {
@@ -642,6 +648,9 @@ var schemasInstallCmd = &cobra.Command{
 		}
 		if len(result.MergedTypes) > 0 {
 			fmt.Fprintf(out, "  Merged types    (%d): %s\n", len(result.MergedTypes), strings.Join(result.MergedTypes, ", "))
+		}
+		if len(result.ReplacedTypes) > 0 {
+			fmt.Fprintf(out, "  Replaced types  (%d): %s\n", len(result.ReplacedTypes), strings.Join(result.ReplacedTypes, ", "))
 		}
 
 		// Report migration status if present

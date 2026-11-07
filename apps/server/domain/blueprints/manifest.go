@@ -32,6 +32,12 @@ type PackManifest struct {
 	Migrations        *schemas.SchemaMigrationHints `json:"migrations,omitempty"`
 	ObjectTypes       []ObjectTypeDef               `json:"objectTypes,omitempty"`
 	RelationshipTypes []RelationshipTypeDef         `json:"relationshipTypes,omitempty"`
+	// UIConfigs is the optional pack-level appearance map (type name → UI
+	// config). A type's inline `ui:` block wins over its entry here; this is
+	// only the pack-level default, mirroring the CLI's PackFile. Without it a
+	// pack authored with a top-level `uiConfigs:` block applied server-side
+	// (blueprint apply / builtin seeding) silently lost its appearance data.
+	UIConfigs map[string]json.RawMessage `json:"uiConfigs,omitempty"`
 }
 
 // UnmarshalJSON accepts both the camelCase (`objectTypes`/`relationshipTypes`)

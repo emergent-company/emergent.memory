@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,15 +102,28 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 	// dropped. Later migrations may sit between head and 00232 (e.g. 00233 adds
 	// a column to it, 00238 adds blueprint model overrides, and 00239 adds a
 	// project_id column), so step back one at a time rather than assuming a
-	// fixed rollback depth. The bound is the number of embedded migrations
-	// rather than a fixed cap, so adding a head migration cannot make this test
-	// fail before the drop is reached.
-	allMigrations, err := goose.CollectMigrations(".", 0, math.MaxInt64)
+	// fixed rollback depth.
+	//
+	// The bound is the size of the embedded migration set, not a hand-maintained
+	// constant: the distance from head to 00232 grows with every new migration,
+	// and a fixed cap silently falls one short (it did at 41 migrations, which
+	// failed the DB-backed suite for every PR until the cap was raised).
+	entries, err := migrations.FS.ReadDir(".")
 	if err != nil {
-		t.Fatalf("collect embedded migrations: %v", err)
+		t.Fatalf("list embedded migrations: %v", err)
 	}
+	migrationCount := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			migrationCount++
+		}
+	}
+	if migrationCount == 0 {
+		t.Fatalf("no embedded migrations found")
+	}
+
 	dropped := false
-	for range allMigrations {
+	for range migrationCount {
 		if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 			t.Fatalf("roll back one migration: %v", err)
 		}
