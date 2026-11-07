@@ -141,9 +141,12 @@ func TestMCPSSE_ToolsList_DiscoverAll18Tools(t *testing.T) {
 		tool := tt.(map[string]any)
 		toolNames[tool["name"].(string)] = true
 	}
+	// #305 consolidated the catalog behind action discriminators: the per-verb
+	// names these used to be (schema-version, entity-query, schema-list, ...)
+	// still dispatch as deprecated aliases, but tools/list advertises the
+	// consolidated tools, so this asserts those.
 	expected := []string{
-		"schema-version", "entity-type-list", "entity-query", "entity-search",
-		"schema-list", "schema-get", "schema-list-available", "schema-list-installed",
+		"project", "entity", "entity-write", "schema-types", "schema",
 	}
 	for _, name := range expected {
 		if !toolNames[name] {
