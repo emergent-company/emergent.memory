@@ -76,7 +76,7 @@ jobs:
       # force-moved onto main. A bare `git describe --tags --abbrev=0 HEAD^`
       # resolves the NEAREST tag, so a rolling tag parked on the commit right
       # before the release bump wins over the previous `vX.Y.Z` tag. The diff
-      # then covers only the bump commit (VERSION, main.go, swagger, pbxproj) and
+      # then covers only the bump commit (VERSION, main.go, pbxproj) and
       # the web-ui tree looks unchanged — v0.88.0 shipped a `web-ui:0.88.0` that
       # was a re-alias of the 0.87.4 image. Match release tags only.
       - name: Check if changed since last tag
