@@ -1754,11 +1754,6 @@ func looksLikeSchemaKeyword(key string, value any) bool {
 	case "type", "$schema", "$id", "$ref", "title", "description", "format":
 		_, ok := value.(string)
 		return ok
-	case "required":
-		switch value.(type) {
-		case []any, []string:
-			return true
-		}
 	case "properties", "definitions", "$defs", "items":
 		_, ok := value.(map[string]any)
 		return ok
@@ -1787,30 +1782,35 @@ func isSchemaKeyword(schema map[string]any, key string) bool {
 	return looksLikeSchemaKeyword(key, value)
 }
 
-// requiredNames reads a schema's `required` keyword. A list arrives as an array
-// of names; a model that answers with one comma-separated string is believed
+// requiredNames reads a schema's `required` keyword. An array marks the keyword
+// even when it yields no names: {"properties": {…}, "required": []} is still a
+// wrapper. A model that answers with one comma-separated string is believed
 // only when every name in it is a property the schema defines, so a property
 // literally named "required" whose value is a string ({"required": "yes"}) is
-// not read as a required list (#258).
+// not read as a required list (#258). A one-name string is therefore accepted
+// when the schema also defines that property; that ambiguity is inherent to
+// reading the value's shape.
 func requiredNames(schema map[string]any) ([]string, bool) {
 	value, ok := schema["required"]
 	if !ok {
 		return nil, false
 	}
-	if list, isString := value.(string); isString {
-		defined := schemaPropertyKeys(schema)
-		for _, part := range strings.Split(list, ",") {
-			name := strings.TrimSpace(part)
-			if _, known := defined[name]; name == "" || !known {
-				return nil, false
-			}
-		}
+	switch value.(type) {
+	case []any, []string:
+		return propertyNames(value), true
 	}
-	names := propertyNames(value)
-	if len(names) == 0 {
+	list, isString := value.(string)
+	if !isString {
 		return nil, false
 	}
-	return names, true
+	defined := schemaPropertyKeys(schema)
+	for _, part := range strings.Split(list, ",") {
+		name := strings.TrimSpace(part)
+		if _, known := defined[name]; name == "" || !known {
+			return nil, false
+		}
+	}
+	return propertyNames(list), true
 }
 
 // schemaPropertyKeys returns the names a `required` list could legitimately

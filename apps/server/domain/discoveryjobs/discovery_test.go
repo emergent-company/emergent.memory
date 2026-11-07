@@ -474,6 +474,32 @@ func TestNormalizeInferredSchema_KeepsLonePropertyNamedProperties(t *testing.T) 
 	}
 }
 
+func TestNormalizeInferredSchema_EmptyRequiredArrayStillMarksWrapper(t *testing.T) {
+	// An empty `required` array is still the keyword: it must not stop a
+	// `properties` wrapper from unwrapping, or the columns leak as junk
+	// properties named after the wrapper keys (#258 review).
+	schema := map[string]any{
+		"properties": map[string]any{
+			"title": map[string]any{"type": "string"},
+		},
+		"required": []any{},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["title"] == nil {
+		t.Fatalf("columns missing: %#v", props)
+	}
+	if _, present := props["properties"]; present {
+		t.Errorf("wrapper key leaked: %#v", props)
+	}
+	if _, present := props["required"]; present {
+		t.Errorf("wrapper key leaked: %#v", props)
+	}
+	if len(required) != 0 {
+		t.Errorf("required = %v, want empty", required)
+	}
+}
+
 func TestNormalizeInferredSchema_KeepsPropertyNamedType(t *testing.T) {
 	// A wrapper that lists `required` while keeping properties at the top
 	// level must strip `type` only when its value is the keyword's shape
