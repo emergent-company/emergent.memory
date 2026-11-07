@@ -1108,6 +1108,11 @@ type ForkBranchRequest struct {
 	Name        string   `json:"name" validate:"required"`
 	Description *string  `json:"description,omitempty"`
 	FilterTypes []string `json:"filter_types,omitempty"` // If set, only copy objects of these types
+	// Origin is who or what created the fork: extraction | agent | manual |
+	// system. Empty defaults to manual; immutable afterwards.
+	Origin      string  `json:"origin,omitempty"`
+	OriginID    *string `json:"origin_id,omitempty"`
+	OriginLabel *string `json:"origin_label,omitempty"`
 }
 
 // ForkBranchResponse is the response for a fork branch operation.

@@ -31337,6 +31337,16 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "origin": {
+                    "description": "Origin is who or what created the branch (extraction | agent | manual |\nsystem), OriginID its id and OriginLabel the human-readable source.",
+                    "type": "string"
+                },
+                "origin_id": {
+                    "type": "string"
+                },
+                "origin_label": {
+                    "type": "string"
+                },
                 "parent_branch_id": {
                     "type": "string"
                 },
@@ -31352,6 +31362,18 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "origin": {
+                    "description": "Origin is who or what created the branch: extraction | agent | manual |\nsystem. Empty defaults to manual. Server-side creators set it; it is not\nmutable afterwards.",
+                    "type": "string"
+                },
+                "origin_id": {
+                    "description": "OriginID is the creator's id (extraction job, agent run or user).",
+                    "type": "string"
+                },
+                "origin_label": {
+                    "description": "OriginLabel is the creator rendered for humans (document filename, agent\nname, user name).",
                     "type": "string"
                 },
                 "parent_branch_id": {
@@ -34172,6 +34194,16 @@ const docTemplate = `{
                     }
                 },
                 "name": {
+                    "type": "string"
+                },
+                "origin": {
+                    "description": "Origin is who or what created the fork: extraction | agent | manual |\nsystem. Empty defaults to manual; immutable afterwards.",
+                    "type": "string"
+                },
+                "origin_id": {
+                    "type": "string"
+                },
+                "origin_label": {
                     "type": "string"
                 }
             }

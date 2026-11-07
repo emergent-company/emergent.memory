@@ -493,10 +493,16 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		if job.DocumentID != nil {
 			desc = fmt.Sprintf("Extraction job %s (doc %s)", job.ID, *job.DocumentID)
 		}
+		jobID := job.ID
 		branch, err := w.branchService.Create(ctx, &branches.CreateBranchRequest{
 			ProjectID:   &job.ProjectID,
 			Name:        branchName,
 			Description: &desc,
+			// Attribution: the UI labels this branch with its source document
+			// rather than the opaque extraction/<doc>/<job> name (issue #242).
+			Origin:      branches.OriginExtraction,
+			OriginID:    &jobID,
+			OriginLabel: w.stagingBranchLabel(ctx, job),
 		})
 		if err != nil {
 			// Non-fatal: fall back to writing on main graph rather than blocking extraction.
@@ -1070,6 +1076,25 @@ func (w *ObjectExtractionWorker) stagingBranchName(job *ObjectExtractionJob) str
 		return fmt.Sprintf("extraction/%s/%s", docShort, jobShort)
 	}
 	return fmt.Sprintf("extraction/%s", jobShort)
+}
+
+// stagingBranchLabel names the branch's source document for its origin label,
+// so the UI can show "Invoice.pdf" instead of extraction/<doc>/<job>. Best
+// effort: a missing document, filename or document service yields nil, and the
+// UI falls back to the branch name.
+func (w *ObjectExtractionWorker) stagingBranchLabel(ctx context.Context, job *ObjectExtractionJob) *string {
+	if w.docService == nil || job.DocumentID == nil {
+		return nil
+	}
+	doc, err := w.docService.GetByID(ctx, job.ProjectID, *job.DocumentID)
+	if err != nil || doc == nil || doc.Filename == nil {
+		return nil
+	}
+	name := strings.TrimSpace(*doc.Filename)
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 // resolveDocumentVersion returns the source document's current version for

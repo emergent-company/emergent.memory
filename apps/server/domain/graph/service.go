@@ -6062,6 +6062,17 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 // ForkBranch creates a new branch from a source branch and copies all HEAD objects
 // and their relationships. This is the "copy-on-fork" semantics requested by
 // `branches create --parent --copy-objects`.
+// forkOrigin normalises a fork's origin to one of the four stored values,
+// defaulting to manual. Fork cannot import the branches package's constants
+// without a cycle, so the accepted set is repeated here and pinned by a test.
+func forkOrigin(origin string) string {
+	switch origin {
+	case "extraction", "agent", "manual", "system":
+		return origin
+	}
+	return "manual"
+}
+
 func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID *uuid.UUID, req *ForkBranchRequest) (*ForkBranchResponse, error) {
 	// Validate source branch exists (nil = main, no row to check)
 	if sourceBranchID != nil {
@@ -6085,6 +6096,16 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 		ProjectID:   projectID,
 		Name:        req.Name,
 		Description: req.Description,
+		Origin:      forkOrigin(req.Origin),
+	}
+	if req.OriginID != nil {
+		if id, err := uuid.Parse(*req.OriginID); err == nil {
+			newBranch.OriginID = &id
+		}
+	}
+	if req.OriginLabel != nil {
+		label := *req.OriginLabel
+		newBranch.OriginLabel = &label
 	}
 	if sourceBranchID != nil {
 		newBranch.ParentBranchID = sourceBranchID
