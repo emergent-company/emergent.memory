@@ -14,9 +14,9 @@ func frozenExecutor(now time.Time) *AgentExecutor {
 
 // TestRunContextPrefixCarriesFrozenClockOnce is the fail-first regression for
 // issue #330: every run's first user message carries exactly one "Current date
-// and time" line with the run's clock value and an explicit zone. Before the
-// fix, runContextPrefix only contained TriggerMetadata and the model had to
-// guess the date.
+// and time" line with the run's clock value and an explicit zone. Without the
+// injection the prefix carried only TriggerMetadata, so the model had to guess
+// the date.
 func TestRunContextPrefixCarriesFrozenClockOnce(t *testing.T) {
 	frozen := time.Date(2026, 11, 7, 5, 0, 0, 0, time.UTC)
 	got := frozenExecutor(frozen).runContextPrefix(&AgentRun{})
@@ -68,6 +68,19 @@ func TestRunContextPrefixPreservesTriggerMetadata(t *testing.T) {
 		"<context>\n{\"namespace\":\"kb\",\"title\":\"nightly\"}\n</context>\n\n"
 	if got != want {
 		t.Fatalf("runContextPrefix() = %q, want %q", got, want)
+	}
+}
+
+// TestRunUserContentWiresPrefixToMessage pins the wiring the reviewer asked
+// for: runPipeline builds the model's first turn through runUserContent, not
+// through a bare user message, so losing the prefix there must fail. Without
+// this, the helper could keep the date while the real seam dropped it.
+func TestRunUserContentWiresPrefixToMessage(t *testing.T) {
+	frozen := time.Date(2026, 11, 7, 5, 0, 0, 0, time.UTC)
+	const wantPrefix = "Current date and time: 2026-11-07T05:00:00Z (UTC)\n\n"
+	got := frozenExecutor(frozen).runUserContent(&AgentRun{}, "review next_due")
+	if got != wantPrefix+"review next_due" {
+		t.Fatalf("runUserContent() = %q, want %q", got, wantPrefix+"review next_due")
 	}
 }
 

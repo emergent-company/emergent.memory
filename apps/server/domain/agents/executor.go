@@ -2391,6 +2391,14 @@ func (ae *AgentExecutor) runContextPrefix(run *AgentRun) string {
 	return b.String()
 }
 
+// runUserContent composes the run's first user turn: the per-run context
+// prefix (current date and time plus trigger metadata) followed by the caller's
+// message. It is the single wired path every surface shares, so tests exercise
+// the same call runPipeline makes (issue #330).
+func (ae *AgentExecutor) runUserContent(run *AgentRun, userMessage string) string {
+	return ae.runContextPrefix(run) + userMessage
+}
+
 // runPipeline builds the ADK agent, resolves tools, creates the runner, and
 // iterates over events until the agent is done or a safety limit is reached.
 func (ae *AgentExecutor) runPipeline(
@@ -2781,15 +2789,6 @@ func (ae *AgentExecutor) runPipeline(
 		contextInjectionMode(req.AgentDefinition) != "never" {
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
 	}
-
-	// Per-run context (current date and time plus TriggerMetadata: title,
-	// source, caller-supplied keys) is prepended to the first user-turn
-	// message rather than the system instruction, so the system instruction
-	// remains byte-identical across runs and can be served from the provider's
-	// implicit prompt cache (requires a stable prefix). This is the single seam
-	// every surface shares: trigger, scheduled, A2A, chat, chat-completions,
-	// resume and sub-agent spawns.
-	triggerContextPrefix := ae.runContextPrefix(run)
 
 	// Inject namespace from TriggerMetadata into the context so that MCP tools
 	// (entity-create, relationship-create) scope writes to the correct namespace
@@ -3617,9 +3616,14 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, fmt.Errorf("failed to create runner: %w", err)
 	}
 
-	// Build the user message. Prepend TriggerMetadata context if present so the
-	// system instruction stays static (enabling Gemini implicit prompt caching).
-	userContent := genai.NewContentFromText(triggerContextPrefix+req.UserMessage, genai.RoleUser)
+	// Build the user message. The per-run context (current date and time plus
+	// TriggerMetadata: title, source, caller-supplied keys) is prepended to the
+	// first user turn rather than the system instruction, so the system
+	// instruction remains byte-identical across runs and can be served from the
+	// provider's implicit prompt cache. This is the single seam every surface
+	// shares: trigger, scheduled, A2A, chat, chat-completions, resume and
+	// sub-agent spawns. The date/time clock is read exactly once, here.
+	userContent := genai.NewContentFromText(ae.runUserContent(run, req.UserMessage), genai.RoleUser)
 
 	// Persist the composed system instruction so the recorded transcript carries
 	// the prompt the model actually saw (base prompt + skills block + appendix +
