@@ -229,6 +229,11 @@ func TestWithBranchScopeDerivation(t *testing.T) {
 	if mcp.IsBranchScopeInstalled(absent) || mcp.IsAbsentBranchScope(absent) != true {
 		t.Fatalf("an absent hand-off must stay absent, got installed=%v", mcp.IsBranchScopeInstalled(absent))
 	}
+	// ... unless THIS definition declares a scope of its own, which is narrower.
+	narrowed := mcp.BranchScopeFromContext(ae.withBranchScope(absentCtx, declaring))
+	if narrowed.IsMainOnly() || !narrowed.AllowsOrigin("extraction") || narrowed.AllowsOrigin("agent") {
+		t.Fatalf("absent + declared = %+v, want the declared scope", narrowed.Origins())
+	}
 
 	// ... and a defining internal run still narrows it.
 	got = mcp.BranchScopeFromContext(ae.withBranchScope(fixedCtx, declaring))

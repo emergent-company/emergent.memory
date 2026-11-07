@@ -2030,14 +2030,18 @@ func withQueryBranchScope(ctx context.Context, req QueryStreamRequest) (context.
 		return mcp.ContextWithAbsentBranchScope(ctx), nil
 	case "":
 		// Other /query clients: a bare branch_scope is still honoured as a scope.
-		if req.BranchScope == nil {
-			return ctx, nil
+		if req.BranchScope != nil {
+			scope, err := mcp.NewBranchScope(*req.BranchScope)
+			if err != nil {
+				return ctx, err
+			}
+			return mcp.ContextWithFixedBranchScope(ctx, scope), nil
 		}
-		scope, err := mcp.NewBranchScope(*req.BranchScope)
-		if err != nil {
-			return ctx, err
-		}
-		return mcp.ContextWithFixedBranchScope(ctx, scope), nil
+		// No mode and no scope: a direct /query caller (the web UI's "Ask the
+		// graph" is one). It never had a branch boundary, and letting the executor
+		// install the main-only default would silently drop the branch it asked
+		// about, so restate the absence.
+		return mcp.ContextWithAbsentBranchScope(ctx), nil
 	default:
 		return ctx, fmt.Errorf("branch_scope_mode %q is not one of scoped, main_only, absent", req.BranchScopeMode)
 	}

@@ -17,6 +17,11 @@
   "version": 1,
   "raw_sql": [
     {
+      "file": "apps/server/domain/mcp/branch_scope.go",
+      "func": "branchAllowedByScope",
+      "why": "read kb.branches (id, name, origin) for ONE branch, project-scoped (WHERE project_id = ?) and only to decide whether the run's declared branch scope covers it; the caller is already an authorized project run, the query is read-only, and a missing/foreign branch fails closed as not readable (#265)"
+    },
+    {
       "file": "apps/server/domain/mcp/bundle.go",
       "func": "GenerateAgentMCPBundle",
       "why": "read core.api_tokens by token hash (the bearer validation itself; revoked/expired fails closed) + kb.projects name, read-only and keyed by the authorized endpoint's project; agent authorization is authorizeAgentBundle (401 unbound/revoked key, 403 wrong agent/revoked endpoint/disabled agent)"

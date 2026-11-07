@@ -4052,7 +4052,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			return err
 		}
 
-		branchFilter := ""
+		// Build the branch filter the same way every other read tool does: no
+		// branch named is the MAIN graph, never "all branches". An unfiltered scan
+		// would hand a main-only run (including a delegated child) unmerged work,
+		// and hand a scoped run branches outside its scope (#265).
+		branchFilter := " AND go.branch_id IS NULL"
 		branchArgs := []any{}
 		if branchID != nil {
 			branchFilter = " AND go.branch_id = ?"

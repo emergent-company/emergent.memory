@@ -231,3 +231,7 @@ outside it), and a read tool that names a branch outside the boundary is refused
     sub-agent receives the intersection of its own scope and its caller's: a child
     can never read more than its parent, and a child that declares nothing of its
     own reads the main graph only.
+
+Graph traversal and edge reads are not widened by a scope yet: they stay on the
+main graph, so a scoped agent reads branches through search, a branch named on a
+read tool, and `search-knowledge`.

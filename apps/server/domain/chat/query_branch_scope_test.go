@@ -15,13 +15,14 @@ import (
 func TestWithQueryBranchScope(t *testing.T) {
 	ctx := context.Background()
 
-	// Absent: unchanged, and the internal run keeps its own behaviour.
+	// No mode and no scope: a direct /query caller that never had a boundary. The
+	// executor must not narrow it to main only, so the absence is restated.
 	got, err := withQueryBranchScope(ctx, QueryStreamRequest{})
 	if err != nil {
-		t.Fatalf("absent branch scope: %v", err)
+		t.Fatalf("no branch boundary: %v", err)
 	}
-	if mcp.BranchScopeFromContext(got) != nil {
-		t.Fatal("absent branch scope must leave the context unscoped")
+	if mcp.IsBranchScopeInstalled(got) || !mcp.IsAbsentBranchScope(got) {
+		t.Fatal("a direct caller with no boundary must stay boundary-absent")
 	}
 
 	// Present: installed and marked fixed, so the executor preserves it instead of
@@ -66,6 +67,18 @@ func TestWithQueryBranchScope(t *testing.T) {
 	}
 	if mcp.IsBranchScopeInstalled(got) || !mcp.IsAbsentBranchScope(got) {
 		t.Fatal("absent must not install a boundary")
+	}
+
+	// A bare branch_scope with no mode is still a scope (older loopback callers).
+	got, err = withQueryBranchScope(ctx, QueryStreamRequest{BranchScope: &branchscope.Config{
+		Unmerged: true,
+		Origins:  []string{"extraction"},
+	}})
+	if err != nil {
+		t.Fatalf("bare branch scope: %v", err)
+	}
+	if !mcp.IsFixedBranchScope(got) || mcp.BranchScopeFromContext(got).IsMainOnly() {
+		t.Fatal("a bare branch_scope must install a fixed scope")
 	}
 
 	// A mode that claims a scope without one, or an unknown mode, is an error.

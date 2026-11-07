@@ -4598,13 +4598,6 @@ func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 // is left alone. An unreadable setting fails closed to main only, never to the
 // caller's inherited boundary.
 func (ae *AgentExecutor) withBranchScope(ctx context.Context, def *AgentDefinition) context.Context {
-	// A hand-off that restates an ABSENT boundary (its originating caller was a
-	// human MCP client with no boundary at all) must not be narrowed to main only
-	// here: that caller could name branches before branch scopes existed, and this
-	// run is executing its request.
-	if mcp.IsAbsentBranchScope(ctx) {
-		return ctx
-	}
 	declared, err := resolveBranchScope(def)
 	if err != nil {
 		if ae.log != nil {
@@ -4617,6 +4610,17 @@ func (ae *AgentExecutor) withBranchScope(ctx context.Context, def *AgentDefiniti
 				slog.String("error", err.Error()))
 		}
 		return mcp.ContextWithBranchScope(ctx, nil)
+	}
+	if mcp.IsAbsentBranchScope(ctx) {
+		// A hand-off that restates an ABSENT boundary (its originating caller had
+		// no boundary at all — a human MCP client, a direct /query caller) must not
+		// be narrowed to main only here: that caller could name branches before
+		// branch scopes existed, and this run is executing its request. A
+		// definition that declares a scope of its own is narrower and wins.
+		if declared.IsMainOnly() {
+			return ctx
+		}
+		return mcp.ContextWithBranchScope(ctx, declared)
 	}
 	if mcp.IsFixedBranchScope(ctx) && declared.IsMainOnly() {
 		// The caller decided this boundary and the internal definition says
