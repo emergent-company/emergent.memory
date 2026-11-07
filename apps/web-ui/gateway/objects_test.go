@@ -3267,29 +3267,15 @@ func TestRenderObjectCreatePage(t *testing.T) {
 // form/TagList) must draw the same outline as every other form field instead of
 // the component's near-black border-line-strong. daisyUI's .input/.select/
 // .textarea border with --input-color, which defaults to var(--color-base-content)
-// at 20%; app.css overrides the TagList wrapper with that same token. The
-// override is keyed on the `.memory-chip-list` class the call sites pass, so
-// this test pins both halves: the hook is still rendered, and the rule still
-// paints the input token (not the ladder's strong step).
+// at 20%; app.css overrides the TagList wrapper with that same token. Since the
+// v0.19.0 bump the override is keyed structurally (a .relative wrapper directly
+// containing the border-line-strong field box) rather than on a call-site class,
+// so this test pins the rule and its token.
 func TestTagListWrapperMatchesInputBorder(t *testing.T) {
 	const (
-		hook     = "memory-chip-list"
-		selector = ".memory-chip-list > div > div:not(.absolute):not(:focus-within)"
+		selector = "div.relative > div.border-line-strong:not(:focus-within)"
 		wantDecl = "border-color: color-mix(in oklab, var(--color-base-content) 20%, transparent)"
 	)
-
-	objectTypes := []CompiledType{{
-		Name:       "person",
-		Properties: json.RawMessage(`{"tags":{"type":"array"}}`),
-	}}
-	propDefs := []objectPropertyDef{{Name: "tags", Type: "array"}}
-	createHTML := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, objectCreateForm{Type: "person"}, nil, nil, nil))
-	editHTML := renderHTML(t, objectBuiltinPropertiesCard(&GraphObject{Key: "k", Labels: []string{"vip"}}, nil))
-	for name, html := range map[string]string{"create": createHTML, "edit": editHTML} {
-		if !strings.Contains(html, hook) {
-			t.Errorf("%s page TagList must carry the %q hook that app.css styles", name, hook)
-		}
-	}
 
 	css, err := os.ReadFile("webui/css/app.css")
 	if err != nil {
@@ -3844,7 +3830,7 @@ func TestPropertyInput(t *testing.T) {
 	// inputs); a long or multi-line element cannot be a chip, so the whole
 	// array is edited as JSON instead.
 	htmlChips := renderHTML(t, propertyInput(objectPropertyDef{Name: "tags", Type: "array"}, []string{"x", "y"}, nil, false))
-	if !strings.Contains(htmlChips, `placeholder="Add an item..."`) || !strings.Contains(htmlChips, `memory-chip-list`) || strings.Contains(htmlChips, `name="prop_tags" type="text"`) {
+	if !strings.Contains(htmlChips, `placeholder="Add an item..."`) || !strings.Contains(htmlChips, `min-w-0 max-w-full`) || strings.Contains(htmlChips, `name="prop_tags" type="text"`) {
 		t.Errorf("short array: expected TagList input in:\n%s", htmlChips)
 	}
 	long := strings.Repeat("a", jsonEditorElementLimit+1)
