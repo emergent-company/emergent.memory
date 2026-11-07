@@ -82,7 +82,7 @@ func TestShippedPackPropertyLabels(t *testing.T) {
 				// so check the labels survive that hop too: a label that passes
 				// the rules above but is dropped on the way to kb.graph_schemas
 				// would never reach the UI.
-				objectTypesJSON, _, jsonErr := packSchemaJSON(pack)
+				objectTypesJSON, _, _, jsonErr := packSchemaJSON(pack)
 				require.NoErrorf(t, jsonErr, "%s: %s must produce a pack schema payload", src.name, p)
 				assertTitlesSurviveRegistryJSON(t, path.Join(src.name, p), objectTypesJSON, objType.Name, titles)
 			}

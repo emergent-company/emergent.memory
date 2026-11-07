@@ -377,6 +377,7 @@ type AssignPackResult struct {
 	InstalledTypes   []string         `json:"installed_types"`
 	SkippedTypes     []string         `json:"skipped_types,omitempty"`
 	MergedTypes      []string         `json:"merged_types,omitempty"`
+	ReplacedTypes    []string         `json:"replaced_types,omitempty"`
 	Conflicts        []SchemaConflict `json:"conflicts,omitempty"`
 	AlreadyInstalled bool             `json:"already_installed,omitempty"`
 	// Migration fields — populated when the schema has a migrations block

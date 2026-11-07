@@ -291,18 +291,17 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 			Action: BlueprintsActionError, Error: fmt.Errorf("update pack: %w", err)}
 	}
 
-	// A merge-confirmed upgrade also re-assigns the updated pack so its type
-	// definitions land in the project registry (Merge=true keeps existing
-	// property definitions and adds new ones). Without merge confirmation the
-	// historical upgrade path is unchanged.
-	if b.mergeTypes {
-		if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
-			SchemaID: packID,
-			Merge:    true,
-		}); err != nil {
-			return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-				Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
-		}
+	// Re-assign after every upgrade so the updated pack's type definitions reach
+	// the project registry (an upgrade is an idempotent "refresh this pack"
+	// operation). The server replaces types this pack owns and follows
+	// Merge for types owned by other packs, so Merge only needs to be set when
+	// the caller confirmed a cross-pack merge in the preflight.
+	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+		SchemaID: packID,
+		Merge:    b.mergeTypes,
+	}); err != nil {
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
 	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionUpdated}
@@ -910,6 +909,12 @@ func expandedRelationshipTypeCount(d RelationshipTypeDef) int64 {
 
 // marshalPackSchemas converts the typed ObjectTypes / RelationshipTypes slices
 // to the raw JSON blobs expected by the API.
+//
+// uiCfgs is the type-keyed appearance map the registry stores per type. It must
+// carry the pack-level uiConfigs blob AND every object type's inline `ui:`
+// block, with the inline block winning (mirroring ObjectTypeDef.UI's contract),
+// or a pack that only declares inline `ui:` installs with ui_config='{}' and
+// its icons/colours never reach the registry (issue #291).
 func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts json.RawMessage, err error) {
 	if len(p.ObjectTypes) > 0 {
 		objSchemas, err = json.Marshal(p.ObjectTypes)
@@ -927,13 +932,46 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 			return nil, nil, nil, nil, fmt.Errorf("marshal relationshipTypes: %w", err)
 		}
 	}
-	if raw := p.UIConfigs.Raw(); len(raw) > 0 {
-		uiCfgs = raw
+	uiCfgs, err = mergePackUIConfigs(p)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 	if raw := p.ExtractionPrompts.Raw(); len(raw) > 0 {
 		exPrompts = raw
 	}
 	return objSchemas, relSchemas, uiCfgs, exPrompts, nil
+}
+
+// mergePackUIConfigs builds the type-keyed uiConfigs map sent to the API from
+// the pack-level uiConfigs blob overlaid with each object type's inline `ui:`
+// block (inline wins). Returns nil when the pack declares neither, so the
+// request omits the field instead of sending an empty map.
+//
+// The pack-level blob is read through decodePackUIConfigs so a JSON `null`
+// (which the validator already treats as absent) cannot nil the map out from
+// under the inline overlay.
+func mergePackUIConfigs(p PackFile) (json.RawMessage, error) {
+	entries, err := decodePackUIConfigs(p)
+	if err != nil {
+		return nil, err
+	}
+	ui := make(map[string]any, len(entries)+len(p.ObjectTypes))
+	for name, cfg := range entries {
+		if name == "" {
+			continue
+		}
+		ui[name] = cfg
+	}
+	for _, ot := range p.ObjectTypes {
+		if ot.Name == "" || len(ot.UI) == 0 {
+			continue
+		}
+		ui[ot.Name] = ot.UI
+	}
+	if len(ui) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(ui)
 }
 
 func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequest {
