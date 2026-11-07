@@ -9,6 +9,13 @@ import SwiftUI
 /// toolbar's baseline. The organisation now lives in the panel header, where
 /// there is room for it.
 ///
+/// `MainWindowView` installs this control only while the account is effectively
+/// signed in. Signed out there is nothing to switch, and the trigger's own
+/// "Sign in" label would sit beside the account control's Sign in button; that
+/// control is the single signed-out affordance. The labels below therefore cover
+/// a session that expires under a signed-in window rather than the signed-out
+/// toolbar.
+///
 /// The panel itself is `ProjectSwitcherPanel`, a real view in a `.popover`
 /// rather than a `Menu` (see that type for why).
 struct ProjectSwitcherView: View {

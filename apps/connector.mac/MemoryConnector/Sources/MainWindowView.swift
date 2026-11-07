@@ -41,19 +41,28 @@ struct MainWindowView: View {
                 // affordances, and the panel header carries the identity. The
                 // pre-26 toolbar never drew one, so the fallback branch keeps
                 // the same shape.
+                //
+                // The project control exists only while effectively signed in:
+                // with no account there is nothing to switch, and a project
+                // trigger would render its own "Sign in" label beside the
+                // account control's button — the same action, twice.
                 if #available(macOS 26, *) {
-                    ToolbarItem(placement: .primaryAction) {
-                        ProjectSwitcherView()
+                    if accountStore.isEffectivelySignedIn {
+                        ToolbarItem(placement: .primaryAction) {
+                            ProjectSwitcherView()
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                        ToolbarSpacer(.fixed)
                     }
-                    .sharedBackgroundVisibility(.hidden)
-                    ToolbarSpacer(.fixed)
                     ToolbarItem(placement: .primaryAction) {
                         AccountToolbarView()
                     }
                     .sharedBackgroundVisibility(.hidden)
                 } else {
-                    ToolbarItem(placement: .primaryAction) {
-                        ProjectSwitcherView()
+                    if accountStore.isEffectivelySignedIn {
+                        ToolbarItem(placement: .primaryAction) {
+                            ProjectSwitcherView()
+                        }
                     }
                     ToolbarItem(placement: .primaryAction) {
                         AccountToolbarView()
