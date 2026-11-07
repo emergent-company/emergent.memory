@@ -465,9 +465,12 @@ func (s *Server) uiBackupDetail(c echo.Context) error {
 }
 
 // uiBackupCreate handles the create form (PRG → POST /backups): it forwards
-// includeDeleted/includeChat/retentionDays to memory and redirects back to the
-// list. retentionDays defaults to 30 when blank (matching memory's default);
-// out-of-range values are rejected by memory and surface via the ?err= flash.
+// includeDeleted/includeChat/retentionDays to memory and, on success, redirects
+// back to the list. retentionDays defaults to 30 when blank (matching memory's
+// default). A malformed/out-of-range retention is a validation failure of the
+// create form, which now lives on GET /backups/new, so the error flashes there
+// (where the field and its message are visible) instead of on the list — the
+// same inline-feedback target as uiMCPCreate's re-render.
 func (s *Server) uiBackupCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	includeDeleted := c.FormValue("includeDeleted") != ""
@@ -476,12 +479,12 @@ func (s *Server) uiBackupCreate(c echo.Context) error {
 	if raw := c.FormValue("retentionDays"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			return redirectWithError(c, "/backups", fmt.Errorf("retentionDays must be a number of days"))
+			return redirectWithError(c, "/backups/new", fmt.Errorf("retentionDays must be a number of days"))
 		}
 		retentionDays = n
 	}
 	if _, err := s.memory.CreateBackup(ctx, includeDeleted, includeChat, retentionDays); err != nil {
-		return redirectWithError(c, "/backups", backupActionError(err))
+		return redirectWithError(c, "/backups/new", backupActionError(err))
 	}
 	return c.Redirect(http.StatusSeeOther, "/backups?created=1")
 }

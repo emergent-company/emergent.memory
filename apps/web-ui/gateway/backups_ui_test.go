@@ -538,8 +538,46 @@ func TestUIBackupCreateRejected(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/backups?err=") {
-		t.Errorf("location = %q, want error flash", loc)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/backups/new?err=") {
+		t.Errorf("location = %q, want the create page's error flash", loc)
+	}
+}
+
+// TestUIBackupCreateInvalidLandsOnCreatePage follows the PRG redirect from a
+// rejected create and asserts the user sees the error next to the form they
+// submitted (not on the list, which no longer carries the form).
+func TestUIBackupCreateInvalidLandsOnCreatePage(t *testing.T) {
+	f := &fakeMemory{
+		project:          backupProject(),
+		createdBackupErr: fmt.Errorf("memory 400 bad_request: retention_days must be between 1 and 365"),
+	}
+	_, e := newBackupsEcho(f)
+	form := url.Values{"retentionDays": {"999"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/backups", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, loc, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("follow-up status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	// The flash must carry the sanitized validation message, and the page the
+	// user lands on must be the form itself.
+	msg, err := url.QueryUnescape(strings.TrimPrefix(loc, "/backups/new?err="))
+	if err != nil || msg == "" {
+		t.Fatalf("could not decode error flash from %q: %v", loc, err)
+	}
+	for _, want := range []string{msg, `id="backup-retention"`, `action="/backups"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("error landing page missing %q", want)
+		}
 	}
 }
 
@@ -554,8 +592,8 @@ func TestUIBackupCreateBadRetentionInput(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "retentionDays+must+be+a+number") {
-		t.Errorf("location = %q", loc)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/backups/new?err=") || !strings.Contains(loc, "retentionDays+must+be+a+number") {
+		t.Errorf("location = %q, want the create page's error flash", loc)
 	}
 	if f.createdBackupReq.RetentionDays != 0 {
 		t.Error("no create should be forwarded for a malformed retention value")

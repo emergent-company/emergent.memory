@@ -55,9 +55,13 @@ async function firstRowBackupId(page: Page): Promise<string> {
   return href.match(/\/backups\/([^/]+)/)?.[1] ?? '';
 }
 
-// startBackupViaForm submits the real inline create form (Start backup) and
-// returns the new backup's id.
+// startBackupViaForm opens the create page (GET /backups/new, linked from the
+// list header action), submits the real create form (Start backup), and returns
+// the new backup's id. The form no longer lives on /backups: the create flow
+// PRG-redirects back to the list on success.
 async function startBackupViaForm(page: Page): Promise<string> {
+  await goto(page, '/backups/new');
+  await expectAppPage(page, /New backup/);
   await page.getByRole('button', { name: 'Start backup' }).click();
   await page.waitForURL(/\/backups\?created=1/, { timeout: 30_000 });
   await page.waitForLoadState('domcontentloaded');
