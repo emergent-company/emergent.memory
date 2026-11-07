@@ -1,0 +1,225 @@
+package agents
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"google.golang.org/adk/v2/tool"
+)
+
+// scopeOnlyToolPool supplies only the tool-scope catalog, which is all the
+// capability disclosure reads from the tool pool.
+type scopeOnlyToolPool struct {
+	scopes map[string]string
+}
+
+func (p *scopeOnlyToolPool) ResolveTools(string, *AgentDefinition, int, int) ([]tool.Tool, error) {
+	return nil, nil
+}
+func (p *scopeOnlyToolPool) StripOperatorTools(_ context.Context, tools []tool.Tool) []tool.Tool {
+	return tools
+}
+func (p *scopeOnlyToolPool) ToolScopes() map[string]string { return p.scopes }
+func (p *scopeOnlyToolPool) CallTool(context.Context, string, string, map[string]any) (map[string]any, error) {
+	return nil, nil
+}
+
+// TestResolveInstructionCapabilityDisclosure pins the #236 contract: the agent
+// must be told, before it answers, which capability groups it actually has, and
+// must never claim a save it cannot make. The report: an agent with every tool
+// group disabled answered that it had saved a fact; the fact was gone in a new
+// chat.
+func TestResolveInstructionCapabilityDisclosure(t *testing.T) {
+	ae := &AgentExecutor{}
+	empty := ""
+
+	t.Run("all tool groups disabled says no write capability", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        nil,
+			},
+		}
+		got := ae.resolveInstruction(req)
+		t.Logf("composed instruction (all disabled): %s", got)
+		if !strings.Contains(got, "Capabilities: the tool groups enabled for this agent are: none.") {
+			t.Fatalf("resolveInstruction() did not list the (empty) capability groups: %q", got)
+		}
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() did not disclose the missing write capability: %q", got)
+		}
+		if !strings.Contains(got, "say plainly that you cannot because no write tool is enabled") {
+			t.Fatalf("resolveInstruction() did not tell the agent how to answer a save request: %q", got)
+		}
+	})
+
+	t.Run("session builtin does not count as write capability", func(t *testing.T) {
+		// In production the catalog always carries set_session_title, which is
+		// injected and default-on even when every capability group is switched
+		// off. It must not make the agent believe it can persist a fact.
+		scoped := &AgentExecutor{toolPool: &scopeOnlyToolPool{scopes: map[string]string{
+			"set_session_title": "",
+			"entity-create":     "graph:write",
+			"search-hybrid":     "search",
+		}}}
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        nil,
+			},
+		}
+		got := scoped.resolveInstruction(req)
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() claimed write capability on a fully disabled agent: %q", got)
+		}
+	})
+
+	t.Run("graph write enabled reflects it and drops the cannot-save wording", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"entity-create"},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		t.Logf("composed instruction (graph write): %s", got)
+		if !strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() did not name the enabled Graph · Write group: %q", got)
+		}
+		if strings.Contains(got, "cannot save") || strings.Contains(got, "no write tool is enabled") {
+			t.Fatalf("resolveInstruction() kept the cannot-save wording for a write-capable agent: %q", got)
+		}
+		if !strings.Contains(got, "Only report that something was saved, remembered, created or updated after a write-capable tool call actually executed") {
+			t.Fatalf("resolveInstruction() dropped the no-fabricated-save rule: %q", got)
+		}
+	})
+
+	t.Run("read-only tools still get the capability list", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"search-hybrid", "entity-query"},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if !strings.Contains(got, "Search") || !strings.Contains(got, "Graph · Read") {
+			t.Fatalf("resolveInstruction() did not list the enabled read groups: %q", got)
+		}
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() did not disclose the missing write capability: %q", got)
+		}
+	})
+
+	t.Run("default-deny policy makes a whitelisted group unavailable", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt:      &empty,
+				Tools:             []string{"entity-create"},
+				DefaultToolPolicy: ToolPolicyDefaultDeny,
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() listed a group the default deny policy blocks: %q", got)
+		}
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() did not disclose the blocked write capability: %q", got)
+		}
+	})
+
+	t.Run("per-tool deny makes a whitelisted group unavailable", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"entity-create"},
+				ToolPolicies: map[string]ToolPolicy{"entity-create": {Disabled: true}},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() listed a group whose only member is policy-disabled: %q", got)
+		}
+	})
+
+	t.Run("catalog members that are not offered do not make a group available", func(t *testing.T) {
+		// Production always has a catalog. A group's membership then includes
+		// every catalog tool, whitelisted or not; a non-offered member with
+		// default-allow policy must not keep the group on the available list.
+		scoped := &AgentExecutor{toolPool: &scopeOnlyToolPool{scopes: map[string]string{
+			"entity-create":     "graph:write",
+			"entity-update":     "graph:write",
+			"search-hybrid":     "search",
+			"set_session_title": "",
+		}}}
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"entity-create"},
+				ToolPolicies: map[string]ToolPolicy{"entity-create": {Disabled: true}},
+			},
+		}
+		got := scoped.resolveInstruction(req)
+		if strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() listed Graph · Write because of a non-offered catalog member: %q", got)
+		}
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() did not disclose the blocked write capability: %q", got)
+		}
+	})
+
+	t.Run("sandbox workspace tools count as write capability", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt:  &empty,
+				Tools:         []string{"search-hybrid"},
+				SandboxConfig: map[string]any{"enabled": true},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if !strings.Contains(got, "Workspace · Execute") {
+			t.Fatalf("resolveInstruction() omitted the workspace tools the sandbox offers: %q", got)
+		}
+		if strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() told a sandbox agent it cannot write files: %q", got)
+		}
+		if !strings.Contains(got, "Graph · Write is not enabled") {
+			t.Fatalf("resolveInstruction() did not distinguish graph writes from workspace writes: %q", got)
+		}
+	})
+
+	t.Run("glob whitelist degrades to the rule-only variant", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"graph-*"},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if !strings.Contains(got, "determined by the tools you are actually offered") {
+			t.Fatalf("resolveInstruction() did not use the glob-safe variant: %q", got)
+		}
+		if strings.Contains(got, "no write tool is enabled") {
+			t.Fatalf("resolveInstruction() falsely claimed no write tool under a glob whitelist: %q", got)
+		}
+	})
+
+	t.Run("block is not duplicated when the prompt already carries it", func(t *testing.T) {
+		def := &AgentDefinition{SystemPrompt: &empty, Tools: []string{"entity-create"}}
+		block := capabilityDisclosureInstruction(def, nil)
+		prompt := "You are a helpful assistant.\n\n" + block
+		req := ExecuteRequest{AgentDefinition: def}
+		req.AgentDefinition.SystemPrompt = &prompt
+		got := ae.resolveInstruction(req)
+		if strings.Count(got, capabilityInstructionPrefix) != 1 {
+			t.Fatalf("resolveInstruction() duplicated the capability block: %q", got)
+		}
+	})
+
+	t.Run("no disclosure when the definition is unknown", func(t *testing.T) {
+		got := ae.resolveInstruction(ExecuteRequest{})
+		if strings.Contains(got, capabilityInstructionPrefix) {
+			t.Fatalf("resolveInstruction() disclosed capabilities with no definition: %q", got)
+		}
+	})
+}
