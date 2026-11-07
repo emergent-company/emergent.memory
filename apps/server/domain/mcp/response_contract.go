@@ -342,7 +342,9 @@ func slimRelationship(r *graph.GraphRelationshipResponse, opts ResponseOpts) map
 
 // slimSearchResponse renders a search response as a compact map:
 // {data, total, has_more}. Verbose adds per-item lexical_score, vector_score
-// and vector_dist, plus a top-level meta (passed through as-is).
+// and vector_dist, plus a top-level meta (passed through as-is). A scoped search
+// also carries meta in compact mode: the branch note is what tells the model its
+// answer is bounded by pending branches, so it cannot be a verbose-only detail.
 func slimSearchResponse(res *graph.SearchResponse, opts ResponseOpts) map[string]any {
 	if res == nil {
 		return nil
@@ -353,7 +355,7 @@ func slimSearchResponse(res *graph.SearchResponse, opts ResponseOpts) map[string
 		"total":    res.Total,
 		"has_more": res.HasMore,
 	}
-	if opts.Verbose && res.Meta != nil {
+	if res.Meta != nil && (opts.Verbose || res.Meta.BranchScopeNote != "" || len(res.Meta.BranchesRead) > 0) {
 		out["meta"] = res.Meta
 	}
 
@@ -379,6 +381,22 @@ func slimSearchData(items []*graph.SearchResultItem, opts ResponseOpts) []map[st
 		item := map[string]any{
 			"object": object,
 			"score":  it.Score,
+		}
+		// Branch provenance is always emitted, not gated on verbose: an item that
+		// came from an unmerged branch is pending work, and the model must be able
+		// to say so instead of presenting it as settled fact (#265). Main-graph
+		// items carry no branch id and get none of these keys.
+		if it.BranchID != nil {
+			item["branch_id"] = *it.BranchID
+			if it.BranchName != nil {
+				item["branch_name"] = *it.BranchName
+			}
+			if it.BranchOrigin != nil {
+				item["origin"] = *it.BranchOrigin
+			}
+			if it.BranchOriginLabel != nil {
+				item["origin_label"] = *it.BranchOriginLabel
+			}
 		}
 		if opts.Verbose {
 			if it.LexicalScore != nil {
