@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 )
 
@@ -883,6 +885,95 @@ func (d *AgentDefinition) RelationshipTypes() []string {
 // entry.
 func (d *AgentDefinition) SetRelationshipTypes(types []string) {
 	setStringListConfig(d, relationshipTypesConfigKey, types)
+}
+
+// branchScopeConfigKey is the AgentDefinition.Config key holding the per-run
+// branch read scope (#265). It lives in the config JSONB blob alongside the other
+// per-definition runtime settings, so no schema change is needed. Absent or
+// `unmerged: false` means main only, which is the default.
+const branchScopeConfigKey = "branchScope"
+
+// BranchScopeConfig decodes the raw branchScope entry into its typed shape. It
+// returns (nil, nil) when the key is absent, and an error when the stored value
+// is not an object or the object has the wrong types — a definition written
+// through the raw Config map must still be validated, not trusted.
+func (d *AgentDefinition) BranchScopeConfig() (*branchscope.Config, error) {
+	if d == nil || d.Config == nil {
+		return nil, nil
+	}
+	raw, ok := d.Config[branchScopeConfigKey]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	switch cfg := raw.(type) {
+	case branchscope.Config:
+		out := cfg
+		return &out, nil
+	case map[string]any:
+		b, err := json.Marshal(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("config.branchScope: %w", err)
+		}
+		var out branchscope.Config
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil, fmt.Errorf("config.branchScope: %w", err)
+		}
+		return &out, nil
+	default:
+		return nil, fmt.Errorf("config.branchScope: expected an object, got %T", raw)
+	}
+}
+
+// BranchScope returns the validated read scope this definition grants. A nil
+// scope means main only. A stored value that fails validation is an error so the
+// caller can decide: the executor degrades to main only, while the definition API
+// reports it.
+func (d *AgentDefinition) BranchScope() (*branchscope.Scope, error) {
+	cfg, err := d.BranchScopeConfig()
+	if err != nil || cfg == nil {
+		return nil, err
+	}
+	return branchscope.New(*cfg)
+}
+
+// SetBranchScope validates and stores the branch read scope. A nil configuration,
+// or one that does not enable unmerged reads, deletes the key so the default
+// carries no redundant entry. An invalid configuration is rejected rather than
+// stored: a typo in an origin or a glob must not silently hide a branch.
+func (d *AgentDefinition) SetBranchScope(cfg *branchscope.Config) error {
+	if d == nil {
+		return fmt.Errorf("config.branchScope: nil definition")
+	}
+	if cfg == nil || !cfg.Unmerged {
+		delete(d.Config, branchScopeConfigKey)
+		return nil
+	}
+	scope, err := branchscope.New(*cfg)
+	if err != nil {
+		return err
+	}
+	if d.Config == nil {
+		d.Config = map[string]any{}
+	}
+	d.Config[branchScopeConfigKey] = branchscope.Config{
+		Unmerged:    true,
+		Origins:     scope.Origins(),
+		Branches:    scope.BranchPatterns(),
+		MaxBranches: scope.MaxBranches(),
+	}
+	return nil
+}
+
+// branchScopeConfigOrNil returns the stored branch scope for API responses. A
+// value that fails validation is dropped rather than failing the whole response:
+// the definition stays readable, and the write path is where the error is
+// reported.
+func (d *AgentDefinition) branchScopeConfigOrNil() *branchscope.Config {
+	cfg, err := d.BranchScopeConfig()
+	if err != nil || cfg == nil || !cfg.Unmerged {
+		return nil
+	}
+	return cfg
 }
 
 // stringListFromConfig reads a non-empty []string from the definition's config.

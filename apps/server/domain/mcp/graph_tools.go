@@ -364,7 +364,11 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 					Properties:  r.Fields,
 					Labels:      r.Labels,
 				},
-				Score: r.Score,
+				Score:             r.Score,
+				BranchID:          r.BranchID,
+				BranchName:        r.BranchName,
+				BranchOrigin:      r.BranchOrigin,
+				BranchOriginLabel: r.BranchOriginLabel,
 			})
 
 		case search.ItemTypeText:
@@ -425,11 +429,25 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 		items = filtered
 	}
 
-	return &graph.SearchResponse{
+	resp := &graph.SearchResponse{
 		Data:    items,
 		Total:   len(items),
 		HasMore: false,
 	}
+	// A scoped search reports what it read, so the model can say its answer is
+	// bounded by pending branches instead of silently presenting a partial
+	// picture (#265).
+	if bs := res.Metadata.BranchScope; bs != nil {
+		meta := &graph.SearchResponseMeta{
+			BranchScopeNote: bs.Note,
+			BranchesOmitted: bs.Omitted,
+		}
+		for _, b := range bs.Branches {
+			meta.BranchesRead = append(meta.BranchesRead, b.Name)
+		}
+		resp.Meta = meta
+	}
+	return resp
 }
 
 func containsStr(slice []string, s string) bool {

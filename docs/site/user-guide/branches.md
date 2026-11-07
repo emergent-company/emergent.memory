@@ -174,3 +174,48 @@ main graph (no branch ID)
 
 !!! note
     The main graph itself is not a branch and has no ID. To merge a branch into the main graph, you need the main graph's branch record ID — use `GET /api/graph/branches` to list all branches and identify the one representing main (typically the one with no parent and the earliest creation date).
+
+---
+
+## Letting an agent read unmerged branches
+
+By default an agent searches **the main graph only** — pending work sitting on an
+unmerged branch is invisible to it. An agent definition can opt into reading
+branches that have not been merged yet, narrowed by why a branch exists and by
+its name:
+
+```http
+PATCH /api/projects/{projectId}/agent-definitions/{id}
+Content-Type: application/json
+
+{
+  "branchScope": {
+    "unmerged": true,
+    "origins": ["extraction"],
+    "branches": ["extraction/*"],
+    "maxBranches": 3
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `unmerged` | `true` enables branch reads. Absent or `false` means main only. |
+| `origins` | Only branches created by these sources: `extraction`, `agent`, `manual`, `system`. Empty/omitted allows any. |
+| `branches` | Name globs. `*` is the only wildcard and it matches across `/`, so `extraction/*` covers every extraction branch. |
+| `maxBranches` | How many branches one search may read, newest first. Default 3, maximum 20. |
+
+When both `origins` and `branches` are set, a branch must match both.
+
+A search under a scope reads the main graph plus each matching branch and merges
+the results. Every object that exists only on a branch comes back flagged with
+`branch_id`, `branch_name`, `origin` and `origin_label`, so a model can say
+"on the pending extraction branch for Invoice.pdf…" rather than presenting it as
+settled fact. When the cap leaves branches unread, the response metadata carries a
+`branch_scope_note` saying so.
+
+!!! note "Read-only"
+    A branch scope never grants writes. An agent that can read a pending branch
+    cannot modify or merge it, and a delegated sub-agent receives the
+    intersection of its own scope and its caller's — a child can never read more
+    than its parent.

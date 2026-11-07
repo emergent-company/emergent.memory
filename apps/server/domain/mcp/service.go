@@ -39,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -4694,6 +4695,10 @@ func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string
 	req := &branches.CreateBranchRequest{
 		ProjectID: &projectID,
 		Name:      name,
+		// A branch created through an MCP tool was created by an agent, not a
+		// person. Attribution is server-derived (it is json:"-" on the request),
+		// so this is the only place that can say so.
+		Attribution: &branchorigin.Attribution{Origin: branchorigin.Agent},
 	}
 	if desc, ok := args["description"].(string); ok && desc != "" {
 		req.Description = &desc
@@ -6499,6 +6504,11 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 
 	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {
 		if id, err := uuid.Parse(branchIDStr); err == nil {
+			// A branch named by the model may only widen a scoped run within its
+			// own boundary, never outside it (#265).
+			if err := s.branchAllowedByScope(ctx, projectUUID, id); err != nil {
+				return nil, err
+			}
 			params.BranchID = &id
 		}
 	}

@@ -2711,6 +2711,19 @@ func (ae *AgentExecutor) runPipeline(
 	// the internal graph-query-agent) could silently widen an inherited caller
 	// boundary.
 	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
+	// The branch read scope is derived at the same seam, and narrowed by any
+	// inherited (delegated caller) scope for the same reason: a child definition
+	// must never widen the boundary its parent ran under (#265). A nil scope is
+	// main only, the default.
+	if declaredBranchScope, err := resolveBranchScope(req.AgentDefinition); err != nil {
+		if ae.log != nil {
+			ae.log.Warn("agent branch scope is invalid; running main only",
+				slog.String("agent_definition_id", req.AgentDefinition.ID),
+				slog.String("error", err.Error()))
+		}
+	} else {
+		ctx = mcp.ContextWithBranchScope(ctx, mcp.NarrowBranchScope(mcp.BranchScopeFromContext(ctx), declaredBranchScope))
+	}
 	ctx = mcp.ContextWithAgentWriteRules(ctx, resolveAgentWriteRules(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
 
@@ -4570,6 +4583,15 @@ func knowledgeBaseContextBlock(projectInfo string) string {
 // scope (issue #1695).
 func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 	return mcp.NewTypeScope(def.ObjectTypes(), def.RelationshipTypes())
+}
+
+// resolveBranchScope derives the per-agent-run branch read scope from the
+// definition's config (#265). It returns nil (main only) when the definition is
+// nil or configures no scope. A stored value that fails validation is an error:
+// the caller degrades to main only — a tampered or legacy value must fail
+// closed, never widen — while the definition API reports the same error on write.
+func resolveBranchScope(def *AgentDefinition) (*mcp.BranchScope, error) {
+	return def.BranchScope()
 }
 
 // resolveAgentWriteRules derives the per-run object write policy from the
