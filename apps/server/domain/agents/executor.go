@@ -759,12 +759,40 @@ type AgentExecutor struct {
 	// run-finalizing work_complete / work_block terminator tools for
 	// object-driven runs. Nil disables those tools (e.g. in unit tests).
 	workObjects WorkObjectStore
+
+	// skillCapture is the optional post-run capture hook. Nil disables the
+	// automatic skill loop; the project policy is the master switch.
+	skillCapture SkillCaptureHook
+	// projectCapture reads the project's skill-capture policy so the executor
+	// can add the foreground capture policy block. Nil makes capture appear off.
+	projectCapture ProjectCaptureConfigReader
+}
+
+// SkillCaptureHook is the post-run hook implemented by skills.CaptureService.
+// The interface lives here so the executor does not depend on the service's
+// concrete type and tests can inject a spy.
+type SkillCaptureHook interface {
+	AfterRun(ctx context.Context, in skills.AfterRunInput)
+}
+
+// ProjectCaptureConfigReader reads the project skill-capture policy. It is
+// implemented by domain/projects and installed by the projects fx module.
+type ProjectCaptureConfigReader interface {
+	SkillCaptureConfigForProject(ctx context.Context, projectID string) (*skills.ProjectSkillCaptureConfig, error)
 }
 
 // SetWorkObjectStore injects the graph work-object surface used by the
 // run-finalizing terminator tools.
 func (ae *AgentExecutor) SetWorkObjectStore(store WorkObjectStore) {
 	ae.workObjects = store
+}
+
+// SetSkillCaptureHook installs the post-run capture hook.
+func (ae *AgentExecutor) SetSkillCaptureHook(h SkillCaptureHook) { ae.skillCapture = h }
+
+// SetProjectCaptureConfigReader installs the project policy reader.
+func (ae *AgentExecutor) SetProjectCaptureConfigReader(r ProjectCaptureConfigReader) {
+	ae.projectCapture = r
 }
 
 // userCancelReason is the terminal reason recorded when a run is stopped by an
@@ -1449,8 +1477,70 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		span.SetStatus(codes.Ok, "")
 	}
 
+	// Automatic skill capture: only successful runs teach lessons. The hook is
+	// detached from the run lifetime and bounded, so a slow review queue can
+	// never delay or fail the run's return path.
+	if result.Status == RunStatusSuccess {
+		ae.emitSkillCapture(run, req, result)
+	}
+
 	result.Cleanup = cleanup.Cleanup
 	return result, nil
+}
+
+// emitSkillCapture enqueues one bounded review job. The actual model call runs
+// in the capture worker, never here.
+func (ae *AgentExecutor) emitSkillCapture(run *AgentRun, req ExecuteRequest, result *ExecuteResult) {
+	if ae.skillCapture == nil || req.AgentDefinition == nil || run == nil {
+		return
+	}
+	agentID := req.AgentDefinition.ID
+	if agentID == "" && req.Agent != nil {
+		agentID = req.Agent.ID
+	}
+	desc := ""
+	if req.AgentDefinition.Description != nil {
+		desc = *req.AgentDefinition.Description
+	}
+	modelName := ""
+	if req.AgentDefinition.Model != nil {
+		modelName = req.AgentDefinition.Model.Name
+	}
+	if run.Model != nil && *run.Model != "" {
+		modelName = *run.Model
+	}
+	triggerMessage := ""
+	if run.TriggerMessage != nil {
+		triggerMessage = *run.TriggerMessage
+	}
+	in := skills.AfterRunInput{
+		ProjectID:        req.ProjectID,
+		OrgID:            req.OrgID,
+		RunID:            run.ID,
+		AgentID:          agentID,
+		AgentName:        req.AgentDefinition.Name,
+		AgentDescription: desc,
+		ModelName:        modelName,
+		TriggerMessage:   triggerMessage,
+		Steps:            result.Steps,
+		Status:           string(result.Status),
+		Summary:          result.Summary,
+		AutoLoadSkills:   req.AgentDefinition.AutoLoadSkills,
+		DeclaredSkills:   req.AgentDefinition.Skills,
+		AgentCapture:     req.AgentDefinition.SkillCapture,
+	}
+	hook := ae.skillCapture
+	log := ae.log
+	go func() {
+		defer func() {
+			if r := recover(); r != nil && log != nil {
+				log.Error("skill capture hook panicked", slog.Any("panic", r))
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		hook.AfterRun(ctx, in)
+	}()
 }
 
 // defaultRunTimeout is the fallback per-step no-progress budget applied to a
@@ -2623,6 +2713,12 @@ func (ae *AgentExecutor) runPipeline(
 	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
 	ctx = mcp.ContextWithAgentWriteRules(ctx, resolveAgentWriteRules(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
+
+	// Foreground capture policy. Only projects/agents that opted in see the
+	// block, so the default instruction stays byte-identical (prompt cache).
+	if block := ae.skillCapturePrompt(ctx, req); block != "" {
+		instruction += "\n\n" + block
+	}
 
 	// Augment system instruction with workspace context if available.
 	// If workspace was requested but provisioning failed or is degraded, inject a clear
@@ -4574,6 +4670,51 @@ func hasToolPolicy(d *AgentDefinition) bool {
 	return d.DefaultToolPolicy == ToolPolicyDefaultDeny || d.DefaultToolPolicy == ToolPolicyDefaultAsk
 }
 
+// effectiveSkillCapture resolves the project policy plus the agent override.
+// Returns the normalized policy and the effective mode, or off.
+func (ae *AgentExecutor) effectiveSkillCapture(ctx context.Context, req ExecuteRequest) (*skills.ProjectSkillCaptureConfig, string) {
+	if ae.projectCapture == nil || req.AgentDefinition == nil || skills.SkillCaptureDisabled() {
+		return nil, skills.SkillCaptureOff
+	}
+	cfg, err := ae.projectCapture.SkillCaptureConfigForProject(ctx, req.ProjectID)
+	if err != nil || cfg == nil {
+		return nil, skills.SkillCaptureOff
+	}
+	mode := skills.ResolveCaptureMode(cfg, req.AgentDefinition.SkillCapture)
+	if mode == skills.SkillCaptureOff {
+		return nil, skills.SkillCaptureOff
+	}
+	normalized := cfg.Normalized()
+	return &normalized, mode
+}
+
+// skillCapturePrompt is the foreground half of the capture loop: it tells the
+// agent that preserving a durable lesson is welcome, and how to do it through
+// the skill tools. It is appended only when capture is enabled.
+func (ae *AgentExecutor) skillCapturePrompt(ctx context.Context, req ExecuteRequest) string {
+	cfg, mode := ae.effectiveSkillCapture(ctx, req)
+	if cfg == nil || mode == skills.SkillCaptureOff || req.AgentDefinition == nil {
+		return ""
+	}
+	prefix := skills.AgentSkillPrefix(req.AgentDefinition.Name)
+	disposition := "A human reviews every proposal before it is applied."
+	if mode == skills.SkillCaptureAuto {
+		disposition = "Proposals that pass every guardrail may be applied automatically; the rest wait for a human."
+	}
+	var b strings.Builder
+	b.WriteString("## Skill capture\n")
+	b.WriteString("When a run teaches a durable, reusable lesson, you may preserve it for future runs. ")
+	b.WriteString(disposition + "\n\n")
+	b.WriteString("- Use `skill-create` with a name starting `" + prefix + "` (for example `" + prefix + "topic`) and a short Markdown procedure.\n")
+	b.WriteString("- Use `skill-patch` to extend an existing learned skill. `old` must be an exact, unique substring of its current content.\n")
+	b.WriteString("- Write lessons, not logs: no dates, ticket or PR numbers, quoted chat, user names, secrets, or one-off facts.\n")
+	b.WriteString("- Only do this when the lesson will clearly help a future run. Most runs teach nothing; do nothing then.\n")
+	if cfg.MaxAgentSkills > 0 {
+		fmt.Fprintf(&b, "- The agent may own at most %d learned skills; prefer patching over creating.\n", cfg.MaxAgentSkills)
+	}
+	return b.String()
+}
+
 // buildSkillsSystemPrompt builds the <available_skills> block that is appended
 // to the system instruction when the agent definition declares bound skills.
 // Returns an empty string when there are no skills to inject.
@@ -4613,9 +4754,11 @@ func (ae *AgentExecutor) buildSkillsSystemPrompt(req ExecuteRequest) string {
 				seen[s.Name] = struct{}{}
 			}
 		}
-		// Auto-load: prefix match — any skill named "{agentName}.{anything}".
+		// Auto-load: prefix match — any skill named "{agentSlug}.{anything}".
+		// The prefix is slugified so names with spaces/uppercase still match the
+		// learned-skill writer (see skills.AgentSkillPrefix).
 		if hasAutoLoad && req.AgentDefinition.Name != "" {
-			prefix := req.AgentDefinition.Name + "."
+			prefix := skills.AgentSkillPrefix(req.AgentDefinition.Name)
 			for _, s := range all {
 				if _, already := seen[s.Name]; !already && strings.HasPrefix(s.Name, prefix) {
 					matched = append(matched, s)

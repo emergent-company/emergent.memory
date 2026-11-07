@@ -8,8 +8,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// NamePattern is the validation regex for skill names: lowercase alphanumeric slugs with hyphens.
-const NamePattern = `^[a-z0-9]+(-[a-z0-9]+)*$`
+// NamePattern is the validation regex for skill names: lowercase alphanumeric
+// segments separated by a single hyphen or dot. Dots are allowed because
+// AutoLoadSkills matches learned skills by the "{agentSlug}." prefix (see
+// AgentSkillPrefix); the loader and the writer must agree on the shape.
+const NamePattern = `^[a-z0-9]+([-.][a-z0-9]+)*$`
 
 // Provenance source values for SkillMetadata.Source.
 const (
@@ -49,6 +52,62 @@ type SkillMetadata struct {
 	SourceURL   string `json:"source_url,omitempty"`   // URL the skill was imported from
 	OriginID    string `json:"origin_id,omitempty"`    // external identifier of the source skill
 	ContentHash string `json:"content_hash,omitempty"` // SHA-256 of content, computed server-side
+
+	// Capture provenance. Populated when an agent-created skill is applied from
+	// a proposal; empty for user-authored skills.
+	Author    string `json:"author,omitempty"`     // display name of the creating agent
+	RunID     string `json:"run_id,omitempty"`     // source agent run
+	CreatedBy string `json:"created_by,omitempty"` // "agent" | "user" | "cli" | "blueprint"
+
+	// Lifecycle guards. Pinned skills are never aged by the curator; locked
+	// skills refuse agent-initiated writes and deletes (human REST writes still
+	// work). Both default to false.
+	Pinned bool `json:"pinned,omitempty"`
+	Locked bool `json:"locked,omitempty"`
+
+	// LifecycleState is maintained by the deterministic curator for
+	// agent-created skills: active | stale | archived. Archived skills are not
+	// auto-loaded or semantically retrieved; they remain readable by name.
+	LifecycleState string `json:"lifecycle_state,omitempty"`
+}
+
+// Lifecycle states for agent-created skills.
+const (
+	SkillLifecycleActive   = "active"
+	SkillLifecycleStale    = "stale"
+	SkillLifecycleArchived = "archived"
+)
+
+// LifecycleStateOrDefault returns the stored state, defaulting to active.
+func (s *Skill) LifecycleStateOrDefault() string {
+	if s == nil || s.Metadata == nil || s.Metadata.LifecycleState == "" {
+		return SkillLifecycleActive
+	}
+	return s.Metadata.LifecycleState
+}
+
+// IsAgentCreated reports whether the skill was written by the skill-capture
+// loop. Only these skills are eligible for curator ageing and auto-patches.
+func (s *Skill) IsAgentCreated() bool {
+	return s != nil && s.Metadata != nil && (s.Metadata.CreatedBy == "agent" || s.Metadata.Source == SourceAgent)
+}
+
+// IsPinned reports the pin guard (nil-safe).
+func (s *Skill) IsPinned() bool {
+	return s != nil && s.Metadata != nil && s.Metadata.Pinned
+}
+
+// IsLocked reports the lock guard (nil-safe).
+func (s *Skill) IsLocked() bool {
+	return s != nil && s.Metadata != nil && s.Metadata.Locked
+}
+
+// ContentHashOf returns the stored content hash, or "" when absent.
+func (s *Skill) ContentHashOf() string {
+	if s == nil || s.Metadata == nil {
+		return ""
+	}
+	return s.Metadata.ContentHash
 }
 
 // Scan implements sql.Scanner for SkillMetadata.
