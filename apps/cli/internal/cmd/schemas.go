@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"github.com/spf13/cobra"
@@ -151,24 +150,11 @@ func getSchemasClient(cmd *cobra.Command) (*sdkschemas.Client, error) {
 		return nil, err
 	}
 
-	// Resolve orgID: prefer config, then auto-detect from server.
-	orgID := ""
-	configPath, _ := cmd.Flags().GetString("config")
-	if configPath == "" {
-		configPath = config.DiscoverPath("")
-	}
-	if cfg, err := config.LoadWithEnv(configPath); err == nil && cfg.OrgID != "" {
-		orgID = cfg.OrgID
-	}
-	if orgID == "" {
-		// Auto-detect from server (same pattern as resolveProviderOrgID).
-		orgs, err := c.SDK.Orgs.List(context.Background())
-		if err == nil && len(orgs) > 0 {
-			orgID = orgs[0].ID
-		}
-	}
-
-	c.SetContext(orgID, projectID)
+	// Scope the client to the project and let the shared client resolve the
+	// org from that project when no org is configured. Guessing an org here
+	// (e.g. the account's first org) makes the server 403 with an X-Org-ID
+	// mismatch (issue #324).
+	c.ResolveProjectContext(context.Background(), projectID)
 	return c.SDK.Schemas, nil
 }
 
@@ -260,6 +246,15 @@ func resolveInstalledAssignmentArgOrPick(cmd *cobra.Command, args []string) (id,
 		return "", "", fmt.Errorf("assignment ID is required")
 	}
 	return id, name, nil
+}
+
+// shadowedOwner names the pack the registry still points at for a cross-pack
+// shadowed type, or "unknown" when the registry row has no resolvable pack.
+func shadowedOwner(s sdkschemas.ShadowedType) string {
+	if s.RegistryOwnerPack == "" {
+		return "unknown"
+	}
+	return s.RegistryOwnerPack
 }
 
 // ─────────────────────────────────────────────
@@ -604,10 +599,23 @@ var schemasInstallCmd = &cobra.Command{
 					fmt.Fprintf(out, "  ~ %s\n", t)
 				}
 			}
+			if len(result.ShadowedTypes) > 0 {
+				_, _ = fmt.Fprintf(out, "\nCross-pack shadows — registry owner keeps the type, reads use this pack (%d):\n", len(result.ShadowedTypes))
+				for _, s := range result.ShadowedTypes {
+					_, _ = fmt.Fprintf(out, "  ! %s: registry owner %s, effective definition from %s\n",
+						s.TypeName, shadowedOwner(s), s.ShadowingPack)
+				}
+			}
 			if len(result.MergedTypes) > 0 {
 				fmt.Fprintf(out, "\nTypes to merge (%d):\n", len(result.MergedTypes))
 				for _, t := range result.MergedTypes {
 					fmt.Fprintf(out, "  ↑ %s\n", t)
+				}
+			}
+			if len(result.ReplacedTypes) > 0 {
+				fmt.Fprintf(out, "\nTypes to replace — already owned by this pack (%d):\n", len(result.ReplacedTypes))
+				for _, t := range result.ReplacedTypes {
+					fmt.Fprintf(out, "  ↻ %s\n", t)
 				}
 			}
 			if len(result.Conflicts) > 0 {
@@ -640,8 +648,18 @@ var schemasInstallCmd = &cobra.Command{
 		if len(result.SkippedTypes) > 0 {
 			fmt.Fprintf(out, "  Skipped types   (%d): %s\n", len(result.SkippedTypes), strings.Join(result.SkippedTypes, ", "))
 		}
+		if len(result.ShadowedTypes) > 0 {
+			_, _ = fmt.Fprintf(out, "  Shadowed types  (%d):\n", len(result.ShadowedTypes))
+			for _, s := range result.ShadowedTypes {
+				_, _ = fmt.Fprintf(out, "    %s: registry owner %s, effective definition from %s\n",
+					s.TypeName, shadowedOwner(s), s.ShadowingPack)
+			}
+		}
 		if len(result.MergedTypes) > 0 {
 			fmt.Fprintf(out, "  Merged types    (%d): %s\n", len(result.MergedTypes), strings.Join(result.MergedTypes, ", "))
+		}
+		if len(result.ReplacedTypes) > 0 {
+			fmt.Fprintf(out, "  Replaced types  (%d): %s\n", len(result.ReplacedTypes), strings.Join(result.ReplacedTypes, ", "))
 		}
 
 		// Report migration status if present

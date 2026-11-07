@@ -1149,15 +1149,23 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		span.SetStatus(codes.Error, llmErr.Error())
 		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(llmErr)))
 	} else {
-		// Persist assistant response
-		go func() {
-			// Use a background context since the request context may be cancelled
-			_, _ = h.svc.AddMessage(ctx, user.ProjectID, user.ID, conv.ID, AddMessageRequest{
-				Role:             RoleAssistant,
-				Content:          fullResponse.String(),
-				RetrievalContext: retrievalCtx,
-			})
-		}()
+		// Persist the assistant response synchronously, on the caller's DB
+		// handle. A fire-and-forget goroutine here shares that handle with the
+		// request goroutine, and the handle is not always a pool: under
+		// internal/testutil.BaseSuite it is the per-test transaction (one
+		// connection). Two statements racing on one connection make pgx's
+		// stdlib driver reset the shared result reader and the other
+		// statement's Rows.Next panics (issue #302).
+		if _, err := h.svc.AddMessage(ctx, user.ProjectID, user.ID, conv.ID, AddMessageRequest{
+			Role:             RoleAssistant,
+			Content:          fullResponse.String(),
+			RetrievalContext: retrievalCtx,
+		}); err != nil {
+			h.log.Warn("failed to persist assistant response",
+				slog.String("conversation_id", conv.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Emit done event
@@ -1695,6 +1703,16 @@ func agentRunMessageText(content map[string]any) string {
 
 // persistAssistantMessage stores an assistant turn in kb.chat_messages, tagged
 // with the run that produced it.
+//
+// The write is deliberately synchronous. It used to run in a fire-and-forget
+// goroutine, but that goroutine shares the handler's DB handle — and that handle
+// is not always a pool: under internal/testutil.BaseSuite it is the per-test
+// transaction, i.e. one connection. The handler issues its citation query
+// (FindToolCallsByRunID) immediately after this call, so a background writer
+// racing it on the same connection makes pgx's stdlib driver reset the shared
+// result reader; the citation query's Rows.Next then panics with
+// "index out of range [0] with length 0" (issue #302). One extra round trip to
+// make the turn durable before the stream reports done is the cheaper trade.
 func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID string, conv *Conversation, result *agents.ExecuteResult, text string) {
 	if text == "" {
 		return
@@ -1704,13 +1722,16 @@ func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID
 		rc, _ := json.Marshal(map[string]string{"agent_run_id": result.RunID})
 		retrievalCtx = rc
 	}
-	go func() {
-		_, _ = h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
-			Role:             RoleAssistant,
-			Content:          text,
-			RetrievalContext: retrievalCtx,
-		})
-	}()
+	if _, err := h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
+		Role:             RoleAssistant,
+		Content:          text,
+		RetrievalContext: retrievalCtx,
+	}); err != nil {
+		h.log.Warn("failed to persist assistant message",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // pauseSentinels are the synthetic texts the executor streams when it parks a

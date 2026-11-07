@@ -450,6 +450,58 @@ would need a stub gateway + memory fixtures that cover every surface. The
 data-source-integrations + document-version endpoints (see the data-sources
 note below); the remaining surfaces are still tracked as follow-up.
 
+### Ports for the hermetic suites (read before adding one)
+
+The hermetic suites (`share`, `datasources`, `gateway-smoke`, `mcp-inspect`,
+`dev-gallery`) **must not contain a port constant**. The `memory` pool runs
+concurrent jobs on shared hosts, so two runs of the *same* job can reach the
+same suite step at once; a pinned gateway/mock pair means the second job binds
+the first job's ports and dies in `run-e2e.sh`'s pre-flight (#810).
+
+Adding a suite or a job — the rule, in four steps:
+
+1. **Never pin a port.** No `?? <number>` default, no `MEMORY_PORT=…` in a
+   workflow, no number in `run-e2e.sh`.
+2. **Select from the single source.** Copy the `execFileSync(... '--lane',
+   '<your-lane>')` block from an existing config. `ports.mjs` is the only place
+   that chooses ports; it writes the pair to `E2E_PORTS_FILE` (under
+   `$RUNNER_TEMP` in CI, the platform temp dir locally) and prints it. The lane
+   name should be unique per config because it names that file.
+3. **Hand the same file to the runner.** Pass `E2E_PORTS_FILE: portsFile` in the
+   suite's `webServer.env`. The config builds its `baseURL` from the selection
+   and `run-e2e.sh` boots from the file — the runner has no numeric default, and
+   a missing file (or an env override that disagrees with it) is fatal, not a
+   reason to re-derive a second pair the config is not looking at.
+4. **Rely on the provenance check, not on arithmetic.** The probe skips a port
+   that is already listening, but it does **not reserve** it: a foreign process
+   can take the port between the probe (before the build) and the bind (after
+   it). `run-e2e.sh` therefore accepts `/api/health` only when `ss -ltnp` shows
+   the gateway *it started* owns the port, and re-checks both PIDs after the
+   curl. A lost race fails loudly naming the port; it never tests a stranger.
+
+What this does and does not guarantee: the start offset is random per
+invocation and the bands are wide, so a collision is unlikely, but it is
+**probabilistic** — two different jobs are not hard-disjoint by construction,
+and the probe does not make the selection atomic. The loud provenance check is
+the guarantee that a collision cannot silently pass. `reuseExistingServer:
+false` is not that guard: Playwright checks the URL before launch and then
+trusts it, so it cannot tell our gateway from one that took the port later.
+
+`scripts/provenance-race-test.sh` is the hermetic regression for that window
+(CI runs it as the `port provenance` step): it slows the build with a `go` shim,
+binds the selected gateway port with a foreign health responder, and asserts the
+runner exits non-zero naming the port.
+
+`scripts/ci-contract-check.mjs` (CI: the `Contract: e2e suite gates` step) holds
+the rules above down, because a rule that only lives in prose is one revert away
+from coming back (#205): it fails if a hermetic config names a port, gives two
+configs the same lane, or stops selecting through `ports.mjs`; it also binds a
+reservation and re-runs the selection from the same `E2E_PORT_SEED`, asserting it
+skips the ports the reservation holds — so the probe cannot rot silently. The
+same script asserts the `Report` step of `web-ui.yml` reads the outcome of every
+`continue-on-error` step and does not accept `skipped` as a pass — a suite that
+never ran must never read as a suite that passed.
+
 ### Hermetic agent public-share gate
 
 The agent public-share suite — `specs/share/*` under `share.config.ts` — is
@@ -462,12 +514,14 @@ that job provisions the Go + templ + `task` prerequisites once for every suite;
 the suite is excluded from the live session-mode suite via `testIgnore`
 (`specs/share/**`).
 
-The suites in that job run one at a time, so each keeps its own default gateway +
-mock ports (`${MEMORY_PORT:-8097}` / `${MOCK_PORT:-5301}` here, 8096/5304 for
-`gateway-smoke`) rather than a job-level pin: only one stack is ever up, so
-nothing can collide with itself. `run-e2e.sh` still reads those variables and
-fails fast if either port is already served, instead of silently attaching to a
-sibling's gateway + stateful mock.
+The suites in that job run one at a time, so each boots and tears down its own
+stack. Ports are **derived per run** (see **Ports for the hermetic suites**
+above): the config selects a free gateway/mock pair, writes it to
+`E2E_PORTS_FILE`, and `run-e2e.sh` reads the same file. No default number is
+shared between suites or jobs, and the runner refuses to attach: it accepts
+`/api/health` only once it has proven the gateway it started owns the port, so
+a lost race names the port and fails instead of running against a sibling's
+gateway + stateful mock.
 
 ```bash
 cd tests/e2e
@@ -488,8 +542,8 @@ Unlike the `js` gate it does need the gateway binary:
 `datasources.config.ts` boots `bash run-e2e.sh` as its Playwright `webServer`,
 which builds the gateway (generating the gitignored templ + `app.css` assets on
 a cold tree — see the cold-tree note under **Notes**) and starts
-`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on
-`http://localhost:${MEMORY_PORT:-8097}` (mock on `${MOCK_PORT:-5301}`).
+`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on a gateway/mock pair
+derived at run time (see **Ports for the hermetic suites** above).
 
 ```bash
 cd tests/e2e
@@ -508,13 +562,11 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 
 `specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
 gate (#564): the highest-risk UI contracts run on every PR without credentials.
-It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on
-`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`). That pair
-is this suite's own because each suite boots its own stack, but it is not
-reserved against the other two: `datasources` and `share` both default to
-8097/5301. What keeps them apart is time, not port number — in the single CI job
-the suites run sequentially, so each boots its stack, runs, and tears it down
-before the next one starts, and two suites never hold a port at once.
+It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on a
+gateway/mock pair derived at run time (see **Ports for the hermetic suites**
+above). Each invocation selects its own pair; safety comes from the probe plus
+the runner's provenance check, not from arithmetic over suite names or an
+assumption that only one lane is live on a host.
 
 It covers the documents upload dialog (the #2287 regression class — opener,
 modal dialog, file input and submit must stay together), the mobile shell

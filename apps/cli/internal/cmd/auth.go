@@ -93,11 +93,12 @@ func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 
 // tokenInfoResponse mirrors the server-side TokenInfoResponse for /api/auth/me
 type tokenInfoResponse struct {
-	UserID    string `json:"user_id"`
-	Email     string `json:"email,omitempty"`
-	Type      string `json:"type"`
-	ProjectID string `json:"project_id,omitempty"`
-	OrgID     string `json:"org_id,omitempty"`
+	UserID      string `json:"user_id"`
+	Email       string `json:"email,omitempty"`
+	Type        string `json:"type"`
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectName string `json:"project_name,omitempty"`
+	OrgID       string `json:"org_id,omitempty"`
 }
 
 // registerCmd is a hidden alias for loginCmd — kept for backwards compatibility.

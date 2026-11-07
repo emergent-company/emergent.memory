@@ -20,6 +20,14 @@ var (
 	commit  = "unknown"
 )
 
+// buildVersionLabel renders the running build's version + short commit for the
+// sidebar footer. It is the same source the /api/health endpoint already
+// exposes, so the value a reporter copies out of the UI identifies the exact
+// build and matches what the endpoint returns.
+func buildVersionLabel() string {
+	return version + " (" + commit + ")"
+}
+
 type Server struct {
 	cfg         Config
 	memory      MemoryBackend

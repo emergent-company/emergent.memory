@@ -243,15 +243,22 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 	}
 
 	// Assign to current project.
-	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+	assigned, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
 		SchemaID: created.ID,
 		Merge:    b.mergeTypes,
-	}); err != nil {
+	})
+	if err != nil {
 		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
-	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionCreated}
+	return BlueprintsResult{
+		ResourceType:  "pack",
+		Name:          p.Name,
+		SourceFile:    p.SourceFile,
+		Action:        BlueprintsActionCreated,
+		ShadowedTypes: assigned.ShadowedTypes,
+	}
 }
 
 func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string) BlueprintsResult {
@@ -291,21 +298,27 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 			Action: BlueprintsActionError, Error: fmt.Errorf("update pack: %w", err)}
 	}
 
-	// A merge-confirmed upgrade also re-assigns the updated pack so its type
-	// definitions land in the project registry (Merge=true keeps existing
-	// property definitions and adds new ones). Without merge confirmation the
-	// historical upgrade path is unchanged.
-	if b.mergeTypes {
-		if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
-			SchemaID: packID,
-			Merge:    true,
-		}); err != nil {
-			return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-				Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
-		}
+	// Re-assign after every upgrade so the updated pack's type definitions reach
+	// the project registry (an upgrade is an idempotent "refresh this pack"
+	// operation). The server replaces types this pack owns and follows
+	// Merge for types owned by other packs, so Merge only needs to be set when
+	// the caller confirmed a cross-pack merge in the preflight.
+	assigned, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+		SchemaID: packID,
+		Merge:    b.mergeTypes,
+	})
+	if err != nil {
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
-	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionUpdated}
+	return BlueprintsResult{
+		ResourceType:  "pack",
+		Name:          p.Name,
+		SourceFile:    p.SourceFile,
+		Action:        BlueprintsActionUpdated,
+		ShadowedTypes: assigned.ShadowedTypes,
+	}
 }
 
 // ──────────────────────────────────────────────
@@ -338,10 +351,11 @@ func (b *Blueprinter) blueprintAgent(ctx context.Context, ag AgentFile, existing
 	}
 
 	return BlueprintsResult{
-		ResourceType: "agent",
-		Name:         ag.Name,
-		SourceFile:   ag.SourceFile,
-		Action:       BlueprintsActionSkipped,
+		ResourceType:   "agent",
+		Name:           ag.Name,
+		SourceFile:     ag.SourceFile,
+		Action:         BlueprintsActionSkipped,
+		RuntimeTrigger: ag.runtimeTriggerType(),
 	}
 }
 
@@ -356,7 +370,8 @@ func (b *Blueprinter) createAgent(ctx context.Context, ag AgentFile) BlueprintsR
 		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("create runtime agent: %w", err)}
 	}
-	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: BlueprintsActionCreated}
+	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
+		Action: BlueprintsActionCreated, RuntimeTrigger: ag.runtimeTriggerType()}
 }
 
 func (b *Blueprinter) updateAgent(ctx context.Context, ag AgentFile, agentID string) BlueprintsResult {
@@ -369,7 +384,8 @@ func (b *Blueprinter) updateAgent(ctx context.Context, ag AgentFile, agentID str
 		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("update runtime agent: %w", err)}
 	}
-	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: BlueprintsActionUpdated}
+	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
+		Action: BlueprintsActionUpdated, RuntimeTrigger: ag.runtimeTriggerType()}
 }
 
 // ──────────────────────────────────────────────
@@ -482,16 +498,22 @@ func (b *Blueprinter) dryRunAgents(agents []AgentFile) []BlueprintsResult {
 		if b.upgrade {
 			action = "create or update"
 		}
-		fmt.Fprintf(b.out, "[dry-run] would %s agent %q (%s)\n", action, ag.Name, ag.SourceFile)
-		if ag.TriggerType != "" || ag.ReactionConfig != nil || ag.CronSchedule != "" {
-			_, _ = fmt.Fprintf(b.out, "[dry-run]   would ensure runtime reaction agent %q (triggerType=%q)\n",
-				ag.Name, ag.TriggerType)
+		runtimeTrigger := ag.runtimeTriggerType()
+		source := ""
+		if ag.SourceFile != "" {
+			source = " (" + ag.SourceFile + ")"
+		}
+		if runtimeTrigger != "" {
+			fmt.Fprintf(b.out, "[dry-run] would %s runtime agent %q%s (trigger: %s)\n", action, ag.Name, source, runtimeTrigger)
+		} else {
+			fmt.Fprintf(b.out, "[dry-run] would %s definition %q%s (definition only; trigger manually or add triggerType)\n", action, ag.Name, source)
 		}
 		results = append(results, BlueprintsResult{
-			ResourceType: "agent",
-			Name:         ag.Name,
-			SourceFile:   ag.SourceFile,
-			Action:       BlueprintsActionCreated,
+			ResourceType:   "agent",
+			Name:           ag.Name,
+			SourceFile:     ag.SourceFile,
+			Action:         BlueprintsActionCreated,
+			RuntimeTrigger: runtimeTrigger,
 		})
 	}
 	return results
@@ -542,20 +564,60 @@ func packDetail(name string, packsByName map[string]PackFile) string {
 }
 
 func (b *Blueprinter) printResult(r BlueprintsResult) {
+	label := b.resultLabel(r)
+	switch r.Action {
+	case BlueprintsActionCreated:
+		fmt.Fprintf(b.out, "  created  %s\n", label)
+	case BlueprintsActionUpdated:
+		fmt.Fprintf(b.out, "  updated  %s\n", label)
+	case BlueprintsActionSkipped:
+		if r.ResourceType == "agent" {
+			// The definition already exists, but a triggered agent's runtime row
+			// is still reconciled below; say so rather than implying the runtime
+			// agent was skipped too.
+			note := "definition only — trigger manually or add triggerType"
+			if r.RuntimeTrigger != "" {
+				note = fmt.Sprintf("runtime agent ensured, trigger: %s", r.RuntimeTrigger)
+			}
+			fmt.Fprintf(b.out, "  skipped  definition %q (already exists; use --upgrade to update; %s)\n", r.Name, note)
+			return
+		}
+		fmt.Fprintf(b.out, "  skipped  %s (already exists; use --upgrade to update)\n", label)
+	case BlueprintsActionError:
+		fmt.Fprintf(b.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
+	}
+
+	// A cross-pack skip leaves the registry naming the old owner while the
+	// compiled-types and graph-validation reads use the newly installed pack.
+	// Say so on the pack's output line group rather than leaving the operator to
+	// discover the disagreement with `memory schemas get` (#338).
+	for _, s := range r.ShadowedTypes {
+		owner := s.RegistryOwnerPack
+		if owner == "" {
+			owner = "unknown"
+		}
+		_, _ = fmt.Fprintf(b.out, "           shadowed type %q: registry owner %q, effective definition from %q (pass --merge-types to merge)\n",
+			s.TypeName, owner, s.ShadowingPack)
+	}
+}
+
+// resultLabel renders the resource line shared by the created and updated
+// actions. Agent results name the runtime-vs-definition distinction explicitly
+// (#321): an agent with no trigger materializes only a definition and will not
+// run on its own, which the old "created agent" line hid. Skipped results use a
+// dedicated form in printResult because their definition exists already.
+func (b *Blueprinter) resultLabel(r BlueprintsResult) string {
+	if r.ResourceType == "agent" {
+		if r.RuntimeTrigger != "" {
+			return fmt.Sprintf("runtime agent %q (trigger: %s)", r.Name, r.RuntimeTrigger)
+		}
+		return fmt.Sprintf("definition %q (definition only; trigger manually or add triggerType)", r.Name)
+	}
 	detail := ""
 	if r.ResourceType == "pack" {
 		detail = packDetail(r.Name, b.packsByName)
 	}
-	switch r.Action {
-	case BlueprintsActionCreated:
-		fmt.Fprintf(b.out, "  created  %s %q%s\n", r.ResourceType, r.Name, detail)
-	case BlueprintsActionUpdated:
-		fmt.Fprintf(b.out, "  updated  %s %q%s\n", r.ResourceType, r.Name, detail)
-	case BlueprintsActionSkipped:
-		fmt.Fprintf(b.out, "  skipped  %s %q%s (already exists; use --upgrade to update)\n", r.ResourceType, r.Name, detail)
-	case BlueprintsActionError:
-		fmt.Fprintf(b.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
-	}
+	return fmt.Sprintf("%s %q%s", r.ResourceType, r.Name, detail)
 }
 
 func (b *Blueprinter) printSummary(results []BlueprintsResult, dry bool) {
@@ -910,6 +972,12 @@ func expandedRelationshipTypeCount(d RelationshipTypeDef) int64 {
 
 // marshalPackSchemas converts the typed ObjectTypes / RelationshipTypes slices
 // to the raw JSON blobs expected by the API.
+//
+// uiCfgs is the type-keyed appearance map the registry stores per type. It must
+// carry the pack-level uiConfigs blob AND every object type's inline `ui:`
+// block, with the inline block winning (mirroring ObjectTypeDef.UI's contract),
+// or a pack that only declares inline `ui:` installs with ui_config='{}' and
+// its icons/colours never reach the registry (issue #291).
 func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts json.RawMessage, err error) {
 	if len(p.ObjectTypes) > 0 {
 		objSchemas, err = json.Marshal(p.ObjectTypes)
@@ -927,13 +995,46 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 			return nil, nil, nil, nil, fmt.Errorf("marshal relationshipTypes: %w", err)
 		}
 	}
-	if raw := p.UIConfigs.Raw(); len(raw) > 0 {
-		uiCfgs = raw
+	uiCfgs, err = mergePackUIConfigs(p)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 	if raw := p.ExtractionPrompts.Raw(); len(raw) > 0 {
 		exPrompts = raw
 	}
 	return objSchemas, relSchemas, uiCfgs, exPrompts, nil
+}
+
+// mergePackUIConfigs builds the type-keyed uiConfigs map sent to the API from
+// the pack-level uiConfigs blob overlaid with each object type's inline `ui:`
+// block (inline wins). Returns nil when the pack declares neither, so the
+// request omits the field instead of sending an empty map.
+//
+// The pack-level blob is read through decodePackUIConfigs so a JSON `null`
+// (which the validator already treats as absent) cannot nil the map out from
+// under the inline overlay.
+func mergePackUIConfigs(p PackFile) (json.RawMessage, error) {
+	entries, err := decodePackUIConfigs(p)
+	if err != nil {
+		return nil, err
+	}
+	ui := make(map[string]any, len(entries)+len(p.ObjectTypes))
+	for name, cfg := range entries {
+		if name == "" {
+			continue
+		}
+		ui[name] = cfg
+	}
+	for _, ot := range p.ObjectTypes {
+		if ot.Name == "" || len(ot.UI) == 0 {
+			continue
+		}
+		ui[ot.Name] = ot.UI
+	}
+	if len(ui) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(ui)
 }
 
 func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequest {
@@ -1050,21 +1151,18 @@ func cliReactionConfigToSDK(rc *ReactionConfig) *sdkruntime.ReactionConfig {
 // server apply path: a runtime agent with StrategyType "agent-def:<id>" is what
 // actually picks object-driven work up; the definition alone does not.
 //
+// "manual" is a valid TriggerType: it creates a runtime agent but the server's
+// trigger service registers no automatic trigger for it, so the agent runs only
+// when invoked on demand (`memory agents trigger`, POST /api/admin/agents/:id/trigger).
+//
 // The CLI has no blueprint row id, so ownership is stamped as
 // {"source": "blueprints-cli"} rather than a sourceBlueprintId UUID.
 func (b *Blueprinter) ensureRuntimeAgent(ctx context.Context, ag AgentFile, defID string) error {
-	if ag.TriggerType == "" && ag.ReactionConfig == nil && ag.CronSchedule == "" {
+	if !ag.hasRuntimeTrigger() {
 		return nil
 	}
 
-	triggerType := ag.TriggerType
-	if triggerType == "" {
-		if ag.ReactionConfig != nil {
-			triggerType = "reaction"
-		} else {
-			triggerType = "schedule"
-		}
-	}
+	triggerType := ag.effectiveTriggerType()
 	cron := ag.CronSchedule
 	if cron == "" {
 		cron = "0 0 * * *"

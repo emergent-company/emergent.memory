@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { defineConfig } from '@playwright/test';
 
 // Per-PR hermetic gateway browser smoke (#564).
@@ -9,16 +11,20 @@ import { defineConfig } from '@playwright/test';
 // and drives the highest-risk browser contracts on the pages UI PRs touch:
 // the upload dialog, the app shell, the chat rail. No auth, no live backend.
 //
-// Ports are overridable so this suite can run alongside another harness on one
-// machine. CI runs the suites sequentially in one job — one stack at a time —
-// so these defaults only have to be free when it is this suite's turn.
-const port = process.env.MEMORY_PORT ?? '8096';
-const mockPort = process.env.MOCK_PORT ?? '5304';
-// The webServer below boots the mock on this port, but its env does not flow
-// back to the test process. Export the resolved value so fixture-contract specs
-// that read the mock directly (the discovery start/cancel shapes) agree with a
-// default-port run and a `MOCK_PORT=…` one alike.
-process.env.MOCK_PORT ??= mockPort;
+// Ports are derived per run, never pinned (#810). `ports.mjs` probes a free
+// gateway/mock pair, writes it to a file and prints it; this config builds its
+// baseURL from that selection and hands the same file to `run-e2e.sh` as
+// E2E_PORTS_FILE, so the config and the servers cannot disagree. The resolved
+// values are exported to the test process too, so fixture-contract specs that
+// read the mock directly agree with the servers.
+const { gateway: port, mock: mockPort, file: portsFile } = JSON.parse(
+  execFileSync(process.execPath, [path.join(__dirname, 'ports.mjs'), '--lane', 'gateway-smoke'], {
+    encoding: 'utf8',
+  }),
+) as { gateway: number; mock: number; file: string };
+process.env.MEMORY_PORT = String(port);
+process.env.MOCK_PORT = String(mockPort);
+process.env.E2E_PORTS_FILE = portsFile;
 const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
@@ -41,10 +47,10 @@ export default defineConfig({
   },
   outputDir: 'test-results/gateway-smoke',
   webServer: {
-    // run-e2e.sh defaults to 8097/5301; pass this lane's ports explicitly so
-    // `npx playwright test --config=gateway-smoke.config.ts` with no env works.
-    command: `MEMORY_PORT=${port} MOCK_PORT=${mockPort} bash run-e2e.sh`,
+    // The runner reads the same reservation file this config selected from.
+    command: 'bash run-e2e.sh',
     cwd: __dirname,
+    env: { E2E_PORTS_FILE: portsFile },
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

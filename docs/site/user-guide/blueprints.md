@@ -341,6 +341,25 @@ All blueprint commands resolve the project like the rest of the CLI
 offline — always run it before `install`. `dump` exports graph data only; it
 does not export packs or agent definitions.
 
+### Importing a dump into a branch
+
+`dump` writes `seed/objects/<Type>.jsonl` and `seed/relationships/<Type>.jsonl`
+with object keys and `srcKey`/`dstKey` references. To review a migration on a
+branch before promoting it, feed the dump directory straight back to the graph
+importer:
+
+```bash
+memory blueprints dump ./migration
+# edit ./migration/seed/...
+memory graph objects create-batch --file ./migration --branch migration-review
+```
+
+The importer upserts objects by `key`, resolves relationship keys after the
+objects are written, reads `_untyped.jsonl` back as type `Untyped`, and reports
+unreadable rows individually without aborting the rest. It accepts the dump
+root, a `seed/` directory, or a single `.jsonl` file. See
+[Branches § Bulk importing a dump into a branch](branches.md#bulk-importing-a-dump-into-a-branch).
+
 ---
 
 ## Registry commands (MCP and REST)

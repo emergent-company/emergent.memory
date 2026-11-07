@@ -321,6 +321,13 @@ func TestOneH1PerPage(t *testing.T) {
 	}
 }
 
+// tmplBody is one `templ` declaration's body, keyed by the file it came from.
+type tmplBody struct {
+	file string
+	name string
+	body string
+}
+
 // TestNoTemplateRendersHeaderBeforePageError is the static half of the rule: a
 // template that renders a shared header must not go on to render `pageError`.
 // Its h1 is for a page whose error state *is* the page; a page that already
@@ -334,18 +341,32 @@ func TestOneH1PerPage(t *testing.T) {
 // away) each slipped past a hand sweep. Branch-exclusive sites put the error
 // first by convention, so "a header call before the call that lowers to
 // pageError" is the regression this catches.
+//
+// Position alone is not enough (#206): an error call that comes first but is
+// not mutually exclusive with the header still renders two <h1>s on the failing
+// path. The pair must therefore also be separated by an `else` — see
+// branchesExclusive.
 func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
-	type tmplBody struct {
-		file string
-		name string
-		body string
+	problems, checked := auditHeaderOrder(readTemplateBodies(t))
+	for _, p := range problems {
+		t.Error(p)
 	}
-	var bodies []tmplBody
+	t.Logf("checked %d templates that render a header and lower to pageError", checked)
+	if checked < 10 {
+		t.Fatalf("checked %d templates that render a header and lower to pageError; the scan is not matching the code it guards", checked)
+	}
+}
+
+// readTemplateBodies parses every *.templ file in the gateway into one body per
+// templ declaration.
+func readTemplateBodies(t *testing.T) []tmplBody {
+	t.Helper()
 	files, err := filepath.Glob("*.templ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	decl := regexp.MustCompile(`(?m)^templ (\w+)\(`)
+	var bodies []tmplBody
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
@@ -361,7 +382,17 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 			bodies = append(bodies, tmplBody{file: f, name: text[m[2]:m[3]], body: text[m[1]:end]})
 		}
 	}
+	return bodies
+}
 
+// auditHeaderOrder returns one message per template that breaks the static
+// one-`h1` rule, plus how many template pairs it actually checked (so a scan
+// that stops matching the code fails loudly instead of going quiet).
+//
+// A pair is broken when the header call precedes the call that lowers to
+// pageError, or when the error call comes first but is not the exclusive other
+// arm of the same `if` as the header.
+func auditHeaderOrder(bodies []tmplBody) (problems []string, checked int) {
 	callRe := regexp.MustCompile(`@(\w+)\(`)
 	calls := func(body string) []string {
 		var out []string
@@ -408,7 +439,6 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 		return first
 	}
 
-	checked := 0
 	for i := range bodies {
 		b := &bodies[i]
 		if !rendersHeader[b.name] || !lowersToPageError[b.name] {
@@ -420,11 +450,138 @@ func TestNoTemplateRendersHeaderBeforePageError(t *testing.T) {
 		}
 		checked++
 		if firstHeader < firstError {
-			t.Errorf("%s: %s renders a page header and then something that lowers to pageError; use pageErrorNotice so the page keeps one <h1>", b.file, b.name)
+			problems = append(problems, b.file+": "+b.name+" renders a page header and then something that lowers to pageError; use pageErrorNotice so the page keeps one <h1>")
+			continue
+		}
+		// firstError == firstHeader when one shared shell both renders the header
+		// and lowers to pageError; that call's own body carries the pair and is
+		// audited on its own iteration.
+		if firstError < firstHeader && !branchesExclusive(b.body[firstError:firstHeader]) {
+			problems = append(problems, b.file+": "+b.name+" renders something that lowers to pageError and then a page header with no `else` between them; the error branch falls through to the header, so a failing page renders two <h1>s")
 		}
 	}
-	if checked < 10 {
-		t.Fatalf("checked %d templates that render a header and lower to pageError; the scan is not matching the code it guards", checked)
+	return problems, checked
+}
+
+// elseKeyword matches the `else` keyword, not the letters inside an identifier.
+var elseKeyword = regexp.MustCompile(`\belse\b`)
+
+// branchesExclusive reports whether the segment between an error-lowering call
+// and the header call proves the two are alternative arms of one `if`: the
+// error call's enclosing block must close and continue with `else`.
+//
+// The search starts after the error call's own closing parenthesis, so an error
+// message that merely contains the word "else" cannot satisfy it.
+func branchesExclusive(segment string) bool {
+	end := endOfCall(segment)
+	return end >= 0 && elseKeyword.MatchString(segment[end:])
+}
+
+// endOfCall returns the offset just past the parenthesis closing the call at the
+// start of s (s[0] == '@'), or -1. String and rune literals are skipped so a
+// parenthesis inside an argument does not end the call early.
+func endOfCall(s string) int {
+	open := strings.IndexByte(s, '(')
+	if open < 0 {
+		return -1
+	}
+	depth := 0
+	var quote byte
+	for i := open; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && quote != '`' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'' || c == '`':
+			quote = c
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
+}
+
+// TestHeaderOrderAuditSeesNonExclusiveBranches pins the hole from #206. These
+// fixtures are the same shape the scan runs over the real templates, so a
+// reverted exclusivity check fails here rather than only in a code review. The
+// first case is exactly the shape that passed the old position-only guard: the
+// error call is first, but nothing stops the page from also rendering its
+// header.
+func TestHeaderOrderAuditSeesNonExclusiveBranches(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		wantViolation bool
+	}{
+		{
+			name: "error first but header is not in an else branch",
+			body: `
+	if loadErr != nil {
+		@pageError("Broken unavailable", loadErr)
+	}
+	@pageHeader("Work", "Broken", "Broken")`,
+			wantViolation: true,
+		},
+		{
+			// The word "else" in the error message must not count as the branch
+			// keyword; the page still renders two h1s when the load fails.
+			name: "error message contains else but there is no else branch",
+			body: `
+	if loadErr != nil {
+		@pageError("Nothing here, try something else", loadErr)
+	}
+	@pageHeader("Work", "Broken", "Broken")`,
+			wantViolation: true,
+		},
+		{
+			name: "header before the error is still a violation",
+			body: `
+	@pageHeader("Work", "Broken", "Broken")
+	@pageError("Broken unavailable", loadErr)`,
+			wantViolation: true,
+		},
+		{
+			name: "error and header are arms of one if",
+			body: `
+	if loadErr != nil {
+		@pageError("Broken unavailable", loadErr)
+	} else {
+		@pageHeader("Work", "Broken", "Broken")
+	}`,
+			wantViolation: false,
+		},
+		{
+			name: "error and header are arms of one if/else-if chain",
+			body: `
+	if loadErr != nil {
+		@pageError("Broken unavailable", loadErr)
+	} else if !canEdit {
+		@pageHeader("Work", "Broken", "Broken")
+	}`,
+			wantViolation: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problems, checked := auditHeaderOrder([]tmplBody{{file: "fixture.templ", name: "FixturePage", body: tc.body}})
+			if checked != 1 {
+				t.Fatalf("checked = %d, want 1; the fixture is not exercising the pair", checked)
+			}
+			if got := len(problems) > 0; got != tc.wantViolation {
+				t.Errorf("violation = %v, want %v (problems: %v)", got, tc.wantViolation, problems)
+			}
+		})
 	}
 }
 

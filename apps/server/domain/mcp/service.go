@@ -841,6 +841,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Items:       &PropertySchema{Type: "object"},
 						Description: "Array of relationship specifications to create. Each item: {type (required), source_id (required), target_id (required), properties, weight}. source_id and target_id accept an entity key string (e.g. 'caroline-person') or UUID — entity keys are preferred and more reliable. source_id and target_id must refer to different entities.",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, relationships are created in this branch instead of the main graph.",
+					},
 				},
 				Required: []string{"relationships"},
 			},
@@ -900,6 +904,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
+					},
 				},
 				Required: []string{"entity_id"},
 			},
@@ -914,6 +922,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"entity_id": {
 						Type:        "string",
 						Description: "UUID or key of the entity to restore",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the entity is restored in this branch instead of the main graph.",
 					},
 					"verbose": {
 						Type:        "boolean",
@@ -1380,6 +1392,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "number",
 						Description: "Optional new weight for the relationship",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the update is applied to the relationship's version chain on this branch.",
+					},
 					"verbose": {
 						Type:        "boolean",
 						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
@@ -1402,6 +1418,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"reason": {
 						Type:        "string",
 						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
 				},
 				Required: []string{"relationship_id"},
@@ -3029,6 +3049,10 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	var types []typeRow
 	var relTypes []relTypeRow
+	// Untyped objects (type = '') have no registry row, so the registry-driven
+	// query below can never surface them. Count them separately and fold the
+	// result into a synthetic bucket after the transaction (issue #323).
+	var untypedCount int
 
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Set RLS context
@@ -3036,11 +3060,9 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			return err
 		}
 
-		branchClause := "AND go.branch_id IS NULL"
-		branchArgs := []any{}
-		if branchID != nil {
-			branchClause = "AND go.branch_id = ?"
-			branchArgs = []any{*branchID}
+		branchClause, branchArgs, err := s.branchScopeClause(ctx, projectID, branchID)
+		if err != nil {
+			return err
 		}
 
 		// Build namespace clause
@@ -3058,7 +3080,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		queryArgs = append(queryArgs, branchArgs...)
 		queryArgs = append(queryArgs, projectUUID)
 		queryArgs = append(queryArgs, namespaceArgs...)
-		err := tx.NewRaw(`
+		err = tx.NewRaw(`
 			SELECT 
 				tr.type_name as name,
 				COALESCE(tr.description, '') as description,
@@ -3095,6 +3117,22 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			if err != nil {
 				return err
 			}
+		}
+
+		// Count legacy untyped objects. They have no schema-registry row and no
+		// namespace (the namespace filter is a registry column), so they are
+		// always reported irrespective of the requested namespace.
+		err = tx.NewRaw(`
+			SELECT COUNT(*)::int
+			FROM kb.graph_objects go
+			WHERE go.project_id = ?
+				AND go.deleted_at IS NULL
+				AND go.supersedes_id IS NULL
+				AND (go.type IS NULL OR go.type = '')
+				`+branchClause+`
+		`, append([]any{projectUUID}, branchArgs...)...).Scan(ctx, &untypedCount)
+		if err != nil {
+			return err
 		}
 
 		// Relationship type counts are opt-in (include_relationships=true): the
@@ -3145,6 +3183,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	if err != nil {
 		return nil, fmt.Errorf("query entity types: %w", err)
+	}
+
+	// Fold legacy untyped objects into one visible bucket. Drop any empty-name
+	// row the branch fallback may have discovered so they are counted once.
+	kept := types[:0]
+	for _, t := range types {
+		if t.Name != "" {
+			kept = append(kept, t)
+		}
+	}
+	types = kept
+	if untypedCount > 0 {
+		types = append(types, typeRow{
+			Name:          UntypedEntityTypeBucket,
+			Description:   "Objects with an empty type",
+			InstanceCount: untypedCount,
+		})
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -3590,11 +3645,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	var total int
 
 	// Build branch filter clause: NULL = main branch, non-NULL = specific branch.
-	branchClause := "AND go.branch_id IS NULL"
-	branchArgs := []any{}
-	if branchID != nil {
-		branchClause = "AND go.branch_id = ?"
-		branchArgs = []any{*branchID}
+	// A scoped run with no branch named reads main plus its in-scope unmerged
+	// branches, deduplicated main-first (#308).
+	branchClause, branchArgs, err := s.branchScopeClause(queryCtx, projectID, branchID)
+	if err != nil {
+		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+		}
+		return nil, err
 	}
 
 	// Shared predicate args, in SQL clause order: project, type, branch, filter,
@@ -3887,12 +3945,11 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	}
 	propsProjection := entityPropertiesProjection(strategy, args["fields"])
 
-	branchClause := "AND go.branch_id IS NULL"
-	branchQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
-	if branchID != nil {
-		branchClause = "AND go.branch_id = ?"
-		branchQueryArgs = append(branchQueryArgs, *branchID)
+	branchClause, branchQueryArgs, err := s.branchScopeClause(ctx, projectID, branchID)
+	if err != nil {
+		return nil, err
 	}
+	branchQueryArgs = append([]any{bun.In(canonicalIDs), projectUUID}, branchQueryArgs...)
 
 	var entities []entityRow
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -4218,12 +4275,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		// Build the branch filter the same way every other read tool does: no
 		// branch named is the MAIN graph, never "all branches". An unfiltered scan
 		// would hand a main-only run (including a delegated child) unmerged work,
-		// and hand a scoped run branches outside its scope (#265).
-		branchFilter := " AND go.branch_id IS NULL"
-		branchArgs := []any{}
-		if branchID != nil {
-			branchFilter = " AND go.branch_id = ?"
-			branchArgs = []any{*branchID}
+		// and hand a scoped run branches outside its scope (#265). A scoped run
+		// with no branch named fans out to main plus its in-scope branches (#308).
+		branchFilter, branchArgs, err := s.branchScopeClause(ctx, projectID, branchID)
+		if err != nil {
+			return err
 		}
 
 		namespaceFilter, _ := args["namespace"].(string)
@@ -4499,11 +4555,19 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 // =============================================================================
 
 // resolveCanonicalID looks up the canonical ID for a given entity version ID.
+//
+// The lookup is deterministic and main-preferred: when a canonical id exists on
+// both main and one or more branches (a fork), or when a physical id matches more
+// than one row, the main HEAD wins — mirroring Repository.resolveObjectByID — so
+// an edge/traversal read never resolves a merged object to its branch original
+// (#331). The ordering is `branch_id IS NULL` first, then HEAD (supersedes_id IS
+// NULL) first, then id ascending for a stable tie-break.
 func (s *Service) resolveCanonicalID(ctx context.Context, projectID, entityID uuid.UUID) (uuid.UUID, error) {
 	var canonicalID uuid.UUID
 	err := s.db.NewRaw(`
 		SELECT canonical_id FROM kb.graph_objects 
 		WHERE (id = ? OR canonical_id = ?) AND project_id = ? 
+		ORDER BY (branch_id IS NULL) DESC, (supersedes_id IS NULL) DESC, id ASC
 		LIMIT 1
 	`, entityID, entityID, projectID).Scan(ctx, &canonicalID)
 
@@ -4518,13 +4582,27 @@ func (s *Service) resolveCanonicalID(ctx context.Context, projectID, entityID uu
 // On failure, includes fuzzy suggestions (same type prefix or trigram similarity) to help
 // the caller self-correct — particularly useful for LLM agents that may hallucinate keys.
 func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID, key string) (uuid.UUID, error) {
+	// Resolve the key within the requested scope: a key that exists on both the
+	// main graph and a branch (after a merge the same key is carried by the
+	// merged main copy and the branch original) must land on main when no branch
+	// is named, so a write or edge read cannot silently target the branch copy
+	// (#331). A key with no main row falls back to the branch copy so a
+	// branch-only object remains addressable.
 	var canonicalID uuid.UUID
 	err := s.db.NewRaw(`
 		SELECT canonical_id FROM kb.graph_objects
-		WHERE key = ? AND project_id = ? AND deleted_at IS NULL
+		WHERE key = ? AND project_id = ? AND deleted_at IS NULL AND branch_id IS NULL
 		ORDER BY version DESC
 		LIMIT 1
 	`, key, projectID).Scan(ctx, &canonicalID)
+	if err == sql.ErrNoRows {
+		err = s.db.NewRaw(`
+			SELECT canonical_id FROM kb.graph_objects
+			WHERE key = ? AND project_id = ? AND deleted_at IS NULL
+			ORDER BY version DESC
+			LIMIT 1
+		`, key, projectID).Scan(ctx, &canonicalID)
+	}
 	if err != nil {
 		// Fetch fuzzy suggestions to help agents self-correct.
 		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
@@ -4777,6 +4855,16 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		entityID = resolved
 	}
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist,
+	// matching entity-create/entity-update.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
 	// Optional reason
 	var reason *string
 	if r, ok := args["reason"].(string); ok && r != "" {
@@ -4794,7 +4882,7 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		}
 	}
 
-	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, nil, reason); err != nil {
+	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, branchID, reason); err != nil {
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
 
@@ -4824,6 +4912,15 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		entityID = resolved
 	}
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
 	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
 	// must not restore an object whose type is outside its allowlist. The row is
 	// soft-deleted, so the include-deleted lookup is required; a lookup error
@@ -4835,7 +4932,18 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		}
 	}
 
-	result, err := s.graphService.Restore(ctx, projectUUID, entityID, nil)
+	// Restore patches the version chain of the row it is given, and a chain
+	// cannot span branches. Resolve the branch-local HEAD (the tombstone) so a
+	// branch-scoped restore writes on the branch, not on main.
+	restoreID := entityID
+	if branchID != nil {
+		restoreID, err = s.objectVersionOnBranch(ctx, projectUUID, entityID, *branchID)
+		if err != nil {
+			return nil, fmt.Errorf("restore entity: %w", err)
+		}
+	}
+
+	result, err := s.graphService.Restore(ctx, projectUUID, restoreID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("restore entity: %w", err)
 	}
@@ -5651,6 +5759,17 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 
 	scope := TypeScopeFromContext(ctx)
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist,
+	// matching entity-create. The graph service requires both endpoints to be on
+	// the same branch as the new relationship.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
 	// Support flat single-relationship form for backward compat
 	var relationshipsRaw []any
 	if arr, ok := args["relationships"].([]any); ok {
@@ -5791,6 +5910,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			DstID:      dstID,
 			Properties: properties,
 			Weight:     weight,
+			BranchID:   branchID,
 		}
 
 		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req, nil)

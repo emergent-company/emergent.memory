@@ -2,10 +2,12 @@ package chat_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -269,6 +271,67 @@ func (s *ChatCancelRunSuite) TestAgentBackedStreamCarriesRunID() {
 	// If a future change also stamps the first frame, it must still be the same
 	// conversation/run pair; either ordering keeps the contract additive.
 	s.Equal(runID, metas[0]["runId"])
+}
+
+// TestAgentBackedStreamPersistsAssistantMessageBeforeReturn guards the fix for
+// issue #302: the assistant turn must be written through the request's DB
+// handle from the request goroutine, not from a fire-and-forget goroutine.
+//
+// Under BaseSuite that handle is the per-test transaction — a single
+// connection. A background writer racing the handler's citation query on that
+// connection made pgx's stdlib driver reset the shared result reader, and the
+// citation query's Rows.Next panicked with "index out of range [0] with length
+// 0". The trigger below stretches the assistant INSERT past the end of the
+// stream, so a fire-and-forget writer is guaranteed to still be in flight when
+// the HTTP response returns; the assertion then fails deterministically (and
+// the sanity check on elapsed time proves the trigger actually ran).
+func (s *ChatCancelRunSuite) TestAgentBackedStreamPersistsAssistantMessageBeforeReturn() {
+	s.T().Setenv("CHAT_TEST_DETERMINISTIC", "1")
+
+	const assistantInsertDelay = 400 * time.Millisecond
+
+	// DDL runs inside the test transaction, so it is rolled back with the test.
+	_, err := s.DB().NewRaw(fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION public.test_slow_assistant_insert() RETURNS trigger
+		LANGUAGE plpgsql AS $fn$
+		BEGIN
+			PERFORM pg_sleep(%g);
+			RETURN NEW;
+		END
+		$fn$
+	`, assistantInsertDelay.Seconds())).Exec(s.Ctx)
+	s.Require().NoError(err)
+	_, err = s.DB().NewRaw(`
+		CREATE TRIGGER test_slow_assistant_insert
+		BEFORE INSERT ON kb.chat_messages
+		FOR EACH ROW WHEN (NEW.role = 'assistant')
+		EXECUTE FUNCTION public.test_slow_assistant_insert()
+	`).Exec(s.Ctx)
+	s.Require().NoError(err)
+
+	agentRepo := agents.NewRepository(s.DB())
+	def, err := agentRepo.FindDefinitionByName(s.Ctx, s.ProjectID, "graph-query-agent")
+	s.Require().NoError(err)
+	s.Require().NotNil(def)
+
+	convID := s.seedConversation(&def.ID)
+
+	start := time.Now()
+	rec := s.postChatStream(convID)
+	elapsed := time.Since(start)
+	s.Require().Equal(http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// The assistant turn must already be committed to the request's own DB
+	// handle by the time the stream returns.
+	var stored int
+	s.Require().NoError(s.DB().NewRaw(
+		`SELECT count(*) FROM kb.chat_messages WHERE conversation_id = ?::uuid AND role = 'assistant'`,
+		convID,
+	).Scan(s.Ctx, &stored))
+	s.Equal(1, stored, "assistant message must be persisted before the stream returns")
+
+	s.GreaterOrEqual(elapsed, assistantInsertDelay,
+		"the assistant INSERT did not go through the slow trigger; the ordering assertion above would be vacuous")
 }
 
 // The direct-LLM path's meta frame is unchanged: still exactly one meta and no

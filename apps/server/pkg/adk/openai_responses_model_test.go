@@ -3,6 +3,7 @@ package adk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -447,4 +448,82 @@ func TestOpenAIResponsesModel_ReplaysEncryptedContentWithoutID(t *testing.T) {
 		}
 	}
 	require.True(t, found, "reasoning with encrypted_content but no id must still be replayed")
+}
+
+// responsesRecoveredJSON is a minimal successful Responses payload.
+const responsesRecoveredJSON = `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"recovered"}]}]}`
+
+// TestOpenAIResponsesModel_RetriesRateLimit verifies a 429 with Retry-After is
+// answered inside the call instead of being surfaced to the job above it
+// (#254). The header asks for a zero-second wait so the test does not sleep.
+func TestOpenAIResponsesModel_RetriesRateLimit(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(responsesRecoveredJSON))
+	}))
+	defer srv.Close()
+
+	m := NewOpenAIResponsesModel(srv.URL, "sk-test", "gpt-5", AuthBearer)
+	resp, err := collectResponse(m.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	require.NoError(t, err, "the retry should succeed")
+	assert.Equal(t, 2, calls, "one 429 then one success")
+	require.NotNil(t, resp)
+	require.Len(t, resp.Content.Parts, 1)
+	assert.Equal(t, "recovered", resp.Content.Parts[0].Text)
+}
+
+// TestOpenAIResponsesModel_ServerErrorExhaustsRetries verifies the retry is
+// bounded: a provider that keeps returning 5xx still produces one error naming
+// the status and body, after maxProviderRetries extra attempts.
+func TestOpenAIResponsesModel_ServerErrorExhaustsRetries(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"service unavailable"}}`))
+	}))
+	defer srv.Close()
+
+	m := NewOpenAIResponsesModel(srv.URL, "sk-test", "gpt-5", AuthBearer)
+	_, err := collectResponse(m.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	require.Error(t, err, "expected an error once the retries are spent")
+	assert.Contains(t, err.Error(), "503")
+	assert.Contains(t, err.Error(), "service unavailable")
+	assert.Equal(t, maxProviderRetries+1, calls)
+}
+
+// TestOpenAIResponsesModel_CancelDuringBackoffSurfacesCancellation verifies a
+// run cancelled while the client waits out a 5xx reports the cancellation, not
+// the provider's 503 (#254).
+func TestOpenAIResponsesModel_CancelDuringBackoffSurfacesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := &retryableResponseTransport{
+		status: http.StatusServiceUnavailable,
+		body:   `{"error":{"message":"service unavailable"}}`,
+		cancel: cancel,
+	}
+	m := NewOpenAIResponsesModel("http://provider.invalid/v1", "sk-test", "gpt-5", AuthBearer)
+	m.(*openaiResponsesModel).client = &http.Client{Transport: tr}
+
+	_, err := collectResponse(m.GenerateContent(ctx, &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	require.Error(t, err, "expected a cancellation error, got nil")
+	assert.True(t, errors.Is(err, context.Canceled), "errors.Is(%v, context.Canceled) = false, want true", err)
+	assert.Equal(t, 1, tr.calls, "no retry once the context ended")
 }

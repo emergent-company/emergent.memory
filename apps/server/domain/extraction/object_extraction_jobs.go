@@ -3,9 +3,11 @@ package extraction
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -391,6 +393,89 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 	return nil
 }
 
+// SchemaFingerprint identifies the schema configuration a job extracted with:
+// the explicit enabled types (order-insensitive) plus the job's extraction
+// config. A document-triggered run leaves both empty because the project's
+// installed schema packs are resolved at run time; the fingerprint then matches
+// any other document-triggered run, which is exactly the comparison issue #240
+// describes. When a caller does pin types or config, a run that changed them is
+// a different configuration and is not compared.
+func (j *ObjectExtractionJob) SchemaFingerprint() string {
+	if j == nil {
+		return ""
+	}
+	types := append([]string(nil), j.EnabledTypes...)
+	if types == nil {
+		// Normalise the nil in-memory slice against the empty array the same
+		// column scans back as, so a job compared before insert and one read
+		// back from the database share a fingerprint.
+		types = []string{}
+	}
+	sort.Strings(types)
+	config := j.ExtractionConfig
+	if config == nil {
+		config = JSON{}
+	}
+	cfg, err := json.Marshal(config)
+	if err != nil {
+		cfg = []byte("null")
+	}
+	out, err := json.Marshal(struct {
+		Types  []string `json:"types"`
+		Config string   `json:"config"`
+	}{types, string(cfg)})
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+// RunCountSnapshot is the object count of one completed extraction run, used to
+// decide whether a new run deviated strongly from the previous one.
+type RunCountSnapshot struct {
+	JobID          string
+	ObjectsCreated int
+	CompletedAt    *time.Time
+}
+
+// PreviousCompletedRunForDocument returns the most recent completed run over the
+// same project + document whose schema fingerprint matches the job's, excluding
+// the job itself. It returns nil (no error) when the job has no document or no
+// earlier comparable run exists — the first run of a document never warns.
+func (s *ObjectExtractionJobsService) PreviousCompletedRunForDocument(ctx context.Context, job *ObjectExtractionJob) (*RunCountSnapshot, error) {
+	if s == nil || job == nil || job.DocumentID == nil || *job.DocumentID == "" {
+		return nil, nil
+	}
+	// Take a few of the most recent completed runs rather than only the very
+	// last one: an interleaved job created with a different explicit config (e.g.
+	// an API run with pinned types) must not hide the comparable run behind it.
+	const lookback = 5
+	var candidates []ObjectExtractionJob
+	if err := s.db.NewSelect().
+		Model(&candidates).
+		Where("project_id = ?", job.ProjectID).
+		Where("document_id = ?", *job.DocumentID).
+		Where("status = ?", JobStatusCompleted).
+		Where("id <> ?", job.ID).
+		Order("completed_at DESC NULLS LAST", "created_at DESC").
+		Limit(lookback).
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("find previous completed extraction run: %w", err)
+	}
+	want := job.SchemaFingerprint()
+	for i := range candidates {
+		if candidates[i].SchemaFingerprint() != want {
+			continue
+		}
+		return &RunCountSnapshot{
+			JobID:          candidates[i].ID,
+			ObjectsCreated: candidates[i].ObjectsCreated,
+			CompletedAt:    candidates[i].CompletedAt,
+		}, nil
+	}
+	return nil, nil
+}
+
 // ObjectExtractionResults contains the results of an object extraction job
 type ObjectExtractionResults struct {
 	ObjectsCreated       int
@@ -405,6 +490,18 @@ type ObjectExtractionResults struct {
 	CreatedObjects       JSONArray
 	CreatedObjectIDs     []string
 	DebugInfo            JSON
+	// VarianceWarning is set when this run's object count deviates strongly
+	// from the previous completed run over the same document and schema
+	// configuration. It rides into the job's debug_info and the run's outcome
+	// notification so the operator sees it before merging (#240).
+	VarianceWarning *RunVarianceWarning
+	// SkippedTypes lists the object types omitted because their installed schema
+	// sets skipExtraction (sorted). They are also written to DebugInfo.
+	SkippedTypes []string
+	// OutcomeWarning is set when the run's outcome needs naming: types skipped
+	// by skipExtraction and/or a run that wrote no objects. It rides the same
+	// debug_info/notification path as VarianceWarning (#233).
+	OutcomeWarning *RunOutcomeWarning
 }
 
 // MarkFailed marks a job as failed with an error message

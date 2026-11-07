@@ -68,9 +68,18 @@ jobs:
   # stack: the mock is stateful and seeds per boot (share's "one active session"
   # timeline, gmail's seeded source `s2`, …) and `run-e2e.sh` refuses to attach
   # to a server it did not start, precisely so a suite never runs against
-  # another lane's state. Sequential steps give the same thing without that risk:
-  # only one stack is ever up in this job, so the per-job port pins (#810) are
-  # gone and every suite uses its config's own default ports.
+  # another lane's state.
+  #
+  # Ports are derived per run, never pinned (#810). Each config asks
+  # `apps/web-ui/tests/e2e/ports.mjs` for a free gateway+mock pair, that module
+  # writes the pair to E2E_PORTS_FILE, and `run-e2e.sh` boots from the same
+  # file. Nothing in this workflow may set a port constant: the `memory` pool
+  # runs concurrent jobs on shared hosts, so two runs of *this same job* can be
+  # in the same suite step at once. Safety comes from the probe plus the
+  # runner's provenance check (`ss` shows the gateway it started owns the port),
+  # not from arithmetic or from assuming only one lane is ever live on a host.
+  # `reuseExistingServer: false` only means Playwright launches the command; it
+  # is checked before launch, so it is not the attach guard.
   # ───────────────────────────────────────────────────────────────────────────
   web-ui:
     name: Web UI (gateway + Playwright)
@@ -219,6 +228,28 @@ jobs:
             npx playwright install chromium
           fi
 
+      # Hermetic regression for #810's residual race: the pre-flight checks the
+      # ports before the build, so a foreign listener can take the gateway port
+      # mid-build and answer /api/health. Without a provenance check the runner
+      # would declare a stranger ready. It must exit non-zero naming the port.
+      - name: Port provenance guard
+        id: ports_provenance
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
+        run: bash scripts/provenance-race-test.sh
+
+      # The two invariants #205 asks for, read from source: no hermetic suite
+      # pins a port or shares a lane with another (so the `datasources` and
+      # `share` steps of this one job cannot want the same port — #810's fix,
+      # which nothing else would notice being reverted), and no softened suite
+      # step can fail or never run without the `Report` step below going red.
+      # Static, sub-second, no browser and no gateway.
+      - name: 'Contract: e2e suite gates'
+        id: ci_contract
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
+        run: node scripts/ci-contract-check.mjs
+
       # ── Suite 1: static-JS wiring (no gateway) ─────────────────────────────
       # Hermetic DOM gate. The full Playwright suite (playwright.config.ts) needs
       # a live gateway in session mode + a Zitadel test user + the real memory
@@ -350,9 +381,18 @@ jobs:
       # Turns the run red when any check or suite above did not succeed, and
       # names which ones — this is what keeps the `continue-on-error` steps from
       # reading as a partial green. `steps.<id>.outcome` holds the real result
-      # even when `conclusion` was softened by `continue-on-error`. A step that
-      # never ran (because `Build` failed) reports `skipped`; the job is already
-      # red in that case from `Build`.
+      # even when `conclusion` was softened by `continue-on-error`.
+      #
+      # `success` is the ONLY pass. None of the steps listed below is
+      # conditional, so `skipped` means an earlier *hard* step (checkout,
+      # `npm ci`, templ generate, the Playwright install) stranded the run before
+      # the suites — and a suite that never ran is not a suite that passed
+      # (#205). The job is already red from that stranding step, but the verdict
+      # must not depend on the coupling: an `if:` on a suite step would otherwise
+      # let the job read green while that suite never ran.
+      #
+      # `scripts/ci-contract-check.mjs` asserts this shape — every softened step
+      # has an id the report reads, and `skipped` is not accepted.
       - name: Report
         if: always()
         run: |
@@ -360,7 +400,7 @@ jobs:
           report() {
             printf '%-24s %s\n' "$1" "$2"
             case "$2" in
-              success|skipped) ;;
+              success) ;;
               *) failed+=("$1") ;;
             esac
           }
@@ -368,6 +408,8 @@ jobs:
           report "gateway vet"        "${{ steps.vet.outcome }}"
           report "gateway test"       "${{ steps.test.outcome }}"
           report "gateway lint"       "${{ steps.lint.outcome }}"
+          report "port provenance"    "${{ steps.ports_provenance.outcome }}"
+          report "e2e contract"       "${{ steps.ci_contract.outcome }}"
           report "js syntax"          "${{ steps.js_syntax.outcome }}"
           report "js wiring"          "${{ steps.js.outcome }}"
           report "datasources e2e"    "${{ steps.datasources.outcome }}"

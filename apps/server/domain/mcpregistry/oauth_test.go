@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // errorIs is errors.Is, kept local so the test reads the same as the assertions.
@@ -313,12 +316,49 @@ func TestRegisterClient_RejectedExcerptIsCappedAndSanitized(t *testing.T) {
 	}
 }
 
-// TestDiscoverAuthRequirement_RejectsBlockedMetadataURL asserts a challenge
-// cannot steer the server at internal infrastructure: a protected-resource
-// metadata URL in a blocked range is rejected before any request, and the
-// rejection surfaces through the registry's ErrOutboundURLNotAllowed sentinel
-// (mapped to a 400 by the handler).
-func TestDiscoverAuthRequirement_RejectsBlockedMetadataURL(t *testing.T) {
+// TestRegisterClient_2xxErrorBodyMapsToClientRequired pins the 200/201 DCR
+// response that carries an `error` field: mcpauth.Register wraps
+// ErrClientRequired, and the registry must map it to ErrOAuthClientRequired so
+// the handler answers 400 with the actionable pre-registered-client message,
+// not an opaque 500.
+func TestRegisterClient_2xxErrorBodyMapsToClientRequired(t *testing.T) {
+	withTestOAuthHTTP(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"error":"invalid_client_metadata","error_description":"not in the provider catalog"}`))
+	}))
+	defer srv.Close()
+
+	_, err := registerClient(context.Background(), srv.URL, "n", "https://cb.test", nil)
+	if err == nil {
+		t.Fatal("expected an error for a 2xx registration response carrying an error")
+	}
+	if !errorIs(err, ErrOAuthClientRequired) {
+		t.Errorf("err = %v, want it to wrap ErrOAuthClientRequired", err)
+	}
+
+	// StartMCPOAuth wraps the registration error before the handler sees it.
+	mapped := mcpOAuthError(fmt.Errorf("registering an OAuth client with the authorization server: %w", err))
+	status, body := apperror.ToHTTPError(mapped)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(map[string]any)["message"].(string)
+	if want := oauthClientRequiredMessage(err); msg != want {
+		t.Errorf("message = %q, want %q", msg, want)
+	}
+	if strings.Contains(msg, "internal") {
+		t.Errorf("message = %q, must not be an opaque internal error", msg)
+	}
+}
+
+// TestDiscoverAuthRequirement_ProviderBlockedMetadataURLIsProviderSide asserts
+// a challenge cannot steer the server at internal infrastructure and that the
+// rejection is not blamed on the caller: the blocked protected-resource
+// metadata URL was advertised by the provider, so the failure takes the
+// provider-side 503 class, never the caller-facing ErrOutboundURLNotAllowed.
+func TestDiscoverAuthRequirement_ProviderBlockedMetadataURLIsProviderSide(t *testing.T) {
 	// The resource is a public IP literal, so it passes the guard without a DNS
 	// lookup; only the challenge-supplied URL is rejected.
 	ch := authChallenge{ResourceMetadataURL: "http://169.254.169.254/latest/meta-data"}
@@ -326,8 +366,61 @@ func TestDiscoverAuthRequirement_RejectsBlockedMetadataURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the blocked metadata URL to be rejected")
 	}
+	if errors.Is(err, ErrOutboundURLNotAllowed) {
+		t.Errorf("err = %v, must not blame the caller's URL", err)
+	}
+	if !errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, want the provider-side ErrOAuthDiscoveryFailed class", err)
+	}
+	status, _ := apperror.ToHTTPError(mcpOAuthError(err))
+	if status != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", status)
+	}
+}
+
+// TestDiscoverAuthRequirement_BlockedResourceURLStaysCallerSide pins the one
+// blocked URL in the discovery walk the caller did supply: the resource URL
+// itself keeps the caller-facing 400, so the provider-side classification above
+// is scoped to provider-derived candidates.
+func TestDiscoverAuthRequirement_BlockedResourceURLStaysCallerSide(t *testing.T) {
+	ch := authChallenge{ResourceMetadataURL: "https://1.1.1.1/.well-known/oauth-protected-resource"}
+	_, err := discoverAuthRequirement(context.Background(), "http://169.254.169.254/mcp", ch)
+	if err == nil {
+		t.Fatal("expected the caller-supplied resource URL to be rejected")
+	}
 	if !errors.Is(err, ErrOutboundURLNotAllowed) {
-		t.Errorf("err = %v, want ErrOutboundURLNotAllowed", err)
+		t.Errorf("err = %v, want ErrOutboundURLNotAllowed for the caller's own URL", err)
+	}
+	if errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, must be the caller-facing class, not a provider failure", err)
+	}
+	status, _ := apperror.ToHTTPError(mcpOAuthError(err))
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+// TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe pins
+// that discoverServerAuthRequirement validates the resource URL before probing.
+// That ordering is why probeAuthChallenge needs no ErrURLNotAllowed arm of its
+// own: no rejected URL can reach the probe. It also pins the caller-facing 400
+// for a URL the caller did supply.
+func TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe(t *testing.T) {
+	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr("http://169.254.169.254/mcp")}
+	_, err := discoverServerAuthRequirement(context.Background(), server)
+	if !errors.Is(err, ErrOutboundURLNotAllowed) {
+		t.Errorf("err = %v, want ErrOutboundURLNotAllowed from the pre-probe guard", err)
+	}
+	if errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, must be the pre-probe guard, not a probe failure", err)
+	}
+	status, body := apperror.ToHTTPError(mcpOAuthError(err))
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, ErrOutboundURLNotAllowed.Error()) {
+		t.Errorf("message = %q, want the caller-facing URL copy", msg)
 	}
 }
 

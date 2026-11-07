@@ -462,6 +462,11 @@ type ContentBlock struct {
 	Text string `json:"text"`
 }
 
+// UntypedEntityTypeBucket is the synthetic name entity-type-list reports for
+// graph objects whose type is the empty string. Such rows predate the API
+// rejecting empty types and would otherwise be invisible (issue #323).
+const UntypedEntityTypeBucket = "(untyped)"
+
 // EntityType represents an entity type with count
 type EntityType struct {
 	Name        string `json:"name"`

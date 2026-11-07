@@ -367,6 +367,17 @@ type MergePreviewResult struct {
 	RequiresMerge bool                   `json:"requiresMerge"`
 }
 
+// ShadowedType describes a type the incoming pack declares but does not own,
+// installed without a merge confirmation. The registry keeps naming the old
+// owner while the read paths resolve the type from the newly installed pack.
+type ShadowedType struct {
+	TypeName              string `json:"type_name"`
+	RegistryOwnerPack     string `json:"registry_owner_pack,omitempty"`
+	RegistryOwnerSchemaID string `json:"registry_owner_schema_id,omitempty"`
+	ShadowingPack         string `json:"shadowing_pack"`
+	ShadowingSchemaID     string `json:"shadowing_schema_id"`
+}
+
 // AssignPackResult is the response from the assign endpoint.
 // Replaces the bare ProjectMemorySchema return so callers get conflict details.
 type AssignPackResult struct {
@@ -376,7 +387,9 @@ type AssignPackResult struct {
 	SchemaName       string           `json:"schema_name"`
 	InstalledTypes   []string         `json:"installed_types"`
 	SkippedTypes     []string         `json:"skipped_types,omitempty"`
+	ShadowedTypes    []ShadowedType   `json:"shadowed_types,omitempty"`
 	MergedTypes      []string         `json:"merged_types,omitempty"`
+	ReplacedTypes    []string         `json:"replaced_types,omitempty"`
 	Conflicts        []SchemaConflict `json:"conflicts,omitempty"`
 	AlreadyInstalled bool             `json:"already_installed,omitempty"`
 	// Migration fields — populated when the schema has a migrations block

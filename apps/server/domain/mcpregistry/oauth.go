@@ -104,12 +104,21 @@ var (
 
 // translateProtocolError maps the shared package's sentinels onto the registry's
 // own, which the handler maps to HTTP statuses.
+//
+// Every URL mcpauth fetches in these operations was advertised by the remote
+// provider (a protected-resource document, an issuer, or a registration/token
+// endpoint); the caller's own server URL is validated before any of them (see
+// discoverAuthRequirement and discoverServerAuthRequirement). A URL the outbound
+// guard rejects here is therefore a provider-side failure — the caller cannot
+// fix it by editing its own server URL — so it takes the retryable 503 class,
+// never the caller-facing 400 reserved for ErrOutboundURLNotAllowed. The
+// mcpauth sentinel stays on the underlying aggregate for diagnostics.
 func translateProtocolError(err error) error {
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, mcpauth.ErrURLNotAllowed):
-		return fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
+		return fmt.Errorf("%w: the provider advertised an OAuth URL that is not allowed: %v", ErrOAuthDiscoveryFailed, err)
 	case errors.Is(err, mcpauth.ErrMetadataUnavailable):
 		return fmt.Errorf("%w: %v", ErrOAuthMetadataUnavailable, err)
 	default:
@@ -121,7 +130,31 @@ func translateProtocolError(err error) error {
 // endpoints, and scopes needed to drive a connect flow. Metadata documents are
 // fetched over the SSRF-guarded outbound client, and every derived URL is
 // validated before it is fetched.
+//
+// mcpauth.Discover has two fallbacks this adapter does not exercise in its own
+// tests, so they are pinned in pkg/mcpauth instead:
+//
+//   - when the challenge advertises no resource_metadata, Discover consults
+//     /.well-known/oauth-protected-resource on the resource origin. The probe
+//     reports only challenges carrying resource_metadata or authorization_uri;
+//     an advertised document is authoritative, and the authorization_uri-only
+//     form is the only registry-reachable route into this fallback;
+//   - when the protected-resource document omits authorization_servers (RFC
+//     9728 §2 permits this) or the authorization_uri document omits issuer, no
+//     authorization server has been named and Discover uses the resource
+//     origin. Both routes are reachable from this adapter: a
+//     resource_metadata-only challenge whose document has `resource` but no
+//     authorization_servers, and an authorization_uri that is not a well-known
+//     URL whose document has no issuer.
 func discoverAuthRequirement(ctx context.Context, resourceURL string, ch authChallenge) (*authRequirement, error) {
+	// The resource URL is the only URL in this walk the caller supplied, and
+	// discoverServerAuthRequirement already validated it before the probe. The
+	// re-check keeps the classification local to this boundary: a rejected
+	// resource URL stays the caller-facing 400, while every URL rejected further
+	// down came from provider metadata (see translateProtocolError).
+	if err := oauthValidateURL(ctx, resourceURL); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
+	}
 	req, err := mcpauth.Discover(ctx, mcpauth.DiscoveryConfig{
 		Resource:  resourceURL,
 		Challenge: ch,
@@ -183,7 +216,8 @@ func registerClient(ctx context.Context, registrationEndpoint, clientName, redir
 		if errors.As(err, &rejected) {
 			return nil, &oauthRegistrationRejected{Status: rejected.Status, Excerpt: rejected.Excerpt}
 		}
-		if errors.Is(err, mcpauth.ErrNoRegistrationEndpoint) {
+		if errors.Is(err, mcpauth.ErrNoRegistrationEndpoint) ||
+			errors.Is(err, mcpauth.ErrClientRequired) {
 			return nil, fmt.Errorf("%w: %v", ErrOAuthClientRequired, err)
 		}
 		return nil, translateProtocolError(err)
