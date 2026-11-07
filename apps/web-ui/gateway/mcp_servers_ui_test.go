@@ -200,6 +200,49 @@ func TestRenderMCPServersInvokeAffordances(t *testing.T) {
 	}
 }
 
+// TestRenderMCPServersAddDialog asserts the page header carries one "Add
+// server" action on both the populated and empty list, and that the dialog it
+// opens offers the two add paths with the right destinations: the manual create
+// form and the registry browse page (whose per-entry install posts to the
+// existing /settings/mcp-registry/install handler).
+func TestRenderMCPServersAddDialog(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data mcpServersPageData
+	}{
+		{"populated", mcpServersPageData{Servers: mcpTestRegistryFixture()}},
+		{"empty", mcpServersPageData{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html := renderHTML(t, MCPServersPage(tc.data))
+			for _, want := range []string{
+				// header action (populated pages had no add affordance before)
+				`data-testid="mcp-server-add"`,
+				`data-dialog-open="mcp-server-add-dialog"`,
+				"Add server",
+				// dialog shell + title
+				`id="mcp-server-add-dialog"`,
+				`data-testid="mcp-server-add-dialog"`,
+				"Add an MCP server",
+				// path 1: the existing manual form
+				`data-testid="mcp-server-add-new"`,
+				`href="/settings/mcp-servers/new"`,
+				"Register a server",
+				"New server",
+				// path 2: the existing registry browse page
+				`data-testid="mcp-server-add-registry"`,
+				`href="/settings/mcp-registry"`,
+				"Browse the MCP registry",
+				"Open registry",
+			} {
+				if !strings.Contains(html, want) {
+					t.Errorf("%s MCPServersPage missing add-flow %q", tc.name, want)
+				}
+			}
+		})
+	}
+}
+
 // TestRenderMCPServersPageEmpty asserts the shared EmptyState with the CTA.
 func TestRenderMCPServersPageEmpty(t *testing.T) {
 	html := renderHTML(t, MCPServersPage(mcpServersPageData{}))

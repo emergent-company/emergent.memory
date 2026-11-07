@@ -39,13 +39,16 @@ templ MCPServersPage(data mcpServersPageData) {
 					Sharing
 				}
 				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    mcpServerSettingsBase + "/new",
+					Type:    ui.ButtonTypeButton,
 					Variant: ui.ButtonPrimary,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--plus",
+					Attrs: templ.Attributes{
+						"data-dialog-open": mcpServerAddDialogID,
+						"data-testid":      "mcp-server-add",
+					},
 				}) {
-					New server
+					Add server
 				}
 			}
 		}
@@ -73,8 +76,83 @@ templ MCPServersPage(data mcpServersPageData) {
 				</div>
 			}
 		}
+		@mcpServerAddDialog()
 		@mcpToolInvokeDialog()
 		@mcpServersScript()
+	}
+}
+
+// mcpServerAddDialog is the header "Add server" chooser. Adding a server has
+// two paths — the manual create form and Memory's curated registry — so the
+// header carries one action that opens both instead of a lone link to /new.
+// The registry path links to the browse page (GET /settings/mcp-registry):
+// installing an entry there posts to the existing /settings/mcp-registry/install
+// handler, so no registry data is fetched on this page's load and no install
+// plumbing is duplicated. The registry option reads its own description from
+// that page; this dialog only routes.
+templ mcpServerAddDialog() {
+	@ui.Dialog(ui.DialogProps{
+		ID:       mcpServerAddDialogID,
+		BoxClass: "max-w-lg",
+		Attrs:    templ.Attributes{"aria-labelledby": "mcp-server-add-title", "data-testid": "mcp-server-add-dialog"},
+	}) {
+		<div class="mb-4 flex items-start justify-between gap-4">
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "mcp-server-add-title"}) {
+					Add an MCP server
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) {
+					Set one up from scratch, or install a recommended server from the registry.
+				}
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": mcpServerAddDialogID},
+			})
+		</div>
+		<div class="flex flex-col gap-2">
+			<a class="group block" href={ templ.URL(mcpServerSettingsBase + "/new") } data-testid="mcp-server-add-new">
+				@ui.SoftBox(ui.SoftBoxProps{Class: "hover:border-primary/40 flex items-start gap-3 transition-colors"}) {
+					@ui.IconSpan("lucide--server", "mt-0.5 size-4 shrink-0 text-muted-faint")
+					<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span class="text-sm font-medium">Register a server</span>
+						<span class="text-muted text-xs leading-snug">Create one from scratch — pick a transport and enter its connection details.</span>
+					</span>
+					<span class="text-primary inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+						New server
+						@ui.IconSpan("lucide--chevron-right", "size-3.5")
+					</span>
+				}
+			</a>
+			<a class="group block" href={ templ.URL(mcpRegistrySettingsBase) } data-testid="mcp-server-add-registry">
+				@ui.SoftBox(ui.SoftBoxProps{Class: "hover:border-primary/40 flex items-start gap-3 transition-colors"}) {
+					@ui.IconSpan("lucide--globe", "mt-0.5 size-4 shrink-0 text-muted-faint")
+					<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span class="text-sm font-medium">Browse the MCP registry</span>
+						<span class="text-muted text-xs leading-tight">Install a recommended server that Memory has vetted.</span>
+					</span>
+					<span class="text-primary inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+						Open registry
+						@ui.IconSpan("lucide--chevron-right", "size-3.5")
+					</span>
+				}
+			</a>
+		</div>
+		<div class="modal-action">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-dialog-close": mcpServerAddDialogID},
+			}) {
+				Cancel
+			}
+		</div>
 	}
 }
 
