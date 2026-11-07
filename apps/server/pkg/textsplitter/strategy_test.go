@@ -2,6 +2,7 @@ package textsplitter
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -123,6 +124,51 @@ func TestMarkdownStructureOversizedTableSplitsWithHeader(t *testing.T) {
 	for i, c := range chunks {
 		if !strings.HasPrefix(c.Text, "| name | value |") {
 			t.Fatalf("chunk %d missing carried header: %q", i, c.Text)
+		}
+	}
+}
+
+// An oversized table must split only at row boundaries: every emitted line is
+// a complete pipe row (separators kept), body rows appear exactly once, and
+// only the header is repeated across chunks (#241).
+func TestMarkdownStructureOversizedTableKeepsRowsIntact(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("| date | guest | title | format | min |\n")
+	sb.WriteString("| --- | --- | --- | --- | --- |\n")
+	for i := 0; i < 40; i++ {
+		sb.WriteString("| 2024-11-01 | Alice | Some Title " + strconv.Itoa(i) + " | Live - moderation | 5 |\n")
+	}
+
+	chunks, err := SplitDocument(sb.String(), Config{ChunkSize: 200}, Options{Strategy: StrategyMarkdownStructure})
+	if err != nil {
+		t.Fatalf("SplitDocument: %v", err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("expected oversized table to split, got %d chunk(s)", len(chunks))
+	}
+
+	const header = "| date | guest | title | format | min |"
+	bodyRows := make(map[string]int)
+	for i, c := range chunks {
+		for _, line := range strings.Split(c.Text, "\n") {
+			if line == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+				t.Fatalf("chunk %d has a partial row (separators lost): %q", i, line)
+			}
+			if line == header || isTableSeparator(line) {
+				continue
+			}
+			bodyRows[line]++
+		}
+	}
+	if len(bodyRows) != 40 {
+		t.Fatalf("got %d distinct body rows, want 40", len(bodyRows))
+	}
+	for row, n := range bodyRows {
+		if n != 1 {
+			t.Fatalf("body row repeated %d times (headers are the only intentional repeat): %q", n, row)
 		}
 	}
 }

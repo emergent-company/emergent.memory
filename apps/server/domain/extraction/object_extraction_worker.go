@@ -82,9 +82,17 @@ type ExtractionSchemas struct {
 	RelationshipSchemas map[string]agents.RelationshipSchema
 }
 
+// previousRunFinder looks up the most recent comparable completed run for a
+// job. *ObjectExtractionJobsService implements it; tests use a fake so the
+// variance warning path is verifiable without a database.
+type previousRunFinder interface {
+	PreviousCompletedRunForDocument(ctx context.Context, job *ObjectExtractionJob) (*RunCountSnapshot, error)
+}
+
 // ObjectExtractionWorker processes object extraction jobs.
 type ObjectExtractionWorker struct {
 	jobsService           *ObjectExtractionJobsService
+	previousRuns          previousRunFinder
 	graphService          *graph.Service
 	branchService         *branches.Service
 	docService            *documents.Service
@@ -123,6 +131,7 @@ func NewObjectExtractionWorker(
 	}
 	return &ObjectExtractionWorker{
 		jobsService:    jobsService,
+		previousRuns:   jobsService,
 		graphService:   graphService,
 		branchService:  branchService,
 		docService:     docService,
@@ -174,6 +183,75 @@ func (w *ObjectExtractionWorker) WithNotifications(svc *notifications.Service) *
 func (w *ObjectExtractionWorker) WithRunRecorder(r *RunRecorder) *ObjectExtractionWorker {
 	w.runRecorder = r
 	return w
+}
+
+// WithPreviousRunFinder overrides the lookup the run-variance check uses. The
+// worker defaults to its jobs service; tests inject a fake so the warning path
+// is verifiable without a database.
+func (w *ObjectExtractionWorker) WithPreviousRunFinder(f previousRunFinder) *ObjectExtractionWorker {
+	w.previousRuns = f
+	return w
+}
+
+// applyRunVariance compares this run's object count with the most recent
+// completed run over the same document and schema configuration and, when the
+// deviation is strong, records a warning on the run (summary jsonb + transcript
+// message), on the job result (debug_info) and in the structured log. It never
+// fails the extraction: a missing comparison is not a job error.
+func (w *ObjectExtractionWorker) applyRunVariance(ctx context.Context, job *ObjectExtractionJob, runID string, result *ObjectExtractionResults) *RunVarianceWarning {
+	if w == nil || job == nil || result == nil || w.previousRuns == nil {
+		return nil
+	}
+	previous, err := w.previousRuns.PreviousCompletedRunForDocument(ctx, job)
+	if err != nil {
+		w.log.Warn("could not compare this extraction run with the previous one",
+			slog.String("job_id", job.ID),
+			logger.Error(err))
+		return nil
+	}
+	warning := planRunVariance(previous, result.ObjectsCreated)
+	if warning == nil {
+		return nil
+	}
+	result.VarianceWarning = warning
+	if result.DebugInfo == nil {
+		result.DebugInfo = JSON{}
+	}
+	result.DebugInfo["variance_warning"] = map[string]any{
+		"previous_job_id":   warning.PreviousJobID,
+		"previous_objects":  warning.PreviousObjects,
+		"objects":           warning.Objects,
+		"ratio":             warning.Ratio,
+		"direction":         warning.Direction,
+		"message":           warning.Message,
+		"threshold_factor":  runVarianceRatioFactor,
+		"min_objects_floor": runVarianceMinObjects,
+	}
+	w.log.Warn("extraction run object count deviates strongly from the previous run over the same document",
+		slog.String("job_id", job.ID),
+		slog.String("document_id", stringValue(job.DocumentID)),
+		slog.Int("objects", warning.Objects),
+		slog.Int("previous_objects", warning.PreviousObjects),
+		slog.String("previous_job_id", warning.PreviousJobID),
+		slog.Float64("ratio", warning.Ratio),
+		slog.String("direction", warning.Direction))
+	if runID != "" && w.runRecorder != nil {
+		if err := w.runRecorder.RecordVariance(ctx, runID, warning); err != nil {
+			w.log.Warn("failed to record run variance warning",
+				slog.String("run_id", runID),
+				logger.Error(err))
+		}
+	}
+	return warning
+}
+
+// stringValue dereferences an optional string for logging, returning "" when it
+// is nil.
+func stringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // startExtractionRun opens the job's transcript run and records the header
@@ -611,6 +689,11 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	if stagingBranchID != nil && w.autoMergeEnabled(ctx, job.ProjectID) {
 		w.autoMergeExtractionBranch(ctx, job, *stagingBranchID)
 	}
+
+	// A model in the loop cannot promise the same count twice; the run can still
+	// say when this result is wildly off the previous run over the same document
+	// before a reviewer merges it (#240).
+	w.applyRunVariance(ctx, job, runID, totalResult)
 
 	w.emitExtractionOutcome(ctx, job, stagingBranchID, totalResult)
 
@@ -1223,7 +1306,6 @@ func (w *ObjectExtractionWorker) emitReviewReadyNotification(ctx context.Context
 	if job.DocumentID != nil {
 		detail["document_id"] = *job.DocumentID
 	}
-	details, _ := json.Marshal(detail)
 
 	relatedType := "graph_branch"
 	relatedID := branchID
@@ -1235,12 +1317,19 @@ func (w *ObjectExtractionWorker) emitReviewReadyNotification(ctx context.Context
 	if filename != "" {
 		message = fmt.Sprintf("%s · %d objects, %d relationships", filename, result.ObjectsCreated, result.RelationshipsCreated)
 	}
+	severity := "info"
+	message, severity = withVarianceWarning(message, severity, detail, result.VarianceWarning)
+	if result.VarianceWarning != nil {
+		title = fmt.Sprintf("Extraction ready for review (%d objects, %s than the previous run's %d)",
+			result.ObjectsCreated, result.VarianceWarning.Direction, result.VarianceWarning.PreviousObjects)
+	}
+	details, _ := json.Marshal(detail)
 
 	if err := w.notificationsSvc.CreateForProjectMembers(ctx, job.ProjectID, notifications.CreateInput{
 		EventKey:            "extraction.review_ready",
 		Title:               title,
 		Message:             message,
-		Severity:            "info",
+		Severity:            severity,
 		Importance:          "important",
 		SourceType:          &sourceType,
 		SourceID:            &job.ID,

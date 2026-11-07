@@ -1414,14 +1414,7 @@ func (s *Server) uiOrgOAuthClientDetail(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
 	}
-	var provider *DSProvider
-	for i := range providers {
-		// Self-registering providers (Trale) have no per-provider app editor.
-		if providers[i].Type == providerType && providers[i].DSProviderSupportsOAuth() && !providers[i].DSProviderSelfRegistering() {
-			provider = &providers[i]
-			break
-		}
-	}
+	provider := dsOAuthAppProviderFor(providers, providerType)
 	if provider == nil {
 		return c.NoContent(http.StatusNotFound)
 	}
@@ -1454,13 +1447,24 @@ func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
 	if !s.orgAdminForCaller(c, orgID) {
 		return c.NoContent(http.StatusNotFound)
 	}
+	providerType := strings.TrimSpace(c.Param("providerType"))
+	providers, err := s.memory.ListDSProviders(c.Request().Context())
+	if err != nil {
+		return redirectWithError(c, back, userFacingError(err))
+	}
+	// The write path must reject anything the editor never offers: an unknown,
+	// non-OAuth, or self-registering provider would leave a client record that
+	// cannot be managed and can never be resolved.
+	if dsOAuthAppProviderFor(providers, providerType) == nil {
+		return c.NoContent(http.StatusNotFound)
+	}
 	clientID := strings.TrimSpace(c.FormValue("client_id"))
 	if clientID == "" {
 		return redirectWithError(c, back, errors.New("clientId is required"))
 	}
 	cfg, err := s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
 		return s.memory.GetDSOAuthClient(c.Request().Context(), orgID, pt)
-	}, c.Param("providerType"))
+	}, providerType)
 	if err != nil {
 		return redirectWithError(c, back, err)
 	}
@@ -1471,7 +1475,7 @@ func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
 		Strategy:     strings.TrimSpace(c.FormValue("strategy")),
 		Config:       cfg,
 	}
-	if _, err := s.memory.UpsertDSOAuthClient(c.Request().Context(), orgID, c.Param("providerType"), req); err != nil {
+	if _, err := s.memory.UpsertDSOAuthClient(c.Request().Context(), orgID, providerType, req); err != nil {
 		return redirectWithError(c, back, err)
 	}
 
@@ -1526,7 +1530,17 @@ func (s *Server) uiOrgOAuthClientDelete(c echo.Context) error {
 	if !s.orgAdminForCaller(c, orgID) {
 		return c.NoContent(http.StatusNotFound)
 	}
-	if err := s.memory.DeleteDSOAuthClient(c.Request().Context(), orgID, c.Param("providerType")); err != nil {
+	providerType := strings.TrimSpace(c.Param("providerType"))
+	providers, err := s.memory.ListDSProviders(c.Request().Context())
+	if err != nil {
+		return redirectWithError(c, back, userFacingError(err))
+	}
+	// Symmetric with the upsert: an unknown, non-OAuth, or self-registering
+	// provider has no manageable client, so a delete against it is a 404.
+	if dsOAuthAppProviderFor(providers, providerType) == nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err := s.memory.DeleteDSOAuthClient(c.Request().Context(), orgID, providerType); err != nil {
 		return redirectWithError(c, back, err)
 	}
 	redirectAfterMutation(c, back+"?deleted=1")
@@ -1892,6 +1906,20 @@ func dsOAuthAppProviders(providers []DSProvider) []DSProvider {
 		out = append(out, p)
 	}
 	return out
+}
+
+// dsOAuthAppProviderFor resolves a provider type to the one catalogue entry that
+// is admin-manageable — the same predicate the org editor and table render from
+// (advertises oauth and is not self-registering). A nil return means the type is
+// unknown, non-OAuth, or self-registering, and the caller must 404 rather than
+// create or delete a client record the UI can never offer.
+func dsOAuthAppProviderFor(providers []DSProvider, providerType string) *DSProvider {
+	for i := range providers {
+		if providers[i].Type == providerType && providers[i].DSProviderSupportsOAuth() && !providers[i].DSProviderSelfRegistering() {
+			return &providers[i]
+		}
+	}
+	return nil
 }
 
 // dsOrgOAuthClientHref is the org per-provider OAuth app editor path.

@@ -492,6 +492,16 @@ trusts it, so it cannot tell our gateway from one that took the port later.
 binds the selected gateway port with a foreign health responder, and asserts the
 runner exits non-zero naming the port.
 
+`scripts/ci-contract-check.mjs` (CI: the `Contract: e2e suite gates` step) holds
+the rules above down, because a rule that only lives in prose is one revert away
+from coming back (#205): it fails if a hermetic config names a port, gives two
+configs the same lane, or stops selecting through `ports.mjs`; it also binds a
+reservation and re-runs the selection from the same `E2E_PORT_SEED`, asserting it
+skips the ports the reservation holds — so the probe cannot rot silently. The
+same script asserts the `Report` step of `web-ui.yml` reads the outcome of every
+`continue-on-error` step and does not accept `skipped` as a pass — a suite that
+never ran must never read as a suite that passed.
+
 ### Hermetic agent public-share gate
 
 The agent public-share suite — `specs/share/*` under `share.config.ts` — is

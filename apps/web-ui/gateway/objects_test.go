@@ -1818,7 +1818,9 @@ func TestUIObjectsStatsPartialBranchScoped(t *testing.T) {
 	e.GET("/objects/stats", s.uiObjectsStatsPartial)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/stats?branch=b1", nil))
+	req := httptest.NewRequest(http.MethodGet, "/objects/stats?branch=b1", nil)
+	req.Header.Set("HX-Request", "true")
+	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -1827,6 +1829,25 @@ func TestUIObjectsStatsPartialBranchScoped(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "7") {
 		t.Errorf("stats partial missing branch-scoped count 7: %s", rec.Body.String())
+	}
+}
+
+// TestUIObjectsStatsPartialFullPageLoadRedirects pins that a full-page load of
+// the deferred stats route (no HX-Request) redirects to the objects page instead
+// of rendering a bare unstyled fragment (issue #235).
+func TestUIObjectsStatsPartialFullPageLoadRedirects(t *testing.T) {
+	f := &fakeMemory{objectCount: 7}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/stats", s.uiObjectsStatsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/stats", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("full-page stats load status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/objects" {
+		t.Errorf("full-page stats load location = %q, want /objects", loc)
 	}
 }
 
@@ -3329,6 +3350,30 @@ func TestObjectStatusControl(t *testing.T) {
 	}
 	if ctrl = objectStatusControlFor(shadowedFirst, "Task"); !slices.Equal(ctrl.Options, []string{"triage", "doing"}) {
 		t.Errorf("shadowed declaration leaked: options = %v, want [triage doing]", ctrl.Options)
+	}
+}
+
+// TestObjectCreateKeyRequiredForBoardEnabledType pins the #238 fix: a
+// board-enabled type (Task) marks the Key field required with an explanatory
+// hint, while a non-board type leaves it optional.
+func TestObjectCreateKeyRequiredForBoardEnabledType(t *testing.T) {
+	board := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "done"}}}
+
+	html := renderHTML(t, ObjectCreatePage(board, nil, objectCreateForm{Type: "Task"}, nil, nil, objectStatusControlFor(board, "Task")))
+	if !strings.Contains(html, `id="object-key"`) {
+		t.Fatal("create page missing the Key field")
+	}
+	if !strings.Contains(html, `required class="input w-full"`) {
+		t.Errorf("board-enabled type must mark Key required:\n%s", html)
+	}
+	if !strings.Contains(html, "board-enabled") {
+		t.Errorf("board-enabled type must explain that the key is required:\n%s", html)
+	}
+
+	note := []CompiledType{{Name: "Note"}}
+	html = renderHTML(t, ObjectCreatePage(note, nil, objectCreateForm{Type: "Note"}, nil, nil, objectStatusControlFor(note, "Note")))
+	if strings.Contains(html, "required") {
+		t.Errorf("non-board type must not mark Key required:\n%s", html)
 	}
 }
 

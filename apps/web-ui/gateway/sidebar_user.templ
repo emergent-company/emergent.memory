@@ -42,6 +42,12 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 				}
 			</div>
 		</div>
+		<!-- Footer: build version. Durable and always reachable so a reporter can
+		     copy the running build into an issue (the same value /api/health
+		     exposes) instead of answering "version not shown in the UI". -->
+		<div class="border-base-content/10 shrink-0 border-t px-5 py-3">
+			<p class="text-muted-faint font-mono text-[11px] select-all" data-testid="app-version" title="Build version">{ buildVersionLabel() }</p>
+		</div>
 	</div>
 	<script>
 	(function() {

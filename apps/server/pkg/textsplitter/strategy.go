@@ -427,6 +427,11 @@ func packBlocks(blocks []block, cfg Config) []Chunk {
 
 // splitTable splits an oversized table at row boundaries, carrying the header
 // row (and separator) into every part.
+//
+// The repeated header is intentional: every chunk stays self-describing, and
+// the header is the only row that is ever repeated. Body rows are never
+// repeated and are never cut mid-row, so each chunk keeps complete pipe rows
+// with their column separators (issue #241).
 func splitTable(b block, cfg Config) []Chunk {
 	headerCarry := ""
 	var header []string
