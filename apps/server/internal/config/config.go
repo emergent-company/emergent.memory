@@ -645,12 +645,11 @@ func (b *BraveSearchConfig) IsConfigured() bool {
 
 // MCPConfig holds guardrails for MCP tool calls (issue #1148).
 type MCPConfig struct {
-	// PublicURL is the deployment's externally reachable API origin, e.g.
-	// https://api.dev.emergent-company.ai (dev) or
-	// https://memory.emergent-company.ai (prod). MCP share invite emails and
-	// client snippets are built from it: a call proxied from the web UI carries
-	// the internal compose service name in Host, which an outside MCP client
-	// cannot resolve. Empty falls back to the request-derived base URL.
+	// PublicURL is the deployment's externally reachable API origin (scheme +
+	// host, no trailing slash), set by the deployment. MCP share invite emails
+	// and client snippets are built from it: a call proxied from the web UI
+	// carries the internal compose service name in Host, which an outside MCP
+	// client cannot resolve. Empty falls back to the request-derived base URL.
 	PublicURL string `env:"MCP_PUBLIC_URL" envDefault:""`
 
 	// EntityQueryTimeout is the hard per-call deadline for the entity-query
