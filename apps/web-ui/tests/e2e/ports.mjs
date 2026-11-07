@@ -3,16 +3,24 @@
 // The self-hosted `memory` pool runs several jobs on shared hosts, and this
 // workflow is path-filtered, so two PRs can be in the same suite step at the
 // same time on one host. The harness used to boot every suite on a pinned
-// default pair (gateway 8097, mock 5301): the second job bound the first job's
-// ports and `run-e2e.sh` refused to attach — correct behaviour, wrong port
-// assignment, and a merge-blocking red that only a re-run could clear (#810).
+// default pair: the second job bound the first job's ports and `run-e2e.sh`
+// refused to attach — correct behaviour, wrong port assignment, and a
+// merge-blocking red that only a re-run could clear (#810).
 //
-// Selection is deterministic per GitHub Actions run/job — concurrent runs
-// therefore prefer disjoint ranges — and then probed by actually binding each
-// candidate, so a crashed sibling's leftover process is skipped instead of
-// being mistaken for ours. The chosen pair is written to a file; the Playwright
-// config builds its baseURL from that file and `run-e2e.sh` boots from the same
-// file, so the two cannot disagree.
+// Selection starts from a per-invocation random offset inside a fixed band and
+// then probes each candidate by binding it, so an already-listening leftover
+// from a crashed sibling is skipped. The probe does NOT reserve the port: a
+// foreign process can take it between the probe and the harness bind. That
+// residual race is closed in `run-e2e.sh`, which proves the gateway it started
+// owns the listening socket before it accepts `/api/health`. The chosen pair is
+// written to a file; the Playwright config builds its baseURL from that file and
+// `run-e2e.sh` boots from the same file, so the two cannot disagree.
+//
+// The guarantee between concurrent runs is probabilistic, not arithmetic: the
+// bands are 6000 ports wide per process, the start is random per invocation, and
+// the file name carries run id + attempt + pid. Two *different jobs* of one run
+// are therefore not hard-disjoint by construction; the provenance check, not
+// arithmetic, is what prevents a silent attach.
 //
 // Usage:
 //   node ports.mjs --lane datasources        # JSON: { gateway, mock, file }
@@ -23,6 +31,7 @@
 //   MEMORY_PORT + MOCK_PORT   use both as-is (written to the file)
 //   E2E_PORTS_FILE            use this reservation file
 //   E2E_PORT_SEED             deterministic candidate offset (tests)
+import { randomInt } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync, renameSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,16 +45,7 @@ const GATEWAY_SPAN = 6000; // 18000–23999
 const MOCK_LO = 24000;
 const MOCK_SPAN = 6000; // 24000–29999
 
-function fnv1a(text) {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
-function seedFor(lane) {
+function seedFor() {
   const explicit = process.env.E2E_PORT_SEED;
   if (explicit !== undefined && explicit !== '') {
     const value = Number(explicit);
@@ -55,20 +55,11 @@ function seedFor(lane) {
     return value;
   }
 
-  const runId = process.env.GITHUB_RUN_ID;
-  if (runId) {
-    // Run ids are monotonic per repo, so concurrent runs (a delta far smaller
-    // than the band width) never share an offset. Folding in the job name keeps
-    // two different jobs of one run apart as well.
-    const id = Number(runId);
-    if (!Number.isSafeInteger(id)) {
-      throw new Error(`GITHUB_RUN_ID is not a safe integer: ${JSON.stringify(runId)}`);
-    }
-    return (id + fnv1a(`${process.env.GITHUB_JOB || ''}:${lane}`)) % GATEWAY_SPAN;
-  }
-
-  // No CI identity (local run): pid + time keeps two concurrent terminals apart.
-  return (process.pid * 7919 + Date.now()) % GATEWAY_SPAN;
+  // Random per invocation. A retried step gets a fresh start and a fresh file
+  // (the name carries GITHUB_RUN_ATTEMPT), so it cannot reuse a previous pair by
+  // pid coincidence. Wide bands make a collision unlikely; the probe and the
+  // runner's provenance check handle the rest.
+  return randomInt(0, GATEWAY_SPAN);
 }
 
 function canListen(port) {
@@ -145,7 +136,7 @@ export async function selectPorts({ lane = 'local', file } = {}) {
     return { gateway: envGateway, mock: envMock, file: portsFile };
   }
 
-  const seed = seedFor(lane);
+  const seed = seedFor();
   const gateway = await findFree(GATEWAY_LO, GATEWAY_SPAN, seed);
   const mock = await findFree(MOCK_LO, MOCK_SPAN, seed);
   writePorts(portsFile, gateway, mock);
