@@ -142,10 +142,11 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		Where("ps.removed_at IS NULL").
 		// The last install wins, matching GetCompiledTypesByProject and the
 		// registry write path: assignments are read oldest-first and each pack's
-		// definitions overwrite the map, so the newest install of a type name (or
-		// of a relationship type) is the one validation uses. Without this ORDER
-		// BY Postgres returns rows in arbitrary order and the effective
-		// definition is unpredictable (issue #295).
+		// definitions overwrite the map, so the newest install defines an object
+		// type, a relationship type's name-wide default, and any identical
+		// (name, source, target) triple. Without this ORDER BY Postgres returns
+		// rows in arbitrary order and the effective definition is unpredictable
+		// (issues #295, #322).
 		Order("ps.installed_at ASC").
 		Order("ps.id ASC").
 		Scan(ctx)
@@ -187,7 +188,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 	p.log.Debug("schema cached",
 		slog.String("project_id", projectID),
 		slog.Int("object_types", len(schemas.ObjectSchemas)),
-		slog.Int("relationship_types", len(schemas.RelationshipSchemas)))
+		slog.Int("relationship_types", countRelationshipTypeNames(schemas.RelationshipSchemas)))
 
 	return schemas, nil
 }
@@ -629,8 +630,8 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 }
 
 // relationshipSchemaKeySeparator joins the parts of a relationship schema
-// identity. It cannot occur in a relationship type key, which keeps a qualified
-// key from ever colliding with the bare name of another type.
+// identity. A relationship type key is authored text and never carries a NUL, so
+// a qualified key cannot be mistaken for the bare name of another type.
 const relationshipSchemaKeySeparator = "\x00"
 
 // relationshipSchemaKey is the identity of one relationship schema variant: the
@@ -642,6 +643,19 @@ func relationshipSchemaKey(name, srcType, tgtType string) string {
 		return name
 	}
 	return name + relationshipSchemaKeySeparator + srcType + relationshipSchemaKeySeparator + tgtType
+}
+
+// countRelationshipTypeNames counts the distinct relationship type names in the
+// registry. The map also holds one entry per declared (name, source, target)
+// identity (#322), so len() would overstate the number of types a project has.
+func countRelationshipTypeNames(schemas map[string]agents.RelationshipSchema) int {
+	names := 0
+	for key := range schemas {
+		if !strings.Contains(key, relationshipSchemaKeySeparator) {
+			names++
+		}
+	}
+	return names
 }
 
 // wildcardOr returns the declared endpoint types, or a single empty string
@@ -688,7 +702,7 @@ func (v *relationshipSchemaVariant) addEndpoint(srcType, tgtType string) {
 // relationshipVariantSignature identifies a variant's property schema. Repeated
 // declarations that differ only in their endpoints share a signature and are
 // folded into one variant; declarations that differ in name, description,
-// properties, required fields or extraction guidelines stay apart.
+// properties or required fields stay apart.
 func relationshipVariantSignature(schema agents.RelationshipSchema) string {
 	props := schema.Properties
 	if len(props) == 0 {
@@ -696,17 +710,15 @@ func relationshipVariantSignature(schema agents.RelationshipSchema) string {
 		props = nil
 	}
 	raw, err := json.Marshal(struct {
-		Name                 string
-		Description          string
-		Properties           map[string]agents.PropertyDef
-		Required             []string
-		ExtractionGuidelines string
+		Name        string
+		Description string
+		Properties  map[string]agents.PropertyDef
+		Required    []string
 	}{
 		normalizeRelationType(schema.Name),
 		schema.Description,
 		props,
 		schema.Required,
-		schema.ExtractionGuidelines,
 	})
 	if err != nil {
 		// Property definitions are plain JSON data, so this is unreachable in

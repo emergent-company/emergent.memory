@@ -74,12 +74,9 @@ func TestSameNamedRelationshipFromTwoPacksValidatesPerEndpoint(t *testing.T) {
 	assert.Equal(t, []string{"holder_role"}, names(accountSchema.Properties))
 
 	t.Run("Person owns Vehicle validates against share_percent", func(t *testing.T) {
+		// The string "40" is coerced to a number: it would stay a string if the
+		// account schema (holder_role, a string) were the one applied.
 		validated, err := validateRelationshipProperties("owns", "Person", "Vehicle",
-			map[string]any{"share_percent": 40}, schemas)
-		require.NoError(t, err)
-		// Coerced against the vehicle schema ("40" would stay a string if the
-		// account schema were used, since holder_role is a string).
-		validated, err = validateRelationshipProperties("owns", "Person", "Vehicle",
 			map[string]any{"share_percent": "40"}, schemas)
 		require.NoError(t, err)
 		assert.Equal(t, 40.0, validated["share_percent"])
