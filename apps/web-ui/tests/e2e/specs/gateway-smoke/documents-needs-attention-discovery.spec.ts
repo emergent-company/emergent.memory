@@ -26,9 +26,13 @@ const PANEL = '[data-testid="processing-problems"]';
 const CARD = '[data-testid="schema-discovery-card"]';
 
 // Fixture-contract assertions read the mock directly; gateway-smoke.config.ts
-// exports the resolved MOCK_PORT to the test process so a default-port run and
-// a non-default one agree. The browser cases still go through the gateway.
-const mockOrigin = `http://localhost:${process.env.MOCK_PORT ?? '5301'}`;
+// exports the resolved MOCK_PORT to the test process. No numeric fallback: a
+// suite run outside its config would otherwise hit a stale pinned origin.
+const mockPort = process.env.MOCK_PORT;
+if (!mockPort) {
+  throw new Error('MOCK_PORT is required; run this suite through gateway-smoke.config.ts (run-e2e.sh sets it).');
+}
+const mockOrigin = `http://localhost:${mockPort}`;
 
 /** Rows rendered inside the panel's schema area. */
 function schemaRows(page: Page) {

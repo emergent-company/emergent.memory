@@ -2,9 +2,14 @@ import { test, expect } from '@playwright/test';
 
 // The feedback overlay URL is configured from the mock port (`run-e2e.sh` sets
 // FEEDBACK_OVERLAY_URL=http://localhost:$MOCK_PORT), so derive the expectation
-// from the same default rather than hardcoding it — a non-default-port run would
-// otherwise assert the wrong origin.
-const mockOrigin = `http://localhost:${process.env.MOCK_PORT ?? '5301'}`;
+// from the same env the runner exports. There is deliberately no numeric
+// fallback: a suite run outside its config would otherwise assert against a
+// stale pinned origin.
+const mockPort = process.env.MOCK_PORT;
+if (!mockPort) {
+  throw new Error('MOCK_PORT is required; run this suite through dev-gallery.config.ts (run-e2e.sh sets it).');
+}
+const mockOrigin = `http://localhost:${mockPort}`;
 
 // The component gallery (/dev/components) is a dev-gated surface rendered by the
 // gateway (gateway/devgallery.go + devgallery.templ). It only serves when

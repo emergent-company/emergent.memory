@@ -2,9 +2,10 @@ import { test, expect } from '@playwright/test';
 
 // Hermetic (no-auth, mock-backed) coverage for the provider-generic OAuth
 // data-source connect UI. Runs against the dev-mode mock harness (see
-// data-sources.config.ts): `run-e2e.sh` boots `mock-memory.mjs` (:5301) plus
-// the gateway in AUTH_MODE=dev (:8097). Every memory call is answered by the
-// mock, so the flows are deterministic and never touch a real backend.
+// datasources.config.ts): `run-e2e.sh` boots `mock-memory.mjs` plus the gateway
+// in AUTH_MODE=dev, on a port pair derived per run. Every memory call is
+// answered by the mock, so the flows are deterministic and never touch a real
+// backend.
 //
 // Routes under test (gateway, datasources.go / datasources_ui.go):
 //   /data-sources/new                     provider chooser (catalog-driven)
