@@ -512,3 +512,26 @@ func TestMCPShareRowShowsInviteesAndWriteScope(t *testing.T) {
 		t.Error("share with no recipients rendered an invitee chip")
 	}
 }
+
+// TestMCPShareRecipientsLabel pins the row label's summarisation: at most two
+// addresses are named, the tail is a count, and the title carries the full list
+// so the addresses the row had to drop are still reachable.
+func TestMCPShareRecipientsLabel(t *testing.T) {
+	cases := []struct {
+		emails []string
+		want   string
+	}{
+		{nil, ""},
+		{[]string{"a@example.com"}, "invited a@example.com"},
+		{[]string{"a@example.com", "b@example.com"}, "invited a@example.com, b@example.com"},
+		{[]string{"a@example.com", "b@example.com", "c@example.com"}, "invited a@example.com, b@example.com +1"},
+	}
+	for _, c := range cases {
+		if got := mcpShareRecipientsLabel(c.emails); got != c.want {
+			t.Errorf("label(%v) = %q, want %q", c.emails, got, c.want)
+		}
+	}
+	if got := mcpShareRecipientsTitle([]string{"a@example.com", "b@example.com", "c@example.com"}); got != "a@example.com, b@example.com, c@example.com" {
+		t.Errorf("title = %q", got)
+	}
+}
