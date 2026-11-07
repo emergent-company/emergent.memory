@@ -2,15 +2,50 @@
 # run-e2e.sh — start mock memory + gateway, block until killed.
 # Playwright's webServer runs this and kills it when tests finish.
 set -euo pipefail
-cd "$(dirname "$0")/../.."   # repo root
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+cd "$script_dir/../.."   # repo root
 
-# Ports. The gateway defaults to 8097 (avoids the shared dev gateway on 8095) and
-# the mock to 5301; both are overridable so a second harness can run on the same
-# machine without sharing a server. CI runs the suites sequentially in one job
-# (see .github/workflows/web-ui.yml), so it sets neither and each suite boots on
-# these defaults — one stack at a time, so they cannot collide with each other.
-PORT="${MEMORY_PORT:-8097}"
-MOCK_PORT="${MOCK_PORT:-5301}"
+# Ports are derived per run, never pinned (#810). `ports.mjs` is the single
+# source of truth: the Playwright config selects a free gateway/mock pair, writes
+# it to a file and passes that path here as E2E_PORTS_FILE; this script boots
+# from the same file, so the config's baseURL and the servers cannot disagree.
+# There is deliberately no numeric default — a pinned constant is what let two
+# concurrent jobs on one host bind the same ports.
+ports_file="${E2E_PORTS_FILE:-}"
+if [ -n "$ports_file" ] && [ -f "$ports_file" ]; then
+  file_gateway="$(sed -n 's/^MEMORY_PORT=\([0-9][0-9]*\)$/\1/p' "$ports_file")"
+  file_mock="$(sed -n 's/^MOCK_PORT=\([0-9][0-9]*\)$/\1/p' "$ports_file")"
+  if [ -z "$file_gateway" ] || [ -z "$file_mock" ]; then
+    echo "run-e2e.sh: $ports_file exists but has no MEMORY_PORT/MOCK_PORT pair — refusing to guess ports." >&2
+    exit 1
+  fi
+  # Drift guard: an environment override that contradicts the reservation file
+  # means two sources are live. Fail instead of booting where the config is not
+  # looking.
+  if [ -n "${MEMORY_PORT:-}" ] && [ "$MEMORY_PORT" != "$file_gateway" ]; then
+    echo "run-e2e.sh: MEMORY_PORT=$MEMORY_PORT disagrees with $ports_file ($file_gateway)." >&2
+    exit 1
+  fi
+  if [ -n "${MOCK_PORT:-}" ] && [ "$MOCK_PORT" != "$file_mock" ]; then
+    echo "run-e2e.sh: MOCK_PORT=$MOCK_PORT disagrees with $ports_file ($file_mock)." >&2
+    exit 1
+  fi
+  PORT="$file_gateway"
+  MOCK_PORT="$file_mock"
+elif [ -n "${MEMORY_PORT:-}" ] && [ -n "${MOCK_PORT:-}" ]; then
+  # Explicit local override (both halves required). No default lives here.
+  PORT="$MEMORY_PORT"
+elif [ -n "$ports_file" ]; then
+  # The config handed us a path but no file: derive and write it ourselves.
+  eval "$(node "$script_dir/ports.mjs" --lane "${E2E_LANE:-local}" --out "$ports_file" --shell)"
+  PORT="$MEMORY_PORT"
+else
+  # Direct invocation (no Playwright config): select a pair for this process and
+  # keep it next to the runner's temp dir, like the configs do.
+  ports_file="$(mktemp -d)/ports.env"
+  eval "$(node "$script_dir/ports.mjs" --lane "${E2E_LANE:-local}" --out "$ports_file" --shell)"
+  PORT="$MEMORY_PORT"
+fi
 
 # Pre-flight: this harness is deliberately self-contained (Playwright runs it
 # with reuseExistingServer:false). If either port is already served, the gateway
@@ -24,7 +59,7 @@ port_in_use() {
 }
 for _port in "$PORT" "$MOCK_PORT"; do
   if port_in_use "$_port"; then
-    echo "run-e2e.sh: port $_port is already in use — refusing to reuse a foreign server. Stop whatever is listening there, or set MEMORY_PORT/MOCK_PORT to free ports." >&2
+    echo "run-e2e.sh: port $_port is already in use — refusing to reuse a foreign server. The port selector should have skipped it; if this repeats, remove ${ports_file:-the reservation file} and re-run." >&2
     exit 1
   fi
 done

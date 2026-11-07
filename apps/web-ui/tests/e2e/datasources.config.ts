@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 
 // Self-contained config for the Data Sources surface (Google Drive integration).
@@ -11,12 +13,19 @@ import { defineConfig, devices } from '@playwright/test';
 //
 // Run:  npx playwright test --config=datasources.config.ts
 //
-// The gateway port is overridable so this suite can run alongside another
-// harness on one machine without sharing a server (see share.config.ts). CI
-// runs the suites sequentially in one job, one stack at a time, so it leaves
-// this default at 8097 — the same number `share` uses, just never at the same
-// moment. `run-e2e.sh` reads the same variables.
-const port = process.env.MEMORY_PORT ?? '8097';
+// Ports are derived per run, never pinned (#810). `ports.mjs` probes a free
+// gateway/mock pair, writes it to a file and prints it; this config builds its
+// baseURL from that selection and hands the same file to `run-e2e.sh` as
+// E2E_PORTS_FILE, so the config and the servers cannot disagree. Two concurrent
+// runs of this job on one host therefore get different pairs.
+const { gateway: port, mock, file: portsFile } = JSON.parse(
+  execFileSync(process.execPath, [path.join(__dirname, 'ports.mjs'), '--lane', 'datasources'], {
+    encoding: 'utf8',
+  }),
+) as { gateway: number; mock: number; file: string };
+process.env.MEMORY_PORT = String(port);
+process.env.MOCK_PORT = String(mock);
+process.env.E2E_PORTS_FILE = portsFile;
 const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
@@ -43,6 +52,7 @@ export default defineConfig({
   webServer: {
     command: 'bash run-e2e.sh',
     cwd: __dirname,
+    env: { E2E_PORTS_FILE: portsFile },
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
