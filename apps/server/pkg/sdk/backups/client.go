@@ -396,3 +396,97 @@ func (c *Client) GetRestore(ctx context.Context, restoreID string) (*Restore, er
 	}
 	return &restore, nil
 }
+
+// GetSchedule returns the project's recurring backup configuration. A project
+// with no schedule configured yields (nil, nil): the API answers 404, which is
+// this resource's "unset" state rather than an error.
+func (c *Client) GetSchedule(ctx context.Context, projectID string) (*Schedule, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		c.base+"/api/v1/projects/"+url.PathEscape(projectID)+"/backup-schedule", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var schedule Schedule
+	if err := json.NewDecoder(resp.Body).Decode(&schedule); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &schedule, nil
+}
+
+// SaveSchedule creates or replaces the project's recurring backup
+// configuration (PUT .../backup-schedule).
+func (c *Client) SaveSchedule(ctx context.Context, projectID string, scheduleRequest *ScheduleRequest) (*Schedule, error) {
+	body, err := json.Marshal(scheduleRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT",
+		c.base+"/api/v1/projects/"+url.PathEscape(projectID)+"/backup-schedule", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var schedule Schedule
+	if err := json.NewDecoder(resp.Body).Decode(&schedule); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &schedule, nil
+}
+
+// DeleteSchedule removes the project's recurring backup configuration. Deleting
+// an absent schedule yields sdkerrors.IsNotFound.
+func (c *Client) DeleteSchedule(ctx context.Context, projectID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE",
+		c.base+"/api/v1/projects/"+url.PathEscape(projectID)+"/backup-schedule", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}

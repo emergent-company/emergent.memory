@@ -476,6 +476,14 @@ type fakeMemory struct {
 	deletedBackupID   string              // last id passed to DeleteBackup
 	deletedBackupErr  error               // failure for DeleteBackup
 
+	backupSchedule      *BackupSchedule        // returned by GetBackupSchedule
+	backupScheduleErr   error                  // failure for GetBackupSchedule
+	savedBackupSchedule *BackupScheduleRequest // last request passed to SaveBackupSchedule
+	savedScheduleResult *BackupSchedule        // returned by SaveBackupSchedule
+	saveScheduleErr     error                  // failure for SaveBackupSchedule
+	deletedSchedule     bool                   // whether DeleteBackupSchedule was called
+	deleteScheduleErr   error                  // failure for DeleteBackupSchedule
+
 	project          *Project
 	projectErr       error          // GetCurrentProject failure
 	updateErr        error          // UpdateProject failure
@@ -2297,6 +2305,32 @@ func (f *fakeMemory) DeleteBackup(ctx context.Context, orgID, backupID string) e
 		return f.deletedBackupErr
 	}
 	f.deletedBackupID = backupID
+	return nil
+}
+
+func (f *fakeMemory) GetBackupSchedule(ctx context.Context) (*BackupSchedule, error) {
+	if f.backupScheduleErr != nil {
+		return nil, f.backupScheduleErr
+	}
+	return f.backupSchedule, nil
+}
+
+func (f *fakeMemory) SaveBackupSchedule(ctx context.Context, in BackupScheduleRequest) (*BackupSchedule, error) {
+	if f.saveScheduleErr != nil {
+		return nil, f.saveScheduleErr
+	}
+	f.savedBackupSchedule = &in
+	if f.savedScheduleResult != nil {
+		return f.savedScheduleResult, nil
+	}
+	return &BackupSchedule{Enabled: in.Enabled, CronSchedule: in.CronSchedule, RetentionDays: in.RetentionDays}, nil
+}
+
+func (f *fakeMemory) DeleteBackupSchedule(ctx context.Context) error {
+	if f.deleteScheduleErr != nil {
+		return f.deleteScheduleErr
+	}
+	f.deletedSchedule = true
 	return nil
 }
 

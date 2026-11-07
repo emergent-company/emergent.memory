@@ -127,3 +127,37 @@ type RestoreRequest struct {
 	IncludeJournal    bool   `json:"includeJournal"`
 	TargetProjectName string `json:"targetProjectName"`
 }
+
+// Schedule is a project's recurring backup configuration as returned by the
+// API. There is at most one per project; CronSchedule is a standard 5-field
+// cron expression evaluated in UTC.
+type Schedule struct {
+	ID             string  `json:"id"`
+	OrganizationID string  `json:"organizationId"`
+	ProjectID      string  `json:"projectId"`
+	Enabled        bool    `json:"enabled"`
+	CronSchedule   string  `json:"cronSchedule"`
+	Timezone       string  `json:"timezone"`
+	RetentionDays  int     `json:"retentionDays"`
+	IncludeChat    bool    `json:"includeChat"`
+	IncludeJournal bool    `json:"includeJournal"`
+	IncludeDeleted bool    `json:"includeDeleted"`
+	NextRunAt      string  `json:"nextRunAt"`
+	LastRunAt      *string `json:"lastRunAt,omitempty"`
+	LastBackupID   *string `json:"lastBackupId,omitempty"`
+	CreatedBy      *string `json:"createdBy,omitempty"`
+	CreatedAt      string  `json:"createdAt"`
+	UpdatedAt      string  `json:"updatedAt"`
+}
+
+// ScheduleRequest is the request body for creating or replacing a project's
+// backup schedule. RetentionDays defaults to 30 server-side; valid range is
+// 1-365. CronSchedule must not fire more often than every 15 minutes.
+type ScheduleRequest struct {
+	Enabled        bool   `json:"enabled"`
+	CronSchedule   string `json:"cronSchedule"`
+	RetentionDays  int    `json:"retentionDays"`
+	IncludeChat    bool   `json:"includeChat"`
+	IncludeJournal bool   `json:"includeJournal"`
+	IncludeDeleted bool   `json:"includeDeleted"`
+}

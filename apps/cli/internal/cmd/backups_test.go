@@ -53,7 +53,7 @@ func TestBackupsCommandStructure(t *testing.T) {
 		names[cmd.Name()] = true
 	}
 
-	for _, name := range []string{"create", "list", "get", "download", "delete", "import"} {
+	for _, name := range []string{"create", "list", "get", "download", "delete", "import", "schedule"} {
 		assert.True(t, names[name], "expected backups subcommand %q", name)
 	}
 

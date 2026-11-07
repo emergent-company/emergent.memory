@@ -434,3 +434,177 @@ func TestBackupsErrorParsing(t *testing.T) {
 		t.Errorf("expected code not_ready, got %q", sdkErr.Code)
 	}
 }
+
+func scheduleFixture() map[string]interface{} {
+	return map[string]interface{}{
+		"id":             "sched_1",
+		"organizationId": "org_test",
+		"projectId":      "proj_test",
+		"enabled":        true,
+		"cronSchedule":   "0 2 * * *",
+		"timezone":       "UTC",
+		"retentionDays":  30,
+		"includeChat":    true,
+		"nextRunAt":      "2026-01-02T02:00:00Z",
+		"createdAt":      "2026-01-01T00:00:00Z",
+		"updatedAt":      "2026-01-01T00:00:00Z",
+	}
+}
+
+func TestBackupsGetSchedule(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/v1/projects/proj_test/backup-schedule", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-API-Key", "test_key")
+		w.Header().Set("Content-Type", "application/json")
+		testutil.JSONResponse(t, w, scheduleFixture())
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+		OrgID:     "org_test",
+		ProjectID: "proj_test",
+	})
+
+	schedule, err := client.Backups.GetSchedule(context.Background(), "proj_test")
+	if err != nil {
+		t.Fatalf("GetSchedule failed: %v", err)
+	}
+	if schedule == nil {
+		t.Fatal("schedule is nil")
+	}
+	if schedule.CronSchedule != "0 2 * * *" || !schedule.Enabled || schedule.RetentionDays != 30 || !schedule.IncludeChat {
+		t.Errorf("schedule = %+v", schedule)
+	}
+}
+
+func TestBackupsGetScheduleUnset(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/v1/projects/proj_test/backup-schedule", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"backup schedule proj_test not found"}}`)
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+		OrgID:     "org_test",
+		ProjectID: "proj_test",
+	})
+
+	schedule, err := client.Backups.GetSchedule(context.Background(), "proj_test")
+	if err != nil {
+		t.Fatalf("an unset schedule must not be an error: %v", err)
+	}
+	if schedule != nil {
+		t.Errorf("schedule = %+v, want nil", schedule)
+	}
+}
+
+func TestBackupsSaveSchedule(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("PUT", "/api/v1/projects/proj_test/backup-schedule", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		if body["cronSchedule"] != "0 */6 * * *" {
+			t.Errorf("cronSchedule = %v", body["cronSchedule"])
+		}
+		if body["retentionDays"] != float64(7) {
+			t.Errorf("retentionDays = %v", body["retentionDays"])
+		}
+		if body["enabled"] != true || body["includeJournal"] != true {
+			t.Errorf("body = %v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		testutil.JSONResponse(t, w, scheduleFixture())
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+		OrgID:     "org_test",
+		ProjectID: "proj_test",
+	})
+
+	schedule, err := client.Backups.SaveSchedule(context.Background(), "proj_test", &backups.ScheduleRequest{
+		Enabled:        true,
+		CronSchedule:   "0 */6 * * *",
+		RetentionDays:  7,
+		IncludeJournal: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveSchedule failed: %v", err)
+	}
+	if schedule == nil || schedule.CronSchedule != "0 2 * * *" {
+		t.Errorf("schedule = %+v", schedule)
+	}
+}
+
+func TestBackupsSaveScheduleRejected(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("PUT", "/api/v1/projects/proj_test/backup-schedule", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"bad_request","message":"invalid backup schedule: minimum interval is 15 minutes"}}`)
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+		OrgID:     "org_test",
+		ProjectID: "proj_test",
+	})
+
+	_, err := client.Backups.SaveSchedule(context.Background(), "proj_test", &backups.ScheduleRequest{CronSchedule: "*/5 * * * *"})
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !sdkerrors.IsBadRequest(err) {
+		t.Errorf("error = %v, want bad request", err)
+	}
+}
+
+func TestBackupsDeleteSchedule(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	if _, err := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+		OrgID:     "org_test",
+		ProjectID: "proj_test",
+	}); err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	var called bool
+	mock.On("DELETE", "/api/v1/projects/proj_test/backup-schedule", func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+		OrgID:     "org_test",
+		ProjectID: "proj_test",
+	})
+
+	if err := client.Backups.DeleteSchedule(context.Background(), "proj_test"); err != nil {
+		t.Fatalf("DeleteSchedule failed: %v", err)
+	}
+	if !called {
+		t.Fatal("delete route was not called")
+	}
+}
