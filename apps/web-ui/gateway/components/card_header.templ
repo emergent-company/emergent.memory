@@ -1,0 +1,48 @@
+package components
+
+// CardHeaderProps configures CardHeader.
+//
+// Action is the header's trailing slot. templ gives a component a single
+// children slot, which the title block already uses, so the action travels as a
+// component value instead of nested markup.
+type CardHeaderProps struct {
+	// Action is the header's one action (a button, a link, or a POST form
+	// wrapping one). From sm up it renders in the second column; below sm it
+	// drops under the title and spans the card width. Nil renders no action
+	// column at all.
+	Action templ.Component
+	// Class is appended to the header's base classes.
+	Class string
+	// Attrs is spread onto the header root, last.
+	Attrs templ.Attributes
+}
+
+// CardHeader is the shared title/action header for a card or panel.
+//
+// Layout: from sm up the title block (children) and the action sit side by side,
+// the action in the right-hand column and aligned with the title's first line.
+// Below sm the header stacks, with the action below the title at full width.
+//
+// It replaces the `flex flex-wrap items-start justify-between` header whose
+// action kept its intrinsic width and its right-hand alignment when it wrapped
+// onto its own line in a narrow card — the "button below the title, pushed
+// right" shape reported in #263.
+templ CardHeader(props CardHeaderProps) {
+	<div
+		class={ "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", props.Class }
+		data-component="components/CardHeader"
+		{ props.Attrs... }
+	>
+		<div class="min-w-0">
+			{ children... }
+		</div>
+		if props.Action != nil {
+			<div
+				class="w-full min-w-0 max-sm:[&_a]:w-full max-sm:[&_button]:w-full sm:w-auto sm:shrink-0"
+				data-component="components/CardHeaderAction"
+			>
+				@props.Action
+			</div>
+		}
+	</div>
+}

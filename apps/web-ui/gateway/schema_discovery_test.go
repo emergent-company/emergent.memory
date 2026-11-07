@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"golang.org/x/net/html"
 )
 
 // --- schema discovery: the Schema page card and the per-document trigger ---
@@ -46,6 +47,63 @@ func TestSchemaDiscoveryCardPollsWhileRunning(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("running card missing %q\n%s", want, html)
 		}
+	}
+}
+
+// TestSchemaDiscoveryCardPutsItsActionInTheHeaderColumn pins the #263 layout
+// contract: the start action lives inside the shared header component, in a
+// column beside the title, not as a flex-wrap sibling that wrapped under it
+// while keeping its intrinsic width and right alignment. Below sm the header
+// stacks; from sm up it is a two-column row, and the action stops stretching.
+func TestSchemaDiscoveryCardPutsItsActionInTheHeaderColumn(t *testing.T) {
+	doc := parseDOM(t, renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{DocumentCount: 8})))
+
+	header := findElementByAttr(doc, "data-component", "components/CardHeader")
+	if header == nil {
+		t.Fatal("discovery card has no components.CardHeader wrapper")
+	}
+	for _, want := range []string{"flex-col", "gap-3", "sm:flex-row", "sm:items-start", "sm:justify-between"} {
+		if !hasClasses(header, want) {
+			t.Errorf("header class missing %q: %q", want, classAttr(header))
+		}
+	}
+	if hasClasses(header, "flex-wrap") {
+		t.Errorf("header still wraps instead of using the responsive column: %q", classAttr(header))
+	}
+
+	// The title block stays in the first column.
+	title := findElementByTag(header, "h2")
+	if title == nil {
+		t.Fatalf("header lost its title: %s", breadcrumbText(header))
+	}
+	if got := breadcrumbText(title); got != "Schema discovery" {
+		t.Errorf("header title = %q, want Schema discovery", got)
+	}
+
+	// The action is in the second column of the same header, so a narrow card
+	// cannot push it out of the header.
+	action := findElementByAttr(header, "data-component", "components/CardHeaderAction")
+	if action == nil {
+		t.Fatal("header has no action column")
+	}
+	for _, want := range []string{"w-full", "sm:w-auto", "sm:shrink-0"} {
+		if !hasClasses(action, want) {
+			t.Errorf("action column class missing %q: %q", want, classAttr(action))
+		}
+	}
+	start := findElementByAttr(action, "data-testid", "schema-discovery-start")
+	if start == nil {
+		t.Fatal("schema-discovery-start is not inside the header's action column")
+	}
+	form := start.Parent
+	if form == nil || form.Type != html.ElementNode || form.Data != "form" {
+		t.Fatalf("start action is not wrapped in its POST form")
+	}
+	if got := attrValue(form, "action"); got != "/schema/discovery/start" {
+		t.Errorf("start form action = %q, want /schema/discovery/start", got)
+	}
+	if got := attrValue(form, "method"); got != "post" {
+		t.Errorf("start form method = %q, want post", got)
 	}
 }
 
