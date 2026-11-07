@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -107,11 +108,27 @@ type Service struct {
 	// accessStamp debounces last_accessed_at writes (issue #1070).
 	accessStamp *accessStampDebouncer
 
+	// minVectorSimilarity is the cosine-similarity floor for the vector leg of
+	// object search. Below it a candidate is dropped, so a nonsense query with no
+	// lexical match returns nothing instead of weak, confident-looking noise
+	// (#244). 0 disables the floor.
+	minVectorSimilarity float32
+
 	// Metrics
 	metricsMu          sync.RWMutex
 	validationSuccess  int64
 	validationErrors   int64
 	validationDuration time.Duration
+}
+
+// envFloatDefault reads a float32 env var, returning def on empty/parse error.
+func envFloatDefault(key string, def float32) float32 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			return float32(f)
+		}
+	}
+	return def
 }
 
 // NewService creates a new graph service.
@@ -133,6 +150,7 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		bulkUpdateMaxItems:    100,
 		bulkUpdateMaxDuration: 60 * time.Second,
 		accessStamp:           newAccessStampDebouncer(),
+		minVectorSimilarity:   envFloatDefault("SEARCH_MIN_VECTOR_SIMILARITY", 0.5),
 	}
 }
 
@@ -2911,6 +2929,14 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 		limit = 200
 	}
 
+	// Relevance floor: when the caller did not set an explicit max distance,
+	// apply the similarity floor so a weak semantic match is not surfaced (#244).
+	maxDistance := req.MaxDistance
+	if maxDistance == nil && s.minVectorSimilarity > 0 {
+		d := 1.0 - s.minVectorSimilarity
+		maxDistance = &d
+	}
+
 	params := VectorSearchParams{
 		ProjectID:      projectID,
 		Vector:         req.Vector,
@@ -2919,7 +2945,7 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 		Labels:         req.Labels,
 		Status:         req.Status,
 		IncludeDeleted: req.IncludeDeleted,
-		MaxDistance:    req.MaxDistance,
+		MaxDistance:    maxDistance,
 		Limit:          limit + 1, // Fetch one extra to determine hasMore
 		Offset:         req.Offset,
 	}
@@ -3138,6 +3164,10 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 			return nil, err
 		}
 		for _, r := range vecResults {
+			// Relevance floor on the semantic leg (#244).
+			if s.minVectorSimilarity > 0 && (1.0-r.Distance) < s.minVectorSimilarity {
+				continue
+			}
 			vectorResults[r.Object.ID] = r
 		}
 	}
@@ -3260,9 +3290,18 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		})
 	}
 
-	// Sort by fused score descending; equal scores break by ascending id so the
-	// order is total and reproducible regardless of upstream map iteration order.
+	// Sort: an object that matched the query lexically (contains the term)
+	// outranks one the vector leg matched on similarity alone, then by fused
+	// score descending. This keeps an object that actually contains the query
+	// term above one it merely resembles (#244). Equal scores break by ascending
+	// id so the order is total and reproducible regardless of upstream map
+	// iteration order.
 	sort.Slice(fusedResults, func(i, j int) bool {
+		iLex := fusedResults[i].lexicalScore != nil
+		jLex := fusedResults[j].lexicalScore != nil
+		if iLex != jLex {
+			return iLex
+		}
 		if fusedResults[i].fusedScore != fusedResults[j].fusedScore {
 			return fusedResults[i].fusedScore > fusedResults[j].fusedScore
 		}

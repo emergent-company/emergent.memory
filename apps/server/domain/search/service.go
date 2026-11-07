@@ -51,6 +51,12 @@ type Service struct {
 	textWeight   float32
 	relWeight    float32
 
+	// minVectorSimilarity is the cosine-similarity floor for the vector leg of
+	// document search. Below it a candidate is dropped, so a nonsense query with
+	// no lexical match returns nothing instead of weak, confident-looking noise
+	// (#244). 0 disables the floor.
+	minVectorSimilarity float32
+
 	// reranker is the optional post-fusion vendor reranker. Nil (the default)
 	// keeps the existing in-house fused ranking unchanged. rerankTopN bounds the
 	// number of fused candidates sent to the provider.
@@ -74,16 +80,17 @@ func NewService(
 		}
 	}
 	svc := &Service{
-		repo:         repo,
-		graphService: graphService,
-		traceStore:   traceStore,
-		log:          log.With(logger.Scope("search.svc")),
-		defaultLimit: defaultLimit,
-		maxLimit:     envIntDefault("SEARCH_MAX_LIMIT", 100),
-		rrfConstant:  envIntDefault("SEARCH_RRF_CONSTANT", 60),
-		graphWeight:  envFloatDefault("SEARCH_GRAPH_WEIGHT", 0.25),
-		textWeight:   envFloatDefault("SEARCH_TEXT_WEIGHT", 0.75),
-		relWeight:    envFloatDefault("SEARCH_RELATIONSHIP_WEIGHT", 0),
+		repo:                repo,
+		graphService:        graphService,
+		traceStore:          traceStore,
+		log:                 log.With(logger.Scope("search.svc")),
+		defaultLimit:        defaultLimit,
+		maxLimit:            envIntDefault("SEARCH_MAX_LIMIT", 100),
+		rrfConstant:         envIntDefault("SEARCH_RRF_CONSTANT", 60),
+		graphWeight:         envFloatDefault("SEARCH_GRAPH_WEIGHT", 0.25),
+		textWeight:          envFloatDefault("SEARCH_TEXT_WEIGHT", 0.75),
+		relWeight:           envFloatDefault("SEARCH_RELATIONSHIP_WEIGHT", 0),
+		minVectorSimilarity: envFloatDefault("SEARCH_MIN_VECTOR_SIMILARITY", 0.5),
 	}
 	// Keep a typed-nil out of the interface field so `s.embeddings != nil`
 	// remains a truthful "embedding is available" check.
@@ -662,6 +669,7 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 		// NamespaceIsNull set) scopes them to the null namespace instead (#1910).
 		Namespace:       req.Namespace,
 		NamespaceIsNull: req.NamespaceIsNull,
+		MinSimilarity:   s.minVectorSimilarity,
 	}
 
 	var resp *TextSearchResponse

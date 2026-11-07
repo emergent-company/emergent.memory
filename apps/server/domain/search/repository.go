@@ -64,6 +64,11 @@ type TextSearchParams struct {
 	// the same scoping or it leaks chunks extracted into non-null-namespace
 	// objects (#1910).
 	NamespaceIsNull bool
+	// MinSimilarity, when > 0, is the cosine-similarity floor applied to vector
+	// candidates. Results whose similarity falls below it are dropped, giving a
+	// nonsense query (no lexical match, weak semantic similarity) an empty
+	// semantic path instead of confident-looking noise (#244).
+	MinSimilarity float32
 }
 
 // chunkNamespacePredicate returns the extra WHERE fragment (and its bind args)
@@ -277,20 +282,26 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	var results []*TextSearchResult
 	for rows.Next() {
 		var row TextSearchResultRow
-		if err := rows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
+		if err := rows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.ParentChunkID, &row.Score); err != nil {
 			r.log.Error("vector search row scan failed", logger.Error(err))
 			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		// Relevance floor: drop candidates whose cosine similarity is too weak to
+		// mean anything (#244).
+		if params.MinSimilarity > 0 && row.Score < params.MinSimilarity {
+			continue
 		}
 		mode := string(TextSearchModeVector)
 		docID := row.DocumentID.String()
 		results = append(results, &TextSearchResult{
-			ID:         row.ID,
-			DocumentID: row.DocumentID,
-			ChunkIndex: row.ChunkIndex,
-			Text:       row.Text,
-			Score:      row.Score,
-			Mode:       &mode,
-			Source:     &docID,
+			ID:            row.ID,
+			DocumentID:    row.DocumentID,
+			ChunkIndex:    row.ChunkIndex,
+			Text:          row.Text,
+			Score:         row.Score,
+			ParentChunkID: row.ParentChunkID,
+			Mode:          &mode,
+			Source:        &docID,
 		})
 	}
 
@@ -374,19 +385,24 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	var vectorScores []float32
 	for vectorRows.Next() {
 		var row TextSearchResultRow
-		if err := vectorRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
+		if err := vectorRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.ParentChunkID, &row.Score); err != nil {
 			vectorRows.Close()
 			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		// Relevance floor on the semantic leg (#244).
+		if params.MinSimilarity > 0 && row.Score < params.MinSimilarity {
+			continue
 		}
 		if existing, ok := lexicalResults[row.ID]; ok {
 			existing.VectorScore = row.Score
 		} else {
 			lexicalResults[row.ID] = &hybridCandidate{
-				ID:          row.ID,
-				DocumentID:  row.DocumentID,
-				ChunkIndex:  row.ChunkIndex,
-				Text:        row.Text,
-				VectorScore: row.Score,
+				ID:            row.ID,
+				DocumentID:    row.DocumentID,
+				ChunkIndex:    row.ChunkIndex,
+				Text:          row.Text,
+				VectorScore:   row.Score,
+				ParentChunkID: row.ParentChunkID,
 			}
 		}
 		vectorScores = append(vectorScores, row.Score)
@@ -421,8 +437,16 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		candidates = append(candidates, c)
 	}
 
-	// Sort by fused score descending
+	// Sort: a chunk that matched the query lexically (contains the term) outranks
+	// one that only matched semantically, then by fused score descending. This
+	// keeps a document that actually contains the query term above one the vector
+	// leg matched on similarity alone (#244).
 	sort.Slice(candidates, func(i, j int) bool {
+		iLex := candidates[i].LexicalScore > 0
+		jLex := candidates[j].LexicalScore > 0
+		if iLex != jLex {
+			return iLex
+		}
 		if candidates[i].FusedScore != candidates[j].FusedScore {
 			return candidates[i].FusedScore > candidates[j].FusedScore
 		}
