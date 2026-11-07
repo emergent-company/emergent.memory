@@ -472,11 +472,11 @@ Consolidated tools (`action` selects the operation):
 | `token` | `projects:write` | `list`, `get` |
 | `token-write` | `projects:write` | `create`, `revoke` |
 
-That is 29 consolidated tools. 135 per-verb definitions collapse to 56; 41 of
-them are visible to a project token before the per-project enrichment below (the
-other 15 are 12 superadmin-only and 3 agent-only tools, and both sets keep their
-per-verb names on the surface that serves them). A project's endpoint adds its
-registry and relay tools on top of that.
+That is 29 consolidated tools: the catalog goes from 147 per-verb definitions to
+68 advertised tools (29 consolidated + 39 that had no sibling). Of those 68, a
+project token sees 45; 12 are superadmin-only and 11 are agent-only, and both
+sets keep their per-verb names on the surface that serves them. A project's
+endpoint also serves its relay tools, which are appended per project.
 
 Tools that had no sibling keep their name: `relationship-list`,
 `session-get-messages`, `remember`, `forget`, `remember-status`,
