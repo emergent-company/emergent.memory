@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// The account context panel: the signed-in identity at the top, every stored
@@ -41,10 +42,7 @@ struct AccountSwitcherPanel: View {
             switchAccount(to: id)
             return .handled
         }
-        .onAppear {
-            isFocused = true
-            highlightedID = accountStore.activeAccountID
-        }
+        .onAppear(perform: prepareKeyboard)
     }
 
     // MARK: - Header
@@ -117,6 +115,15 @@ struct AccountSwitcherPanel: View {
     }
 
     // MARK: - Keyboard
+
+    /// Seeds the highlight on the active account and takes focus. Deferred by
+    /// one runloop turn: during `onAppear` the popover window is not key yet and
+    /// a synchronous focus assignment is silently dropped, leaving arrow keys and
+    /// Return dead with no visible symptom.
+    private func prepareKeyboard() {
+        highlightedID = accountStore.activeAccountID
+        DispatchQueue.main.async { isFocused = true }
+    }
 
     private func move(_ direction: MoveCommandDirection) {
         let ids = accountStore.accounts.map(\.id)

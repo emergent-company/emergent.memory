@@ -49,9 +49,10 @@ struct MemoryConnectorApp: App {
             // system's own checkmark for the active item, the same state the
             // panel rows show.
             CommandMenu("Project") {
-                ForEach(Array(environment.projectStore.projects.prefix(9).enumerated()),
-                        id: \.element.id)
-                { index, project in
+                // Sorted, not the CLI's order: the shortcuts are positional, so a
+                // refresh that reorders the list must not move which project ⌘3
+                // selects.
+                ForEach(Array(sortedProjects.prefix(9).enumerated()), id: \.element.id) { index, project in
                     Toggle(isOn: Binding(
                         get: { project.id == environment.projectStore.activeProjectID },
                         set: { _ in switchProject(project.id) }
@@ -84,7 +85,7 @@ struct MemoryConnectorApp: App {
                         get: { account.id == environment.accountStore.activeAccountID },
                         set: { _ in switchAccount(account.id) }
                     )) {
-                        Text(verbatim: account.switcherTitle)
+                        Text(verbatim: accountMenuTitle(account))
                     }
                 }
                 if environment.accountStore.accounts.count > 1 {
@@ -103,8 +104,10 @@ struct MemoryConnectorApp: App {
                     // A menu command is explicit: it names the account and acts.
                     // The toolbar keeps its confirmation because that control is
                     // one stray click away.
-                    Button("Sign Out of \(active.switcherTitle)") {
+                    Button(role: .destructive) {
                         signOut(active)
+                    } label: {
+                        Text(SignOutConfirmation.confirmButtonTitle(displayTitle: active.displayTitle))
                     }
                 }
             }
@@ -116,6 +119,23 @@ struct MemoryConnectorApp: App {
     private func projectName(_ project: ProjectInfo) -> String {
         let name = (project.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? String(localized: "Untitled project") : name
+    }
+
+    /// Projects in name order, which is the order the ⌘1…⌘9 shortcuts bind to.
+    private var sortedProjects: [ProjectInfo] {
+        environment.projectStore.projects.sorted {
+            projectName($0).localizedStandardCompare(projectName($1)) == .orderedAscending
+        }
+    }
+
+    /// An account id is `<environmentID>:<sub-or-email>`, so the same email
+    /// signed in to Prod and Dev is two accounts. The menu labels them apart with
+    /// the environment — the same rule the account panel uses, applied to the
+    /// third surface that lists accounts.
+    private func accountMenuTitle(_ account: Account) -> String {
+        let spansEnvironments = Set(environment.accountStore.accounts.map(\.environmentID)).count > 1
+        guard spansEnvironments else { return account.switcherTitle }
+        return "\(account.switcherTitle) · \(account.environmentLabel)"
     }
 
     private func switchProject(_ id: String) {

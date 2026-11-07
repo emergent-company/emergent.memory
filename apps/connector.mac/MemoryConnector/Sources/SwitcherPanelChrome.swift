@@ -179,8 +179,10 @@ struct SwitcherRow: View {
                 }
                 Spacer(minLength: 8)
                 if isConnected {
+                    // Same colour as the trigger's connection glyph: one state,
+                    // one visual, on both surfaces.
                     Circle()
-                        .fill(Color.secondary)
+                        .fill(Color.green)
                         .frame(width: 6, height: 6)
                         .accessibilityHidden(true)
                 }
@@ -190,7 +192,9 @@ struct SwitcherRow: View {
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, 8)
-            .frame(height: subtitle == nil ? 28 : 36)
+            // A minimum, not a fixed height: a larger text size makes the two
+            // lines taller and the row has to grow with them.
+            .frame(minHeight: subtitle == nil ? 28 : 36)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)

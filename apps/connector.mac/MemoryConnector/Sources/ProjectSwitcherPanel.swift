@@ -24,7 +24,10 @@ struct ProjectSwitcherPanel: View {
     /// panel's own header would repeat it.
     var showsHeader = true
 
-    @State private var highlightedID: String?
+    /// Section-scoped row key, NOT the project id: the Recent section repeats
+    /// projects that also appear under their organisation, so a project id
+    /// identifies up to two rendered rows.
+    @State private var highlightedKey: String?
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -32,12 +35,7 @@ struct ProjectSwitcherPanel: View {
             if showsHeader {
                 header
             }
-            if projectStore.projects.isEmpty {
-                status
-            } else {
-                rows
-                SwitcherDivider()
-            }
+            content
             actions
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -46,16 +44,28 @@ struct ProjectSwitcherPanel: View {
         .focusEffectDisabled()
         .onMoveCommand(perform: move)
         .onKeyPress(.return) {
-            guard let id = highlightedID else { return .ignored }
-            switchProject(to: id)
+            guard let key = highlightedKey,
+                  let row = navigationRows.first(where: { $0.key == key })
+            else { return .ignored }
+            switchProject(to: row.projectID)
             return .handled
         }
-        .onAppear {
-            // Only take focus in the popover; the page card embeds this list and
-            // must not steal the keyboard from the page.
-            guard onDismiss != nil else { return }
-            isFocused = true
-            highlightedID = projectStore.activeProjectID
+        .onAppear(perform: prepareKeyboard)
+    }
+
+    /// Signed-out is decided BEFORE the list is considered: a failed load can
+    /// leave a stale populated list behind (`.signedOut` is set without clearing
+    /// `projects`), and painting those rows as enabled next to a trigger that
+    /// says "Sign in" is worse than showing the sign-in block.
+    @ViewBuilder
+    private var content: some View {
+        if !accountStore.isEffectivelySignedIn || projectStore.state == .signedOut {
+            signedOutBlock
+        } else if projectStore.projects.isEmpty {
+            status
+        } else {
+            rows
+            SwitcherDivider()
         }
     }
 
@@ -93,7 +103,7 @@ struct ProjectSwitcherPanel: View {
                     subtitle: row.subtitle,
                     isActive: row.isActive,
                     isConnected: row.isConnected,
-                    isHighlighted: highlightedID == row.id,
+                    isHighlighted: highlightedKey == rowKey(section: section, row: row),
                     isEnabled: projectStore.state != .loading,
                     action: { switchProject(to: row.id) }
                 )
@@ -119,37 +129,27 @@ struct ProjectSwitcherPanel: View {
         case .idle, .loading:
             SwitcherStatusBlock(message: String(localized: "Loading projects…"), isLoading: true)
         case .signedOut:
-            VStack(alignment: .leading, spacing: 8) {
-                SwitcherStatusBlock(message: String(localized: "Signed out"))
-                signedInAction
-            }
+            // Unreachable from `content`, which handles signed-out first; kept so
+            // the switch stays exhaustive over the store's state.
+            signedOutBlock
         case let .error(message):
-            VStack(alignment: .leading, spacing: 8) {
-                SwitcherStatusBlock(message: message)
-                retryAction
-            }
+            // The action footer already carries "Refresh projects" — no second
+            // copy next to the error text.
+            SwitcherStatusBlock(message: message)
         case .loaded:
-            VStack(alignment: .leading, spacing: 8) {
-                SwitcherStatusBlock(message: String(localized: "This account has no projects yet."))
-                retryAction
-            }
+            SwitcherStatusBlock(message: String(localized: "This account has no projects yet."))
         }
     }
 
-    private var retryAction: some View {
-        SwitcherActionRow(title: "Refresh projects",
-                          systemImage: "arrow.clockwise",
-                          isEnabled: projectStore.state != .loading,
-                          action: retry)
-            .padding(.horizontal, 2)
-    }
-
-    private var signedInAction: some View {
-        SwitcherActionRow(title: "Sign in",
-                          systemImage: "person.crop.circle.badge.checkmark",
-                          isEnabled: !accountStore.isSigningIn,
-                          action: signIn)
-            .padding(.horizontal, 2)
+    private var signedOutBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SwitcherStatusBlock(message: String(localized: "Sign in to switch projects."))
+            SwitcherActionRow(title: "Sign in",
+                              systemImage: "person.crop.circle.badge.checkmark",
+                              isEnabled: !accountStore.isSigningIn,
+                              action: signIn)
+                .padding(.horizontal, 2)
+        }
     }
 
     // MARK: - Actions
@@ -167,28 +167,59 @@ struct ProjectSwitcherPanel: View {
                           action: openWebProject)
         SwitcherActionRow(title: "Refresh projects",
                           systemImage: "arrow.clockwise",
-                          isEnabled: projectStore.state != .loading && !accountStore.isSigningIn,
+                          isEnabled: projectStore.state != .loading,
                           action: retry)
     }
 
     // MARK: - Keyboard
 
+    private struct NavigationRow {
+        let key: String
+        let projectID: String
+    }
+
+    /// Every rendered row, in render order, keyed by section so a project that
+    /// appears in both Recent and its organisation is two distinct stops.
+    private var navigationRows: [NavigationRow] {
+        sections.flatMap { section in
+            section.rows.map {
+                NavigationRow(key: rowKey(section: section, row: $0), projectID: $0.id)
+            }
+        }
+    }
+
+    private func rowKey(section: ProjectSwitcherSection, row: ProjectSwitcherRow) -> String {
+        "\(section.id)/\(row.id)"
+    }
+
+    /// Seeds the highlight on the active project (its first occurrence, i.e. the
+    /// Recent row) and takes focus. Deferred by one runloop turn: during
+    /// `onAppear` the popover window is not key yet and a synchronous focus
+    /// assignment is silently dropped, which would leave arrow keys and Return
+    /// dead with no visible symptom. Never takes focus when embedded, where the
+    /// page owns the keyboard.
+    private func prepareKeyboard() {
+        guard onDismiss != nil else { return }
+        highlightedKey = navigationRows.first { $0.projectID == projectStore.activeProjectID }?.key
+        DispatchQueue.main.async { isFocused = true }
+    }
+
     private func move(_ direction: MoveCommandDirection) {
-        let ids = sections.flatMap(\.rows).map(\.id)
-        guard !ids.isEmpty else { return }
+        let keys = navigationRows.map(\.key)
+        guard !keys.isEmpty else { return }
         switch direction {
         case .down:
-            guard let current = highlightedID, let index = ids.firstIndex(of: current) else {
-                highlightedID = ids.first
+            guard let current = highlightedKey, let index = keys.firstIndex(of: current) else {
+                highlightedKey = keys.first
                 return
             }
-            highlightedID = ids[min(index + 1, ids.count - 1)]
+            highlightedKey = keys[min(index + 1, keys.count - 1)]
         case .up:
-            guard let current = highlightedID, let index = ids.firstIndex(of: current) else {
-                highlightedID = ids.last
+            guard let current = highlightedKey, let index = keys.firstIndex(of: current) else {
+                highlightedKey = keys.last
                 return
             }
-            highlightedID = ids[max(index - 1, 0)]
+            highlightedKey = keys[max(index - 1, 0)]
         default:
             break
         }

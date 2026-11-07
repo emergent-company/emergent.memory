@@ -100,6 +100,25 @@ final class ProjectSwitcherModelTests: XCTestCase {
         XCTAssertEqual(sections[1].rows.count, 12)
     }
 
+    func testRecentSectionIsPinnedToTheThresholdBoundary() {
+        func hasRecentSection(projectCount: Int) -> Bool {
+            let projects = (1 ... projectCount).map { project("p\($0)", "Project \($0)", org: "o1") }
+            let sections = ProjectSwitcherModel.sections(
+                groups: [group("o1", "Acme", projects)],
+                recents: [projects[0]],
+                organizationNames: ["o1": "Acme"],
+                connectedIDs: [],
+                activeID: nil
+            )
+            return sections.first?.title == String(localized: "Recent")
+        }
+
+        // The threshold is exclusive: the Recent section appears only once the
+        // list is LONGER than it.
+        XCTAssertFalse(hasRecentSection(projectCount: ProjectSwitcherModel.recentSectionThreshold))
+        XCTAssertTrue(hasRecentSection(projectCount: ProjectSwitcherModel.recentSectionThreshold + 1))
+    }
+
     func testGroupsKeepTheirOrderAndFallBackForUnknownOrganization() {
         let unknown = group("__unknown__", nil, [project("p9", "Loose")])
         let sections = ProjectSwitcherModel.sections(
