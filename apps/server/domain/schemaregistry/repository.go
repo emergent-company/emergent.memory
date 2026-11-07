@@ -174,6 +174,10 @@ func (r *Repository) GetProjectTypes(ctx context.Context, projectID string, quer
 			if !existing[pt.Type] {
 				pt.ObjectCount = objectCounts[pt.Type]
 				result = append(result, pt)
+				// Packs are read newest-first, so the first definition of a
+				// type name is the effective one (last install wins); later
+				// packs must not append a duplicate row for the same name.
+				existing[pt.Type] = true
 			}
 		}
 
@@ -206,7 +210,8 @@ func (r *Repository) getTypesFromInstalledPacks(ctx context.Context, projectID s
 		       gs.object_type_schemas, gs.ui_configs
 		FROM kb.project_schemas ps
 		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
-		WHERE ps.project_id = ? AND ps.active = true
+		WHERE ps.project_id = ? AND ps.active = true AND ps.removed_at IS NULL
+		ORDER BY ps.installed_at DESC, ps.id DESC
 	`, projectID).Exec(ctx, &packs)
 	if err != nil {
 		return nil, err

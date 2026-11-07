@@ -100,7 +100,6 @@ struct ProjectSwitcherPanel: View {
                 SwitcherRow(
                     icon: .none,
                     title: row.title,
-                    subtitle: row.subtitle,
                     isActive: row.isActive,
                     isConnected: row.isConnected,
                     isHighlighted: highlightedKey == rowKey(section: section, row: row),
@@ -115,7 +114,6 @@ struct ProjectSwitcherPanel: View {
         ProjectSwitcherModel.sections(
             groups: projectStore.projectsByOrganization,
             recents: recentProjects.resolved(in: projectStore.projects),
-            organizationNames: projectStore.organizationNames,
             connectedIDs: Set(projectStore.connectedProjects.map(\.id)),
             activeID: projectStore.activeProjectID
         )
