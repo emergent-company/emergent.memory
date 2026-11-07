@@ -182,6 +182,8 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 		detail["document_id"] = *job.DocumentID
 		groupKey = fmt.Sprintf("document.extraction_completed:%s:%d", *job.DocumentID, documentVersion)
 	}
+	severity := "info"
+	message, severity = withVarianceWarning(message, severity, detail, result.VarianceWarning)
 	details, err := json.Marshal(detail)
 	if err != nil {
 		w.log.Warn("failed to marshal extraction-completed details",
@@ -195,7 +197,7 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 		EventKey:   taxonomy.EventDocumentExtractionCompleted,
 		Title:      "Document extraction finished",
 		Message:    message,
-		Severity:   "info",
+		Severity:   severity,
 		Importance: "other",
 		SourceType: &sourceType,
 		SourceID:   &job.ID,
@@ -214,7 +216,10 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 	}
 
 	var opts []notifications.FanoutOptions
-	if actorID != "" {
+	if actorID != "" && result.VarianceWarning == nil {
+		// An ordinary completion is informational and the actor already knows.
+		// A variance warning is exactly what the person who re-ran the document
+		// needs to see before merging, so it is delivered to them too.
 		opts = append(opts, notifications.FanoutOptions{ActorUserID: actorID})
 	}
 	if err := w.notificationsSvc.CreateForProjectMembers(ctx, job.ProjectID, in, opts...); err != nil {
@@ -257,4 +262,21 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// withVarianceWarning folds a run-to-run variance warning into an outcome
+// notification: the message names both counts, the severity escalates to
+// "warning" so the inbox row is not another neutral "finished" note, and the
+// numbers travel structurally in details. With no warning the inputs are
+// unchanged, so callers keep one code path.
+func withVarianceWarning(message, severity string, detail map[string]any, warning *RunVarianceWarning) (string, string) {
+	if warning == nil {
+		return message, severity
+	}
+	detail["previous_objects"] = warning.PreviousObjects
+	detail["variance_ratio"] = warning.Ratio
+	detail["variance_direction"] = warning.Direction
+	detail["previous_job_id"] = warning.PreviousJobID
+	detail["variance_warning"] = warning.Message
+	return message + " — " + warning.Message, "warning"
 }

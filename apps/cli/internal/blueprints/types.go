@@ -349,6 +349,41 @@ type AgentFile struct {
 	SourceFile string `json:"-" yaml:"-"`
 }
 
+// effectiveTriggerType mirrors the server applier's defaulting
+// (apps/server/domain/blueprints/apply.go applyAgent): an empty triggerType is a
+// reaction trigger when a reactionConfig is present, otherwise a schedule. The
+// validator and the CLI applier both branch on it, so it lives with the type.
+func (a AgentFile) effectiveTriggerType() string {
+	if a.TriggerType != "" {
+		return a.TriggerType
+	}
+	if a.ReactionConfig != nil {
+		return "reaction"
+	}
+	return "schedule"
+}
+
+// hasRuntimeTrigger reports whether the manifest configures runtime trigger
+// behaviour, i.e. whether install materializes a runtime kb.agents row bound to
+// the definition. Without one the agent installs as a definition only: nothing
+// picks work up and nothing runs until an operator triggers it by hand (#321).
+func (a AgentFile) hasRuntimeTrigger() bool {
+	return a.TriggerType != "" || a.ReactionConfig != nil || a.CronSchedule != ""
+}
+
+// runtimeTriggerType returns the trigger type of the runtime agent install will
+// ensure, or "" when the agent installs as a definition only. "manual" is a
+// first-class value: the runtime agent is created but the trigger service
+// registers no automatic trigger for it, so it only runs when invoked through
+// the manual trigger endpoint (POST /api/admin/agents/:id/trigger, surfaced as
+// `memory agents trigger`).
+func (a AgentFile) runtimeTriggerType() string {
+	if !a.hasRuntimeTrigger() {
+		return ""
+	}
+	return a.effectiveTriggerType()
+}
+
 // ReactionConfig mirrors the server's reaction trigger configuration for a
 // runtime agent, so memory blueprints round-trips the block losslessly.
 type ReactionConfig struct {
@@ -381,6 +416,19 @@ type AgentModel struct {
 // Seed records — seed/objects/<Type>.jsonl
 //                seed/relationships/<Type>.jsonl
 // ──────────────────────────────────────────────
+
+const (
+	// UntypedSeedBaseName is the file-name stem used for seed records whose
+	// type is empty. A bare "<Type>.jsonl" naming scheme would emit a file
+	// literally named ".jsonl", which is invisible in directory listings and
+	// easily mistaken for noise (issue #323).
+	UntypedSeedBaseName = "_untyped"
+
+	// UntypedTypeName is the visible placeholder assigned to records read back
+	// from an UntypedSeedBaseName file. The graph API rejects an empty type on
+	// create, so a dump of legacy untyped objects must restore as a real type.
+	UntypedTypeName = "Untyped"
+)
 
 // SeedObjectRecord is one JSONL line from a seed/objects/<Type>.jsonl file.
 // Each line represents one object to create or upsert.
@@ -466,4 +514,9 @@ type BlueprintsResult struct {
 	SourceFile   string           // file path it was loaded from
 	Action       BlueprintsAction // what happened
 	Error        error            // non-nil when Action == BlueprintsActionError
+	// RuntimeTrigger is the trigger type of the runtime agent ensured for an
+	// agent result, or "" when the manifest installs a definition only (#321).
+	// It lets the install output tell the operator which agents will actually
+	// run instead of printing an identical "created agent" line for both.
+	RuntimeTrigger string
 }

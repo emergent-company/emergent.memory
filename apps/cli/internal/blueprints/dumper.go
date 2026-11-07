@@ -249,6 +249,8 @@ func (d *Dumper) dumpRelationships(ctx context.Context, outputDir string, entity
 // splitWriter — writes JSONL lines to a sequence of files, splitting at
 // dumpSplitSize bytes. Files are named <typeName>.jsonl for the first file,
 // then <typeName>.001.jsonl, <typeName>.002.jsonl, etc. once splitting occurs.
+// Records with an empty type use the visible stem "_untyped" instead of the
+// empty string, which would produce a file literally named ".jsonl".
 // ─────────────────────────────────────────────────────────────────────────────
 
 type splitWriter struct {
@@ -271,11 +273,22 @@ func getSplitWriter(writers map[string]*splitWriter, dir, typeName string) (*spl
 	return sw, nil
 }
 
-func (sw *splitWriter) fileName() string {
-	if sw.part == 0 {
-		return filepath.Join(sw.dir, sw.typeName+".jsonl")
+// seedFileBaseName returns the file-name stem for a seed type. An empty type
+// (legacy objects created before the API rejected it) maps to UntypedSeedBaseName
+// so dumped files stay visible instead of being named ".jsonl".
+func seedFileBaseName(typeName string) string {
+	if typeName == "" {
+		return UntypedSeedBaseName
 	}
-	return filepath.Join(sw.dir, fmt.Sprintf("%s.%03d.jsonl", sw.typeName, sw.part))
+	return typeName
+}
+
+func (sw *splitWriter) fileName() string {
+	base := seedFileBaseName(sw.typeName)
+	if sw.part == 0 {
+		return filepath.Join(sw.dir, base+".jsonl")
+	}
+	return filepath.Join(sw.dir, fmt.Sprintf("%s.%03d.jsonl", base, sw.part))
 }
 
 func (sw *splitWriter) openNext() error {
@@ -289,7 +302,7 @@ func (sw *splitWriter) openNext() error {
 			if err := sw.file.Close(); err != nil {
 				return err
 			}
-			oldName := filepath.Join(sw.dir, sw.typeName+".jsonl")
+			oldName := filepath.Join(sw.dir, seedFileBaseName(sw.typeName)+".jsonl")
 			sw.part = 1
 			newName := sw.fileName()
 			if err := os.Rename(oldName, newName); err != nil {

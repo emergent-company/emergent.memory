@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -46,7 +47,115 @@ const (
 	// runWriteTimeout bounds each transcript write so a stuck database cannot
 	// stall extraction: recording is diagnostics, never a dependency.
 	runWriteTimeout = 5 * time.Second
+	// varianceMessageStep sorts the variance warning after every stage message
+	// but before the job-failure message, so a transcript that both completed
+	// and carried a warning shows the warning last.
+	varianceMessageStep = 1 << 29
 )
+
+// Run-to-run variance thresholds. A pipeline that calls a model cannot promise
+// the same object count twice for the same input, but it can refuse to present
+// a wildly different count as an ordinary "Completed" run silently (issue #240:
+// 235 objects, then 71 objects, both Completed with no warning).
+const (
+	// runVarianceRatioFactor is how far the current count may drift from the
+	// previous run's count before the run warns: more than 2× either way
+	// (three times smaller is 3.0, which is over the band).
+	runVarianceRatioFactor = 2.0
+	// runVarianceMinObjects is the absolute floor. A pair whose larger side is
+	// below it never warns: 3 objects becoming 1 is ordinary model noise, not
+	// the defect this signal exists to catch. The numbers in #240 (235 vs 71)
+	// are an order of magnitude above it.
+	runVarianceMinObjects = 10
+)
+
+// RunVarianceWarning is raised when a completed run's object count deviates
+// strongly from the most recent completed run over the same document and schema
+// configuration. It is carried on the run (kb.agent_runs.summary), on the job
+// result (debug_info) and in the run's outcome notification, so the operator
+// sees it before merging the staging branch.
+type RunVarianceWarning struct {
+	PreviousJobID   string  `json:"previous_job_id"`
+	PreviousObjects int     `json:"previous_objects"`
+	Objects         int     `json:"objects"`
+	Ratio           float64 `json:"ratio"`
+	// Direction is "smaller" or "larger" relative to the previous run.
+	Direction string `json:"direction"`
+	Message   string `json:"message"`
+}
+
+// planRunVariance decides whether objects deviates strongly from the previous
+// run's count and, when it does, builds the warning. It is pure so the
+// thresholds are testable without a database: previous == nil (no earlier run)
+// is never a warning, and neither is a pair whose larger side is under
+// runVarianceMinObjects.
+func planRunVariance(previous *RunCountSnapshot, objects int) *RunVarianceWarning {
+	if previous == nil {
+		return nil
+	}
+	prev := previous.ObjectsCreated
+	low, high := prev, objects
+	if low > high {
+		low, high = high, low
+	}
+	if high < runVarianceMinObjects {
+		return nil
+	}
+	// max(1, low) keeps a 0 → N jump representable; a zero previous count is
+	// itself anomalous, so any pair that large is worth naming.
+	ratio := float64(high) / math.Max(1, float64(low))
+	if ratio < runVarianceRatioFactor {
+		return nil
+	}
+	direction := "larger"
+	if objects < prev {
+		direction = "smaller"
+	}
+	warning := &RunVarianceWarning{
+		PreviousJobID:   previous.JobID,
+		PreviousObjects: prev,
+		Objects:         objects,
+		Ratio:           math.Round(ratio*10) / 10,
+		Direction:       direction,
+	}
+	warning.Message = fmt.Sprintf(
+		"This run produced %d objects — %.1f× %s than the previous run over the same document (%d objects, job %s). Model output varies between runs; check that this result is complete before merging.",
+		objects, warning.Ratio, direction, prev, previous.JobID)
+	return warning
+}
+
+// RecordVariance writes a run-to-run variance warning onto the run's summary
+// jsonb (the field the run API and chat workspace already read) and records it
+// in the transcript as a labelled message, so it is visible where the operator
+// reviews the run. Best-effort like every recorder write: a missing warning
+// must never fail an extraction that otherwise succeeded.
+func (r *RunRecorder) RecordVariance(ctx context.Context, runID string, warning *RunVarianceWarning) error {
+	if r == nil || runID == "" || warning == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"variance_warning": warning})
+	if err != nil {
+		return fmt.Errorf("marshal run variance warning: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runWriteTimeout)
+	defer cancel()
+	if _, err := r.db.NewRaw(`
+		UPDATE kb.agent_runs
+		SET summary = coalesce(summary, '{}'::jsonb) || ?::jsonb
+		WHERE id = ?`, string(payload), runID).Exec(ctx); err != nil {
+		return fmt.Errorf("record run variance warning: %w", err)
+	}
+	if err := r.RecordMessage(ctx, runID, RunMessage{
+		Role:      "assistant",
+		Step:      varianceMessageStep,
+		Text:      warning.Message,
+		Stage:     extractionRunAgentName,
+		StageKind: stageKindWarning,
+	}); err != nil {
+		return fmt.Errorf("record run variance message: %w", err)
+	}
+	return nil
+}
 
 // RunRecorder persists an extraction job's pipeline transcript as an agent run
 // (kb.agent_runs + kb.agent_run_messages), the same shape the chat workspace

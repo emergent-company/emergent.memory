@@ -406,26 +406,58 @@ func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p P
 // packSchemaJSON marshals a pack's object types and (expanded) relationship
 // types into the exact JSON shape the schema registry stores, so the built-in
 // seeder and the apply path produce identical payloads.
-func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMessage, err error) {
+//
+// It also returns the pack's top-level ui_configs map (type name → UI config)
+// built from the pack-level uiConfigs block overlaid with each object type's
+// inline `ui:` block (inline wins). Appearance lives in a schema-level
+// ui_configs map keyed by type name in the registry, so a pack that declares
+// either form must have it promoted here or the icons/colours never reach the
+// registry (issue #291).
+func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes, uiConfigs json.RawMessage, err error) {
 	objectTypes, err = json.Marshal(p.ObjectTypes)
 	if err != nil {
-		return nil, nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
+		return nil, nil, nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
 	}
 	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	relationshipTypes, err = json.Marshal(expandedRels)
 	if err != nil {
-		return nil, nil, apperror.NewBadRequest("invalid relationshipTypes in pack " + p.Name)
+		return nil, nil, nil, apperror.NewBadRequest("invalid relationshipTypes in pack " + p.Name)
 	}
-	return objectTypes, relationshipTypes, nil
+
+	ui := make(map[string]json.RawMessage, len(p.UIConfigs)+len(p.ObjectTypes))
+	for typeName, cfg := range p.UIConfigs {
+		if typeName == "" || len(cfg) == 0 {
+			continue
+		}
+		ui[typeName] = cfg
+	}
+	for _, ot := range p.ObjectTypes {
+		if ot.Name == "" || len(ot.UI) == 0 {
+			continue
+		}
+		raw, uerr := json.Marshal(ot.UI)
+		if uerr != nil {
+			return nil, nil, nil, apperror.NewBadRequest("invalid ui block for object type " + ot.Name)
+		}
+		ui[ot.Name] = raw
+	}
+	if len(ui) == 0 {
+		return objectTypes, relationshipTypes, nil, nil
+	}
+	uiConfigs, err = json.Marshal(ui)
+	if err != nil {
+		return nil, nil, nil, apperror.NewBadRequest("invalid ui_configs in pack " + p.Name)
+	}
+	return objectTypes, relationshipTypes, uiConfigs, nil
 }
 
 // createProjectPack creates a project-scoped schema pack via the schemas
 // service (same path the pre-scoping apply used), returning the created row.
 func (s *Service) createProjectPack(ctx context.Context, projectID string, p PackManifest) (*schemas.GraphMemorySchema, error) {
-	objectTypes, relationshipTypes, err := packSchemaJSON(p)
+	objectTypes, relationshipTypes, uiConfigs, err := packSchemaJSON(p)
 	if err != nil {
 		return nil, err
 	}
@@ -437,6 +469,7 @@ func (s *Service) createProjectPack(ctx context.Context, projectID string, p Pac
 		Migrations:                   p.Migrations,
 		ObjectTypeSchemasSnake:       objectTypes,
 		RelationshipTypeSchemasSnake: relationshipTypes,
+		UIConfigsSnake:               uiConfigs,
 	})
 }
 
@@ -446,7 +479,7 @@ func (s *Service) createProjectPack(ctx context.Context, projectID string, p Pac
 // descriptions) to the registry without requiring a version bump. Only the
 // owning project can update; a non-owner returns ErrNotFound (benign).
 func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack *schemas.GraphMemorySchema, p PackManifest) error {
-	objectTypes, relationshipTypes, err := packSchemaJSON(p)
+	objectTypes, relationshipTypes, uiConfigs, err := packSchemaJSON(p)
 	if err != nil {
 		return err
 	}
@@ -454,6 +487,7 @@ func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack
 		Description:             &p.Description,
 		ObjectTypeSchemas:       objectTypes,
 		RelationshipTypeSchemas: relationshipTypes,
+		UIConfigs:               uiConfigs,
 		Migrations:              p.Migrations,
 	})
 	return err
