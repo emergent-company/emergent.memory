@@ -239,7 +239,7 @@ func TestExecuteGetSkill_NameResolution(t *testing.T) {
 
 func TestSkillsToolScopeFiltering(t *testing.T) {
 	defs := skillsToolDefinitions()
-	require.Len(t, defs, 5)
+	require.Len(t, defs, 6)
 
 	t.Run("skills:write implies skills:read", func(t *testing.T) {
 		expanded := expandScopesSet([]string{"skills:write"})
@@ -256,7 +256,7 @@ func TestSkillsToolScopeFiltering(t *testing.T) {
 	t.Run("write scope exposes all skill tools", func(t *testing.T) {
 		filtered := FilterToolsForScopes(defs, []string{"skills:write"})
 		names := toolNames(filtered)
-		assert.ElementsMatch(t, []string{"skill-list", "skill-get", "skill-create", "skill-update", "skill-delete"}, names)
+		assert.ElementsMatch(t, []string{"skill-list", "skill-get", "skill-create", "skill-update", "skill-patch", "skill-delete"}, names)
 	})
 
 	t.Run("no scope exposes nothing", func(t *testing.T) {

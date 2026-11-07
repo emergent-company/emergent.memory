@@ -129,7 +129,8 @@ func (r *Repository) FindAll(ctx context.Context, projectID *string, orgID *stri
 func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID string) ([]*Skill, error) {
 	var all []*Skill
 
-	q := r.db.NewSelect().Model(&all)
+	q := r.db.NewSelect().Model(&all).
+		Where("COALESCE(s.metadata->>'lifecycle_state', '') <> ?", SkillLifecycleArchived)
 	if orgID != "" {
 		q = q.Where(
 			"s.project_id = ? OR (s.org_id = ? AND s.project_id IS NULL) OR (s.project_id IS NULL AND s.org_id IS NULL)",
@@ -179,7 +180,8 @@ func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID s
 	var skills []*Skill
 	q := r.db.NewSelect().
 		Model(&skills).
-		Where("s.description_embedding IS NOT NULL")
+		Where("s.description_embedding IS NOT NULL").
+		Where("COALESCE(s.metadata->>'lifecycle_state', '') <> ?", SkillLifecycleArchived)
 
 	if orgID != "" {
 		q = q.Where(

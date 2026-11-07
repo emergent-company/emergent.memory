@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 )
 
 // Service handles business logic for branches
@@ -96,12 +97,23 @@ func (s *Service) Create(ctx context.Context, req *CreateBranchRequest) (*Branch
 		}
 	}
 
+	// Normalise the caller's attribution. It is server-derived (the request DTO
+	// keeps it out of JSON binding); an unknown origin or malformed id is a
+	// client error rather than a stored value or a database error.
+	attribution, err := branchorigin.Resolve(req.Attribution)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+
 	// Create the branch
 	branch := &Branch{
 		ProjectID:      req.ProjectID,
 		Name:           name,
 		Description:    req.Description,
 		ParentBranchID: req.ParentBranchID,
+		Origin:         attribution.Origin,
+		OriginID:       attribution.ID,
+		OriginLabel:    attribution.Label,
 	}
 
 	created, err := s.store.Create(ctx, branch)
