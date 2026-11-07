@@ -125,6 +125,157 @@ func blueprintConflictDef(raw json.RawMessage) string {
 	return pretty.String()
 }
 
+// blueprintDefRow is one differing key in a property-definition diff table.
+// ExistingMono/IncomingMono mark values that are rendered as compact JSON in a
+// monospace cell (nested objects/arrays and long strings).
+type blueprintDefRow struct {
+	Key          string
+	Existing     string
+	Incoming     string
+	Changed      bool
+	ExistingMono bool
+	IncomingMono bool
+}
+
+// blueprintDefInlineScalarMax is the longest string shown inline. Anything
+// longer is rendered as compact JSON in a monospace cell, matching how nested
+// values are shown.
+const blueprintDefInlineScalarMax = 80
+
+// blueprintConflictDefRows diffs two property definitions key by key. The shape
+// is known (a JSON object of property-definition fields), so it returns one row
+// per differing key in lexical key order plus the count of identical keys. The
+// final bool is false when either side is not a JSON object (missing, null,
+// scalar, array, or malformed): the caller then keeps the raw dump so no
+// information is lost.
+func blueprintConflictDefRows(existing, incoming json.RawMessage) ([]blueprintDefRow, int, bool) {
+	existingObj, ok := blueprintDefObject(existing)
+	if !ok {
+		return nil, 0, false
+	}
+	incomingObj, ok := blueprintDefObject(incoming)
+	if !ok {
+		return nil, 0, false
+	}
+
+	keys := make([]string, 0, len(existingObj)+len(incomingObj))
+	seen := make(map[string]bool, len(existingObj)+len(incomingObj))
+	for _, obj := range []map[string]json.RawMessage{existingObj, incomingObj} {
+		for key := range obj {
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
+			}
+		}
+	}
+	sort.Strings(keys)
+
+	rows := make([]blueprintDefRow, 0, len(keys))
+	unchanged := 0
+	for _, key := range keys {
+		existingVal, existingPresent := existingObj[key]
+		incomingVal, incomingPresent := incomingObj[key]
+		if blueprintDefValuesEqual(existingVal, existingPresent, incomingVal, incomingPresent) {
+			unchanged++
+			continue
+		}
+		existingText, existingMono := blueprintDefValueText(existingVal, existingPresent)
+		incomingText, incomingMono := blueprintDefValueText(incomingVal, incomingPresent)
+		rows = append(rows, blueprintDefRow{
+			Key:          key,
+			Existing:     existingText,
+			Incoming:     incomingText,
+			Changed:      true,
+			ExistingMono: existingMono,
+			IncomingMono: incomingMono,
+		})
+	}
+	return rows, unchanged, true
+}
+
+// blueprintDefObject parses a property definition object. A nil result (null,
+// array, scalar) or a parse error reports false so the caller falls back.
+func blueprintDefObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, false
+	}
+	return obj, true
+}
+
+// blueprintDefValuesEqual compares two definition values semantically: key
+// order and whitespace do not count as a change. Values that cannot be
+// canonicalised fall back to a trimmed byte comparison.
+func blueprintDefValuesEqual(a json.RawMessage, aPresent bool, b json.RawMessage, bPresent bool) bool {
+	if aPresent != bPresent {
+		return false
+	}
+	if !aPresent {
+		return true
+	}
+	aCanon, aOK := blueprintDefCanonical(a)
+	bCanon, bOK := blueprintDefCanonical(b)
+	if !aOK || !bOK {
+		return bytes.Equal(bytes.TrimSpace(a), bytes.TrimSpace(b))
+	}
+	return bytes.Equal(aCanon, bCanon)
+}
+
+// blueprintDefCanonical returns deterministic JSON for a value (object keys
+// sorted by encoding/json) so reordered keys compare equal.
+func blueprintDefCanonical(raw json.RawMessage) ([]byte, bool) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	return b, true
+}
+
+// blueprintDefValueText renders one side of a diff row: an em dash for an
+// absent key, short scalars inline, and nested objects/arrays or long strings as
+// compact JSON flagged for a monospace cell.
+func blueprintDefValueText(raw json.RawMessage, present bool) (string, bool) {
+	if !present {
+		return "—", false
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return strings.TrimSpace(string(raw)), true
+	}
+	if s, ok := v.(string); ok {
+		if len(s) <= blueprintDefInlineScalarMax {
+			return s, false
+		}
+		if b, err := json.Marshal(s); err == nil {
+			return string(b), true
+		}
+		return s, false
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return strings.TrimSpace(string(raw)), true
+	}
+	switch v.(type) {
+	case nil, bool, float64:
+		return string(b), false
+	default:
+		return string(b), true
+	}
+}
+
+// blueprintConflictUnchangedLabel is the one-line note shown under the diff
+// table for keys whose values are identical on both sides.
+func blueprintConflictUnchangedLabel(n int) string {
+	if n == 1 {
+		return "1 unchanged key"
+	}
+	return fmt.Sprintf("%d unchanged keys", n)
+}
+
 // blueprintConflictResolutionLabel is the human label for a property conflict's
 // resolution. The server only reports existing_wins.
 func blueprintConflictResolutionLabel(resolution string) string {
