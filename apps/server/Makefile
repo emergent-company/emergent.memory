@@ -10,7 +10,7 @@ DOCS_DIR=./docs/swagger
 # Go variables
 GOFLAGS=-ldflags="-s -w"
 
-# Swagger generator, derived from go.mod so the committed spec always matches the
+# Swagger generator, derived from go.mod so the generated spec always matches the
 # compiled swaggo/swag library. Keep the fallback in step with go.mod.
 SWAG_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/swaggo/swag 2>/dev/null || echo v1.16.6)
 

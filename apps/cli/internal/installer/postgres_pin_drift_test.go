@@ -10,9 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The Postgres pin exists in four places, like the compose topology in
-// healthcheck_drift_test.go: the two constants here and the three static copies
-// the CLI never rewrites for an existing install. A half-bump fails badly rather
+// The Postgres pin is duplicated by hand, like the compose topology in
+// healthcheck_drift_test.go: the two constants here, the static copies the CLI
+// never rewrites for an existing install, and the two CI workflows that start a
+// database (`server.yml`'s DB-backed job and the required `ci` job's schema
+// guard). Deliberately no count in this sentence: a number here went stale the
+// first time a copy was added, which is the drift this test exists to catch.
+// A half-bump fails badly rather
 // than loudly:
 //
 //   - an 18 runtime image with a 17 upgrade image upgrades the cluster to 17
@@ -185,15 +189,21 @@ func TestTestStacksPinTheShippedPostgresImage(t *testing.T) {
 		}
 	}
 
-	// The integration database server.yml starts for the server's DB tests.
-	workflowPath := filepath.Join(root, ".github", "workflows", "server.yml")
-	images := regexp.MustCompile(`pgvector/pgvector:[A-Za-z0-9._-]+`).FindAllString(readFileString(t, workflowPath), -1)
-	if len(images) == 0 {
-		t.Fatalf("%s starts no pgvector image, so the integration DB pin could not be checked", workflowPath)
-	}
-	for _, image := range images {
-		if image != PostgresImage {
-			t.Errorf("%s starts %q, want %q: the integration suite must run the shipped major", workflowPath, image, PostgresImage)
+	// The integration databases CI starts: server.yml's DB-backed job, and the
+	// required `ci` job's schema-documentation guard, which introspects a
+	// migrated database. Both must run the shipped major -- a bump that updated
+	// only server.yml would have the required guard comparing the committed
+	// document against a Postgres the product no longer ships.
+	for _, workflow := range []string{"server.yml", "ci.yml"} {
+		workflowPath := filepath.Join(root, ".github", "workflows", workflow)
+		images := regexp.MustCompile(`pgvector/pgvector:[A-Za-z0-9._-]+`).FindAllString(readFileString(t, workflowPath), -1)
+		if len(images) == 0 {
+			t.Fatalf("%s starts no pgvector image, so the integration DB pin could not be checked", workflowPath)
+		}
+		for _, image := range images {
+			if image != PostgresImage {
+				t.Errorf("%s starts %q, want %q: the integration suite must run the shipped major", workflowPath, image, PostgresImage)
+			}
 		}
 	}
 }

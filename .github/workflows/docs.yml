@@ -16,6 +16,9 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      # The OpenAPI spec is generated, not committed (#270), and this workflow
+      # generates it — so a change to the generator wiring must exercise it.
+      - '.github/actions/generate-openapi/**'
       # Self-change so a runner/build migration is exercised by its own PR and
       # by the merge, instead of silently waiting for the next docs edit.
       - '.github/workflows/docs.yml'
@@ -30,6 +33,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      - '.github/actions/generate-openapi/**'
       - '.github/workflows/docs.yml'
 
 jobs:
@@ -46,6 +50,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # mike needs full history
+
+      # The OpenAPI spec is generated, not committed (#270). The llms_files hook
+      # copies it into the built site and only warns when it is absent, so a docs
+      # build without this step would publish an /api-reference page whose
+      # Swagger UI points at a 404.
+      - uses: ./.github/actions/generate-openapi
 
       # uv pins one interpreter, so the docs build is identical on both hosts of
       # the self-hosted pool whatever their distro Python looks like. They do
@@ -83,6 +93,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The OpenAPI spec is generated, not committed (#270); it is copied to
+      # gh-pages below, so it must exist in the checkout first.
+      - uses: ./.github/actions/generate-openapi
 
       # uv pins one interpreter, so the docs build is identical on both hosts of
       # the self-hosted pool whatever their distro Python looks like. They do
@@ -154,6 +168,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The OpenAPI spec is generated, not committed (#270); it is copied to
+      # gh-pages below, so it must exist in the checkout first.
+      - uses: ./.github/actions/generate-openapi
 
       # uv pins one interpreter, so the docs build is identical on both hosts of
       # the self-hosted pool whatever their distro Python looks like. They do
