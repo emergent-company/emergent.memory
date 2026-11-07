@@ -330,6 +330,30 @@ func TestRegisterClientSuccess(t *testing.T) {
 	require.Equal(t, "none", stored.TokenEndpointAuthMethod)
 }
 
+// TestRegisterClientToleratesClientMetadata covers clients that do not match
+// this server's public-client defaults: no client_name, a confidential auth
+// method, the refresh_token grant, and scopes this server does not implement.
+// Registration must succeed with the supported subset rather than fail, or the
+// client never gets far enough to show the consent page.
+func TestRegisterClientToleratesClientMetadata(t *testing.T) {
+	svc, store, _, _, _ := newServiceFixture(t, config.OAuthASConfig{})
+	resp, err := svc.RegisterClient(context.Background(), ClientRegistrationRequest{
+		RedirectURIs:            []string{"https://oauth-redirect.googleusercontent.com/r/project-1"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		Scope:                   "offline_access graph:read vendor:unknown",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "MCP client", resp.ClientName)
+	require.Equal(t, "none", resp.TokenEndpointAuthMethod)
+	require.Equal(t, []string{"authorization_code"}, resp.GrantTypes)
+	require.Equal(t, "graph:read", resp.Scope)
+
+	stored := store.clients[resp.ClientID]
+	require.NotNil(t, stored)
+	require.Equal(t, "none", stored.TokenEndpointAuthMethod)
+}
+
 func TestRegisterClientValidation(t *testing.T) {
 	manyURIs := make([]string, 6)
 	for i := range manyURIs {
@@ -343,12 +367,6 @@ func TestRegisterClientValidation(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		{
-			name:       "missing client name",
-			req:        ClientRegistrationRequest{RedirectURIs: []string{"https://app.example/cb"}},
-			wantCode:   "invalid_client_metadata",
-			wantStatus: 400,
-		},
 		{
 			name:       "missing redirect uris",
 			req:        ClientRegistrationRequest{ClientName: "app"},
@@ -387,36 +405,6 @@ func TestRegisterClientValidation(t *testing.T) {
 				RedirectURIs: []string{"https://evil.example/cb"},
 			},
 			wantCode:   "invalid_redirect_uri",
-			wantStatus: 400,
-		},
-		{
-			name: "confidential client rejected",
-			req: ClientRegistrationRequest{
-				ClientName:              "app",
-				RedirectURIs:            []string{"https://app.example/cb"},
-				TokenEndpointAuthMethod: "client_secret_post",
-			},
-			wantCode:   "invalid_client_metadata",
-			wantStatus: 400,
-		},
-		{
-			name: "unsupported grant type",
-			req: ClientRegistrationRequest{
-				ClientName:   "app",
-				RedirectURIs: []string{"https://app.example/cb"},
-				GrantTypes:   []string{"client_credentials"},
-			},
-			wantCode:   "invalid_client_metadata",
-			wantStatus: 400,
-		},
-		{
-			name: "invalid scope",
-			req: ClientRegistrationRequest{
-				ClientName:   "app",
-				RedirectURIs: []string{"https://app.example/cb"},
-				Scope:        "graph:read admin:all",
-			},
-			wantCode:   "invalid_client_metadata",
 			wantStatus: 400,
 		},
 	}

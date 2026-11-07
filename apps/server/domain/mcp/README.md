@@ -77,6 +77,23 @@ All requests require a valid API token. Two header formats are accepted:
 
 The project is resolved automatically from the token's scope. The legacy `X-Project-ID` header is no longer required.
 
+### OAuth discovery
+
+Clients that cannot send an API-key header — Google's Gemini custom-app
+connector, for example — can use the built-in OAuth 2.1 authorization server
+(authorization code + PKCE, dynamic client registration at
+`/api/oauth/register`). An unauthenticated request to a `/api/mcp` route answers
+`401` with
+
+    WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource/api/mcp"
+
+and the protected-resource metadata is served both at that path-inserted URL and
+at the origin (`/.well-known/oauth-protected-resource`). Two details matter to
+strict clients: `resource` always equals the URL the client addressed (RFC 9728
+§3.3), and `scopes_supported` lists the scopes the authorization server
+understands. Registered clients are public (PKCE, no client secret), and an
+OAuth-issued token is an ordinary non-expiring project API token.
+
 ## Protocol Methods
 
 ### Core Methods
