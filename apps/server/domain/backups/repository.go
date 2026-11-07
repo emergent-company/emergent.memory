@@ -196,14 +196,21 @@ func (r *Repository) HardDelete(ctx context.Context, backupID string) error {
 	return nil
 }
 
-// GetExpiredBackups retrieves backups that have expired
-func (r *Repository) GetExpiredBackups(ctx context.Context) ([]Backup, error) {
+// GetExpiredBackups retrieves up to limit backups past their expiry, oldest
+// expiry first. Failed backups are included: they hold no archive worth keeping
+// and would otherwise accumulate forever, since nothing else removes them.
+// Ordering plus the SQL limit (rather than fetching everything and truncating in
+// the caller) keeps one sweep bounded and lets successive sweeps make progress
+// through a backlog instead of always re-reading the same arbitrary rows.
+func (r *Repository) GetExpiredBackups(ctx context.Context, limit int) ([]Backup, error) {
 	var backups []Backup
 	err := r.db.NewSelect().
 		Model(&backups).
 		Where("expires_at < ?", time.Now()).
 		Where("deleted_at IS NULL").
-		Where("status = ?", BackupStatusReady).
+		Where("status IN (?)", bun.In([]string{BackupStatusReady, BackupStatusFailed})).
+		Order("expires_at ASC").
+		Limit(limit).
 		Scan(ctx)
 
 	if err != nil {
@@ -214,13 +221,17 @@ func (r *Repository) GetExpiredBackups(ctx context.Context) ([]Backup, error) {
 	return backups, nil
 }
 
-// GetSoftDeletedBackups retrieves backups that were soft deleted before the given date
-func (r *Repository) GetSoftDeletedBackups(ctx context.Context, before time.Time) ([]Backup, error) {
+// GetSoftDeletedBackups retrieves up to limit backups soft deleted before the
+// given date, oldest deletion first so a bounded sweep drains the backlog in
+// order.
+func (r *Repository) GetSoftDeletedBackups(ctx context.Context, before time.Time, limit int) ([]Backup, error) {
 	var backups []Backup
 	err := r.db.NewSelect().
 		Model(&backups).
 		Where("deleted_at IS NOT NULL").
 		Where("deleted_at < ?", before).
+		Order("deleted_at ASC").
+		Limit(limit).
 		Scan(ctx)
 
 	if err != nil {

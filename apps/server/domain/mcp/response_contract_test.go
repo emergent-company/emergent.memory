@@ -789,3 +789,58 @@ func TestSlimSearchData_TextChunkKeepsPayload(t *testing.T) {
 		t.Errorf("document_id = %v, want %s", obj["document_id"], docID)
 	}
 }
+
+func TestSlimSearchResponse_BranchProvenanceAndScopeNote(t *testing.T) {
+	branchID := uuid.New().String()
+	mainItem := &graph.SearchResultItem{Object: testObject(), Score: 0.9}
+	branchItem := &graph.SearchResultItem{
+		Object:            testObject(),
+		Score:             0.8,
+		BranchID:          rstr(branchID),
+		BranchName:        rstr("extraction/Invoice.pdf/1"),
+		BranchOrigin:      rstr("extraction"),
+		BranchOriginLabel: rstr("Invoice.pdf"),
+	}
+	res := &graph.SearchResponse{
+		Data:  []*graph.SearchResultItem{mainItem, branchItem},
+		Total: 2,
+		Meta: &graph.SearchResponseMeta{
+			BranchScopeNote: "read 2 of 3 matching branches",
+			BranchesRead:    []string{"extraction/Invoice.pdf/1", "extraction/Payslip.pdf/1"},
+			BranchesOmitted: 1,
+		},
+	}
+
+	// Compact mode (the default for an agent) must still carry the provenance and
+	// the note: an unmerged result presented without them reads as settled fact.
+	got := slimSearchResponse(res, ResponseOpts{FieldStrategy: "compact"})
+	data := got["data"].([]map[string]any)
+
+	if _, ok := data[0]["branch_id"]; ok {
+		t.Errorf("a main-graph item must carry no branch provenance: %v", data[0])
+	}
+	for key, want := range map[string]string{
+		"branch_id":    branchID,
+		"branch_name":  "extraction/Invoice.pdf/1",
+		"origin":       "extraction",
+		"origin_label": "Invoice.pdf",
+	} {
+		if got, _ := data[1][key].(string); got != want {
+			t.Errorf("item[1][%q] = %q, want %q", key, got, want)
+		}
+	}
+
+	meta, ok := got["meta"].(*graph.SearchResponseMeta)
+	if !ok {
+		t.Fatalf("meta should be present in compact mode when the search was scoped, got %T", got["meta"])
+	}
+	if meta.BranchesOmitted != 1 || len(meta.BranchesRead) != 2 {
+		t.Errorf("meta = %+v, want 2 read and 1 omitted", meta)
+	}
+
+	// An unscoped response stays quiet in compact mode.
+	unscoped := slimSearchResponse(&graph.SearchResponse{Data: []*graph.SearchResultItem{mainItem}, Total: 1, Meta: &graph.SearchResponseMeta{}}, ResponseOpts{})
+	if _, ok := unscoped["meta"]; ok {
+		t.Errorf("meta should stay verbose-only when no branch scope ran: %v", unscoped)
+	}
+}

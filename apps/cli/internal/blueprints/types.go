@@ -285,6 +285,11 @@ type RelationshipTypeDef struct {
 	// service accepts them and the server's manifest round-trips them; the CLI
 	// must preserve them so install/update does not silently drop them.
 	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
+	// Required names the relationship-level properties the server enforces on
+	// every write of this type. It is preserved for the same reason as
+	// Properties: dropping it here makes the constraint unreachable from a
+	// pack, while a schema created through the API keeps it.
+	Required []string `json:"required,omitempty" yaml:"required,omitempty"`
 }
 
 // GetSourceTypes returns the effective source types, preferring the plural

@@ -75,7 +75,7 @@ func (s *Service) CreateBackup(ctx context.Context, req CreateBackupRequest) (*B
 			"deleted":   req.IncludeDeleted,
 		},
 		CreatedAt: time.Now(),
-		CreatedBy: &req.CreatedBy,
+		CreatedBy: req.CreatedBy,
 		ExpiresAt: &expiresAt,
 	}
 

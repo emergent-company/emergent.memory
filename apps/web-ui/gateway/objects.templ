@@ -180,6 +180,15 @@ templ objectsFilterControls(data objectsPageData) {
 			<input type="hidden" name="actor_id" value={ data.ActorID }/>
 		}
 	}
+	// A share's write scope is carried by the link that opened the page, not by
+	// a control, so it is resubmitted as hidden fields: changing the branch or
+	// type must narrow within the scope, not silently drop it.
+	if data.CredentialID != "" {
+		<input type="hidden" name="credential_id" value={ data.CredentialID }/>
+		if data.ViaShare != "" {
+			<input type="hidden" name="via" value={ data.ViaShare }/>
+		}
+	}
 	if len(data.Branches) > 0 {
 		@fm.FormControl("objects-filter-branch", "Branch", fm.LabelAbove, "", "", nil) {
 			@objectsFilterSelect("objects-filter-branch", "branch", "Branch", objectBranchOptionLabel(data.Branches, data.BranchID), templ.Attributes{"data-stats-refresh": "true"}) {
@@ -1334,6 +1343,35 @@ templ similarObjectRow(obj *GraphObject, so SimilarObject) {
 			Icon:    "lucide--git-merge",
 		}) {
 			Merge
+		}
+	</div>
+}
+
+// objectsCredentialScopeNotice explains a credential-scoped browse list: the
+// objects an MCP share's key created or last updated, reached from the share
+// row's "View writes" action. The scope is a link, not a filter control, so the
+// notice is the only thing that names it and the only way to clear it.
+templ objectsCredentialScopeNotice(data objectsPageData) {
+	{{
+		scope := "an MCP share key"
+		if data.ViaShare != "" {
+			scope = "the share \u201c" + data.ViaShare + "\u201d"
+		}
+	}}
+	<div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-content/10 bg-base-100 px-3 py-2" data-testid="objects-credential-scope">
+		<div class="flex min-w-0 items-center gap-2 text-sm text-muted">
+			@ui.IconSpan("lucide--history", "size-4 shrink-0 text-primary/70")
+			<span class="min-w-0">Showing objects created or last updated with the key of { scope }.</span>
+		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonXS,
+			Icon:    "lucide--x",
+			Attrs:   templ.Attributes{"data-testid": "objects-credential-scope-clear"},
+		}) {
+			Show all objects
 		}
 	</div>
 }

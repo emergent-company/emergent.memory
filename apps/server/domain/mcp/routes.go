@@ -8,9 +8,11 @@ import (
 
 func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamableHandler *StreamableHTTPHandler, adminStreamableHandler *AdminStreamableHTTPHandler, agentEndpointHandler *AgentEndpointHandler, authMiddleware *auth.Middleware) {
 	// OAuth 2.0 Protected Resource Metadata (RFC 9728 / MCP 2025-11-25 auth spec).
-	// Tells MCP clients (mcp-remote etc.) that this server uses bearer token auth
-	// and does not require an OAuth authorization flow.
+	// The origin form and the path-inserted form are both served: a strict
+	// client asks for /.well-known/oauth-protected-resource/api/mcp and rejects
+	// metadata whose "resource" is not the URL it addressed.
 	e.GET("/.well-known/oauth-protected-resource", h.HandleOAuthProtectedResource)
+	e.GET("/.well-known/oauth-protected-resource/*", h.HandleOAuthProtectedResource)
 
 	// Public redirect: /api/mcp/install?url=<mcpUrl>&name=<name>
 	// Redirects to claude://install-mcp deep link. Must be registered before the
@@ -20,6 +22,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	e.GET("/api/mcp/agents/:agentId/bundle", h.HandleDownloadAgentMCPBundle)
 
 	g := e.Group("/api/mcp")
+	// Challenge before auth: a 401 must carry
+	// WWW-Authenticate: Bearer resource_metadata="..." or OAuth-capable clients
+	// cannot discover the authorization server.
+	g.Use(oauthChallengeMiddleware)
 	g.Use(authMiddleware.RequireAuth())
 	// Project authorization for /api/mcp (issue #868, the #864 class). The group
 	// is session-bound with a header fallback: the SSE sub-routes address the

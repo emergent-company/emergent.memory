@@ -150,7 +150,7 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 
 			if s.emailSvc != nil {
 				bundleURL := fmt.Sprintf("%s/api/mcp/bundle?token=%s", mcpBaseURL, tokenResp.Token)
-				enqErr := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, tokenResp.Token, bundleURL, snippets)
+				enqErr := s.enqueueMCPInviteEmail(ctx, addr, "", true, senderName, projectID, projectName, mcpURL, tokenResp.Token, bundleURL, snippets)
 				if enqErr != nil {
 					s.log.Warn("failed to enqueue mcp invite email",
 						"email", addr,
@@ -331,12 +331,19 @@ func (h *Handler) HandleInstallRedirect(c echo.Context) error {
 }
 
 // enqueueMCPInviteEmail enqueues a single MCP invite email.
-func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName, projectID, projectName, mcpURL, apiKey, bundleURL string, snippets MCPSnippets) error {
+//
+// shareName and readOnly describe the grant when the invite is for a named MCP
+// share instance; the legacy /mcp/share flow passes "" and true, which keeps
+// its template rendering unchanged.
+func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, shareName string, readOnly bool, senderName, projectID, projectName, mcpURL, apiKey, bundleURL string, snippets MCPSnippets) error {
 	displayName := projectName
 	if displayName == "" {
 		displayName = projectID
 	}
 	subject := fmt.Sprintf("%s has shared Memory project access with you", senderName)
+	if shareName != "" {
+		subject = fmt.Sprintf("%s invited you to the %q Memory share", senderName, shareName)
+	}
 
 	sourceType := "project"
 	_, err := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
@@ -350,6 +357,8 @@ func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName
 			"senderName":  senderName,
 			"projectId":   projectID,
 			"projectName": displayName,
+			"shareName":   shareName,
+			"readOnly":    readOnly,
 			"mcpUrl":      mcpURL,
 			"apiKey":      apiKey,
 			"installUrl":  snippets.InstallURL,
@@ -365,16 +374,18 @@ func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName
 	return err
 }
 
-// SendShareInviteEmails emails a freshly minted MCP share key to each
-// recipient using the `mcp-invite` template, so a share created from the web UI
-// (or the API) can be handed over without the sender copying the key by hand.
+// SendShareInviteEmails emails a freshly minted (or existing) MCP share key to
+// each recipient using the `mcp-invite` template, so a share created from the
+// web UI (or the API) can be handed over without the sender copying the key by
+// hand. shareName and readOnly describe the grant in the email's copy; the
+// legacy /mcp/share flow passes "" and true.
 //
 // Delivery is enqueued, never awaited: this returns as soon as the emails are
 // on the queue. A share must not fail because email is unavailable, so the
 // returned problem string describes a delivery problem for the caller to surface
 // instead of an error. Addresses that made it onto the queue are returned in
 // sent.
-func (s *Service) SendShareInviteEmails(ctx context.Context, projectID, senderName, baseURL, token string, emails []string) (sent []string, problem string) {
+func (s *Service) SendShareInviteEmails(ctx context.Context, projectID, shareName string, readOnly bool, senderName, baseURL, token string, emails []string) (sent []string, problem string) {
 	if len(emails) == 0 {
 		return nil, ""
 	}
@@ -389,7 +400,7 @@ func (s *Service) SendShareInviteEmails(ctx context.Context, projectID, senderNa
 	sent = make([]string, 0, len(emails))
 	failed := 0
 	for _, addr := range emails {
-		if err := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, token, bundleURL, snippets); err != nil {
+		if err := s.enqueueMCPInviteEmail(ctx, addr, shareName, readOnly, senderName, projectID, projectName, mcpURL, token, bundleURL, snippets); err != nil {
 			failed++
 			s.log.Warn("failed to enqueue mcp share invite email",
 				"email", addr,
@@ -464,8 +475,9 @@ func (h *Handler) HandleShareMCPAccess(c echo.Context) error {
 	}
 	req.Emails = emails
 
-	// Derive the public base URL from the incoming request.
-	mcpBaseURL := requestBaseURL(c)
+	// Prefer the deployment's public API origin: a proxied call carries the
+	// internal compose host, which an invited MCP client cannot reach.
+	mcpBaseURL := h.svc.shareBaseURL(requestBaseURL(c))
 
 	senderName := h.senderDisplayName(c.Request().Context(), user.ID, user.Email)
 

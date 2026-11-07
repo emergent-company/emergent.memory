@@ -1,0 +1,385 @@
+// Package branchscope is the per-agent-run read boundary for unmerged graph
+// branches (issue #265).
+//
+// An agent definition may declare that its runs read not only the main graph but
+// also branches that have not been merged yet, narrowed by why a branch exists
+// (`origin`, immutable) and by branch name (mutable, an escape hatch). The scope
+// is derived once per run from the definition and threaded through
+// context.Context, exactly like the object-type scope, so every execution
+// surface resolves it the same way and no tool argument can widen it.
+//
+// Two invariants keep the feature safe:
+//
+//   - The default is main only. An absent or empty configuration yields a nil
+//     Scope, and every consumer treats nil as "main only", reproducing the
+//     previous behaviour byte for byte.
+//   - The scope grants only reads. It bounds which branches a run can name on
+//     any tool, which includes the branch a write targets, so a scoped run cannot
+//     reach a branch outside its own boundary; whether it may write at all is
+//     governed by its write rules, never widened here.
+//
+// A Scope is immutable once built; Narrow returns a new Scope so a delegated
+// child can never widen its caller's boundary.
+package branchscope
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
+)
+
+// DefaultMaxBranches bounds how many branches one scoped read may fan out to
+// when the definition does not say. Reading is per-branch, so this is also the
+// bound on query count for one search.
+const DefaultMaxBranches = 3
+
+// MaxMaxBranches is the hard ceiling a definition may request. It exists so a
+// typo cannot turn one search into a hundred queries.
+const MaxMaxBranches = 20
+
+// Config is the JSON shape stored under AgentDefinition.Config["branchScope"] and
+// accepted by the agent-definition API. Origin values are the four stored ones
+// (see pkg/branchorigin); Branches entries are glob patterns where only `*` is
+// special and it crosses `/`, so `extraction/*` matches
+// `extraction/1413e4cf/20fa1f14`.
+type Config struct {
+	// Unmerged enables reads from unmerged branches. False/absent means main
+	// only and is the default.
+	Unmerged bool `json:"unmerged"`
+	// Origins narrows the branches by why they exist. Empty means any origin.
+	Origins []string `json:"origins,omitempty"`
+	// Branches narrows by name glob. Empty means any name.
+	Branches []string `json:"branches,omitempty"`
+	// MaxBranches caps how many branches one read fans out to. Zero means
+	// DefaultMaxBranches.
+	MaxBranches int `json:"maxBranches,omitempty"`
+}
+
+// Scope is a validated, immutable branch read boundary. A nil *Scope means main
+// only; there is no "unrestricted" state beyond the configured origins/globs,
+// because every branch is read the same way regardless of origin.
+type Scope struct {
+	unmerged bool
+
+	origins           map[string]bool
+	originsRestricted bool
+
+	globs           []string
+	globsRestricted bool
+
+	maxBranches int
+}
+
+// New validates a configuration and returns the scope it describes. It returns
+// (nil, nil) when the configuration does not enable unmerged reads, so callers
+// can store nil — the main-only default — without special-casing. An invalid
+// origin, a blank glob, or an out-of-range MaxBranches is an error rather than a
+// silently narrowed scope: a typo must not hide data the user asked for.
+func New(cfg Config) (*Scope, error) {
+	if !cfg.Unmerged {
+		return nil, nil
+	}
+
+	origins := make(map[string]bool, len(cfg.Origins))
+	for _, raw := range cfg.Origins {
+		o := strings.ToLower(strings.TrimSpace(raw))
+		if o == "" {
+			continue
+		}
+		if !branchorigin.Valid(o) {
+			return nil, fmt.Errorf("branchScope.origins: %q is not one of extraction, agent, manual, system", raw)
+		}
+		origins[o] = true
+	}
+
+	globs := make([]string, 0, len(cfg.Branches))
+	for _, raw := range cfg.Branches {
+		g := strings.TrimSpace(raw)
+		if g == "" {
+			return nil, fmt.Errorf("branchScope.branches: blank name pattern")
+		}
+		globs = append(globs, g)
+	}
+
+	maxBranches := cfg.MaxBranches
+	if maxBranches == 0 {
+		maxBranches = DefaultMaxBranches
+	}
+	if maxBranches < 1 || maxBranches > MaxMaxBranches {
+		return nil, fmt.Errorf("branchScope.maxBranches: must be between 1 and %d", MaxMaxBranches)
+	}
+
+	return &Scope{
+		unmerged:          true,
+		origins:           origins,
+		originsRestricted: len(origins) > 0,
+		globs:             globs,
+		globsRestricted:   len(globs) > 0,
+		maxBranches:       maxBranches,
+	}, nil
+}
+
+// IsMainOnly reports whether the scope reads the main graph only. A nil scope is
+// main only, which is the default and the backwards-compatible behaviour.
+func (s *Scope) IsMainOnly() bool {
+	return s == nil || !s.unmerged
+}
+
+// Origins returns the sorted origin allowlist (nil when unrestricted).
+func (s *Scope) Origins() []string {
+	if s == nil || !s.originsRestricted {
+		return nil
+	}
+	out := make([]string, 0, len(s.origins))
+	for o := range s.origins {
+		out = append(out, o)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// BranchPatterns returns the configured name globs (nil when unrestricted).
+func (s *Scope) BranchPatterns() []string {
+	if s == nil || !s.globsRestricted {
+		return nil
+	}
+	return append([]string(nil), s.globs...)
+}
+
+// MaxBranches returns the fan-out cap. A nil scope returns 0; callers only use it
+// for a non-main-only scope.
+func (s *Scope) MaxBranches() int {
+	if s == nil {
+		return 0
+	}
+	return s.maxBranches
+}
+
+// AllowsOrigin reports whether a branch with the given stored origin is in
+// scope. An empty origin reads as manual, matching ToResponse's normalisation.
+func (s *Scope) AllowsOrigin(origin string) bool {
+	if s == nil {
+		return false
+	}
+	if !s.originsRestricted {
+		return true
+	}
+	origin = strings.ToLower(strings.TrimSpace(origin))
+	if origin == "" {
+		origin = branchorigin.Manual
+	}
+	return s.origins[origin]
+}
+
+// AllowsName reports whether a branch name matches the configured globs. A glob
+// only gives `*` special meaning and `*` crosses `/`, because branch names are
+// slash-delimited paths and a caller writing `extraction/*` means the subtree.
+func (s *Scope) AllowsName(name string) bool {
+	if s == nil {
+		return false
+	}
+	if !s.globsRestricted {
+		return true
+	}
+	for _, g := range s.globs {
+		if GlobMatch(g, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// GlobMatch reports whether name matches pattern, where `*` matches any
+// sequence of characters (including none, including `/`) and every other
+// character is literal. It is deliberately smaller than path.Match: a branch
+// name is a single string, not a filesystem path, so a `*` that stopped at `/`
+// would surprise the caller who wrote `extraction/*`.
+func GlobMatch(pattern, name string) bool {
+	if pattern == "*" {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == name
+	}
+	if !strings.HasPrefix(name, parts[0]) {
+		return false
+	}
+	rest := name[len(parts[0]):]
+	for i := 1; i < len(parts)-1; i++ {
+		idx := strings.Index(rest, parts[i])
+		if idx < 0 {
+			return false
+		}
+		rest = rest[idx+len(parts[i]):]
+	}
+	return strings.HasSuffix(rest, parts[len(parts)-1])
+}
+
+// Narrow returns the intersection of an inherited scope and a declared one, so a
+// delegated run can never see more than its caller permits. A nil inherited
+// scope is main only, and main-only on either side yields main only — a parent
+// that cannot read branches must not gain that ability by delegating.
+//
+// Origins intersect exactly. Globs are only kept when the declared pattern is
+// provably covered by an inherited pattern, so the rule is conservative: it may
+// drop a branch that both could have read, never keep one only the child could
+// have read. A restricted axis that intersects to nothing stays restricted and
+// matches nothing, rather than becoming unrestricted.
+func Narrow(inherited, declared *Scope) *Scope {
+	if inherited.IsMainOnly() || declared.IsMainOnly() {
+		return nil
+	}
+
+	out := &Scope{
+		unmerged:    true,
+		maxBranches: min(inherited.maxBranches, declared.maxBranches),
+	}
+
+	// Origins: restricted when either side is, intersect when both are.
+	out.originsRestricted = inherited.originsRestricted || declared.originsRestricted
+	if out.originsRestricted {
+		out.origins = map[string]bool{}
+		switch {
+		case inherited.originsRestricted && declared.originsRestricted:
+			for o := range declared.origins {
+				if inherited.origins[o] {
+					out.origins[o] = true
+				}
+			}
+		case inherited.originsRestricted:
+			out.origins = inherited.origins
+		default:
+			out.origins = declared.origins
+		}
+	}
+
+	// Globs: restricted when either side is; keep only declared patterns the
+	// inherited side provably covers (or vice versa when only one restricts).
+	out.globsRestricted = inherited.globsRestricted || declared.globsRestricted
+	switch {
+	case inherited.globsRestricted && declared.globsRestricted:
+		for _, g := range declared.globs {
+			for _, parent := range inherited.globs {
+				if GlobCovers(parent, g) {
+					out.globs = append(out.globs, g)
+					break
+				}
+			}
+		}
+	case inherited.globsRestricted:
+		out.globs = inherited.globs
+	default:
+		out.globs = declared.globs
+	}
+
+	return out
+}
+
+// GlobCovers reports whether every name matched by child is also matched by
+// parent, for the conservative subset of cases that can be decided structurally:
+// an exact pattern, a parent of `*`, and a parent with a `*` suffix that is a
+// prefix of the child. Anything else is "not covered" — dropping a branch is
+// always safe during narrowing, keeping one that widens is not.
+func GlobCovers(parent, child string) bool {
+	if parent == child || parent == "*" {
+		return true
+	}
+	if strings.HasSuffix(parent, "*") && !strings.Contains(strings.TrimSuffix(parent, "*"), "*") {
+		return strings.HasPrefix(child, strings.TrimSuffix(parent, "*"))
+	}
+	return false
+}
+
+// branchScopeCtxKey is the context key for the per-run Scope. It is unexported
+// so the only way to install or read a scope is through this package, which keeps
+// the MCP facade and the search layer on the same key.
+type branchScopeCtxKey struct{}
+
+// contextValue is what the context holds: the scope, whether a caller declared
+// it as the run's fixed boundary (see ContextWithFixed), and whether the caller
+// explicitly has no boundary at all (see ContextWithAbsent).
+type contextValue struct {
+	scope  *Scope
+	fixed  bool
+	absent bool
+}
+
+// ContextWith returns a context carrying the scope. A main-only (nil) scope is
+// stored explicitly rather than ignored: a delegated run whose definition
+// declares no scope must NOT inherit its caller's branch reads, and ignoring nil
+// would leave the caller's value in place. Storing a nil scope keeps FromContext
+// returning nil, so consumers still see the main-only default.
+func ContextWith(ctx context.Context, scope *Scope) context.Context {
+	if scope.IsMainOnly() {
+		scope = nil
+	}
+	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{scope: scope})
+}
+
+// ContextWithFixed installs a boundary the CALLER already decided, for an
+// internal run that executes on the originating run's behalf (the /query
+// hand-off behind search-knowledge). Run-level derivation must not replace it
+// with main-only just because the internal definition declares nothing — that
+// would silently widen the originating run's read boundary. It is not a widening
+// tool: the scope installed is the caller's own, and a definition that declares a
+// scope still narrows it through ContextWith.
+//
+// Never install this from a model-visible surface: it is reserved for a
+// server-to-server hand-off that carries a boundary already derived from a real
+// run.
+func ContextWithFixed(ctx context.Context, scope *Scope) context.Context {
+	if scope.IsMainOnly() {
+		return ContextWith(ctx, nil)
+	}
+	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{scope: scope, fixed: true})
+}
+
+// ContextWithAbsent marks the context as having NO branch boundary, for an
+// internal hand-off whose originating caller had none (a human MCP client). Run
+// derivation leaves it alone instead of installing the main-only default, so the
+// hand-off keeps exactly the behaviour that caller had. It is not a widening
+// tool: it can only ever restate an absence, never grant a scope.
+func ContextWithAbsent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{absent: true})
+}
+
+// FromContext returns the scope installed by ContextWith or ContextWithFixed, or
+// nil (main only).
+func FromContext(ctx context.Context) *Scope {
+	if v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue); ok {
+		return v.scope
+	}
+	return nil
+}
+
+// Installed reports whether a boundary was installed at all, including the
+// main-only one. This is the difference between "this run reads the main graph
+// only" — every agent run — and "this caller never had a boundary", which is a
+// human MCP client whose branch arguments predate the scope. Consumers must
+// enforce main-only for the former and preserve the old behaviour for the latter.
+func Installed(ctx context.Context) bool {
+	v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue)
+	return ok && !v.absent
+}
+
+// IsAbsent reports whether the context was marked by ContextWithAbsent. Run
+// derivation must not install a boundary over it.
+func IsAbsent(ctx context.Context) bool {
+	v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue)
+	return ok && v.absent
+}
+
+// IsFixed reports whether the installed scope was declared as a fixed boundary
+// by ContextWithFixed. The fixed run itself re-installs the same scope with
+// ContextWith, which clears the marker, so the exception applies to exactly one
+// run and cannot reach anything that run delegates.
+func IsFixed(ctx context.Context) bool {
+	if v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue); ok {
+		return v.fixed
+	}
+	return false
+}

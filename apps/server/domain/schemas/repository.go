@@ -154,6 +154,13 @@ func isNullJSON(raw json.RawMessage) bool {
 
 // GetAvailablePacks returns schemas available for a project to install.
 // Only returns schemas owned by this project that are not yet installed.
+//
+// Deprecated schemas are excluded: this catalog is a picker (GET
+// /api/schemas/projects/:id/available, the schema-list-available tool and the
+// CLI blueprint applier all install from it), so offering a retired pack here
+// would invite new installs of something the registry has withdrawn. Installed
+// packs stay visible through GetInstalledPacks regardless of deprecation, so a
+// project that already uses a pack does not lose sight of it (#24).
 func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
 	// Get IDs of packs already installed for this project
 	var installedIDs []string
@@ -178,6 +185,8 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([
 	}
 
 	q = q.Where("project_id = ?", projectID)
+	// Retired packs are not installable candidates (#24).
+	q = q.Where("deprecated_at IS NULL")
 
 	err = q.Order("name ASC").Scan(ctx, &packs)
 	if err != nil {

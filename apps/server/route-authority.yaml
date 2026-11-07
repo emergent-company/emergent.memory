@@ -42,6 +42,10 @@ routes:
       level: public
       note: ""
     - method: GET
+      path: /.well-known/oauth-protected-resource/*
+      level: public
+      note: ""
+    - method: GET
       path: /api/admin/builtin-tool-groups
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
@@ -948,15 +952,15 @@ routes:
     - method: DELETE
       path: /api/mcp
       level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+      note: oauthChallengeMiddleware, RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/mcp
       level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+      note: oauthChallengeMiddleware, RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/mcp
       level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+      note: oauthChallengeMiddleware, RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/mcp-relay/connect
       level: project-member
@@ -1008,15 +1012,15 @@ routes:
     - method: POST
       path: /api/mcp/rpc
       level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+      note: oauthChallengeMiddleware, RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/mcp/sse/:projectId
       level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+      note: oauthChallengeMiddleware, RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/mcp/sse/:projectId/message
       level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+      note: oauthChallengeMiddleware, RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/me/activity
       level: auth
@@ -2299,6 +2303,18 @@ routes:
       note: RequireAuth
     - method: GET
       path: /api/v1/pricing
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/v1/projects/:projectId/backup-schedule
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/v1/projects/:projectId/backup-schedule
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/v1/projects/:projectId/backup-schedule
       level: auth
       note: RequireAuth
     - method: POST

@@ -115,6 +115,13 @@ type UnifiedSearchGraphResult struct {
 	Relationships   []UnifiedSearchRelationship `json:"relationships,omitempty"`
 	Explanation     *string                     `json:"explanation,omitempty"`
 	TruncatedFields []string                    `json:"truncated_fields,omitempty"`
+	// Branch provenance. Set only when the result was read from an unmerged
+	// branch through an agent's branch scope (#265); empty for the main graph.
+	// Consumers must treat these results as pending, not merged, fact.
+	BranchID          *string `json:"branch_id,omitempty"`
+	BranchName        *string `json:"branch_name,omitempty"`
+	BranchOrigin      *string `json:"origin,omitempty"`
+	BranchOriginLabel *string `json:"origin_label,omitempty"`
 }
 
 // UnifiedSearchTextResult is a text search result (document chunk)
@@ -154,6 +161,11 @@ type UnifiedSearchResultItem struct {
 	Relationships   []UnifiedSearchRelationship `json:"relationships,omitempty"`
 	Explanation     *string                     `json:"explanation,omitempty"`
 	TruncatedFields []string                    `json:"truncated_fields,omitempty"`
+	// Branch provenance, copied from UnifiedSearchGraphResult (#265).
+	BranchID          *string `json:"branch_id,omitempty"`
+	BranchName        *string `json:"branch_name,omitempty"`
+	BranchOrigin      *string `json:"origin,omitempty"`
+	BranchOriginLabel *string `json:"origin_label,omitempty"`
 
 	// Text-specific fields
 	Snippet    string  `json:"snippet,omitempty"`
@@ -189,6 +201,31 @@ type UnifiedSearchMetadata struct {
 	RelationshipResultCount int                         `json:"relationshipResultCount"`
 	FusionStrategy          UnifiedSearchFusionStrategy `json:"fusionStrategy"`
 	ExecutionTime           UnifiedSearchExecutionTime  `json:"executionTime"`
+	// BranchScope describes the unmerged branches this search fanned out to
+	// (#265). Absent when the search read the main graph only, which is the
+	// default.
+	BranchScope *BranchScopeInfo `json:"branchScope,omitempty"`
+}
+
+// BranchScopeInfo reports what a scoped search actually read, so a consumer can
+// tell a complete answer from a bounded one. It is present only when the run
+// carried a branch scope.
+type BranchScopeInfo struct {
+	// Branches are the unmerged branches that were read, in fan-out order.
+	Branches []BranchRead `json:"branches,omitempty"`
+	// Omitted counts matching branches the cap excluded.
+	Omitted int `json:"omitted,omitempty"`
+	// Note is a one-sentence statement of the fan-out for a model to repeat when
+	// its answer is bounded; empty when the read was complete.
+	Note string `json:"note,omitempty"`
+}
+
+// BranchRead identifies one branch a scoped search read.
+type BranchRead struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Origin string  `json:"origin"`
+	Label  *string `json:"label,omitempty"`
 }
 
 // UnifiedSearchScoreDistribution contains score statistics for debug info

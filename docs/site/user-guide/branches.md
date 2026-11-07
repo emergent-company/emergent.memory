@@ -174,3 +174,66 @@ main graph (no branch ID)
 
 !!! note
     The main graph itself is not a branch and has no ID. To merge a branch into the main graph, you need the main graph's branch record ID — use `GET /api/graph/branches` to list all branches and identify the one representing main (typically the one with no parent and the earliest creation date).
+
+---
+
+## Letting an agent read unmerged branches
+
+By default an agent searches **the main graph only** — pending work sitting on an
+unmerged branch is invisible to it. An agent definition can opt into reading
+branches that have not been merged yet, narrowed by why a branch exists and by
+its name:
+
+```http
+PATCH /api/projects/{projectId}/agent-definitions/{id}
+Content-Type: application/json
+
+{
+  "branchScope": {
+    "unmerged": true,
+    "origins": ["extraction"],
+    "branches": ["extraction/*"],
+    "maxBranches": 3
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `unmerged` | `true` enables branch reads. Absent or `false` means main only. |
+| `origins` | Only branches created by these sources: `extraction`, `agent`, `manual`, `system`. Empty/omitted allows any. |
+| `branches` | Name globs. `*` is the only wildcard and it matches across `/`, so `extraction/*` covers every extraction branch. |
+| `maxBranches` | How many branches one search may read, newest first. Default 3, maximum 20. |
+
+When both `origins` and `branches` are set, a branch must match both.
+
+A search under a scope reads the main graph plus each matching branch and merges
+the results. Every object that exists only on a branch comes back flagged with
+`branch_id`, `branch_name`, `origin` and `origin_label`, so a model can say
+"on the pending extraction branch for Invoice.pdf…" rather than presenting it as
+settled fact. When the cap leaves branches unread, the response metadata carries a
+`branch_scope_note` saying so.
+
+The boundary also follows the agent's calls: `search-knowledge` runs its internal
+research agent under the same boundary (it cannot be steered into reading a branch
+outside it), and a read tool that names a branch outside the boundary is refused.
+
+!!! note "It narrows reads; it grants nothing"
+    A branch scope only restricts. **No scope means main only**: an agent that
+    declares no `branchScope` reads the main graph, and a read tool that names a
+    branch is refused — declaring a scope is what lets it read unmerged work. A
+    scoped run may name only branches inside its scope, on any tool, so it cannot
+    reach the rest by asking for one. Branch *management* is separate: an agent
+    that could already create a branch and write to it still can (branch creation
+    and writes are not gated by the read scope), and an agent allowed to merge a
+    branch can always surface its content through main — that is a write-permission
+    question, so grant write and merge rights on their own merits. A delegated
+    sub-agent receives the intersection of its own scope and its caller's: a child
+    can never read more than its parent, and a child that declares nothing of its
+    own reads the main graph only.
+
+Edge reads are bounded the same way: a scoped run sees relationships on the main
+graph and on the branches in its scope, and an agent run that declares no scope
+sees main edges only. Graph traversal is not widened by a scope yet — it walks the main graph — so
+a scoped agent reaches branch content through search, a branch named on a read
+tool, and `search-knowledge`.

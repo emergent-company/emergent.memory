@@ -11,15 +11,19 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/search"
 )
 
-func toolDefByName(t *testing.T, tools []ToolDefinition, name string) ToolDefinition {
+// toolDefByName resolves a tool definition by name through the service index,
+// which includes the deprecated per-verb aliases. The consolidated catalog
+// advertises `entity`, but the alias keeps the exact schema these tests pin.
+func toolDefByName(t *testing.T, svc *Service, name string) ToolDefinition {
 	t.Helper()
-	for _, tool := range tools {
-		if tool.Name == name {
-			return tool
-		}
+	// Rebuild the index for this service so a per-service configuration (for
+	// example entityQueryFullMaxLimit) is reflected in the definition.
+	svc.GetToolDefinitions()
+	def := svc.GetToolByName(name)
+	if def == nil {
+		t.Fatalf("tool %q not found in the catalog index", name)
 	}
-	t.Fatalf("tool %q not found in GetToolDefinitions()", name)
-	return ToolDefinition{}
+	return *def
 }
 
 // =============================================================================
@@ -28,12 +32,11 @@ func toolDefByName(t *testing.T, tools []ToolDefinition, name string) ToolDefini
 
 func TestGetToolDefinitions_MinScoreSchema(t *testing.T) {
 	svc := &Service{}
-	tools := svc.GetToolDefinitions()
 
 	searchTools := []string{"search-hybrid", "search-semantic"}
 	for _, name := range searchTools {
 		t.Run(name, func(t *testing.T) {
-			tool := toolDefByName(t, tools, name)
+			tool := toolDefByName(t, svc, name)
 			prop, ok := tool.InputSchema.Properties["min_score"]
 			require.True(t, ok, "tool %q must expose a min_score property", name)
 			assert.Equal(t, "number", prop.Type)
@@ -119,10 +122,9 @@ func TestParseMinScoreArg(t *testing.T) {
 
 func TestToolDefinitions_IncludeRelationshipsSchema(t *testing.T) {
 	svc := &Service{}
-	tools := svc.GetToolDefinitions()
 
 	t.Run("entity-type-list exposes include_relationships", func(t *testing.T) {
-		tool := toolDefByName(t, tools, "entity-type-list")
+		tool := toolDefByName(t, svc, "entity-type-list")
 		prop, ok := tool.InputSchema.Properties["include_relationships"]
 		require.True(t, ok, "entity-type-list must expose include_relationships")
 		assert.Equal(t, "boolean", prop.Type)
@@ -130,7 +132,7 @@ func TestToolDefinitions_IncludeRelationshipsSchema(t *testing.T) {
 	})
 
 	t.Run("search-hybrid does not expose include_relationships", func(t *testing.T) {
-		tool := toolDefByName(t, tools, "search-hybrid")
+		tool := toolDefByName(t, svc, "search-hybrid")
 		_, ok := tool.InputSchema.Properties["include_relationships"]
 		assert.False(t, ok, "search-hybrid must not expose include_relationships (the relationship leg is always skipped for MCP)")
 	})
@@ -183,11 +185,10 @@ func TestBuildHybridUnifiedRequest_NamespaceMapping(t *testing.T) {
 
 func TestToolDefinitions_IncludeChunksSchema(t *testing.T) {
 	svc := &Service{}
-	tools := svc.GetToolDefinitions()
 
 	for _, name := range []string{"search-hybrid", "search-semantic"} {
 		t.Run(name, func(t *testing.T) {
-			tool := toolDefByName(t, tools, name)
+			tool := toolDefByName(t, svc, name)
 			prop, ok := tool.InputSchema.Properties["include_chunks"]
 			require.True(t, ok, "tool %q must expose include_chunks", name)
 			assert.Equal(t, "boolean", prop.Type)

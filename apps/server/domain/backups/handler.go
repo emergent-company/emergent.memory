@@ -177,7 +177,7 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 	backup, err := h.service.CreateBackup(c.Request().Context(), CreateBackupRequest{
 		ProjectID:      projectID,
 		OrganizationID: orgID,
-		CreatedBy:      user.ID,
+		CreatedBy:      &user.ID,
 		IncludeDeleted: req.IncludeDeleted,
 		IncludeChat:    req.IncludeChat,
 		IncludeJournal: req.IncludeJournal,

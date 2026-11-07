@@ -1576,7 +1576,9 @@ func pickEffectiveModel(override, projectDefault string) string {
 func (h *Handler) toDefinitionDTO(ctx context.Context, def *AgentDefinition) *AgentDefinitionDTO {
 	dto := def.ToDTO()
 	if h.mcpService != nil {
-		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetToolDefinitionsForProject(ctx, def.ProjectID))
+		// Per-verb catalog: tool groups are policy units the agent tool pool
+		// resolves by name, and the pool works in per-verb names.
+		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetInternalToolDefinitionsForProject(ctx, def.ProjectID))
 	}
 	return dto
 }
@@ -1608,7 +1610,10 @@ func (h *Handler) ListBuiltinToolGroups(c echo.Context) error {
 		return c.JSON(http.StatusOK, SuccessResponse([]ToolGroupDTO{}))
 	}
 
-	catalog := h.mcpService.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
+	// Per-verb catalog, matching what the agent tool pool resolves: a group that
+	// named consolidated tools would grant nothing when it fans out into an
+	// agent's tool whitelist.
+	catalog := h.mcpService.GetInternalToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	groups := ToolGroupsFromCatalog(catalog)
 	return c.JSON(http.StatusOK, SuccessResponse(groups))
 }
@@ -1830,6 +1835,14 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	if dto.RelationshipTypes != nil {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
 	}
+	// Branch reads are a typed setting as well: validate it here so a bad origin
+	// or glob is a 400 rather than a run that silently reads less than asked
+	// (#265).
+	if dto.BranchScope != nil {
+		if err := def.SetBranchScope(dto.BranchScope); err != nil {
+			return apperror.NewBadRequest(err.Error())
+		}
+	}
 
 	// Write-path secret handling: a workspace config must never persist a
 	// plaintext git token supplied by the client — it must use
@@ -1971,6 +1984,14 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.RelationshipTypes != nil {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
+	}
+	// Branch reads are a typed setting as well: validate it here so a bad origin
+	// or glob is a 400 rather than a run that silently reads less than asked
+	// (#265).
+	if dto.BranchScope != nil {
+		if err := def.SetBranchScope(dto.BranchScope); err != nil {
+			return apperror.NewBadRequest(err.Error())
+		}
 	}
 	if dto.SandboxConfig != nil {
 		// Write-path secret handling against the stored config: carry forward the
