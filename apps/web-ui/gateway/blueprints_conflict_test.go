@@ -772,7 +772,7 @@ func TestBlueprintConflictDefRows(t *testing.T) {
 			wantOK:        true,
 			wantUnchanged: 1,
 			wantRows: []blueprintDefRow{
-				{Key: "description", Existing: "Job title or role", Incoming: "Job title of the person.", Changed: true},
+				{Key: "description", Existing: `"Job title or role"`, Incoming: `"Job title of the person."`, Changed: true},
 				{Key: "maxLength", Existing: "120", Incoming: "64", Changed: true},
 			},
 		},
@@ -791,7 +791,7 @@ func TestBlueprintConflictDefRows(t *testing.T) {
 			wantOK:        true,
 			wantUnchanged: 1,
 			wantRows: []blueprintDefRow{
-				{Key: "format", Existing: "—", Incoming: "email", Changed: true},
+				{Key: "format", Existing: "—", Incoming: `"email"`, Changed: true},
 			},
 		},
 		{
@@ -813,6 +813,36 @@ func TestBlueprintConflictDefRows(t *testing.T) {
 			wantUnchanged: 0,
 			wantRows: []blueprintDefRow{
 				{Key: "description", Existing: `"` + longExisting + `"`, Incoming: `"` + longIncoming + `"`, Changed: true, ExistingMono: true, IncomingMono: true},
+			},
+		},
+		{
+			name:          "integers above 2^53 compare distinctly and render exactly",
+			existing:      `{"maxValue":9007199254740993}`,
+			incoming:      `{"maxValue":9007199254740992}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "maxValue", Existing: "9007199254740993", Incoming: "9007199254740992", Changed: true},
+			},
+		},
+		{
+			name:          "very large integers keep every digit",
+			existing:      `{"maxValue":12345678901234567890}`,
+			incoming:      `{"maxValue":12345678901234567891}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "maxValue", Existing: "12345678901234567890", Incoming: "12345678901234567891", Changed: true},
+			},
+		},
+		{
+			name:          "string and number are visibly distinguishable",
+			existing:      `{"default":"64"}`,
+			incoming:      `{"default":64}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "default", Existing: `"64"`, Incoming: "64", Changed: true},
 			},
 		},
 		{
@@ -926,6 +956,32 @@ func TestBlueprintPropertyConflictRowRendersTable(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("table render missing %q", want)
+		}
+	}
+}
+
+// TestBlueprintPropertyConflictRowRendersLargeIntegerExactly verifies a diff
+// above 2^53 reaches the rendered cell with every digit intact (no float64
+// rounding) and is rendered as a change.
+func TestBlueprintPropertyConflictRowRendersLargeIntegerExactly(t *testing.T) {
+	var buf bytes.Buffer
+	err := blueprintPropertyConflictRow("Widget", BlueprintPropertyConflict{
+		Property:    "maxValue",
+		ExistingDef: json.RawMessage(`{"maxValue":9007199254740993}`),
+		IncomingDef: json.RawMessage(`{"maxValue":9007199254740992}`),
+		Resolution:  "existing_wins",
+	}).Render(context.Background(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := buf.String()
+	for _, want := range []string{
+		`data-testid="blueprint-conflict-def-row-Widget-maxValue-maxValue"`,
+		"9007199254740993",
+		"9007199254740992",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("large-integer diff render missing %q: %s", want, body)
 		}
 	}
 }

@@ -221,11 +221,24 @@ func blueprintDefValuesEqual(a json.RawMessage, aPresent bool, b json.RawMessage
 	return bytes.Equal(aCanon, bCanon)
 }
 
+// blueprintDefDecode decodes a definition value without lossy float64
+// conversion: UseNumber keeps integers exact (and json.Number re-marshals
+// verbatim), so a >2^53 change is neither misrendered nor treated as equal.
+func blueprintDefDecode(raw json.RawMessage) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
 // blueprintDefCanonical returns deterministic JSON for a value (object keys
 // sorted by encoding/json) so reordered keys compare equal.
 func blueprintDefCanonical(raw json.RawMessage) ([]byte, bool) {
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	v, ok := blueprintDefDecode(raw)
+	if !ok {
 		return nil, false
 	}
 	b, err := json.Marshal(v)
@@ -237,30 +250,30 @@ func blueprintDefCanonical(raw json.RawMessage) ([]byte, bool) {
 
 // blueprintDefValueText renders one side of a diff row: an em dash for an
 // absent key, short scalars inline, and nested objects/arrays or long strings as
-// compact JSON flagged for a monospace cell.
+// compact JSON flagged for a monospace cell. Strings are always quoted (via
+// encoding/json) so the string "64" is visibly distinct from the number 64;
+// numbers, booleans and null stay bare.
 func blueprintDefValueText(raw json.RawMessage, present bool) (string, bool) {
 	if !present {
 		return "—", false
 	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	v, ok := blueprintDefDecode(raw)
+	if !ok {
 		return strings.TrimSpace(string(raw)), true
 	}
 	if s, ok := v.(string); ok {
-		if len(s) <= blueprintDefInlineScalarMax {
+		b, err := json.Marshal(s)
+		if err != nil {
 			return s, false
 		}
-		if b, err := json.Marshal(s); err == nil {
-			return string(b), true
-		}
-		return s, false
+		return string(b), len(s) > blueprintDefInlineScalarMax
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return strings.TrimSpace(string(raw)), true
 	}
 	switch v.(type) {
-	case nil, bool, float64:
+	case nil, bool, json.Number:
 		return string(b), false
 	default:
 		return string(b), true
