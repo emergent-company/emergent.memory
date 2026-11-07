@@ -485,10 +485,14 @@ func (b *Blueprinter) dryRunAgents(agents []AgentFile) []BlueprintsResult {
 			action = "create or update"
 		}
 		runtimeTrigger := ag.runtimeTriggerType()
+		source := ""
+		if ag.SourceFile != "" {
+			source = " (" + ag.SourceFile + ")"
+		}
 		if runtimeTrigger != "" {
-			fmt.Fprintf(b.out, "[dry-run] would %s runtime agent %q (trigger: %s)\n", action, ag.Name, runtimeTrigger)
+			fmt.Fprintf(b.out, "[dry-run] would %s runtime agent %q%s (trigger: %s)\n", action, ag.Name, source, runtimeTrigger)
 		} else {
-			fmt.Fprintf(b.out, "[dry-run] would %s definition %q (definition only; trigger manually or add triggerType)\n", action, ag.Name)
+			fmt.Fprintf(b.out, "[dry-run] would %s definition %q%s (definition only; trigger manually or add triggerType)\n", action, ag.Name, source)
 		}
 		results = append(results, BlueprintsResult{
 			ResourceType:   "agent",
@@ -553,16 +557,28 @@ func (b *Blueprinter) printResult(r BlueprintsResult) {
 	case BlueprintsActionUpdated:
 		fmt.Fprintf(b.out, "  updated  %s\n", label)
 	case BlueprintsActionSkipped:
+		if r.ResourceType == "agent" {
+			// The definition already exists, but a triggered agent's runtime row
+			// is still reconciled below; say so rather than implying the runtime
+			// agent was skipped too.
+			note := "definition only — trigger manually or add triggerType"
+			if r.RuntimeTrigger != "" {
+				note = fmt.Sprintf("runtime agent ensured, trigger: %s", r.RuntimeTrigger)
+			}
+			fmt.Fprintf(b.out, "  skipped  definition %q (already exists; use --upgrade to update; %s)\n", r.Name, note)
+			return
+		}
 		fmt.Fprintf(b.out, "  skipped  %s (already exists; use --upgrade to update)\n", label)
 	case BlueprintsActionError:
 		fmt.Fprintf(b.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
 	}
 }
 
-// resultLabel renders the resource line shared by the created/updated/skipped
+// resultLabel renders the resource line shared by the created and updated
 // actions. Agent results name the runtime-vs-definition distinction explicitly
 // (#321): an agent with no trigger materializes only a definition and will not
-// run on its own, which the old "created agent" line hid.
+// run on its own, which the old "created agent" line hid. Skipped results use a
+// dedicated form in printResult because their definition exists already.
 func (b *Blueprinter) resultLabel(r BlueprintsResult) string {
 	if r.ResourceType == "agent" {
 		if r.RuntimeTrigger != "" {
