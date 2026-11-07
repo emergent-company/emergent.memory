@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -586,15 +587,157 @@ func TestDiscover_UnadvertisedResourceMetadata5xxIsTransient(t *testing.T) {
 	}
 }
 
-// TestDiscover_WellKnownProtectedResourceFallback pins the unadvertised
-// fallback: with no resource_metadata on the challenge, Discover consults
-// /.well-known/oauth-protected-resource on the resource origin.
-func TestDiscover_WellKnownProtectedResourceFallback(t *testing.T) {
+// TestDiscover_PathInserted5xxDoesNotMaskRootDocument pins the compatibility
+// edge of the ordered walk: a provider that answers the conforming
+// path-inserted URL with 5xx but publishes the document at its root still
+// discovers, exactly as it did before the conformance fix. The transient rule
+// (5xx surfaces) applies only when NO candidate yields a document.
+func TestDiscover_PathInserted5xxDoesNotMaskRootDocument(t *testing.T) {
+	const (
+		pathInsertedPath = "/.well-known/oauth-protected-resource/api/mcp"
+		originOnlyPath   = "/.well-known/oauth-protected-resource"
+	)
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	mux.HandleFunc("/.well-known/oauth-protected-resource", writePRM)
+	mux.HandleFunc(pathInsertedPath, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc(originOnlyPath, writePRM)
+	registerRFC8414AS(mux, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "unused"})
+	})
+
+	req, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v, want the root document to win over the path-inserted 500", err)
+	}
+	if want := srv.URL + originOnlyPath; req.ResourceMetadataURL != want {
+		t.Errorf("ResourceMetadataURL = %q, want the origin-only document %q", req.ResourceMetadataURL, want)
+	}
+}
+
+// requestRecorder records the request paths an httptest server saw, in order,
+// so a test can pin which discovery candidate was consulted and when.
+type requestRecorder struct {
+	mu    sync.Mutex
+	paths []string
+}
+
+func (r *requestRecorder) record(path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paths = append(r.paths, path)
+}
+
+func (r *requestRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.paths...)
+}
+
+// TestProtectedResourceMetadataCandidates pins the RFC 9728 §3.1 URL shapes and
+// their order: the path-inserted document first, the origin-only document as
+// the compatibility fallback.
+func TestProtectedResourceMetadataCandidates(t *testing.T) {
+	const (
+		originOnly = "https://host.example/.well-known/oauth-protected-resource"
+	)
+	tests := []struct {
+		name     string
+		resource string
+		want     []string
+	}{
+		{
+			name:     "multi-segment path",
+			resource: "https://host.example/api/mcp",
+			want:     []string{"https://host.example/.well-known/oauth-protected-resource/api/mcp", originOnly},
+		},
+		{
+			name:     "deep multi-segment path",
+			resource: "https://host.example/api/mcp/sse/p1",
+			want:     []string{"https://host.example/.well-known/oauth-protected-resource/api/mcp/sse/p1", originOnly},
+		},
+		{
+			name:     "trailing slash on the resource path is trimmed",
+			resource: "https://host.example/api/mcp/",
+			want:     []string{"https://host.example/.well-known/oauth-protected-resource/api/mcp", originOnly},
+		},
+		{
+			name:     "no path component yields the origin-only form alone",
+			resource: "https://host.example",
+			want:     []string{originOnly},
+		},
+		{
+			name:     "bare slash after the host yields the origin-only form alone",
+			resource: "https://host.example/",
+			want:     []string{originOnly},
+		},
+		{
+			name:     "query component stays after the inserted segment",
+			resource: "https://host.example/api/mcp?tenant=acme",
+			want:     []string{"https://host.example/.well-known/oauth-protected-resource/api/mcp?tenant=acme", originOnly},
+		},
+		{
+			name:     "port is preserved",
+			resource: "https://host.example:8443/api/mcp",
+			want:     []string{"https://host.example:8443/.well-known/oauth-protected-resource/api/mcp", "https://host.example:8443/.well-known/oauth-protected-resource"},
+		},
+		{
+			name:     "unparseable resource has no candidates",
+			resource: "not a url at all",
+			want:     nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := protectedResourceMetadataCandidates(tc.resource)
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Fatalf("protectedResourceMetadataCandidates(%q) = %q, want %q", tc.resource, got, tc.want)
+			}
+			for _, candidate := range got {
+				// No candidate may carry a doubled slash after the scheme
+				// (a "//"-in-path typo would 404 or, worse, hit a different
+				// document).
+				if rest := strings.TrimPrefix(strings.TrimPrefix(candidate, "https://"), "http://"); strings.Contains(rest, "//") {
+					t.Errorf("candidate %q contains a doubled slash", candidate)
+				}
+			}
+		})
+	}
+}
+
+// TestDiscover_WellKnownProtectedResourcePathInserted pins RFC 9728 §3.1: a
+// resource that publishes ONLY the path-inserted document is discoverable. The
+// pre-fix behaviour fetched only the origin-only URL, 404'd, and degraded to
+// the authorization-server walk.
+func TestDiscover_WellKnownProtectedResourcePathInserted(t *testing.T) {
+	const (
+		pathInsertedPath = "/.well-known/oauth-protected-resource/api/mcp"
+		originOnlyPath   = "/.well-known/oauth-protected-resource"
+	)
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rec := &requestRecorder{}
+	// Only the conforming path-inserted document exists.
+	mux.HandleFunc(pathInsertedPath, func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r.URL.Path)
+		writePRM(w, r)
+	})
+	// The origin-only document does not exist: it records the (unexpected)
+	// request and 404s.
+	mux.HandleFunc(originOnlyPath, func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r.URL.Path)
+		http.NotFound(w, r)
+	})
 	registerRFC8414AS(mux, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "unused"})
@@ -608,16 +751,185 @@ func TestDiscover_WellKnownProtectedResourceFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
-	// Current (pre-#2188) behaviour: the well-known URL is origin-only. RFC
-	// 9728 §3.1 wants the resource path inserted
-	// (<origin>/.well-known/oauth-protected-resource/api/mcp); a conformance
-	// fix must update this pin.
-	if want := srv.URL + "/.well-known/oauth-protected-resource"; req.ResourceMetadataURL != want {
-		t.Errorf("ResourceMetadataURL = %q, want %q", req.ResourceMetadataURL, want)
+	if want := srv.URL + pathInsertedPath; req.ResourceMetadataURL != want {
+		t.Errorf("ResourceMetadataURL = %q, want the path-inserted document %q", req.ResourceMetadataURL, want)
 	}
 	if want := srv.URL + "/auth/v1"; req.AuthorizationServer != want {
 		t.Errorf("AuthorizationServer = %q, want %q", req.AuthorizationServer, want)
 	}
+	if got := rec.snapshot(); len(got) != 1 || got[0] != pathInsertedPath {
+		t.Errorf("requested %q, want only the path-inserted document %q (no origin-only fallback)", got, pathInsertedPath)
+	}
+}
+
+// TestDiscover_WellKnownProtectedResourceFallback pins the compatibility
+// fallback: a provider that publishes ONLY the origin-only document (Trale,
+// Figma, …) must still be discoverable. RFC 9728 §3.1 puts the path-inserted
+// document first, so the origin-only URL is the second candidate — the request
+// order below pins exactly that.
+func TestDiscover_WellKnownProtectedResourceFallback(t *testing.T) {
+	const (
+		pathInsertedPath = "/.well-known/oauth-protected-resource/api/mcp"
+		originOnlyPath   = "/.well-known/oauth-protected-resource"
+	)
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rec := &requestRecorder{}
+	mux.HandleFunc(pathInsertedPath, func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r.URL.Path)
+		http.NotFound(w, r)
+	})
+	mux.HandleFunc(originOnlyPath, func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r.URL.Path)
+		writePRM(w, r)
+	})
+	registerRFC8414AS(mux, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "unused"})
+	})
+
+	req, err := Discover(context.Background(), DiscoveryConfig{
+		Resource:  srv.URL + "/api/mcp",
+		ClientFor: func(string) *http.Client { return srv.Client() },
+		Validate:  allowAllURLs,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if want := srv.URL + originOnlyPath; req.ResourceMetadataURL != want {
+		t.Errorf("ResourceMetadataURL = %q, want the origin-only fallback %q", req.ResourceMetadataURL, want)
+	}
+	if want := srv.URL + "/auth/v1"; req.AuthorizationServer != want {
+		t.Errorf("AuthorizationServer = %q, want %q", req.AuthorizationServer, want)
+	}
+	if got, want := rec.snapshot(), []string{pathInsertedPath, originOnlyPath}; strings.Join(got, " -> ") != strings.Join(want, " -> ") {
+		t.Errorf("lookup order = %q, want %q (path-inserted first, origin-only second)", got, want)
+	}
+}
+
+// TestDiscover_ProtectedResourceCandidatesAreURLGuarded pins that the outbound
+// URL guard sees the RFC 9728 §3.1 path-inserted candidate exactly as it sees
+// the origin-only one: the guard runs before the fetch (a rejected candidate is
+// never requested) and the remaining candidate still gets its turn.
+func TestDiscover_ProtectedResourceCandidatesAreURLGuarded(t *testing.T) {
+	const (
+		pathInsertedPath = "/.well-known/oauth-protected-resource/api/mcp"
+		originOnlyPath   = "/.well-known/oauth-protected-resource"
+	)
+
+	// guardOf returns a Validate func that blocks exactly one URL and reports
+	// every URL the guard was shown plus whether it saw the blocked one.
+	guardOf := func(blocked string) (func(context.Context, string) error, func() ([]string, bool)) {
+		var mu sync.Mutex
+		var seen []string
+		validate := func(_ context.Context, raw string) error {
+			mu.Lock()
+			seen = append(seen, raw)
+			mu.Unlock()
+			if raw == blocked {
+				return errors.New("blocked by policy")
+			}
+			return nil
+		}
+		report := func() ([]string, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, raw := range seen {
+				if raw == blocked {
+					return append([]string(nil), seen...), true
+				}
+			}
+			return append([]string(nil), seen...), false
+		}
+		return validate, report
+	}
+
+	t.Run("path-inserted candidate blocked", func(t *testing.T) {
+		var pathHits, originHits atomic.Int32
+		mux := http.NewServeMux()
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+
+		mux.HandleFunc(pathInsertedPath, func(w http.ResponseWriter, r *http.Request) {
+			pathHits.Add(1)
+			writePRM(w, r)
+		})
+		mux.HandleFunc(originOnlyPath, func(w http.ResponseWriter, r *http.Request) {
+			originHits.Add(1)
+			writePRM(w, r)
+		})
+		registerRFC8414AS(mux, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "unused"})
+		})
+
+		blocked := srv.URL + pathInsertedPath
+		validate, report := guardOf(blocked)
+		req, err := Discover(context.Background(), DiscoveryConfig{
+			Resource:  srv.URL + "/api/mcp",
+			ClientFor: func(string) *http.Client { return srv.Client() },
+			Validate:  validate,
+		})
+		if err != nil {
+			t.Fatalf("Discover() error = %v", err)
+		}
+		seen, sawBlocked := report()
+		if !sawBlocked {
+			t.Errorf("outbound guard never saw the path-inserted candidate %q (guarded: %q)", blocked, seen)
+		}
+		if got := pathHits.Load(); got != 0 {
+			t.Errorf("path-inserted candidate fetched %d times, want 0 (the guard must reject it before the request)", got)
+		}
+		if got := originHits.Load(); got != 1 {
+			t.Errorf("origin-only fallback fetched %d times, want 1", got)
+		}
+		if want := srv.URL + originOnlyPath; req.ResourceMetadataURL != want {
+			t.Errorf("ResourceMetadataURL = %q, want the unblocked origin-only fallback %q", req.ResourceMetadataURL, want)
+		}
+	})
+
+	t.Run("origin-only candidate blocked", func(t *testing.T) {
+		// A resource with no path has the origin-only candidate alone, so the
+		// walk reaches — and the guard must reject — that form.
+		var originHits atomic.Int32
+		mux := http.NewServeMux()
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+
+		mux.HandleFunc(originOnlyPath, func(w http.ResponseWriter, r *http.Request) {
+			originHits.Add(1)
+			writePRM(w, r)
+		})
+		// The walk continues past the blocked document and resolves the
+		// authorization server on the same origin.
+		mux.HandleFunc("/.well-known/oauth-authorization-server", writeASMetadata)
+
+		blocked := srv.URL + originOnlyPath
+		validate, report := guardOf(blocked)
+		req, err := Discover(context.Background(), DiscoveryConfig{
+			Resource:  srv.URL,
+			ClientFor: func(string) *http.Client { return srv.Client() },
+			Validate:  validate,
+		})
+		if err != nil {
+			t.Fatalf("Discover() error = %v", err)
+		}
+		seen, sawBlocked := report()
+		if !sawBlocked {
+			t.Errorf("outbound guard never saw the origin-only candidate %q (guarded: %q)", blocked, seen)
+		}
+		if got := originHits.Load(); got != 0 {
+			t.Errorf("origin-only candidate fetched %d times, want 0 (the guard must reject it before the request)", got)
+		}
+		if req.ResourceMetadataURL != "" {
+			t.Errorf("ResourceMetadataURL = %q, want empty (the document was rejected)", req.ResourceMetadataURL)
+		}
+		if req.AuthorizationServer != srv.URL {
+			t.Errorf("AuthorizationServer = %q, want the resource origin %q", req.AuthorizationServer, srv.URL)
+		}
+	})
 }
 
 // TestDiscover_ResourceOriginAsAuthorizationServer pins the last fallback: with

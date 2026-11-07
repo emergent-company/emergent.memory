@@ -276,19 +276,20 @@ func Discover(ctx context.Context, cfg DiscoveryConfig) (*Requirement, error) {
 			return nil, fmt.Errorf("fetching protected resource metadata: %w", err)
 		}
 	case resourceOrigin(resource) != "":
-		fallback := resourceOrigin(resource) + "/.well-known/oauth-protected-resource"
-		if err := d.getJSON(ctx, fallback, prm); err != nil {
-			// Absence is not fatal: the challenge may name the server directly.
-			// A 5xx is different — a transient upstream outage must not degrade
-			// silently into the authorization-server walk, mirroring the
-			// 404/410-vs-5xx distinction fetchAuthMetadata makes.
-			if transientMetadataFailure(err) {
-				return nil, fmt.Errorf("fetching protected resource metadata: %w", err)
-			}
-			prm = &protectedResourceMetadata{}
-		} else {
-			req.ResourceMetadataURL = fallback
+		// RFC 9728 §3.1: try the path-inserted document first, then the
+		// origin-only form existing providers publish. See
+		// protectedResourceMetadataCandidates.
+		fetched, metadataURL, err := d.fetchProtectedResourceMetadata(ctx, resource)
+		if err != nil {
+			// Absence is not fatal: the challenge may name the server
+			// directly. A 5xx is different — a transient upstream outage must
+			// not degrade silently into the authorization-server walk,
+			// mirroring the 404/410-vs-5xx distinction fetchAuthMetadata
+			// makes.
+			return nil, fmt.Errorf("fetching protected resource metadata: %w", err)
 		}
+		prm = fetched
+		req.ResourceMetadataURL = metadataURL
 	}
 	if r := strings.TrimSpace(prm.Resource); r != "" {
 		req.Resource = r
@@ -375,10 +376,12 @@ func issuerFromMetadataURL(raw string) string {
 
 // Well-known document paths. RFC 8414 §3.1 defines the OAuth authorization
 // server metadata path; OpenID Connect Discovery 1.0 defines the issuer
-// configuration path some authorization servers (e.g. GitHub) serve instead.
+// configuration path some authorization servers (e.g. GitHub) serve instead;
+// RFC 9728 §3 defines the protected-resource metadata path.
 const (
-	wellKnownOAuthASPath = ".well-known/oauth-authorization-server"
-	wellKnownOIDCPath    = ".well-known/openid-configuration"
+	wellKnownOAuthASPath           = ".well-known/oauth-authorization-server"
+	wellKnownOIDCPath              = ".well-known/openid-configuration"
+	wellKnownProtectedResourcePath = ".well-known/oauth-protected-resource"
 )
 
 // wellKnownInsert builds a well-known document URL by inserting the well-known
@@ -401,6 +404,64 @@ func wellKnownInsert(issuer, segment string) string {
 // wellKnownAppend builds the legacy append form: {issuer}/{segment}.
 func wellKnownAppend(issuer, segment string) string {
 	return strings.TrimRight(issuer, "/") + "/" + segment
+}
+
+// protectedResourceMetadataCandidates returns the ordered, deduplicated list of
+// URLs to try when discovering a resource's protected-resource metadata
+// (RFC 9728 §3.1).
+//
+// The conforming shape inserts the well-known segment between the host and the
+// resource path — RFC 9728 §3 mandates the document "available at a URL formed
+// by inserting a well-known URI string into the protected resource's resource
+// identifier between the host component and the path and/or query components,
+// if any", and §3.1 adds:
+//
+//	"If the resource identifier value contains a path or query component, any
+//	terminating slash (/) following the host component MUST be removed before
+//	inserting /.well-known/ and the well-known URI path suffix between the host
+//	component and the path and/or query components."
+//
+//	i.e. https://host/api/mcp -> https://host/.well-known/oauth-protected-resource/api/mcp
+//
+// The path-inserted URL is tried first because a conforming path-scoped server
+// publishes only there. The origin-only form
+// (<origin>/.well-known/oauth-protected-resource) stays as a fallback: existing
+// providers (Trale, Figma, …) publish only at the root. A resource with no path
+// yields the origin-only form alone — never a path-inserted URL with a trailing
+// slash doubled onto the segment.
+func protectedResourceMetadataCandidates(resource string) []string {
+	u, err := url.Parse(resource)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	var out []string
+	out = appendUniqueURL(out, wellKnownProtectedResourceURL(resource))
+	out = appendUniqueURL(out, wellKnownAppend(u.Scheme+"://"+u.Host, wellKnownProtectedResourcePath))
+	return out
+}
+
+// wellKnownProtectedResourceURL builds the §3.1 path-inserted document URL:
+// <origin>/.well-known/oauth-protected-resource/<resource-path>?<query>, or ""
+// when the resource has no path component (the origin-only form is then the
+// conforming shape, per the §3.1 example for https://resource.example.com).
+//
+// A trailing slash on the resource path is trimmed — the same normalisation
+// wellKnownInsert applies for RFC 8414 — so neither a bare "https://host/" nor
+// a path such as "/api/mcp/" can produce a doubled or dangling slash.
+func wellKnownProtectedResourceURL(resource string) string {
+	u, err := url.Parse(resource)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	path := strings.TrimSuffix(u.Path, "/")
+	if path == "" {
+		return ""
+	}
+	inserted := *u
+	inserted.Path = "/" + wellKnownProtectedResourcePath + path
+	inserted.RawPath = "" // rewritten Path: let url.URL re-escape it
+	inserted.Fragment = ""
+	return inserted.String()
 }
 
 // authMetadataCandidates returns the ordered, deduplicated list of URLs to try
@@ -620,6 +681,89 @@ func failureReason(err error) string {
 		return fmt.Sprintf("%d", statusErr.Status)
 	}
 	return "error"
+}
+
+// protectedResourceMetadataFailure summarizes a failed protected-resource
+// metadata walk. The per-candidate detail stays in the message; the underlying
+// errors stay in the chain so a caller can inspect them.
+type protectedResourceMetadataFailure struct {
+	detail string
+	errs   []error
+}
+
+func (e *protectedResourceMetadataFailure) Error() string {
+	return "all candidates failed: " + e.detail
+}
+
+// Unwrap exposes every candidate's error to errors.Is/errors.As.
+func (e *protectedResourceMetadataFailure) Unwrap() []error { return e.errs }
+
+// usableProtectedResourceMetadata reports whether a decoded document carries at
+// least one field this package consumes. `resource` is REQUIRED by RFC 9728
+// §2, so a document with none of these fields is not protected-resource
+// metadata.
+func usableProtectedResourceMetadata(prm *protectedResourceMetadata) bool {
+	if strings.TrimSpace(prm.Resource) != "" {
+		return true
+	}
+	if len(prm.ScopesSupported) > 0 {
+		return true
+	}
+	for _, as := range prm.AuthorizationServers {
+		if strings.TrimSpace(as) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchProtectedResourceMetadata fetches the protected-resource metadata
+// document (RFC 9728) for a resource, trying the candidate URLs from
+// protectedResourceMetadataCandidates in order — path-inserted first, then
+// origin-only. It returns the first usable document together with the URL that
+// served it.
+//
+// A resource that publishes no such document is not an error: the result is an
+// empty document and an empty URL, so the caller continues with whatever its
+// challenge advertised. When no candidate yields a document, a 5xx from any of
+// them is a transient upstream failure and surfaces instead of degrading
+// silently into the authorization-server walk — the same 404/410-vs-5xx
+// distinction fetchAuthMetadata makes. Every other outcome (404/410, 401/403, a
+// transport failure, an HTML catch-all that fails to decode, a 200 that is not
+// a metadata document, or a URL the caller's guard rejected) means "no usable
+// document here" and moves on to the next candidate.
+func (d *discovery) fetchProtectedResourceMetadata(ctx context.Context, resource string) (*protectedResourceMetadata, string, error) {
+	candidates := protectedResourceMetadataCandidates(resource)
+	if len(candidates) == 0 {
+		return &protectedResourceMetadata{}, "", nil
+	}
+	var failures []string
+	var transient []error
+	for _, candidate := range candidates {
+		prm := &protectedResourceMetadata{}
+		err := d.getJSON(ctx, candidate, prm)
+		if err == nil {
+			if usableProtectedResourceMetadata(prm) {
+				return prm, candidate, nil
+			}
+			// A 200 with none of the fields this package consumes is a
+			// catch-all (or an unrelated document), not protected-resource
+			// metadata: keep looking rather than letting it mask the next
+			// candidate.
+			err = errors.New("document is not protected-resource metadata")
+		}
+		failures = append(failures, fmt.Sprintf("%s -> %s", candidate, failureReason(err)))
+		if transientMetadataFailure(err) {
+			transient = append(transient, err)
+		}
+	}
+	if len(transient) > 0 {
+		return nil, "", &protectedResourceMetadataFailure{
+			detail: strings.Join(failures, "; "),
+			errs:   transient,
+		}
+	}
+	return &protectedResourceMetadata{}, "", nil
 }
 
 // --- dynamic client registration ---
