@@ -3288,6 +3288,8 @@ definitions:
     type: object
   domain_documents.DeleteSummary:
     properties:
+      branches:
+        type: integer
       chunks:
         type: integer
       extractionJobs:
@@ -3493,6 +3495,8 @@ definitions:
     type: object
   domain_documents.ImpactSummary:
     properties:
+      branches:
+        type: integer
       chunks:
         type: integer
       extractionJobs:
@@ -9065,8 +9069,11 @@ definitions:
         type: boolean
       merge:
         description: |-
-          Merge, when true, additively merges incoming type schemas into existing
-          registered types rather than skipping conflicting type names.
+          Merge, when true, additively merges incoming type schemas into types
+          owned by OTHER packs rather than skipping them. A pack's own types are
+          always replaced on re-assign (an upgrade), with or without Merge. When
+          merging across packs, existing property definitions win and the newest
+          install becomes the owning definition.
         type: boolean
       schema_id:
         type: string
@@ -9080,8 +9087,8 @@ definitions:
   domain_schemas.AssignPackResult:
     properties:
       already_installed:
-        description: AlreadyInstalled is true when merge=true and the pack was already
-          assigned.
+        description: AlreadyInstalled is true when the pack was already assigned to
+          the project.
         type: boolean
       assignment_id:
         description: AssignmentID is empty for dry-run responses.
@@ -9101,7 +9108,9 @@ definitions:
           type: string
         type: array
       merged_types:
-        description: MergedTypes are type names whose schemas were additively extended.
+        description: |-
+          MergedTypes are type names owned by another pack whose schemas were
+          additively extended.
         items:
           type: string
         type: array
@@ -9122,6 +9131,14 @@ definitions:
           MigrationStatus describes the auto-migration state:
           "pending", "skipped", "blocked", "chain_unresolvable"
         type: string
+      replaced_types:
+        description: |-
+          ReplacedTypes are type names already registered by this same pack (an
+          upgrade) whose definitions were replaced by the incoming version. A pack
+          owns its types: refreshing them on upgrade is not a cross-pack conflict.
+        items:
+          type: string
+        type: array
       schema_id:
         type: string
       schema_name:
@@ -12927,7 +12944,7 @@ paths:
             a token header instead
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "502":
+        "503":
           description: Authorization server metadata could not be fetched
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
