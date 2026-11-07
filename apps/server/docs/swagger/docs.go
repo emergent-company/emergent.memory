@@ -1275,7 +1275,7 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
-                    "502": {
+                    "503": {
                         "description": "Authorization server metadata could not be fetched",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
