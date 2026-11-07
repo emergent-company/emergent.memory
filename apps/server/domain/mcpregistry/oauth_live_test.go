@@ -82,10 +82,20 @@ func TestDiscoverServerAuthRequirement_LiveGitHub(t *testing.T) {
 	t.Logf("token endpoint: %s", req.TokenEndpoint)
 	t.Logf("registration endpoint: %s (supported=%v)", req.RegistrationEndpoint, req.RegistrationSupported)
 	t.Logf("resource: %s", req.Resource)
-	t.Logf("scopes: %v", req.Scopes)
+	t.Logf("scopes to request: %v", req.Scopes)
+	t.Logf("scopes available (not requested): %v", req.ScopesAvailable)
 
 	if req.AuthorizationEndpoint == "" || req.TokenEndpoint == "" {
 		t.Fatal("authorization or token endpoint missing from live GitHub metadata (OIDC fallback did not resolve)")
+	}
+	// GitHub's challenge names no scope and its protected-resource metadata
+	// advertises a broad set (including write:packages and project). RFC 9728
+	// §7.2: the advertised set is a capability list, not a request set.
+	if len(req.Scopes) != 0 {
+		t.Errorf("scopes to request = %v, want none: the advertised set must never be requested implicitly", req.Scopes)
+	}
+	if len(req.ScopesAvailable) == 0 {
+		t.Error("scopes available is empty: the advertised scopes_supported should still be reported for the operator")
 	}
 }
 

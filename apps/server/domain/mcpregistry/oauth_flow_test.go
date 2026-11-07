@@ -34,6 +34,12 @@ type oauthFlowServer struct {
 	registerCalls      int
 	tokenCalls         int
 	registrationStatus int
+	// noChallengeScope drops the scope parameter from the Bearer challenge,
+	// modelling a provider that only advertises scopes_supported.
+	noChallengeScope bool
+	// registeredScopes records the scope string the dynamic registration
+	// request carried (empty when none was sent).
+	registeredScopes string
 }
 
 // newOAuthFlowServer builds the flow server. When noChallenge is true the MCP
@@ -53,8 +59,11 @@ func newOAuthFlowServer(t *testing.T, noChallenge bool) *oauthFlowServer {
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
 			return
 		}
-		w.Header().Set("WWW-Authenticate",
-			`Bearer resource_metadata="`+srv.URL+`/.well-known/oauth-protected-resource",scope="mcp:connect"`)
+		challenge := `Bearer resource_metadata="` + srv.URL + `/.well-known/oauth-protected-resource"`
+		if !fs.noChallengeScope {
+			challenge += `,scope="mcp:connect"`
+		}
+		w.Header().Set("WWW-Authenticate", challenge)
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
@@ -75,8 +84,13 @@ func newOAuthFlowServer(t *testing.T, noChallenge bool) *oauthFlowServer {
 			"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
 		})
 	})
-	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
 		fs.registerCalls++
+		var body struct {
+			Scope string `json:"scope"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fs.registeredScopes = body.Scope
 		if fs.registrationStatus != http.StatusCreated && fs.registrationStatus != http.StatusOK {
 			w.WriteHeader(fs.registrationStatus)
 			_, _ = w.Write([]byte(`{"error":"access_denied","error_description":"client not in the provider catalog"}`))
@@ -199,7 +213,7 @@ func TestStartMCPOAuth_UsesProvisionedClient(t *testing.T) {
 
 	// Provision a pre-registered client first; the authorize flow must reuse it
 	// and never hit the dynamic registration endpoint.
-	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret")
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret", "")
 	require.NoError(t, err)
 	require.True(t, status.ClientConfigured)
 
@@ -210,6 +224,116 @@ func TestStartMCPOAuth_UsesProvisionedClient(t *testing.T) {
 	u, err := url.Parse(resp.AuthorizeURL)
 	require.NoError(t, err)
 	require.Equal(t, "provisioned-client", u.Query().Get("client_id"), "authorize URL must carry the provisioned client_id")
+}
+
+// TestStartMCPOAuth_ConfiguredScopesOverrideDiscovery proves the operator-set
+// scope set wins over the challenge scope, so a provider whose advertised set
+// is far broader than needed (GitHub) can be asked for a chosen subset.
+func TestStartMCPOAuth_ConfiguredScopesOverrideDiscovery(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret", "repo read:org")
+	require.NoError(t, err)
+	require.NotNil(t, status.RequestedScope)
+	require.Equal(t, "repo read:org", *status.RequestedScope)
+
+	resp, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.NoError(t, err)
+
+	u, err := url.Parse(resp.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, "repo read:org", u.Query().Get("scope"),
+		"the authorize URL must carry the operator's scope set, not the challenge's")
+}
+
+// TestStartMCPOAuth_ChallengeWithoutScope proves a challenge that names no
+// scope (GitHub's does not) leaves both dynamic registration and the authorize
+// URL scope-free: the provider's advertised scopes_supported must never be
+// requested implicitly (RFC 9728 §7.2).
+func TestStartMCPOAuth_ChallengeWithoutScope(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+	fs.noChallengeScope = true
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	resp, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, fs.registerCalls, "a client must be registered exactly once")
+	require.Empty(t, fs.registeredScopes, "dynamic registration must not be handed the advertised scope set")
+
+	u, err := url.Parse(resp.AuthorizeURL)
+	require.NoError(t, err)
+	_, hasScope := u.Query()["scope"]
+	require.False(t, hasScope,
+		"the authorize URL must omit scope when neither the challenge nor an operator set names any")
+}
+
+// TestStartMCPOAuth_ScopeConfiguredBeforeFirstConnect proves an operator can
+// choose scopes before any client exists: the configuration-only row is picked
+// up, dynamic registration is bound to the chosen set, and the authorize URL
+// carries it.
+func TestStartMCPOAuth_ScopeConfiguredBeforeFirstConnect(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "", "", "repo read:org")
+	require.NoError(t, err)
+	require.False(t, status.ClientConfigured)
+	require.NotNil(t, status.RequestedScope)
+	require.Equal(t, "repo read:org", *status.RequestedScope)
+
+	resp, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, fs.registerCalls)
+	require.Equal(t, "repo read:org", fs.registeredScopes,
+		"dynamic registration must carry the set chosen before the first connect")
+
+	u, err := url.Parse(resp.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, "repo read:org", u.Query().Get("scope"))
+}
+
+// TestStartMCPOAuth_ConfiguredScopeUsedForRegistration proves the operator's set
+// reaches dynamic registration when the stored client was cleared, so the
+// registered client is bound to the scopes the next authorize will request.
+func TestStartMCPOAuth_ConfiguredScopeUsedForRegistration(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	_, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret", "repo read:org")
+	require.NoError(t, err)
+	// Clearing the client keeps the operator's requested set: switching from a
+	// pre-registered client to dynamic registration must not lose it.
+	require.NoError(t, svc.ClearOAuthClient(context.Background(), projectID, server.ID, ""))
+
+	resp, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, fs.registerCalls, "the cleared client must be re-registered")
+	require.Equal(t, "repo read:org", fs.registeredScopes, "dynamic registration must carry the operator's scope set")
+
+	u, err := url.Parse(resp.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, "repo read:org", u.Query().Get("scope"))
 }
 
 func TestStartMCPOAuth_NoAuthorizationRequired(t *testing.T) {
