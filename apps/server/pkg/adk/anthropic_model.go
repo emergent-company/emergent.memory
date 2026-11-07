@@ -260,30 +260,49 @@ func (m *anthropicModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			m.baseURL+"/messages",
-			bytes.NewReader(bodyBytes))
-		if err != nil {
-			yield(nil, fmt.Errorf("anthropic: failed to create request: %w", err))
-			return
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("anthropic-version", "2023-06-01")
-		if m.apiKey != "" {
-			httpReq.Header.Set("x-api-key", m.apiKey)
-		}
+		// Answer a rate limit or a transient gateway fault here rather than
+		// letting it reach the job that owns this call: the extraction job's
+		// retry is immediate, so a 429 would otherwise consume its whole
+		// budget in seconds (#237, #254).
+		var (
+			resp     *http.Response
+			respBody []byte
+		)
+		for attempt := 0; ; attempt++ {
+			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost,
+				m.baseURL+"/messages",
+				bytes.NewReader(bodyBytes))
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("anthropic: failed to create request: %w", reqErr))
+				return
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("anthropic-version", "2023-06-01")
+			if m.apiKey != "" {
+				httpReq.Header.Set("x-api-key", m.apiKey)
+			}
 
-		resp, err := m.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("anthropic: request failed: %w", err))
-			return
-		}
-		defer resp.Body.Close()
+			resp, reqErr = m.client.Do(httpReq)
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("anthropic: request failed: %w", reqErr))
+				return
+			}
 
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			yield(nil, fmt.Errorf("anthropic: failed to read response: %w", err))
-			return
+			respBody, reqErr = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("anthropic: failed to read response: %w", reqErr))
+				return
+			}
+
+			wait, retry := providerRetryWait(attempt, resp.StatusCode, resp.Header.Get("Retry-After"))
+			if !retry {
+				break
+			}
+			if !sleepWithContext(ctx, wait) {
+				yield(nil, retryContextError("anthropic", ctx))
+				return
+			}
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {

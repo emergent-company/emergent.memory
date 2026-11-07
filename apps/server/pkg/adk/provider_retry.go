@@ -2,6 +2,7 @@ package adk
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,8 +22,10 @@ const (
 	// providerRetryBase is the first backoff when the provider sends no
 	// Retry-After, doubled for each further attempt.
 	providerRetryBase = 5 * time.Second
-	// providerRetryMax caps a single wait: a provider asking for longer
-	// releases the worker and lets the job's own retry handle it.
+	// providerRetryMax is the longest wait one model call accepts. A provider
+	// asking for longer is not retried inside the call at all (see
+	// providerRetryWait): the worker is released and the job's own retry
+	// handles it, rather than waiting the cap and re-asking for the same hint.
 	providerRetryMax = 30 * time.Second
 )
 
@@ -56,6 +59,40 @@ func providerRetryDelay(attempt int, retryAfter string) time.Duration {
 		return 0
 	}
 	return delay
+}
+
+// providerRetryWait reports whether a retryable response earns another attempt,
+// and how long to wait first. It is the single decision point shared by every
+// model client, so the policy cannot drift between wire protocols (#254).
+//
+// It answers false when the status is not retryable, when the call's attempts
+// are spent, or when the provider's Retry-After is longer than providerRetryMax.
+// The last case deliberately gives up at once instead of waiting the cap and
+// re-asking: a hint that long is not a delay one call should absorb, so the
+// worker is released and the job's own retry covers it (#254).
+func providerRetryWait(attempt, statusCode int, retryAfter string) (time.Duration, bool) {
+	if !isRetryableProviderStatus(statusCode) || attempt >= maxProviderRetries {
+		return 0, false
+	}
+	if d, ok := parseRetryAfter(retryAfter, time.Now()); ok && d > providerRetryMax {
+		return 0, false
+	}
+	return providerRetryDelay(attempt, retryAfter), true
+}
+
+// retryContextError reports the end of the context as the reason the call
+// stopped. Without it a cancelled run would surface the last 429/5xx response
+// and blame the provider for something the caller did (#254). The context error
+// is wrapped, so errors.Is(err, context.Canceled) and DeadlineExceeded work.
+func retryContextError(client string, ctx context.Context) error {
+	err := ctx.Err()
+	if err == nil {
+		// sleepWithContext reports false only when the context ended, but a
+		// nil Err here would otherwise produce an error that matches neither
+		// sentinel.
+		err = context.Canceled
+	}
+	return fmt.Errorf("%s: cancelled during provider retry: %w", client, err)
 }
 
 // parseRetryAfter reads the delay a provider asked for, in either form RFC 9110
