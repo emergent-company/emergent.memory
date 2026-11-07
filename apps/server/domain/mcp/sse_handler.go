@@ -365,7 +365,7 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 		return NewErrorResponse(req.ID, ErrCodeInternalError,
 			"Failed to resolve share instance scope", nil)
 	}
-	if InstanceDeniesTool(scope, params.Name) {
+	if InstanceDeniesTool(scope, legacyDispatchName(params.Name, params.Arguments)) {
 		return NewErrorResponse(req.ID, ErrCodeForbidden,
 			"Tool not allowed: "+params.Name, nil)
 	}

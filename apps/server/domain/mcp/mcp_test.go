@@ -118,6 +118,7 @@ func TestRequiresProject(t *testing.T) {
 	tests := []struct {
 		name     string
 		toolName string
+		args     map[string]any
 		expected bool
 	}{
 		// Entity tools that require project
@@ -210,6 +211,46 @@ func TestRequiresProject(t *testing.T) {
 			toolName: "journal-add-note",
 			expected: false,
 		},
+		// Consolidated catalog: gating is per action, following the legacy tool
+		// the action dispatches to — not per family. `schema action=icons`
+		// (legacy schema-icon-list) never needed a project; the gate must not
+		// start requiring one just because it shares a tool with schema-list.
+		{
+			name:     "entity query requires project",
+			toolName: "entity",
+			args:     map[string]any{"action": "query"},
+			expected: true,
+		},
+		{
+			name:     "entity tags does not require project",
+			toolName: "entity",
+			args:     map[string]any{"action": "tags"},
+			expected: false,
+		},
+		{
+			name:     "schema owned requires project",
+			toolName: "schema",
+			args:     map[string]any{"action": "owned"},
+			expected: true,
+		},
+		{
+			name:     "schema icons does not require project",
+			toolName: "schema",
+			args:     map[string]any{"action": "icons"},
+			expected: false,
+		},
+		{
+			name:     "schema-write assign requires project",
+			toolName: "schema-write",
+			args:     map[string]any{"action": "assign"},
+			expected: true,
+		},
+		{
+			name:     "schema-write create is project-less",
+			toolName: "schema-write",
+			args:     map[string]any{"action": "create"},
+			expected: false,
+		},
 		// Edge cases
 		{
 			name:     "unknown tool does not require project",
@@ -245,7 +286,7 @@ func TestRequiresProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := requiresProject(tt.toolName)
+			result := requiresProject(tt.toolName, tt.args)
 			if result != tt.expected {
 				t.Errorf("requiresProject(%q) = %v, want %v", tt.toolName, result, tt.expected)
 			}
@@ -479,45 +520,36 @@ func TestGetToolDefinitions(t *testing.T) {
 	svc := &Service{}
 	tools := svc.GetToolDefinitions()
 
+	// The advertised catalog is consolidated: one tool per resource and
+	// permission pair. The per-verb names this replaced are covered by
+	// TestLegacyToolAliasesRemainCallable; agent tools are provided by the agent
+	// handler and pinned by the agent parity tests.
 	expectedTools := []string{
-		"project-get",
-		"schema-version",
-		"entity-type-list",
-		"entity-query",
-		"entity-search",
-		"entity-edges-get",
-		"schema-list",
-		"schema-get",
-		"schema-list-available",
-		"schema-list-installed",
-		"schema-icon-list",
-		"schema-assign",
-		"schema-assignment-update",
-		"schema-uninstall",
-		"schema-create",
-		"schema-delete",
-		"entity-create",
-		"relationship-create",
-		"entity-update",
-		"entity-delete",
-		"entity-restore",
-		"search-hybrid",
-		"search-semantic",
-		"search-similar",
-		"graph-traverse",
+		"project",
+		"entity",
+		"entity-write",
 		"relationship-list",
-		"relationship-update",
-		"relationship-delete",
-		"tag-list",
-		"schema-migration-preview",
-		"migration-archive-list",
-		"migration-archive-get",
+		"relationship-write",
+		"schema-types",
+		"schema",
+		"schema-write",
+		"schema-migrate",
+		"blueprint",
+		"blueprint-write",
+		"branch",
+		"branch-write",
+		"search",
+		"search-knowledge",
+		"remember",
+		"journal-list",
+		"journal-add-note",
+		"document",
+		"document-write",
+		"skill",
+		"skill-write",
 		"web-search-brave",
 		"web-fetch",
 		"web-search-reddit",
-		"search-knowledge",
-		"journal-list",
-		"journal-add-note",
 	}
 
 	if len(tools) < len(expectedTools) {
@@ -545,23 +577,28 @@ func TestGetToolDefinitions(t *testing.T) {
 
 func TestSchemaIconListTool(t *testing.T) {
 	svc := &Service{}
-	defs := svc.GetToolDefinitions()
 
-	var tool *ToolDefinition
-	for i := range defs {
-		if defs[i].Name == "schema-icon-list" {
-			tool = &defs[i]
+	tool := toolDefByName(t, svc, "schema")
+	if tool.Description == "" {
+		t.Error("schema tool has empty description")
+	}
+	if tool.RequiredScope != "schema:read" {
+		t.Errorf("schema RequiredScope = %q, want %q", tool.RequiredScope, "schema:read")
+	}
+	// The icons action must be reachable through the consolidated tool.
+	action, ok := tool.InputSchema.Properties["action"]
+	if !ok {
+		t.Fatal("schema tool must expose the action discriminator")
+	}
+	foundAction := false
+	for _, a := range action.Enum {
+		if a == "icons" {
+			foundAction = true
 			break
 		}
 	}
-	if tool == nil {
-		t.Fatal("schema-icon-list tool not found in GetToolDefinitions()")
-	}
-	if tool.Description == "" {
-		t.Error("schema-icon-list tool has empty description")
-	}
-	if tool.RequiredScope != "schema:read" {
-		t.Errorf("schema-icon-list RequiredScope = %q, want %q", tool.RequiredScope, "schema:read")
+	if !foundAction {
+		t.Error("schema action enum must include \"icons\"")
 	}
 
 	result, err := svc.executeSchemaIconList(context.Background(), "")
@@ -599,15 +636,9 @@ func TestSchemaIconListTool(t *testing.T) {
 
 func TestToolInputSchemas(t *testing.T) {
 	svc := &Service{}
-	tools := svc.GetToolDefinitions()
-
-	toolMap := make(map[string]ToolDefinition)
-	for _, tool := range tools {
-		toolMap[tool.Name] = tool
-	}
 
 	t.Run("entity-query requires type_name", func(t *testing.T) {
-		tool := toolMap["entity-query"]
+		tool := toolDefByName(t, svc, "entity-query")
 		if len(tool.InputSchema.Required) == 0 {
 			t.Error("entity-query should have required fields")
 		}
@@ -624,7 +655,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("entity-search requires query", func(t *testing.T) {
-		tool := toolMap["entity-search"]
+		tool := toolDefByName(t, svc, "entity-search")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "query" {
@@ -638,7 +669,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("schema-get requires schema_id", func(t *testing.T) {
-		tool := toolMap["schema-get"]
+		tool := toolDefByName(t, svc, "schema-get")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "schema_id" {
@@ -652,7 +683,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("assign_schema requires schema_id", func(t *testing.T) {
-		tool := toolMap["schema-assign"]
+		tool := toolDefByName(t, svc, "schema-assign")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "schema_id" {
@@ -666,7 +697,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("template-create requires name, version, object_type_schemas", func(t *testing.T) {
-		tool := toolMap["schema-create"]
+		tool := toolDefByName(t, svc, "schema-create")
 		requiredFields := map[string]bool{"name": false, "version": false, "object_type_schemas": false}
 		for _, r := range tool.InputSchema.Required {
 			if _, ok := requiredFields[r]; ok {
@@ -681,7 +712,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("schema-list has optional pagination params", func(t *testing.T) {
-		tool := toolMap["schema-list"]
+		tool := toolDefByName(t, svc, "schema-list")
 		props := tool.InputSchema.Properties
 		if _, ok := props["limit"]; !ok {
 			t.Error("schema-list should have limit property")
@@ -698,7 +729,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("entity-edges-get requires entity_id", func(t *testing.T) {
-		tool := toolMap["entity-edges-get"]
+		tool := toolDefByName(t, svc, "entity-edges-get")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "entity_id" {
@@ -712,7 +743,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("update_template_assignment requires schema_id", func(t *testing.T) {
-		tool := toolMap["schema-assignment-update"]
+		tool := toolDefByName(t, svc, "schema-assignment-update")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "schema_id" {
@@ -726,7 +757,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("uninstall_template_pack requires schema_id", func(t *testing.T) {
-		tool := toolMap["schema-uninstall"]
+		tool := toolDefByName(t, svc, "schema-uninstall")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "schema_id" {
@@ -740,7 +771,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("schema-delete requires schema_id", func(t *testing.T) {
-		tool := toolMap["schema-delete"]
+		tool := toolDefByName(t, svc, "schema-delete")
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "schema_id" {

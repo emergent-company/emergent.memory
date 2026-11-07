@@ -691,7 +691,7 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		return NewErrorResponse(req.ID, ErrCodeInternalError,
 			"Failed to resolve share instance scope", nil)
 	}
-	if InstanceDeniesTool(scope, params.Name) {
+	if InstanceDeniesTool(scope, legacyDispatchName(params.Name, params.Arguments)) {
 		return NewErrorResponse(req.ID, ErrCodeForbidden,
 			"Tool not allowed: "+params.Name, nil)
 	}
@@ -701,7 +701,7 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		projectID = user.ProjectID
 	}
 
-	if projectID == "" && requiresProject(params.Name) {
+	if projectID == "" && requiresProject(params.Name, params.Arguments) {
 		return NewErrorResponse(req.ID, ErrCodeInvalidParams,
 			"Project ID is required. Provide project_id in initialize params or X-Project-Id header.",
 			map[string]string{"hint": "Call initialize with project_id parameter or set X-Project-Id header"},

@@ -395,7 +395,21 @@ Prompts generate **formatted guidance** for common tasks. Each prompt accepts ar
 
 ## Tools (Operations)
 
-**100+ tools** across multiple tool files (see source for authoritative list).
+The project catalog is **consolidated**: one tool per resource and permission pair, with an
+`action` argument selecting the operation. Consolidation follows the required scope, so a
+read path never shares a tool with a write path (`schema` vs `schema-write`); the `-write`
+suffix mirrors the scope name.
+
+Every per-verb tool name from before the merge stays **callable as a deprecated alias**
+(`entity-search`, `search-hybrid`, `schema-migration-preview`, ...). The alias table is
+`toolAliases` in [`consolidated_catalog.go`](./consolidated_catalog.go): a legacy call is
+canonicalised before authority is resolved, so it keeps its scope, its share-instance
+allowlist entry and its saved agent-definition reference. Legacy names are no longer
+advertised by `tools/list` — new clients should use the consolidated name plus `action`.
+
+The **in-process agent catalog** (`GetInternalToolDefinitions`) intentionally keeps the
+per-verb names, because agent tool whitelists, `bannedTools` and the per-project builtin
+tool enable flags are keyed on them; consolidation there would coarsen those controls.
 
 ### Result Format
 
@@ -422,24 +436,83 @@ Contract:
 
 ### Quick Reference by Category
 
-> **Note:** Tool counts below are approximate. For the authoritative list consult the source files in `apps/server/domain/mcp/`. Operator (platform-admin) tools are **not** on this table — they are served only on the dedicated `/api/mcp/admin` endpoint; see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin).
+> Operator (platform-admin) tools are **not** in this table — they are served only on the dedicated `/api/mcp/admin` endpoint; see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin).
 
-| Category | Tools | Count |
+Consolidated tools (`action` selects the operation):
+
+| Tool | Scope | Actions |
 |---|---|---|
-| **Search** | `search-hybrid`, `search-semantic`, `search-similar`, `search-knowledge` | 4 |
-| **Entity Management** | `entity-create`, `entity-update`, `entity-delete`, `entity-restore`, `entity-query`, `entity-search`, `entity-edges-get`, `entity-type-list` | 8 |
-| **Relationship Management** | `relationship-create`, `relationship-update`, `relationship-delete`, `relationship-list` | 4 |
-| **Graph Traversal** | `graph-traverse` | 1 |
-| **Schema Management** | `schema-version`, `schema-list`, `schema-get`, `schema-create`, `schema-delete`, `schema-assign`, `schema-assignment-update`, `schema-uninstall`, `schema-list-available`, `schema-list-installed`, `schema-history`, `schema-compiled-types`, `schema-icon-list`, `schema-migrate-preview`, `schema-migrate-execute`, `schema-migrate-rollback`, `schema-migrate-commit`, `schema-migration-job-status`, `schema-migration-preview` (legacy), `migration-archive-list`, `migration-archive-get` | 21 |
-| **Blueprints** | `blueprint-create`, `blueprint-list`, `blueprint-get`, `blueprint-update`, `blueprint-publish`, `blueprint-new-version`, `blueprint-versions`, `blueprint-apply`, `blueprint-unapply`, `blueprint-list-applied` | 10 |
-| **Metadata** | `tag-list`, `project-get`, `project-create` | 3 |
-| **Documents** | `document-list`, `document-get`, `document-upload`, `document-delete` | 4 |
-| **Agents** | `agent-question-list`, `agent-question-list-project`, `agent-question-respond`, `agent-hook-list`, `agent-hook-create`, `agent-hook-delete`, `adk-session-list`, `adk-session-get`, `remember-status` | 9 |
-| **Providers (project)** | `provider-configure-project`, `provider-models-list` | 2 |
-| **Skills** | `skill-list`, `skill-get`, `skill-create`, `skill-update`, `skill-delete` | 5 |
-| **Tokens** | `token-list`, `token-create`, `token-get`, `token-revoke` | 4 |
-| **MCP registry** | `search_mcp_registry`, `mcp-registry-get`, `mcp-registry-install` (requires `admin` scope) | 3 |
-| **Operator (superadmin)** | 40 tools — see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin) | 40 |
+| `project` | `graph:read` | `get`, `briefing` |
+| `entity` | `graph:read` | `query`, `search`, `history`, `edges`, `traverse`, `tags` |
+| `entity-write` | `graph:write` | `create`, `update`, `delete`, `restore` |
+| `relationship-write` | `graph:write` | `create`, `update`, `delete` |
+| `schema-types` | `graph:read` | `version`, `compiled`, `types` |
+| `schema` | `schema:read` | `owned`, `available`, `installed`, `packs`, `get`, `history`, `icons`, `classify-document`, `pack-claims` |
+| `schema-write` | `schema:write` | `assign`, `update-assignment`, `uninstall`, `create`, `delete`, `finalize-discovery`, `queue-reextraction` |
+| `schema-migrate` | `schema:migrate` | `preview`, `execute`, `rollback`, `commit`, `status`, `archives`, `archive-get` |
+| `blueprint` | `schema:read` | `list`, `get`, `versions`, `applied`, `apply-preview`, `updates-status`, `import-preview`, `model-overrides` |
+| `blueprint-write` | `schema:write` | `create`, `update`, `publish`, `new-version`, `apply`, `unapply` |
+| `branch` | `graph:read` | `list`, `get`, `readiness` |
+| `branch-write` | `graph:write` | `create`, `update`, `fork`, `merge`, `delete` |
+| `search` | `search` | `hybrid`, `semantic`, `similar` |
+| `document` | `documents:read` | `list`, `get` |
+| `document-write` | `documents:write` | `upload`, `delete` |
+| `skill` | `skills:read` | `list`, `get` |
+| `skill-write` | `skills:write` | `create`, `update`, `patch`, `delete` |
+| `agent-def` | `agents:read` | `list`, `get`, `available` |
+| `agent-def-write` | `agents:write` | `create`, `update`, `delete` |
+| `agent` | `agents:read` | `list`, `get` |
+| `agent-write` | `agents:write` | `create`, `update`, `delete`, `trigger` |
+| `agent-run` | `agents:read` | `list`, `get`, `messages`, `tool-calls`, `status` |
+| `agent-question` | `agents:read` | `list` (`run_id` scopes to one run; omit it for the whole project) |
+| `agent-hook-write` | `agents:write` | `create`, `delete` |
+| `adk-session` | `agents:read` | `list`, `get` |
+| `session-todo` | *(session-owned, no scope)* | `list`, `update` |
+| `project-write` | `projects:write` | `update`, `create` |
+| `token` | `projects:write` | `list`, `get` |
+| `token-write` | `projects:write` | `create`, `revoke` |
+
+That is 29 consolidated tools: the catalog goes from 147 per-verb definitions to
+68 advertised tools (29 consolidated + 39 that had no sibling). Of those 68, a
+project token sees 45; 12 are superadmin-only and 11 are agent-only, and both
+sets keep their per-verb names on the surface that serves them. A project's
+endpoint also serves its relay tools, which are appended per project.
+
+Tools that had no sibling keep their name: `relationship-list`,
+`session-get-messages`, `remember`, `forget`, `remember-status`,
+`search-knowledge`, `journal-list`, `journal-add-note`, `agent-hook-list`,
+`agent-question-respond`, `web-search-brave`, `web-fetch`, `web-search-reddit`,
+the `embedding-*`, `provider-*` and `trace-*` operator tools (their surface is
+the admin endpoint, which stays per-verb) and the `mcp-*` registry tools.
+
+Authority is the strictest of the folded tools: a family that folds an
+operator-only or agent-only tool stays operator-only / agent-only, and a family
+that folds a tool with a raised in-process bar (token minting, project creation)
+keeps that bar for the whole family.
+
+`action` is the only discriminator. `view` and `strategy` are **not** synonyms —
+legacy tools carry them as ordinary parameters, so reading them as an action
+would misroute a legacy call.
+
+A family is never named after one of its own handlers. `remember` and `forget`
+would otherwise be one family called `remember`, and a share allowlist entry
+`["remember"]` could then mean either the pre-merge ingest tool or the whole
+family — including the soft-delete. They stay two standalone tools, so
+`remember {message}` keeps its exact old call shape and `forget` stays separately
+grantable. A shape test enforces the rule for future merges.
+
+### Share instances and the consolidated catalog
+
+A share-instance allowlist may name either spelling. A **consolidated** name
+(`entity`) grants the whole family; a **per-verb** name (`entity-search`) grants
+exactly that action, so a share saved before the merge keeps its granularity and
+`entity` + `action=query` is still refused. A share that grants part of a family
+advertises that family with its `action` enum narrowed to the granted actions,
+so `tools/list` never offers a call the allowlist would refuse.
+
+Share presets keep the names they declare (`classify-document`, not `schema`)
+for the same reason: canonicalising a one-action preset entry would widen it to
+the whole family and add the family's scope to the share.
 
 ---
 
@@ -671,7 +744,12 @@ Supply an optional `key` per entity for idempotent operations — if an entity w
 
 ### Legacy Tools (Existing)
 
-See the Quick Reference table above for the full list of current tool names. The legacy `verb_noun` snake_case names (e.g., `query_entities`, `create_entity`, `assign_template_pack`) are no longer used — all tools follow the `area[-noun]-action` hyphenated format.
+See the Quick Reference table above for the advertised tool names. The legacy `verb_noun`
+snake_case names (e.g., `query_entities`, `create_entity`, `assign_template_pack`) are no
+longer used, and the per-verb `area[-noun]-action` names this catalog replaced
+(`entity-search`, `search-hybrid`, `graph-branch-merge`, ...) remain callable as deprecated
+aliases. `action` on the consolidated tool is the supported spelling; the alias table lives
+in [`consolidated_catalog.go`](./consolidated_catalog.go).
 
 ## Error Handling
 

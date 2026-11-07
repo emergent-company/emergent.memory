@@ -12,16 +12,11 @@ import (
 )
 
 // branchToolNames is the full branch surface exposed over MCP. Every name must
-// have a definition, a required scope, and a dispatch path.
+// have a definition, a required scope, and a dispatch path. The per-verb names
+// (graph-branch-*) remain callable aliases of these two consolidated tools.
 var branchToolNames = []string{
-	"graph-branch-list",
-	"graph-branch-get",
-	"graph-branch-create",
-	"graph-branch-update",
-	"graph-branch-merge",
-	"graph-branch-merge-readiness",
-	"graph-branch-fork",
-	"graph-branch-delete",
+	"branch",
+	"branch-write",
 }
 
 // TestBranchToolsRegistered proves each branch tool is listed in the runtime
@@ -50,10 +45,12 @@ func TestBranchToolsRegistered(t *testing.T) {
 	}
 }
 
-// TestBranchToolRequiredArgs pins the argument contract callers depend on.
+// TestBranchToolRequiredArgs pins the argument contract of each branch action.
+// The consolidated tools require only `action`; each action's own required
+// arguments are enforced by its handler and pinned here through the deprecated
+// per-verb aliases, which keep their original schema.
 func TestBranchToolRequiredArgs(t *testing.T) {
 	svc := &Service{}
-	defs := svc.GetToolDefinitions()
 
 	wantRequired := map[string][]string{
 		"graph-branch-get":             {"branch"},
@@ -65,17 +62,14 @@ func TestBranchToolRequiredArgs(t *testing.T) {
 		"graph-branch-delete":          {"branch"},
 	}
 
-	found := map[string]bool{}
-	for _, d := range defs {
-		want, ok := wantRequired[d.Name]
-		if !ok {
-			continue
-		}
-		found[d.Name] = true
-		assert.Equal(t, want, d.InputSchema.Required, "%s required args", d.Name)
+	for name, want := range wantRequired {
+		def := toolDefByName(t, svc, name)
+		assert.Equal(t, want, def.InputSchema.Required, "%s required args", name)
 	}
-	for name := range wantRequired {
-		assert.True(t, found[name], "%s not found in GetToolDefinitions", name)
+
+	for _, name := range branchToolNames {
+		def := toolDefByName(t, svc, name)
+		assert.Equal(t, []string{"action"}, def.InputSchema.Required, "%s requires the action discriminator", name)
 	}
 }
 
@@ -83,17 +77,11 @@ func TestBranchToolRequiredArgs(t *testing.T) {
 // reachable: policy=manual + execute=false is the REST compare endpoint.
 func TestBranchMergeToolExposesPolicy(t *testing.T) {
 	svc := &Service{}
-	for _, d := range svc.GetToolDefinitions() {
-		if d.Name != "graph-branch-merge" {
-			continue
-		}
-		policy, ok := d.InputSchema.Properties["policy"]
-		require.True(t, ok, "graph-branch-merge must expose policy")
-		assert.Contains(t, policy.Description, "manual")
-		assert.Contains(t, policy.Description, "compare")
-		return
-	}
-	t.Fatal("graph-branch-merge not found in GetToolDefinitions")
+	branchWrite := toolDefByName(t, svc, "branch-write")
+	policy, ok := branchWrite.InputSchema.Properties["policy"]
+	require.True(t, ok, "branch-write must expose policy")
+	assert.Contains(t, policy.Description, "manual")
+	assert.Contains(t, policy.Description, "compare")
 }
 
 // TestBranchReadToolsUseReadScope makes sure inspection tools do not require a
