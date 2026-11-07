@@ -88,6 +88,10 @@ type shareInstanceStore interface {
 	FindByName(ctx context.Context, projectID, name string) (*MCPShareInstance, error)
 	Create(ctx context.Context, inst *MCPShareInstance) error
 	Update(ctx context.Context, inst *MCPShareInstance) error
+	// SetRecipientEmails replaces the recorded invite recipients. It touches
+	// only that column so recording an invite can never rewrite the allowlist
+	// or the bound token.
+	SetRecipientEmails(ctx context.Context, projectID, id string, emails []string) error
 	ListLegacyTokens(ctx context.Context, projectID string) ([]*LegacyTokenRef, error)
 }
 
@@ -128,17 +132,20 @@ type agentDirectory interface {
 type MCPShareInstance struct {
 	bun.BaseModel `bun:"table:core.mcp_share_instances,alias:msi"`
 
-	ID           string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	ProjectID    string     `bun:"project_id,type:uuid,notnull"`
-	Name         string     `bun:"name,notnull"`
-	Description  *string    `bun:"description"`
-	TokenID      string     `bun:"token_id,type:uuid,notnull"`
-	AllowedTools []string   `bun:"allowed_tools,array"`
-	IsLegacy     bool       `bun:"is_legacy,notnull,default:false"`
-	CreatedBy    *string    `bun:"created_by,type:uuid"`
-	CreatedAt    time.Time  `bun:"created_at,notnull,default:now()"`
-	UpdatedAt    time.Time  `bun:"updated_at,notnull,default:now()"`
-	RevokedAt    *time.Time `bun:"revoked_at"`
+	ID           string   `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	ProjectID    string   `bun:"project_id,type:uuid,notnull"`
+	Name         string   `bun:"name,notnull"`
+	Description  *string  `bun:"description"`
+	TokenID      string   `bun:"token_id,type:uuid,notnull"`
+	AllowedTools []string `bun:"allowed_tools,array"`
+	// RecipientEmails lists the addresses this share key was emailed to. It is
+	// attribution metadata: the key itself is never stored here.
+	RecipientEmails []string   `bun:"recipient_emails,array,notnull,default:'{}'"`
+	IsLegacy        bool       `bun:"is_legacy,notnull,default:false"`
+	CreatedBy       *string    `bun:"created_by,type:uuid"`
+	CreatedAt       time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt       time.Time  `bun:"updated_at,notnull,default:now()"`
+	RevokedAt       *time.Time `bun:"revoked_at"`
 
 	// Transient fields populated by read queries that join core.api_tokens.
 	TokenLastUsedAt *time.Time `bun:"token_last_used_at,scanonly"`
@@ -216,16 +223,28 @@ type UpdateShareInstanceRequest struct {
 // ShareInstanceDTO is the non-secret representation of a share instance. It
 // carries the tool allowlist only — instances no longer have an agent allowlist.
 type ShareInstanceDTO struct {
-	ID          string     `json:"id"`
-	ProjectID   string     `json:"projectId"`
-	Name        string     `json:"name"`
-	Description *string    `json:"description,omitempty"`
-	Tools       *[]string  `json:"tools"`
-	IsLegacy    bool       `json:"isLegacy"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
-	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"projectId"`
+	Name        string    `json:"name"`
+	Description *string   `json:"description,omitempty"`
+	Tools       *[]string `json:"tools"`
+	// TokenID is the credential id that authenticates this share. It is the
+	// value graph write stamps record as kb.graph_objects.credential_id, so it
+	// is the join key behind the "objects written via this share" view. The
+	// token's secret is never exposed.
+	TokenID string `json:"tokenId,omitempty"`
+	// RecipientEmails lists the addresses this share key was invited to. It is
+	// the attribution label for the share, not a revocation list: the key is
+	// shared by every recipient.
+	RecipientEmails []string `json:"recipientEmails"`
+	// ReadOnly reports whether the allowlist grants only read scopes. Invite
+	// emails use it so a read-write share is never described as read-only.
+	ReadOnly   bool       `json:"readOnly"`
+	IsLegacy   bool       `json:"isLegacy"`
+	Status     string     `json:"status"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 }
 
 // ShareInstanceListResponse is the response for GET .../shares.
@@ -579,7 +598,7 @@ func agentDirectoryOrNil(db bun.IDB) agentDirectory {
 }
 
 const shareInstanceSelect = `SELECT msi.id, msi.project_id, msi.name, msi.description, msi.token_id,
-	msi.allowed_tools, msi.is_legacy, msi.created_by,
+	msi.allowed_tools, msi.recipient_emails, msi.is_legacy, msi.created_by,
 	msi.created_at, msi.updated_at, msi.revoked_at,
 	at.last_used_at AS token_last_used_at,
 	at.revoked_at AS token_revoked_at,
@@ -668,6 +687,22 @@ func (r *bunShareInstanceStore) Update(ctx context.Context, inst *MCPShareInstan
 		if isUniqueViolation(err) {
 			return apperror.New(409, "share_instance_name_exists", "A share instance with this name already exists")
 		}
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return nil
+}
+
+func (r *bunShareInstanceStore) SetRecipientEmails(ctx context.Context, projectID, id string, emails []string) error {
+	if emails == nil {
+		emails = []string{}
+	}
+	_, err := r.db.NewUpdate().
+		Model((*MCPShareInstance)(nil)).
+		Set("recipient_emails = ?", pq.Array(emails)).
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
 		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
@@ -830,6 +865,125 @@ func (s *Service) scopesForAllowlist(tools []string) ([]string, error) {
 	return deriveScopesForToolNames(tools, s.GetToolByName)
 }
 
+// scopesGrantWrites reports whether any scope in the set permits mutation.
+// Share tokens only ever carry fine-grained scopes, and every mutating one is
+// spelled "<resource>:write" (there is no mutating scope without that suffix),
+// so the suffix is the whole test.
+func scopesGrantWrites(scopes []string) bool {
+	for _, scope := range scopes {
+		if strings.HasSuffix(scope, ":write") {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureToolIndex makes the process-global tool index available before a
+// capability label is derived from an allowlist. The index is built by
+// GetToolDefinitions(ForProject), which the read paths never call otherwise, so
+// without this a freshly started server reports every allowlisted share as
+// read-write — and an invite email would claim write access a read-only key does
+// not have — until some unrelated MCP request warms it.
+func (s *Service) ensureToolIndex(ctx context.Context, projectID string) {
+	if toolIndexReady() {
+		return
+	}
+	s.GetToolDefinitionsForProject(ctx, projectID)
+}
+
+// shareIsReadOnly reports whether a share's allowlist grants only read scopes.
+// A legacy or unrestricted (nil) allowlist is minted read-only. An allowlist
+// that cannot be resolved is reported as NOT read-only: an invite email must
+// never promise read-only access it cannot verify.
+func (s *Service) shareIsReadOnly(tools []string, isLegacy bool) bool {
+	if isLegacy || len(tools) == 0 {
+		return true
+	}
+	scopes, err := s.scopesForAllowlist(tools)
+	if err != nil {
+		return false
+	}
+	return !scopesGrantWrites(scopes)
+}
+
+// toShareDTO builds the API view of an instance, filling the derived fields
+// (ReadOnly) that need the tool registry.
+func (s *Service) toShareDTO(inst *MCPShareInstance, now time.Time) ShareInstanceDTO {
+	dto := inst.toDTO(now)
+	dto.ReadOnly = s.shareIsReadOnly(inst.AllowedTools, inst.IsLegacy)
+	return dto
+}
+
+// shareBaseURL returns the deployment's public API origin when one is
+// configured (MCP_PUBLIC_URL), falling back to the request-derived base URL.
+//
+// Share invite emails and client snippets must point at the public origin: a
+// call proxied from the web UI carries the internal compose service name in
+// Host, which a recipient's MCP client cannot resolve.
+func (s *Service) shareBaseURL(fallback string) string {
+	if s.publicBaseURL != "" {
+		return s.publicBaseURL
+	}
+	return fallback
+}
+
+// RecordShareRecipients stores the addresses a share key was invited to so the
+// grant records who holds it. Addresses are lowercased, trimmed and merged with
+// the existing list; the caller treats a failure as non-fatal because the
+// invite email has already been queued.
+func (s *Service) RecordShareRecipients(ctx context.Context, projectID, userID, id string, emails []string) ([]string, error) {
+	if len(emails) == 0 {
+		return nil, nil
+	}
+	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
+	store := s.shareStore()
+	if store == nil {
+		return nil, apperror.NewInternal("share instance storage unavailable", nil)
+	}
+	inst, err := store.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	if inst == nil {
+		return nil, apperror.NewNotFound("Share instance", id)
+	}
+	merged := mergeRecipientEmails(inst.RecipientEmails, emails)
+	if len(merged) == len(inst.RecipientEmails) {
+		return merged, nil
+	}
+	if err := store.SetRecipientEmails(ctx, projectID, id, merged); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
+// mergeRecipientEmails lowercases and de-duplicates the union of two address
+// lists, preserving first-seen order.
+// copyRecipients returns a non-nil copy so the API answer always carries
+// recipientEmails as an array. A nil slice marshals to null, which every client
+// would then have to special-case, and the spec promises an empty array.
+func copyRecipients(in []string) []string {
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func mergeRecipientEmails(existing, add []string) []string {
+	seen := make(map[string]bool, len(existing)+len(add))
+	out := make([]string, 0, len(existing)+len(add))
+	for _, raw := range append(append([]string(nil), existing...), add...) {
+		addr := strings.ToLower(strings.TrimSpace(raw))
+		if addr == "" || seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		out = append(out, addr)
+	}
+	return out
+}
+
 // instanceTokenName builds a stable token name for an instance.
 func instanceTokenName(name string) string {
 	return "MCP Share: " + name
@@ -914,9 +1068,12 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 		Description:  req.Description,
 		TokenID:      token.ID,
 		AllowedTools: tools,
-		CreatedBy:    &userID,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		// An explicit empty slice, not nil: the column is NOT NULL and bun would
+		// otherwise emit NULL for a nil array on insert.
+		RecipientEmails: []string{},
+		CreatedBy:       &userID,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if err := store.Create(ctx, inst); err != nil {
 		// Best-effort cleanup so we do not strand an untracked credential.
@@ -925,7 +1082,7 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 	}
 
 	return &CreateShareInstanceResponse{
-		ShareInstanceDTO: inst.toDTO(now),
+		ShareInstanceDTO: s.toShareDTO(inst, now),
 		Token:            token.Token,
 		MCPURL:           mcpEndpointURL(baseURL),
 	}, nil
@@ -952,6 +1109,7 @@ func (s *Service) ListShareInstances(ctx context.Context, projectID, userID stri
 	if err != nil {
 		return nil, err
 	}
+	s.ensureToolIndex(ctx, projectID)
 	now := time.Now().UTC()
 	out := make([]ShareInstanceDTO, 0, len(instances))
 	boundTokens := make(map[string]bool, len(instances))
@@ -962,7 +1120,7 @@ func (s *Service) ListShareInstances(ctx context.Context, projectID, userID stri
 		if inst.RevokedAt != nil {
 			continue
 		}
-		out = append(out, inst.toDTO(now))
+		out = append(out, s.toShareDTO(inst, now))
 	}
 
 	legacy, err := store.ListLegacyTokens(ctx, projectID)
@@ -998,7 +1156,8 @@ func (s *Service) GetShareInstance(ctx context.Context, projectID, userID, id st
 	if inst == nil {
 		return nil, apperror.NewNotFound("Share instance", id)
 	}
-	dto := inst.toDTO(time.Now().UTC())
+	s.ensureToolIndex(ctx, projectID)
+	dto := s.toShareDTO(inst, time.Now().UTC())
 	return &dto, nil
 }
 
@@ -1093,7 +1252,7 @@ func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id
 			return nil, uerr
 		}
 	}
-	dto := updated.toDTO(updated.UpdatedAt)
+	dto := s.toShareDTO(&updated, updated.UpdatedAt)
 	return &dto, nil
 }
 
@@ -1215,7 +1374,7 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 		}
 	}
 	return &CreateShareInstanceResponse{
-		ShareInstanceDTO: inst.toDTO(inst.UpdatedAt),
+		ShareInstanceDTO: s.toShareDTO(inst, inst.UpdatedAt),
 		Token:            newToken.Token,
 		MCPURL:           mcpEndpointURL(baseURL),
 	}, nil
@@ -1368,15 +1527,17 @@ func isTokenAlreadyRevoked(err error) bool {
 
 func (inst *MCPShareInstance) toDTO(now time.Time) ShareInstanceDTO {
 	dto := ShareInstanceDTO{
-		ID:          inst.ID,
-		ProjectID:   inst.ProjectID,
-		Name:        inst.Name,
-		Description: inst.Description,
-		IsLegacy:    inst.IsLegacy,
-		Status:      shareInstanceStatus(inst.RevokedAt, inst.TokenRevokedAt, inst.TokenExpiresAt, now),
-		CreatedAt:   inst.CreatedAt,
-		UpdatedAt:   inst.UpdatedAt,
-		LastUsedAt:  inst.TokenLastUsedAt,
+		ID:              inst.ID,
+		ProjectID:       inst.ProjectID,
+		Name:            inst.Name,
+		Description:     inst.Description,
+		TokenID:         inst.TokenID,
+		RecipientEmails: copyRecipients(inst.RecipientEmails),
+		IsLegacy:        inst.IsLegacy,
+		Status:          shareInstanceStatus(inst.RevokedAt, inst.TokenRevokedAt, inst.TokenExpiresAt, now),
+		CreatedAt:       inst.CreatedAt,
+		UpdatedAt:       inst.UpdatedAt,
+		LastUsedAt:      inst.TokenLastUsedAt,
 	}
 	if len(inst.AllowedTools) > 0 {
 		tools := append([]string(nil), inst.AllowedTools...)
@@ -1387,13 +1548,18 @@ func (inst *MCPShareInstance) toDTO(now time.Time) ShareInstanceDTO {
 
 func legacyTokenToDTO(projectID string, tok *LegacyTokenRef, now time.Time) ShareInstanceDTO {
 	return ShareInstanceDTO{
-		ID:         tok.ID,
-		ProjectID:  projectID,
-		Name:       tok.Name,
-		IsLegacy:   true,
-		Status:     shareInstanceStatus(nil, tok.RevokedAt, tok.ExpiresAt, now),
-		CreatedAt:  tok.CreatedAt,
-		UpdatedAt:  tok.CreatedAt,
-		LastUsedAt: tok.LastUsedAt,
+		ID:        tok.ID,
+		ProjectID: projectID,
+		Name:      tok.Name,
+		// A legacy share's row id IS its token id, and legacy shares are
+		// minted read-only, so both attribution fields are unambiguous.
+		TokenID:         tok.ID,
+		RecipientEmails: []string{},
+		ReadOnly:        true,
+		IsLegacy:        true,
+		Status:          shareInstanceStatus(nil, tok.RevokedAt, tok.ExpiresAt, now),
+		CreatedAt:       tok.CreatedAt,
+		UpdatedAt:       tok.CreatedAt,
+		LastUsedAt:      tok.LastUsedAt,
 	}
 }
