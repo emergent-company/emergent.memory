@@ -41,6 +41,17 @@ func insertSchemaAssignment(t *testing.T, db bun.IDB, projectID, schemaID, sourc
 	require.NoError(t, err)
 }
 
+func insertAgentDefinition(t *testing.T, db bun.IDB, projectID, sourceBlueprintID string) string {
+	t.Helper()
+	id := uuid.NewString()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.agent_definitions (id, project_id, name, source_blueprint_id)
+		VALUES (?, ?, ?, ?)
+	`, id, projectID, "retired-agent-"+id[:8], sourceBlueprintID)
+	require.NoError(t, err)
+	return id
+}
+
 func countRowsForRetire(t *testing.T, db bun.IDB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -68,6 +79,7 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 	schemaID := insertSchemaPack(t, db, projectID, "personal-memory", "2.0.0")
 	insertPackClaim(t, db, staleID, projectID, schemaID)
 	insertSchemaAssignment(t, db, projectID, schemaID, staleID)
+	agentID := insertAgentDefinition(t, db, projectID, staleID)
 	insertBlueprintApplication(t, db, staleID, projectID, "2.0.0", "superseded")
 
 	// A project-scoped blueprint of the same name is the user's own install
@@ -91,6 +103,11 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 		`SELECT COUNT(*) FROM kb.project_schemas WHERE source_blueprint_id = ?`, staleID))
 	assert.Equal(t, 1, countRowsForRetire(t, db,
 		`SELECT COUNT(*) FROM kb.project_schemas WHERE schema_id = ? AND source_blueprint_id IS NULL`, schemaID))
+
+	// Same for the agent definitions the retired blueprint owned: the agent
+	// survives, only its attribution is cleared.
+	assert.Equal(t, 1, countRowsForRetire(t, db,
+		`SELECT COUNT(*) FROM kb.agent_definitions WHERE id = ? AND source_blueprint_id IS NULL`, agentID))
 
 	// The project's own personal-memory 2.1.0 survives.
 	assert.Equal(t, 1, countRowsForRetire(t, db,
