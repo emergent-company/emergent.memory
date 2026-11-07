@@ -860,6 +860,13 @@ Table "kb"."branches" {
   "created_at" timestamptz [not null, default: `now()`]
   "description" text
   "merged_at" timestamptz
+  "origin" text [not null, default: 'manual']
+  "origin_id" uuid
+  "origin_label" text
+
+  Indexes {
+    (project_id, created_at) [name: "idx_branches_project_pending", note: '(merged_at IS NULL)']
+  }
 }
 
 Table "kb"."chat_conversations" {
