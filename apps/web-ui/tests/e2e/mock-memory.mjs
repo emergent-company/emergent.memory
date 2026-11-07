@@ -2255,6 +2255,31 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  // The list page ships a deferred tool-rows placeholder per server; its first
+  // expand fetches GET /settings/mcp-servers/:id/tools, whose handler reads the
+  // server detail (MemoryClient.GetMCPServer → GET /api/admin/mcp-servers/:id).
+  // Serve that detail shape with a couple of cached tools so the hermetic
+  // harness proves the deferred path renders rows.
+  const mcpServerDetailMatch = path.match(/^\/api\/admin\/mcp-servers\/([^/]+)$/);
+  if (mcpServerDetailMatch && req.method === "GET") {
+    const id = mcpServerDetailMatch[1];
+    return json(res, {
+      success: true,
+      data: {
+        id,
+        name: "unavailable-oauth-server",
+        type: "http",
+        url: "http://localhost:9999",
+        enabled: true,
+        toolCount: 2,
+        tools: [
+          { id: "tool-alpha", serverId: id, toolName: "alpha_tool", description: "first cached tool", enabled: true },
+          { id: "tool-beta", serverId: id, toolName: "beta_tool", description: "second cached tool", enabled: false },
+        ],
+      },
+    });
+  }
+
   const mcpInspectMatch = path.match(/^\/api\/admin\/mcp-servers\/([^/]+)\/inspect$/);
   if (mcpInspectMatch && req.method === "POST") {
     return json(res, {
