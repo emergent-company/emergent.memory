@@ -112,6 +112,12 @@ func objectsSortHref(data objectsPageData, dir string) string {
 	if data.Provenance != "" && data.Provenance != defaultObjectProvenance {
 		q.Set("provenance", data.Provenance)
 	}
+	if data.CredentialID != "" {
+		q.Set("credential_id", data.CredentialID)
+		if data.ViaShare != "" {
+			q.Set("via", data.ViaShare)
+		}
+	}
 	if dir != "" && dir != "desc" {
 		q.Set("order", dir)
 	}

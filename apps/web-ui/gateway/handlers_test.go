@@ -331,42 +331,43 @@ type fakeMemory struct {
 	lastCommentBody   string          // last body passed to AddWorkComment
 
 	// objects browser: cursor pagination + count + search.
-	pageObjects        []GraphObject        // returned by ListGraphObjectsPage
-	nextPageCursor     string               // returned by ListGraphObjectsPage
-	pageErr            error                // ListGraphObjectsPage failure
-	lastPageCursor     string               // last cursor passed to ListGraphObjectsPage
-	lastPageBranch     string               // last branchID passed to ListGraphObjectsPage
-	lastPageType       string               // last typeFilter passed to ListGraphObjectsPage
-	lastPageLimit      int                  // last limit passed to ListGraphObjectsPage
-	lastPageActorType  string               // last actorType passed to ListGraphObjectsPage
-	lastPageActorID    string               // last actorID passed to ListGraphObjectsPage
-	lastPageProvenance string               // last provenance passed to ListGraphObjectsPage
-	objectCount        int                  // returned by CountObjects
-	objectCountErr     error                // CountObjects failure
-	lastCountBranch    string               // last branchID passed to CountObjects
-	searchResults      []ObjectSearchResult // returned by SearchObjects
-	searchHasMore      bool                 // returned by SearchObjects
-	searchObjectsErr   error                // SearchObjects failure
-	lastSearchMode     string               // last mode passed to SearchObjects
-	lastSearchQuery    string               // last query passed to SearchObjects
-	lastSearchTypes    string               // last types passed to SearchObjects
-	lastSearchBranch   string               // last branchID passed to SearchObjects
-	lastSearchLimit    int                  // last limit passed to SearchObjects
-	lastSearchOffset   int                  // last offset passed to SearchObjects
-	unifiedResults     []ObjectSearchResult // returned by SearchObjectsUnified
-	unifiedErr         error                // SearchObjectsUnified failure
-	lastUnifiedQuery   string               // last query passed to SearchObjectsUnified
-	lastUnifiedTypes   string               // last types passed to SearchObjectsUnified
-	lastUnifiedBrnch   string               // last branchID passed to SearchObjectsUnified
-	lastUnifiedLimit   int                  // last limit passed to SearchObjectsUnified
-	searchUnifiedResp  *UnifiedSearchResponse
-	searchUnifiedErr   error
-	lastSearchUnified  UnifiedSearchParams // last params passed to SearchUnified
-	knowledgeAnswer    string              // returned by QueryKnowledge
-	knowledgeSession   string              // returned by QueryKnowledge
-	knowledgeErr       error               // QueryKnowledge failure
-	lastKnowledgeQ     string              // last question passed to QueryKnowledge
-	lastKnowledgeBr    string              // last branch passed to QueryKnowledge
+	pageObjects          []GraphObject        // returned by ListGraphObjectsPage
+	nextPageCursor       string               // returned by ListGraphObjectsPage
+	pageErr              error                // ListGraphObjectsPage failure
+	lastPageCursor       string               // last cursor passed to ListGraphObjectsPage
+	lastPageBranch       string               // last branchID passed to ListGraphObjectsPage
+	lastPageType         string               // last typeFilter passed to ListGraphObjectsPage
+	lastPageLimit        int                  // last limit passed to ListGraphObjectsPage
+	lastPageActorType    string               // last actorType passed to ListGraphObjectsPage
+	lastPageCredentialID string               // last credentialID passed to ListGraphObjectsPage
+	lastPageActorID      string               // last actorID passed to ListGraphObjectsPage
+	lastPageProvenance   string               // last provenance passed to ListGraphObjectsPage
+	objectCount          int                  // returned by CountObjects
+	objectCountErr       error                // CountObjects failure
+	lastCountBranch      string               // last branchID passed to CountObjects
+	searchResults        []ObjectSearchResult // returned by SearchObjects
+	searchHasMore        bool                 // returned by SearchObjects
+	searchObjectsErr     error                // SearchObjects failure
+	lastSearchMode       string               // last mode passed to SearchObjects
+	lastSearchQuery      string               // last query passed to SearchObjects
+	lastSearchTypes      string               // last types passed to SearchObjects
+	lastSearchBranch     string               // last branchID passed to SearchObjects
+	lastSearchLimit      int                  // last limit passed to SearchObjects
+	lastSearchOffset     int                  // last offset passed to SearchObjects
+	unifiedResults       []ObjectSearchResult // returned by SearchObjectsUnified
+	unifiedErr           error                // SearchObjectsUnified failure
+	lastUnifiedQuery     string               // last query passed to SearchObjectsUnified
+	lastUnifiedTypes     string               // last types passed to SearchObjectsUnified
+	lastUnifiedBrnch     string               // last branchID passed to SearchObjectsUnified
+	lastUnifiedLimit     int                  // last limit passed to SearchObjectsUnified
+	searchUnifiedResp    *UnifiedSearchResponse
+	searchUnifiedErr     error
+	lastSearchUnified    UnifiedSearchParams // last params passed to SearchUnified
+	knowledgeAnswer      string              // returned by QueryKnowledge
+	knowledgeSession     string              // returned by QueryKnowledge
+	knowledgeErr         error               // QueryKnowledge failure
+	lastKnowledgeQ       string              // last question passed to QueryKnowledge
+	lastKnowledgeBr      string              // last branch passed to QueryKnowledge
 
 	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
 	embeddingProgErr  error              // GetEmbeddingProgress failure
@@ -1690,6 +1691,7 @@ func (f *fakeMemory) ListGraphObjectsPage(ctx context.Context, p ObjectListParam
 	f.lastPageActorType = p.ActorType
 	f.lastPageActorID = p.ActorID
 	f.lastPageProvenance = p.Provenance
+	f.lastPageCredentialID = p.CredentialID
 	// Filter pageObjects by branch/type (mirrors ListGraphObjects) so route
 	// tests can assert filter behaviour with a plain slice.
 	var out []GraphObject
