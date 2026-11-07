@@ -299,22 +299,58 @@ func GlobCovers(parent, child string) bool {
 // the MCP facade and the search layer on the same key.
 type branchScopeCtxKey struct{}
 
+// contextValue is what the context holds: the scope plus whether a caller
+// declared it as the run's fixed boundary (see ContextWithFixed).
+type contextValue struct {
+	scope *Scope
+	fixed bool
+}
+
 // ContextWith returns a context carrying the scope. A main-only (nil) scope is
 // stored explicitly rather than ignored: a delegated run whose definition
 // declares no scope must NOT inherit its caller's branch reads, and ignoring nil
-// would leave the caller's value in place. Storing a typed nil keeps FromContext
+// would leave the caller's value in place. Storing a nil scope keeps FromContext
 // returning nil, so consumers still see the main-only default.
 func ContextWith(ctx context.Context, scope *Scope) context.Context {
 	if scope.IsMainOnly() {
 		scope = nil
 	}
-	return context.WithValue(ctx, branchScopeCtxKey{}, scope)
+	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{scope: scope})
 }
 
-// FromContext returns the scope installed by ContextWith, or nil (main only).
+// ContextWithFixed installs a boundary the CALLER already decided, for an
+// internal run that executes on the originating run's behalf (the /query
+// hand-off behind search-knowledge). Run-level derivation must not replace it
+// with main-only just because the internal definition declares nothing — that
+// would silently widen the originating run's read boundary. It is not a widening
+// tool: the scope installed is the caller's own, and a definition that declares a
+// scope still narrows it through ContextWith.
+//
+// Never install this from a model-visible surface: it is reserved for a
+// server-to-server hand-off that carries a boundary already derived from a real
+// run.
+func ContextWithFixed(ctx context.Context, scope *Scope) context.Context {
+	if scope.IsMainOnly() {
+		return ContextWith(ctx, nil)
+	}
+	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{scope: scope, fixed: true})
+}
+
+// FromContext returns the scope installed by ContextWith or ContextWithFixed, or
+// nil (main only).
 func FromContext(ctx context.Context) *Scope {
-	if scope, ok := ctx.Value(branchScopeCtxKey{}).(*Scope); ok {
-		return scope
+	if v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue); ok {
+		return v.scope
 	}
 	return nil
+}
+
+// IsFixed reports whether the installed scope was declared as a fixed boundary
+// by ContextWithFixed. A subsequent ContextWith on the derived context clears it,
+// so derivation cannot leak the marker into a genuinely delegated child.
+func IsFixed(ctx context.Context) bool {
+	if v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue); ok {
+		return v.fixed
+	}
+	return false
 }

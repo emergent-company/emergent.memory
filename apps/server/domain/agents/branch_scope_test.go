@@ -163,3 +163,58 @@ func TestToDTOCarriesBranchScope(t *testing.T) {
 		t.Fatalf("BranchScope.Origins = %v, want [extraction]", dto.BranchScope.Origins)
 	}
 }
+
+// TestWithBranchScopeDerivation covers the three ways a run's branch boundary is
+// decided: a definition that declares a scope, a definition that declares nothing
+// (main only, and it CLEARS an inherited caller scope), and an internal loopback
+// whose boundary the caller already fixed (#265).
+func TestWithBranchScopeDerivation(t *testing.T) {
+	ae := &AgentExecutor{}
+	parent, err := branchscope.New(branchscope.Config{Unmerged: true, Origins: []string{"extraction", "agent"}})
+	if err != nil {
+		t.Fatalf("parent scope: %v", err)
+	}
+	parentCtx := mcp.ContextWithBranchScope(context.Background(), parent)
+
+	// A definition that declares its own scope narrows the caller's.
+	declaring := &AgentDefinition{ID: "ad-1"}
+	if err := declaring.SetBranchScope(&branchscope.Config{Unmerged: true, Origins: []string{"extraction"}}); err != nil {
+		t.Fatalf("SetBranchScope() error = %v", err)
+	}
+	got := mcp.BranchScopeFromContext(ae.withBranchScope(parentCtx, declaring))
+	if got.IsMainOnly() || !got.AllowsOrigin("extraction") || got.AllowsOrigin("agent") {
+		t.Fatalf("declared scope = %+v, want extraction only", got.Origins())
+	}
+
+	// A definition that declares nothing is main only — and that must clear the
+	// caller's scope, or a delegated child would inherit reads it was never given.
+	silent := &AgentDefinition{ID: "ad-2"}
+	got = mcp.BranchScopeFromContext(ae.withBranchScope(parentCtx, silent))
+	if !got.IsMainOnly() {
+		t.Fatalf("undeclared scope = %+v, want main only", got)
+	}
+
+	// An invalid declaration fails closed to main only, not to the inherited
+	// boundary.
+	broken := &AgentDefinition{ID: "ad-3", Config: map[string]any{
+		"branchScope": map[string]any{"unmerged": true, "origins": []any{"not-an-origin"}},
+	}}
+	got = mcp.BranchScopeFromContext(ae.withBranchScope(parentCtx, broken))
+	if !got.IsMainOnly() {
+		t.Fatalf("invalid scope = %+v, want main only", got)
+	}
+
+	// A caller-fixed boundary survives an internal definition that declares
+	// nothing (the /query hand-off behind search-knowledge).
+	fixedCtx := mcp.ContextWithFixedBranchScope(context.Background(), parent)
+	got = mcp.BranchScopeFromContext(ae.withBranchScope(fixedCtx, silent))
+	if got.IsMainOnly() || !got.AllowsOrigin("agent") {
+		t.Fatalf("fixed boundary = %+v, want the caller's scope preserved", got)
+	}
+
+	// ... and a defining internal run still narrows it.
+	got = mcp.BranchScopeFromContext(ae.withBranchScope(fixedCtx, declaring))
+	if got.IsMainOnly() || !got.AllowsOrigin("extraction") || got.AllowsOrigin("agent") {
+		t.Fatalf("fixed + declared = %+v, want extraction only", got.Origins())
+	}
+}

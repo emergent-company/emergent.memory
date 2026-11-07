@@ -107,6 +107,20 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		body["relationship_types"] = scope.RelationshipTypes()
 	}
 
+	// Thread the caller's branch read scope the same way (#265). The internal
+	// graph-query-agent has no branchScope of its own, and it must not read a
+	// branch the calling run cannot: the handler installs this as the internal
+	// run's fixed boundary, so its own entity-query/search calls are gated by the
+	// caller's scope rather than by the absence of one.
+	if bs := BranchScopeFromContext(ctx); !bs.IsMainOnly() {
+		body["branch_scope"] = map[string]any{
+			"unmerged":    true,
+			"origins":     bs.Origins(),
+			"branches":    bs.BranchPatterns(),
+			"maxBranches": bs.MaxBranches(),
+		}
+	}
+
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("query_knowledge: marshal request: %w", err)

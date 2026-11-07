@@ -214,6 +214,10 @@ the results. Every object that exists only on a branch comes back flagged with
 settled fact. When the cap leaves branches unread, the response metadata carries a
 `branch_scope_note` saying so.
 
+The boundary also follows the agent's calls: `search-knowledge` runs its internal
+research agent under the same scope (it cannot be steered into reading a branch
+outside it), and a tool call that names a branch outside the scope is refused.
+
 !!! note "It narrows reads, and bounds every branch a run can name"
     A branch scope grants no permission of its own: it only restricts. It bounds
     every branch a run can name on any tool, so a scoped run cannot reach a branch

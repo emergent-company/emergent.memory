@@ -73,7 +73,7 @@ func (s *Service) fanOutGraphSearch(
 		if len(req.Vector) == 0 {
 			req.DisableAutoEmbed = true
 		}
-		results, _, err := s.graphSearchOnce(ctx, projectID, &req, minScore, false)
+		results, _, _, err := s.graphSearchOnce(ctx, projectID, &req, minScore, false)
 		if err != nil {
 			// One unreadable branch degrades the answer; it does not fail the
 			// search. The note below tells the model the read was incomplete.
@@ -95,14 +95,16 @@ func (s *Service) fanOutGraphSearch(
 	fused := fuseScopedGraphResults(sources, s.rrfConstant, limit)
 	// Both truncation causes can be true at once (cap omitted some, a read
 	// failed), and the model needs both: an incomplete answer must say so.
+	attempted := len(info.Branches) + info.Omitted + failed
 	var notes []string
+	if info.Omitted > 0 || failed > 0 {
+		notes = append(notes, fmt.Sprintf("read %d of %d matching unmerged branches", len(info.Branches), attempted))
+	}
 	if info.Omitted > 0 {
-		notes = append(notes, fmt.Sprintf(
-			"read %d of %d matching unmerged branches; %d were omitted by the per-agent branch cap",
-			len(info.Branches), len(info.Branches)+info.Omitted, info.Omitted))
+		notes = append(notes, fmt.Sprintf("%d were omitted by the per-agent branch cap", info.Omitted))
 	}
 	if failed > 0 {
-		notes = append(notes, fmt.Sprintf("%d matching unmerged branches could not be read", failed))
+		notes = append(notes, fmt.Sprintf("%d could not be read", failed))
 	}
 	info.Note = strings.Join(notes, "; ")
 	return fused, info
@@ -169,18 +171,4 @@ func fuseScopedGraphResults(sources [][]*UnifiedSearchGraphResult, k, limit int)
 		out[i] = f.result
 	}
 	return out
-}
-
-// graphObjectIDs returns the head object ids of a result set, used for the
-// best-effort access-timestamp update.
-func graphObjectIDs(results []*UnifiedSearchGraphResult) []uuid.UUID {
-	ids := make([]uuid.UUID, 0, len(results))
-	for _, r := range results {
-		id, err := uuid.Parse(r.ObjectID)
-		if err != nil {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	return ids
 }

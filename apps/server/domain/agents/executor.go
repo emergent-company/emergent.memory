@@ -2713,17 +2713,16 @@ func (ae *AgentExecutor) runPipeline(
 	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
 	// The branch read scope is derived at the same seam, and narrowed by any
 	// inherited (delegated caller) scope for the same reason: a child definition
-	// must never widen the boundary its parent ran under (#265). A nil scope is
-	// main only, the default.
-	if declaredBranchScope, err := resolveBranchScope(req.AgentDefinition); err != nil {
-		if ae.log != nil {
-			ae.log.Warn("agent branch scope is invalid; running main only",
-				slog.String("agent_definition_id", req.AgentDefinition.ID),
-				slog.String("error", err.Error()))
-		}
-	} else {
-		ctx = mcp.ContextWithBranchScope(ctx, mcp.NarrowBranchScope(mcp.BranchScopeFromContext(ctx), declaredBranchScope))
-	}
+	// must never widen the boundary its parent ran under (#265). A run that
+	// declares nothing is main only, and installing that CLEARS an inherited
+	// scope, so a delegated child cannot inherit reads its caller did not give it.
+	//
+	// One exception: an internal loopback run (the /query hand-off behind
+	// search-knowledge) executes on the originating run's behalf, so its boundary
+	// is fixed by that caller and must be preserved — the internal definition
+	// declares nothing, which would otherwise reset the whole hand-off to main
+	// only. A definition that does declare a scope still narrows it.
+	ctx = ae.withBranchScope(ctx, req.AgentDefinition)
 	ctx = mcp.ContextWithAgentWriteRules(ctx, resolveAgentWriteRules(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
 
@@ -4590,6 +4589,35 @@ func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 // nil or configures no scope. A stored value that fails validation is an error:
 // the caller degrades to main only — a tampered or legacy value must fail
 // closed, never widen — while the definition API reports the same error on write.
+// withBranchScope derives the run's branch read boundary and installs it on the
+// context. A definition that declares nothing yields main only, and installing
+// that CLEARS an inherited scope, so a delegated child cannot inherit reads its
+// caller did not give it. A run whose boundary the caller already fixed (an
+// internal loopback executing on the originating run's behalf) keeps it, and a
+// definition that declares a scope still narrows it. An unreadable setting fails
+// closed to main only, never to the caller's inherited boundary.
+func (ae *AgentExecutor) withBranchScope(ctx context.Context, def *AgentDefinition) context.Context {
+	declared, err := resolveBranchScope(def)
+	if err != nil {
+		if ae.log != nil {
+			id := ""
+			if def != nil {
+				id = def.ID
+			}
+			ae.log.Warn("agent branch scope is invalid; running main only",
+				slog.String("agent_definition_id", id),
+				slog.String("error", err.Error()))
+		}
+		return mcp.ContextWithBranchScope(ctx, nil)
+	}
+	if mcp.IsFixedBranchScope(ctx) && declared.IsMainOnly() {
+		// The caller decided this boundary; the internal definition says nothing,
+		// which must not reset the hand-off to main only.
+		return ctx
+	}
+	return mcp.ContextWithBranchScope(ctx, mcp.NarrowBranchScope(mcp.BranchScopeFromContext(ctx), declared))
+}
+
 func resolveBranchScope(def *AgentDefinition) (*mcp.BranchScope, error) {
 	return def.BranchScope()
 }

@@ -239,3 +239,33 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func TestContextFixedBoundary(t *testing.T) {
+	scope := mustScope(t, Config{Unmerged: true, Origins: []string{"extraction"}})
+
+	ctx := ContextWithFixed(context.Background(), scope)
+	if FromContext(ctx) != scope {
+		t.Fatal("a fixed scope must read back as the run scope")
+	}
+	if !IsFixed(ctx) {
+		t.Fatal("a fixed scope must be marked fixed so derivation preserves it")
+	}
+
+	// Deriving a new boundary clears the marker: a genuinely delegated child gets
+	// the ordinary rules, not the caller's fixed-boundary exception.
+	derived := ContextWith(ctx, nil)
+	if IsFixed(derived) {
+		t.Fatal("ContextWith must clear the fixed marker")
+	}
+	if !FromContext(derived).IsMainOnly() {
+		t.Fatal("ContextWith(nil) must still clear the scope")
+	}
+
+	// A main-only fixed call is just the main-only default.
+	if IsFixed(ContextWithFixed(ctx, nil)) {
+		t.Fatal("a main-only boundary is not a fixed branch boundary")
+	}
+	if !FromContext(ContextWithFixed(ctx, nil)).IsMainOnly() {
+		t.Fatal("a main-only boundary must read back main only")
+	}
+}

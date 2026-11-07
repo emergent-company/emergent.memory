@@ -109,11 +109,3 @@ func TestAttachBranchProvenanceWithoutLabel(t *testing.T) {
 
 	assert.Nil(t, results[0].BranchOriginLabel)
 }
-
-func TestGraphObjectIDsSkipsMalformed(t *testing.T) {
-	results := []*UnifiedSearchGraphResult{
-		graphResult("11111111-1111-1111-1111-111111111111", "c1", 0.5),
-		graphResult("not-a-uuid", "c2", 0.4),
-	}
-	assert.Len(t, graphObjectIDs(results), 1)
-}

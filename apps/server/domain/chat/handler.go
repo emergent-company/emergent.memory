@@ -32,6 +32,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/llm/vertex"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
@@ -1975,6 +1976,13 @@ type QueryStreamRequest struct {
 	// it (issue #1695 follow-up; used by the search-knowledge MCP loopback).
 	ObjectTypes       []string `json:"object_types,omitempty"`
 	RelationshipTypes []string `json:"relationship_types,omitempty"`
+
+	// Per-call branch read scope. The internal graph-query-agent has no
+	// branchScope of its own, so a caller-supplied boundary is installed as the
+	// internal run's FIXED boundary and preserved end-to-end. It can only narrow
+	// the originating run, never widen it (#265; used by the search-knowledge MCP
+	// loopback).
+	BranchScope *branchscope.Config `json:"branch_scope,omitempty"`
 }
 
 // withQueryTypeScope threads a caller-supplied graph type scope into the internal
@@ -1988,6 +1996,23 @@ func withQueryTypeScope(ctx context.Context, req QueryStreamRequest) context.Con
 		return ctx
 	}
 	return mcp.ContextWithTypeScope(ctx, mcp.NewTypeScope(req.ObjectTypes, req.RelationshipTypes))
+}
+
+// withQueryBranchScope installs a caller-supplied branch boundary on the internal
+// query agent's run context. Unlike a delegated sub-agent — whose own declaration
+// governs, an undeclared one meaning main only — this run executes on the
+// caller's behalf, so the boundary is installed as fixed and must not be replaced
+// by the internal definition's absent scope. It can only narrow the originating
+// run, never widen it (#265).
+func withQueryBranchScope(ctx context.Context, req QueryStreamRequest) (context.Context, error) {
+	if req.BranchScope == nil {
+		return ctx, nil
+	}
+	scope, err := mcp.NewBranchScope(*req.BranchScope)
+	if err != nil {
+		return ctx, err
+	}
+	return mcp.ContextWithFixedBranchScope(ctx, scope), nil
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.
@@ -2058,6 +2083,10 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		ctx = auth.ContextWithNamespace(ctx, req.Namespace)
 	}
 	ctx = withQueryTypeScope(ctx, req)
+	ctx, branchScopeErr := withQueryBranchScope(ctx, req)
+	if branchScopeErr != nil {
+		return apperror.NewBadRequest("branch_scope: " + branchScopeErr.Error())
+	}
 
 	// Fail fast if no LLM provider is configured. Probe the model factory before
 	// opening the SSE stream so clients get a proper HTTP error code, not a

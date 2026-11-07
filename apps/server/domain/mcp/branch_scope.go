@@ -38,6 +38,20 @@ func BranchScopeFromContext(ctx context.Context) *BranchScope {
 	return branchscope.FromContext(ctx)
 }
 
+// ContextWithFixedBranchScope installs a boundary the caller already decided, for
+// a server-to-server hand-off that runs on the originating run's behalf (the
+// /query loopback behind search-knowledge). Never call it from a model-visible
+// surface.
+func ContextWithFixedBranchScope(ctx context.Context, scope *BranchScope) context.Context {
+	return branchscope.ContextWithFixed(ctx, scope)
+}
+
+// IsFixedBranchScope reports whether the installed scope is a caller-fixed
+// boundary, which run-level derivation must preserve rather than replace.
+func IsFixedBranchScope(ctx context.Context) bool {
+	return branchscope.IsFixed(ctx)
+}
+
 // NarrowBranchScope combines an inherited (caller) scope with a declared
 // (definition) scope. It is used where a run already carries a scope in context —
 // a delegated sub-agent's caller scope — and then derives its own from the

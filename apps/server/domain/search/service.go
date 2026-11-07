@@ -555,16 +555,16 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	hybridReq := hybridSearchRequestFromUnified(req, vector)
 
 	// Execute search (pass nil opts since unified search has its own debug handling)
-	results, rawDebug, err := s.graphSearchOnce(ctx, projectID, hybridReq, minScore, req.IncludeDebug)
+	results, accessed, rawDebug, err := s.graphSearchOnce(ctx, projectID, hybridReq, minScore, req.IncludeDebug)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	// Track access asynchronously (don't block response). This is the main-leg
-	// result set, exactly as before branch scoping existed: a branch head is a
-	// separate head of the same canonical object and is not what the access log
-	// describes, so fanning out must not change which objects are marked read.
-	if ids := graphObjectIDs(results); len(ids) > 0 {
+	// Track access asynchronously (don't block response). This is the main leg,
+	// exactly as before branch scoping existed: a branch head is a separate head
+	// of the same canonical object and is not what the access log describes, so
+	// fanning out must not change which objects are marked read.
+	if ids := accessed; len(ids) > 0 {
 		go func() {
 			bgCtx := context.Background()
 			if err := s.graphService.UpdateAccessTimestamps(bgCtx, ids); err != nil {
@@ -588,14 +588,21 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 // BranchID = the main graph) and maps it to unified graph results, applying the
 // per-mode min-score cut-off. It is the only query path, so the main-only
 // behaviour is byte-for-byte what it was before branch scoping existed.
-func (s *Service) graphSearchOnce(ctx context.Context, projectID uuid.UUID, hybridReq *graph.HybridSearchRequest, minScore *float32, includeDebug bool) ([]*UnifiedSearchGraphResult, any, error) {
+//
+// accessed carries the head object ids of every raw result, BEFORE the min-score
+// cut-off, because the access log has always recorded what the search saw rather
+// than what survived the caller's filter; returning it here keeps that true after
+// the fan-out refactor.
+func (s *Service) graphSearchOnce(ctx context.Context, projectID uuid.UUID, hybridReq *graph.HybridSearchRequest, minScore *float32, includeDebug bool) ([]*UnifiedSearchGraphResult, []uuid.UUID, any, error) {
 	searchResp, err := s.graphService.HybridSearch(ctx, projectID, hybridReq, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	results := make([]*UnifiedSearchGraphResult, len(searchResp.Data))
+	accessed := make([]uuid.UUID, 0, len(searchResp.Data))
 	for i, item := range searchResp.Data {
+		accessed = append(accessed, item.Object.ID)
 		key := ""
 		if item.Object.Key != nil {
 			key = *item.Object.Key
@@ -622,7 +629,7 @@ func (s *Service) graphSearchOnce(ctx context.Context, projectID uuid.UUID, hybr
 	if includeDebug {
 		rawDebug = searchResp.Data
 	}
-	return results, rawDebug, nil
+	return results, accessed, rawDebug, nil
 }
 
 // executeTextSearch runs text search on document chunks.
