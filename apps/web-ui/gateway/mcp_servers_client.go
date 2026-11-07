@@ -107,6 +107,7 @@ type MCPInspectAuth struct {
 	ResourceMetadataURL   string   `json:"resourceMetadataUrl"`
 	AuthorizationServer   string   `json:"authorizationServer"`
 	Scopes                []string `json:"scopes"`
+	ScopesAvailable       []string `json:"scopesAvailable"`
 	RegistrationSupported bool     `json:"registrationSupported"`
 	// Unavailable is true when the server requires authorization but its
 	// provider publishes no discoverable OAuth metadata, so the browser connect

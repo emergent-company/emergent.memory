@@ -1353,6 +1353,22 @@ func TestUIMCPOAuthClientBlankIDRedirectsWithError(t *testing.T) {
 	}
 }
 
+func TestUIMCPOAuthClientScopeOnlyUpdate(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	// A blank client id with a scope is the DCR-provider remedy: keep the
+	// stored client, change only what the next connect requests.
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&scope=repo+read%3Aorg")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
+		t.Fatalf("scope-only oauth/client = %d %q, want 303 success", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastClientServer != "srv-http" || f.lastClientID != "" || f.lastClientScope != "repo read:org" {
+		t.Errorf("backend record = %s %q %q, want srv-http blank-client repo read:org", f.lastClientServer, f.lastClientID, f.lastClientScope)
+	}
+}
+
 func TestUIMCPOAuthClientBackendErrorRedirectsToList(t *testing.T) {
 	f := newMCPTestBackend(mcpTestRegistryFixture())
 	f.oauthClientErr = fmt.Errorf("memory 400 bad_request: server is not a remote http/sse server")

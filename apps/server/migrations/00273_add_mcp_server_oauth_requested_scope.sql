@@ -16,6 +16,9 @@
 
 ALTER TABLE kb.mcp_server_oauth
     ADD COLUMN IF NOT EXISTS requested_scope text NOT NULL DEFAULT '';
+
+COMMENT ON COLUMN kb.mcp_server_oauth.requested_scope IS
+    'Operator-configured scope set to request on connect; overrides the challenge scope (RFC 9728 §7.2). Empty means discover.';
 -- +goose StatementEnd
 
 -- +goose Down

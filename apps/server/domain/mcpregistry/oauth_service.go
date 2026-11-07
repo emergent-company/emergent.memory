@@ -34,6 +34,9 @@ var (
 	// ErrOAuthNotRequired marks a server whose connection attempt was not
 	// rejected with an OAuth challenge. Handler maps it to 400.
 	ErrOAuthNotRequired = errors.New("this MCP server did not report an authorization requirement")
+	// ErrOAuthClientIDRequired marks a client-configuration request that has no
+	// stored client to attach a requested scope set to. Handler maps it to 400.
+	ErrOAuthClientIDRequired = errors.New("clientId is required until an OAuth client is provisioned")
 	// ErrOAuthClientRequired marks an authorization server that will not issue
 	// us a client: dynamic client registration is unavailable or was rejected.
 	// It is the sentinel behind both a registration-endpoint-free metadata
@@ -521,6 +524,11 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, u
 // token set issued to a previous client (tokens are bound to the client they
 // were issued to). It returns the server's refreshed authorization status,
 // which never carries token material.
+//
+// A blank clientID with a non-blank requestedScope updates only the stored
+// client's requested scope set (the path a provider that offers dynamic client
+// registration but names no challenge scope needs, since its registered client
+// id is never shown). That update leaves the current token set in place.
 func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, userID, clientID, clientSecret, requestedScope string) (*MCPServerOAuthStatusDTO, error) {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
@@ -533,6 +541,15 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 		return nil, ErrOAuthNotSupported
 	}
 
+	clientID = strings.TrimSpace(clientID)
+	requestedScope = strings.Join(strings.Fields(requestedScope), " ")
+	if clientID == "" {
+		if requestedScope == "" {
+			return nil, ErrOAuthClientIDRequired
+		}
+		return s.updateRequestedScope(ctx, projectID, serverID, userID, requestedScope)
+	}
+
 	var secret *EncryptedSecret
 	if clientSecret != "" {
 		secret, err = encryptSecretValue(s.encryptor, clientSecret)
@@ -541,7 +558,7 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 		}
 	}
 
-	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, userID, clientID, secret, strings.Join(strings.Fields(requestedScope), " ")); err != nil {
+	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, userID, clientID, secret, requestedScope); err != nil {
 		return nil, err
 	}
 
@@ -550,6 +567,24 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 	s.proxy.CloseServer(serverID)
 	s.invalidateToolPool(projectID)
 
+	return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
+}
+
+// updateRequestedScope stores a new requested scope set on an existing client
+// row without touching the client identity or the current token set. It fails
+// when no client is stored, because a scope set with nothing to attach it to
+// would be silently ignored by the next connect.
+func (s *Service) updateRequestedScope(ctx context.Context, projectID, serverID, userID, requestedScope string) (*MCPServerOAuthStatusDTO, error) {
+	row, err := s.repo.FindOAuthForUser(ctx, serverID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("loading MCP server authorization: %w", err)
+	}
+	if row == nil || strings.TrimSpace(row.ClientID) == "" {
+		return nil, ErrOAuthClientIDRequired
+	}
+	if err := s.repo.UpdateOAuthRequestedScope(ctx, serverID, oauthUserID(row), requestedScope); err != nil {
+		return nil, err
+	}
 	return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
 }
 

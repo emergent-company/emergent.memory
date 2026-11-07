@@ -499,8 +499,9 @@ type MCPServerInspectDTO struct {
 type InspectAuthDTO struct {
 	ResourceMetadataURL string `json:"resourceMetadataUrl,omitempty"`
 	AuthorizationServer string `json:"authorizationServer,omitempty"`
-	// Scopes are the scopes the connect flow will request (the challenge scope,
-	// or the operator-configured set).
+	// Scopes are the scopes the provider names in its OAuth challenge. A scope
+	// set configured on the server overrides them when the flow starts; the
+	// inspect path has no requesting user, so it reports the discovered set.
 	Scopes []string `json:"scopes"`
 	// ScopesAvailable is what the provider advertises as supported
 	// (scopes_supported). Informational only: it is never requested implicitly

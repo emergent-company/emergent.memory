@@ -429,6 +429,43 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientStoresEncryptedSecretAndClears
 	s.Nil(row.ExpiresAt)
 }
 
+func (s *MCPOAuthDBSuite) TestProvisionOAuthClientScopeOnlyKeepsClientAndTokens() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	s.seedCredential(server, "access-token-value")
+
+	// A blank client id with a scope updates only the requested set: the stored
+	// client and the live token set must survive so the change can be applied on
+	// the next connect without a reconnect first.
+	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "", "", "repo read:org")
+	s.Require().NoError(err)
+	s.Require().NotNil(status.RequestedScope)
+	s.Equal("repo read:org", *status.RequestedScope)
+	s.True(status.ClientConfigured)
+	s.True(status.Connected, "a scope-only update must not drop the current connection")
+
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
+	s.Require().NoError(err)
+	s.Require().NotNil(row)
+	s.Equal("client-abc", row.ClientID, "the stored client identity must be untouched")
+	s.NotNil(row.ClientSecret, "the stored client secret must be untouched")
+	s.Equal("repo read:org", row.RequestedScope)
+	s.Equal("access-token-value", s.decrypt(row.AccessToken), "the live token set must be untouched")
+}
+
+func (s *MCPOAuthDBSuite) TestProvisionOAuthClientRequiresClientIDOrScope() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "", "", "")
+	s.ErrorIs(err, mcpregistry.ErrOAuthClientIDRequired)
+}
+
+func (s *MCPOAuthDBSuite) TestProvisionOAuthClientScopeOnlyRequiresStoredClient() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	// No client has been stored: a scope set has nothing to attach to, and
+	// silently dropping it would make the next connect ignore it.
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "", "", "repo read:org")
+	s.ErrorIs(err, mcpregistry.ErrOAuthClientIDRequired)
+}
+
 func (s *MCPOAuthDBSuite) TestProvisionOAuthClientUnknownServer() {
 	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "", "cid", "sec", "")
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
@@ -443,6 +480,10 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientRejectsNonRemoteTransport() {
 func (s *MCPOAuthDBSuite) TestClearOAuthClientClearsIdentity() {
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	s.seedCredential(server, "access-token-value")
+	// Give the row an operator-configured scope set: clearing the client must not
+	// lose it, so a later (re-)registration still requests the chosen scopes.
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "", "", "repo read:org")
+	s.Require().NoError(err)
 
 	s.Require().NoError(s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, server.ID, ""))
 
@@ -454,6 +495,7 @@ func (s *MCPOAuthDBSuite) TestClearOAuthClientClearsIdentity() {
 	s.Nil(row.AccessToken)
 	s.Nil(row.RefreshToken)
 	s.Nil(row.ExpiresAt)
+	s.Equal("repo read:org", row.RequestedScope, "the operator's requested set survives a client clear")
 
 	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, "")
 	s.Require().NoError(err)

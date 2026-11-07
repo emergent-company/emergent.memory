@@ -339,10 +339,13 @@ func (s *Server) uiMCPOAuthDisconnect(c echo.Context) error {
 // uiMCPOAuthClient handles POST /settings/mcp-servers/:id/oauth/client (PRG).
 // It stores a pre-registered OAuth client (id + optional secret) and the
 // optional scope set to request for a server whose authorization provider
-// rejects dynamic registration. A blank client id and a backend failure both
-// redirect back to the list with an error flash; success redirects with
-// ?oauthClient=1. The client secret never round-trips into any page: failures
-// PRG with a fixed error message that never carries it.
+// rejects dynamic registration. A blank client id with a scope updates only the
+// stored client's requested scope set (the remedy for a provider that offers
+// dynamic registration but names no scope in its challenge). A request with
+// neither a client id nor a scope, and a backend failure, both redirect back to
+// the list with an error flash; success redirects with ?oauthClient=1. The
+// client secret never round-trips into any page: failures PRG with a fixed
+// error message that never carries it.
 func (s *Server) uiMCPOAuthClient(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := strings.TrimSpace(c.Param("id"))
@@ -350,11 +353,11 @@ func (s *Server) uiMCPOAuthClient(c echo.Context) error {
 		return redirectWithError(c, mcpServerSettingsBase, errServerIDRequired())
 	}
 	clientID := strings.TrimSpace(c.FormValue("client_id"))
-	if clientID == "" {
+	scope := strings.Join(strings.Fields(c.FormValue("scope")), " ")
+	if clientID == "" && scope == "" {
 		return redirectWithError(c, mcpServerSettingsBase, errMCPOAuthClientIDRequired())
 	}
 	clientSecret := c.FormValue("client_secret")
-	scope := strings.Join(strings.Fields(c.FormValue("scope")), " ")
 	if _, err := s.memory.SetMCPServerOAuthClient(ctx, id, clientID, clientSecret, scope); err != nil {
 		return redirectWithError(c, mcpServerSettingsBase, err)
 	}
