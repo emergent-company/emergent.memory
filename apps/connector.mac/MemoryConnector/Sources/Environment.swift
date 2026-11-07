@@ -20,8 +20,7 @@ struct Environment: Identifiable, Hashable, Sendable {
     let serverURL: URL
     /// Web-console base URL. The console shares the API origin in prod and on a
     /// local dev gateway, but the hosted dev deployment serves it from its own
-    /// ingress (`admin.dev…` fronting `api.dev…`), so a deep link must never
-    /// assume the API host.
+    /// ingress on a sibling host, so a deep link must never assume the API host.
     let consoleURL: URL
     /// OIDC issuer used for discovery + sign-in.
     let issuer: URL
@@ -128,17 +127,18 @@ struct Environment: Identifiable, Hashable, Sendable {
     }
 
     /// Dev console URL for an API base URL: the hosted dev deployment fronts the
-    /// console at `admin.dev…` while the API is `api.dev…`, so the `api.` label
-    /// maps to `admin.`. Any other host (a local gateway serving both, or a
-    /// bare domain) keeps the API origin.
+    /// console from a sibling host that carries the `admin.` label where the API
+    /// carries `api.`, so that label is rewritten. Any other host (a local
+    /// gateway serving both, or a bare domain) keeps the API origin.
     static func devConsoleURL(for serverURL: URL) -> URL {
         guard
             var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false),
             let host = components.host,
-            host.hasPrefix("api.")
+            host.lowercased().hasPrefix("api.")
         else {
             return serverURL
         }
+        // Rewrite only the label: the rest of the host keeps its own case.
         components.host = "admin." + host.dropFirst("api.".count)
         return components.url ?? serverURL
     }

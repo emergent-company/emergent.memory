@@ -62,16 +62,17 @@ final class EnvironmentTests: XCTestCase {
         XCTAssertEqual(Environment.prod.consoleURL, Environment.prod.serverURL)
     }
 
-    /// The hosted dev deployment splits them (`admin.dev…` fronts `api.dev…`),
+    /// The hosted dev deployment splits API and console across sibling hosts
+    /// (the console carries the `admin.` label where the API carries `api.`),
     /// so a deep link must not reuse the API host.
     func testDevConsoleURLMapsAPIHostToAdminHost() {
         let dev = Environment.makeDev(environment: [
-            "MEMORY_DEV_SERVER_URL": "https://api.dev.emergent-company.ai",
+            "MEMORY_DEV_SERVER_URL": "https://api.dev.example.com",
         ])
 
-        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.dev.emergent-company.ai")
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.dev.example.com")
         XCTAssertEqual(dev.projectWebURL(orgID: "org-1", projectID: "p2")?.absoluteString,
-                       "https://admin.dev.emergent-company.ai/o/org-1/p/p2/agents")
+                       "https://admin.dev.example.com/o/org-1/p/p2/agents")
     }
 
     /// A local gateway serves API and console on one origin.
@@ -85,21 +86,30 @@ final class EnvironmentTests: XCTestCase {
 
     func testDevConsoleURLCanBeOverridden() {
         let dev = Environment.makeDev(environment: [
-            "MEMORY_DEV_SERVER_URL": "https://api.dev.emergent-company.ai",
-            "MEMORY_DEV_CONSOLE_URL": "https://console.internal.example",
+            "MEMORY_DEV_SERVER_URL": "https://api.dev.example.com",
+            "MEMORY_DEV_CONSOLE_URL": "https://console.example.com",
         ])
 
-        XCTAssertEqual(dev.consoleURL.absoluteString, "https://console.internal.example")
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://console.example.com")
     }
 
     /// A blank or unparseable override falls back to the derived host, like
     /// every other dev value.
     func testDevConsoleURLIgnoresBlankOverride() {
         let dev = Environment.makeDev(environment: [
-            "MEMORY_DEV_SERVER_URL": "https://api.dev.emergent-company.ai",
+            "MEMORY_DEV_SERVER_URL": "https://api.dev.example.com",
             "MEMORY_DEV_CONSOLE_URL": "  ",
         ])
 
-        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.dev.emergent-company.ai")
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.dev.example.com")
+    }
+
+    /// The label match is case-insensitive; the rest of the host keeps its case.
+    func testDevConsoleURLMatchesTheAPILabelCaseInsensitively() {
+        let dev = Environment.makeDev(environment: [
+            "MEMORY_DEV_SERVER_URL": "https://API.Dev.example.com",
+        ])
+
+        XCTAssertEqual(dev.consoleURL.absoluteString, "https://admin.Dev.example.com")
     }
 }
