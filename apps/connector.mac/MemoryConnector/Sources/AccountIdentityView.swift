@@ -68,12 +68,16 @@ struct EnvironmentBadge: View {
     }
 }
 
-/// One reusable account row used by the toolbar menu, the menu-bar popover,
-/// and the account page so all surfaces agree. The identity is the account's
+/// One reusable account row used by the menu-bar status-item popover and the
+/// Project & Account page so both surfaces agree. The identity is the account's
 /// EMAIL address (`switcherTitle`), with the environment as a trailing badge
 /// ("Prod"/"Dev") and a checkmark for the active account. No initials avatar
 /// is shown by default (the switcher must not rely on an avatar/initials as
 /// the identity); the Manage Accounts page opts back into the avatar.
+///
+/// The window toolbar's account control does not use this row any more: it hosts
+/// `AccountSwitcherPanel`, which needs a real two-line row (avatar, email,
+/// environment label) that this compact single-line label cannot express.
 struct AccountRowLabel: View {
     let account: Account
     /// Shows the initials avatar. Off by default so switcher rows are

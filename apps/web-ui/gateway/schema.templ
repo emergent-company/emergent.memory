@@ -890,9 +890,7 @@ templ deriveWarningDialog(view *SchemaEditView) {
 	{{ p := view.Provenance }}
 	@ui.Dialog(ui.DialogProps{ID: "derive-warning-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "derive-warning-title", "aria-describedby": "derive-warning-desc"}}) {
 		<div class="flex items-start gap-3">
-			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--alert-triangle", "size-5")
-			</div>
+			@components.IconCircle("lucide--alert-triangle", components.IconCircleToneWarning)
 			<div>
 				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-warning-title"}) {
 					Save changes to a blueprint-derived type? 
@@ -934,9 +932,7 @@ templ deriveWarningDialog(view *SchemaEditView) {
 templ deriveBlueprintDialog() {
 	@ui.Dialog(ui.DialogProps{ID: "derive-blueprint-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "derive-blueprint-title"}}) {
 		<div class="flex items-start gap-3">
-			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--save", "size-5")
-			</div>
+			@components.IconCircle("lucide--save", components.IconCircleTonePrimary)
 			<div>
 				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-blueprint-title"}) {
 					Save as blueprint 

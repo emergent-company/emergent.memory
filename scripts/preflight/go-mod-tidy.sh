@@ -16,8 +16,9 @@
 #
 # `go mod tidy -diff` (Go >= 1.23) prints exactly what a tidy would change
 # without writing it, and exits 1 when there is anything to change — go.mod and
-# go.sum both. It is the same invariant the generator-side guard enforces for
-# Swagger artifacts (scripts/preflight/swagger-drift.sh, #2082).
+# go.sum both. It mirrors the invariant that made the swagger artifacts safe to
+# stop committing (#270): a generated file must never be the only record of a
+# change the source already carries.
 #
 # Cost: ~0.2 s per module on a warm module cache, which is what the
 # branch-protection-required `ci` job has by the time this runs (the earlier
