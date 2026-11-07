@@ -143,6 +143,18 @@ func TestDetectShape(t *testing.T) {
 			want: ShapeProse,
 		},
 		{
+			// #278 case 2: two structural labels alternating like a conversation
+			// ("Term:"/"Meaning:") are a definition list, not a dialogue.
+			name: "glossary with term meaning alternation is not a transcript",
+			text: "Term: chunk\nMeaning: a contiguous span of a document\n" +
+				"Term: embedding\nMeaning: a vector representation of text\n" +
+				"Term: namespace\nMeaning: a named scope for objects\n" +
+				"Term: projection\nMeaning: a subset of fields\n" +
+				"Term: branch\nMeaning: an unmerged line of work\n" +
+				"Term: journal\nMeaning: an append-only event log\n",
+			want: ShapeProse,
+		},
+		{
 			// A second distinct name is the evidence that makes the long form a
 			// conversation rather than a list.
 			name: "long form with a second speaker name",
@@ -346,6 +358,9 @@ func TestIsSpeakerAndTimestampLines(t *testing.T) {
 		"Priority: P1",
 		"Assignee: platform",
 		"Due: Friday",
+		// Glossary entry labels (#278 case 2).
+		"Term: chunk",
+		"Meaning: a contiguous span",
 	}
 	for _, line := range notSpeakers {
 		if got := speakerName(line); got != "" {

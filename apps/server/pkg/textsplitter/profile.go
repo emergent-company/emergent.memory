@@ -332,6 +332,9 @@ var labelPrefixes = map[string]struct{}{
 	"decision": {}, "decisions": {}, "deliverable": {}, "due": {}, "estimate": {},
 	"milestone": {}, "objective": {}, "outcome": {}, "owner": {}, "priority": {},
 	"risk": {}, "status": {},
+	// Glossary entry labels (#278 case 2): "Term:"/"Meaning:" alternate like a
+	// two-speaker conversation but are a definition list, not a dialogue.
+	"meaning": {}, "term": {}, "terms": {},
 }
 
 func isLabelPrefix(word string) bool {
