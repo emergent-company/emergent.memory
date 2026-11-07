@@ -158,23 +158,55 @@ templ blueprintTypeConflictCard(conflict BlueprintTypeConflict) {
 }
 
 // blueprintPropertyConflictRow renders one property whose definition differs:
-// the property name, the "existing wins" resolution, and both definitions side
-// by side so the user can see exactly what is kept and what is ignored.
+// the property name, the "existing wins" resolution, and a compact key-by-key
+// diff of the two known-shape definition objects. Identical keys are omitted
+// from the table and summarised as "N unchanged keys"; the raw definitions are
+// kept as the fallback when either side is not a JSON object.
 templ blueprintPropertyConflictRow(typeSlug string, conflict BlueprintPropertyConflict) {
-	<div class="flex flex-col gap-2" data-testid={ "blueprint-conflict-overridden-" + typeSlug + "-" + blueprintConflictSlug(conflict.Property) }>
+	{{ propSlug := blueprintConflictSlug(conflict.Property)
+		rows, unchanged, tableOK := blueprintConflictDefRows(conflict.ExistingDef, conflict.IncomingDef) }}
+	<div class="flex flex-col gap-2" data-testid={ "blueprint-conflict-overridden-" + typeSlug + "-" + propSlug }>
 		<div class="flex flex-wrap items-center gap-2">
 			<code class="rounded bg-base-200 px-1.5 py-0.5 text-xs font-semibold">{ conflict.Property }</code>
 			@ui.Badge(ui.BadgeProps{Label: blueprintConflictResolutionLabel(conflict.Resolution), Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--lock"})
 		</div>
-		<div class="grid gap-2 sm:grid-cols-2">
-			<div>
-				<p class="text-base-content/70 text-xs font-medium">Your project</p>
-				<pre class="mt-1 overflow-x-auto rounded border border-base-content/10 bg-base-100 p-2 text-xs">{ blueprintConflictDef(conflict.ExistingDef) }</pre>
+		if tableOK {
+			<div class="overflow-x-auto rounded border border-base-content/10 bg-base-100" data-testid={ "blueprint-conflict-def-table-" + typeSlug + "-" + propSlug }>
+				<table class="table table-xs w-full">
+					<thead>
+						<tr>
+							<th class="text-base-content/70 text-xs font-medium">Property</th>
+							<th class="text-base-content/70 text-xs font-medium">Current value</th>
+							<th class="text-base-content/70 text-xs font-medium">Incoming value</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, row := range rows {
+							<tr data-testid={ "blueprint-conflict-def-row-" + typeSlug + "-" + propSlug + "-" + blueprintConflictSlug(row.Key) }>
+								<td class="align-top">
+									<code class="rounded bg-base-200 px-1.5 py-0.5 text-xs font-semibold">{ row.Key }</code>
+								</td>
+								<td class={ "align-top break-words text-xs", templ.KV("font-mono", row.ExistingMono) }>{ row.Existing }</td>
+								<td class={ "text-base-content/70 align-top break-words text-xs", templ.KV("font-mono", row.IncomingMono) }>{ row.Incoming }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+				if unchanged > 0 {
+					<p class="text-base-content/50 border-t border-base-content/10 px-3 py-2 text-xs" data-testid={ "blueprint-conflict-def-unchanged-" + typeSlug + "-" + propSlug }>{ blueprintConflictUnchangedLabel(unchanged) }</p>
+				}
 			</div>
-			<div>
-				<p class="text-base-content/70 text-xs font-medium">Incoming (ignored)</p>
-				<pre class="text-base-content/70 mt-1 overflow-x-auto rounded border border-base-content/10 bg-base-100 p-2 text-xs">{ blueprintConflictDef(conflict.IncomingDef) }</pre>
+		} else {
+			<div class="grid gap-2 sm:grid-cols-2">
+				<div>
+					<p class="text-base-content/70 text-xs font-medium">Your project</p>
+					<pre class="mt-1 overflow-x-auto rounded border border-base-content/10 bg-base-100 p-2 text-xs">{ blueprintConflictDef(conflict.ExistingDef) }</pre>
+				</div>
+				<div>
+					<p class="text-base-content/70 text-xs font-medium">Incoming (ignored)</p>
+					<pre class="text-base-content/70 mt-1 overflow-x-auto rounded border border-base-content/10 bg-base-100 p-2 text-xs">{ blueprintConflictDef(conflict.IncomingDef) }</pre>
+				</div>
 			</div>
-		</div>
+		}
 	</div>
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -301,7 +302,7 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 			"document_ids":          docIDStrings,
 			"batch_size":            req.BatchSize,
 			"min_confidence":        req.MinConfidence,
-			"include_relationships": req.IncludeRelationships,
+			"include_relationships": includeRelationshipsRequested(req),
 			"max_iterations":        req.MaxIterations,
 			"scope":                 scope,
 			"trigger":               trigger,
@@ -341,6 +342,24 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 	}, nil
 }
 
+// includeRelationshipsRequested resolves a start request's relationship flag.
+// An omitted field means "yes" (#234): discovery of a document that names
+// entities is expected to propose how they relate, and the web UI's discovery
+// actions never set the field. An explicit false opts out.
+func includeRelationshipsRequested(req *StartDiscoveryRequest) bool {
+	if req == nil || req.IncludeRelationships == nil {
+		return true
+	}
+	return *req.IncludeRelationships
+}
+
+// relationshipDiscoveryEnabled is the pipeline gate for the relationship phase:
+// the job must have asked for relationships and there must be at least two
+// types to relate.
+func relationshipDiscoveryEnabled(requested bool, typeCount int) bool {
+	return requested && typeCount > 1
+}
+
 // RetryDiscovery re-runs a terminal job over the same documents. The stored
 // config is the source of truth for the document set, so a retry can never
 // silently widen the original run's scope; only the batch size may be
@@ -370,11 +389,13 @@ func (s *Service) RetryDiscovery(ctx context.Context, jobID uuid.UUID, req *Retr
 	}
 
 	startReq := &StartDiscoveryRequest{
-		DocumentIDs:          docIDs,
-		Scope:                DiscoveryScopeDocuments,
-		BatchSize:            cfg.BatchSize,
-		MinConfidence:        cfg.MinConfidence,
-		IncludeRelationships: cfg.IncludeRelationships,
+		DocumentIDs:   docIDs,
+		Scope:         DiscoveryScopeDocuments,
+		BatchSize:     cfg.BatchSize,
+		MinConfidence: cfg.MinConfidence,
+		// The stored config already holds the resolved decision, so a retry
+		// repeats the original run rather than re-deriving a default.
+		IncludeRelationships: &cfg.IncludeRelationships,
 		MaxIterations:        cfg.MaxIterations,
 		Trigger:              DiscoveryTriggerManual,
 	}
@@ -1109,7 +1130,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 
 	// Step 4: Discover relationships (if enabled and we have types)
 	var relationships []DiscoveredRelationship
-	if config.IncludeRelationships && len(refinedTypes) > 1 {
+	if relationshipDiscoveryEnabled(config.IncludeRelationships, len(refinedTypes)) {
 		relationships, err = s.discoverRelationships(ctx, jobID, refinedTypes, job.KBPurpose)
 		if err != nil {
 			s.log.Warn("relationship discovery failed, continuing without relationships", logger.Error(err))
@@ -1596,32 +1617,56 @@ func isReifiedType(name string) bool {
 // Taken literally that produced three properties named "type", "properties" and
 // "required" and an empty required list — the schema the reporter saw (#234).
 // The object form is unwrapped when present; the flat form passes through.
+//
+// A table is also sometimes described as an array of row objects
+// ({"type":"array","items":{...columns...}}) or as a bare properties map with
+// no type/required markers. Both wrappers are unwrapped too: the fields are the
+// table columns, never the wrapper keywords.
 func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
 	if schema == nil {
 		return nil, []string{}
 	}
 
 	properties := schema
-	required := propertyNames(schema["required"])
-	if inner, ok := jsonSchemaObjectProperties(schema); ok {
-		properties = inner
-	} else if len(required) > 0 {
+	var required []string
+	unwrapped := false
+
+	// Unwrap nested wrappers (at most a few: an array of row objects is two
+	// layers). Nothing in the flat form can trigger this loop, because the flat
+	// form names each entry with a descriptor object and has no scalar `type`.
+	for depth := 0; depth < 4; depth++ {
+		required = append(required, propertyNames(properties["required"])...)
+		if inner, ok := jsonSchemaObjectProperties(properties); ok {
+			properties = inner
+			unwrapped = true
+			continue
+		}
+		if inner, ok := jsonSchemaArrayItems(properties); ok {
+			properties = inner
+			unwrapped = true
+			continue
+		}
+		break
+	}
+
+	if !unwrapped && len(required) > 0 {
 		// A wrapper that lists `required` but no nested `properties` map, e.g.
 		// {"type":"object","title":{"type":"string"},"required":["title"]}.
 		// Drop only the structural keywords; everything else is a property.
-		properties = withoutSchemaKeywords(schema)
+		properties = withoutSchemaKeywords(properties)
 	}
 	return normalizePropertyCrossRefs(properties), required
 }
 
 // withoutSchemaKeywords removes the JSON Schema structural keywords from a
 // wrapper that declared `required` without a nested `properties` map, leaving
-// the property descriptors behind.
+// the property descriptors behind. A keyword is removed only when its value has
+// the keyword's shape: a genuine property named "type" or "description" holds a
+// descriptor object, not the keyword's scalar value (see #258).
 func withoutSchemaKeywords(schema map[string]any) map[string]any {
 	out := make(map[string]any, len(schema))
 	for key, value := range schema {
-		switch key {
-		case "type", "required", "properties", "$schema", "additionalProperties", "definitions", "$defs":
+		if looksLikeSchemaKeyword(key, value) {
 			continue
 		}
 		out[key] = value
@@ -1632,10 +1677,12 @@ func withoutSchemaKeywords(schema map[string]any) map[string]any {
 // jsonSchemaObjectProperties reports whether schema is a JSON Schema object
 // wrapper and returns its properties map.
 //
-// The wrapper is recognised only by markers that cannot occur in the flat form
-// the prompt defines: a top-level `type` of "object" (flat maps hold descriptors
+// The wrapper is recognised by markers that cannot occur in the flat form the
+// prompt defines: a top-level `type` of "object" (flat maps hold descriptors
 // under each property name, never a scalar type at the top) or a `required`
-// array. A flat schema that happens to contain a property literally named
+// array. A wrapper that carries no marker at all is still recognised when the
+// only siblings of `properties` are structural keywords and the map holds
+// descriptors. A flat schema that happens to contain a property literally named
 // "properties" or "type" therefore stays flat.
 func jsonSchemaObjectProperties(schema map[string]any) (map[string]any, bool) {
 	properties, ok := schema["properties"].(map[string]any)
@@ -1648,7 +1695,79 @@ func jsonSchemaObjectProperties(schema map[string]any) (map[string]any, bool) {
 	if _, isArray := schema["required"].([]any); isArray {
 		return properties, true
 	}
+	if looksLikePropertiesMap(properties) && onlySchemaKeywordSiblings(schema, "properties") {
+		return properties, true
+	}
 	return nil, false
+}
+
+// jsonSchemaArrayItems unwraps an array-of-rows schema. Only a top-level
+// `type: "array"` is decisive: the flat form never has a scalar type at the
+// top, so a genuine property named "items" cannot be mistaken for a wrapper.
+func jsonSchemaArrayItems(schema map[string]any) (map[string]any, bool) {
+	typeName, _ := schema["type"].(string)
+	if typeName != "array" {
+		return nil, false
+	}
+	items, ok := schema["items"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	return items, true
+}
+
+// looksLikePropertiesMap reports whether m has the shape of a JSON Schema
+// `properties` map: every value is itself a schema/descriptor object.
+func looksLikePropertiesMap(m map[string]any) bool {
+	if len(m) == 0 {
+		return false
+	}
+	for _, value := range m {
+		if _, ok := value.(map[string]any); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// onlySchemaKeywordSiblings reports whether every key in schema except `except`
+// is a structural keyword with the keyword's value shape.
+func onlySchemaKeywordSiblings(schema map[string]any, except string) bool {
+	for key, value := range schema {
+		if key == except {
+			continue
+		}
+		if !looksLikeSchemaKeyword(key, value) {
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikeSchemaKeyword reports whether key/value is a JSON Schema structural
+// keyword. The value shape matters: the flat form maps every property name to a
+// descriptor object, so a property genuinely named "type", "description" or
+// "items" holds a map and is not stripped.
+func looksLikeSchemaKeyword(key string, value any) bool {
+	switch key {
+	case "type", "$schema", "$id", "$ref", "title", "description", "format":
+		_, ok := value.(string)
+		return ok
+	case "required":
+		switch value.(type) {
+		case []any, []string, string:
+			return true
+		}
+	case "properties", "definitions", "$defs", "items":
+		_, ok := value.(map[string]any)
+		return ok
+	case "additionalProperties":
+		switch value.(type) {
+		case bool, map[string]any:
+			return true
+		}
+	}
+	return false
 }
 
 // propertyNames reads a JSON `required` array into names, dropping anything
@@ -1942,44 +2061,11 @@ func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, ty
 		return nil, fmt.Errorf("LLM provider not configured")
 	}
 
-	// Build types list
-	var typesList strings.Builder
-	for _, t := range types {
-		typesList.WriteString(fmt.Sprintf("- %s: %s\n", t.TypeName, t.Description))
-	}
-
-	prompt := fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
-
-%s
-
-We have discovered the following entity types:
-%s
-
-Discover important relationships between these types.
-
-For each relationship, provide:
-- from_type: The source type (must be one of the types above)
-- to_type: The target type (must be one of the types above)
-- relationship_name: A clear name for the relationship
-- description: What this relationship represents
-- cardinality: one-to-one, one-to-many, or many-to-many
-- confidence: How confident you are about this relationship (0-1)
-
-Return ONLY a JSON object with this structure (no markdown, no code blocks):
-{
-  "discovered_relationships": [
-    {
-      "from_type": "...",
-      "to_type": "...",
-      "relationship_name": "...",
-      "description": "...",
-      "cardinality": "one-to-many",
-      "confidence": 0.9
-    }
-  ]
-}
-
-Focus on the most important relationships.`, kbPurpose, typesList.String())
+	// The prompt names each type's properties: they are the evidence that links
+	// two types. A table whose Episode rows carry a Guest column is what makes
+	// "a guest appears in an episode" inferable from a prompt that never sees
+	// the document text (#234).
+	prompt := s.buildRelationshipDiscoveryPrompt(types, kbPurpose)
 
 	span.SetAttributes(attribute.Int("prompt_length", len(prompt)))
 	response, err := s.completeWithLLM(ctx, prompt)
@@ -2015,6 +2101,83 @@ Focus on the most important relationships.`, kbPurpose, typesList.String())
 
 	s.log.Info("discovered relationships", slog.Int("count", len(relationships)))
 	return relationships, nil
+}
+
+// buildRelationshipDiscoveryPrompt asks the model to relate the discovered
+// types. The type list includes property names because they are the evidence
+// that links two types: the document text is not part of this prompt, so a
+// table whose Episode rows carry a Guest column only reads as "a guest appears
+// in an episode" when the column is visible here (#234).
+func (s *Service) buildRelationshipDiscoveryPrompt(types []DiscoveredType, kbPurpose string) string {
+	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
+
+%s
+
+We have discovered the following entity types:
+%s
+
+Discover important relationships between these types. Treat a property that
+names another discovered type (for example an Episode's "guest" property) as
+evidence of a relationship rather than a plain attribute.
+
+For each relationship, provide:
+- from_type: The source type (must be one of the types above)
+- to_type: The target type (must be one of the types above)
+- relationship_name: A clear name for the relationship
+- description: What this relationship represents
+- cardinality: one-to-one, one-to-many, or many-to-many
+- confidence: How confident you are about this relationship (0-1)
+
+Return ONLY a JSON object with this structure (no markdown, no code blocks):
+{
+  "discovered_relationships": [
+    {
+      "from_type": "...",
+      "to_type": "...",
+      "relationship_name": "...",
+      "description": "...",
+      "cardinality": "one-to-many",
+      "confidence": 0.9
+    }
+  ]
+}
+
+Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types))
+}
+
+// buildRelationshipDiscoveryTypes renders one bullet per type: its name, its
+// description, and its property names in deterministic order.
+func (s *Service) buildRelationshipDiscoveryTypes(types []DiscoveredType) string {
+	var typesList strings.Builder
+	for _, t := range types {
+		typesList.WriteString("- ")
+		typesList.WriteString(t.TypeName)
+		if t.Description != "" {
+			typesList.WriteString(": ")
+			typesList.WriteString(t.Description)
+		}
+		if names := sortedPropertyNames(t.Properties); len(names) > 0 {
+			typesList.WriteString(" (properties: ")
+			typesList.WriteString(strings.Join(names, ", "))
+			typesList.WriteString(")")
+		}
+		typesList.WriteString("\n")
+	}
+	return typesList.String()
+}
+
+// sortedPropertyNames returns the keys of a properties map in a stable order,
+// so the same discovered types render the same prompt on every run.
+func sortedPropertyNames(properties map[string]any) []string {
+	if len(properties) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // parseRelationshipDiscoveryResponse parses the LLM response for relationship discovery

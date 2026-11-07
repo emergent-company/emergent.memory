@@ -587,9 +587,10 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 //
 // Each declared identity is keyed with relationshipSchemaKey(name, source,
 // target) — the identity domain/schemas uses for compiled types. The bare
-// normalised name is also kept as the name-wide default for callers that only
-// know the relationship type (the relationship patch path); within one pack the
-// first declaration of a name defines that default.
+// normalised name is also kept as the name-wide default, used only when an
+// edge's endpoint pair declares no schema of its own (for example a dangling
+// edge whose endpoint no longer resolves); within one pack the first
+// declaration of a name defines that default.
 //
 // Keys are canonicalised with normalizeRelationType: relationship rows are stored
 // lower_snake_case, so the registry must be keyed the same way or a declared
