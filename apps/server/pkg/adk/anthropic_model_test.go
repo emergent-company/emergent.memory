@@ -3,6 +3,7 @@ package adk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -460,5 +461,98 @@ func TestAnthropicModel_EmptyContent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no content or tool use") {
 		t.Errorf("error %q should mention empty content", err.Error())
+	}
+}
+
+// TestAnthropicModel_RetriesRateLimit verifies a 429 with Retry-After is
+// answered inside the call instead of being surfaced to the job above it
+// (#254). The header asks for a zero-second wait so the test does not sleep.
+func TestAnthropicModel_RetriesRateLimit(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(makeAnthropicResponse("recovered")))
+	}))
+	defer srv.Close()
+
+	m := NewAnthropicModel(srv.URL, "sk-ant-test", "claude-sonnet-4-5")
+	resp, err := collectAnthropicResponse(m.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	if err != nil {
+		t.Fatalf("GenerateContent() error = %v, want the retry to succeed", err)
+	}
+	if calls != 2 {
+		t.Errorf("provider calls = %d, want 2 (one 429 then one success)", calls)
+	}
+	if resp == nil || resp.Content == nil || len(resp.Content.Parts) == 0 || resp.Content.Parts[0].Text != "recovered" {
+		t.Fatalf("response = %+v, want the recovered body", resp)
+	}
+}
+
+// TestAnthropicModel_ServerErrorExhaustsRetries verifies the retry is bounded:
+// a provider that keeps returning 5xx still produces one error naming the
+// status and body, after maxProviderRetries extra attempts.
+func TestAnthropicModel_ServerErrorExhaustsRetries(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"type":"api_error","message":"bad gateway"}}`))
+	}))
+	defer srv.Close()
+
+	m := NewAnthropicModel(srv.URL, "sk-ant-test", "claude-sonnet-4-5")
+	_, err := collectAnthropicResponse(m.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	if err == nil {
+		t.Fatal("expected an error once the retries are spent")
+	}
+	if !strings.Contains(err.Error(), "502") {
+		t.Errorf("error %q should contain the status code", err.Error())
+	}
+	if !strings.Contains(err.Error(), "bad gateway") {
+		t.Errorf("error %q should contain the provider body", err.Error())
+	}
+	if want := maxProviderRetries + 1; calls != want {
+		t.Errorf("provider calls = %d, want %d", calls, want)
+	}
+}
+
+// TestAnthropicModel_CancelDuringBackoffSurfacesCancellation verifies a run
+// cancelled while the client waits out a 429 reports the cancellation, not the
+// provider's 429 (#254).
+func TestAnthropicModel_CancelDuringBackoffSurfacesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := &retryableResponseTransport{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":{"type":"rate_limit_error","message":"rate limited"}}`,
+		cancel: cancel,
+	}
+	m := NewAnthropicModel("http://provider.invalid", "sk-ant-test", "claude-sonnet-4-5")
+	m.(*anthropicModel).client = &http.Client{Transport: tr}
+
+	_, err := collectAnthropicResponse(m.GenerateContent(ctx, &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "extract"}}}},
+	}, false))
+	if err == nil {
+		t.Fatal("expected a cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("errors.Is(%v, context.Canceled) = false, want true", err)
+	}
+	if tr.calls != 1 {
+		t.Errorf("provider calls = %d, want 1 (no retry once the context ended)", tr.calls)
 	}
 }

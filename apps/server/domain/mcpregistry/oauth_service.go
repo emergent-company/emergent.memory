@@ -34,6 +34,18 @@ var (
 	// ErrOAuthNotRequired marks a server whose connection attempt was not
 	// rejected with an OAuth challenge. Handler maps it to 400.
 	ErrOAuthNotRequired = errors.New("this MCP server did not report an authorization requirement")
+	// ErrOAuthClientIDRequired marks a client-configuration request that has no
+	// row to attach a requested scope set to (or, with an existing row, nothing
+	// to clear). Handler maps it to 400.
+	ErrOAuthClientIDRequired = errors.New("clientId is required until an OAuth client or scope set is configured")
+	// ErrOAuthClientSecretRequiresClientID marks a scope-only configuration
+	// request that also carried a client secret: a secret has no owner without a
+	// client id, and silently dropping it would misrepresent what was saved.
+	ErrOAuthClientSecretRequiresClientID = errors.New("a client secret requires a client id")
+	// ErrOAuthSharedConnection marks a disconnect of a project-wide (shared)
+	// credential by a signed-in user. Only an administrative disconnect
+	// (empty user id) may remove it.
+	ErrOAuthSharedConnection = errors.New("this OAuth connection is shared; an administrator must disconnect it")
 	// ErrOAuthClientRequired marks an authorization server that will not issue
 	// us a client: dynamic client registration is unavailable or was rejected.
 	// It is the sentinel behind both a registration-endpoint-free metadata
@@ -166,6 +178,12 @@ func discoverServerAuthRequirement(ctx context.Context, server *MCPServer) (*aut
 			// does not publish it), not an upstream outage.
 			return nil, fmt.Errorf("%w: %v", ErrOAuthMetadataUnavailable, err)
 		}
+		if errors.Is(err, ErrOAuthDiscoveryFailed) {
+			// Already the provider-side class, carrying its own wording (a
+			// provider-advertised URL the outbound guard rejected, for example).
+			// Re-wrapping would repeat the same sentence.
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %v", ErrOAuthDiscoveryFailed, err)
 	}
 	return req, nil
@@ -216,6 +234,15 @@ func (s *Service) StartMCPOAuth(ctx context.Context, projectID, serverID, userID
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server authorization: %w", err)
 	}
+	// An operator-configured scope set wins over discovery. The provider's
+	// advertised scopes_supported is a capability list, not a request set
+	// (RFC 9728 §7.2), so it is never requested implicitly; a challenge scope
+	// stays authoritative and dynamic when no operator set is configured.
+	if row != nil {
+		if configured := splitScope(row.RequestedScope); len(configured) > 0 {
+			req.Scopes = configured
+		}
+	}
 	if row == nil {
 		row = &MCPServerOAuth{
 			ServerID:             server.ID,
@@ -225,7 +252,6 @@ func (s *Service) StartMCPOAuth(ctx context.Context, projectID, serverID, userID
 			TokenEndpoint:        req.TokenEndpoint,
 			RegistrationEndpoint: req.RegistrationEndpoint,
 			Resource:             req.Resource,
-			Scope:                strings.Join(req.Scopes, " "),
 		}
 	}
 
@@ -253,9 +279,6 @@ func (s *Service) StartMCPOAuth(ctx context.Context, projectID, serverID, userID
 	row.TokenEndpoint = req.TokenEndpoint
 	row.RegistrationEndpoint = req.RegistrationEndpoint
 	row.Resource = req.Resource
-	if row.Scope == "" {
-		row.Scope = strings.Join(req.Scopes, " ")
-	}
 	if err := s.repo.UpsertOAuth(ctx, row); err != nil {
 		return nil, err
 	}
@@ -295,6 +318,8 @@ func (s *Service) StartMCPOAuth(ctx context.Context, projectID, serverID, userID
 		slog.String("project_id", projectID),
 		slog.String("server_id", server.ID),
 		slog.String("authorization_server", req.AuthorizationServer),
+		slog.Any("requested_scopes", req.Scopes),
+		slog.Bool("scopes_available_not_requested", len(req.Scopes) == 0 && len(req.ScopesAvailable) > 0),
 	)
 
 	return &StartMCPOAuthResponseDTO{AuthorizeURL: authorizeURL, State: state}, nil
@@ -363,7 +388,7 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 	if err != nil {
 		return serverID, projectID, fmt.Errorf("exchanging the authorization code: %w", err)
 	}
-	if err := s.storeTokens(ctx, row, tokens); err != nil {
+	if err := s.storeTokens(ctx, row, tokens, pending.Scopes); err != nil {
 		return serverID, projectID, err
 	}
 
@@ -389,8 +414,12 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 
 // storeTokens encrypts and persists a token set. A response without a refresh
 // token keeps the previously stored one (some authorization servers only issue
-// a refresh token on the first exchange).
-func (s *Service) storeTokens(ctx context.Context, row *MCPServerOAuth, tokens *oauthTokenSet) error {
+// a refresh token on the first exchange). requested is the scope set the flow
+// asked for: RFC 6749 §5.1 requires the token response to echo `scope` when it
+// differs from the request, so an omitted value means the request was granted.
+// No other source is consulted: the granted scope must describe the token being
+// stored, not a configuration value that may have changed mid-flow.
+func (s *Service) storeTokens(ctx context.Context, row *MCPServerOAuth, tokens *oauthTokenSet, requested []string) error {
 	access, err := encryptSecretValue(s.encryptor, tokens.AccessToken)
 	if err != nil {
 		return err
@@ -409,7 +438,7 @@ func (s *Service) storeTokens(ctx context.Context, row *MCPServerOAuth, tokens *
 	}
 	scope := tokens.Scope
 	if scope == "" {
-		scope = row.Scope
+		scope = strings.Join(requested, " ")
 	}
 	if err := s.repo.UpdateOAuthTokens(ctx, row.ServerID, oauthUserID(row), access, refreshSecret, scope, expiresAt); err != nil {
 		return err
@@ -465,6 +494,10 @@ func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID, userI
 		status.Scope = &scope
 		status.Scopes = splitScope(scope)
 	}
+	if row.RequestedScope != "" {
+		requested := row.RequestedScope
+		status.RequestedScope = &requested
+	}
 	status.ExpiresAt = row.ExpiresAt
 	updated := row.UpdatedAt
 	status.UpdatedAt = &updated
@@ -475,6 +508,11 @@ func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID, userI
 // drops any pooled connection that was using it. A user may only disconnect
 // their own credential; the shared (project-wide) row is deleted only when
 // userID is empty (an operator/administrative disconnect).
+//
+// An operator-configured requested scope set survives the disconnect: it is
+// configuration, not a credential, and reconnecting must keep asking for it.
+// When one is stored the row is kept with only that set (client and tokens
+// cleared); otherwise the row is deleted as before.
 func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, userID string) error {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
@@ -483,7 +521,23 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, u
 	if server == nil {
 		return ErrServerNotFound
 	}
-	if err := s.repo.DeleteOAuthByServerID(ctx, serverID, userID); err != nil {
+	row, err := s.repo.FindOAuthForUser(ctx, serverID, userID)
+	if err != nil {
+		return fmt.Errorf("loading MCP server authorization: %w", err)
+	}
+	// A signed-in user may resolve the project-wide row, but it is not theirs to
+	// disconnect: report it instead of silently doing nothing (the old path
+	// deleted no row yet still closed pooled connections).
+	if userID != "" && row != nil && row.UserID == nil {
+		return ErrOAuthSharedConnection
+	}
+	// Only the row this caller may delete is affected: their personal row, or
+	// the shared row for an empty userID.
+	if row != nil && oauthUserID(row) == userID && strings.TrimSpace(row.RequestedScope) != "" {
+		if err := s.repo.ClearOAuthClient(ctx, serverID, oauthUserID(row)); err != nil {
+			return err
+		}
+	} else if err := s.repo.DeleteOAuthByServerID(ctx, serverID, userID); err != nil {
 		return err
 	}
 	s.proxy.CloseServer(serverID)
@@ -500,7 +554,13 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, u
 // token set issued to a previous client (tokens are bound to the client they
 // were issued to). It returns the server's refreshed authorization status,
 // which never carries token material.
-func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, userID, clientID, clientSecret string) (*MCPServerOAuthStatusDTO, error) {
+//
+// A blank clientID with a non-blank requestedScope sets the requested scope set
+// without a client (creating a configuration-only row when none exists, so
+// scopes can be chosen before the first connect); a blank clientID and blank
+// scope clears an existing set. A changed set clears the stored token, because
+// its grant was issued for the previous request.
+func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, userID, clientID, clientSecret, requestedScope string) (*MCPServerOAuthStatusDTO, error) {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server: %w", err)
@@ -512,6 +572,15 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 		return nil, ErrOAuthNotSupported
 	}
 
+	clientID = strings.TrimSpace(clientID)
+	requestedScope = strings.Join(strings.Fields(requestedScope), " ")
+	if clientID == "" {
+		if clientSecret != "" {
+			return nil, ErrOAuthClientSecretRequiresClientID
+		}
+		return s.updateRequestedScope(ctx, projectID, serverID, userID, requestedScope)
+	}
+
 	var secret *EncryptedSecret
 	if clientSecret != "" {
 		secret, err = encryptSecretValue(s.encryptor, clientSecret)
@@ -520,7 +589,7 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 		}
 	}
 
-	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, userID, clientID, secret); err != nil {
+	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, userID, clientID, secret, requestedScope); err != nil {
 		return nil, err
 	}
 
@@ -529,6 +598,50 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 	s.proxy.CloseServer(serverID)
 	s.invalidateToolPool(projectID)
 
+	return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
+}
+
+// updateRequestedScope stores the operator's requested scope set without
+// touching the client identity. It creates a configuration-only row when none
+// exists, so an operator can choose scopes before the first connect (the
+// dynamic client registration and the authorize URL then both request them). A
+// blank scope clears the stored set on an existing row; with no row at all
+// there is nothing to clear and the request is rejected as incomplete.
+//
+// When the set actually changes and a token is stored, the token is cleared:
+// its grant was issued for the previous request, so keeping the connection
+// "Connected" would misrepresent the server's access. The UI then offers
+// Connect again, which re-authorizes with the new set.
+func (s *Service) updateRequestedScope(ctx context.Context, projectID, serverID, userID, requestedScope string) (*MCPServerOAuthStatusDTO, error) {
+	row, err := s.repo.FindOAuthForUser(ctx, serverID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("loading MCP server authorization: %w", err)
+	}
+	if row == nil {
+		if requestedScope == "" {
+			return nil, ErrOAuthClientIDRequired
+		}
+		if err := s.repo.UpsertOAuthRequestedScope(ctx, serverID, projectID, userID, requestedScope, false); err != nil {
+			return nil, err
+		}
+		return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
+	}
+
+	owner := oauthUserID(row)
+	// A signed-in user may resolve the project-wide row; editing its requested
+	// set is allowed, but dropping the shared token would disconnect every user
+	// of the project. The configuration applies on the next project-wide
+	// reconnect instead.
+	sharedForUser := userID != "" && row.UserID == nil
+	changed := strings.Join(strings.Fields(row.RequestedScope), " ") != requestedScope
+	clearTokens := changed && row.AccessToken != nil && !sharedForUser
+	if err := s.repo.UpsertOAuthRequestedScope(ctx, serverID, projectID, owner, requestedScope, clearTokens); err != nil {
+		return nil, err
+	}
+	if clearTokens {
+		s.proxy.CloseServer(serverID)
+		s.invalidateToolPool(projectID)
+	}
 	return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
 }
 
@@ -601,6 +714,10 @@ func (s *Service) oauthSummaries(ctx context.Context, projectID, userID string, 
 			if row.Scope != "" {
 				scope := row.Scope
 				summary.Scope = &scope
+			}
+			if row.RequestedScope != "" {
+				requested := row.RequestedScope
+				summary.RequestedScope = &requested
 			}
 			summary.ExpiresAt = row.ExpiresAt
 		}

@@ -673,11 +673,13 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 				return
 			}
 
-			if !isRetryableProviderStatus(resp.StatusCode) || attempt >= maxProviderRetries {
+			wait, retry := providerRetryWait(attempt, resp.StatusCode, resp.Header.Get("Retry-After"))
+			if !retry {
 				break
 			}
-			if !sleepWithContext(ctx, providerRetryDelay(attempt, resp.Header.Get("Retry-After"))) {
-				break // context ended during the wait; report the response we have
+			if !sleepWithContext(ctx, wait) {
+				yield(nil, retryContextError("openai-compatible", ctx))
+				return
 			}
 		}
 

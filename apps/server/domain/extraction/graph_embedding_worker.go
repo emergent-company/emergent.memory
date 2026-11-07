@@ -894,10 +894,13 @@ func isPermanentEmbeddingError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	// HTTP client errors from the model provider (invalid model/creds) are
-	// permanent — retrying will never succeed.
-	for _, code := range []string{"API error 400", "API error 401", "API error 403", "API error 404"} {
+	// Match case-insensitively and against the bare "error NNN:" shape so every
+	// embedding client is covered regardless of how it capitalises its prefix:
+	//   - OpenAI-compatible emits "api error 403: …"   (lowercase api)
+	//   - Vertex AI emits        "API error 403: …"     (uppercase API)
+	//   - Generative AI wraps    "googleapi: Error 403: …" (SDK shape)
+	msg := strings.ToLower(err.Error())
+	for _, code := range []string{"error 400:", "error 401:", "error 403:", "error 404:"} {
 		if strings.Contains(msg, code) {
 			return true
 		}

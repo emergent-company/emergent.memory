@@ -41,6 +41,47 @@ func listEntityTypes(t *testing.T, svc *Service, projectID string, args map[stri
 	return result
 }
 
+// TestExecuteListEntityTypes_UntypedBucket covers issue #323: objects whose
+// type is the empty string have no schema-registry row and used to be invisible
+// to entity-type-list even with namespace=all. They must surface as one visible
+// bucket with their count.
+func TestExecuteListEntityTypes_UntypedBucket(t *testing.T) {
+	db := connectTestDB(t)
+	svc := &Service{db: db}
+
+	t.Run("reports legacy untyped objects", func(t *testing.T) {
+		_, projectID := seedProject(t, db)
+		insertGraphObject(t, db, projectID, "", "repo-1")
+		insertGraphObject(t, db, projectID, "", "repo-2")
+
+		// The bucket must be present in both the default (default-namespace)
+		// listing and with namespace=all, since untyped rows belong to no namespace.
+		for _, args := range []map[string]any{{"namespace": "all"}, {}} {
+			result := listEntityTypes(t, svc, projectID, args)
+			var bucket *EntityType
+			for i := range result.Types {
+				if result.Types[i].Name == UntypedEntityTypeBucket {
+					bucket = &result.Types[i]
+				}
+			}
+			require.NotNil(t, bucket, "untyped bucket missing for args %+v", args)
+			assert.Equal(t, 2, bucket.Count)
+			assert.NotEmpty(t, bucket.Description)
+			assert.Equal(t, len(result.Types), result.Total)
+		}
+	})
+
+	t.Run("omitted when no untyped objects exist", func(t *testing.T) {
+		_, projectID := seedProject(t, db)
+		insertGraphObject(t, db, projectID, "Person", "person-1")
+
+		result := listEntityTypes(t, svc, projectID, map[string]any{"namespace": "all"})
+		for _, et := range result.Types {
+			assert.NotEqual(t, UntypedEntityTypeBucket, et.Name)
+		}
+	})
+}
+
 // TestExecuteListEntityTypes_RelationshipTypesOptIn pins the latency fix: the
 // relationship-type aggregation must NOT run (and the result must carry an empty
 // relationships list) unless include_relationships=true, and when enabled it must

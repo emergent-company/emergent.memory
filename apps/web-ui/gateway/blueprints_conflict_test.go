@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -54,6 +57,7 @@ func TestUIRouteInstallTypeConflictRendersReview(t *testing.T) {
 		`data-testid="blueprint-type-conflict-Widget"`,
 		`data-testid="blueprint-conflict-added-Widget-email"`,
 		`data-testid="blueprint-conflict-overridden-Widget-name"`,
+		`data-testid="blueprint-conflict-def-table-Widget-name"`,
 		`data-testid="blueprint-type-conflict-merge"`,
 		`data-testid="blueprint-type-conflict-cancel"`,
 		`action="/blueprints/install/confirm"`,
@@ -739,5 +743,273 @@ func TestUIRouteInstallPinnedNoConflictUnchanged(t *testing.T) {
 	}
 	if f.applyOptions[0].ModelOverrides["operator"] != "openai/gpt-4o" {
 		t.Errorf("model overrides = %v", f.applyOptions[0].ModelOverrides)
+	}
+}
+
+// --- property-definition diff table ---
+
+// TestBlueprintConflictDefRows covers the known-shape diff helper: only keys
+// that differ become rows, in stable lexical order; identical keys are counted
+// rather than shown; an absent key renders the em-dash placeholder; nested
+// values are compact JSON; and non-object or malformed input takes the fallback
+// path (ok=false) instead of panicking.
+func TestBlueprintConflictDefRows(t *testing.T) {
+	longExisting := strings.Repeat("x", 90)
+	longIncoming := strings.Repeat("x", 91)
+
+	tests := []struct {
+		name          string
+		existing      string
+		incoming      string
+		wantOK        bool
+		wantUnchanged int
+		wantRows      []blueprintDefRow
+	}{
+		{
+			name:          "differing keys become rows in lexical order",
+			existing:      `{"type":"string","description":"Job title or role","maxLength":120}`,
+			incoming:      `{"description":"Job title of the person.","type":"string","maxLength":64}`,
+			wantOK:        true,
+			wantUnchanged: 1,
+			wantRows: []blueprintDefRow{
+				{Key: "description", Existing: `"Job title or role"`, Incoming: `"Job title of the person."`, Changed: true},
+				{Key: "maxLength", Existing: "120", Incoming: "64", Changed: true},
+			},
+		},
+		{
+			name:          "semantically identical keys are not shown",
+			existing:      `{"type":"string","enum":["a","b"],"meta":{"z":1,"a":2}}`,
+			incoming:      `{"meta":{"a":2,"z":1},"enum":["a","b"],"type":"string"}`,
+			wantOK:        true,
+			wantUnchanged: 3,
+			wantRows:      nil,
+		},
+		{
+			name:          "missing key renders placeholder",
+			existing:      `{"type":"string"}`,
+			incoming:      `{"format":"email","type":"string"}`,
+			wantOK:        true,
+			wantUnchanged: 1,
+			wantRows: []blueprintDefRow{
+				{Key: "format", Existing: "—", Incoming: `"email"`, Changed: true},
+			},
+		},
+		{
+			name:          "nested values render compact JSON in mono",
+			existing:      `{"enum":["a","b"],"items":{"type":"string"}}`,
+			incoming:      `{"enum":["a","c"],"items":{"type":"number"}}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "enum", Existing: `["a","b"]`, Incoming: `["a","c"]`, Changed: true, ExistingMono: true, IncomingMono: true},
+				{Key: "items", Existing: `{"type":"string"}`, Incoming: `{"type":"number"}`, Changed: true, ExistingMono: true, IncomingMono: true},
+			},
+		},
+		{
+			name:          "long strings render compact JSON in mono",
+			existing:      `{"description":"` + longExisting + `"}`,
+			incoming:      `{"description":"` + longIncoming + `"}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "description", Existing: `"` + longExisting + `"`, Incoming: `"` + longIncoming + `"`, Changed: true, ExistingMono: true, IncomingMono: true},
+			},
+		},
+		{
+			name:          "integers above 2^53 compare distinctly and render exactly",
+			existing:      `{"maxValue":9007199254740993}`,
+			incoming:      `{"maxValue":9007199254740992}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "maxValue", Existing: "9007199254740993", Incoming: "9007199254740992", Changed: true},
+			},
+		},
+		{
+			name:          "very large integers keep every digit",
+			existing:      `{"maxValue":12345678901234567890}`,
+			incoming:      `{"maxValue":12345678901234567891}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "maxValue", Existing: "12345678901234567890", Incoming: "12345678901234567891", Changed: true},
+			},
+		},
+		{
+			name:          "string and number are visibly distinguishable",
+			existing:      `{"default":"64"}`,
+			incoming:      `{"default":64}`,
+			wantOK:        true,
+			wantUnchanged: 0,
+			wantRows: []blueprintDefRow{
+				{Key: "default", Existing: `"64"`, Incoming: "64", Changed: true},
+			},
+		},
+		{
+			name:     "array takes the fallback path",
+			existing: `["a"]`,
+			incoming: `{"a":1}`,
+			wantOK:   false,
+		},
+		{
+			name:     "scalar takes the fallback path",
+			existing: `"x"`,
+			incoming: `{"a":1}`,
+			wantOK:   false,
+		},
+		{
+			name:     "null takes the fallback path",
+			existing: `null`,
+			incoming: `{"a":1}`,
+			wantOK:   false,
+		},
+		{
+			name:     "empty input takes the fallback path",
+			existing: ``,
+			incoming: `{"a":1}`,
+			wantOK:   false,
+		},
+		{
+			name:     "malformed JSON does not panic and takes the fallback path",
+			existing: `{"type":`,
+			incoming: `{"a":1}`,
+			wantOK:   false,
+		},
+		{
+			name:     "malformed incoming JSON takes the fallback path",
+			existing: `{"a":1}`,
+			incoming: `{"b":`,
+			wantOK:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRows, gotUnchanged, gotOK := blueprintConflictDefRows(json.RawMessage(tt.existing), json.RawMessage(tt.incoming))
+			if gotOK != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", gotOK, tt.wantOK)
+			}
+			if !tt.wantOK {
+				if gotRows != nil || gotUnchanged != 0 {
+					t.Errorf("fallback returned rows=%v unchanged=%d, want nil, 0", gotRows, gotUnchanged)
+				}
+				return
+			}
+			if gotUnchanged != tt.wantUnchanged {
+				t.Errorf("unchanged = %d, want %d", gotUnchanged, tt.wantUnchanged)
+			}
+			if len(gotRows) != len(tt.wantRows) {
+				t.Fatalf("rows = %+v, want %+v", gotRows, tt.wantRows)
+			}
+			for i := range tt.wantRows {
+				if gotRows[i] != tt.wantRows[i] {
+					t.Errorf("row[%d] = %+v, want %+v", i, gotRows[i], tt.wantRows[i])
+				}
+			}
+			// Stable order: a second call returns the same rows.
+			againRows, _, _ := blueprintConflictDefRows(json.RawMessage(tt.existing), json.RawMessage(tt.incoming))
+			if !reflect.DeepEqual(gotRows, againRows) {
+				t.Errorf("rows are not deterministic: first=%+v second=%+v", gotRows, againRows)
+			}
+		})
+	}
+}
+
+// TestBlueprintConflictUnchangedLabel pins the one-line unchanged note wording.
+func TestBlueprintConflictUnchangedLabel(t *testing.T) {
+	for _, tt := range []struct {
+		n    int
+		want string
+	}{
+		{0, "0 unchanged keys"},
+		{1, "1 unchanged key"},
+		{3, "3 unchanged keys"},
+	} {
+		if got := blueprintConflictUnchangedLabel(tt.n); got != tt.want {
+			t.Errorf("blueprintConflictUnchangedLabel(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+// TestBlueprintPropertyConflictRowRendersTable verifies the authored markup
+// emits the diff table (with headers and a muted unchanged note) for object
+// definitions.
+func TestBlueprintPropertyConflictRowRendersTable(t *testing.T) {
+	var buf bytes.Buffer
+	err := blueprintPropertyConflictRow("Widget", BlueprintPropertyConflict{
+		Property:    "name",
+		ExistingDef: json.RawMessage(`{"type":"string","description":"Old"}`),
+		IncomingDef: json.RawMessage(`{"type":"string","description":"New"}`),
+		Resolution:  "existing_wins",
+	}).Render(context.Background(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := buf.String()
+	for _, want := range []string{
+		`data-testid="blueprint-conflict-overridden-Widget-name"`,
+		`data-testid="blueprint-conflict-def-table-Widget-name"`,
+		`data-testid="blueprint-conflict-def-row-Widget-name-description"`,
+		"Current value",
+		"Incoming value",
+		"1 unchanged key",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("table render missing %q", want)
+		}
+	}
+}
+
+// TestBlueprintPropertyConflictRowRendersLargeIntegerExactly verifies a diff
+// above 2^53 reaches the rendered cell with every digit intact (no float64
+// rounding) and is rendered as a change.
+func TestBlueprintPropertyConflictRowRendersLargeIntegerExactly(t *testing.T) {
+	var buf bytes.Buffer
+	err := blueprintPropertyConflictRow("Widget", BlueprintPropertyConflict{
+		Property:    "maxValue",
+		ExistingDef: json.RawMessage(`{"maxValue":9007199254740993}`),
+		IncomingDef: json.RawMessage(`{"maxValue":9007199254740992}`),
+		Resolution:  "existing_wins",
+	}).Render(context.Background(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := buf.String()
+	for _, want := range []string{
+		`data-testid="blueprint-conflict-def-row-Widget-maxValue-maxValue"`,
+		"9007199254740993",
+		"9007199254740992",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("large-integer diff render missing %q: %s", want, body)
+		}
+	}
+}
+
+// TestBlueprintPropertyConflictRowFallsBackToRaw verifies a non-object
+// definition keeps the original side-by-side raw dump (nothing is silently
+// dropped) and emits no diff table.
+func TestBlueprintPropertyConflictRowFallsBackToRaw(t *testing.T) {
+	var buf bytes.Buffer
+	err := blueprintPropertyConflictRow("Widget", BlueprintPropertyConflict{
+		Property:    "name",
+		ExistingDef: json.RawMessage(`{"type":"string"}`),
+		IncomingDef: json.RawMessage(`["not","an","object"]`),
+		Resolution:  "existing_wins",
+	}).Render(context.Background(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := buf.String()
+	if strings.Contains(body, "blueprint-conflict-def-table-Widget-name") {
+		t.Errorf("fallback must not render the diff table: %s", body)
+	}
+	if strings.Count(body, "<pre") != 2 {
+		t.Errorf("fallback must keep both raw dumps, got %d <pre> blocks: %s", strings.Count(body, "<pre"), body)
+	}
+	for _, want := range []string{"Your project", "Incoming (ignored)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fallback render missing %q", want)
+		}
 	}
 }

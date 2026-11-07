@@ -110,6 +110,42 @@ Relationships are **directed**: `src → dst`. Use `type` to describe the semant
 
 ---
 
+## Bulk creating objects and relationships
+
+For more than a handful of objects, use the batch commands instead of one API
+call per node:
+
+```bash
+# Objects only: a JSON array of {type, name, description, properties}
+memory graph objects create-batch --file objects.json
+
+# Objects + relationships: a subgraph with _ref/src_ref/dst_ref placeholders
+memory graph objects create-batch --file subgraph.json
+
+# Relationships only: a JSON array of {type, from, to}
+memory graph relationships create-batch --file relationships.json
+```
+
+Both commands accept `--branch <name-or-uuid>` to write into a graph branch
+instead of the main graph. Objects are chunked to the server's per-call limit
+(500 for a subgraph, 100 per bulk item), and each row reports its own error
+instead of failing the whole batch.
+
+`create-batch` on objects also reads the JSONL seed layout written by
+`memory blueprints dump` — pass the dump root, a `seed/` directory, or a single
+`.jsonl` file. Records are upserted by `key` and relationship `srcKey`/`dstKey`
+endpoints are resolved after the objects are written, so dump → edit → import
+into a branch is a complete migration loop:
+
+```bash
+memory blueprints dump ./migration
+memory graph objects create-batch --file ./migration --branch migration-review
+```
+
+See [Branches § Bulk importing a dump into a branch](branches.md#bulk-importing-a-dump-into-a-branch).
+
+---
+
 ## Updating Objects
 
 ```http

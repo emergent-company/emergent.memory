@@ -108,6 +108,10 @@ func (r *Repository) FindOAuthByServerIDs(ctx context.Context, projectID string,
 // UpsertOAuth inserts or updates the OAuth row for a server and user. Callers
 // pass the full desired state (including UserID, nil for the shared row);
 // created_at is preserved on update.
+//
+// requested_scope is deliberately NOT copied here: it is operator configuration
+// owned by UpsertOAuthClient, and StartMCPOAuth's upsert must not overwrite it
+// with the in-memory row it just read.
 func (r *Repository) UpsertOAuth(ctx context.Context, row *MCPServerOAuth) error {
 	if row == nil || row.ServerID == "" {
 		return fmt.Errorf("oauth row requires a server id")
@@ -136,15 +140,17 @@ func (r *Repository) UpsertOAuth(ctx context.Context, row *MCPServerOAuth) error
 
 // UpdateOAuthTokens persists a refreshed/new token set for a server and user
 // without touching the registered client identity or the discovered endpoints.
+// scope is the granted scope set for the new token: an empty value clears the
+// stored grant, because a re-issued token must never be reported with the
+// previous token's scopes. Refresh callers that received no scope keep the
+// existing grant by passing it explicitly (RFC 6749 §6).
 func (r *Repository) UpdateOAuthTokens(ctx context.Context, serverID, userID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
 	q := r.db.NewUpdate().
 		Model((*MCPServerOAuth)(nil)).
 		Set("access_token = ?", access).
 		Set("refresh_token = ?", refresh).
+		Set("scope = ?", scope).
 		Set("updated_at = now()")
-	if scope != "" {
-		q = q.Set("scope = ?", scope)
-	}
 	if expiresAt != nil {
 		q = q.Set("expires_at = ?", expiresAt)
 	}
@@ -170,28 +176,32 @@ func (r *Repository) DeleteOAuthByServerID(ctx context.Context, serverID, userID
 }
 
 // UpsertOAuthClient stores a pre-registered OAuth client identity for a server
-// and user (the shared row when userID is empty) and clears any token set,
-// because tokens issued to a previous client are invalid. Discovered endpoints
-// (authorization_server, token_endpoint, registration_endpoint, resource,
-// scope) are left untouched when the row already exists; a new row starts with
-// their defaults and is filled in by the next authorize. clientSecret may be nil
-// for a public client.
-func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, userID, clientID string, clientSecret *EncryptedSecret) error {
+// and user (the shared row when userID is empty) and clears any token set and
+// its granted scope, because tokens issued to a previous client are invalid.
+// Discovered endpoints (authorization_server, token_endpoint,
+// registration_endpoint, resource, scope) are left untouched when the row
+// already exists; a new row starts with their defaults and is filled in by the
+// next authorize. requestedScope is the operator's requested scope set (may be
+// empty: request no scope). clientSecret may be nil for a public client.
+func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, userID, clientID string, clientSecret *EncryptedSecret, requestedScope string) error {
 	if serverID == "" {
 		return fmt.Errorf("oauth row requires a server id")
 	}
 	uid := userIDOrNil(userID)
 	_, err := r.db.NewInsert().
 		Model(&MCPServerOAuth{
-			ServerID:     serverID,
-			UserID:       uid,
-			ProjectID:    projectID,
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
+			ServerID:       serverID,
+			UserID:         uid,
+			ProjectID:      projectID,
+			ClientID:       clientID,
+			ClientSecret:   clientSecret,
+			RequestedScope: requestedScope,
 		}).
 		On(oauthConflictTarget(uid)).
 		Set("client_id = EXCLUDED.client_id").
 		Set("client_secret = EXCLUDED.client_secret").
+		Set("requested_scope = EXCLUDED.requested_scope").
+		Set("scope = ?", "").
 		Set("access_token = ?", nil).
 		Set("refresh_token = ?", nil).
 		Set("expires_at = ?", nil).
@@ -203,6 +213,51 @@ func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID,
 	return nil
 }
 
+// UpsertOAuthRequestedScope stores the operator's requested scope set for a
+// server and user, creating a configuration-only row when none exists and
+// leaving any stored client identity untouched. A blank userID targets the
+// shared row. An empty requestedScope clears the stored set. When clearTokens
+// is true the row's token set and granted scope are removed in the same
+// transaction, so a scope change can never commit while the token it
+// invalidates survives.
+func (r *Repository) UpsertOAuthRequestedScope(ctx context.Context, serverID, projectID, userID, requestedScope string, clearTokens bool) error {
+	if serverID == "" {
+		return fmt.Errorf("oauth row requires a server id")
+	}
+	uid := userIDOrNil(userID)
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().
+			Model(&MCPServerOAuth{
+				ServerID:       serverID,
+				ProjectID:      projectID,
+				UserID:         uid,
+				RequestedScope: requestedScope,
+			}).
+			On(oauthConflictTarget(uid)).
+			Set("requested_scope = EXCLUDED.requested_scope").
+			Set("updated_at = now()").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("upserting mcp server oauth requested scope: %w", err)
+		}
+		if !clearTokens {
+			return nil
+		}
+		if _, err := tx.NewUpdate().
+			Model((*MCPServerOAuth)(nil)).
+			Set("scope = ?", "").
+			Set("access_token = ?", nil).
+			Set("refresh_token = ?", nil).
+			Set("expires_at = ?", nil).
+			Set("updated_at = now()").
+			Where("server_id = ?", serverID).
+			Where("user_id IS NOT DISTINCT FROM ?", uid).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("clearing mcp server oauth tokens: %w", err)
+		}
+		return nil
+	})
+}
+
 // ClearOAuthClient clears a server's stored client identity and token set for a
 // server and user (the shared row when userID is empty), leaving the discovered
 // endpoints in place. It is a no-op when no row exists.
@@ -211,6 +266,7 @@ func (r *Repository) ClearOAuthClient(ctx context.Context, serverID, userID stri
 		Model((*MCPServerOAuth)(nil)).
 		Set("client_id = ?", "").
 		Set("client_secret = ?", nil).
+		Set("scope = ?", "").
 		Set("access_token = ?", nil).
 		Set("refresh_token = ?", nil).
 		Set("expires_at = ?", nil).

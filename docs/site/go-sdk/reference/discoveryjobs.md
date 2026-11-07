@@ -97,7 +97,9 @@ type StartDiscoveryRequest struct {
     DocumentIDs          []string `json:"document_ids"`
     BatchSize            int      `json:"batch_size,omitempty"`
     MinConfidence        float32  `json:"min_confidence,omitempty"`
-    IncludeRelationships bool     `json:"include_relationships,omitempty"`
+    // Optional. Omitted means true: discovery also proposes relationship
+    // types. Send false explicitly to skip that phase.
+    IncludeRelationships *bool    `json:"include_relationships,omitempty"`
     MaxIterations        int      `json:"max_iterations,omitempty"`
 }
 ```

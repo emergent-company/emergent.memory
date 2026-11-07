@@ -409,6 +409,158 @@ func TestNormalizeInferredSchema_HybridWrapperWithoutPropertiesMap(t *testing.T)
 	}
 }
 
+func TestNormalizeInferredSchema_UnwrapsRowArray(t *testing.T) {
+	// A table is sometimes described as an array of row objects. The row's
+	// columns are the fields; `type` and `items` are wrapper keywords (#234).
+	schema := map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"Date":  map[string]any{"type": "string"},
+				"Guest": map[string]any{"type": "string"},
+			},
+			"required": []any{"Date"},
+		},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["Date"] == nil || props["Guest"] == nil {
+		t.Fatalf("row columns missing: %#v", props)
+	}
+	for _, leaked := range []string{"type", "items", "properties", "required"} {
+		if _, present := props[leaked]; present {
+			t.Errorf("schema keyword %q leaked into properties: %#v", leaked, props)
+		}
+	}
+	if len(required) != 1 || required[0] != "Date" {
+		t.Errorf("required = %v, want [Date]", required)
+	}
+}
+
+func TestNormalizeInferredSchema_BarePropertiesWrapper(t *testing.T) {
+	// No `type` and no `required`: only a `properties` map whose values are all
+	// descriptors. That is a wrapper, not a single property named "properties".
+	schema := map[string]any{
+		"properties": map[string]any{
+			"Date":  map[string]any{"type": "string"},
+			"Guest": map[string]any{"type": "string"},
+		},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["Date"] == nil || props["Guest"] == nil {
+		t.Fatalf("columns missing: %#v", props)
+	}
+	if _, present := props["properties"]; present {
+		t.Errorf("wrapper key leaked: %#v", props)
+	}
+	if len(required) != 0 {
+		t.Errorf("required = %v, want empty", required)
+	}
+}
+
+func TestNormalizeInferredSchema_KeepsLonePropertyNamedProperties(t *testing.T) {
+	// The converse of the case above: a flat map with a genuine property named
+	// "properties" holds a descriptor, not a map of descriptors, so it must
+	// survive.
+	schema := map[string]any{
+		"properties": map[string]any{"type": "string"},
+	}
+
+	props, _ := normalizeInferredSchema(schema)
+	if props["properties"] == nil {
+		t.Fatalf("property named \"properties\" was lost: %#v", props)
+	}
+}
+
+func TestNormalizeInferredSchema_EmptyRequiredArrayStillMarksWrapper(t *testing.T) {
+	// An empty `required` array is still the keyword: it must not stop a
+	// `properties` wrapper from unwrapping, or the columns leak as junk
+	// properties named after the wrapper keys (#258 review).
+	schema := map[string]any{
+		"properties": map[string]any{
+			"title": map[string]any{"type": "string"},
+		},
+		"required": []any{},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["title"] == nil {
+		t.Fatalf("columns missing: %#v", props)
+	}
+	if _, present := props["properties"]; present {
+		t.Errorf("wrapper key leaked: %#v", props)
+	}
+	if _, present := props["required"]; present {
+		t.Errorf("wrapper key leaked: %#v", props)
+	}
+	if len(required) != 0 {
+		t.Errorf("required = %v, want empty", required)
+	}
+}
+
+func TestNormalizeInferredSchema_KeepsPropertyNamedType(t *testing.T) {
+	// A wrapper that lists `required` while keeping properties at the top
+	// level must strip `type` only when its value is the keyword's shape
+	// ("object"), not when it is a genuine property descriptor named "type".
+	schema := map[string]any{
+		"type":     map[string]any{"type": "string"},
+		"title":    map[string]any{"type": "string"},
+		"required": []any{"title"},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["type"] == nil {
+		t.Fatalf("property named %q was lost: %#v", "type", props)
+	}
+	if _, present := props["required"]; present {
+		t.Errorf("schema keyword 'required' leaked into properties: %#v", props)
+	}
+	if len(required) != 1 || required[0] != "title" {
+		t.Errorf("required = %v, want [title]", required)
+	}
+}
+
+func TestNormalizeInferredSchema_KeepsPropertyNamedRequiredWithStringValue(t *testing.T) {
+	// {"required": "yes"} is a property named "required", not a required list:
+	// the string is not a list of properties the schema defines.
+	schema := map[string]any{
+		"required": "yes",
+		"title":    map[string]any{"type": "string"},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["required"] != "yes" {
+		t.Errorf("property named %q was lost: %#v", "required", props)
+	}
+	if len(required) != 0 {
+		t.Errorf("required = %v, want empty", required)
+	}
+}
+
+func TestNormalizeInferredSchema_CommaStringRequiredStillReadAsList(t *testing.T) {
+	// A comma-separated string whose names are properties of the schema is
+	// still the keyword list.
+	schema := map[string]any{
+		"type":     "object",
+		"title":    map[string]any{"type": "string"},
+		"guest":    map[string]any{"type": "string"},
+		"required": "title, guest",
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if props["title"] == nil || props["guest"] == nil {
+		t.Fatalf("properties = %#v, want title and guest", props)
+	}
+	if _, present := props["required"]; present {
+		t.Errorf("schema keyword 'required' leaked into properties: %#v", props)
+	}
+	if len(required) != 2 || required[0] != "title" || required[1] != "guest" {
+		t.Errorf("required = %v, want [title guest]", required)
+	}
+}
+
 func TestPropertyNames_DropsNonStrings(t *testing.T) {
 	names := propertyNames([]any{"title", 42, "", "guest"})
 	if len(names) != 2 || names[0] != "title" || names[1] != "guest" {
@@ -457,13 +609,58 @@ func TestMergeTypeSchemas_UnionsRequiredAndDropsDepartedProperties(t *testing.T)
 		t.Errorf("properties = %#v, want title/guest/date", merged.Properties)
 	}
 	// Union of the candidates' lists, de-duplicated, minus anything the merged
-	// schema cannot offer ("absent").
-	want := []string{"title", "date"}
+	// schema cannot offer ("absent"), sorted so the rendered prompt is stable.
+	want := []string{"date", "title"}
 	if len(merged.RequiredProperties) != len(want) {
 		t.Fatalf("required = %v, want %v", merged.RequiredProperties, want)
 	}
-	if merged.RequiredProperties[0] != "title" || merged.RequiredProperties[1] != "date" {
-		t.Errorf("required = %v, want %v", merged.RequiredProperties, want)
+	for i := range want {
+		if merged.RequiredProperties[i] != want[i] {
+			t.Fatalf("required = %v, want %v", merged.RequiredProperties, want)
+		}
+	}
+}
+
+func TestMergeTypeSchemas_RequiredOrderIsDeterministic(t *testing.T) {
+	// Equal-confidence candidates make the union order depend on slice order;
+	// the merged list is rendered into the extraction prompt, so it must be
+	// sorted to keep the prompt reproducible.
+	svc := testService()
+	props := func(names ...string) map[string]any {
+		out := make(map[string]any, len(names))
+		for _, name := range names {
+			out[name] = map[string]any{"type": "string"}
+		}
+		return out
+	}
+	candidates := func() []*DiscoveryTypeCandidate {
+		return []*DiscoveryTypeCandidate{
+			{
+				TypeName:           "Episode",
+				Confidence:         0.8,
+				InferredSchema:     JSONMap(props("title", "alpha", "zebra", "mango")),
+				RequiredProperties: JSONArray{"zebra", "alpha"},
+			},
+			{
+				TypeName:           "Episode",
+				Confidence:         0.8,
+				InferredSchema:     JSONMap(props("title", "alpha", "zebra", "mango")),
+				RequiredProperties: JSONArray{"title", "alpha", "mango"},
+			},
+		}
+	}
+
+	want := []string{"alpha", "mango", "title", "zebra"}
+	for i := 0; i < 20; i++ {
+		got := svc.mergeTypeSchemas(candidates()).RequiredProperties
+		if len(got) != len(want) {
+			t.Fatalf("run %d: required = %v, want %v", i, got, want)
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("run %d: required = %v, want %v", i, got, want)
+			}
+		}
 	}
 }
 

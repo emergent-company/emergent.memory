@@ -91,13 +91,6 @@ type ShareAgentPageProps struct {
 
 	// ComposerPlaceholder overrides the composer hint.
 	ComposerPlaceholder string
-
-	// Sentry config mirrors appShell/loginPage; zero values disable reporting.
-	SentryDSN                     string
-	SentryEnvironment             string
-	SentryTracesSampleRate        float64
-	SentryReplaySessionSampleRate float64
-	SentryReplayOnErrorSampleRate float64
 }
 
 // ShareAgentPage renders the whole public share document.
@@ -212,16 +205,9 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			}
 			</style>
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
-			<!-- Sentry sits after the stylesheet, as in the app shell: the SDK is
-			     deferred today (see sentry_head.templ), so position blocks
-			     nothing — this keeps it behind app.css even if that regresses. -->
-			@sentryHead(sentryHeadOpts{
-				DSN:                     props.SentryDSN,
-				Environment:             props.SentryEnvironment,
-				TracesSampleRate:        props.SentryTracesSampleRate,
-				ReplaySessionSampleRate: props.SentryReplaySessionSampleRate,
-				ReplayOnErrorSampleRate: props.SentryReplayOnErrorSampleRate,
-			})
+			<!-- No Sentry here, deliberately: the public share page is served
+			     under the strict CSP in shareSecurityHeaders, which disallows
+			     third-party scripts. See issue #219. -->
 		</head>
 		<body class="bg-base-200">
 			if props.State != ShareStateReady {

@@ -52,7 +52,7 @@ var createAgentCmd = &cobra.Command{
 
 Examples:
   memory agents create --name "my-agent" --project <id>
-  memory agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
+  memory agents create --name "cron-agent" --trigger-type schedule --cron "0 2 * * *"
   memory agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document`,
 	RunE: runCreateAgent,
 }
@@ -1043,7 +1043,7 @@ func init() {
 	createAgentCmd.Flags().StringVar(&agentName, "name", "", "Agent name (required)")
 	createAgentCmd.Flags().StringVar(&agentStrategyType, "strategy-type", "", "Strategy type (e.g., graph_object_processor)")
 	createAgentCmd.Flags().StringVar(&agentPrompt, "prompt", "", "Agent prompt")
-	createAgentCmd.Flags().StringVar(&agentCronSchedule, "cron", "", "Cron schedule (e.g., '0 */5 * * * *')")
+	createAgentCmd.Flags().StringVar(&agentCronSchedule, "cron", "", "Cron schedule (standard 5-field, e.g. '0 2 * * *')")
 	createAgentCmd.Flags().StringVar(&agentEnabled, "enabled", "", "Enable agent (true/false)")
 	createAgentCmd.Flags().StringVar(&agentTriggerType, "trigger-type", "", "Trigger type (manual, schedule, reaction, webhook)")
 	createAgentCmd.Flags().StringVar(&agentExecutionMode, "execution-mode", "", "Execution mode")

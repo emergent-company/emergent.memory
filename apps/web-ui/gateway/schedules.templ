@@ -373,39 +373,63 @@ templ scheduleDeleteDialog(a *ScheduledAgent) {
 // --- New schedule ---
 
 // SchedulesNewPage renders the create form for a new schedule: a
-// breadcrumb/title header, an optional error toast, and the create form.
-templ SchedulesNewPage(defs []AgentDefinitionSummary, flashErr error) {
+// breadcrumb/title header and the create form. draft carries the submitted
+// values and error after a rejected save, so the form re-renders exactly what
+// the user typed instead of blanking (issue #239).
+templ SchedulesNewPage(defs []AgentDefinitionSummary, draft *scheduleDraft) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schedules", "/schedules", "New schedule")), "", "New schedule", "A name, a prompt, and a cron expression — the linked agent definition supplies the model and tools.")
-		if flashErr != nil {
-			@flashToast("error", flashErr.Error())
-		}
-		@scheduleCreateForm(defs)
+		@scheduleCreateForm(defs, draft)
 	}
 }
 
-// scheduleCreateForm is the create form (PRG → POST /schedules).
-templ scheduleCreateForm(defs []AgentDefinitionSummary) {
+// scheduleCreateForm is the create form (PRG → POST /schedules). When draft is
+// non-nil the fields are prefilled from the prior (rejected) submission and the
+// error is shown inline.
+templ scheduleCreateForm(defs []AgentDefinitionSummary, draft *scheduleDraft) {
+	{{
+		name := ""
+		prompt := ""
+		cron := ""
+		defID := ""
+		enabled := true
+		errMsg := ""
+		if draft != nil {
+			name = draft.Name
+			prompt = draft.Prompt
+			cron = draft.CronSchedule
+			defID = draft.AgentDefinitionID
+			enabled = draft.Enabled
+			errMsg = draft.Error
+		}
+		var defRef *string
+		if defID != "" {
+			defRef = &defID
+		}
+	}}
 	@ui.Section("Schedule", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
+		if errMsg != "" {
+			<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium" role="alert">{ errMsg }</p>
+		}
 		<form class="flex flex-col gap-4" method="post" action="/schedules">
 			@form.FormControl("sched-name", "Name", form.LabelAbove, "", "", nil) {
-				<input id="sched-name" name="name" type="text" required placeholder="e.g. Daily briefing" class="input w-full"/>
+				<input id="sched-name" name="name" type="text" required value={ name } placeholder="e.g. Daily briefing" class="input w-full"/>
 			}
 			@form.FormControl("sched-prompt", "Prompt", form.LabelAbove, "The instructions each run executes. Empty uses the definition's system prompt.", "", nil) {
-				<textarea id="sched-prompt" name="prompt" rows="4" placeholder="Summarize yesterday's notes and surface anything that needs my attention…" class="textarea w-full resize-none"></textarea>
+				<textarea id="sched-prompt" name="prompt" rows="4" placeholder="Summarize yesterday's notes and surface anything that needs my attention…" class="textarea w-full resize-none">{ prompt }</textarea>
 			}
 			@form.FormControl("sched-cron", "Cron schedule", form.LabelAbove, "5-field cron (min hour dom mon dow), e.g. 0 8 * * * for 08:00 daily. Runs more often than every 15 minutes are rejected.", "", nil) {
-				<input id="sched-cron" name="cronSchedule" type="text" required placeholder="0 8 * * *" class="input w-full font-mono"/>
+				<input id="sched-cron" name="cronSchedule" type="text" required value={ cron } placeholder="0 8 * * *" class="input w-full font-mono"/>
 			}
 			@form.FormControl("sched-def", "Agent definition", form.LabelAbove, "The agent that powers each run — its model, system prompt, and tools.", "", nil) {
-				@scheduleDefinitionSelect("sched-def", defs, nil)
+				@scheduleDefinitionSelect("sched-def", defs, defRef)
 			}
 			<label class="label flex w-full justify-between gap-3">
 				<span class="text-sm font-medium">Enabled on creation</span>
-				<input id="sched-enabled" name="enabled" type="checkbox" checked class="checkbox"/>
+				<input id="sched-enabled" name="enabled" type="checkbox" if enabled { checked } class="checkbox"/>
 			</label>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{

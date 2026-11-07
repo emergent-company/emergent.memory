@@ -33,8 +33,8 @@ func TestResolveInstructionProjectInfoOptIn(t *testing.T) {
 		if strings.Contains(got, knowledgeBaseContextHeading) {
 			t.Fatalf("resolveInstruction() injected project context without opt-in: %q", got)
 		}
-		if got != base {
-			t.Fatalf("resolveInstruction() = %q, want exactly %q", got, base)
+		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil); got != want {
+			t.Fatalf("resolveInstruction() = %q, want exactly %q", got, want)
 		}
 	})
 
@@ -68,7 +68,7 @@ func TestResolveInstructionProjectInfoOptIn(t *testing.T) {
 		if !strings.Contains(got, projectInfo) {
 			t.Fatalf("resolveInstruction() = %q, want it to contain the project info %q", got, projectInfo)
 		}
-		want := base + "\n\n" + knowledgeBaseContextBlock(projectInfo)
+		want := base + "\n\n" + knowledgeBaseContextBlock(projectInfo) + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil)
 		if got != want {
 			t.Fatalf("resolveInstruction() = %q, want %q", got, want)
 		}
@@ -82,8 +82,8 @@ func TestResolveInstructionProjectInfoOptIn(t *testing.T) {
 				Config:       map[string]any{includeProjectInfoConfigKey: true},
 			},
 		}
-		if got := ae.resolveInstruction(req); got != base {
-			t.Fatalf("resolveInstruction() = %q, want %q (nothing to inject)", got, base)
+		if got, want := ae.resolveInstruction(req), base+"\n\n"+capabilityDisclosureInstruction(req.AgentDefinition, nil); got != want {
+			t.Fatalf("resolveInstruction() = %q, want %q (nothing to inject)", got, want)
 		}
 	})
 

@@ -73,6 +73,21 @@ func TestMCPOAuthError_ClientRequiredRegistrationUnavailable(t *testing.T) {
 	require.NotContains(t, string(blob), "internal_error")
 }
 
+// TestMCPOAuthError_ClientConfigIncompleteMapsToBadRequest covers the
+// scope-configuration guards: an empty submission with no row to clear and a
+// secret sent without a client id are both actionable 400s, not 500s.
+func TestMCPOAuthError_ClientConfigIncompleteMapsToBadRequest(t *testing.T) {
+	for _, err := range []error{ErrOAuthClientIDRequired, ErrOAuthClientSecretRequiresClientID, ErrOAuthSharedConnection} {
+		mapped := mcpOAuthError(err)
+		status, body := apperror.ToHTTPError(mapped)
+		require.Equal(t, http.StatusBadRequest, status)
+
+		blob, err := json.Marshal(body)
+		require.NoError(t, err)
+		require.NotContains(t, string(blob), "internal_error")
+	}
+}
+
 // TestMCPOAuthError_MetadataUnavailableMapsToValidation covers the provider that
 // publishes no discoverable OAuth metadata: it must surface as an actionable 422
 // naming the token-header remedy, never an opaque 500 or a 503.

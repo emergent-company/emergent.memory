@@ -142,6 +142,7 @@ type DeleteResponse struct {
 
 // DeleteSummary contains counts of related entities deleted.
 type DeleteSummary struct {
+	Branches           int `json:"branches"`
 	Chunks             int `json:"chunks"`
 	ExtractionJobs     int `json:"extractionJobs"`
 	GraphObjects       int `json:"graphObjects"`
@@ -174,6 +175,7 @@ type DocumentInfo struct {
 
 // ImpactSummary contains counts of entities that will be deleted.
 type ImpactSummary struct {
+	Branches           int `json:"branches"`
 	Chunks             int `json:"chunks"`
 	ExtractionJobs     int `json:"extractionJobs"`
 	GraphObjects       int `json:"graphObjects"`

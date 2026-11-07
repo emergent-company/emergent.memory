@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -107,11 +108,62 @@ type Service struct {
 	// accessStamp debounces last_accessed_at writes (issue #1070).
 	accessStamp *accessStampDebouncer
 
+	// minVectorSimilarity is the cosine-similarity floor for the vector leg of
+	// object search. Below it a candidate is dropped, so a nonsense query with no
+	// lexical match returns nothing instead of weak, confident-looking noise
+	// (#244). 0 disables the floor.
+	minVectorSimilarity float32
+
 	// Metrics
 	metricsMu          sync.RWMutex
 	validationSuccess  int64
 	validationErrors   int64
 	validationDuration time.Duration
+}
+
+// envFloatDefault reads a float32 env var, returning def on empty/parse error.
+func envFloatDefault(key string, def float32) float32 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			return float32(f)
+		}
+	}
+	return def
+}
+
+// resolveMaxDistance returns the max-distance to apply to a vector search. An
+// explicit caller value always wins; otherwise the similarity floor, when
+// enabled, is translated to its distance form (1 - floor); otherwise nil (no
+// bound).
+func resolveMaxDistance(explicit *float32, minSimilarity float32) *float32 {
+	if explicit != nil {
+		return explicit
+	}
+	if minSimilarity > 0 {
+		d := 1.0 - minSimilarity
+		return &d
+	}
+	return nil
+}
+
+// aboveSimilarityFloor reports whether a vector result's cosine similarity meets
+// the configured floor. A floor <= 0 disables the check (no floor).
+func aboveSimilarityFloor(distance, floor float32) bool {
+	return floor <= 0 || (1.0-distance) >= floor
+}
+
+// fusedLess reports whether a fused candidate with the given attributes should
+// sort before another: a lexical term match first (a result that actually
+// contains the query term outranks one the vector leg matched on similarity
+// alone), then higher fused score, then ascending id.
+func fusedLess(aHasLexical, bHasLexical bool, aScore, bScore float32, aID, bID uuid.UUID) bool {
+	if aHasLexical != bHasLexical {
+		return aHasLexical
+	}
+	if aScore != bScore {
+		return aScore > bScore
+	}
+	return slices.Compare(aID[:], bID[:]) < 0
 }
 
 // NewService creates a new graph service.
@@ -133,6 +185,7 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		bulkUpdateMaxItems:    100,
 		bulkUpdateMaxDuration: 60 * time.Second,
 		accessStamp:           newAccessStampDebouncer(),
+		minVectorSimilarity:   envFloatDefault("SEARCH_MIN_VECTOR_SIMILARITY", 0.5),
 	}
 }
 
@@ -2543,6 +2596,46 @@ func (s *Service) maybeCreateInverse(
 	return inverseRel.ToResponse(), inverseRel.ID.String()
 }
 
+// relationshipSchemaForEdge resolves the property schema that applies to an
+// existing relationship from the project's registry, using the edge's own
+// (name, source type, target type) identity — the same lookup the create path
+// performs. The endpoint types come from the live source/destination objects.
+//
+// A project may declare `owns` Person→Vehicle (share_percent) in one pack and
+// `owns` Person→Account (holder_role) in another, so a patch must validate
+// against the schema for its endpoints rather than the name-wide default,
+// which is merely the newest install's first declaration for the name (#361,
+// follow-up to #322/#357).
+//
+// A dangling edge (an endpoint that no longer resolves) falls back to the
+// name-wide default instead of failing the patch, which is the pre-#361
+// behaviour.
+func (s *Service) relationshipSchemaForEdge(ctx context.Context, projectID uuid.UUID, rel *GraphRelationship, schemas *ExtractionSchemas) (agents.RelationshipSchema, bool) {
+	if schemas == nil || schemas.RelationshipSchemas == nil {
+		return agents.RelationshipSchema{}, false
+	}
+
+	srcType, dstType := "", ""
+	if src, err := s.repo.GetObjectIdentity(ctx, projectID, rel.SrcID); err != nil {
+		s.log.Warn("failed to resolve relationship source for patch validation, using the name-wide schema default",
+			slog.String("relationship_id", rel.ID.String()),
+			slog.String("project_id", projectID.String()),
+			slog.String("error", err.Error()))
+	} else {
+		srcType = src.Type
+	}
+	if dst, err := s.repo.GetObjectIdentity(ctx, projectID, rel.DstID); err != nil {
+		s.log.Warn("failed to resolve relationship destination for patch validation, using the name-wide schema default",
+			slog.String("relationship_id", rel.ID.String()),
+			slog.String("project_id", projectID.String()),
+			slog.String("error", err.Error()))
+	} else {
+		dstType = dst.Type
+	}
+
+	return relationshipSchemaFor(schemas.RelationshipSchemas, rel.Type, srcType, dstType)
+}
+
 // PatchRelationship updates a relationship by creating a new version.
 func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
@@ -2609,27 +2702,26 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		return nil, apperror.ErrBadRequest.WithMessage("cannot_patch_non_head_version")
 	}
 
-	// Validate patch delta properties against schema (soft-fail on schema load error).
-	// Required fields are enforced against the merged result (existing properties +
-	// patch delta), so a patch can neither clear nor omit a required property.
-	if schemas != nil {
-		if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
-			objSchema := agents.ObjectSchema{
-				Properties: relSchema.Properties,
-				Required:   relSchema.Required,
+	// Validate patch delta properties against the schema for the edge's own
+	// endpoints (soft-fail on schema load error). Required fields are enforced
+	// against the merged result (existing properties + patch delta), so a patch
+	// can neither clear nor omit a required property.
+	if relSchema, ok := s.relationshipSchemaForEdge(ctx, projectID, current, schemas); ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
+		objSchema := agents.ObjectSchema{
+			Properties: relSchema.Properties,
+			Required:   relSchema.Required,
+		}
+		patchDelta := make(map[string]any)
+		for k, v := range req.Properties {
+			if v != nil {
+				patchDelta[k] = v
 			}
-			patchDelta := make(map[string]any)
-			for k, v := range req.Properties {
-				if v != nil {
-					patchDelta[k] = v
-				}
-			}
-			if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
-				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
-			} else {
-				for k, v := range validatedDelta {
-					newProps[k] = v
-				}
+		}
+		if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+		} else {
+			for k, v := range validatedDelta {
+				newProps[k] = v
 			}
 		}
 	}
@@ -2911,6 +3003,10 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 		limit = 200
 	}
 
+	// Relevance floor: when the caller did not set an explicit max distance,
+	// apply the similarity floor so a weak semantic match is not surfaced (#244).
+	maxDistance := resolveMaxDistance(req.MaxDistance, s.minVectorSimilarity)
+
 	params := VectorSearchParams{
 		ProjectID:      projectID,
 		Vector:         req.Vector,
@@ -2919,7 +3015,7 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 		Labels:         req.Labels,
 		Status:         req.Status,
 		IncludeDeleted: req.IncludeDeleted,
-		MaxDistance:    req.MaxDistance,
+		MaxDistance:    maxDistance,
 		Limit:          limit + 1, // Fetch one extra to determine hasMore
 		Offset:         req.Offset,
 	}
@@ -3138,6 +3234,10 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 			return nil, err
 		}
 		for _, r := range vecResults {
+			// Relevance floor on the semantic leg (#244).
+			if !aboveSimilarityFloor(r.Distance, s.minVectorSimilarity) {
+				continue
+			}
 			vectorResults[r.Object.ID] = r
 		}
 	}
@@ -3260,13 +3360,21 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		})
 	}
 
-	// Sort by fused score descending; equal scores break by ascending id so the
-	// order is total and reproducible regardless of upstream map iteration order.
+	// Sort: an object that matched the query lexically (contains the term)
+	// outranks one the vector leg matched on similarity alone, then by fused
+	// score descending. This keeps an object that actually contains the query
+	// term above one it merely resembles (#244). Equal scores break by ascending
+	// id so the order is total and reproducible regardless of upstream map
+	// iteration order.
 	sort.Slice(fusedResults, func(i, j int) bool {
-		if fusedResults[i].fusedScore != fusedResults[j].fusedScore {
-			return fusedResults[i].fusedScore > fusedResults[j].fusedScore
-		}
-		return slices.Compare(fusedResults[i].id[:], fusedResults[j].id[:]) < 0
+		return fusedLess(
+			fusedResults[i].lexicalScore != nil,
+			fusedResults[j].lexicalScore != nil,
+			fusedResults[i].fusedScore,
+			fusedResults[j].fusedScore,
+			fusedResults[i].id,
+			fusedResults[j].id,
+		)
 	})
 
 	// Exclude operational object types from default search (P4.2).

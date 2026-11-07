@@ -1194,6 +1194,9 @@ type typeAction struct {
 	action         string // "install", "skip", "merge", "replace", or "restore"
 	conflict       *SchemaConflict
 	mergedSchema   json.RawMessage
+	// shadowed is set for a cross-pack "skip": the incoming pack's declaration
+	// shadows the registry owner in the last-wins read paths (#338).
+	shadowed *ShadowedType
 	// ownedSchemaIDs scopes a "restore" action to registry rows owned by one of
 	// these schema IDs, so types installed by unrelated packs are left alone.
 	ownedSchemaIDs []string
@@ -1295,6 +1298,7 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		SchemaName:       pack.Name,
 		InstalledTypes:   []string{},
 		SkippedTypes:     []string{},
+		ShadowedTypes:    []ShadowedType{},
 		MergedTypes:      []string{},
 		ReplacedTypes:    []string{},
 		Conflicts:        []SchemaConflict{},
@@ -1350,10 +1354,11 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		// stay deterministic if duplicates ever exist.
 		var existingRow struct {
 			JSONSchema json.RawMessage `bun:"json_schema"`
+			SchemaID   *string         `bun:"schema_id"`
 			SchemaName *string         `bun:"schema_name"`
 		}
 		scanErr := r.db.NewRaw(`
-			SELECT por.json_schema, gs.name AS schema_name
+			SELECT por.json_schema, por.schema_id, gs.name AS schema_name
 			FROM kb.project_object_schema_registry por
 			LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
 			WHERE por.project_id = ? AND por.type_name = ?
@@ -1410,11 +1415,28 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 				mergedSchema:   merged,
 			})
 		} else {
+			// Cross-pack skip without merge confirmation: the registry row keeps
+			// naming the old owner, but assigning this pack makes it the newest
+			// assignment, so the last-wins read paths resolve the type from the
+			// incoming declaration. Report that divergence instead of leaving the
+			// caller to notice it (#338).
+			shadowed := &ShadowedType{
+				TypeName:          typeName,
+				ShadowingPack:     pack.Name,
+				ShadowingSchemaID: pack.ID,
+			}
+			if existingRow.SchemaName != nil {
+				shadowed.RegistryOwnerPack = *existingRow.SchemaName
+			}
+			if existingRow.SchemaID != nil {
+				shadowed.RegistryOwnerSchemaID = *existingRow.SchemaID
+			}
 			actions = append(actions, typeAction{
 				name:           typeName,
 				incomingSchema: incomingSchema,
 				action:         "skip",
 				conflict:       &conflict,
+				shadowed:       shadowed,
 			})
 		}
 	}
@@ -1428,6 +1450,9 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			result.ReplacedTypes = append(result.ReplacedTypes, a.name)
 		case "skip":
 			result.SkippedTypes = append(result.SkippedTypes, a.name)
+			if a.shadowed != nil {
+				result.ShadowedTypes = append(result.ShadowedTypes, *a.shadowed)
+			}
 			result.Conflicts = append(result.Conflicts, *a.conflict)
 		case "merge":
 			result.MergedTypes = append(result.MergedTypes, a.name)

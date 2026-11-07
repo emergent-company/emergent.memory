@@ -920,6 +920,21 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 		}
 	}
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// A relationship version chain cannot span branches, so the patch targets the
+	// branch-local HEAD row.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+		relID, err = s.relationshipVersionOnBranch(ctx, projectUUID, relID, *branchID)
+		if err != nil {
+			return nil, fmt.Errorf("update relationship: %w", err)
+		}
+	}
+
 	req := &graph.PatchGraphRelationshipRequest{}
 
 	if props, ok := args["properties"].(map[string]any); ok {
@@ -961,13 +976,28 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("invalid relationship_id: %w", err)
 	}
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// The tombstone must be written on the branch's own version chain, so resolve
+	// the branch-local HEAD and scope the delete to that branch.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+		relID, err = s.relationshipVersionOnBranch(ctx, projectUUID, relID, *branchID)
+		if err != nil {
+			return nil, fmt.Errorf("delete relationship: %w", err)
+		}
+	}
+
 	// Optional reason
 	var reason *string
 	if r, ok := args["reason"].(string); ok && r != "" {
 		reason = &r
 	}
 
-	_, err = s.graphService.DeleteRelationship(ctx, projectUUID, relID, nil, reason, nil)
+	_, err = s.graphService.DeleteRelationship(ctx, projectUUID, relID, branchID, reason, nil)
 	if err != nil {
 		return nil, fmt.Errorf("delete relationship: %w", err)
 	}

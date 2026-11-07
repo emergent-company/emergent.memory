@@ -1149,15 +1149,23 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		span.SetStatus(codes.Error, llmErr.Error())
 		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(llmErr)))
 	} else {
-		// Persist assistant response
-		go func() {
-			// Use a background context since the request context may be cancelled
-			_, _ = h.svc.AddMessage(ctx, user.ProjectID, user.ID, conv.ID, AddMessageRequest{
-				Role:             RoleAssistant,
-				Content:          fullResponse.String(),
-				RetrievalContext: retrievalCtx,
-			})
-		}()
+		// Persist the assistant response synchronously, on the caller's DB
+		// handle. A fire-and-forget goroutine here shares that handle with the
+		// request goroutine, and the handle is not always a pool: under
+		// internal/testutil.BaseSuite it is the per-test transaction (one
+		// connection). Two statements racing on one connection make pgx's
+		// stdlib driver reset the shared result reader and the other
+		// statement's Rows.Next panics (issue #302).
+		if _, err := h.svc.AddMessage(ctx, user.ProjectID, user.ID, conv.ID, AddMessageRequest{
+			Role:             RoleAssistant,
+			Content:          fullResponse.String(),
+			RetrievalContext: retrievalCtx,
+		}); err != nil {
+			h.log.Warn("failed to persist assistant response",
+				slog.String("conversation_id", conv.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Emit done event
@@ -1695,6 +1703,16 @@ func agentRunMessageText(content map[string]any) string {
 
 // persistAssistantMessage stores an assistant turn in kb.chat_messages, tagged
 // with the run that produced it.
+//
+// The write is deliberately synchronous. It used to run in a fire-and-forget
+// goroutine, but that goroutine shares the handler's DB handle — and that handle
+// is not always a pool: under internal/testutil.BaseSuite it is the per-test
+// transaction, i.e. one connection. The handler issues its citation query
+// (FindToolCallsByRunID) immediately after this call, so a background writer
+// racing it on the same connection makes pgx's stdlib driver reset the shared
+// result reader; the citation query's Rows.Next then panics with
+// "index out of range [0] with length 0" (issue #302). One extra round trip to
+// make the turn durable before the stream reports done is the cheaper trade.
 func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID string, conv *Conversation, result *agents.ExecuteResult, text string) {
 	if text == "" {
 		return
@@ -1704,13 +1722,16 @@ func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID
 		rc, _ := json.Marshal(map[string]string{"agent_run_id": result.RunID})
 		retrievalCtx = rc
 	}
-	go func() {
-		_, _ = h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
-			Role:             RoleAssistant,
-			Content:          text,
-			RetrievalContext: retrievalCtx,
-		})
-	}()
+	if _, err := h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
+		Role:             RoleAssistant,
+		Content:          text,
+		RetrievalContext: retrievalCtx,
+	}); err != nil {
+		h.log.Warn("failed to persist assistant message",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // pauseSentinels are the synthetic texts the executor streams when it parks a
@@ -2047,6 +2068,33 @@ func withQueryBranchScope(ctx context.Context, req QueryStreamRequest) (context.
 	}
 }
 
+// shouldReuseToolSession reports whether a /query request is a stateless tool
+// call that must reuse one conversation instead of creating a row per call.
+//
+// It is deliberately false when the caller has an agent run context: an in-run
+// sub-chat keeps the #2266 parent-conversation linkage and its per-call row.
+// An explicit session_id also wins, and a request without a tool kind
+// (spawn_source) keeps the pre-existing per-call behaviour so generic /query
+// clients (e.g. the web UI's "Ask the graph") are unchanged.
+func shouldReuseToolSession(parentRunID, conversationID, spawnSource string) bool {
+	return parentRunID == "" && conversationID == "" && strings.TrimSpace(spawnSource) != ""
+}
+
+// toolSessionIdentity returns the stable caller identity used in a stateless
+// tool-session key. The resolved internal user id is the strongest identity and
+// is shared by every credential shape (human JWT, user-owned emt_* API key,
+// agent MCP endpoint key). An ownerless credential has no user id, so its API
+// token id keeps unrelated machine callers apart.
+func toolSessionIdentity(caller *auth.AuthUser) string {
+	if caller == nil {
+		return ""
+	}
+	if caller.ID != "" {
+		return caller.ID
+	}
+	return caller.APITokenID
+}
+
 // QueryStream handles POST /api/projects/:projectId/query.
 // It finds (or lazily creates) the project's graph-query-agent and streams the response
 // using the same agent chat path as /api/chat/stream. The agent is internal — it never
@@ -2161,48 +2209,60 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		}
 	}
 	if conv == nil {
-		title := message
-		if len(title) > 50 {
-			title = title[:50] + "..."
-		}
+		if shouldReuseToolSession(parentRunID, req.ConversationID, req.SpawnSource) {
+			// Stateless tool call (a direct MCP/API caller with no agent run
+			// context): one reused conversation per (project, caller identity,
+			// tool), not one per call. The in-run path below is untouched.
+			conv, _, err = h.svc.GetOrCreateToolSession(ctx, projectID, user.ID, toolSessionIdentity(user), req.SpawnSource, message)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return apperror.NewInternal("failed to resolve tool session", err)
+			}
+		} else {
+			title := message
+			if len(title) > 50 {
+				title = title[:50] + "..."
+			}
 
-		// Persist the spawning conversation when the caller supplied a parent
-		// run (the search-knowledge loopback forwards its own run id). The run's
-		// session resolves to the conversation; only link one the caller can see
-		// in this project, so a caller-supplied run id cannot graft a chat onto
-		// a foreign conversation.
-		var parentConversationID string
-		if parentRunID != "" && h.agentRepo != nil {
-			if id := h.agentRepo.ConversationIDForRun(ctx, parentRunID); id != "" {
-				if parentUUID, parseErr := uuid.Parse(id); parseErr == nil &&
-					h.svc.CanAccessConversation(ctx, projectID, user.ID, parentUUID) {
-					parentConversationID = id
+			// Persist the spawning conversation when the caller supplied a parent
+			// run (the search-knowledge loopback forwards its own run id). The run's
+			// session resolves to the conversation; only link one the caller can see
+			// in this project, so a caller-supplied run id cannot graft a chat onto
+			// a foreign conversation.
+			var parentConversationID string
+			if parentRunID != "" && h.agentRepo != nil {
+				if id := h.agentRepo.ConversationIDForRun(ctx, parentRunID); id != "" {
+					if parentUUID, parseErr := uuid.Parse(id); parseErr == nil &&
+						h.svc.CanAccessConversation(ctx, projectID, user.ID, parentUUID) {
+						parentConversationID = id
+					}
 				}
 			}
-		}
 
-		createReq := CreateConversationRequest{Title: title, Message: message}
-		if parentConversationID != "" {
-			createReq.ParentConversationID = &parentConversationID
-		}
-		if req.SpawnSource != "" {
-			// Public callers reach this endpoint too; cap the label so a
-			// caller-supplied source cannot store an unbounded string in the rail.
-			// Truncate by rune, not byte, so a multi-byte label never becomes
-			// invalid UTF-8 and fails the insert.
-			source := req.SpawnSource
-			if runes := []rune(source); len(runes) > 64 {
-				source = string(runes[:64])
+			createReq := CreateConversationRequest{Title: title, Message: message}
+			if parentConversationID != "" {
+				createReq.ParentConversationID = &parentConversationID
 			}
-			createReq.SpawnSource = &source
-		}
+			if req.SpawnSource != "" {
+				// Public callers reach this endpoint too; cap the label so a
+				// caller-supplied source cannot store an unbounded string in the rail.
+				// Truncate by rune, not byte, so a multi-byte label never becomes
+				// invalid UTF-8 and fails the insert.
+				source := req.SpawnSource
+				if runes := []rune(source); len(runes) > 64 {
+					source = string(runes[:64])
+				}
+				createReq.SpawnSource = &source
+			}
 
-		var createErr error
-		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, createReq)
-		if createErr != nil {
-			span.RecordError(createErr)
-			span.SetStatus(codes.Error, createErr.Error())
-			return apperror.NewInternal("failed to create conversation", createErr)
+			var createErr error
+			conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, createReq)
+			if createErr != nil {
+				span.RecordError(createErr)
+				span.SetStatus(codes.Error, createErr.Error())
+				return apperror.NewInternal("failed to create conversation", createErr)
+			}
 		}
 	}
 	conv.AgentDefinitionID = &agentDefUUID

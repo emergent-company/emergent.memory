@@ -310,6 +310,25 @@ func backupsLoadErr(err error) error {
 	return userFacingError(err)
 }
 
+// backupActionError sanitizes a backup mutation failure for the ?err= flash. A
+// 4xx from Memory carries actionable validation copy, so it is echoed back to
+// the user — with the transport prefix ("memory 400 bad_request:") removed by
+// memoryHTTPErrorMessage and the schedule write's internal "invalid backup
+// schedule:" sentinel stripped, matching what the page-load paths surface. Any
+// other failure (5xx, transport, timeout) is redacted so hosts, ports, URLs and
+// the raw "memory <status> <code>:" prefix never reach the user.
+func backupActionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if status := memoryStatus(err); status > 0 && status < http.StatusInternalServerError {
+		if msg := memoryHTTPErrorMessage(err); msg != "" {
+			return errors.New(strings.TrimPrefix(msg, "invalid backup schedule: "))
+		}
+	}
+	return userFacingError(err)
+}
+
 func (s *Server) backupsOrgID(ctx context.Context) (string, error) {
 	// Web session: the org is authoritative when present. When only the project
 	// is known (the project picker stores just the id), recover the org from the
@@ -363,12 +382,22 @@ func (s *Server) projectOrgID(ctx context.Context, projectID string) (string, er
 
 // --- UI handlers ---
 
-// uiBackups renders the backups page: the create form plus the active
-// project's backups, most recent first. The list load is best-effort in the
-// skills-page style: a 404/not-found from Memory (feature gated off, design
-// D6) or an unresolved org degrades to an unavailable state; any other load
-// failure (Memory unreachable, etc.) renders an error state. ?created=1 /
-// ?deleted=1 / ?err=1 surface PRG feedback.
+// uiBackupNewPage renders the create form as its own page (GET
+// /backups/new): retention + archive includes, posting to POST /backups. It is
+// the page the list's header action opens, mirroring
+// /settings/mcp-servers/new. ?err= surfaces PRG feedback; the create flow's
+// validation failures still redirect back to the list.
+func (s *Server) uiBackupNewPage(c echo.Context) error {
+	return s.page(c, pageTitle("New backup"), BackupNewPage(flashError(c)))
+}
+
+// uiBackups renders the backups page: the active project's backups, most
+// recent first, with a header action linking to the create page
+// (GET /backups/new). The list load is best-effort in the skills-page style: a
+// 404/not-found from Memory (feature gated off, design D6) or an unresolved org
+// degrades to an unavailable state; any other load failure (Memory unreachable,
+// etc.) renders an error state. ?created=1 / ?deleted=1 / ?err=1 surface PRG
+// feedback.
 func (s *Server) uiBackups(c echo.Context) error {
 	ctx := c.Request().Context()
 	flashMsg := flashFromQuery(c, []flashParam{
@@ -401,10 +430,10 @@ func (s *Server) uiBackups(c echo.Context) error {
 	// list that already loaded. An unset schedule is 404 → nil, not an error;
 	// any other failure marks the card unavailable so its form (which would be
 	// prefilled with defaults) cannot overwrite the schedule it could not read.
+	// The card already renders that failure ("Could not load the saved backup
+	// schedule"), so it is not also flashed here — a read failure must not show
+	// the same error twice.
 	schedule, schedErr := s.memory.GetBackupSchedule(ctx)
-	if flashErr == nil && schedErr != nil {
-		flashErr = userFacingError(schedErr)
-	}
 	return s.page(c, pageTitle("Backups"), BackupsPage(backups, total, schedule, schedErr != nil, "", nil, flashMsg, flashErr))
 }
 
@@ -436,9 +465,12 @@ func (s *Server) uiBackupDetail(c echo.Context) error {
 }
 
 // uiBackupCreate handles the create form (PRG → POST /backups): it forwards
-// includeDeleted/includeChat/retentionDays to memory and redirects back to the
-// list. retentionDays defaults to 30 when blank (matching memory's default);
-// out-of-range values are rejected by memory and surface via the ?err= flash.
+// includeDeleted/includeChat/retentionDays to memory and, on success, redirects
+// back to the list. retentionDays defaults to 30 when blank (matching memory's
+// default). A malformed/out-of-range retention is a validation failure of the
+// create form, which now lives on GET /backups/new, so the error flashes there
+// (where the field and its message are visible) instead of on the list — the
+// same inline-feedback target as uiMCPCreate's re-render.
 func (s *Server) uiBackupCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	includeDeleted := c.FormValue("includeDeleted") != ""
@@ -447,12 +479,12 @@ func (s *Server) uiBackupCreate(c echo.Context) error {
 	if raw := c.FormValue("retentionDays"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			return redirectWithError(c, "/backups", fmt.Errorf("retentionDays must be a number of days"))
+			return redirectWithError(c, "/backups/new", fmt.Errorf("retentionDays must be a number of days"))
 		}
 		retentionDays = n
 	}
 	if _, err := s.memory.CreateBackup(ctx, includeDeleted, includeChat, retentionDays); err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups/new", backupActionError(err))
 	}
 	return c.Redirect(http.StatusSeeOther, "/backups?created=1")
 }
@@ -467,18 +499,18 @@ func (s *Server) uiBackupDownload(c echo.Context) error {
 	id := c.Param("id")
 	orgID, err := s.backupsOrgID(ctx)
 	if err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupsLoadErr(err))
 	}
 	b, err := s.memory.GetBackup(ctx, orgID, id)
 	if err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupActionError(err))
 	}
 	if b == nil || b.Status != backupStatusReady {
 		return redirectWithError(c, "/backups", fmt.Errorf("backup %s is not ready for download", shortID(id)))
 	}
 	downloadURL, err := s.memory.DownloadBackup(ctx, orgID, id)
 	if err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupActionError(err))
 	}
 	return c.Redirect(http.StatusFound, downloadURL)
 }
@@ -491,10 +523,10 @@ func (s *Server) uiBackupDelete(c echo.Context) error {
 	id := c.Param("id")
 	orgID, err := s.backupsOrgID(ctx)
 	if err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupsLoadErr(err))
 	}
 	if err := s.memory.DeleteBackup(ctx, orgID, id); err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupActionError(err))
 	}
 	return c.Redirect(http.StatusSeeOther, "/backups?deleted=1")
 }
@@ -531,7 +563,7 @@ func (s *Server) uiBackupScheduleSave(c echo.Context) error {
 		IncludeDeleted: c.FormValue("includeDeleted") != "",
 	})
 	if err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupActionError(err))
 	}
 	redirectAfterMutation(c, "/backups?schedule_saved=1")
 	return nil
@@ -541,7 +573,7 @@ func (s *Server) uiBackupScheduleSave(c echo.Context) error {
 // /backups/schedule/delete).
 func (s *Server) uiBackupScheduleDelete(c echo.Context) error {
 	if err := s.memory.DeleteBackupSchedule(c.Request().Context()); err != nil {
-		return redirectWithError(c, "/backups", err)
+		return redirectWithError(c, "/backups", backupActionError(err))
 	}
 	redirectAfterMutation(c, "/backups?schedule_deleted=1")
 	return nil

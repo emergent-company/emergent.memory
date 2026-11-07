@@ -33,6 +33,44 @@ func detectProjectSource(cmd *cobra.Command) string {
 	return "config file"
 }
 
+// explicitProjectFlag returns the value the caller passed to the global
+// --project flag, or "" when the flag was not set. Only the flag counts as an
+// override; the config file and environment provide defaults.
+func explicitProjectFlag(cmd *cobra.Command) string {
+	f := cmd.Flags().Lookup("project")
+	if f == nil || !f.Changed {
+		return ""
+	}
+	return f.Value.String()
+}
+
+// projectTokenBoundElsewhere reports whether the configured project token is
+// bound to a project other than target.
+//
+// A project token identifies exactly one project, so using it to address a
+// different one is always wrong: the server either rejects the request or the
+// token's project silently wins over --project. The binding is discovered by
+// asking /api/auth/me, which reports project_id (and project_name) for API
+// tokens. Any failure counts as "unknown" so credential selection is left
+// untouched rather than guessed.
+func projectTokenBoundElsewhere(cfg *config.Config, target string) bool {
+	if cfg == nil || cfg.ProjectToken == "" || target == "" || cfg.ServerURL == "" {
+		return false
+	}
+	info, err := fetchAuthMe(cfg.ServerURL, cfg.ProjectToken)
+	if err != nil || info.ProjectID == "" {
+		return false
+	}
+	if info.ProjectID == target {
+		return false
+	}
+	// target may be a project name rather than an ID.
+	if !isUUID(target) && info.ProjectName != "" && strings.EqualFold(info.ProjectName, target) {
+		return false
+	}
+	return true
+}
+
 // printProjectIndicator writes a single-line project context breadcrumb to
 // stderr when a project scope is active (either via a project token or a
 // resolved project name). It is a no-op when:

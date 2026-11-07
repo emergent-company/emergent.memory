@@ -39,13 +39,16 @@ templ MCPServersPage(data mcpServersPageData) {
 					Sharing
 				}
 				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    mcpServerSettingsBase + "/new",
+					Type:    ui.ButtonTypeButton,
 					Variant: ui.ButtonPrimary,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--plus",
+					Attrs: templ.Attributes{
+						"data-dialog-open": mcpServerAddDialogID,
+						"data-testid":      "mcp-server-add",
+					},
 				}) {
-					New server
+					Add server
 				}
 			}
 		}
@@ -73,8 +76,83 @@ templ MCPServersPage(data mcpServersPageData) {
 				</div>
 			}
 		}
+		@mcpServerAddDialog()
 		@mcpToolInvokeDialog()
 		@mcpServersScript()
+	}
+}
+
+// mcpServerAddDialog is the header "Add server" chooser. Adding a server has
+// two paths — the manual create form and Memory's curated registry — so the
+// header carries one action that opens both instead of a lone link to /new.
+// The registry path links to the browse page (GET /settings/mcp-registry):
+// installing an entry there posts to the existing /settings/mcp-registry/install
+// handler, so no registry data is fetched on this page's load and no install
+// plumbing is duplicated. The registry option reads its own description from
+// that page; this dialog only routes.
+templ mcpServerAddDialog() {
+	@ui.Dialog(ui.DialogProps{
+		ID:       mcpServerAddDialogID,
+		BoxClass: "max-w-lg",
+		Attrs:    templ.Attributes{"aria-labelledby": "mcp-server-add-title", "data-testid": "mcp-server-add-dialog"},
+	}) {
+		<div class="mb-4 flex items-start justify-between gap-4">
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "mcp-server-add-title"}) {
+					Add an MCP server
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) {
+					Set one up from scratch, or install a recommended server from the registry.
+				}
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": mcpServerAddDialogID},
+			})
+		</div>
+		<div class="flex flex-col gap-2">
+			<a class="group block" href={ templ.URL(mcpServerSettingsBase + "/new") } data-testid="mcp-server-add-new">
+				@ui.SoftBox(ui.SoftBoxProps{Class: "hover:border-primary/40 flex items-start gap-3 transition-colors"}) {
+					@ui.IconSpan("lucide--server", "mt-0.5 size-4 shrink-0 text-muted-faint")
+					<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span class="text-sm font-medium">Register a server</span>
+						<span class="text-muted text-xs leading-snug">Create one from scratch — pick a transport and enter its connection details.</span>
+					</span>
+					<span class="text-primary inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+						New server
+						@ui.IconSpan("lucide--chevron-right", "size-3.5")
+					</span>
+				}
+			</a>
+			<a class="group block" href={ templ.URL(mcpRegistrySettingsBase) } data-testid="mcp-server-add-registry">
+				@ui.SoftBox(ui.SoftBoxProps{Class: "hover:border-primary/40 flex items-start gap-3 transition-colors"}) {
+					@ui.IconSpan("lucide--globe", "mt-0.5 size-4 shrink-0 text-muted-faint")
+					<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span class="text-sm font-medium">Browse the MCP registry</span>
+						<span class="text-muted text-xs leading-tight">Install a recommended server that Memory has vetted.</span>
+					</span>
+					<span class="text-primary inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+						Open registry
+						@ui.IconSpan("lucide--chevron-right", "size-3.5")
+					</span>
+				}
+			</a>
+		</div>
+		<div class="modal-action">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-dialog-close": mcpServerAddDialogID},
+			}) {
+				Cancel
+			}
+		</div>
 	}
 }
 
@@ -343,11 +421,14 @@ templ mcpServerOAuthControls(srv MCPServer) {
 		}, mcpOAuthClientDisclosureLeading()) {
 			<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/client") } data-testid="mcp-oauth-client-form">
 				<div class="flex flex-col gap-3">
-					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued.", "", nil) {
-						<input id="mcp-oauth-client-id" name="client_id" type="text" required class="input w-full font-mono" autocomplete="off"/>
+					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued. Leave blank to set the scopes only.", "", nil) {
+						<input id="mcp-oauth-client-id" name="client_id" type="text" class="input w-full font-mono" autocomplete="off"/>
 					}
 					@form.FormControl("mcp-oauth-client-secret", "Client secret", form.LabelAbove, "Optional — leave blank if your provider issued only a client ID.", "", nil) {
 						<input id="mcp-oauth-client-secret" name="client_secret" type="password" class="input w-full font-mono" autocomplete="off"/>
+					}
+					@form.FormControl("mcp-oauth-scope", "Scopes", form.LabelAbove, "Optional, space-separated (for example: repo read:org). Leave blank to request no scopes; changing this set clears the current connection so the next Connect asks for the new one. The test result lists the scopes this server supports.", "", nil) {
+						<input id="mcp-oauth-scope" name="scope" type="text" value={ mcpOAuthRequestedScopeValue(srv) } class="input w-full font-mono" autocomplete="off"/>
 					}
 				</div>
 				<div class="flex items-center justify-end gap-2">
@@ -364,6 +445,15 @@ templ mcpServerOAuthControls(srv MCPServer) {
 			</form>
 		}
 	}
+}
+
+// mcpOAuthRequestedScopeValue returns the operator-configured requested scope
+// set for the client form, or "" when none is stored.
+func mcpOAuthRequestedScopeValue(srv MCPServer) string {
+	if srv.OAuth == nil || srv.OAuth.RequestedScope == nil {
+		return ""
+	}
+	return *srv.OAuth.RequestedScope
 }
 
 // mcpOAuthClientDisclosureLeading is the pre-registered-client disclosure's
@@ -1163,12 +1253,27 @@ templ mcpServersScript() {
 					var meta = [];
 					if (auth.authorizationServer) meta.push(auth.authorizationServer);
 					var scopes = auth.scopes || [];
-					if (scopes.length) meta.push('scopes: ' + scopes.join(', '));
+					var available = auth.scopesAvailable || [];
+					if (scopes.length) meta.push('challenge scopes: ' + scopes.join(', '));
 					if (meta.length) {
 						var mline = document.createElement('p');
 						mline.className = 'text-muted mt-0.5';
 						mline.textContent = meta.join(' · ');
 						box.appendChild(mline);
+					}
+					// Advertised scopes are informational (RFC 9728 §7.2): the flow
+					// never requests them implicitly, so name them as choices.
+					if (available.length) {
+						var aline = document.createElement('p');
+						aline.className = 'text-muted mt-0.5';
+						aline.textContent = 'Supported scopes: ' + available.join(', ');
+						box.appendChild(aline);
+						if (!scopes.length) {
+							var shint = document.createElement('p');
+							shint.className = 'text-muted-faint mt-0.5';
+							shint.textContent = 'No scopes are requested by default. Add the ones this server needs in its OAuth client settings.';
+							box.appendChild(shint);
+						}
 					}
 					var link = document.createElement('a');
 					link.className = 'link link-primary mt-1.5 inline-flex items-center gap-1.5';
