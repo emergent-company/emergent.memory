@@ -6,6 +6,31 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Memory</title>
         <item>
+            <title>0.92.0</title>
+            <pubDate>Sun, 08 Nov 2026 00:34:21 +0100</pubDate>
+            <sparkle:version>9200099999</sparkle:version>
+            <sparkle:shortVersionString>0.92.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory-0.92.0.dmg" length="24473165" type="application/octet-stream" sparkle:edSignature="M6uxBLco2JH2ajaSAjIBaYSugzo7dzyModVy4v9rJ1Ns1oX5VFnAxVvj6WoD2VMn93raEw1/veea+pdlg0mQAA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9200099999-9100299999.delta" sparkle:deltaFrom="9100299999" length="19550" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Qu34U/H3t+0cp5x0JIvMhVf0Uf55jVzlehVewyLgfFQIYklaafG4i1gcbU35TY0yb5oWRsgq0ojbxpVm4FAjCA=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9200099999-9100199999.delta" sparkle:deltaFrom="9100199999" length="4404902" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="c7XfNQp2hHgirUITnGse/hC9TIerQzULGgZX5v/sD+lLNG32+jFEbntrkYxCkG/1bAaILhh8qusoXj6Lft1PDQ=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9200099999-8801099999.delta" sparkle:deltaFrom="8801099999" length="5143474" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="y/w0PiQ0CCL/BY8Fo7/keHaQXir8lIlIoal5VDg8PB9ZpRtf7v9Mb99LZSdFnnWCbLuhr21cxYtJiR+6WXJMCw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>0.91.2</title>
+            <pubDate>Sat, 07 Nov 2026 22:04:18 +0100</pubDate>
+            <sparkle:version>9100299999</sparkle:version>
+            <sparkle:shortVersionString>0.91.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory-0.91.2.dmg" length="24473372" type="application/octet-stream" sparkle:edSignature="YuCKeTTKaQYEJNdjvUNLaLKpEJD0Q2ojyeApNv8zcBdvBBXYf4J7cuFx6UGfKB88rARVtsvr/K+52VQhq/nAAA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9100299999-9100199999.delta" sparkle:deltaFrom="9100199999" length="4404782" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ogS0/l/BHNFEYd5h0KgWmQOWFl2yRK2iBInuhuGIhI036OK4s+c9sKH8FObZc5tjYaKIsq1LWOs0OIVX5teEDg=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9100299999-8801099999.delta" sparkle:deltaFrom="8801099999" length="5153858" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="NHMbnTcYeT0H/3YGXpX3zoo+7c28LxmLnjVM+6mrhf3s/G8prBnEU2TOhk3hh2EhUHOPhfN7XW5vggIhmQs+AA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.91.1</title>
             <pubDate>Sat, 07 Nov 2026 16:39:07 +0100</pubDate>
             <sparkle:version>9100199999</sparkle:version>
@@ -16,17 +41,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
                 <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9100199999-8801099999.delta" sparkle:deltaFrom="8801099999" length="4906162" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="vulw5oLdm1Tr/CwF/WQRlCyTVxYD8FtdsiCCSacr0So0Lz247iyViyK5wLSo458zLdIJW9tXadkG2m7er/cMDQ=="/>
             </sparkle:deltas>
         </item>
-        <item>
-            <title>0.88.10</title>
-            <pubDate>Wed, 04 Nov 2026 08:44:39 +0100</pubDate>
-            <sparkle:version>8801099999</sparkle:version>
-            <sparkle:shortVersionString>0.88.10</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory-0.88.10.dmg" length="24107232" type="application/octet-stream" sparkle:edSignature="elJQaHGpXgJZ4FubE0LuZ+/z2HtbUsAG4OT13ATdW6SfGsxSBBxS/SOCvn6J4IUwzQORJKzXSk8tR5VcU6xECA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: otegrKgY72pFb5Dlg9FRTK+sCugAYSZvjMUH7k+g3HnI2gpmP2fjU+f4J6ZIwJyelW+oUvtR9Ell63Ot2XgiCg==
-length: 2153
+edSignature: vNK0eOkKe3HeNIvrVZs8p9AsT5/F4gPMq97NucAUWt16aRCbkKtscMylIWC/xKKHFjYfvransWhbQm4VAr4ZBg==
+length: 5027
 -->
