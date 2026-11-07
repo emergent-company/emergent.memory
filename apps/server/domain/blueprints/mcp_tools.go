@@ -299,39 +299,45 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintUpdate(ctx context.Context, pr
 
 // stringMapArg extracts a map[string]string from a tool argument that may be
 // passed as a JSON object (map[string]any) or a JSON-encoded object string.
-// Non-string values are ignored.
-func stringMapArg(v any) map[string]string {
+//
+// Unlike a silent coercion it refuses input REST refuses: a non-string value, a
+// malformed JSON string, or any other shape is an error, so a bad modelOverrides
+// cannot quietly preview with no overrides applied (the REST PreviewImport
+// binds map[string]string and returns 400 — handler.go:133).
+func stringMapArg(v any) (map[string]string, error) {
 	switch m := v.(type) {
 	case nil:
-		return nil
+		return nil, nil
 	case map[string]string:
-		return m
+		return m, nil
 	case map[string]any:
-		out := make(map[string]string, len(m))
-		for k, val := range m {
-			if s, ok := val.(string); ok {
-				out[k] = s
-			}
-		}
-		return out
+		return stringMapFromAny(m)
 	case string:
 		if strings.TrimSpace(m) == "" {
-			return nil
+			return nil, nil
 		}
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(m), &raw); err != nil {
-			return nil
+			return nil, fmt.Errorf("must be a JSON object of strings: %w", err)
 		}
-		out := make(map[string]string, len(raw))
-		for k, val := range raw {
-			if s, ok := val.(string); ok {
-				out[k] = s
-			}
-		}
-		return out
+		return stringMapFromAny(raw)
 	default:
-		return nil
+		return nil, fmt.Errorf("must be an object of strings, got %T", v)
 	}
+}
+
+// stringMapFromAny converts a decoded object, refusing any non-string value
+// rather than dropping it.
+func stringMapFromAny(m map[string]any) (map[string]string, error) {
+	out := make(map[string]string, len(m))
+	for k, val := range m {
+		s, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("value for %q must be a string, got %T", k, val)
+		}
+		out[k] = s
+	}
+	return out, nil
 }
 
 // ExecuteBlueprintUpdatesStatus reports the latest upstream-update status for
@@ -374,11 +380,16 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintImportPreview(ctx context.Cont
 		}
 	}
 
+	modelOverrides, err := stringMapArg(args["modelOverrides"])
+	if err != nil {
+		return errResult("invalid modelOverrides: " + err.Error())
+	}
+
 	req := &ImportGitHubRequest{
 		URL:            url,
 		Ref:            ref,
 		Token:          token,
-		ModelOverrides: stringMapArg(args["modelOverrides"]),
+		ModelOverrides: modelOverrides,
 	}
 	preview, err := h.svc.PreviewFromGitHub(ctx, req)
 	if err != nil {

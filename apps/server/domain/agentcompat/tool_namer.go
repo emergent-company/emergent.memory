@@ -78,7 +78,6 @@ var internalToolNames = map[string]struct{}{
 	"schema-delete":               {},
 	"schema-history":              {},
 	"schema-compiled-types":       {},
-	"schema-pack-list":            {},
 	"schema-pack-claims":          {},
 	"schema-migration-preview":    {},
 	"schema-migrate-preview":      {},

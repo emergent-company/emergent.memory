@@ -589,6 +589,13 @@ func (s *Service) ExecuteSuperadminTool(ctx context.Context, toolName string, ar
 	if !ok {
 		return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
 	}
+	// Same strict-boolean boundary as ExecuteTool (#24): the operator catalogue
+	// declares `confirm` and `has_error` as booleans and the handlers read them
+	// with silent casts, so {"confirm": "true"} would degrade a mutation to a
+	// dry-run instead of being refused. Validate before either dispatch branch.
+	if err := validateBooleanArgs(s.GetToolByName(toolName), args); err != nil {
+		return nil, err
+	}
 	if superadminOperatorToolNames[toolName] {
 		return s.dispatchSuperadminTool(ctx, toolName, args)
 	}
