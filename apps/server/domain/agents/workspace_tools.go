@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -733,7 +734,9 @@ func buildGlobTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			Name: "workspace_glob",
 			Description: `Fast file pattern matching tool that works with any codebase size inside the workspace container.
 
-- Supports glob patterns like "**/*.go" or "src/**/*.ts"
+- Patterns are relative to the "path" argument (which defaults to /workspace), e.g. "apps/server/pkg/httputil/*.go" or "*.go"
+- Absolute patterns also work, e.g. "/workspace/apps/server/**/*.go"
+- Supports glob patterns like "**/*.go" or "src/**/*.ts"; "*" crosses directory separators
 - Returns matching file paths sorted by modification time
 - Use this tool when you need to find files by name patterns
 - Optionally specify a path to restrict the search to a subdirectory
@@ -742,8 +745,8 @@ func buildGlobTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{
-					"pattern": {Type: "string", Description: "Glob pattern to match files (e.g. **/*.go)"},
-					"path":    {Type: "string", Description: "Directory to search in (default: /workspace)"},
+					"pattern": {Type: "string", Description: "Glob pattern relative to path (e.g. **/*.go, apps/server/*.go)"},
+					"path":    {Type: "string", Description: "Directory to search in, also the base for relative patterns (default: /workspace)"},
 				},
 				Required: []string{"pattern"},
 			},
@@ -1540,26 +1543,16 @@ yaml, lua, elixir, haskell, nix, solidity
 			}
 			include, _ := args["include"].(string)
 
-			binary, binErr := resolveAstGrepBinary(ctx, provider, providerID)
-			if binErr != nil {
-				return map[string]any{"error": binErr.Error()}, nil
-			}
-
-			cmd := fmt.Sprintf("%s run --pattern %q --lang %q --json", binary, pattern, lang)
-			if include != "" {
-				cmd += fmt.Sprintf(" --glob %q", include)
-			}
-			cmd += fmt.Sprintf(" %q", searchPath)
-
-			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
-				Command:   cmd,
-				TimeoutMs: 60000,
+			matches, searchErr := astGrepSearch(ctx, provider, providerID, astGrepQuery{
+				Pattern:    pattern,
+				Lang:       lang,
+				SearchPath: searchPath,
+				Include:    include,
 			})
-			if err != nil {
-				return map[string]any{"error": fmt.Sprintf("ast-grep execution failed: %s", err.Error())}, nil
+			if searchErr != nil {
+				return map[string]any{"error": searchErr.Error()}, nil
 			}
 
-			matches := parseAstGrepOutput(result.Stdout)
 			return map[string]any{
 				"matches": matches,
 				"count":   len(matches),
@@ -1568,21 +1561,105 @@ yaml, lua, elixir, haskell, nix, solidity
 	)
 }
 
-// resolveAstGrepBinary returns the name of the ast-grep binary available in the
-// sandbox, trying "ast-grep" first and falling back to "sg" (the short alias
-// used by some package managers / distros).
-func resolveAstGrepBinary(ctx agent.Context, provider sandbox.Provider, providerID string) (string, error) {
+// astGrepQuery describes a single structural search passed to ast-grep.
+type astGrepQuery struct {
+	Pattern    string
+	Lang       string
+	SearchPath string
+	Include    string
+}
+
+// astGrepSearch resolves the ast-grep binary and runs one structural search.
+// A non-zero ast-grep exit is a tool error carrying stderr, never "zero
+// matches": swallowing it is what made workspace_ast_grep silently useless when
+// the resolved binary was not really ast-grep (#393).
+func astGrepSearch(ctx context.Context, provider sandbox.Provider, providerID string, q astGrepQuery) ([]map[string]any, error) {
+	binary, err := resolveAstGrepBinary(ctx, provider, providerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// --json=stream is required: plain --json pretty-prints a JSON array, which
+	// parseAstGrepOutput (one JSON object per line) cannot read.
+	cmd := fmt.Sprintf("%q run --pattern %q --lang %q --json=stream", binary, q.Pattern, q.Lang)
+	if q.Include != "" {
+		cmd += fmt.Sprintf(" --glob %q", q.Include)
+	}
+	cmd += fmt.Sprintf(" %q", q.SearchPath)
+
+	result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+		Command:   cmd,
+		TimeoutMs: 60000,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ast-grep execution failed: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("ast-grep execution returned no result")
+	}
+	if result.ExitCode != 0 {
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(result.Stdout)
+		}
+		if detail == "" {
+			detail = "(no output)"
+		}
+		return nil, fmt.Errorf("ast-grep exited with code %d: %s", result.ExitCode, detail)
+	}
+
+	return parseAstGrepOutput(result.Stdout), nil
+}
+
+// resolveAstGrepBinary returns the path of a binary in the sandbox that really
+// is ast-grep, trying "ast-grep" first and falling back to "sg" (the short alias
+// shipped with ast-grep). Existing on PATH is not enough: Debian bookworm ships
+// /usr/bin/sg from shadow-utils, which answers --version with usage text.
+func resolveAstGrepBinary(ctx context.Context, provider sandbox.Provider, providerID string) (string, error) {
+	var rejected []string
 	for _, name := range []string{"ast-grep", "sg"} {
 		result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 			Command:   fmt.Sprintf("command -v %s 2>/dev/null", name),
 			TimeoutMs: 3000,
 		})
-		if err == nil && result.ExitCode == 0 && strings.TrimSpace(result.Stdout) != "" {
-			return name, nil
+		if err != nil || result == nil || result.ExitCode != 0 {
+			continue
 		}
+		binary := strings.TrimSpace(result.Stdout)
+		if binary == "" {
+			continue
+		}
+
+		version, verErr := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+			Command:   fmt.Sprintf("%q --version 2>&1", binary),
+			TimeoutMs: 3000,
+		})
+		if verErr != nil || version == nil || version.ExitCode != 0 || !isAstGrepVersion(version.Stdout+"\n"+version.Stderr) {
+			probe := ""
+			if version != nil {
+				probe = strings.TrimSpace(version.Stdout + " " + version.Stderr)
+			}
+			if len(probe) > 80 {
+				probe = probe[:80] + "..."
+			}
+			rejected = append(rejected, fmt.Sprintf("%s (%q)", binary, probe))
+			continue
+		}
+		return binary, nil
 	}
-	return "", fmt.Errorf("ast-grep binary not found in sandbox (tried: ast-grep, sg). " +
-		"Install ast-grep in your sandbox image or use workspace_bash directly.")
+
+	msg := "ast-grep binary not found in sandbox (tried: ast-grep, sg)"
+	if len(rejected) > 0 {
+		msg += "; rejected candidates that are not ast-grep: " + strings.Join(rejected, ", ")
+	}
+	return "", fmt.Errorf("%s. Install ast-grep in your sandbox image or use workspace_bash directly.", msg)
+}
+
+// isAstGrepVersion reports whether out looks like ast-grep's --version output
+// (e.g. "ast-grep 0.51.1"). shadow-utils sg prints "Usage: sg group ...".
+func isAstGrepVersion(out string) bool {
+	fields := strings.Fields(strings.TrimSpace(out))
+	return len(fields) > 0 && fields[0] == "ast-grep"
 }
 
 // parseAstGrepOutput parses ast-grep --json newline-delimited output into

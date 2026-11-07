@@ -34,6 +34,45 @@ type BranchMergeResult struct {
 	SimilarCount       int `json:"similar_count"`
 	LeftForReviewCount int `json:"left_for_review_count"`
 	MergedCount        int `json:"merged_count"`
+	// Objects is the per-object breakdown the server returns alongside the
+	// counts. It carries the canonical id, merge status/resolution, and — for
+	// the objects a merge does not apply — the conflicting keys and/or the
+	// similar target, so the UI can name which objects were left for review
+	// instead of showing only a bare count (#242).
+	Objects []BranchMergeObject `json:"objects"`
+}
+
+// BranchMergeObject is one entry of a merge response's per-object breakdown.
+// Resolution is "skipped" (a conflict preserved on the target) or "suggested"
+// (a similarity match flagged for review) for the objects a "partial" merge
+// leaves on the source branch; SimilarTargetName names the matched object when
+// the entry is a similarity match.
+type BranchMergeObject struct {
+	CanonicalID       string   `json:"canonical_id"`
+	Status            string   `json:"status"`
+	Resolution        string   `json:"resolution"`
+	Conflicts         []string `json:"conflicts"`
+	SimilarityScore   float32  `json:"similarity_score"`
+	SimilarTargetID   string   `json:"similar_target_id"`
+	SimilarTargetName string   `json:"similar_target_name"`
+}
+
+// LeftForReviewObjects returns the per-object entries a merge left on the
+// source branch for human decision: conflicts preserved on the target
+// ("skipped") and similarity matches flagged for review ("suggested"). Nil-safe;
+// returns nil when the breakdown is absent.
+func (r *BranchMergeResult) LeftForReviewObjects() []BranchMergeObject {
+	if r == nil {
+		return nil
+	}
+	var out []BranchMergeObject
+	for _, o := range r.Objects {
+		switch o.Resolution {
+		case "skipped", "suggested":
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // MergeBranch merges a source branch into main with the given policy (POST

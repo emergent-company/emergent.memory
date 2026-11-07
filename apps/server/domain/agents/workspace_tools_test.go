@@ -20,11 +20,14 @@ type testProvider struct {
 	// Configurable responses
 	execResult *sandbox.ExecResult
 	execErr    error
-	readResult *sandbox.FileReadResult
-	readErr    error
-	writeErr   error
-	listResult *sandbox.FileListResult
-	listErr    error
+	// execResults, when non-empty, are returned in order (one per Exec call).
+	// execResult is the fallback once the queue is drained.
+	execResults []*sandbox.ExecResult
+	readResult  *sandbox.FileReadResult
+	readErr     error
+	writeErr    error
+	listResult  *sandbox.FileListResult
+	listErr     error
 
 	// Captured calls for verification
 	lastExecReq   *sandbox.ExecRequest
@@ -51,6 +54,11 @@ func (p *testProvider) Resume(_ context.Context, _ string) error  { return nil }
 func (p *testProvider) Exec(_ context.Context, _ string, req *sandbox.ExecRequest) (*sandbox.ExecResult, error) {
 	p.lastExecReq = req
 	p.execCallCount++
+	if len(p.execResults) > 0 {
+		result := p.execResults[0]
+		p.execResults = p.execResults[1:]
+		return result, p.execErr
+	}
 	return p.execResult, p.execErr
 }
 func (p *testProvider) ReadFile(_ context.Context, _ string, req *sandbox.FileReadRequest) (*sandbox.FileReadResult, error) {
@@ -646,4 +654,125 @@ func TestDoomLoopDetector_ResetOnDifferentCall(t *testing.T) {
 	action = d.recordCall("tool_b", args)
 	assert.Equal(t, doomActionNone, action)
 	assert.Equal(t, 2, d.consecutiveCount)
+}
+
+// --- resolveAstGrepBinary / astGrepSearch tests (#393) ---
+
+// TestResolveAstGrepBinary_RejectsShadowUtilsSg is the regression test for the
+// silent-zero-matches bug: Debian bookworm's /usr/bin/sg is shadow-utils, it
+// exists on PATH, and its --version output is usage text, not a version.
+func TestResolveAstGrepBinary_RejectsShadowUtilsSg(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 1},                          // command -v ast-grep
+		{ExitCode: 0, Stdout: "/usr/bin/sg\n"}, // command -v sg
+		{ExitCode: 1, Stdout: "Usage: sg group [[-c] command]\n"}, // /usr/bin/sg --version
+	}
+
+	binary, err := resolveAstGrepBinary(context.Background(), provider, "ws-1")
+	require.Error(t, err)
+	assert.Empty(t, binary)
+	assert.Contains(t, err.Error(), "not ast-grep")
+	assert.Contains(t, err.Error(), "Usage: sg group")
+}
+
+// TestResolveAstGrepBinary_RejectsNonZeroVersionCheck covers a candidate whose
+// --version exits non-zero (e.g. a broken shim) even if its output is empty.
+func TestResolveAstGrepBinary_RejectsNonZeroVersionCheck(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 0, Stdout: "/usr/local/bin/ast-grep\n"},
+		{ExitCode: 127, Stderr: "sh: ast-grep: not found\n"},
+	}
+
+	binary, err := resolveAstGrepBinary(context.Background(), provider, "ws-1")
+	require.Error(t, err)
+	assert.Empty(t, binary)
+}
+
+func TestResolveAstGrepBinary_PrefersAstGrepName(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 0, Stdout: "/usr/local/bin/ast-grep\n"},
+		{ExitCode: 0, Stdout: "ast-grep 0.51.1\n"},
+	}
+
+	binary, err := resolveAstGrepBinary(context.Background(), provider, "ws-1")
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/local/bin/ast-grep", binary)
+}
+
+// TestResolveAstGrepBinary_AcceptsSgAliasWhenItIsAstGrep keeps the documented
+// "sg" fallback working for installs where sg is ast-grep's short alias.
+func TestResolveAstGrepBinary_AcceptsSgAliasWhenItIsAstGrep(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 1},                              // command -v ast-grep
+		{ExitCode: 0, Stdout: "/opt/bin/sg\n"},     // command -v sg
+		{ExitCode: 0, Stdout: "ast-grep 0.51.1\n"}, // /opt/bin/sg --version
+	}
+
+	binary, err := resolveAstGrepBinary(context.Background(), provider, "ws-1")
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/bin/sg", binary)
+}
+
+func TestResolveAstGrepBinary_NotFound(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 1}, // command -v ast-grep
+		{ExitCode: 1}, // command -v sg
+	}
+
+	binary, err := resolveAstGrepBinary(context.Background(), provider, "ws-1")
+	require.Error(t, err)
+	assert.Empty(t, binary)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestAstGrepSearch_NonZeroExitSurfacesStderr is the second half of #393: a
+// failed ast-grep run must be a tool error carrying stderr, never count=0.
+func TestAstGrepSearch_NonZeroExitSurfacesStderr(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 0, Stdout: "/usr/local/bin/ast-grep\n"},
+		{ExitCode: 0, Stdout: "ast-grep 0.51.1\n"},
+		{ExitCode: 2, Stderr: "error: invalid pattern syntax\n"},
+	}
+
+	matches, err := astGrepSearch(context.Background(), provider, "ws-1", astGrepQuery{
+		Pattern:    "func main() { $$$ }",
+		Lang:       "go",
+		SearchPath: "/workspace",
+	})
+	require.Error(t, err)
+	assert.Nil(t, matches)
+	assert.Contains(t, err.Error(), "exited with code 2")
+	assert.Contains(t, err.Error(), "invalid pattern syntax")
+}
+
+func TestAstGrepSearch_ParsesMatchesOnZeroExit(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 0, Stdout: "/usr/local/bin/ast-grep\n"},
+		{ExitCode: 0, Stdout: "ast-grep 0.51.1\n"},
+		{ExitCode: 0, Stdout: `{"file":"/workspace/a.go","text":"func main() {}","range":{"start":{"line":0,"column":0}}}` + "\n"},
+	}
+
+	matches, err := astGrepSearch(context.Background(), provider, "ws-1", astGrepQuery{
+		Pattern:    "func main() { $$$ }",
+		Lang:       "go",
+		SearchPath: "/workspace",
+		Include:    "*.go",
+	})
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, "/workspace/a.go", matches[0]["file"])
+
+	// The resolved path is used verbatim and the search args are intact.
+	require.NotNil(t, provider.lastExecReq)
+	assert.Contains(t, provider.lastExecReq.Command, `"/usr/local/bin/ast-grep" run --pattern`)
+	assert.Contains(t, provider.lastExecReq.Command, "--json=stream")
+	assert.Contains(t, provider.lastExecReq.Command, `--glob "*.go"`)
+	assert.Contains(t, provider.lastExecReq.Command, `"/workspace"`)
 }
