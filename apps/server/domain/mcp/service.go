@@ -542,7 +542,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"branch": {
 						Type:        "string",
-						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query across all branches.",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to search the main graph; branches are only readable when the agent definition declares a branchScope that covers them.",
 					},
 					"type_name": {
 						Type:        "string",

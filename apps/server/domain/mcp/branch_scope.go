@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/pkg/branchscope"
+	"github.com/emergent-company/emergent.memory/pkg/branchsql"
 )
 
 // BranchScope is the per-agent-run read boundary for unmerged graph branches
@@ -104,7 +105,34 @@ func (s *Service) branchReadAllowedByScope(ctx context.Context, projectID string
 	if err != nil {
 		return fmt.Errorf("invalid project_id: %w", err)
 	}
-	return s.branchAllowedByScope(ctx, projectUUID, branchID)
+	if err := s.branchAllowedByScope(ctx, projectUUID, branchID); err != nil {
+		return err
+	}
+	return s.branchSourceReadable(ctx, projectUUID, branchID)
+}
+
+// branchSourceReadable is the source half of the read boundary: an extraction
+// branch whose source document was deleted is not readable, whatever the scope
+// says, because its staged objects must not appear in any scoped read (#265,
+// #246). The search fan-out applies the same predicate, so naming the branch
+// cannot reach what a scoped search would not return.
+func (s *Service) branchSourceReadable(ctx context.Context, projectID, branchID uuid.UUID) error {
+	var row struct {
+		Readable bool `bun:"readable"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.branches AS b").
+		ColumnExpr("("+branchsql.DeletedExtractionSourceExclusion+") AS readable").
+		Where("b.id = ? AND b.project_id = ?", branchID, projectID).
+		Limit(1).
+		Scan(ctx, &row)
+	if err != nil {
+		return fmt.Errorf("branch %s is not readable: %w", branchID, err)
+	}
+	if !row.Readable {
+		return fmt.Errorf("branch %s is not readable: its extraction source document was deleted", branchID)
+	}
+	return nil
 }
 
 // branchAllowedByScope is the id-level check: the branch must be inside a

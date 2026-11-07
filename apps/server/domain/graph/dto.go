@@ -377,6 +377,11 @@ type GetEdgesParams struct {
 	Types     []string // Multiple relationship type filters
 	Direction string   // "incoming", "outgoing", or "" (both)
 	Limit     int      // Max edges to return per direction; 0 = unbounded
+	// IncludeAllBranches bypasses the run's branch read boundary. Only internal
+	// mutating paths set it — the delete cascade must see every live relationship
+	// touching the object, not just the ones the caller may read (#265). It is
+	// never derived from a request or a tool argument.
+	IncludeAllBranches bool
 }
 
 // ObjectHistoryResponse is the response for version history.

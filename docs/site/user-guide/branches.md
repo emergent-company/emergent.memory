@@ -232,6 +232,8 @@ outside it), and a read tool that names a branch outside the boundary is refused
     can never read more than its parent, and a child that declares nothing of its
     own reads the main graph only.
 
-Graph traversal and edge reads are not widened by a scope yet: they stay on the
-main graph, so a scoped agent reads branches through search, a branch named on a
-read tool, and `search-knowledge`.
+Edge reads are bounded the same way: a scoped run sees relationships on the main
+graph and on the branches in its scope, and an agent run that declares no scope
+sees main edges only. Graph traversal is not widened by a scope yet — it walks the main graph — so
+a scoped agent reaches branch content through search, a branch named on a read
+tool, and `search-knowledge`.

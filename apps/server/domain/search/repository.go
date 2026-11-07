@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/branchsql"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -675,40 +676,6 @@ type BranchTarget struct {
 // policy: a branch beyond it is reported as omitted like any other.
 const branchReadCandidateLimit = 500
 
-// deletedExtractionSourceExclusion drops an extraction branch whose source
-// document is gone, so a deleted document's staged objects cannot be read
-// through a branch scope (#265, #246). Two states mean "the source was deleted",
-// and both are reachable because deleting a document deletes its extraction jobs
-// but not the branches those jobs created:
-//
-//   - the branch's immutable origin_id names no live job (dangling id), which is
-//     the ordinary case: DeleteWithCascade removes the job row, and origin_id has
-//     no foreign key to follow it;
-//   - the branch carries no origin_id but a job still points at it through
-//     staging_branch_id and that job has no live document (an older delete path
-//     left the job behind with a null document_id).
-//
-// A branch with no job link at all is kept: nothing says its source was deleted,
-// and origin_id was only introduced in migration 00269 (legacy extraction
-// branches were backfilled as manual, not extraction).
-const deletedExtractionSourceExclusion = `NOT (
-	b.origin = 'extraction' AND (
-		(b.origin_id IS NOT NULL AND NOT EXISTS (
-			SELECT 1 FROM kb.object_extraction_jobs j
-			WHERE j.id = b.origin_id
-			  AND j.document_id IS NOT NULL
-			  AND EXISTS (SELECT 1 FROM kb.documents d WHERE d.id = j.document_id)
-		))
-		OR (b.origin_id IS NULL AND EXISTS (
-			SELECT 1 FROM kb.object_extraction_jobs j
-			WHERE j.staging_branch_id = b.id
-			  AND (j.document_id IS NULL OR NOT EXISTS (
-				SELECT 1 FROM kb.documents d WHERE d.id = j.document_id
-			))
-		))
-	)
-)`
-
 // ListUnmergedBranches returns a project's open branches, newest first, minus
 // any extraction branch whose source document no longer exists. Origins, when
 // non-empty, restricts the query to those origins; name globs are applied by the
@@ -723,7 +690,7 @@ func (r *Repository) ListUnmergedBranches(ctx context.Context, projectID uuid.UU
 		ColumnExpr("b.origin_label").
 		Where("b.project_id = ?", projectID).
 		Where("b.merged_at IS NULL").
-		Where(deletedExtractionSourceExclusion).
+		Where(branchsql.DeletedExtractionSourceExclusion).
 		Order("b.created_at DESC").
 		Limit(branchReadCandidateLimit)
 	if len(origins) > 0 {

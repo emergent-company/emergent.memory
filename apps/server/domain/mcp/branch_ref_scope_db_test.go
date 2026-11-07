@@ -108,3 +108,89 @@ func TestResolveBranchIDHonoursBranchScope(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, manualID, *got)
 }
+
+// TestReadableBranchRefusesDeletedExtractionSource covers the source half of the
+// read boundary: an extraction branch whose source document was deleted must not
+// be readable through a branch scope, however it was linked to its job (#265,
+// #246). The search fan-out applies the same predicate in SQL, so naming the
+// branch must not reach what a scoped search would not return.
+func TestReadableBranchRefusesDeletedExtractionSource(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "mcpbranchsource")
+	t.Cleanup(tdb.Close)
+
+	ctx := context.Background()
+	db := tdb.DB
+	svc := &Service{db: db}
+
+	orgID := uuid.New()
+	_, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "branch-source-org")
+	require.NoError(t, err)
+	projectID := uuid.New()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "branch-source-project")
+	require.NoError(t, err)
+
+	// A live extraction branch: the document and its job still exist.
+	liveDocID, liveJobID := uuid.New(), uuid.New()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.documents (id, project_id, filename) VALUES (?, ?, ?)`,
+		liveDocID, projectID, "Invoice.pdf")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.object_extraction_jobs (id, project_id, document_id) VALUES (?, ?, ?)`,
+		liveJobID, projectID, liveDocID)
+	require.NoError(t, err)
+
+	liveBranchID := uuid.New()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.branches (id, project_id, name, origin, origin_id) VALUES (?, ?, ?, 'extraction', ?)`,
+		liveBranchID, projectID, "extraction/Invoice.pdf/1", liveJobID)
+	require.NoError(t, err)
+
+	// The source was deleted: deleting the document took the job with it, leaving
+	// the branch's origin_id dangling (there is no foreign key from a branch).
+	danglingBranchID := uuid.New()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.branches (id, project_id, name, origin, origin_id) VALUES (?, ?, ?, 'extraction', ?)`,
+		danglingBranchID, projectID, "extraction/Deleted.pdf/1", uuid.New())
+	require.NoError(t, err)
+
+	// The older delete path left the job behind with a null document_id and no
+	// origin_id on the branch; the staging link still proves the source is gone.
+	stagingBranchID := uuid.New()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.branches (id, project_id, name, origin) VALUES (?, ?, ?, 'extraction')`,
+		stagingBranchID, projectID, "extraction/staging-only/1")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.object_extraction_jobs (id, project_id, document_id, staging_branch_id) VALUES (?, ?, NULL, ?)`,
+		uuid.New(), projectID, stagingBranchID)
+	require.NoError(t, err)
+
+	scoped, err := branchscope.New(branchscope.Config{Unmerged: true, Origins: []string{"extraction"}})
+	require.NoError(t, err)
+	scopedCtx := branchscope.ContextWith(ctx, scoped)
+
+	// The live branch is readable; the two deleted-source shapes are not.
+	got, err := svc.resolveReadableBranchID(scopedCtx, projectID.String(), liveBranchID.String())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, liveBranchID, *got)
+
+	for _, ref := range []string{danglingBranchID.String(), stagingBranchID.String()} {
+		_, err := svc.resolveReadableBranchID(scopedCtx, projectID.String(), ref)
+		assert.ErrorContains(t, err, "extraction source document was deleted",
+			"a deleted source's staged objects must not be readable through a scope")
+	}
+
+	// A human client with no boundary keeps its pre-existing access: the exclusion
+	// is part of the scope's own guarantee, not a new global rule.
+	got, err = svc.resolveReadableBranchID(ctx, projectID.String(), danglingBranchID.String())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, danglingBranchID, *got)
+}

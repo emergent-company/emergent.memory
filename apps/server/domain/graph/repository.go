@@ -22,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/branchscope"
+	"github.com/emergent-company/emergent.memory/pkg/branchsql"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
@@ -1218,10 +1219,11 @@ func (r *Repository) branchReadPredicate(ctx context.Context, projectID uuid.UUI
 	var branches []Branch
 	err := r.db.NewSelect().
 		Model(&branches).
-		Column("id", "name", "origin").
-		Where("project_id = ?", projectID).
-		Where("merged_at IS NULL").
-		OrderExpr("created_at DESC").
+		ColumnExpr("b.id, b.name, b.origin").
+		Where("b.project_id = ?", projectID).
+		Where("b.merged_at IS NULL").
+		Where(branchsql.DeletedExtractionSourceExclusion).
+		OrderExpr("b.created_at DESC").
 		Scan(ctx)
 	if err != nil && err != sql.ErrNoRows {
 		return "", nil, apperror.ErrDatabase.WithInternal(err)
@@ -1258,10 +1260,15 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.U
 	}
 
 	// An agent run is bounded by its branch scope; a caller with no boundary is
-	// unbounded, exactly as before (#265).
-	branchPredicate, branchArgs, err := r.branchReadPredicate(ctx, projectID)
-	if err != nil {
-		return nil, nil, err
+	// unbounded, exactly as before (#265). An internal cascade asks for every
+	// branch explicitly, so a write does not depend on the caller's read scope.
+	branchPredicate, branchArgs := "", []any(nil)
+	if !params.IncludeAllBranches {
+		var err error
+		branchPredicate, branchArgs, err = r.branchReadPredicate(ctx, projectID)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Get incoming edges (object is destination) unless direction is "outgoing"
@@ -1341,9 +1348,14 @@ func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID
 	}
 
 	// Same branch boundary as GetEdges (#265).
-	branchPredicate, branchArgs, err := r.branchReadPredicate(ctx, projectID)
-	if err != nil {
-		return nil, err
+	var branchPredicate string
+	var branchArgs []any
+	if !params.IncludeAllBranches {
+		var err error
+		branchPredicate, branchArgs, err = r.branchReadPredicate(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Get incoming edges (object is destination) unless direction is "outgoing"
