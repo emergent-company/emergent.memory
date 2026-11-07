@@ -61,6 +61,12 @@ type Service struct {
 	// no encryption key is configured (inert — PAT storage is then refused).
 	encryptor *crypto.Encryptor
 
+	// minCronIntervalMinutes is the configured AGENT_MIN_CRON_INTERVAL_MINUTES
+	// floor (0 = unset, use agents.DefaultMinCronIntervalMinutes). Apply uses
+	// the same floor as the agents API and trigger service so it can never
+	// persist a schedule the trigger service refuses (#354).
+	minCronIntervalMinutes int
+
 	log *slog.Logger
 }
 
@@ -102,7 +108,23 @@ func NewService(p ServiceParams) *Service {
 		log:         p.Log.With(logger.Scope("blueprints.svc")),
 	}
 	s.initEncryptor(p.Cfg)
+	if p.Cfg != nil && p.Cfg.AgentSafeguards.MinCronIntervalMinutes > 0 {
+		s.minCronIntervalMinutes = p.Cfg.AgentSafeguards.MinCronIntervalMinutes
+	}
 	return s
+}
+
+// minCronInterval returns the minimum cron interval apply enforces. It mirrors
+// the agents create/update handlers: the configured
+// AGENT_MIN_CRON_INTERVAL_MINUTES safeguard when set, otherwise the shared
+// default. Using the SAME floor as the trigger service is what makes this gate
+// trustworthy — a looser one would let apply persist a schedule the service
+// refuses (the #354 symptom), a stricter one would reject valid blueprints.
+func (s *Service) minCronInterval() int {
+	if s.minCronIntervalMinutes > 0 {
+		return s.minCronIntervalMinutes
+	}
+	return agents.DefaultMinCronIntervalMinutes
 }
 
 // initEncryptor builds the GitHub PAT encryptor from GITHUB_TOKEN_ENCRYPTION_KEY,

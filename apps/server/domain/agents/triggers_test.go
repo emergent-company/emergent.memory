@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -473,7 +474,48 @@ func TestOnEntityEvent_SystemActorAllowed(t *testing.T) {
 
 // ---------- Concurrency ----------
 
-// ---------- validateCronInterval ----------
+// ---------- syncCronTriggers (#354) ----------
+
+// TestSyncCronTriggers_SurfacesUnregisterableAgents is the #354 defence-in-depth
+// test: an enabled scheduled agent whose cron cannot be registered must never be
+// dropped silently. The valid agent registers, and every dead one is reported by
+// name + id + reason so SyncAllTriggers can return it to the startup caller.
+func TestSyncCronTriggers_SurfacesUnregisterableAgents(t *testing.T) {
+	ts := newTestTriggerService()
+
+	newScheduled := func(id, name, cron string) *Agent {
+		return &Agent{
+			ID:           id,
+			Name:         name,
+			ProjectID:    "p1",
+			TriggerType:  TriggerTypeSchedule,
+			Enabled:      true,
+			CronSchedule: cron,
+		}
+	}
+
+	valid := newScheduled("a-valid", "nightly", "0 3 * * *")
+	sixField := newScheduled("a-six", "broken-six-field", "0 0 5 * * *")
+	tooFrequent := newScheduled("a-fast", "broken-fast", "* * * * *")
+	noCron := newScheduled("a-empty", "broken-empty", "")
+
+	registered, failures := ts.syncCronTriggers([]*Agent{valid, sixField, tooFrequent, noCron})
+
+	assert.Equal(t, 1, registered, "only the valid agent may register")
+	assert.Contains(t, ts.scheduler.ListTasks(), triggerTaskName("a-valid"))
+
+	require.Len(t, failures, 3, "every unregisterable agent must be reported")
+	joined := strings.Join(failures, "\n")
+	assert.Contains(t, joined, "a-six")
+	assert.Contains(t, joined, "broken-six-field")
+	assert.Contains(t, joined, "expected exactly 5 fields")
+	assert.Contains(t, joined, "a-fast")
+	assert.Contains(t, joined, "below minimum")
+	assert.Contains(t, joined, "a-empty")
+	assert.Contains(t, joined, "no cron expression")
+}
+
+// ---------- ValidateCronInterval ----------
 
 // TestValidateCronInterval_TooFrequent verifies that sub-15-minute schedules are rejected.
 func TestValidateCronInterval_TooFrequent(t *testing.T) {
@@ -487,7 +529,7 @@ func TestValidateCronInterval_TooFrequent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateCronInterval(tt.expr, 15)
+			err := ValidateCronInterval(tt.expr, 15)
 			assert.Error(t, err, "expected validation error for %q", tt.expr)
 		})
 	}
@@ -507,7 +549,7 @@ func TestValidateCronInterval_AtOrAboveMinimum(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateCronInterval(tt.expr, 15)
+			err := ValidateCronInterval(tt.expr, 15)
 			assert.NoError(t, err, "expected no error for %q", tt.expr)
 		})
 	}
@@ -526,7 +568,7 @@ func TestValidateCronInterval_InvalidSyntax(t *testing.T) {
 	}
 	for _, tt := range invalidExprs {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateCronInterval(tt.expr, 15)
+			err := ValidateCronInterval(tt.expr, 15)
 			assert.Error(t, err, "expected parse error for %q", tt.expr)
 		})
 	}
@@ -535,18 +577,18 @@ func TestValidateCronInterval_InvalidSyntax(t *testing.T) {
 // TestValidateCronInterval_CustomMinimum verifies behaviour with a non-default minimum.
 func TestValidateCronInterval_CustomMinimum(t *testing.T) {
 	// With a 5-minute minimum, every-5-min should be accepted.
-	err := validateCronInterval("*/5 * * * *", 5)
+	err := ValidateCronInterval("*/5 * * * *", 5)
 	assert.NoError(t, err)
 
 	// With a 5-minute minimum, every-minute should still be rejected.
-	err = validateCronInterval("* * * * *", 5)
+	err = ValidateCronInterval("* * * * *", 5)
 	assert.Error(t, err)
 }
 
 // TestValidateCronInterval_ErrorMessageContainsInterval verifies the error message
 // contains the actual interval for diagnosability.
 func TestValidateCronInterval_ErrorMessageContainsInterval(t *testing.T) {
-	err := validateCronInterval("*/5 * * * *", 15)
+	err := ValidateCronInterval("*/5 * * * *", 15)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "5")  // actual interval in minutes
 	assert.Contains(t, err.Error(), "15") // minimum in minutes
