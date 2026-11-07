@@ -627,6 +627,26 @@ func parseRelationshipTypeSchemas(raw json.RawMessage) map[string]agents.Relatio
 			schema.ExtractionGuidelines = guidelines
 		}
 
+		// Relationship-level properties are declared in a pack (and preserved by
+		// the CLI), so carry them into the schema the write path validates
+		// against and the extraction prompt describes. Without this an edge
+		// property such as `role` or `response_status` was silently untyped.
+		if props, ok := schemaMap["properties"].(map[string]any); ok && len(props) > 0 {
+			schema.Properties = make(map[string]agents.PropertyDef, len(props))
+			for propName, raw := range props {
+				if m, ok := raw.(map[string]any); ok {
+					schema.Properties[propName] = agents.PropertyDefFromMap(m)
+				}
+			}
+		}
+		if required, ok := schemaMap["required"].([]any); ok {
+			for _, item := range required {
+				if s, ok := item.(string); ok {
+					schema.Required = append(schema.Required, s)
+				}
+			}
+		}
+
 		schemas[typeName] = schema
 	}
 

@@ -22,6 +22,7 @@ func mcpServerTestServer(s *Server) *echo.Echo {
 	e.GET("/settings/mcp-servers/new", s.uiMCPNewPage)
 	e.POST("/settings/mcp-servers/new", s.uiMCPCreate)
 	e.GET("/settings/mcp-servers/:id/edit", s.uiMCPEditPage)
+	e.GET("/settings/mcp-servers/:id/tools", s.uiMCPServerToolsFragment)
 	e.POST("/settings/mcp-servers/:id/update", s.uiMCPUpdate)
 	e.POST("/settings/mcp-servers/:id/delete", s.uiMCPDelete)
 	e.POST("/settings/mcp-servers/:id/toggle", s.uiMCPToggle)
@@ -360,8 +361,11 @@ func TestUIMCPServersListRoute(t *testing.T) {
 	for _, want := range []string{
 		"MCP Servers", "github-mcp", "files", "builtin",
 		"3 servers", "http", "stdio",
-		"2 tools", "search_issues", "create_issue", "read_file", "memory_lookup",
+		"2 tools",
 		`href="/settings/mcp-servers/new"`, "New server",
+		// rows are deferred to the first expand (#210)
+		`data-mcp-tools-host="srv-http"`, `data-mcp-tools-host="srv-builtin"`,
+		`data-mcp-tools-url="/settings/mcp-servers/srv-http/tools"`,
 		// external row actions + delete confirm target
 		`href="/settings/mcp-servers/srv-http/edit"`,
 		`action="/settings/mcp-servers/srv-http/delete"`,
@@ -390,10 +394,10 @@ func TestUIMCPServersListRoute(t *testing.T) {
 	if got := strings.Count(body, `data-mcp-action="inspect"`); got != 2 {
 		t.Errorf("inspect action occurrences = %d, want 2 (external rows only)", got)
 	}
-	// per-tool toggles render only for the three external tools (builtin tools
-	// are read-only); the enabled toggle only on the two external rows
-	if got := strings.Count(body, `class="toggle toggle-sm shrink-0"`); got != 3 {
-		t.Errorf("per-tool toggle occurrences = %d, want 3 (builtin tools read-only)", got)
+	// The per-tool toggles belong to the deferred rows fragment, not the page
+	// (#210): the page must ship none of them, whatever the row count.
+	if got := strings.Count(body, `class="toggle toggle-sm shrink-0"`); got != 0 {
+		t.Errorf("per-tool toggle occurrences on the page = %d, want 0 (rows are deferred)", got)
 	}
 	for _, want := range []string{`aria-label="Enable github-mcp"`, `aria-label="Enable files"`} {
 		if !strings.Contains(body, want) {
@@ -463,12 +467,19 @@ func TestUIMCPServersListDeviceRow(t *testing.T) {
 		}
 	}
 
-	// device rows explain where they run instead of pointing at sync
+	// device rows explain where their tools come from instead of pointing at sync
 	if got := strings.Count(body, `data-testid="mcp-device-note"`); got != 2 {
 		t.Errorf("device note occurrences = %d, want 2 (device rows only)", got)
 	}
-	if !strings.Contains(body, "tools are discovered on the device") {
-		t.Error("device row with no cached tools must not suggest a host sync")
+	if !strings.Contains(body, "Expand to load the tools discovered on the device.") {
+		t.Error("device row must say its tools are discovered on the device, not synced from the host")
+	}
+	// The "no tools cached" copy moved into the deferred rows fragment (#210);
+	// it must still tell a device user not to run a host sync.
+	deviceRows := renderHTML(t, mcpServerToolsContainer(
+		MCPServer{ID: "srv-device", Name: "local-files", Type: "stdio", Target: "device"}, nil, nil))
+	if !strings.Contains(deviceRows, "tools are discovered on the device") {
+		t.Error("device rows with no cached tools must not suggest a host sync")
 	}
 	// the outbound row keeps its sync hint
 	if !strings.Contains(body, "sync refreshes this list") {
@@ -1117,7 +1128,10 @@ func TestUIMCPServersCallToolPreservesForbiddenStatus(t *testing.T) {
 	}
 }
 
-func TestUIMCPServersListLoadsBuiltinGroups(t *testing.T) {
+// TestUIMCPServersListDoesNotFetchGroups pins the deferred half of #210: the
+// list page must not carry the builtin capability taxonomy (or any tool rows) —
+// a row fetches them when it is first expanded.
+func TestUIMCPServersListDoesNotFetchGroups(t *testing.T) {
 	f := newMCPTestBackend(mcpTestRegistryFixture())
 	f.builtinGroups = []BuiltinToolGroup{
 		{ID: "graph", Label: "Graph", Enabled: true, Tools: []string{"memory_lookup"}},
@@ -1128,27 +1142,79 @@ func TestUIMCPServersListLoadsBuiltinGroups(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `data-mcp-group="graph"`) {
-		t.Error("list must render the builtin capability groups when memory provides them")
+	body := rec.Body.String()
+	if strings.Contains(body, `data-mcp-group="graph"`) || strings.Contains(body, "data-mcp-builtin-groups") {
+		t.Error("list page must not render the capability groups — they belong to the deferred rows fragment")
+	}
+	if !strings.Contains(body, `data-mcp-tools-host="srv-builtin"`) {
+		t.Error("builtin row must still carry its load-on-expand host")
 	}
 }
 
-func TestUIMCPServersListBuiltinGroupsFailureDegrades(t *testing.T) {
+// TestUIMCPServerToolsFragmentGroupsBuiltin covers the fragment the expanded
+// row fetches: the builtin server's rows render grouped by capability.
+func TestUIMCPServerToolsFragmentGroupsBuiltin(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.builtinGroups = []BuiltinToolGroup{
+		{ID: "graph", Label: "Graph", Enabled: true, Tools: []string{"memory_lookup"}},
+	}
+	e := mcpServerTestServer(&Server{cfg: Config{}, memory: f})
+
+	rec := mcpServerGet(e, "/settings/mcp-servers/srv-builtin/tools")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tools fragment = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get(echo.HeaderContentType); !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want an HTML fragment", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-mcp-tools="srv-builtin"`) {
+		t.Error("fragment must return the data-mcp-tools container the row host swaps in")
+	}
+	if !strings.Contains(body, `data-mcp-group="graph"`) || !strings.Contains(body, "memory_lookup") {
+		t.Error("fragment must render the builtin rows grouped by capability")
+	}
+}
+
+// TestUIMCPServerToolsFragmentGroupsFailureDegrades keeps the additive-endpoint
+// contract: a missing/failing taxonomy falls back to the flat builtin rows
+// rather than failing the row.
+func TestUIMCPServerToolsFragmentGroupsFailureDegrades(t *testing.T) {
 	f := newMCPTestBackend(mcpTestRegistryFixture())
 	f.builtinGroupsErr = fmt.Errorf("memory 404 not_found")
 	e := mcpServerTestServer(&Server{cfg: Config{}, memory: f})
 
-	rec := mcpServerGet(e, "/settings/mcp-servers")
+	rec := mcpServerGet(e, "/settings/mcp-servers/srv-builtin/tools")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("list with groups failure = %d, want 200 (additive endpoint must not fail the page)", rec.Code)
+		t.Fatalf("fragment with groups failure = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, "data-mcp-builtin-groups") {
 		t.Error("groups failure must fall back to the flat builtin list")
 	}
-	// the builtin tool rows still render flat
-	if !strings.Contains(body, `data-mcp-tools="srv-builtin"`) || !strings.Contains(body, "memory_lookup") {
-		t.Error("builtin tools must stay reachable when the groups fetch fails")
+	if !strings.Contains(body, "memory_lookup") {
+		t.Error("builtin tool rows must stay reachable when the groups fetch fails")
+	}
+}
+
+// TestUIMCPServerToolsFragmentErrorRendersNote covers the failure path htmx
+// cannot show by itself: a non-2xx response is never swapped, so the row's
+// fetch failure has to arrive as a 200 with a readable note.
+func TestUIMCPServerToolsFragmentErrorRendersNote(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.listErr = fmt.Errorf("backend unreachable")
+	e := mcpServerTestServer(&Server{cfg: Config{}, memory: f})
+
+	rec := mcpServerGet(e, "/settings/mcp-servers/srv-http/tools")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("failed fragment = %d, want 200 with a rendered note", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Could not load cached tools") {
+		t.Errorf("expected a readable failure note, got %s", body)
+	}
+	if !strings.Contains(body, `data-mcp-tools="srv-http"`) {
+		t.Error("failure note must stay inside the rows container")
 	}
 }
 

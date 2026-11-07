@@ -317,7 +317,7 @@ type RemovedProperty struct {
 
 // SchemaMigrationHints describes how to upgrade from a previous schema version
 // (the `migrations:` block in a pack YAML). Array-form type_renames, matching
-// memory's domain entity (the SDK's map form is stale).
+// memory's domain entity and the SDK's SchemaMigrationHints.
 type SchemaMigrationHints struct {
 	FromVersion       string            `json:"from_version" yaml:"from_version"`
 	TypeRenames       []TypeRename      `json:"type_renames,omitempty" yaml:"type_renames,omitempty"`

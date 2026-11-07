@@ -43,15 +43,12 @@ struct StubChatStream: ChatStreaming {
     var error: Error?
     var recorder: StreamCallRecorder?
 
-    func frames(
-        conversationID: String?,
-        agentDefinitionID: String?,
-        message: String
-    ) -> AsyncThrowingStream<String, Error> {
+    func frames(_ turn: ChatTurnRequest) -> AsyncThrowingStream<String, Error> {
         recorder?.calls.append(StreamCall(
-            conversationID: conversationID,
-            agentDefinitionID: agentDefinitionID,
-            message: message
+            conversationID: turn.conversationID,
+            agentDefinitionID: turn.agentDefinitionID,
+            message: turn.message,
+            surfaceAction: turn.surfaceAction
         ))
         let payloads = payloads
         let error = error
@@ -69,6 +66,7 @@ struct StreamCall: Equatable {
     let conversationID: String?
     let agentDefinitionID: String?
     let message: String
+    var surfaceAction: ChatSurfaceAction?
 }
 
 /// Records what the transport sent into the stream (written from the stub).
@@ -81,6 +79,30 @@ final class StreamCallRecorder: @unchecked Sendable {
 private final class RequestRecorder: @unchecked Sendable {
     nonisolated(unsafe) var paths: [String] = []
     nonisolated(unsafe) var methods: [String] = []
+    nonisolated(unsafe) var bodies: [Data?] = []
+}
+
+/// URLProtocol hands a request body over as a stream, not as `httpBody`; read it
+/// so request-shape tests can assert the JSON payload.
+private nonisolated func chatRequestBody(_ request: URLRequest) -> Data? {
+    if let body = request.httpBody {
+        return body
+    }
+    guard let stream = request.httpBodyStream else { return nil }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    let size = 4096
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
+    defer { buffer.deallocate() }
+    while stream.hasBytesAvailable {
+        let read = stream.read(buffer, maxLength: size)
+        if read <= 0 {
+            break
+        }
+        data.append(buffer, count: read)
+    }
+    return data
 }
 
 /// Serialized because the stub's static handler and recorders are shared.
@@ -166,6 +188,86 @@ private final class RequestRecorder: @unchecked Sendable {
         #expect(turn.tools.count == 1)
         #expect(turn.tools.first?.isRunning == false)
         #expect(turn.didReplyStart)
+    }
+
+    @Test func surfaceActionRidesTheTurnWithoutAUserBubble() async throws {
+        let recorder = StreamCallRecorder()
+        stubAgentLookup(RequestRecorder())
+        defer { HTTPChatStubProtocol.handler = nil }
+
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(
+            payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA, ChatStreamFixtures.done],
+            recorder: recorder
+        )
+        let action = ChatSurfaceAction(surfaceID: "s1", componentID: "c1", response: .string("approve"))
+
+        let task = try #require(transport.send(
+            "",
+            surfaceAction: action,
+            conversationID: nil,
+            agentName: "alfred",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        // The click is the turn: no empty user bubble, and the action reaches
+        // the stream so the server can frame the message it stands for.
+        #expect(recorder.calls.map(\.message) == [""])
+        #expect(recorder.calls.map(\.surfaceAction) == [action])
+        #expect(transcript.liveMessages.map(\.role) == [.assistant])
+        #expect(transport.isStreaming == false)
+    }
+
+    @Test func emptyTextWithoutASurfaceActionIsDropped() {
+        let transport = makeTransport(payloads: [])
+        let task = transport.send(
+            "   ",
+            conversationID: nil,
+            agentName: "alfred",
+            transcript: ChatSessionTranscriptStore(),
+            activity: ChatActivityStore()
+        )
+        #expect(task == nil)
+    }
+
+    @Test func chatRequestCarriesTheSurfaceActionNested() async throws {
+        let recorder = RequestRecorder()
+        HTTPChatStubProtocol.handler = { request in
+            recorder.paths.append(request.url?.path ?? "")
+            recorder.methods.append(request.httpMethod ?? "")
+            recorder.bodies.append(chatRequestBody(request))
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(fileURLWithPath: "/"),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/event-stream"]
+            )!
+            return (response, Data("data: {\"type\":\"done\"}\n\n".utf8))
+        }
+        defer { HTTPChatStubProtocol.handler = nil }
+
+        let client = HTTPChatStreamClient(config: MemoryConfig(), session: makeSession())
+        let stream = client.frames(ChatTurnRequest(
+            conversationID: "conv-1",
+            agentDefinitionID: "agent-a",
+            message: "",
+            surfaceAction: ChatSurfaceAction(surfaceID: "s1", componentID: "c1", response: .string("approve"))
+        ))
+        for try await _ in stream {}
+
+        let body = try #require(recorder.bodies.first ?? nil)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["message"] as? String == "")
+        #expect(json["conversationId"] as? String == "conv-1")
+        #expect(json["agentDefinitionId"] as? String == "agent-a")
+        let action = try #require(json["surfaceAction"] as? [String: Any])
+        #expect(action["surfaceId"] as? String == "s1")
+        let payload = try #require(action["action"] as? [String: Any])
+        #expect(payload["componentId"] as? String == "c1")
+        #expect(payload["response"] as? String == "approve")
     }
 
     @Test func secondTurnContinuesTheLearnedConversation() async throws {

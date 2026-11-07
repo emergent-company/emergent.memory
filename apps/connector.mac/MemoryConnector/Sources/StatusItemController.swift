@@ -73,6 +73,7 @@ final class StatusItemController: NSObject {
         .environment(environment.settings)
         .environment(environment.accountStore)
         .environment(environment.projectStore)
+        .environment(environment.recentProjects)
         .environment(environment.appState)
         .environment(environment.identity)
         .environment(environment.avatarStore)

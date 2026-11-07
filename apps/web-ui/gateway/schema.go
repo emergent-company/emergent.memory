@@ -414,7 +414,10 @@ func schemaOriginLabel(name, version string) string {
 // mirrors the types the memory schema registry accepts and interprets and drives
 // both the existing rows and the add-row template so they never drift.
 func propertyTypeOptions() []string {
-	return []string{"string", "url", "number", "boolean", "date", "md5", "sha1", "sha256", "sha512", "array", "object"}
+	return []string{
+		"string", "url", "email", "phone", "number", "boolean", "date", "time",
+		"country", "currency", "md5", "sha1", "sha256", "sha512", "array", "object",
+	}
 }
 
 // propertyWidgetOption is one choice in the editor's per-property widget select.

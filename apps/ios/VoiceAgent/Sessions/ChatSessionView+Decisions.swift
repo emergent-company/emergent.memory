@@ -39,14 +39,13 @@ extension ChatSessionView {
     /// run in the background, so the transcript is polled for the continuation.
     func respondOverHTTP(questionId: String, response: String, message: String) {
         guard let conversationID = openConversationID else { return }
-        let baseline = transcript.lastRecordCount
+        let scope = TranscriptWaitScope(conversationID: conversationID, baseline: transcript.lastRecordCount)
         Task {
             do {
                 try await transport.respond(questionID: questionId, response: response, message: message)
                 await pollResumedHistory(
                     client: SessionLogClient(config: MemoryConfig()),
-                    conversationID: conversationID,
-                    baseline: baseline
+                    scope: scope
                 )
             } catch {
                 transcript.historyLoadFailed(error.localizedDescription)
@@ -63,7 +62,7 @@ extension ChatSessionView {
             return
         }
         let client = SessionLogClient(config: MemoryConfig())
-        let baseline = transcript.lastRecordCount
+        let scope = TranscriptWaitScope(conversationID: conversationID, baseline: transcript.lastRecordCount)
         transcript.markApprovalAnswered(questionId: request.questionId)
         Task {
             do {
@@ -82,7 +81,7 @@ extension ChatSessionView {
                     response: response,
                     message: message
                 )
-                await pollResumedHistory(client: client, conversationID: conversationID, baseline: baseline)
+                await pollResumedHistory(client: client, scope: scope)
             } catch {
                 transcript.historyLoadFailed(error.localizedDescription)
             }
@@ -90,19 +89,25 @@ extension ChatSessionView {
     }
 
     /// Waits for the resumed run to append records, then reloads the history.
-    func pollResumedHistory(
-        client: SessionLogClient,
-        conversationID: String,
-        baseline: Int
-    ) async {
-        for _ in 0 ..< 30 {
-            try? await Task.sleep(for: .seconds(1))
-            guard let detail = try? await client.detail(room: conversationID) else { continue }
-            if detail.records.count > baseline {
-                transcript.loadHistory(from: detail)
-                return
-            }
-        }
+    ///
+    /// The wait carries the conversation it started for and the record count it
+    /// was measuring against, and stops as soon as the view no longer matches:
+    /// answering a card and switching chats inside the window used to write the
+    /// old conversation's records into the new one (`emergent.memory#208`).
+    func pollResumedHistory(client: any SessionLogFetching, scope: TranscriptWaitScope) async {
+        let poll = ResumedHistoryPoll(client: client)
+        await poll.run(
+            scope: scope,
+            isCurrent: { scopeIsCurrent(scope) },
+            apply: { transcript.loadHistory(from: $0) }
+        )
+    }
+
+    /// Whether a bounded wait that started on `scope` still owns the transcript:
+    /// the same conversation is open and its records have not been replaced
+    /// since the baseline was read. One predicate for every wait the view runs.
+    func scopeIsCurrent(_ scope: TranscriptWaitScope) -> Bool {
+        scope.isCurrent(openConversationID: openConversationID, recordCount: transcript.lastRecordCount)
     }
 
     func answerQuestion(_ request: QuestionRequest, answer: String) {
@@ -116,11 +121,31 @@ extension ChatSessionView {
     }
 
     func submitSurfaceAction(_ surface: ChatUISurface, _ action: ChatUIAction) {
-        // A generic A2UI surface action has no HTTP transport yet (product #66),
-        // so a text session renders surfaces read-only — the same thing the web
-        // chat can do today. Voice keeps the worker round-trip. Approval- and
-        // question-shaped cards are answered through the routes above.
-        guard activeSession.mode == .voice else { return }
+        if activeSession.mode == .text {
+            // The action rides the chat turn: the server frames the message the
+            // agent receives, so a click never becomes client-invented prose.
+            // A dropped send (a turn is already streaming) leaves the card
+            // unsubmitted rather than marking a decision that never left.
+            let turn = transport.send(
+                "",
+                surfaceAction: ChatSurfaceAction(
+                    surfaceID: surface.id,
+                    componentID: action.componentId,
+                    response: action.response
+                ),
+                conversationID: openConversationID,
+                agentName: route.agentName,
+                transcript: transcript,
+                activity: activity
+            )
+            guard turn != nil else { return }
+            activity.submitSurfaceAction(
+                surfaceId: surface.id,
+                componentId: action.componentId,
+                response: action.response
+            )
+            return
+        }
         activity.submitSurfaceAction(
             surfaceId: surface.id,
             componentId: action.componentId,

@@ -88,9 +88,9 @@ final class ChatSessionTranscriptStore {
     /// The rendered entries for one detail's records: consecutive same-role
     /// turns merged with a newline, `tools_executed` kept between runs.
     ///
-    /// One builder, used by ``loadHistory(from:)`` and by ``recordedReply``, so a
-    /// predicate cannot judge a different shape from the one the transcript
-    /// renders.
+    /// This is the *rendering* shape. ``recordedReply(extending:in:since:)``
+    /// deliberately judges the flattened reply instead: a tool call between two
+    /// assistant segments splits the rendered timeline but not the reply.
     private static func entries(from records: [SessionRecord]) -> [HistoryEntry] {
         var entries: [HistoryEntry] = []
         for record in records {
@@ -195,23 +195,57 @@ final class ChatSessionTranscriptStore {
     /// Three conditions, each earning its place:
     /// - the record grew past `baseline`, so an older reply cannot pass for this
     ///   one just because it starts the same way;
-    /// - its newest turn is the assistant's, because a run still executing leaves
-    ///   step records after its last turn;
-    /// - that turn opens with what the client already saw and carries more.
+    /// - some suffix of the reply's assistant turns opens with what the client
+    ///   already saw;
+    /// - it carries more than that, so a record still holding only the truncated
+    ///   copy keeps the wait going.
     ///
-    /// The turn compared is the *merged* entry the transcript renders, not the
-    /// newest raw record: a resumed run re-enters the agent and appends a record
-    /// holding only the tail of the reply, which does not start with the partial
-    /// even though the merged entry does.
+    /// Suffixes, not one concatenation, because the client's partial can start
+    /// part-way through the recorded reply:
+    /// - rendering splits entries at a `tools_executed` record, but a reply that
+    ///   called a tool is still one reply: `"hi the"`, a tool call, `"re"` is
+    ///   `"hi there"`;
+    /// - the gateway records a function-call-only step as an assistant turn of
+    ///   its own, `"(calls: …)"` (`apps/web-ui/gateway/client_api.go`,
+    ///   `messageRecord`), so a reply with no preamble to its first tool step is
+    ///   stored as `"(calls: …)"` and then the answer — the text the client saw
+    ///   starts after that placeholder.
+    ///
+    /// Judging only the last rendered entry was what #213 found broken; judging
+    /// one concatenation only moves the break to the placeholder shape.
     static func recordedReply(extending partial: String, in detail: SessionDetail, since baseline: Int) -> Bool {
         let opening = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !opening.isEmpty, detail.records.count > baseline else { return false }
-        let turns = entries(from: detail.records).compactMap { entry -> ChatMessage? in
-            guard case let .message(message) = entry else { return nil }
-            return message
+        return replySuffixes(from: detail.records).contains {
+            $0.count > opening.count && $0.hasPrefix(opening)
         }
-        guard let latest = turns.last, latest.role == .assistant else { return false }
-        return latest.text.count > opening.count && latest.text.hasPrefix(opening)
+    }
+
+    /// The reply to the turn the client is waiting on — every assistant turn
+    /// after the last user turn — as the text from each turn onward: the client's
+    /// partial may start at any of them, and each continuation extends into the
+    /// ones after it.
+    private static func replySuffixes(from records: [SessionRecord]) -> [String] {
+        var turns: [String] = []
+        for record in records {
+            switch record.kind {
+            case "turn":
+                guard let role = record.role else { continue }
+                if role == "user" {
+                    // A new user turn starts a new reply; anything recorded for
+                    // an earlier one is not the continuation being waited on.
+                    turns.removeAll()
+                    continue
+                }
+                guard let text = record.text else { continue }
+                turns.append(text)
+            default:
+                // `tools_executed` between assistant segments does not split the
+                // reply; other record kinds carry no reply text.
+                continue
+            }
+        }
+        return turns.indices.map { turns[$0...].joined() }
     }
 
     /// Marks the start of a history fetch (the previous result stays visible

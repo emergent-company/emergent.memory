@@ -366,7 +366,7 @@ func (h *A2AHandler) StreamMessage(c echo.Context) error {
 		if a2aErr != nil {
 			return writeA2AError(c, a2aErr)
 		}
-		return h.streamNewTask(c, projectID, userID, a2uiActionMessage(surfaceAction, userMessage), contextID, a2aSkillIDFromMetadata(req.Message.Metadata))
+		return h.streamNewTask(c, projectID, userID, A2UIActionMessage(surfaceAction, userMessage), contextID, a2aSkillIDFromMetadata(req.Message.Metadata))
 	}
 
 	if req.Message.TaskID == "" {

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -36,6 +37,34 @@ func (r *Repository) Create(ctx context.Context, src *Source) (*Source, error) {
 	if err != nil {
 		r.log.Error("failed to create source", logger.Error(err))
 		return nil, apperror.NewDatabase("failed to create source", err)
+	}
+	return src, nil
+}
+
+// CreateWithGrant inserts the source and, when the creator holds a concrete
+// api_key credential, the exact grant that lets it push as the source it just
+// created (slice 2 of #2376). The two writes share one transaction so a failed
+// grant cannot leave a created-but-ungranted source the api_key creator could
+// never push as.
+//
+// grant is nil for a session creator, who gets no row: its source is pushed by
+// the system sync worker (exempt from the grant check), and a ('session', NULL)
+// row would read back as the hidden wildcard migration 00268 forbids.
+func (r *Repository) CreateWithGrant(ctx context.Context, src *Source, grant *graph.SourceGrant) (*Source, error) {
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(src).Exec(ctx); err != nil {
+			r.log.Error("failed to create source", logger.Error(err))
+			return apperror.NewDatabase("failed to create source", err)
+		}
+		if grant != nil {
+			if err := graph.InsertSourceGrant(ctx, tx, grant); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return src, nil
 }

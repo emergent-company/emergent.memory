@@ -205,7 +205,7 @@ func (s *Server) chat(c echo.Context) error {
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 	}
-	if in.Message == "" {
+	if in.Message == "" && in.SurfaceAction == nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "message required"})
 	}
 	body, err := s.memory.ChatStream(c.Request().Context(), in)
@@ -303,29 +303,31 @@ func (s *Server) cancelQuestion(c echo.Context) error {
 	})
 }
 
-// cancelAgentRun handles POST /api/chat/runs/:runId/cancel. It resolves the
-// active run's owning runtime agent id from the run DTO, then proxies the
-// upstream project/agent-scoped cancel. Unresolvable run id or agent id, and
-// upstream failures, return a 200 with {"ok":false,"reason":…} — never an
-// error status — so the client always gets an actionable body. When the run
-// already reached a terminal state, memory reports cancelled:false and this
-// handler returns {"ok":false,"reason":"run already finished"} so the response
-// is consistent with the run row rather than falsely claiming a cancel.
+// cancelAgentRun handles POST /api/chat/runs/:runId/cancel. It proxies memory's
+// chat-scoped cancel verbatim with the caller's bearer; the server owns the
+// chat:use gate and the run-ownership check. Authorization failures are
+// propagated as their real status (401/403/404) so a client can tell "not
+// allowed" from "no such run" — never rewritten to a 200 {"ok":false}. A
+// non-2xx 5xx/transport failure maps to 502. When the run already reached a
+// terminal state, memory reports cancelled:false and this handler returns
+// {"ok":false,"reason":"run already finished"} so the response is consistent
+// with the run row rather than falsely claiming a cancel.
 func (s *Server) cancelAgentRun(c echo.Context) error {
 	runID := c.Param("runId")
-	ctx := c.Request().Context()
-	run, err := s.memory.GetAgentRun(ctx, runID)
+	cancelled, err := s.memory.CancelAgentRun(c.Request().Context(), runID)
 	if err != nil {
 		captureError(err)
-		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "run id could not be resolved"})
-	}
-	if run == nil || run.AgentID == "" {
-		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "agent identifier could not be resolved"})
-	}
-	cancelled, err := s.memory.CancelAgentRun(ctx, run.AgentID, runID)
-	if err != nil {
-		captureError(err)
-		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": err.Error()})
+		status := memoryStatus(err)
+		// Propagate client-class upstream statuses (not allowed, unknown run,
+		// malformed id). Anything else is an upstream outage.
+		if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+			reason := memoryHTTPErrorMessage(err)
+			if reason == "" {
+				reason = err.Error()
+			}
+			return c.JSON(status, map[string]any{"ok": false, "reason": reason})
+		}
+		return c.JSON(http.StatusBadGateway, map[string]any{"ok": false, "reason": "memory service unavailable"})
 	}
 	if !cancelled {
 		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "run already finished"})

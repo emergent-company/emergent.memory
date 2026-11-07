@@ -1082,12 +1082,15 @@ const (
 // propertyTypeIntent maps a schema property type to a badge tone so the type
 // column is scannable at a glance. The vocabulary is the set the schema
 // registry accepts and interprets, NOT the schema editor's select options
-// (propertyTypeOptions): string, url, number, integer, boolean, date, md5,
-// sha1, sha256, sha512, array, object. See
+// (propertyTypeOptions): string, url, email, phone, country, currency, number,
+// integer, boolean, date, time, md5, sha1, sha256, sha512, array, object. See
 // docs/public/guides/schema-creation.md and the coercion switches in
 // apps/server/domain/graph/validation.go. `integer` is a distinct registry type
 // (builtin_seeder.go, blueprint YAMLs) and deliberately shares number's tone;
-// url and the four hex-digest types share the `identifier` tone (see above).
+// url, email, phone, country, currency and the four hex-digest types share the
+// `identifier` tone (see above) — every one is a structured string value, and
+// the badge label carries the type name. `time` shares date's tone for the same
+// reason: both are a point in the day the user reads at a glance.
 // `null`, `ref`/`object_ref`, `json`, `uuid` and `datetime`
 // are not accepted types, so they are not mapped. Anything else (empty, or a
 // type a future registry adds) falls back to the neutral tone deliberately, so
@@ -1096,13 +1099,13 @@ func propertyTypeIntent(t string) ui.BadgeIntent {
 	switch t {
 	case "string":
 		return ui.BadgeInfo
-	case "url", "md5", "sha1", "sha256", "sha512":
+	case "url", "email", "phone", "country", "currency", "md5", "sha1", "sha256", "sha512":
 		return propertyTypeBadgeIdentifier
 	case "number", "integer":
 		return ui.BadgeSuccess
 	case "boolean":
 		return propertyTypeBadgeBoolean
-	case "date":
+	case "date", "time":
 		return ui.BadgeWarning
 	case "array":
 		return propertyTypeBadgeArray
