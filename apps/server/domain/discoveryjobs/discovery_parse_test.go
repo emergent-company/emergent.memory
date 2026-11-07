@@ -82,6 +82,46 @@ func TestParseTypeDiscoveryResponse_UnwrapsJSONSchemaObject(t *testing.T) {
 	}
 }
 
+// TestParseTypeDiscoveryResponse_TableColumnsNotWrapperKeywords is the direct
+// regression for #234: a DOCX table (Date, Guest, Title, Format, Min) whose
+// answer states the column map under `properties` but omits the enclosing
+// `type`/`required` markers. The columns are the fields; the wrapper key is not.
+func TestParseTypeDiscoveryResponse_TableColumnsNotWrapperKeywords(t *testing.T) {
+	raw := `{"discovered_types":[{"type_name":"PodcastEpisode",` +
+		`"description":"One row of the episode table",` +
+		`"inferred_schema":{"properties":{` +
+		`"Date":{"type":"string"},` +
+		`"Guest":{"type":"string","description":"reference to Guest"},` +
+		`"Title":{"type":"string"},` +
+		`"Format":{"type":"string"},` +
+		`"Min":{"type":"number"}}},` +
+		`"confidence":0.9,"occurrences":12}]}`
+
+	types, _, err := testService().parseTypeDiscoveryResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(types) != 1 {
+		t.Fatalf("types = %d, want 1", len(types))
+	}
+
+	got := types[0]
+	want := []string{"Date", "Guest", "Title", "Format", "Min"}
+	for _, column := range want {
+		if _, present := got.Properties[column]; !present {
+			t.Errorf("table column %q missing from properties: %#v", column, got.Properties)
+		}
+	}
+	for _, leaked := range []string{"properties", "required", "type", "items"} {
+		if _, present := got.Properties[leaked]; present {
+			t.Errorf("schema keyword %q leaked into properties: %#v", leaked, got.Properties)
+		}
+	}
+	if len(got.Properties) != len(want) {
+		t.Errorf("properties = %#v, want exactly the table columns", got.Properties)
+	}
+}
+
 func TestParseTypeDiscoveryResponse_FlatSchemaUnchanged(t *testing.T) {
 	raw := `{"discovered_types":[{"type_name":"Guest","description":"A guest",` +
 		`"inferred_schema":{"name":{"type":"string"},"bio":{"type":"string"}},` +

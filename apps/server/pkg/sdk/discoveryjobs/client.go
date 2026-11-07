@@ -55,11 +55,14 @@ type JSONArray []any
 
 // StartDiscoveryRequest is the request to start a discovery job.
 type StartDiscoveryRequest struct {
-	DocumentIDs          []string `json:"document_ids"`
-	BatchSize            int      `json:"batch_size,omitempty"`
-	MinConfidence        float32  `json:"min_confidence,omitempty"`
-	IncludeRelationships bool     `json:"include_relationships,omitempty"`
-	MaxIterations        int      `json:"max_iterations,omitempty"`
+	DocumentIDs   []string `json:"document_ids"`
+	BatchSize     int      `json:"batch_size,omitempty"`
+	MinConfidence float32  `json:"min_confidence,omitempty"`
+	// IncludeRelationships also proposes relationship types for the discovered
+	// entities. It is optional: omitting it means true (an explicit false opts
+	// out), and it is a pointer so false is actually transmitted.
+	IncludeRelationships *bool `json:"include_relationships,omitempty"`
+	MaxIterations        int   `json:"max_iterations,omitempty"`
 }
 
 // StartDiscoveryResponse is the response from starting a discovery job.
