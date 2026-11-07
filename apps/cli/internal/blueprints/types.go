@@ -519,4 +519,8 @@ type BlueprintsResult struct {
 	// It lets the install output tell the operator which agents will actually
 	// run instead of printing an identical "created agent" line for both.
 	RuntimeTrigger string
+	// ShadowedTypes lists types this pack declares but does not own: the
+	// assignment was skipped without a merge, so the registry still names the
+	// old owner while the read paths use this pack's declaration (#338).
+	ShadowedTypes []sdkschemas.ShadowedType
 }
