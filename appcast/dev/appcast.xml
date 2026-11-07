@@ -6,6 +6,18 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Memory</title>
         <item>
+            <title>0.0.0-dev.68abea39d</title>
+            <pubDate>Sat, 07 Nov 2026 17:03:30 +0100</pubDate>
+            <sparkle:version>9100200007</sparkle:version>
+            <sparkle:shortVersionString>0.0.0-dev.68abea39d</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory-0.0.0-dev.68abea39d.dmg" length="12230348" type="application/octet-stream" sparkle:edSignature="JIre0Ov+9KDeHqmZIIrRk3VWsPF1x9AmZpTsqXqgN659YJHMMRhUWpIDnZ0ndX6StZLRu/crusqIUJjU2z9bCQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory9100200007-9100100004.delta" sparkle:deltaFrom="9100100004" length="4605734" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="VkIXcIlprW5jsgvR3Ytbh+mCQ98gGhjpHPQ8hMFHkCbS4eisiJrjo0BO9zrkf9Trp7pAWQWjBzNrrWmcc1IaAg=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory9100200007-100001.delta" sparkle:deltaFrom="100001" length="4897738" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="l1rFy5YlYJVdPN1XKrBUXO7iADl3MNJPSmLCRdPwRyGAboc2rZV29sTeuEgdM3WlcKy9oGZ1OsXUDJ9PK4Z+BQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.0.0-dev.43a0083af</title>
             <pubDate>Sat, 07 Nov 2026 12:25:49 +0100</pubDate>
             <sparkle:version>9100100004</sparkle:version>
@@ -27,6 +39,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: IZpTAqpob+Ae6VEfZT1a0dqKWC3PRaUQyHrjgFd/EpHf6RBuNix9F2C6GOBCcBSzkvuUou1gequEyKgAyzHRCQ==
-length: 2207
+edSignature: qXJBOguY/JSWkn4I6z3ewk5MRq7X8skgPU7qVgCH/Hg9y1YryiFzEA4h45fxrERppDX2z9x+q+355/xnh/5MDQ==
+length: 3762
 -->
