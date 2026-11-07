@@ -764,7 +764,7 @@ func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string)
 		case sc.ProjectID != "" && s.strictProjectAdminForCaller(c, sc.ProjectID):
 			oauthErr.SettingsURL = dsCredentialAppHref(providerType)
 		case sc.OrgID != "":
-			oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients#" + url.PathEscape(providerType)
+			oauthErr.SettingsURL = dsOrgOAuthClientHref(sc.OrgID, providerType)
 		}
 	}
 	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, dsSavedCredentialPicker{}, err, nil, oauthErr))
@@ -1399,6 +1399,51 @@ func (s *Server) uiOrgOAuthClients(c echo.Context) error {
 	return s.page(c, pageTitle("OAuth clients"), OrgOAuthClientsPage(orgID, orgName, providers, byType, err, flashMsg, flashError(c)))
 }
 
+// uiOrgOAuthClientDetail renders the org per-provider OAuth app editor: the same
+// shared OAuth-client card the project editor uses, on its own page inside the
+// org settings rail. Org-admin only; an unknown or non-OAuth provider is a 404,
+// matching the project editor.
+func (s *Server) uiOrgOAuthClientDetail(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providerType := strings.TrimSpace(c.Param("providerType"))
+	providers, err := s.memory.ListDSProviders(ctx)
+	if err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
+	}
+	var provider *DSProvider
+	for i := range providers {
+		// Self-registering providers (Trale) have no per-provider app editor.
+		if providers[i].Type == providerType && providers[i].DSProviderSupportsOAuth() && !providers[i].DSProviderSelfRegistering() {
+			provider = &providers[i]
+			break
+		}
+	}
+	if provider == nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	cfg, cerr := s.memory.GetDSOAuthClient(ctx, orgID, providerType)
+	if cerr != nil {
+		cerr = userFacingError(cerr)
+	}
+	var config DSOAuthClientConfig
+	if cfg != nil {
+		config = *cfg
+	}
+	orgName := ""
+	if org, oerr := s.memory.GetOrg(ctx, orgID); oerr == nil && org != nil {
+		orgName = org.Name
+	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "saved", msg: "OAuth client saved."},
+		{key: "deleted", msg: "OAuth client removed."},
+	})
+	return s.page(c, pageTitle(dsCredentialAppLabel(*provider)), OrgOAuthClientDetailPage(orgID, orgName, *provider, config, cerr, flashMsg, flashError(c)))
+}
+
 // uiOrgOAuthClientUpsert saves an org's OAuth client for a provider (org-admin
 // only). A blank secret preserves the stored one; scopes accept one per line or
 // comma-separated. Non-secret Picker settings are merged into Config, preserving
@@ -1832,14 +1877,16 @@ func dsCredentialAppLabel(p DSProvider) string {
 	return vendor + " OAuth app"
 }
 
-// dsOAuthAppProviders filters out self-registering providers (Trale). They
-// register their own OAuth client via RFC 7591 at connect time, so they have no
-// client id/secret for an admin to manage and must not appear on the
-// org-wide OAuth-app editor.
+// dsOAuthAppProviders filters the catalogue down to the providers that have an
+// admin-manageable OAuth app: those advertising the oauth auth method, minus the
+// self-registering ones (Trale), which register their own client via RFC 7591 at
+// connect time and have no client id/secret to manage. The org OAuth-apps table
+// and its per-provider editor both render from this list, so a credentials-only
+// provider (GitHub's personal-access-token method) never gets an app row.
 func dsOAuthAppProviders(providers []DSProvider) []DSProvider {
 	out := make([]DSProvider, 0, len(providers))
 	for _, p := range providers {
-		if p.DSProviderSelfRegistering() {
+		if p.DSProviderSelfRegistering() || !p.DSProviderSupportsOAuth() {
 			continue
 		}
 		out = append(out, p)
@@ -1847,12 +1894,21 @@ func dsOAuthAppProviders(providers []DSProvider) []DSProvider {
 	return out
 }
 
-// dsCredentialRows builds the table rows: project then organization per OAuth
-// provider, in catalog order. It also collects the providers that currently
-// resolve to the deployment default, so the page can explain that no
-// user-managed app is in play. Actions depend on the caller's roles: project
-// admins manage project rows, org admins manage organization rows, and everyone
-// else sees a read-only note.
+// dsOrgOAuthClientHref is the org per-provider OAuth app editor path.
+func dsOrgOAuthClientHref(orgID, providerType string) string {
+	return "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients/" + url.PathEscape(providerType)
+}
+
+// dsCredentialRows builds the table rows: the project row for every OAuth
+// provider, plus the organization row for a provider only when the organization
+// app is configured, in catalog order. A provider with no project app still gets
+// its project row so the admin "Set up" action stays reachable; an unconfigured
+// organization row carries no information (resolution never lands there) and is
+// omitted, which keeps the table one row per provider until an org app exists.
+// It also collects the providers that currently resolve to the deployment
+// default, so the page can explain that no user-managed app is in play. Actions
+// depend on the caller's roles: project admins manage project rows, org admins
+// manage organization rows, and everyone else sees a read-only note.
 func dsCredentialRows(providers []DSProvider, creds []DSOAuthCredentialDescription, isProjectAdmin, isOrgAdmin bool, orgID string) ([]dsCredentialRow, string) {
 	byType := make(map[string]DSOAuthCredentialDescription, len(creds))
 	for _, c := range creds {
@@ -1900,26 +1956,27 @@ func dsCredentialRows(providers []DSProvider, creds []DSOAuthCredentialDescripti
 		}
 		rows = append(rows, projectRow)
 
-		orgRow := dsCredentialRow{
-			ProviderType: p.Type,
-			ScopeKey:     "organization",
-			App:          app,
-			DataSource:   p.Name,
-			ScopeIcon:    "lucide--building-2",
-			ScopeLabel:   "Organization",
-			Configured:   desc.Organization.Configured,
-			ClientID:     desc.Organization.ClientID,
-			UpdatedAt:    desc.Organization.UpdatedAt,
-			Resolved:     desc.ResolvedScope == dsCredentialScopeOrganization,
+		if desc.Organization.Configured {
+			orgRow := dsCredentialRow{
+				ProviderType: p.Type,
+				ScopeKey:     "organization",
+				App:          app,
+				DataSource:   p.Name,
+				ScopeIcon:    "lucide--building-2",
+				ScopeLabel:   "Organization",
+				Configured:   desc.Organization.Configured,
+				ClientID:     desc.Organization.ClientID,
+				UpdatedAt:    desc.Organization.UpdatedAt,
+				Resolved:     desc.ResolvedScope == dsCredentialScopeOrganization,
+			}
+			if isOrgAdmin && orgID != "" {
+				orgRow.ManageHref = dsOrgOAuthClientHref(orgID, p.Type)
+				orgRow.ManageLabel = "Manage"
+			} else {
+				orgRow.ManagedNote = "Managed by org admins"
+			}
+			rows = append(rows, orgRow)
 		}
-		switch {
-		case isOrgAdmin && orgID != "":
-			orgRow.ManageHref = "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients#" + url.PathEscape(p.Type)
-			orgRow.ManageLabel = "Manage"
-		case orgRow.Configured:
-			orgRow.ManagedNote = "Managed by org admins"
-		}
-		rows = append(rows, orgRow)
 
 		if desc.ResolvedScope == dsCredentialScopeDeployment {
 			deployment = append(deployment, p.Name)
@@ -2065,7 +2122,7 @@ func (s *Server) uiProjectCredential(c echo.Context) error {
 	}
 	orgManageHref := ""
 	if project.OrgID != "" && s.orgAdminForCaller(c, project.OrgID) {
-		orgManageHref = "/orgs/" + url.PathEscape(project.OrgID) + "/settings/oauth-clients#" + url.PathEscape(providerType)
+		orgManageHref = dsOrgOAuthClientHref(project.OrgID, providerType)
 	}
 	var config DSOAuthClientConfig
 	if cfg != nil {

@@ -24,7 +24,9 @@ test.describe('project credentials', () => {
     await expect(page.getByTestId('ds-saved-credential-add')).toBeVisible();
 
     // Saved credentials are the reusable, per-project tokens; the OAuth apps
-    // table below them keeps its vendor-level rows.
+    // table below them is a separate section, not the same list.
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'OAuth apps' })).toBeVisible();
     await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
     const savedBox = await saved.boundingBox();
     const oauthBox = await page.getByTestId('ds-credentials-table').boundingBox();
@@ -41,10 +43,13 @@ test.describe('project credentials', () => {
     await expect(driveRows.first().getByText('Google OAuth app')).toBeVisible();
     await expect(page.getByTestId('ds-credential-row').filter({ hasText: 'GitHub' }).first().getByText('GitHub OAuth app')).toBeVisible();
 
-    // One project row and one organization row per provider.
-    await expect(driveRows).toHaveCount(2);
+    // One project row per provider. Organization rows are added only for a
+    // provider whose org app is configured, so they never double the table.
+    await expect(driveRows).toHaveCount(1);
     await expect(driveRows.filter({ hasText: 'Project' })).toHaveCount(1);
-    await expect(driveRows.filter({ hasText: 'Organization' })).toHaveCount(1);
+    await expect(
+      page.getByTestId('ds-credential-row').filter({ hasText: 'GitHub' }).filter({ hasText: 'Project' }),
+    ).toHaveCount(1);
 
     // Admins get an editor link on the project row.
     await expect(driveRows.filter({ hasText: 'Project' }).getByTestId('ds-credential-manage')).toHaveAttribute(
@@ -179,6 +184,48 @@ test.describe('project credentials', () => {
     const projectRow = page.getByTestId('ds-credential-row').filter({ hasText: 'Google Drive' }).filter({ hasText: 'Project' });
     await expect(projectRow.getByTestId('ds-credential-client-id')).toHaveAttribute('title', 'e2e-project-client-id');
     await expect(projectRow.getByTestId('ds-credential-in-use')).toBeVisible();
+  });
+
+  test('organization rows appear only once an org app is configured', async ({ page }) => {
+    // Gmail is used here because no other spec configures an org app for it, so
+    // the row appears and disappears with this test alone.
+    await page.goto('/settings/credentials');
+    const gmailOrgRows = page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' });
+    await expect(gmailOrgRows).toHaveCount(0);
+
+    // The org settings page is a table; the row opens the provider's editor.
+    await page.goto('/orgs/org-1/settings/oauth-clients');
+    await expect(page.getByTestId('ds-oauth-apps-table')).toBeVisible();
+    const gmailRow = page.getByTestId('ds-oauth-app-row').filter({ hasText: 'Gmail' });
+    await expect(gmailRow).toContainText('Not configured');
+    await gmailRow.getByTestId('ds-oauth-app-manage').click();
+    await expect(page).toHaveURL(/\/o\/org-1\/settings\/oauth-clients\/gmail$/);
+
+    // The editor is the shared card, not a field on the table page.
+    await expect(page.getByTestId('ds-oauth-client-detail')).toBeVisible();
+    await expect(page.getByTestId('ds-field-client_secret')).toHaveAttribute('type', 'password');
+    await page.getByTestId('ds-field-client_id').fill('e2e-gmail-org-client-id');
+    await page.getByTestId('ds-field-client_secret').fill('super-secret-e2e-value');
+    await page.getByTestId('ds-oauth-client-form').getByRole('button', { name: 'Save' }).click();
+
+    // PRG returns to the table with the flash and the row now configured.
+    await expect(page).toHaveURL(/oauth-clients\?saved=1/);
+    await expect(page.getByText('OAuth client saved.')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-app-row').filter({ hasText: 'Gmail' })).toContainText('Configured');
+
+    // The project table gains the organization row, marked In use because the
+    // project has no app of its own for Gmail.
+    await page.goto('/settings/credentials');
+    const orgRow = page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' });
+    await expect(orgRow).toHaveCount(1);
+    await expect(orgRow.getByTestId('ds-credential-in-use')).toBeVisible();
+    await expect(orgRow.getByTestId('ds-credential-client-id')).toHaveAttribute('title', 'e2e-gmail-org-client-id');
+
+    // Removing the org app drops the row again.
+    await page.goto('/orgs/org-1/settings/oauth-clients/gmail');
+    await page.getByTestId('ds-oauth-client-delete').getByRole('button', { name: 'Remove client' }).click();
+    await page.goto('/settings/credentials');
+    await expect(page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' })).toHaveCount(0);
   });
 
   test('the retired OAuth-clients URL redirects to credentials', async ({ page }) => {

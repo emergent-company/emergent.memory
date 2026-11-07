@@ -73,6 +73,7 @@ var userVisibleRoutes = []gatewayRoute{
 	{method: "GET", path: "/orgs/:id/settings/general", handler: "uiOrgSettingsGeneral"},
 	{method: "GET", path: "/orgs/:id/settings/danger-zone", handler: "uiOrgSettingsDangerZone"},
 	{method: "GET", path: "/orgs/:id/settings/oauth-clients", handler: "uiOrgOAuthClients"},
+	{method: "GET", path: "/orgs/:id/settings/oauth-clients/:providerType", handler: "uiOrgOAuthClientDetail"},
 	{method: "POST", path: "/orgs/:id/settings/oauth-clients/:providerType", handler: "uiOrgOAuthClientUpsert"},
 	{method: "POST", path: "/orgs/:id/settings/oauth-clients/:providerType/delete", handler: "uiOrgOAuthClientDelete"},
 	{method: "POST", path: "/orgs/:id/rename", handler: "uiOrgRename"},

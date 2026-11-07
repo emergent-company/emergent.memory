@@ -21,8 +21,12 @@ Data sources let you connect external systems to Memory and automatically import
 
 ## Saved credentials
 
-The **Credentials** page also lists the project's **saved credentials** above the OAuth apps table. A
-saved credential is a token — today, a GitHub personal access token — stored once, encrypted, and
+The **Credentials** page has two sections, each with its own heading. **Saved credentials** lists the
+project's reusable tokens; **OAuth apps** lists the vendor apps available to the project. The two are
+different things: a saved credential is a token you paste, an OAuth app is a client id/secret created
+in the vendor console — adding one never changes the other's status.
+
+A saved credential is a token — today, a GitHub personal access token — stored once, encrypted, and
 reused by any number of data sources in the project. The list shows the name, the provider, how many
 sources use it, and when it was last changed; the token itself is never displayed again.
 
@@ -59,7 +63,8 @@ The app can be configured at three levels, resolved in this order when a connect
 1. **Project** — a project-level app, managed by a `project_admin` on the project's
    **Settings → Credentials** page. It overrides everything else for that project.
 2. **Organization** — an org-level app, managed by an `org_admin` under
-   **Organization Settings → Data source OAuth clients**.
+   **Organization Settings → Data source OAuth clients**. That page is a table of providers, and each
+   row opens that provider's editor — the same editor shape as the project page.
 3. **Deployment default** — a centrally configured app set via `SOURCES_OAUTH_GOOGLE_CLIENT_ID` /
    `SOURCES_OAUTH_GOOGLE_CLIENT_SECRET` (no setup needed by users).
 
@@ -67,8 +72,8 @@ If none is configured, connecting fails with an actionable message linking to th
 
 ### The Credentials table
 
-**Project Settings → Credentials** lists every OAuth-capable vendor as a table. Each provider has one
-row per scope, project first, then organization:
+**Project Settings → Credentials** lists every OAuth-capable vendor as a table. Each provider has a
+project row, and gains an organization row only once an organization app is configured:
 
 | Column | Meaning |
 |---|---|
@@ -80,9 +85,22 @@ row per scope, project first, then organization:
 | Updated | When the app was last changed |
 | Actions | **Manage** / **Set up** for admins; a role note for everyone else |
 
+A provider with no project and no organization app still shows its project row, so **Set up** stays
+reachable. The organization row appears only when that org app exists, which keeps the table one row
+per provider until someone configures the org scope. An admin's organization-row action opens the
+org's per-provider editor.
+
 Every project member can view the table and see which app is in use. Only a `project_admin` can open
 the per-provider editor and change the project app; organization-wide apps are managed by org admins.
 Opening a per-provider editor as a non-admin returns 404.
+
+### The organization OAuth apps table
+
+**Organization Settings → Data source OAuth clients** lists each OAuth-capable provider as a row — app,
+data source, status, client id, updated — with a **Set up** or **Manage** action. That action opens
+`/o/<org>/settings/oauth-clients/<provider>`: the same OAuth-client card the project editor uses
+(client id, write-only secret, scopes, strategy, and the vendor console guide), with a back link to the
+table. Saving returns you to the table with a confirmation, and the stored secret is never shown again.
 
 When no project or organization app exists and the deployment does not provide one, the page carries
 a note naming the providers that fall back to the deployment default.

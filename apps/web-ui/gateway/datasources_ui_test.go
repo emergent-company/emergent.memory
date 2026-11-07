@@ -406,17 +406,66 @@ func TestDSDriveFileScopePrefersGranted(t *testing.T) {
 
 func TestRenderOrgOAuthClientsPage(t *testing.T) {
 	providers := []DSProvider{
-		{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth", "credentials"}},
-		{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}},
+		{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth", "credentials"}},
+		{Type: "github", Name: "GitHub", VendorName: "GitHub", AuthMethods: []string{"credentials"}},
 	}
 	clients := map[string]DSOAuthClientConfig{
-		"google_drive": {ProviderType: "google_drive", ClientID: "cid-123", Scopes: []string{"scope.a", "scope.b"}, Strategy: "drive.file", Configured: true},
+		"google_drive": {ProviderType: "google_drive", ClientID: "cid-123", Configured: true},
 	}
-	html := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", providers, clients, nil, "", nil))
+	html := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", dsOAuthAppProviders(providers), clients, nil, "", nil))
 	for _, want := range []string{
 		"Data source OAuth clients",
 		"Acme",
+		"Google OAuth app",
 		"Google Drive",
+		`data-testid="ds-oauth-apps-table"`,
+		`data-testid="ds-oauth-app-row"`,
+		`data-testid="ds-oauth-app-client-id"`,
+		"cid-123",
+		"Configured",
+		`data-testid="ds-oauth-app-manage"`,
+		`href="/orgs/org-1/settings/oauth-clients/google_drive"`,
+		"Manage",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("org OAuth apps table missing %q", want)
+		}
+	}
+	// The org index is a table, not a stack of credential forms.
+	if strings.Contains(html, `data-testid="ds-oauth-client-form"`) {
+		t.Error("the org OAuth apps table must not render a credential form")
+	}
+	// A credentials-only provider has no OAuth app to manage, so no row.
+	if strings.Contains(html, "GitHub") {
+		t.Error("credentials-only provider must not appear on the OAuth apps table")
+	}
+
+	// An unconfigured provider still renders a row, with a Set up action.
+	unconfigured := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", dsOAuthAppProviders(providers), nil, nil, "", nil))
+	if !strings.Contains(unconfigured, "Not configured") {
+		t.Error("unconfigured badge missing")
+	}
+	if !strings.Contains(unconfigured, "Set up") {
+		t.Error("unconfigured provider should offer a Set up action")
+	}
+}
+
+func TestRenderOrgOAuthClientDetailPage(t *testing.T) {
+	provider := DSProvider{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}}
+	cfg := DSOAuthClientConfig{
+		ProviderType: "google_drive",
+		ClientID:     "cid-123",
+		Scopes:       []string{"scope.a", "scope.b"},
+		Strategy:     "drive.file",
+		Configured:   true,
+	}
+	html := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme", provider, cfg, nil, "", nil))
+	for _, want := range []string{
+		"Google OAuth app",
+		"Google Drive",
+		`data-testid="ds-oauth-client-detail"`,
+		`data-testid="ds-oauth-app-back"`,
+		`href="/orgs/org-1/settings/oauth-clients"`,
 		`data-testid="ds-oauth-client-form"`,
 		`action="/orgs/org-1/settings/oauth-clients/google_drive"`,
 		`data-testid="ds-field-client_id"`,
@@ -433,42 +482,31 @@ func TestRenderOrgOAuthClientsPage(t *testing.T) {
 		"Configured",
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("org clients page missing %q", want)
+			t.Errorf("org client editor missing %q", want)
 		}
 	}
 	// The client secret is write-only: never prefilled, even when configured.
 	if regexp.MustCompile(`name="client_secret"[^>]*value=`).MatchString(html) {
 		t.Error("client_secret must not be prefilled")
 	}
-	// A credentials-only provider is not rendered on the OAuth clients page.
-	if strings.Contains(html, "GitHub") {
-		t.Error("credentials-only provider must not appear on the OAuth clients page")
-	}
 
 	// An unconfigured provider shows no delete form.
-	unconfigured := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", providers, nil, nil, "", nil))
-	if !strings.Contains(unconfigured, "Not configured") {
-		t.Error("unconfigured badge missing")
-	}
-	if strings.Contains(unconfigured, `data-testid="ds-oauth-client-delete"`) {
+	bare := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme", provider, DSOAuthClientConfig{}, nil, "", nil))
+	if strings.Contains(bare, `data-testid="ds-oauth-client-delete"`) {
 		t.Error("unconfigured provider must not render a delete form")
 	}
 }
 
-func TestRenderOrgOAuthClientsPageStrategySelectAndPicker(t *testing.T) {
-	providers := []DSProvider{
-		{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}, Strategies: []string{"drive.file", "drive.readonly"}},
+func TestRenderOrgOAuthClientDetailStrategySelectAndPicker(t *testing.T) {
+	provider := DSProvider{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}, Strategies: []string{"drive.file", "drive.readonly"}}
+	cfg := DSOAuthClientConfig{
+		ProviderType: "google_drive",
+		ClientID:     "cid-123",
+		Strategy:     "drive.file",
+		Config:       map[string]any{"pickerDeveloperKey": "dev-key-1", "pickerAppId": "app-42"},
+		Configured:   true,
 	}
-	clients := map[string]DSOAuthClientConfig{
-		"google_drive": {
-			ProviderType: "google_drive",
-			ClientID:     "cid-123",
-			Strategy:     "drive.file",
-			Config:       map[string]any{"pickerDeveloperKey": "dev-key-1", "pickerAppId": "app-42"},
-			Configured:   true,
-		},
-	}
-	html := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", providers, clients, nil, "", nil))
+	html := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme", provider, cfg, nil, "", nil))
 	for _, want := range []string{
 		`<select`,
 		`name="strategy"`,
@@ -485,7 +523,7 @@ func TestRenderOrgOAuthClientsPageStrategySelectAndPicker(t *testing.T) {
 		`value="app-42"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("org clients strategy/picker page missing %q", want)
+			t.Errorf("org client editor strategy/picker page missing %q", want)
 		}
 	}
 	// The client secret stays write-only.
@@ -494,14 +532,16 @@ func TestRenderOrgOAuthClientsPageStrategySelectAndPicker(t *testing.T) {
 	}
 
 	// A provider without the drive.file strategy renders neither picker field.
-	noPicker := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme",
-		[]DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}, Strategies: []string{"repo"}}}, nil, nil, "", nil))
+	noPicker := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme",
+		DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}, Strategies: []string{"repo"}},
+		DSOAuthClientConfig{}, nil, "", nil))
 	if strings.Contains(noPicker, `data-testid="ds-field-picker_developer_key"`) || strings.Contains(noPicker, `data-testid="ds-field-picker_app_id"`) {
 		t.Error("picker fields must not render without the drive.file strategy")
 	}
 	// A provider with no advertised strategies falls back to a text input.
-	noStrategies := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme",
-		[]DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}}, nil, nil, "", nil))
+	noStrategies := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme",
+		DSProvider{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}},
+		DSOAuthClientConfig{}, nil, "", nil))
 	if strings.Contains(noStrategies, `<select`) || !strings.Contains(noStrategies, `type="text"`) {
 		t.Error("a provider without strategies should keep a text strategy input")
 	}
@@ -741,6 +781,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.POST("/data-sources/:id/sync-jobs/:jobId/cancel", s.uiDataSourceCancelSync)
 	e.POST("/data-sources/:id/delete", s.uiDataSourceDelete)
 	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
+	e.GET("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientDetail)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
 	e.GET("/settings/credentials", s.uiProjectCredentials)
@@ -2250,6 +2291,75 @@ func TestUIOrgOAuthClientsPageAdminAndNonAdmin(t *testing.T) {
 	}
 }
 
+// TestUIOrgOAuthClientDetailPage covers the per-provider org editor route: the
+// shared card renders for an org admin, while an unknown, non-OAuth or
+// self-registering provider is a 404, and a non-admin is refused the same way.
+func TestUIOrgOAuthClientDetailPage(t *testing.T) {
+	e := newDSUIServer(orgOAuthAdminFake())
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orgs/o1/settings/oauth-clients/google_drive", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin detail status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-oauth-client-detail"`,
+		`data-testid="ds-oauth-client-form"`,
+		// Served pages canonicalise /orgs/{id} to /o/{id}.
+		`action="/o/o1/settings/oauth-clients/google_drive"`,
+		`value="cid-123"`,
+		`data-testid="ds-oauth-app-back"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("editor body missing %q", want)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		fake *fakeMemory
+		path string
+	}{
+		{
+			name: "unknown provider",
+			fake: orgOAuthAdminFake(),
+			path: "/orgs/o1/settings/oauth-clients/nope",
+		},
+		{
+			name: "credentials-only provider has no app editor",
+			fake: &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+				dsProviders:     []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}},
+			},
+			path: "/orgs/o1/settings/oauth-clients/github",
+		},
+		{
+			name: "self-registering provider has no app editor",
+			fake: &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+				dsProviders:     []DSProvider{{Type: "trale", Name: "Trale", AuthMethods: []string{"oauth"}, SelfRegistering: true}},
+			},
+			path: "/orgs/o1/settings/oauth-clients/trale",
+		},
+		{
+			name: "non-admin",
+			fake: &fakeMemory{orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}},
+			path: "/orgs/o1/settings/oauth-clients/google_drive",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			newDSUIServer(tc.fake).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", rec.Code)
+			}
+		})
+	}
+}
+
 func TestUIOrgOAuthClientUpsertValidationAndSuccess(t *testing.T) {
 	f := orgOAuthAdminFake()
 	e := newDSUIServer(f)
@@ -2397,6 +2507,8 @@ func TestRenderCredentialsPage(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Credentials",
+		"Saved credentials",
+		"OAuth apps",
 		"Google OAuth app",
 		"GitHub OAuth app",
 		"Google Drive",
@@ -2405,6 +2517,8 @@ func TestRenderCredentialsPage(t *testing.T) {
 		"pcid",
 		"ocid",
 		"In use",
+		`data-testid="ds-saved-credentials"`,
+		`data-testid="ds-oauth-apps"`,
 		`data-testid="ds-credentials-table"`,
 		`data-testid="ds-credential-row"`,
 		`href="/settings/credentials/google_drive"`,
@@ -2452,6 +2566,47 @@ func TestRenderCredentialsPageDeploymentNote(t *testing.T) {
 	}
 }
 
+// TestDSCredentialRowsOrganizationScopeOnlyWhenConfigured pins the row-visibility
+// rule: every provider keeps its project row (it carries the admin Set up action),
+// while an unconfigured organization row is omitted, so the table does not double
+// in size with rows that can never resolve.
+func TestDSCredentialRowsOrganizationScopeOnlyWhenConfigured(t *testing.T) {
+	providers := []DSProvider{
+		{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}},
+		{Type: "github", Name: "GitHub", VendorName: "GitHub", AuthMethods: []string{"oauth", "credentials"}},
+	}
+	creds := []DSOAuthCredentialDescription{{
+		ProviderType:  "google_drive",
+		Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
+		ResolvedScope: dsCredentialScopeOrganization,
+	}}
+	rows, _ := dsCredentialRows(providers, creds, false, true, "o1")
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (two project rows + one configured org row): %+v", len(rows), rows)
+	}
+	var driveOrg, githubOrg *dsCredentialRow
+	for i := range rows {
+		switch {
+		case rows[i].ProviderType == "google_drive" && rows[i].ScopeKey == "organization":
+			driveOrg = &rows[i]
+		case rows[i].ProviderType == "github" && rows[i].ScopeKey == "organization":
+			githubOrg = &rows[i]
+		}
+	}
+	if githubOrg != nil {
+		t.Error("an unconfigured organization row must be omitted")
+	}
+	if driveOrg == nil {
+		t.Fatal("the configured organization row is missing")
+	}
+	if !driveOrg.Resolved {
+		t.Error("the org row should be In use when the project has no app")
+	}
+	if driveOrg.ManageHref != "/orgs/o1/settings/oauth-clients/google_drive" {
+		t.Errorf("org manage href = %q", driveOrg.ManageHref)
+	}
+}
+
 func TestRenderCredentialDetailPage(t *testing.T) {
 	provider := DSProvider{Type: "google_drive", Name: "Google Drive", Vendor: "google", VendorName: "Google", AuthMethods: []string{"oauth"}}
 	cfg := DSOAuthClientConfig{
@@ -2466,7 +2621,7 @@ func TestRenderCredentialDetailPage(t *testing.T) {
 		Provider:      provider,
 		Config:        cfg,
 		OrgConfigured: true,
-		OrgManageHref: "/orgs/o1/settings/oauth-clients#google_drive",
+		OrgManageHref: "/orgs/o1/settings/oauth-clients/google_drive",
 	}))
 	for _, want := range []string{
 		"Google OAuth app",
@@ -2605,6 +2760,7 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 		dsCredentials: []DSOAuthCredentialDescription{{
 			ProviderType:  "google_drive",
 			Project:       DSOAuthCredentialSource{Configured: true, ClientID: "pcid"},
+			Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
 			ResolvedScope: dsCredentialScopeProject,
 		}},
 	}
@@ -2622,8 +2778,10 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 	if !strings.Contains(body, "Managed by project admins") {
 		t.Error("org_admin/project_user should see the project row as read-only")
 	}
-	// The org-wide app stays manageable by the org admin.
-	if !strings.Contains(body, `/o/o1/settings/oauth-clients#google_drive`) {
+	// The org-wide app stays manageable by the org admin, through the
+	// per-provider org editor rather than an anchor on a stacked form page.
+	// (Rendered links are canonicalised from /orgs/{id} to /o/{id}.)
+	if !strings.Contains(body, `/o/o1/settings/oauth-clients/google_drive`) {
 		t.Error("org_admin should still get the organization editor link")
 	}
 
