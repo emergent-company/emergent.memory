@@ -269,3 +269,36 @@ func TestContextFixedBoundary(t *testing.T) {
 		t.Fatal("a main-only boundary must read back main only")
 	}
 }
+
+func TestContextInstalledAndAbsent(t *testing.T) {
+	scope := mustScope(t, Config{Unmerged: true, Origins: []string{"extraction"}})
+
+	// Nothing installed: the caller never had a boundary (a human MCP client).
+	bare := context.Background()
+	if Installed(bare) || IsAbsent(bare) {
+		t.Fatal("an empty context must report neither installed nor absent")
+	}
+
+	// An installed main-only boundary is not the same thing as none: consumers
+	// enforce "main graph only" for it and stay permissive for the bare case.
+	mainOnly := ContextWith(bare, nil)
+	if !Installed(mainOnly) || IsAbsent(mainOnly) {
+		t.Fatal("a main-only boundary must report installed, not absent")
+	}
+	if !FromContext(mainOnly).IsMainOnly() {
+		t.Fatal("a main-only boundary must read back main only")
+	}
+
+	scopedCtx := ContextWith(bare, scope)
+	if !Installed(scopedCtx) || FromContext(scopedCtx) != scope {
+		t.Fatal("a scope must report installed and read back")
+	}
+
+	absent := ContextWithAbsent(scopedCtx)
+	if Installed(absent) || !IsAbsent(absent) {
+		t.Fatal("an absent marker must report absent and not installed")
+	}
+	if FromContext(absent) != nil {
+		t.Fatal("an absent marker must read back no scope")
+	}
+}

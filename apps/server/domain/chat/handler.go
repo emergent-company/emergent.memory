@@ -1977,12 +1977,14 @@ type QueryStreamRequest struct {
 	ObjectTypes       []string `json:"object_types,omitempty"`
 	RelationshipTypes []string `json:"relationship_types,omitempty"`
 
-	// Per-call branch read scope. The internal graph-query-agent has no
-	// branchScope of its own, so a caller-supplied boundary is installed as the
-	// internal run's FIXED boundary and preserved end-to-end. It can only narrow
-	// the originating run, never widen it (#265; used by the search-knowledge MCP
-	// loopback).
+	// Per-call branch read boundary (#265; used by the search-knowledge MCP
+	// loopback). BranchScope carries the caller's scope when it has one.
 	BranchScope *branchscope.Config `json:"branch_scope,omitempty"`
+	// BranchScopeMode restates the caller's boundary when it is not a scope:
+	// "main_only" (an agent run that reads the main graph only) or "absent" (no
+	// boundary at all, e.g. a human MCP client). Other /query clients omit it and
+	// keep the pre-existing behaviour.
+	BranchScopeMode string `json:"branch_scope_mode,omitempty"`
 }
 
 // withQueryTypeScope threads a caller-supplied graph type scope into the internal
@@ -1998,21 +2000,47 @@ func withQueryTypeScope(ctx context.Context, req QueryStreamRequest) context.Con
 	return mcp.ContextWithTypeScope(ctx, mcp.NewTypeScope(req.ObjectTypes, req.RelationshipTypes))
 }
 
-// withQueryBranchScope installs a caller-supplied branch boundary on the internal
-// query agent's run context. Unlike a delegated sub-agent — whose own declaration
-// governs, an undeclared one meaning main only — this run executes on the
-// caller's behalf, so the boundary is installed as fixed and must not be replaced
-// by the internal definition's absent scope. It can only narrow the originating
-// run, never widen it (#265).
+// withQueryBranchScope installs the originating caller's branch boundary on the
+// internal query agent's run. Unlike a delegated sub-agent — whose own declaration
+// governs, an undeclared one meaning main only — this run executes on the caller's
+// behalf, so the boundary is installed as fixed and must not be replaced by the
+// internal definition's absent scope. It can only narrow the originating run,
+// never widen it (#265).
+//
+// The three modes exist because "no branch reads" and "no boundary at all" are
+// different callers: an agent run is main only and must not name branches, while a
+// human MCP client never had a boundary and keeps its branch arguments.
 func withQueryBranchScope(ctx context.Context, req QueryStreamRequest) (context.Context, error) {
-	if req.BranchScope == nil {
-		return ctx, nil
+	switch req.BranchScopeMode {
+	case "scoped":
+		if req.BranchScope == nil {
+			return ctx, fmt.Errorf("branch_scope_mode %q requires branch_scope", req.BranchScopeMode)
+		}
+		scope, err := mcp.NewBranchScope(*req.BranchScope)
+		if err != nil {
+			return ctx, err
+		}
+		return mcp.ContextWithFixedBranchScope(ctx, scope), nil
+	case "main_only":
+		// Explicit main-only boundary: the internal run may not name a branch.
+		return mcp.ContextWithBranchScope(ctx, nil), nil
+	case "absent":
+		// The caller had no boundary; the internal run keeps that state instead of
+		// being narrowed to main only.
+		return mcp.ContextWithAbsentBranchScope(ctx), nil
+	case "":
+		// Other /query clients: a bare branch_scope is still honoured as a scope.
+		if req.BranchScope == nil {
+			return ctx, nil
+		}
+		scope, err := mcp.NewBranchScope(*req.BranchScope)
+		if err != nil {
+			return ctx, err
+		}
+		return mcp.ContextWithFixedBranchScope(ctx, scope), nil
+	default:
+		return ctx, fmt.Errorf("branch_scope_mode %q is not one of scoped, main_only, absent", req.BranchScopeMode)
 	}
-	scope, err := mcp.NewBranchScope(*req.BranchScope)
-	if err != nil {
-		return ctx, err
-	}
-	return mcp.ContextWithFixedBranchScope(ctx, scope), nil
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.

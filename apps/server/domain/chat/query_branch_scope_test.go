@@ -48,4 +48,31 @@ func TestWithQueryBranchScope(t *testing.T) {
 	}}); err == nil {
 		t.Fatal("an invalid branch scope must be an error")
 	}
+
+	// main_only: the internal run must refuse to name a branch.
+	got, err = withQueryBranchScope(ctx, QueryStreamRequest{BranchScopeMode: "main_only"})
+	if err != nil {
+		t.Fatalf("main_only mode: %v", err)
+	}
+	if !mcp.IsBranchScopeInstalled(got) || !mcp.BranchScopeFromContext(got).IsMainOnly() {
+		t.Fatal("main_only must install an enforced main-only boundary")
+	}
+
+	// absent: the internal run keeps no boundary at all, so a human MCP client's
+	// branch argument still works.
+	got, err = withQueryBranchScope(ctx, QueryStreamRequest{BranchScopeMode: "absent"})
+	if err != nil {
+		t.Fatalf("absent mode: %v", err)
+	}
+	if mcp.IsBranchScopeInstalled(got) || !mcp.IsAbsentBranchScope(got) {
+		t.Fatal("absent must not install a boundary")
+	}
+
+	// A mode that claims a scope without one, or an unknown mode, is an error.
+	if _, err := withQueryBranchScope(ctx, QueryStreamRequest{BranchScopeMode: "scoped"}); err == nil {
+		t.Fatal("scoped mode without a scope must be an error")
+	}
+	if _, err := withQueryBranchScope(ctx, QueryStreamRequest{BranchScopeMode: "everything"}); err == nil {
+		t.Fatal("an unknown mode must be an error")
+	}
 }

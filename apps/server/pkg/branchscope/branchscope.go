@@ -299,11 +299,13 @@ func GlobCovers(parent, child string) bool {
 // the MCP facade and the search layer on the same key.
 type branchScopeCtxKey struct{}
 
-// contextValue is what the context holds: the scope plus whether a caller
-// declared it as the run's fixed boundary (see ContextWithFixed).
+// contextValue is what the context holds: the scope, whether a caller declared
+// it as the run's fixed boundary (see ContextWithFixed), and whether the caller
+// explicitly has no boundary at all (see ContextWithAbsent).
 type contextValue struct {
-	scope *Scope
-	fixed bool
+	scope  *Scope
+	fixed  bool
+	absent bool
 }
 
 // ContextWith returns a context carrying the scope. A main-only (nil) scope is
@@ -336,6 +338,15 @@ func ContextWithFixed(ctx context.Context, scope *Scope) context.Context {
 	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{scope: scope, fixed: true})
 }
 
+// ContextWithAbsent marks the context as having NO branch boundary, for an
+// internal hand-off whose originating caller had none (a human MCP client). Run
+// derivation leaves it alone instead of installing the main-only default, so the
+// hand-off keeps exactly the behaviour that caller had. It is not a widening
+// tool: it can only ever restate an absence, never grant a scope.
+func ContextWithAbsent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, branchScopeCtxKey{}, contextValue{absent: true})
+}
+
 // FromContext returns the scope installed by ContextWith or ContextWithFixed, or
 // nil (main only).
 func FromContext(ctx context.Context) *Scope {
@@ -345,9 +356,27 @@ func FromContext(ctx context.Context) *Scope {
 	return nil
 }
 
+// Installed reports whether a boundary was installed at all, including the
+// main-only one. This is the difference between "this run reads the main graph
+// only" — every agent run — and "this caller never had a boundary", which is a
+// human MCP client whose branch arguments predate the scope. Consumers must
+// enforce main-only for the former and preserve the old behaviour for the latter.
+func Installed(ctx context.Context) bool {
+	v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue)
+	return ok && !v.absent
+}
+
+// IsAbsent reports whether the context was marked by ContextWithAbsent. Run
+// derivation must not install a boundary over it.
+func IsAbsent(ctx context.Context) bool {
+	v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue)
+	return ok && v.absent
+}
+
 // IsFixed reports whether the installed scope was declared as a fixed boundary
-// by ContextWithFixed. A subsequent ContextWith on the derived context clears it,
-// so derivation cannot leak the marker into a genuinely delegated child.
+// by ContextWithFixed. The fixed run itself re-installs the same scope with
+// ContextWith, which clears the marker, so the exception applies to exactly one
+// run and cannot reach anything that run delegates.
 func IsFixed(ctx context.Context) bool {
 	if v, ok := ctx.Value(branchScopeCtxKey{}).(contextValue); ok {
 		return v.fixed

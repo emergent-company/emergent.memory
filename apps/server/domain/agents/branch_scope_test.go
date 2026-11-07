@@ -205,11 +205,29 @@ func TestWithBranchScopeDerivation(t *testing.T) {
 	}
 
 	// A caller-fixed boundary survives an internal definition that declares
-	// nothing (the /query hand-off behind search-knowledge).
+	// nothing (the /query hand-off behind search-knowledge) ...
 	fixedCtx := mcp.ContextWithFixedBranchScope(context.Background(), parent)
-	got = mcp.BranchScopeFromContext(ae.withBranchScope(fixedCtx, silent))
+	kept := ae.withBranchScope(fixedCtx, silent)
+	got = mcp.BranchScopeFromContext(kept)
 	if got.IsMainOnly() || !got.AllowsOrigin("agent") {
 		t.Fatalf("fixed boundary = %+v, want the caller's scope preserved", got)
+	}
+	// ... and the exception applies to exactly this run: the marker is cleared, so
+	// a child THIS run delegates to follows the ordinary rules.
+	if mcp.IsFixedBranchScope(kept) {
+		t.Fatal("the fixed marker must not survive derivation into a delegated child")
+	}
+	if child := mcp.BranchScopeFromContext(ae.withBranchScope(kept, silent)); !child.IsMainOnly() {
+		t.Fatalf("a delegated child of the loopback run = %+v, want main only", child)
+	}
+
+	// A hand-off restating an ABSENT boundary is left exactly as it was: its
+	// originating caller was a human MCP client that could name branches before
+	// branch scopes existed.
+	absentCtx := mcp.ContextWithAbsentBranchScope(context.Background())
+	absent := ae.withBranchScope(absentCtx, silent)
+	if mcp.IsBranchScopeInstalled(absent) || mcp.IsAbsentBranchScope(absent) != true {
+		t.Fatalf("an absent hand-off must stay absent, got installed=%v", mcp.IsBranchScopeInstalled(absent))
 	}
 
 	// ... and a defining internal run still narrows it.

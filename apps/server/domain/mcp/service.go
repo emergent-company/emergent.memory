@@ -2842,7 +2842,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 	}
 
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil {
 		return nil, err
 	}
@@ -3253,7 +3253,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(queryCtx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(queryCtx, projectID, branchRef)
 	if err != nil {
 		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
@@ -3908,6 +3908,22 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	return &row.ID, nil
 }
 
+// resolveReadableBranchID resolves a branch reference for a tool that READS branch
+// content, so it also enforces the read boundary: an agent run with no declared
+// scope reads the main graph only and cannot name a branch at all, while a run
+// inside a scope may name only its own branches. A caller with no boundary (a human
+// MCP client) keeps the pre-existing argument (#265).
+func (s *Service) resolveReadableBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	id, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || id == nil {
+		return id, err
+	}
+	if err := s.branchReadAllowedByScope(ctx, projectID, *id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
 // branchRefAllowedByScope applies the run's branch scope to an already-resolved
 // branch reference, so no tool can name a branch outside the boundary the run
 // declared. It is the choke point for every read and every write that takes a
@@ -4002,7 +4018,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil {
 		return nil, err
 	}
@@ -4909,7 +4925,7 @@ func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectI
 	if branchRef == "" {
 		return nil, fmt.Errorf("missing required parameter: branch")
 	}
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil || branchID == nil {
 		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
@@ -6563,9 +6579,9 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 
 	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {
 		if id, err := uuid.Parse(branchIDStr); err == nil {
-			// A branch named by the model may only widen a scoped run within its
-			// own boundary, never outside it (#265).
-			if err := s.branchAllowedByScope(ctx, projectUUID, id); err != nil {
+			// Reading another branch's journal is a read: a main-only run cannot
+			// name one, and a scoped run may name only its own (#265).
+			if err := s.branchReadAllowedByScope(ctx, projectUUID.String(), id); err != nil {
 				return nil, err
 			}
 			params.BranchID = &id

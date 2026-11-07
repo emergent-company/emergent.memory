@@ -52,6 +52,28 @@ func IsFixedBranchScope(ctx context.Context) bool {
 	return branchscope.IsFixed(ctx)
 }
 
+// ContextWithAbsentBranchScope marks a context as having no branch boundary at
+// all, for a hand-off whose originating caller had none (a human MCP client). Run
+// derivation leaves it alone instead of installing main-only, so that caller keeps
+// exactly the behaviour it had before branch scopes existed. Never install it from
+// a model-visible surface.
+func ContextWithAbsentBranchScope(ctx context.Context) context.Context {
+	return branchscope.ContextWithAbsent(ctx)
+}
+
+// IsAbsentBranchScope reports whether the context was marked boundary-absent.
+func IsAbsentBranchScope(ctx context.Context) bool {
+	return branchscope.IsAbsent(ctx)
+}
+
+// IsBranchScopeInstalled reports whether a boundary was installed at all,
+// including the main-only one. Every agent run has one; a human MCP client has
+// none. Reads enforce main-only for the former and keep the pre-existing
+// behaviour for the latter (#265).
+func IsBranchScopeInstalled(ctx context.Context) bool {
+	return branchscope.Installed(ctx)
+}
+
 // NarrowBranchScope combines an inherited (caller) scope with a declared
 // (definition) scope. It is used where a run already carries a scope in context —
 // a delegated sub-agent's caller scope — and then derives its own from the
@@ -61,14 +83,37 @@ func NarrowBranchScope(inherited, declared *BranchScope) *BranchScope {
 	return branchscope.Narrow(inherited, declared)
 }
 
-// branchAllowedByScope checks a model-supplied branch id against the run's branch
-// scope. It is the id-level check; branch references (names or ids) funnel
-// through Service.branchRefAllowedByScope, which is what every tool that takes a
-// `branch` argument uses. A nil scope is not enforced here: nil is what a human
-// MCP client carries, and a branch argument is existing, legitimate behaviour for
-// them. The boundary this enforces is a scope-bearing agent's own declaration —
-// an agent that may read some unmerged branches must not reach the rest by naming
-// one, on a read or a write (#265).
+// branchReadAllowedByScope is the READ boundary. A run with a boundary installed
+// — every agent run, including the default main-only one — may read only the
+// branches inside it, and a main-only run reads no branch at all. A context with
+// no boundary is a human MCP client, whose branch arguments predate the scope and
+// keep working.
+//
+// Writes and branch management go through branchRefAllowedByScope instead: an
+// agent could already create a branch and write to it, and the read scope must
+// not take that away. Merging a branch can still surface its content in main, which
+// is a write-permission question, not a read-scope one.
+func (s *Service) branchReadAllowedByScope(ctx context.Context, projectID string, branchID uuid.UUID) error {
+	if !IsBranchScopeInstalled(ctx) {
+		return nil
+	}
+	if scope := BranchScopeFromContext(ctx); scope.IsMainOnly() {
+		return fmt.Errorf("branch %s is not readable: this run reads the main graph only (declare a branchScope on the agent definition to read unmerged branches)", branchID)
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("invalid project_id: %w", err)
+	}
+	return s.branchAllowedByScope(ctx, projectUUID, branchID)
+}
+
+// branchAllowedByScope is the id-level check: the branch must be inside a
+// scope-bearing run's own boundary. It is reached through
+// branchReadAllowedByScope (reads) and branchRefAllowedByScope (everything that
+// resolves a `branch` argument), so a scoped run cannot reach a branch outside its
+// declaration by name or by id. A main-only scope is a no-op here by design — the
+// caller decides whether main-only means "refuse" (reads) or "unchanged"
+// (management) — and a context with no boundary never gets here.
 func (s *Service) branchAllowedByScope(ctx context.Context, projectID, branchID uuid.UUID) error {
 	scope := BranchScopeFromContext(ctx)
 	if scope.IsMainOnly() {

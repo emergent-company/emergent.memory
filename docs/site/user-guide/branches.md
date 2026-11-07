@@ -215,15 +215,19 @@ settled fact. When the cap leaves branches unread, the response metadata carries
 `branch_scope_note` saying so.
 
 The boundary also follows the agent's calls: `search-knowledge` runs its internal
-research agent under the same scope (it cannot be steered into reading a branch
-outside it), and a tool call that names a branch outside the scope is refused.
+research agent under the same boundary (it cannot be steered into reading a branch
+outside it), and a read tool that names a branch outside the boundary is refused.
 
-!!! note "It narrows reads, and bounds every branch a run can name"
-    A branch scope grants no permission of its own: it only restricts. It bounds
-    every branch a run can name on any tool, so a scoped run cannot reach a branch
-    outside its scope — on a read or a write. Whether it may change an **in-scope**
-    branch at all is still decided by its ordinary write permissions, not by this
-    setting, so give read scope to a reviewing agent you would not give write
-    access to. A delegated sub-agent additionally receives the intersection of its
-    own scope and its caller's — a child can never read more than its parent, and a
-    child that declares nothing of its own reads the main graph only.
+!!! note "It narrows reads; it grants nothing"
+    A branch scope only restricts. **No scope means main only**: an agent that
+    declares no `branchScope` reads the main graph, and a read tool that names a
+    branch is refused — declaring a scope is what lets it read unmerged work. A
+    scoped run may name only branches inside its scope, on any tool, so it cannot
+    reach the rest by asking for one. Branch *management* is separate: an agent
+    that could already create a branch and write to it still can (branch creation
+    and writes are not gated by the read scope), and an agent allowed to merge a
+    branch can always surface its content through main — that is a write-permission
+    question, so grant write and merge rights on their own merits. A delegated
+    sub-agent receives the intersection of its own scope and its caller's: a child
+    can never read more than its parent, and a child that declares nothing of its
+    own reads the main graph only.

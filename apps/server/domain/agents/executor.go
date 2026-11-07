@@ -4592,11 +4592,19 @@ func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
 // withBranchScope derives the run's branch read boundary and installs it on the
 // context. A definition that declares nothing yields main only, and installing
 // that CLEARS an inherited scope, so a delegated child cannot inherit reads its
-// caller did not give it. A run whose boundary the caller already fixed (an
-// internal loopback executing on the originating run's behalf) keeps it, and a
-// definition that declares a scope still narrows it. An unreadable setting fails
-// closed to main only, never to the caller's inherited boundary.
+// caller did not give it. A boundary the caller already fixed (an internal
+// loopback executing on the originating run's behalf) is kept, and a definition
+// that declares a scope still narrows it. A hand-off restating an ABSENT boundary
+// is left alone. An unreadable setting fails closed to main only, never to the
+// caller's inherited boundary.
 func (ae *AgentExecutor) withBranchScope(ctx context.Context, def *AgentDefinition) context.Context {
+	// A hand-off that restates an ABSENT boundary (its originating caller was a
+	// human MCP client with no boundary at all) must not be narrowed to main only
+	// here: that caller could name branches before branch scopes existed, and this
+	// run is executing its request.
+	if mcp.IsAbsentBranchScope(ctx) {
+		return ctx
+	}
 	declared, err := resolveBranchScope(def)
 	if err != nil {
 		if ae.log != nil {
@@ -4611,9 +4619,12 @@ func (ae *AgentExecutor) withBranchScope(ctx context.Context, def *AgentDefiniti
 		return mcp.ContextWithBranchScope(ctx, nil)
 	}
 	if mcp.IsFixedBranchScope(ctx) && declared.IsMainOnly() {
-		// The caller decided this boundary; the internal definition says nothing,
-		// which must not reset the hand-off to main only.
-		return ctx
+		// The caller decided this boundary and the internal definition says
+		// nothing, which must not reset the hand-off to main only. Re-install the
+		// same scope WITHOUT the fixed marker so anything this run delegates gets
+		// the ordinary rules — an undeclared child is main only, never an inherited
+		// branch read.
+		return mcp.ContextWithBranchScope(ctx, mcp.BranchScopeFromContext(ctx))
 	}
 	return mcp.ContextWithBranchScope(ctx, mcp.NarrowBranchScope(mcp.BranchScopeFromContext(ctx), declared))
 }

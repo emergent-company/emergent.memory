@@ -107,12 +107,19 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		body["relationship_types"] = scope.RelationshipTypes()
 	}
 
-	// Thread the caller's branch read scope the same way (#265). The internal
-	// graph-query-agent has no branchScope of its own, and it must not read a
-	// branch the calling run cannot: the handler installs this as the internal
-	// run's fixed boundary, so its own entity-query/search calls are gated by the
-	// caller's scope rather than by the absence of one.
-	if bs := BranchScopeFromContext(ctx); !bs.IsMainOnly() {
+	// Thread the caller's branch read boundary the same way (#265). The internal
+	// graph-query-agent has no branchScope of its own, so its run must restate what
+	// the caller had: a scope, the main-only default, or no boundary at all (a
+	// human MCP client, whose branch arguments stay valid). Without that restatement
+	// the internal run would either read branches the caller cannot, or lose the
+	// caller's ability to name one.
+	switch bs := BranchScopeFromContext(ctx); {
+	case !IsBranchScopeInstalled(ctx):
+		body["branch_scope_mode"] = "absent"
+	case bs.IsMainOnly():
+		body["branch_scope_mode"] = "main_only"
+	default:
+		body["branch_scope_mode"] = "scoped"
 		body["branch_scope"] = map[string]any{
 			"unmerged":    true,
 			"origins":     bs.Origins(),

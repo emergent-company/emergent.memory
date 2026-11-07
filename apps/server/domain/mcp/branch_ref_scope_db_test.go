@@ -79,4 +79,32 @@ func TestResolveBranchIDHonoursBranchScope(t *testing.T) {
 	// An unknown branch is still the resolver's own error, not a scope error.
 	_, err = svc.resolveBranchID(scopedCtx, projectID.String(), "no/such-branch")
 	assert.ErrorContains(t, err, "not found")
+
+	// An INSTALLED main-only boundary — every agent run that declares no scope —
+	// refuses branch reads outright: otherwise a delegated child would read more
+	// than its scoped parent, which is the widening this boundary exists to stop.
+	mainOnlyCtx := branchscope.ContextWith(ctx, nil)
+	for _, ref := range []string{"plan/q3", manualID.String()} {
+		_, err := svc.resolveReadableBranchID(mainOnlyCtx, projectID.String(), ref)
+		assert.ErrorContains(t, err, "main graph only", "a main-only run must not read a branch")
+	}
+	// In-scope branches are still readable through a read tool under the scope.
+	got, err = svc.resolveReadableBranchID(scopedCtx, projectID.String(), "extraction/Invoice.pdf/1")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, extractionID, *got)
+
+	// Branch MANAGEMENT is deliberately not taken away: an agent could always
+	// create a branch and write to it, and merging can surface a branch's content
+	// in main regardless — that is a write-permission question, not a read scope.
+	got, err = svc.resolveBranchID(mainOnlyCtx, projectID.String(), "plan/q3")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, manualID, *got)
+
+	// No boundary at all is a human MCP client: unchanged, read included.
+	got, err = svc.resolveReadableBranchID(ctx, projectID.String(), "plan/q3")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, manualID, *got)
 }
