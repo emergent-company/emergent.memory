@@ -202,6 +202,25 @@ func TestValidateManifest_StaticErrors(t *testing.T) {
 	})
 }
 
+// TestValidateManifest_UsesConfiguredMinCronInterval verifies apply enforces the
+// same floor the trigger service will (AGENT_MIN_CRON_INTERVAL_MINUTES), not
+// just the default: a schedule the service would refuse must be caught at
+// validate time even when the floor is raised.
+func TestValidateManifest_UsesConfiguredMinCronInterval(t *testing.T) {
+	svc := &Service{skillsRepo: skills.NewRepository(nil, testLogger()), minCronIntervalMinutes: 60}
+
+	err := svc.validateManifest(&BlueprintManifest{
+		Agents: []AgentManifest{{Name: "half-hourly", TriggerType: "schedule", CronSchedule: "*/30 * * * *"}},
+	})
+	require.Error(t, err)
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+	assert.Contains(t, err.Error(), "below minimum")
+
+	require.NoError(t, svc.validateManifest(&BlueprintManifest{
+		Agents: []AgentManifest{{Name: "hourly", TriggerType: "schedule", CronSchedule: "0 * * * *"}},
+	}))
+}
+
 func derefString(s *string) string {
 	if s == nil {
 		return ""
@@ -714,6 +733,29 @@ func TestEnsureRuntimeAgent_ForeignOwnerNoHijack(t *testing.T) {
 			assert.Len(t, fake.createdAgents, 0)
 		})
 	}
+}
+
+// TestEnsureRuntimeAgent_InvalidCronOnUpdateRejected verifies the write-point
+// guard also covers the update path: an owned runtime agent must not be mutated
+// with a cron the trigger service refuses.
+func TestEnsureRuntimeAgent_InvalidCronOnUpdateRejected(t *testing.T) {
+	fake := newFakeAgentRepo()
+	fake.agentsByName["nightly"] = &agents.Agent{
+		ProjectID:    "proj-1",
+		Name:         "nightly",
+		Config:       map[string]any{"sourceBlueprintId": "bp-1"},
+		CronSchedule: "0 3 * * *",
+	}
+	svc := &Service{agentRepo: fake, log: testLogger()}
+	def := &agents.AgentDefinition{ID: uuid.NewString(), Name: "nightly", ProjectID: "proj-1"}
+	am := AgentManifest{Name: "nightly", TriggerType: "schedule", CronSchedule: "0 0 5 * * *"}
+
+	err := svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am)
+	require.Error(t, err)
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+	assert.Contains(t, err.Error(), "0 0 5 * * *")
+	assert.Empty(t, fake.updatedAgents, "existing agent must not be mutated")
+	assert.Equal(t, "0 3 * * *", fake.agentsByName["nightly"].CronSchedule)
 }
 
 // TestEnsureRuntimeAgent_OwnBlueprintUpdates verifies a runtime agent owned by

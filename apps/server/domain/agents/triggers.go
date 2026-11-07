@@ -1001,10 +1001,11 @@ func (ts *TriggerService) GetEventListeners(key string) []*Agent {
 }
 
 // DefaultMinCronIntervalMinutes is the fallback minimum cron interval used when
-// no executor safeguard is configured. Every writer of a runtime agent's
-// cronSchedule (the agents HTTP handler, SQL-backed create paths, and blueprint
-// apply) validates against this same floor so none of them can persist a
-// schedule the trigger service will refuse to register (#354).
+// no executor safeguard is configured. The agents HTTP handler and blueprint
+// apply both validate against this same floor (and against the configured
+// AGENT_MIN_CRON_INTERVAL_MINUTES when set) so neither can persist a schedule
+// the trigger service will refuse to register (#354). Note: the MCP
+// create/update-agent tools still write cron_schedule unvalidated.
 const DefaultMinCronIntervalMinutes = 15
 
 // ValidateCronInterval parses the given cron expression and returns an error if

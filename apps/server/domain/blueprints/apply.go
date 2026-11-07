@@ -291,7 +291,7 @@ func (s *Service) validateManifest(m *BlueprintManifest) error {
 		// the value unused, so they are skipped — exactly like the agents API and
 		// `memory blueprints validate` (#320) do.
 		if am.DeclaresScheduleTrigger() && am.CronSchedule != "" {
-			if err := agents.ValidateCronInterval(am.CronSchedule, agents.DefaultMinCronIntervalMinutes); err != nil {
+			if err := agents.ValidateCronInterval(am.CronSchedule, s.minCronInterval()); err != nil {
 				return apperror.NewBadRequest(fmt.Sprintf(
 					"agent %q: invalid cronSchedule: %v (runtime agents use standard 5-field cron — minute hour day-of-month month day-of-week; a seconds field is not accepted)",
 					am.Name, err))
@@ -1172,7 +1172,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	// persist a dead scheduled agent — including when the reaction trigger was
 	// derived from objectRules rather than declared.
 	if triggerType == agents.TriggerTypeSchedule {
-		if err := agents.ValidateCronInterval(cron, agents.DefaultMinCronIntervalMinutes); err != nil {
+		if err := agents.ValidateCronInterval(cron, s.minCronInterval()); err != nil {
 			return apperror.NewBadRequest(fmt.Sprintf(
 				"agent %q: invalid cronSchedule: %v (runtime agents use standard 5-field cron — minute hour day-of-month month day-of-week; a seconds field is not accepted)",
 				m.Name, err))
