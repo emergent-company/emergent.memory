@@ -47,7 +47,9 @@ test('expanding a row fetches and renders the deferred cached tool rows', async 
   await expect(row).toBeVisible();
 
   const host = row.locator('[data-mcp-tools-host="mcp-unavailable"]');
-  await expect(host.locator('[data-mcp-tools-pending]')).toBeVisible();
+  // Collapsed <details> hides the body, so assert attachment rather than
+  // visibility: the placeholder exists but is not rendered until expand.
+  await expect(host.locator('[data-mcp-tools-pending]')).toHaveCount(1);
 
   await row.locator('summary').click();
 
