@@ -98,8 +98,8 @@ func TestLexicalSearch_NamespaceScopesChunkQuery(t *testing.T) {
 	projectID := uuid.New()
 
 	mock.ExpectQuery(chunkScopedRE + `[\s\S]*LIMIT 20`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "hit", nil, 0.9))
 
 	resp, err := repo.LexicalSearch(context.Background(), TextSearchParams{
 		ProjectID: projectID,
@@ -117,8 +117,8 @@ func TestVectorSearch_NamespaceScopesChunkQuery(t *testing.T) {
 	projectID := uuid.New()
 
 	mock.ExpectQuery(chunkScopedRE + `[\s\S]*LIMIT 20`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "hit", nil, 0.9))
 
 	resp, err := repo.VectorSearch(context.Background(), TextSearchParams{
 		ProjectID: projectID,
@@ -141,12 +141,12 @@ func TestHybridSearch_NamespaceScopesBothLegs(t *testing.T) {
 
 	// Lexical leg: one hit, so lexicalSearch short-circuits (no relax retry).
 	mock.ExpectQuery(chunkScopedRE + `[\s\S]*LIMIT 40`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "lexical hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "lexical hit", nil, 0.9))
 	// Vector leg: must also carry the namespace predicate.
 	mock.ExpectQuery(chunkScopedRE + `[\s\S]*LIMIT 40`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "vector hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "vector hit", nil, 0.9))
 
 	resp, err := repo.HybridSearch(context.Background(), TextSearchParams{
 		ProjectID: projectID,
@@ -169,8 +169,8 @@ func TestLexicalSearch_NullNamespaceScopesChunkQuery(t *testing.T) {
 	projectID := uuid.New()
 
 	mock.ExpectQuery(chunkNullScopedRE + `[\s\S]*LIMIT 20`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "hit", nil, 0.9))
 
 	resp, err := repo.LexicalSearch(context.Background(), TextSearchParams{
 		ProjectID:       projectID,
@@ -196,11 +196,11 @@ func TestExecuteTextSearch_ForwardsNamespace(t *testing.T) {
 	// A queryVector is supplied so executeTextSearch runs HybridSearch (both
 	// legs) without needing an embedder; both legs must carry the predicate.
 	mock.ExpectQuery(chunkScopedRE + `[\s\S]*LIMIT 40`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "lexical hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "lexical hit", nil, 0.9))
 	mock.ExpectQuery(chunkScopedRE + `[\s\S]*LIMIT 40`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "vector hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "vector hit", nil, 0.9))
 
 	ns := "system"
 	results, _, _, err := svc.executeTextSearch(context.Background(), projectID, &UnifiedSearchRequest{
@@ -228,8 +228,8 @@ func TestExecuteTextSearch_ForwardsNamespaceIsNull(t *testing.T) {
 	svc := NewService(repo, nil, nil, log, nil)
 
 	mock.ExpectQuery(chunkNullScopedRE + `[\s\S]*LIMIT 20`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
-			AddRow(uuid.New(), uuid.New(), 0, "default hit", 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "default hit", nil, 0.9))
 
 	results, _, _, err := svc.executeTextSearch(context.Background(), projectID, &UnifiedSearchRequest{
 		Query:           "needle",

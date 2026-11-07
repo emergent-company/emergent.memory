@@ -688,6 +688,13 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	// Per-mode cutoff: drop chunk results below the requested min score (nil/0 keeps baseline).
 	resp.Results = filterBelowMinScore(resp.Results, minScore, func(t *TextSearchResult) float32 { return t.Score })
 
+	// Small-to-big: a child chunk that matched is expanded to its stored parent
+	// chunk so the retrieval context is the coherent section, not the fragment.
+	// Expansion only rewrites Text; score and identity stay on the matched child.
+	if err := s.repo.ExpandToParent(ctx, resp.Results); err != nil {
+		return nil, "", nil, err
+	}
+
 	// Return raw debug info
 	var rawDebug any
 	if req.IncludeDebug {

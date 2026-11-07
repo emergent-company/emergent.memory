@@ -294,6 +294,12 @@ type TextSearchResult struct {
 	Score      float32
 	Source     *string
 	Mode       *string
+	// ParentChunkID is the stored parent chunk this child belongs to, when the
+	// chunk was produced by parent-child chunking. It is set during search and
+	// used by small-to-big expansion to swap in the parent's text as retrieval
+	// context. Parents are deliberately not embedded, so they can only be
+	// reached through their children.
+	ParentChunkID *uuid.UUID
 }
 
 // GraphSearchResult represents a graph search result with scores
