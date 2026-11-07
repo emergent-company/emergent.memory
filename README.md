@@ -76,8 +76,12 @@ Requirements: **Go 1.26+**, **Docker with Compose v2**, **Task**, **Node 20+**
 ## Documentation
 
 - Published documentation: **https://emergent-company.github.io/emergent.memory/**
-- API reference: [`apps/server/docs/swagger/`](apps/server/docs/swagger/)
+- API reference: **[interactive](https://emergent-company.github.io/emergent.memory/latest/api-reference/)** · [`swagger.json`](https://emergent-company.github.io/emergent.memory/latest/swagger.json)
 - Database schema: [`docs/schema.dbml`](docs/schema.dbml)
+
+The OpenAPI spec is build output, not a checked-in file: generate it locally
+with `task server:swagger` (or it is produced by `task build`, both Dockerfiles
+and the docs workflow). It is served at `/openapi.json` by a running server.
 
 ## License
 
