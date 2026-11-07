@@ -1239,7 +1239,7 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 			}
 			if d.Branch != nil {
 				if d.Branch.MergedAt == "" {
-					@extractionMergeAction(documentID, d.Job.ID, d.BranchID, d.LeftForReview)
+					@extractionMergeAction(documentID, d.Job.ID, d.BranchID, d.LeftForReview, d.LeftForReviewObjects)
 				} else {
 					@components.StatusBadge("Merged into main", ui.BadgeSuccess, "lucide--check", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 				}
@@ -1275,8 +1275,10 @@ templ extractionReadiness(r *MergeReadiness) {
 // split before confirming. It is rendered only when the branch exists and is
 // not already merged (hide, don't disable). leftForReview is the count of
 // objects a prior partial merge left on the branch; when non-zero it renders a
-// "N left for review" badge.
-templ extractionMergeAction(documentID, jobID, branchID string, leftForReview int) {
+// "N left for review" badge, and — when the specific items are known — the list
+// of those objects so the user can see *which* need attention, not just how
+// many (#242).
+templ extractionMergeAction(documentID, jobID, branchID string, leftForReview int, reviewItems []mergeReviewItem) {
 	<div class="mt-4 flex flex-row flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3 sm:flex-nowrap" data-testid="extraction-merge">
 		<div class="flex flex-wrap items-center gap-2">
 			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "text-right"}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
@@ -1310,14 +1312,18 @@ templ extractionMergeAction(documentID, jobID, branchID string, leftForReview in
 			Merge into main
 		}
 	</div>
+	if len(reviewItems) > 0 {
+		@mergeReviewList(reviewItems)
+	}
 	<div id={ "merge-preview-target-" + jobID }></div>
 }
 
 // mergePreviewModal is the confirm-before-merge dialog. actionURL is the POST
 // target for the confirm button (the document merge route or the inbox merge
-// route). preview is the server's predicted split; previewErr renders the modal
-// in its error state. The dialog auto-opens once the HTMX swap inserts it.
-templ mergePreviewModal(actionURL string, preview *BranchMergeResult, previewErr error) {
+// route). preview is the server's predicted split; items names the objects the
+// merge would leave for review; previewErr renders the modal in its error
+// state. The dialog auto-opens once the HTMX swap inserts it.
+templ mergePreviewModal(actionURL string, preview *BranchMergeResult, items []mergeReviewItem, previewErr error) {
 	@ui.Dialog(ui.DialogProps{ID: "merge-preview-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "merge-preview-modal"}}) {
 		@ui.DialogTitle() { Review merge }
 		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
@@ -1332,6 +1338,9 @@ templ mergePreviewModal(actionURL string, preview *BranchMergeResult, previewErr
 			})
 		} else {
 			@mergePreviewSummary(preview)
+			if len(items) > 0 {
+				@mergeReviewList(items)
+			}
 		}
 		<form method="post" action={ templ.URL(actionURL) }>
 			<div class="mt-4 flex justify-end gap-2">
@@ -1390,6 +1399,53 @@ templ mergePreviewRow(icon, label, value string, warn bool) {
 		<span class={ "grow text-sm", templ.KV("text-muted", !warn), templ.KV("text-warning font-medium", warn) }>{ label }</span>
 		<span class={ "text-sm tabular-nums", templ.KV("font-medium", warn) }>{ value }</span>
 	</div>
+}
+
+// mergeReviewList renders the objects a merge left (or would leave) for review:
+// each row names the object and its type, flags the reason (conflict vs
+// similarity), and — when present — the similar target or conflicting keys, plus
+// a link to the object. It gives the "N left for review" count a visible place
+// to live after a partial merge (#242).
+templ mergeReviewList(items []mergeReviewItem) {
+	if len(items) > 0 {
+		<div class="mt-2 space-y-1" data-testid="merge-review-list">
+			for _, it := range items {
+				<div class="flex flex-wrap items-center gap-2 rounded-field bg-base-200/40 px-3 py-2">
+					if it.Type != "" {
+						@ui.Badge(ui.BadgeProps{
+							Label:   it.Type,
+							Variant: ui.BadgePrimary,
+							Size:    ui.BadgeSizeXS,
+							Icon:    "lucide--box",
+						})
+					}
+					<span class="min-w-0 grow truncate text-sm font-medium">{ it.Label }</span>
+					if it.Resolution == "suggested" {
+						@ui.Badge(ui.BadgeProps{
+							Label:   "Similar",
+							Variant: ui.BadgeAccent,
+							Size:    ui.BadgeSizeXS,
+						})
+					} else {
+						@ui.Badge(ui.BadgeProps{
+							Label:   "Conflict",
+							Variant: ui.BadgeWarning,
+							Size:    ui.BadgeSizeXS,
+						})
+					}
+					if it.SimilarTarget != "" {
+						<span class="text-muted text-xs">similar to { it.SimilarTarget }</span>
+					}
+					if it.Conflicts != "" {
+						<span class="text-warning text-xs">conflict: { it.Conflicts }</span>
+					}
+					if it.ObjectID != "" {
+						<a class="link link-primary shrink-0 text-xs" href={ templ.URL("/objects/" + url.PathEscape(it.ObjectID)) }>View →</a>
+					}
+				</div>
+			}
+		</div>
+	}
 }
 
 // --- extraction results ---

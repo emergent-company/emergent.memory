@@ -473,20 +473,20 @@ func (s *Server) uiInboxMergePreview(c echo.Context) error {
 
 	job, err := s.findExtractionJob(ctx, documentID, jobID)
 	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, nil, userFacingError(err)))
 		return nil
 	}
 	branchID, _, ok := s.extractionJobBranch(ctx, job)
 	if !ok {
-		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, fmt.Errorf("this extraction has no staging branch to merge")))
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, nil, fmt.Errorf("this extraction has no staging branch to merge")))
 		return nil
 	}
 	res, err := s.memory.PreviewMergeBranch(ctx, branchID, "partial")
 	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, nil, userFacingError(err)))
 		return nil
 	}
-	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, nil))
+	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, s.resolveMergePreviewItems(ctx, branchID, res), nil))
 	return nil
 }
 

@@ -2021,7 +2021,7 @@ func TestRenderMergePreviewModalAutoOpens(t *testing.T) {
 		TotalObjects: 3,
 		AddedCount:   2,
 		SimilarCount: 1,
-	}, nil))
+	}, nil, nil))
 	for _, want := range []string{
 		`data-dialog-autoopen="true"`,
 		`data-testid="merge-preview-modal"`,
@@ -2035,7 +2035,7 @@ func TestRenderMergePreviewModalAutoOpens(t *testing.T) {
 		}
 	}
 
-	errHTML := renderHTML(t, mergePreviewModal(actionURL, nil, errors.New("preview unavailable")))
+	errHTML := renderHTML(t, mergePreviewModal(actionURL, nil, nil, errors.New("preview unavailable")))
 	for _, want := range []string{
 		`data-dialog-autoopen="true"`,
 		`data-testid="merge-preview-modal"`,
@@ -2088,6 +2088,84 @@ func TestMergeAppliedObjects(t *testing.T) {
 	review := &BranchMergeResult{TotalObjects: 5, ConflictCount: 2, SimilarCount: 3}
 	if got := mergeAppliedObjects(review); got != 0 {
 		t.Errorf("review-only preview clean count = %d, want 0", got)
+	}
+}
+
+// TestMergeReviewItems pins the label resolution for a merge's left-for-review
+// objects: it keeps only "skipped"/"suggested" entries, joins each to the graph
+// object by canonical id for its display label and deep-link id, and carries the
+// similar target and conflicting keys through.
+func TestMergeReviewItems(t *testing.T) {
+	res := &BranchMergeResult{
+		Objects: []BranchMergeObject{
+			{CanonicalID: "c1", Status: "added", Resolution: "enriched"},
+			{CanonicalID: "c2", Status: "conflict", Resolution: "skipped", Conflicts: []string{"name", "status"}},
+			{CanonicalID: "c3", Status: "similar", Resolution: "suggested", SimilarTargetName: "Sam Altman"},
+		},
+	}
+	objects := []GraphObject{
+		{ID: "o2", CanonicalID: "c2", Type: "person", Key: "sam"},
+		{ID: "o3", CanonicalID: "c3", Type: "org"},
+	}
+
+	items := mergeReviewItems(res, objects)
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2: %+v", len(items), items)
+	}
+	if items[0].ObjectID != "o2" || items[0].Label != "sam" || items[0].Type != "person" || items[0].Resolution != "skipped" || items[0].Conflicts != "name, status" {
+		t.Errorf("conflict item = %+v", items[0])
+	}
+	if items[1].ObjectID != "o3" || items[1].Label != "org o3" || items[1].Type != "org" || items[1].Resolution != "suggested" || items[1].SimilarTarget != "Sam Altman" {
+		t.Errorf("similar item = %+v", items[1])
+	}
+
+	// No left-for-review entries → no items, regardless of the object list.
+	if got := mergeReviewItems(&BranchMergeResult{Objects: []BranchMergeObject{{Resolution: "enriched"}}}, objects); got != nil {
+		t.Errorf("no-review result must yield nil, got %+v", got)
+	}
+}
+
+// TestRenderMergeReviewList pins the list rendering for objects left for review:
+// each row names the object and type, flags conflict vs similarity, and shows
+// the similar target / conflicting keys with a link to the object.
+func TestRenderMergeReviewList(t *testing.T) {
+	items := []mergeReviewItem{
+		{ObjectID: "o2", Label: "sam", Type: "person", Resolution: "skipped", Conflicts: "name, status"},
+		{ObjectID: "o3", Label: "openai", Type: "org", Resolution: "suggested", SimilarTarget: "OpenAI"},
+	}
+	html := renderHTML(t, mergeReviewList(items))
+	for _, want := range []string{
+		`data-testid="merge-review-list"`,
+		"sam", "person", "Conflict", "conflict: name, status",
+		"openai", "org", "Similar", "similar to OpenAI",
+		`href="/objects/o2"`, `href="/objects/o3"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("merge review list missing %q:\n%s", want, html)
+		}
+	}
+
+	if got := renderHTML(t, mergeReviewList(nil)); strings.Contains(got, "merge-review-list") {
+		t.Errorf("empty list must render nothing:\n%s", got)
+	}
+}
+
+// TestRenderExtractionMergeLeftList pins #242's remaining gap: after a partial
+// merge the merge row must list the specific objects left for review, not just
+// the count badge.
+func TestRenderExtractionMergeLeftList(t *testing.T) {
+	items := []mergeReviewItem{
+		{ObjectID: "o2", Label: "sam", Type: "person", Resolution: "skipped", Conflicts: "name"},
+	}
+	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 1, items))
+	for _, want := range []string{
+		"1 left for review",
+		`data-testid="merge-review-list"`,
+		"sam", "Conflict", `href="/objects/o2"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("left-for-review list missing %q:\n%s", want, html)
+		}
 	}
 }
 
@@ -2576,7 +2654,7 @@ func TestAnchorNestingSeesNestedAnchors(t *testing.T) {
 // the merge row stays on one line (explicit row direction, no wrapping) and the
 // explanatory note is right-aligned inside it.
 func TestRenderExtractionMergeRowLayout(t *testing.T) {
-	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-1", 0))
+	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-1", 0, nil))
 	// One row from sm up; below it the row wraps, because a non-wrapping row at
 	// 320 px squeezed the note into a tall stack of ragged lines (#2088 review).
 	if !strings.Contains(html, "flex flex-row flex-wrap items-center justify-between gap-3") {
@@ -2597,7 +2675,7 @@ func TestRenderExtractionMergeRowLayout(t *testing.T) {
 // "N left for review" but offered no way to see the objects. The badge is now a
 // link into the branch-filtered object browser, and it is absent at zero.
 func TestRenderExtractionMergeLeftLinksToBrowser(t *testing.T) {
-	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 3))
+	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 3, nil))
 	for _, want := range []string{
 		`href="/objects?branch=branch-7"`,
 		"3 left for review",
@@ -2608,7 +2686,7 @@ func TestRenderExtractionMergeLeftLinksToBrowser(t *testing.T) {
 		}
 	}
 
-	zero := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 0))
+	zero := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 0, nil))
 	if strings.Contains(zero, "/objects?branch=") {
 		t.Errorf("no review badge should render at zero leftovers:\n%s", zero)
 	}
