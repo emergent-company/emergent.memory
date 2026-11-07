@@ -519,6 +519,89 @@ func TestRenderMCPServersOAuthClientDisclosure(t *testing.T) {
 	}
 }
 
+// TestRenderMCPServersInvokeJSONHighlight covers the dialog's client-side JSON
+// highlighter, which has no Go-side equivalent: the tool result text is
+// untrusted and arrives only at runtime. This asserts the script shape —
+// detection is JSON.parse-gated, tokens are built from text nodes (never
+// innerHTML), the plain baseline survives for non-JSON and oversized results,
+// and both result paths go through the highlighter. The visual result is not
+// observed here: this package has no browser.
+func TestRenderMCPServersInvokeJSONHighlight(t *testing.T) {
+	page := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
+
+	const (
+		start = "// JSON highlighter for MCP tool invoke results."
+		end   = "// End JSON highlighter."
+	)
+	from, to := strings.Index(page, start), strings.Index(page, end)
+	if from < 0 || to < 0 || to < from {
+		t.Fatalf("invoke result JSON highlighter section missing (start=%d end=%d)", from, to)
+	}
+	block := page[from:to]
+
+	for _, want := range []string{
+		// Explicit size guard: oversized output stays plain.
+		"var jsonHighlightLimit = 32 * 1024",
+		// Detection rule: only JSON.parse-accepted text is tokenised.
+		"JSON.parse(text)",
+		// Plain baseline is written before any token work.
+		"pre.textContent = text;",
+		// Tokens are elements whose text is set via textContent; whitespace
+		// between tokens is a real text node.
+		"document.createTextNode(",
+		"el.textContent = text;",
+		// Theme tokens, one per token class (keys, strings, numbers,
+		// booleans/null, punctuation).
+		"'text-info'", "'text-success'", "'text-warning'", "'text-primary'", "'text-base-content/50'",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("JSON highlighter missing %q", want)
+		}
+	}
+
+	// Non-JSON text must fall through to the plain baseline rather than being
+	// tokenised: this exact catch is the only exit from the parse gate.
+	if !strings.Contains(block, "try { JSON.parse(text); } catch (e) { return false; }") {
+		t.Error("JSON highlighter must return the plain baseline when JSON.parse fails")
+	}
+
+	// Ordering proves the parse/size gates run before token building and that
+	// the exact pretty-printed text is written first.
+	baseline := strings.Index(block, "pre.textContent = text;")
+	limit := strings.Index(block, "text.length > jsonHighlightLimit")
+	parse := strings.Index(block, "JSON.parse(text)")
+	build := strings.Index(block, "var nodes = jsonTokenNodes(text)")
+	if baseline < 0 || limit < baseline || parse < limit || build < parse {
+		t.Errorf("highlighter order wrong: baseline=%d limit=%d parse=%d build=%d (want baseline < limit < parse < build)", baseline, limit, parse, build)
+	}
+
+	// XSS safety: the highlight path has no markup-injection sink at all.
+	for _, banned := range []string{"innerHTML", "insertAdjacentHTML", "outerHTML", "document.write"} {
+		if strings.Contains(block, banned) {
+			t.Errorf("JSON highlighter must not use %s (tool output is untrusted)", banned)
+		}
+	}
+
+	// Wiring: both the text-block and structuredContent paths highlight, and
+	// no result path still writes prettyJSONText straight into a pre.
+	for _, call := range []string{
+		"highlightJSONText(pre, b.text || '')",
+		"highlightJSONText(pre, JSON.stringify(r.structuredContent))",
+	} {
+		if got := strings.Count(page, call); got != 1 {
+			t.Errorf("highlighter call %q occurrences = %d, want 1", call, got)
+		}
+	}
+	if strings.Contains(page, "pre.textContent = prettyJSONText(") {
+		t.Error("a result path bypasses the highlighter and writes plain prettyJSONText")
+	}
+
+	// Long-line containment stays on both pre elements.
+	if got := strings.Count(page, "max-h-80 overflow-auto break-words whitespace-pre-wrap"); got != 2 {
+		t.Errorf("result pre containment class occurrences = %d, want 2", got)
+	}
+}
+
 // TestRenderMCPServersOAuthClientConfigured asserts a server with a stored
 // pre-registered client renders the "Client configured" chip plus a Clear
 // action.
