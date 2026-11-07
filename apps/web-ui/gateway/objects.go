@@ -1349,6 +1349,28 @@ func objectTypeDisplayName(t CompiledType) string {
 	return t.Name
 }
 
+// objectTypeRequiresKey reports whether an object type is board-enabled and so
+// requires a non-empty key on create. It mirrors the server's
+// requireBoardEnabledKey rule: the claim lock keys on (project, type, key), so a
+// keyless board-enabled object could be dispatched but never claimed.
+func objectTypeRequiresKey(objectTypes []CompiledType, typeName string) bool {
+	for _, t := range visibleCompiledTypes(objectTypes) {
+		if t.Name == typeName {
+			return t.BoardEnabled
+		}
+	}
+	return false
+}
+
+// objectKeyHint is the Key field's help text on the create form: what the key
+// is for, and that a board-enabled object requires one.
+func objectKeyHint(required bool) string {
+	if required {
+		return "Required. A stable unique identifier used for API lookups and board work — a board-enabled object (like a Task) is claimed by its key."
+	}
+	return "A stable unique identifier used for API lookups. Optional for non-board objects."
+}
+
 // objectPropertyDef is one schema property of an object type, with the schema
 // metadata needed to render a type-appropriate input. Type drives the default
 // widget; Widget is an explicit schema hint ("textarea" for free-form long

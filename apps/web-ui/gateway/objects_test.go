@@ -3353,6 +3353,30 @@ func TestObjectStatusControl(t *testing.T) {
 	}
 }
 
+// TestObjectCreateKeyRequiredForBoardEnabledType pins the #238 fix: a
+// board-enabled type (Task) marks the Key field required with an explanatory
+// hint, while a non-board type leaves it optional.
+func TestObjectCreateKeyRequiredForBoardEnabledType(t *testing.T) {
+	board := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "done"}}}
+
+	html := renderHTML(t, ObjectCreatePage(board, nil, objectCreateForm{Type: "Task"}, nil, nil, objectStatusControlFor(board, "Task")))
+	if !strings.Contains(html, `id="object-key"`) {
+		t.Fatal("create page missing the Key field")
+	}
+	if !strings.Contains(html, `required class="input w-full"`) {
+		t.Errorf("board-enabled type must mark Key required:\n%s", html)
+	}
+	if !strings.Contains(html, "board-enabled") {
+		t.Errorf("board-enabled type must explain that the key is required:\n%s", html)
+	}
+
+	note := []CompiledType{{Name: "Note"}}
+	html = renderHTML(t, ObjectCreatePage(note, nil, objectCreateForm{Type: "Note"}, nil, nil, objectStatusControlFor(note, "Note")))
+	if strings.Contains(html, "required") {
+		t.Errorf("non-board type must not mark Key required:\n%s", html)
+	}
+}
+
 // TestObjectStatusField pins the rendered controls: a type that declares a
 // workflow gets the ticket-style status picker at the top of the detail page,
 // with the current status as its trigger and the other statuses in the menu. A
