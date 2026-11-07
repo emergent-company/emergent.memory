@@ -49,7 +49,7 @@ func pt(t time.Time) *time.Time { return &t }
 
 func TestRenderBackupsPage(t *testing.T) {
 	backups := testBackups()
-	html := renderHTML(t, BackupsPage(backups, 3, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(backups, 3, nil, "", nil, "", nil))
 
 	// list content: names/ids/status/size/created + header count
 	for _, want := range []string{
@@ -111,7 +111,7 @@ func TestRenderBackupsPage(t *testing.T) {
 
 func TestRenderBackupsPageCreatingPolls(t *testing.T) {
 	creating := []Backup{{ID: "b2", ProjectName: "Acme", Status: backupStatusCreating, Progress: 40, CreatedAt: time.Now()}}
-	html := renderHTML(t, BackupsPage(creating, 1, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(creating, 1, nil, "", nil, "", nil))
 	if !strings.Contains(html, "window.location.reload") {
 		t.Error("auto-refresh poll missing while a backup is creating")
 	}
@@ -120,14 +120,14 @@ func TestRenderBackupsPageCreatingPolls(t *testing.T) {
 	}
 
 	terminal := []Backup{{ID: "b1", ProjectName: "Acme", Status: backupStatusReady, Progress: 100, CreatedAt: time.Now()}}
-	htmlDone := renderHTML(t, BackupsPage(terminal, 1, "", nil, "", nil))
+	htmlDone := renderHTML(t, BackupsPage(terminal, 1, nil, "", nil, "", nil))
 	if strings.Contains(htmlDone, "window.location.reload") {
 		t.Error("poll must stop once every backup is terminal")
 	}
 }
 
 func TestRenderBackupsPageEmpty(t *testing.T) {
-	html := renderHTML(t, BackupsPage(nil, 0, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, "", nil, "", nil))
 	if !strings.Contains(html, "No backups yet") {
 		t.Error("empty state missing")
 	}
@@ -138,7 +138,7 @@ func TestRenderBackupsPageEmpty(t *testing.T) {
 
 func TestRenderBackupsPageUnavailable(t *testing.T) {
 	// feature-gated degrade (design D6): unavailable state, not an error
-	html := renderHTML(t, BackupsPage(nil, 0, "The connected Memory service does not expose backups.", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, "The connected Memory service does not expose backups.", nil, "", nil))
 	for _, want := range []string{"Backups unavailable", "does not expose backups"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("unavailable state missing %q", want)
@@ -154,7 +154,7 @@ func TestRenderBackupsPageUnavailable(t *testing.T) {
 
 func TestRenderBackupsPageError(t *testing.T) {
 	// Memory unreachable / non-404 failure: real error state
-	html := renderHTML(t, BackupsPage(nil, 0, "", errTest, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, "", errTest, "", nil))
 	for _, want := range []string{"Failed to load backups", "backend unreachable"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("error state missing %q", want)
@@ -254,6 +254,8 @@ func newBackupsEcho(f *fakeMemory) (*Server, *echo.Echo) {
 	e.GET("/backups/:id", s.uiBackupDetail)
 	e.GET("/backups/:id/download", s.uiBackupDownload)
 	e.POST("/backups/:id/delete", s.uiBackupDelete)
+	e.POST("/backups/schedule", s.uiBackupScheduleSave)
+	e.POST("/backups/schedule/delete", s.uiBackupScheduleDelete)
 	return s, e
 }
 
@@ -633,5 +635,230 @@ func TestBackupsOrgIDFromSessionNoProject(t *testing.T) {
 	ctx := withSessionContext(context.Background(), &sessionContext{})
 	if _, err := s.backupsOrgID(ctx); !errors.Is(err, errBackupsNoOrg) {
 		t.Fatalf("backupsOrgID err = %v, want errBackupsNoOrg", err)
+	}
+}
+
+// --- Scheduled backups: render ---
+
+// TestRenderBackupsPageSchedule covers the card for a configured schedule:
+// state badge, next/last fire, the preset selection and the delete affordance.
+func TestRenderBackupsPageSchedule(t *testing.T) {
+	next := time.Date(2026, 11, 8, 2, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 11, 7, 2, 0, 0, 0, time.UTC)
+	lastID := "b1"
+	schedule := &BackupSchedule{
+		Enabled:       true,
+		CronSchedule:  "0 2 * * *",
+		RetentionDays: 30,
+		NextRunAt:     next,
+		LastRunAt:     &last,
+		LastBackupID:  &lastID,
+	}
+	html := renderHTML(t, BackupsPage(nil, 0, schedule, "", nil, "", nil))
+
+	for _, want := range []string{
+		"Scheduled backups",
+		"Enabled",
+		"Next run 2026-11-08 02:00 UTC",
+		"Last run 2026-11-07 02:00 UTC",
+		`href="/backups/b1"`,
+		`action="/backups/schedule"`,
+		`action="/backups/schedule/delete"`,
+		`value="30"`,
+		`value="0 2 * * *" selected`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("schedule card missing %q", want)
+		}
+	}
+	if strings.Contains(html, "Not configured") {
+		t.Error("configured schedule should not render the not-configured badge")
+	}
+	if strings.Contains(html, `value="custom" selected`) {
+		t.Error("a preset cadence should not select the custom option")
+	}
+}
+
+// TestRenderBackupsPageScheduleAbsent covers the no-schedule card: the form
+// renders with the daily preset and enabled defaulted, and there is nothing to
+// delete yet.
+func TestRenderBackupsPageScheduleAbsent(t *testing.T) {
+	html := renderHTML(t, BackupsPage(nil, 0, nil, "", nil, "", nil))
+
+	for _, want := range []string{
+		"Scheduled backups",
+		"Not configured",
+		`action="/backups/schedule"`,
+		`value="0 2 * * *" selected`,
+		`value="30"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("empty schedule card missing %q", want)
+		}
+	}
+	if strings.Contains(html, `action="/backups/schedule/delete"`) {
+		t.Error("delete form must not render when no schedule exists")
+	}
+}
+
+// TestRenderBackupsPageScheduleCustomCron covers a stored expression outside the
+// preset list: the custom option is selected and the field carries the value.
+func TestRenderBackupsPageScheduleCustomCron(t *testing.T) {
+	schedule := &BackupSchedule{
+		Enabled:       false,
+		CronSchedule:  "15 4 * * 1-5",
+		RetentionDays: 14,
+		NextRunAt:     time.Date(2026, 11, 9, 4, 15, 0, 0, time.UTC),
+	}
+	html := renderHTML(t, BackupsPage(nil, 0, schedule, "", nil, "", nil))
+
+	for _, want := range []string{
+		"Disabled",
+		`value="custom" selected`,
+		`value="15 4 * * 1-5"`,
+		`value="14"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("custom schedule card missing %q", want)
+		}
+	}
+	if strings.Contains(html, `value="0 2 * * *" selected`) {
+		t.Error("a custom expression should not select a preset")
+	}
+}
+
+// --- Scheduled backups: handlers ---
+
+// TestUIBackupScheduleSave covers the preset cadence path: the select posts the
+// cron expression directly and the checkbox/retention/includes are forwarded.
+func TestUIBackupScheduleSave(t *testing.T) {
+	f := &fakeMemory{project: backupProject()}
+	_, e := newBackupsEcho(f)
+
+	form := url.Values{
+		"enabled":        {"on"},
+		"cadence":        {"0 */6 * * *"},
+		"retentionDays":  {"7"},
+		"includeChat":    {"on"},
+		"includeJournal": {"on"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/backups/schedule", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/backups?schedule_saved=1" {
+		t.Errorf("location = %q", loc)
+	}
+	got := f.savedBackupSchedule
+	if got == nil {
+		t.Fatal("schedule was not saved")
+	}
+	if !got.Enabled || got.CronSchedule != "0 */6 * * *" || got.RetentionDays != 7 || !got.IncludeChat || !got.IncludeJournal || got.IncludeDeleted {
+		t.Errorf("forwarded request = %+v", got)
+	}
+}
+
+// TestUIBackupScheduleSaveCustomCron covers the custom option: the free-text
+// cron field is used instead of the select value.
+func TestUIBackupScheduleSaveCustomCron(t *testing.T) {
+	f := &fakeMemory{project: backupProject()}
+	_, e := newBackupsEcho(f)
+
+	form := url.Values{"cadence": {"custom"}, "cron": {" 15 4 * * 1-5 "}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/backups/schedule", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	got := f.savedBackupSchedule
+	if got == nil {
+		t.Fatal("schedule was not saved")
+	}
+	if got.CronSchedule != "15 4 * * 1-5" {
+		t.Errorf("cron = %q, want the trimmed custom value", got.CronSchedule)
+	}
+	if got.Enabled {
+		t.Error("an absent enabled checkbox must forward disabled")
+	}
+	if got.RetentionDays != 30 {
+		t.Errorf("retention should default to 30, got %d", got.RetentionDays)
+	}
+}
+
+// TestUIBackupScheduleSaveRejected covers memory rejecting the write (bad cron
+// or retention): the message goes to the ?err= flash, not a 500.
+func TestUIBackupScheduleSaveRejected(t *testing.T) {
+	f := &fakeMemory{
+		project:         backupProject(),
+		saveScheduleErr: fmt.Errorf("memory 400 bad_request: cron schedule fires every 5m0s; the minimum interval is 15 minutes"),
+	}
+	_, e := newBackupsEcho(f)
+
+	form := url.Values{"cadence": {"*/5 * * * *"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/backups/schedule", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/backups?err=") {
+		t.Errorf("location = %q, want error flash", loc)
+	}
+}
+
+// TestUIBackupScheduleDelete covers the delete form PRG.
+func TestUIBackupScheduleDelete(t *testing.T) {
+	f := &fakeMemory{project: backupProject()}
+	_, e := newBackupsEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/backups/schedule/delete", strings.NewReader(url.Values{}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/backups?schedule_deleted=1" {
+		t.Errorf("location = %q", loc)
+	}
+	if !f.deletedSchedule {
+		t.Error("delete was not forwarded")
+	}
+}
+
+// TestUIBackupsPageShowsSchedule proves the page loads the schedule alongside the
+// list, and that a configured schedule renders on the real handler path.
+func TestUIBackupsPageShowsSchedule(t *testing.T) {
+	f := &fakeMemory{
+		project: backupProject(),
+		backups: testBackups(),
+		backupSchedule: &BackupSchedule{
+			Enabled:       true,
+			CronSchedule:  "0 2 * * *",
+			RetentionDays: 30,
+			NextRunAt:     time.Date(2026, 11, 8, 2, 0, 0, 0, time.UTC),
+		},
+	}
+	_, e := newBackupsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/backups", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Scheduled backups", "Next run 2026-11-08 02:00 UTC", `action="/backups/schedule/delete"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
 	}
 }

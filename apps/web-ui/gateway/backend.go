@@ -277,6 +277,9 @@ type MemoryBackend interface {
 	CreateBackup(ctx context.Context, includeDeleted, includeChat bool, retentionDays int) (*Backup, error)
 	DownloadBackup(ctx context.Context, orgID, backupID string) (string, error)
 	DeleteBackup(ctx context.Context, orgID, backupID string) error
+	GetBackupSchedule(ctx context.Context) (*BackupSchedule, error)
+	SaveBackupSchedule(ctx context.Context, in BackupScheduleRequest) (*BackupSchedule, error)
+	DeleteBackupSchedule(ctx context.Context) error
 	GetCurrentProject(ctx context.Context) (*Project, error)
 	UpdateProject(ctx context.Context, id string, in *ProjectUpdate) (*Project, error)
 	ListAgentOverrides(ctx context.Context) ([]AgentOverrideEntry, error)

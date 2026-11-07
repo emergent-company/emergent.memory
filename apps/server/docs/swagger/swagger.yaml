@@ -1947,6 +1947,56 @@ definitions:
         description: Storage
         type: string
     type: object
+  domain_backups.BackupSchedule:
+    properties:
+      createdAt:
+        type: string
+      createdBy:
+        type: string
+      cronSchedule:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      includeChat:
+        type: boolean
+      includeDeleted:
+        type: boolean
+      includeJournal:
+        type: boolean
+      lastBackupId:
+        type: string
+      lastRunAt:
+        type: string
+      nextRunAt:
+        type: string
+      organizationId:
+        type: string
+      projectId:
+        type: string
+      retentionDays:
+        type: integer
+      timezone:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  domain_backups.BackupScheduleRequestDTO:
+    properties:
+      cronSchedule:
+        type: string
+      enabled:
+        type: boolean
+      includeChat:
+        type: boolean
+      includeDeleted:
+        type: boolean
+      includeJournal:
+        type: boolean
+      retentionDays:
+        type: integer
+    type: object
   domain_backups.CreateBackupRequestDTO:
     properties:
       includeChat:
@@ -27450,6 +27500,123 @@ paths:
       security:
       - bearerAuth: []
       summary: Import backup archive
+      tags:
+      - backups
+  /api/v1/projects/{projectId}/backup-schedule:
+    delete:
+      description: Removes the project's recurring backup configuration. Returns 404
+        when no schedule is configured.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Schedule deleted
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: No schedule configured
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete project backup schedule
+      tags:
+      - backups
+    get:
+      description: Returns the project's recurring backup configuration, or 404 when
+        no schedule is configured.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Backup schedule
+          schema:
+            $ref: '#/definitions/domain_backups.BackupSchedule'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: No schedule configured
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get project backup schedule
+      tags:
+      - backups
+    put:
+      consumes:
+      - application/json
+      description: Creates or replaces the project's one recurring backup schedule.
+        cronSchedule is a standard 5-field cron expression evaluated in UTC (minimum
+        interval 15 minutes); retentionDays defaults to 30 and must be 1-365.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Schedule configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_backups.BackupScheduleRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved schedule
+          schema:
+            $ref: '#/definitions/domain_backups.BackupSchedule'
+        "400":
+          description: Invalid cron expression or retention
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create or replace project backup schedule
       tags:
       - backups
   /api/v1/projects/{projectId}/backups:

@@ -40,6 +40,10 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 	projects.Use(authMiddleware.RequireAuth())
 	{
 		projects.POST("/backups", handler.CreateBackup)
+		// Recurring backup configuration (one schedule per project).
+		projects.GET("/backup-schedule", handler.GetBackupSchedule)
+		projects.PUT("/backup-schedule", handler.PutBackupSchedule)
+		projects.DELETE("/backup-schedule", handler.DeleteBackupSchedule)
 		// Overwrite restore: replaces this project with the backup snapshot.
 		projects.POST("/restore", handler.RestoreBackup)
 	}

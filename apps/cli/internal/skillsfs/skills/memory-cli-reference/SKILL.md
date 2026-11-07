@@ -1681,6 +1681,106 @@ memory backups list [flags]
       --org-id string   Organization ID (auto-detected if not specified)
 ```
 
+## memory backups schedule
+
+Manage the project's recurring backup schedule
+
+### Synopsis
+
+Configure automatic project backups.
+
+A project has at most one schedule. The cadence is a standard 5-field cron
+expression (minute hour day-of-month month day-of-week) evaluated in UTC, and it
+must not fire more often than every 15 minutes. The server runs due schedules
+once a minute and starts a normal project backup for each one.
+
+### Options
+
+```
+  -h, --help   help for schedule
+```
+
+## memory backups schedule delete
+
+Delete the project's backup schedule
+
+### Synopsis
+
+Delete the project's recurring backup configuration.
+
+Backups the schedule already created are kept (subject to their own retention).
+Future runs stop immediately.
+
+```
+memory backups schedule delete [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory backups schedule get
+
+Show the project's backup schedule
+
+### Synopsis
+
+Show the project's recurring backup configuration.
+
+Exits 0 with "No backup schedule configured." when the project has none.
+
+```
+memory backups schedule get [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory backups schedule set
+
+Create or replace the project's backup schedule
+
+### Synopsis
+
+Create or replace the project's recurring backup configuration.
+
+--cron is a standard 5-field cron expression evaluated in UTC (for example
+"0 2 * * *" for 02:00 UTC daily). It must not fire more often than every 15
+minutes. The schedule is enabled unless --disabled is passed; retention applies
+to every backup the schedule creates.
+
+Editing the schedule recomputes the next run immediately, so a cadence change
+takes effect without waiting out the previous expression.
+
+```
+memory backups schedule set [flags]
+```
+
+### Examples
+
+```
+  memory backups schedule set --cron "0 2 * * *"
+  memory backups schedule set --cron "0 */6 * * *" --retention-days 14 --include-chat
+  memory backups schedule set --cron "0 2 * * *" --disabled
+```
+
+### Options
+
+```
+      --cron string          5-field cron expression in UTC (required)
+      --disabled             Save the schedule but do not run it
+  -h, --help                 help for set
+      --include-chat         Include chat conversations and messages
+      --include-deleted      Include soft-deleted items
+      --include-journal      Include journal entries
+      --retention-days int   Retention for the backups it creates (1-365) (default 30)
+```
+
 ## memory blueprints
 
 Install or export Blueprints (schemas, agents, skills, seed data)

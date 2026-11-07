@@ -23797,6 +23797,182 @@
                 }
             }
         },
+        "/api/v1/projects/{projectId}/backup-schedule": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the project's recurring backup configuration, or 404 when no schedule is configured.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Get project backup schedule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Backup schedule",
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.BackupSchedule"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "No schedule configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates or replaces the project's one recurring backup schedule. cronSchedule is a standard 5-field cron expression evaluated in UTC (minimum interval 15 minutes); retentionDays defaults to 30 and must be 1-365.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Create or replace project backup schedule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Schedule configuration",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.BackupScheduleRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved schedule",
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.BackupSchedule"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid cron expression or retention",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes the project's recurring backup configuration. Returns 404 when no schedule is configured.",
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Delete project backup schedule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Schedule deleted"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "No schedule configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/projects/{projectId}/backups": {
             "post": {
                 "security": [
@@ -30661,6 +30837,82 @@
                 "storageKey": {
                     "description": "Storage",
                     "type": "string"
+                }
+            }
+        },
+        "domain_backups.BackupSchedule": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "cronSchedule": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "includeChat": {
+                    "type": "boolean"
+                },
+                "includeDeleted": {
+                    "type": "boolean"
+                },
+                "includeJournal": {
+                    "type": "boolean"
+                },
+                "lastBackupId": {
+                    "type": "string"
+                },
+                "lastRunAt": {
+                    "type": "string"
+                },
+                "nextRunAt": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "retentionDays": {
+                    "type": "integer"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_backups.BackupScheduleRequestDTO": {
+            "type": "object",
+            "properties": {
+                "cronSchedule": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "includeChat": {
+                    "type": "boolean"
+                },
+                "includeDeleted": {
+                    "type": "boolean"
+                },
+                "includeJournal": {
+                    "type": "boolean"
+                },
+                "retentionDays": {
+                    "type": "integer"
                 }
             }
         },
