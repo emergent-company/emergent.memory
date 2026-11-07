@@ -1562,12 +1562,13 @@ func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType,
 			)
 			continue
 		}
+		properties, required := normalizeInferredSchema(t.InferredSchema)
 		types = append(types, DiscoveredType{
 			TypeName:           t.TypeName,
 			Description:        t.Description,
 			Confidence:         t.Confidence,
-			Properties:         normalizePropertyCrossRefs(t.InferredSchema),
-			RequiredProperties: []string{},
+			Properties:         properties,
+			RequiredProperties: required,
 			ExampleInstances:   t.ExampleInstances,
 			Frequency:          t.Occurrences,
 		})
@@ -1581,6 +1582,78 @@ func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType,
 // Only suffix-matches on unambiguously relational nouns to avoid false positives.
 func isReifiedType(name string) bool {
 	return strings.HasSuffix(name, "Relationship") || strings.HasSuffix(name, "Association")
+}
+
+// normalizeInferredSchema reads the property schema a discovery model returned
+// and returns the property map plus the required property names.
+//
+// The prompt asks for a flat map of property name → descriptor, but models
+// routinely answer with a complete JSON Schema object instead:
+//
+//	{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}
+//
+// Taken literally that produced three properties named "type", "properties" and
+// "required" and an empty required list — the schema the reporter saw (#234).
+// The object form is unwrapped when present; the flat form passes through.
+func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
+	if schema == nil {
+		return nil, []string{}
+	}
+
+	properties := schema
+	required := []string{}
+	if inner, ok := jsonSchemaObjectProperties(schema); ok {
+		properties = inner
+		required = propertyNames(schema["required"])
+	}
+	return normalizePropertyCrossRefs(properties), required
+}
+
+// jsonSchemaObjectProperties reports whether schema is a JSON Schema object
+// wrapper and returns its properties map.
+//
+// The wrapper is recognised only by markers that cannot occur in the flat form
+// the prompt defines: a top-level `type` of "object" (flat maps hold descriptors
+// under each property name, never a scalar type at the top) or a `required`
+// array. A flat schema that happens to contain a property literally named
+// "properties" or "type" therefore stays flat.
+func jsonSchemaObjectProperties(schema map[string]any) (map[string]any, bool) {
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if typeName, _ := schema["type"].(string); typeName == "object" {
+		return properties, true
+	}
+	if _, isArray := schema["required"].([]any); isArray {
+		return properties, true
+	}
+	return nil, false
+}
+
+// propertyNames reads a JSON `required` array into names, dropping anything
+// that is not a non-empty string.
+func propertyNames(value any) []string {
+	var items []any
+	switch v := value.(type) {
+	case []any:
+		items = v
+	case []string:
+		items = make([]any, len(v))
+		for i, name := range v {
+			items[i] = name
+		}
+	default:
+		return []string{}
+	}
+
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		if name, ok := item.(string); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // normalizePropertyCrossRefs walks an inferred_schema properties map and flattens

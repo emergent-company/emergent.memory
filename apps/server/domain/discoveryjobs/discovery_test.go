@@ -306,6 +306,92 @@ func TestNormalizePropertyCrossRefs_NonObjectPassthrough(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// normalizeInferredSchema
+// ---------------------------------------------------------------------------
+
+func TestNormalizeInferredSchema_FlatMapPassesThrough(t *testing.T) {
+	schema := map[string]any{
+		"title": map[string]any{"type": "string"},
+		"guest": map[string]any{"type": "string"},
+	}
+	props, required := normalizeInferredSchema(schema)
+	if len(props) != 2 || props["title"] == nil || props["guest"] == nil {
+		t.Errorf("flat properties changed: %#v", props)
+	}
+	if len(required) != 0 {
+		t.Errorf("required = %v, want empty", required)
+	}
+}
+
+func TestNormalizeInferredSchema_UnwrapsJSONSchemaObject(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"title": map[string]any{"type": "string"},
+			"guest": map[string]any{"type": "string"},
+		},
+		"required": []any{"title"},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if len(props) != 2 {
+		t.Fatalf("properties = %#v, want the two inner properties", props)
+	}
+	for _, junk := range []string{"type", "properties", "required"} {
+		if _, present := props[junk]; present {
+			t.Errorf("wrapper key %q leaked into properties", junk)
+		}
+	}
+	if len(required) != 1 || required[0] != "title" {
+		t.Errorf("required = %v, want [title]", required)
+	}
+}
+
+func TestNormalizeInferredSchema_UnwrapsWithoutTypeMarker(t *testing.T) {
+	// Some models keep the wrapper but omit "type": "object". A `required`
+	// array is still decisive, because the flat form maps every name to a
+	// descriptor object.
+	schema := map[string]any{
+		"properties": map[string]any{"title": map[string]any{"type": "string"}},
+		"required":   []any{"title"},
+	}
+
+	props, required := normalizeInferredSchema(schema)
+	if _, present := props["properties"]; present {
+		t.Fatal("wrapper not unwrapped")
+	}
+	if props["title"] == nil || len(required) != 1 {
+		t.Errorf("props = %#v, required = %v", props, required)
+	}
+}
+
+func TestNormalizeInferredSchema_KeepsFlatMapWithWrapperNamedProperty(t *testing.T) {
+	// A genuine type with a property named "properties" must not be unwrapped:
+	// the flat form holds a descriptor object there, not a top-level type or a
+	// required array.
+	schema := map[string]any{
+		"properties": map[string]any{"type": "string"},
+	}
+	props, required := normalizeInferredSchema(schema)
+	if props["properties"] == nil {
+		t.Fatalf("property named 'properties' was lost: %#v", props)
+	}
+	if len(required) != 0 {
+		t.Errorf("required = %v, want empty", required)
+	}
+}
+
+func TestPropertyNames_DropsNonStrings(t *testing.T) {
+	names := propertyNames([]any{"title", 42, "", "guest"})
+	if len(names) != 2 || names[0] != "title" || names[1] != "guest" {
+		t.Errorf("names = %v, want [title guest]", names)
+	}
+	if got := propertyNames(nil); len(got) != 0 {
+		t.Errorf("nil = %v, want empty", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // loadDocumentText — GAP 5
 // ---------------------------------------------------------------------------
 
