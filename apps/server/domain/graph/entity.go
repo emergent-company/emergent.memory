@@ -177,6 +177,11 @@ type Branch struct {
 	ParentBranchID *uuid.UUID `bun:"parent_branch_id,type:uuid" json:"parent_branch_id,omitempty"`
 	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
 	MergedAt       *time.Time `bun:"merged_at" json:"merged_at,omitempty"`
+	// Origin records why the branch exists (extraction | agent | manual |
+	// system). Metadata only — see branches.Branch.Origin.
+	Origin      string     `bun:"origin,notnull,default:'manual'" json:"origin"`
+	OriginID    *uuid.UUID `bun:"origin_id,type:uuid" json:"origin_id,omitempty"`
+	OriginLabel *string    `bun:"origin_label" json:"origin_label,omitempty"`
 }
 
 // BranchLineage stores the transitive closure of branch ancestry.

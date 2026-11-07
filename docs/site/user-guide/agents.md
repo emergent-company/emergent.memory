@@ -211,7 +211,7 @@ memory defs update <definition-id> --tools "skill,search,graph_query"
 
 ### Manage skills via the CLI
 
-Skills use a lowercase slug name (e.g. `my-skill`, max 64 characters).
+Skills use a lowercase slug name (e.g. `my-skill`, max 64 characters). Letters, digits and single hyphens or dots are allowed; dots are reserved for learned skills (see below).
 
 **List skills**
 
@@ -285,6 +285,53 @@ for f in .agents/skills/*/SKILL.md; do
   memory skills import "$f"
 done
 ```
+
+### Automatic skill capture (opt-in)
+
+An agent can learn from its own successful runs: a bounded background review
+turns a run into a **staged proposal**, and a human decides whether it becomes a
+skill. The feature is off everywhere until a project opts in.
+
+**Enable it on a project**
+
+```bash
+curl -X PATCH "$MEMORY_API/api/projects/$PROJECT_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"skill_capture": {"mode": "suggest"}}'
+```
+
+`mode` is `off` (default), `suggest`, or `auto`. `suggest` is the recommended
+starting point: every candidate waits for approval. `auto` additionally requires
+`"autoApply": true` and passes only when the candidate is clean, confident, not a
+duplicate, not a delete, within the daily caps, and the agent has at least one
+previously approved proposal. Deletes are always human-reviewed.
+
+An agent definition may **narrow** the project policy with `skillCapture:
+{"mode": "off"}`. It cannot widen it.
+
+**What the agent writes.** Learned skills are named `{agent-slug}.{topic}` (for
+example `research-assistant.handling-empty-results`) and are auto-loaded on the
+next run when the agent has `autoLoadSkills` enabled. Skills the agent writes are
+marked as agent-created; the scheduled curator ages them `active → stale →
+archived` when unused. Pin a skill to stop ageing, or lock it to refuse further
+agent writes.
+
+**Review the inbox**
+
+```bash
+GET  /api/projects/:projectId/skills/proposals              # pending by default
+GET  /api/projects/:projectId/skills/proposals/:proposalId
+POST /api/projects/:projectId/skills/proposals/:proposalId/approve
+POST /api/projects/:projectId/skills/proposals/:proposalId/reject
+```
+
+Approving applies the proposal through the normal skill write path, so content
+hashes, embeddings and provenance stay consistent. The security scan runs again
+at approval.
+
+Operators can stop the whole loop without a migration by setting
+`MEMORY_SKILL_CAPTURE_DISABLED=1`.
 
 ---
 

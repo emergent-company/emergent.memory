@@ -1970,7 +1970,7 @@ func TestRenderMergePreviewSummary(t *testing.T) {
 		"Existing objects updated": "2", // fast-forwards only — NOT 2+4 similar = 6
 		"Conflicts":                "1",
 		"Left for review":          "5", // 4 similar + 1 conflict
-		"Total":                    "10",
+		"Total on branch":          "10",
 	}
 	for label, value := range want {
 		if got := rows[label]; got != value {
@@ -2000,7 +2000,7 @@ func TestRenderMergePreviewSummary(t *testing.T) {
 	// warning styling (nothing to flag).
 	htmlNil := renderHTML(t, mergePreviewSummary(nil))
 	rowsNil := mergePreviewRowValues(t, htmlNil)
-	for _, label := range []string{"New objects", "Existing objects updated", "Conflicts", "Left for review", "Total"} {
+	for _, label := range []string{"New objects", "Existing objects updated", "Conflicts", "Left for review", "Total on branch"} {
 		if got, ok := rowsNil[label]; !ok || got != "0" {
 			t.Errorf("nil merge preview row %q = %q (present=%v), want \"0\"", label, got, ok)
 		}
@@ -2028,7 +2028,7 @@ func TestRenderMergePreviewModalAutoOpens(t *testing.T) {
 		`action="` + actionURL + `"`,
 		`data-testid="merge-preview-confirm"`,
 		"Merge 2 objects into main",
-		"New objects", "Total",
+		"New objects", "Total on branch",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("merge preview modal missing %q:\n%s", want, html)
@@ -2576,7 +2576,7 @@ func TestAnchorNestingSeesNestedAnchors(t *testing.T) {
 // the merge row stays on one line (explicit row direction, no wrapping) and the
 // explanatory note is right-aligned inside it.
 func TestRenderExtractionMergeRowLayout(t *testing.T) {
-	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", 0))
+	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-1", 0))
 	// One row from sm up; below it the row wraps, because a non-wrapping row at
 	// 320 px squeezed the note into a tall stack of ragged lines (#2088 review).
 	if !strings.Contains(html, "flex flex-row flex-wrap items-center justify-between gap-3") {
@@ -2590,5 +2590,125 @@ func TestRenderExtractionMergeRowLayout(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-testid="extraction-merge-button"`) {
 		t.Error("the merge action must survive the layout change")
+	}
+}
+
+// TestRenderExtractionMergeLeftLinksToBrowser pins #242: the merge row showed
+// "N left for review" but offered no way to see the objects. The badge is now a
+// link into the branch-filtered object browser, and it is absent at zero.
+func TestRenderExtractionMergeLeftLinksToBrowser(t *testing.T) {
+	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 3))
+	for _, want := range []string{
+		`href="/objects?branch=branch-7"`,
+		"3 left for review",
+		`data-testid="extraction-merge-left"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("left-for-review link missing %q:\n%s", want, html)
+		}
+	}
+
+	zero := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 0))
+	if strings.Contains(zero, "/objects?branch=") {
+		t.Errorf("no review badge should render at zero leftovers:\n%s", zero)
+	}
+}
+
+// TestRenderExtractionDetailReadinessOnlyWhileOpen pins #242: after a merge the
+// run still advertised "Ready to merge" next to "Merged into main". Readiness
+// answers "can this merge now?", so it must disappear once merged, and the
+// branch badge must name the source document rather than the opaque
+// extraction/<doc>/<job> name.
+func TestRenderExtractionDetailReadinessOnlyWhileOpen(t *testing.T) {
+	branch := Branch{
+		ID:          "b1",
+		Name:        "extraction/aaaa/bbbb",
+		MergedAt:    "2026-11-06T10:00:00Z",
+		Origin:      "extraction",
+		OriginLabel: "Invoice.pdf",
+	}
+	detail := extractionJobDetail{
+		Job:       ExtractionJob{ID: "job1"},
+		Branch:    &branch,
+		BranchID:  "b1",
+		Readiness: &MergeReadiness{Ready: true, TotalObjects: 3},
+	}
+
+	merged := renderHTML(t, ExtractionJobDetail("doc-1", detail))
+	if strings.Contains(merged, "Ready to merge") {
+		t.Errorf("a merged branch must not advertise merge readiness (#242):\n%s", merged)
+	}
+	if !strings.Contains(merged, "Merged into main") {
+		t.Error("a merged branch should show its merged state")
+	}
+	if !strings.Contains(merged, "Extraction · Invoice.pdf") {
+		t.Errorf("branch badge should name the source document, not the branch name:\n%s", merged)
+	}
+
+	branch.MergedAt = ""
+	detail.Branch = &branch
+	open := renderHTML(t, ExtractionJobDetail("doc-1", detail))
+	if !strings.Contains(open, "Ready to merge") {
+		t.Errorf("an open branch must still show readiness:\n%s", open)
+	}
+}
+
+// TestAssembleExtractionJobDetailSkipsReadinessWhenMerged pins the fetch half of
+// the #242 fix: a merged branch must not issue the merge-readiness request at
+// all, not merely hide its result. Rendering is covered separately.
+func TestAssembleExtractionJobDetailSkipsReadinessWhenMerged(t *testing.T) {
+	cases := []struct {
+		name               string
+		mergedAt           string
+		wantReadinessCalls int
+	}{
+		{name: "merged branch skips the request", mergedAt: "2026-11-06T10:00:00Z", wantReadinessCalls: 0},
+		{name: "open branch still asks", mergedAt: "", wantReadinessCalls: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var readinessCalls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/merge-readiness"):
+					readinessCalls++
+					_, _ = io.WriteString(w, `{"ready":true,"total_objects":3,"pending_embeddings":0}`)
+				case r.URL.Path == "/api/graph/branches":
+					_, _ = io.WriteString(w, `[{"id":"b1","name":"extraction/aaaa/bbbb","origin":"extraction","origin_label":"Invoice.pdf","merged_at":"`+tc.mergedAt+`"}]`)
+				case strings.HasPrefix(r.URL.Path, "/api/graph/objects/search"):
+					_, _ = io.WriteString(w, `{"items":[],"total":0}`)
+				case strings.HasPrefix(r.URL.Path, "/api/graph/relationships/search"):
+					_, _ = io.WriteString(w, `{"items":[],"total":0}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			s := &Server{
+				cfg:    Config{MemoryURL: srv.URL, MemoryProjectID: "proj-1"},
+				memory: NewMemoryClient(srv.URL, "proj-1"),
+			}
+			job := ExtractionJob{
+				ID:               "job1",
+				StagingBranchID:  "b1",
+				CreatedObjectIDs: []string{"obj-1"},
+			}
+
+			d := s.assembleExtractionJobDetail(context.Background(), job)
+			if d.Branch == nil {
+				t.Fatalf("branch did not resolve: %+v", d)
+			}
+			if readinessCalls != tc.wantReadinessCalls {
+				t.Errorf("merge-readiness requests = %d, want %d", readinessCalls, tc.wantReadinessCalls)
+			}
+			if tc.wantReadinessCalls == 0 && d.Readiness != nil {
+				t.Error("a merged branch must not carry readiness")
+			}
+			if tc.wantReadinessCalls == 1 && d.Readiness == nil {
+				t.Error("an open branch should still carry readiness")
+			}
+		})
 	}
 }
