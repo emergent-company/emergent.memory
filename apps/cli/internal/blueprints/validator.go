@@ -21,6 +21,10 @@ type ValidationSeverity string
 const (
 	ValidationError   ValidationSeverity = "error"
 	ValidationWarning ValidationSeverity = "warning"
+	// ValidationInfo is advisory: it flags a valid configuration whose runtime
+	// consequence an operator should know about. It never fails validate, even
+	// with --strict (#321).
+	ValidationInfo ValidationSeverity = "info"
 )
 
 // ValidationIssue is a single finding produced by Validate.
@@ -76,6 +80,17 @@ func (r *ValidationReport) Warnings() []ValidationIssue {
 	var out []ValidationIssue
 	for _, i := range r.Issues {
 		if i.Severity == ValidationWarning {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// Infos returns only info-severity issues.
+func (r *ValidationReport) Infos() []ValidationIssue {
+	var out []ValidationIssue
+	for _, i := range r.Issues {
+		if i.Severity == ValidationInfo {
 			out = append(out, i)
 		}
 	}
@@ -812,6 +827,16 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 				r.add(ValidationError, "agent", a.Name, a.SourceFile, "cronSchedule",
 					fmt.Sprintf("invalid cronSchedule %q: %v (runtime agents take standard 5-field cron: minute hour day-of-month month day-of-week — a seconds field is not accepted)", a.CronSchedule, err))
 			}
+		}
+
+		// No trigger configuration means install creates an agent definition and
+		// no runtime agent, so the agent silently never runs. This is valid (an
+		// operator may trigger it by hand, or it may be referenced by other
+		// agents), so it is an info note, never an error — including under
+		// --strict (#321).
+		if !a.hasRuntimeTrigger() {
+			r.add(ValidationInfo, "agent", a.Name, a.SourceFile, "triggerType",
+				"definition only; trigger manually or add triggerType (schedule, reaction, or manual) — without one, install creates no runtime agent and the agent never runs on its own")
 		}
 
 		if a.Model != nil {
