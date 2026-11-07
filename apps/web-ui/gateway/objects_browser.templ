@@ -47,7 +47,9 @@ templ ObjectsPage(data objectsPageData) {
 				if data.Query == "" && data.AgentID == "" && data.CredentialID != "" {
 					@objectsCredentialScopeNotice(data)
 				}
-				if data.Query == "" && data.AgentID == "" {
+				// Project-wide totals would misdescribe a share-scoped list, so a
+				// scoped view drops them the same way the agent-scoped view does.
+				if data.Query == "" && data.AgentID == "" && data.CredentialID == "" {
 					@objectsBrowserStats(data)
 				}
 				@objectsBrowserToolbar(data)
