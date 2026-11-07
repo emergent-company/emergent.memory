@@ -172,6 +172,10 @@ type UnifiedSearchResultItem struct {
 	Source     *string `json:"source,omitempty"`
 	Mode       *string `json:"mode,omitempty"`
 	DocumentID *string `json:"document_id,omitempty"`
+	// ContextText is the small-to-big parent chunk text for a text result, when
+	// the matched child belongs to a parent chunk. Snippet stays the matched
+	// child's text; consumers that want the surrounding section read this.
+	ContextText *string `json:"contextText,omitempty"`
 
 	// Relationship-specific fields
 	RelationshipType string                `json:"relationship_type,omitempty"`
@@ -296,10 +300,15 @@ type TextSearchResult struct {
 	Mode       *string
 	// ParentChunkID is the stored parent chunk this child belongs to, when the
 	// chunk was produced by parent-child chunking. It is set during search and
-	// used by small-to-big expansion to swap in the parent's text as retrieval
+	// used by small-to-big expansion to attach the parent's text as retrieval
 	// context. Parents are deliberately not embedded, so they can only be
 	// reached through their children.
 	ParentChunkID *uuid.UUID
+	// ParentText is the expanded parent chunk's text (small-to-big), bounded to
+	// maxParentContextChars. Nil when the chunk has no parent. It is a separate
+	// field so Text (the child snippet) stays stable for callers that want
+	// precision, while callers that want section context read this.
+	ParentText *string
 }
 
 // GraphSearchResult represents a graph search result with scores

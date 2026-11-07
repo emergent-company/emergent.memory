@@ -690,7 +690,8 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 
 	// Small-to-big: a child chunk that matched is expanded to its stored parent
 	// chunk so the retrieval context is the coherent section, not the fragment.
-	// Expansion only rewrites Text; score and identity stay on the matched child.
+	// Expansion only populates ParentText; the child Text (snippet), score, and
+	// identity stay on the matched child.
 	if err := s.repo.ExpandToParent(ctx, resp.Results); err != nil {
 		return nil, "", nil, err
 	}
@@ -1189,13 +1190,14 @@ func (s *Service) graphResultToItem(g *UnifiedSearchGraphResult) UnifiedSearchRe
 func (s *Service) textResultToItem(t *TextSearchResult) UnifiedSearchResultItem {
 	docID := t.DocumentID.String()
 	return UnifiedSearchResultItem{
-		Type:       ItemTypeText,
-		ID:         t.ID.String(),
-		Score:      t.Score,
-		Snippet:    t.Text,
-		Source:     t.Source,
-		Mode:       t.Mode,
-		DocumentID: &docID,
+		Type:        ItemTypeText,
+		ID:          t.ID.String(),
+		Score:       t.Score,
+		Snippet:     t.Text,
+		Source:      t.Source,
+		Mode:        t.Mode,
+		DocumentID:  &docID,
+		ContextText: t.ParentText,
 	}
 }
 

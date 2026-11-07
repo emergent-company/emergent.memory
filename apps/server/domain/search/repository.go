@@ -137,12 +137,20 @@ type TextSearchResponse struct {
 	TotalCandidates int
 }
 
-// ExpandToParent swaps each child chunk's text for its stored parent chunk's
-// text (small-to-big retrieval). The child is what matched the query; the
-// parent is the coherent surrounding context a judge should see. Parents are
+// maxParentContextChars bounds the parent text handed back as retrieval context
+// by small-to-big expansion. Parent chunks are stored up to 32 000 chars
+// (textsplitter.maxParentTextChars), far more than a model should receive
+// unmodified; the expansion returns a bounded section instead.
+const maxParentContextChars = 4000
+
+// ExpandToParent attaches each child chunk's stored parent text as retrieval
+// context (small-to-big retrieval). The child is what matched the query; the
+// parent is the coherent surrounding section a judge should see. Parents are
 // stored but deliberately never embedded, so they can only be reached through
-// their children. Results without a parent (or whose parent is missing) keep
-// their own text.
+// their children. Text (the child snippet) is left unchanged; the parent text is
+// returned in the separate ParentText field so callers that want precision keep
+// the child and callers that want context read the parent. Results without a
+// parent (or whose parent is missing) are left untouched.
 func (r *Repository) ExpandToParent(ctx context.Context, results []*TextSearchResult) error {
 	parentIDs := make([]uuid.UUID, 0, len(results))
 	seen := make(map[uuid.UUID]bool, len(results))
@@ -169,7 +177,8 @@ func (r *Repository) ExpandToParent(ctx context.Context, results []*TextSearchRe
 			continue
 		}
 		if text, ok := texts[*res.ParentChunkID]; ok {
-			res.Text = text
+			text = truncateRunes(text, maxParentContextChars)
+			res.ParentText = &text
 		}
 	}
 	return nil
@@ -194,6 +203,19 @@ func (r *Repository) fetchParentTexts(ctx context.Context, parentIDs []uuid.UUID
 		out[row.ID] = row.Text
 	}
 	return out, nil
+}
+
+// truncateRunes shortens s to at most max runes without adding a marker. It
+// returns s unchanged when it already fits.
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
 
 // LexicalSearch performs full-text search on kb.chunks using tsv column
