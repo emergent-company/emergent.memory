@@ -1,18 +1,32 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Memory</title>
+        <item>
+            <title>0.0.0-dev.43a0083af</title>
+            <pubDate>Sat, 07 Nov 2026 12:25:49 +0100</pubDate>
+            <sparkle:version>9100100004</sparkle:version>
+            <sparkle:shortVersionString>0.0.0-dev.43a0083af</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory-0.0.0-dev.43a0083af.dmg" length="12143175" type="application/octet-stream" sparkle:edSignature="K9nFinIOdcgOL80XchYbYck8he9Ec/kZ9Yn6kJKyHqSzvTpHUroszslAgClJqag8FoDUB/x/ACPVNrDgQz1SBg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory9100100004-100001.delta" sparkle:deltaFrom="100001" length="4973250" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="nXk/YHIzYzhhfXvyW9GXNelP/LzuSpqNenmUB2/rXnhhm9aKnOIqBNmLkQpj1a75ikstCURhI5z8WeV9YmAuCw=="/>
+            </sparkle:deltas>
+        </item>
         <item>
             <title>0.0.0-dev.a82c772e9</title>
             <pubDate>Wed, 04 Nov 2026 06:37:26 +0100</pubDate>
             <sparkle:version>100001</sparkle:version>
             <sparkle:shortVersionString>0.0.0-dev.a82c772e9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory-0.0.0-dev.a82c772e9.dmg" length="12047148" type="application/octet-stream" sparkle:edSignature="aQ7uuvkGI8wVYDOYu9K1Akh08sYTb0f7qB1EAROmBozUeXhvUATJSnzzxR3Fd0SLaIKIcm/BtHH6BE/JIKftBg=="></enclosure>
+            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/dev/Memory-0.0.0-dev.a82c772e9.dmg" length="12047148" type="application/octet-stream" sparkle:edSignature="aQ7uuvkGI8wVYDOYu9K1Akh08sYTb0f7qB1EAROmBozUeXhvUATJSnzzxR3Fd0SLaIKIcm/BtHH6BE/JIKftBg=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: 5F6Tc/ZVPVoxXLK7CixwutOG9GzBl/B7+Q1ImJK9boCmymv49V7cVyzxt+RUiZ6qJIvLC+MC0GsHzxfMrQKZCw==
-length: 1086
+</rss>
+<!-- sparkle-signatures:
+edSignature: IZpTAqpob+Ae6VEfZT1a0dqKWC3PRaUQyHrjgFd/EpHf6RBuNix9F2C6GOBCcBSzkvuUou1gequEyKgAyzHRCQ==
+length: 2207
 -->
