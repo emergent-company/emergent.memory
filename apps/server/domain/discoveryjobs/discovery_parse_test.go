@@ -49,6 +49,56 @@ func TestParseTypeDiscoveryResponse_RepairsLiteralNewline(t *testing.T) {
 	}
 }
 
+func TestParseTypeDiscoveryResponse_UnwrapsJSONSchemaObject(t *testing.T) {
+	// Regression for #234: a model that answers with a complete JSON Schema
+	// object must not produce fields literally named after the schema's own
+	// keys, and its `required` list must reach RequiredProperties.
+	raw := `{"discovered_types":[{"type_name":"Episode","description":"A podcast episode",` +
+		`"inferred_schema":{"type":"object","properties":{` +
+		`"title":{"type":"string"},` +
+		`"guest":{"type":"string","description":"reference to Guest"}},` +
+		`"required":["title","guest"]},` +
+		`"confidence":0.9,"occurrences":3}]}`
+
+	types, _, err := testService().parseTypeDiscoveryResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(types) != 1 {
+		t.Fatalf("types = %d, want 1", len(types))
+	}
+
+	got := types[0]
+	for _, leaked := range []string{"type", "properties", "required"} {
+		if _, present := got.Properties[leaked]; present {
+			t.Errorf("schema key %q leaked into properties: %#v", leaked, got.Properties)
+		}
+	}
+	if got.Properties["title"] == nil || got.Properties["guest"] == nil {
+		t.Errorf("properties = %#v, want title and guest", got.Properties)
+	}
+	if len(got.RequiredProperties) != 2 || got.RequiredProperties[0] != "title" || got.RequiredProperties[1] != "guest" {
+		t.Errorf("required = %v, want [title guest]", got.RequiredProperties)
+	}
+}
+
+func TestParseTypeDiscoveryResponse_FlatSchemaUnchanged(t *testing.T) {
+	raw := `{"discovered_types":[{"type_name":"Guest","description":"A guest",` +
+		`"inferred_schema":{"name":{"type":"string"},"bio":{"type":"string"}},` +
+		`"confidence":0.8,"occurrences":1}]}`
+
+	types, _, err := testService().parseTypeDiscoveryResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(types) != 1 {
+		t.Fatalf("types = %d, want 1", len(types))
+	}
+	if types[0].Properties["name"] == nil || types[0].Properties["bio"] == nil {
+		t.Errorf("properties = %#v, want name and bio", types[0].Properties)
+	}
+}
+
 func TestDiscoveryRetrySmaller(t *testing.T) {
 	cases := []struct {
 		name      string
