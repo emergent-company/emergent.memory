@@ -148,6 +148,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		// rows in arbitrary order and the effective definition is unpredictable
 		// (issues #295, #322).
 		Order("ps.installed_at ASC").
+		Order("ps.created_at ASC").
 		Order("ps.id ASC").
 		Scan(ctx)
 

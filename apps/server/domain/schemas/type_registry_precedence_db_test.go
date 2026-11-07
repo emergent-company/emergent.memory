@@ -339,3 +339,59 @@ func TestPreviewMergeDetectsSameRunCollision(t *testing.T) {
 	assert.Equal(t, "aa-core", c.ExistingSchemaName)
 	assert.Equal(t, []string{"legal_name"}, c.AddedProperties)
 }
+
+// TestAssignPackCrossScopeSameNameRequiresMerge is the #338 part-1 regression.
+// A pack is "same family" (replace, no merge) only when it matches the registry
+// owner on name AND project/source scope. A different pack that reuses the name
+// across a scope boundary — e.g. a project-scoped copy of a builtin — must not
+// silently capture the type: it requires Merge=true.
+func TestAssignPackCrossScopeSameNameRequiresMerge(t *testing.T) {
+	ctx, repo, db, projectID := setupTypeRegistryTest(t)
+
+	// A global builtin owns Person (project_id NULL, source 'builtin').
+	builtinID := uuid.NewString()
+	_, err := db.NewRaw(`
+		INSERT INTO kb.graph_schemas (id, name, version, source, project_id, object_type_schemas)
+		VALUES (?, 'ot-core', '1.0.0', 'builtin', NULL,
+		        '[{"name":"Person","properties":{"name":{"type":"string"}}}]'::jsonb)
+	`, builtinID).Exec(ctx)
+	require.NoError(t, err)
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: builtinID})
+	require.NoError(t, err)
+
+	// A project-scoped pack reuses the builtin's name and declares the same type.
+	fork, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name: "ot-core", Version: "0.1.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"},"legal_name":{"type":"string"}}}]`),
+	})
+	require.NoError(t, err)
+
+	// No merge: the same-name cross-scope pack must not capture the type.
+	skipped, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: fork.ID})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Person"}, skipped.SkippedTypes)
+	assert.Empty(t, skipped.ReplacedTypes, "a cross-scope name reuse is not a same-pack upgrade")
+	require.Len(t, skipped.ShadowedTypes, 1)
+	assert.Equal(t, "Person", skipped.ShadowedTypes[0].TypeName)
+	assert.Equal(t, builtinID, skipped.ShadowedTypes[0].RegistryOwnerSchemaID)
+	assert.Equal(t, fork.ID, skipped.ShadowedTypes[0].ShadowingSchemaID)
+
+	// The builtin still owns the type in the registry.
+	var ownerSchemaID string
+	require.NoError(t, db.NewRaw(`
+		SELECT schema_id FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND type_name = 'Person'
+	`, projectID).Scan(ctx, &ownerSchemaID))
+	assert.Equal(t, builtinID, ownerSchemaID, "an unconfirmed cross-scope install must not re-point the registry row")
+
+	// Merge confirmed: additive merge moves ownership to the project pack.
+	merged, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: fork.ID, Merge: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Person"}, merged.MergedTypes)
+
+	owner, got := registryRowAndOwner(t, ctx, db, projectID, "Person")
+	assert.Equal(t, "ot-core", owner)
+	props := propsOf(t, got)
+	assert.Contains(t, props, "name")
+	assert.Contains(t, props, "legal_name")
+}
