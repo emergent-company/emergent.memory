@@ -3566,26 +3566,32 @@ table is replaced by a card list carrying the same fields.</p>
 <tbody>
 <tr>
 <td><code>strategy</code></td>
-<td><code>character</code> (default), <code>sentence</code>, or <code>paragraph</code></td>
+<td><code>recursive_character</code> (default) or <code>markdown_structure</code> (splits on headings and paragraphs, keeping code, math, and table blocks intact)</td>
 </tr>
 <tr>
 <td><code>maxChunkSize</code></td>
 <td>Maximum characters per chunk</td>
 </tr>
 <tr>
-<td><code>minChunkSize</code></td>
-<td>Minimum characters per chunk</td>
-</tr>
-<tr>
 <td><code>overlap</code></td>
 <td>Character overlap between consecutive chunks</td>
 </tr>
+<tr>
+<td><code>parentChild</code></td>
+<td><code>markdown_structure</code> only: store a parent chunk per section alongside its children</td>
+</tr>
+<tr>
+<td><code>autoProfile</code></td>
+<td>Detect each document's shape (prose, markdown, code-heavy, tabular, transcript, email) and use that shape's parameters instead of the project-wide <code>strategy</code>/<code>maxChunkSize</code>/<code>overlap</code></td>
+</tr>
 </tbody>
 </table>
-<p>Configure via <strong>Project Settings → Chunking</strong> or via <code>PATCH /api/projects/{id}</code> with the <code>chunking_config</code> field.</p>
+<p>Configure with <code>PUT /api/chunking/config</code>, and read the effective settings back with <code>GET /api/chunking/config</code>. The write is a full replacement: turning <code>autoProfile</code> on stores the other fields as sent (they are then unused), so turning it back off lands on those stored values rather than the ones that were in force beforehand.</p>
+<p><code>autoProfile</code> is opt-in and replaces the project-wide size and strategy settings; it never blends with them. Documents with no dominant structure are split with the deployment's <code>CHUNK_SIZE</code>/<code>CHUNK_OVERLAP</code> defaults (1000/200 when unset) — not with a project-level <code>maxChunkSize</code> — so opting in changes nothing for plain prose unless the project had overridden those values. A read of the project's chunking configuration returns the per-shape profile table when <code>autoProfile</code> is on, reporting the effective prose defaults.</p>
 <p>To re-chunk a specific document after changing the config:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="err">POST /api/documents/{id}/recreate-chunks</span>
 </code></pre></div>
+<p>The response summary reports the <code>strategy</code> actually used, plus <code>autoProfile</code> and the detected <code>shape</code> when auto-profile chose it. Chunk metadata records the same, so a chunk can be audited back to the rule that produced it.</p>
 
 
 

@@ -4141,7 +4141,7 @@ round-trip.</p>
 <tbody>
 <tr>
 <td><code>type</code></td>
-<td>Coerced on write for <code>number</code>, <code>boolean</code>, <code>date</code>, <code>url</code>, <code>md5</code>/<code>sha1</code>/<code>sha256</code>/<code>sha512</code>, <code>array</code> (see below). <code>string</code> and <code>integer</code> are accepted but not coerced — <code>integer: 1.5</code> is stored as sent; <code>object</code> is type-checked but not converted. An unknown type is stored as-is</td>
+<td>Coerced on write for <code>number</code>, <code>integer</code>, <code>boolean</code>, <code>date</code>, <code>time</code>, <code>url</code>, <code>email</code>, <code>phone</code>, <code>country</code>, <code>currency</code>, <code>md5</code>/<code>sha1</code>/<code>sha256</code>/<code>sha512</code>, <code>array</code> (see below). <code>string</code> is stored as sent unless <code>format</code> names a semantic format; <code>object</code> is type-checked but not converted. An unknown type is stored as-is</td>
 </tr>
 <tr>
 <td><code>title</code></td>
@@ -4156,6 +4156,14 @@ round-trip.</p>
 <td>Element schema for <code>array</code>; every element is coerced (a wrong element fails with its index)</td>
 </tr>
 <tr>
+<td><code>format</code></td>
+<td>On a <code>string</code> property, validates like the matching type for <code>email</code>, <code>phone</code>, <code>country</code>, <code>currency</code> and <code>time</code>. Any other format is documentation only</td>
+</tr>
+<tr>
+<td><code>minimum</code> / <code>maximum</code></td>
+<td>Enforced on <code>number</code> and <code>integer</code>: a value outside the bound fails the write</td>
+</tr>
+<tr>
 <td><code>required</code></td>
 <td>Type-level list of property names that must be present on a write</td>
 </tr>
@@ -4168,6 +4176,17 @@ round-trip.</p>
   length; stored lower-case.</li>
 <li><strong><code>date</code></strong> — RFC 3339, <code>2006-01-02</code>, <code>2006-01-02 15:04:05</code>,
   <code>2006-01-02T15:04:05</code>, <code>01/02/2006</code>, or <code>02-01-2006</code>; stored as RFC 3339.</li>
+<li><strong><code>time</code></strong> — 24-hour <code>HH:MM</code> (or <code>HH:MM:SS</code>, whose seconds are dropped);
+  stored as <code>HH:MM</code>.</li>
+<li><strong><code>email</code></strong> — one bare RFC 5322 address; a display form
+  (<code>Alice &lt;alice@example.com&gt;</code>) is rejected. Stored lower-case.</li>
+<li><strong><code>phone</code></strong> — an optional leading <code>+</code>, then digits with spaces, dashes, dots
+  or parentheses; 7–15 digits in total. Stored as typed.</li>
+<li><strong><code>country</code></strong> — ISO 3166-1 alpha-2 or alpha-3 country code; stored as the
+  canonical two-letter upper-case code.</li>
+<li><strong><code>currency</code></strong> — ISO 4217 currency code; stored upper-case.</li>
+<li><strong><code>number</code> / <code>integer</code></strong> — <code>minimum</code>/<code>maximum</code>, when declared, are enforced;
+  <code>integer</code> also rejects a fractional value.</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">properties</span><span class="p">:</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">tokensUsed</span><span class="p">:</span>
@@ -4182,6 +4201,17 @@ round-trip.</p>
 <a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">  </span><span class="nt">tags</span><span class="p">:</span>
 <a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">array</span>
 <a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="nt">items</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">  </span><span class="nt">contact_email</span><span class="p">:</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">email</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Contact email</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="w">  </span><span class="nt">home_country</span><span class="p">:</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">country</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Home country</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="w">  </span><span class="nt">latitude</span><span class="p">:</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">number</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="w">    </span><span class="nt">minimum</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-90</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="w">    </span><span class="nt">maximum</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Latitude</span>
 </code></pre></div>
 <p>Label every key a reader cannot scan at a glance — any <code>snake_case</code> key, or one
 with an internal capital. <code>event_time</code> → <code>Event time</code>, <code>tokensUsed</code> →
