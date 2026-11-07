@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -190,10 +191,14 @@ func TestSourceAuthorityAdoptionWithoutGrantRefused(t *testing.T) {
 	require.NotNil(t, head.OwnerSourceID)
 	assert.Equal(t, sourceA, *head.OwnerSourceID)
 
-	// The generation row for the (otherwise empty) push is still written.
-	var generations int
-	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.source_generations WHERE project_id = ? AND source_id = ?`, projectID, sourceB).Scan(ctx, &generations))
-	assert.Equal(t, 1, generations)
+	// The generation row for the (otherwise empty) push is still written, and
+	// its item_count records that nothing was applied — the single item was
+	// refused, so it must not be counted (changeset.go ItemCount).
+	var gen struct {
+		ItemCount int `bun:"item_count"`
+	}
+	require.NoError(t, db.NewRaw(`SELECT item_count FROM kb.source_generations WHERE project_id = ? AND source_id = ?`, projectID, sourceB).Scan(ctx, &gen.ItemCount))
+	assert.Equal(t, 0, gen.ItemCount)
 }
 
 // TestSourceAuthorityAdoptionWithGrantPreservesPreviousOwner: with a grant for
@@ -315,7 +320,11 @@ func TestSourceAuthorityUserEditStillVersions(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "user-edit-owner")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	// Push the source-owned row as a concrete credential (the backfill wildcard
+	// authorises any project credential, never a caller with no credential).
+	keyID := uuid.New()
+	pushCtx := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &keyID)
+	applied, err := svc.ApplyChangeset(pushCtx, projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -345,4 +354,130 @@ func TestSourceAuthorityUserEditStillVersions(t *testing.T) {
 	assert.Equal(t, graph.DataClassSource, head.DataClass, "a user edit must not change the data class")
 	require.NotNil(t, head.OwnerSourceID)
 	assert.Equal(t, sourceID, *head.OwnerSourceID, "a user edit must not reassign the owner")
+}
+
+// TestHasSourceGrantWildcardExcludesNoCredential pins should-fix 1: the backfill
+// wildcard (credential_kind='project', credential_id NULL) authorises any
+// *project credential*, but never a caller with no credential at all. Background
+// or internal work that stamps CredentialNone must not ride a backfill wildcard.
+func TestHasSourceGrantWildcardExcludesNoCredential(t *testing.T) {
+	ctx, db, repo, _, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "wildcard-none") // carries the backfill wildcard
+
+	keyID := uuid.New()
+	ok, err := repo.HasSourceGrant(ctx, db, projectID, sourceID, auth.CredentialAPIKey, &keyID)
+	require.NoError(t, err)
+	assert.True(t, ok, "a concrete project credential satisfies the wildcard")
+
+	ok, err = repo.HasSourceGrant(ctx, db, projectID, sourceID, auth.CredentialNone, nil)
+	require.NoError(t, err)
+	assert.False(t, ok, "a caller with no credential must not ride the wildcard")
+}
+
+// TestSourceGrantRejectsNullCredentialIDForConcreteKind pins should-fix 2: the
+// 00265 CHECK (credential_kind = 'project' OR credential_id IS NOT NULL) forbids
+// the hidden-wildcard row — a ('session', NULL) or ('api_key', NULL) grant that
+// would authorise every session / every api_key.
+func TestSourceGrantRejectsNullCredentialIDForConcreteKind(t *testing.T) {
+	ctx, db, _, _, projectID := setupProvenanceTest(t)
+	sourceID := createTestSourceUngranted(t, ctx, db, projectID, "no-null-session")
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO kb.source_grants (project_id, source_id, credential_kind, credential_id, granted_by_type)
+		VALUES (?, ?, 'session', NULL, 'system')
+	`, projectID, sourceID)
+	require.Error(t, err, "a ('session', NULL) hidden wildcard must be rejected by the 00265 CHECK")
+}
+
+// TestSourceAuthorityGrantDoesNotCrossProjects: a grant is project-scoped — the
+// same credential that holds a grant in project A is still refused when it
+// pushes a source it has no grant for in project B.
+func TestSourceAuthorityGrantDoesNotCrossProjects(t *testing.T) {
+	ctx, db, repo, svc, projectID := setupProvenanceTest(t)
+
+	otherOrgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, otherOrgID, "Other Org"))
+	otherProjectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: otherProjectID, OrgID: otherOrgID, Name: "Other Project",
+	}, testutil.AdminUser.ID))
+	otherPID := uuid.MustParse(otherProjectID)
+
+	keyID := uuid.New()
+	sourceA := createTestSourceUngranted(t, ctx, db, projectID, "scoped-a")
+	grantSourceTo(t, ctx, repo, projectID, sourceA, auth.CredentialAPIKey, &keyID)
+
+	sourceB := createTestSourceUngranted(t, ctx, db, otherPID, "scoped-b")
+	pushCtx := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &keyID)
+
+	_, err := svc.ApplyChangeset(pushCtx, otherPID, &graph.ApplyChangesetRequest{
+		SourceID: sourceB,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			ExternalID:          "scoped-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "owner_conflict")
+}
+
+// TestSourceAuthorityOnlySystemActorExempts: the system exemption is the only
+// actor-based bypass. A forged non-system actor — an agent stamp, or the HTTP
+// fallback user id — does not satisfy the grant check; only a context-stamped
+// system principal does (TestSourceAuthoritySystemPrincipalNeedsNoGrant).
+func TestSourceAuthorityOnlySystemActorExempts(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSourceUngranted(t, ctx, db, projectID, "forged-actor")
+
+	// An agent actor (which a client can never become) still needs a grant.
+	agentID := uuid.New()
+	agentCtx := auth.WithActor(ctx, graph.ActorAgent, &agentID)
+	_, err := svc.ApplyChangeset(agentCtx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			ExternalID:          "forged-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "owner_conflict")
+
+	// The HTTP fallback user id is likewise not the system principal.
+	userID := uuid.New()
+	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			ExternalID:          "forged-2",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, &userID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "owner_conflict")
+}
+
+// TestSourceAuthorityWildcardAllowsDifferentCredential: a pre-existing source
+// (with the migration backfill's wildcard grant) may be pushed as by any project
+// credential — including one that never created it — because the backfill is
+// "any project credential", not "the credential that created the source".
+func TestSourceAuthorityWildcardAllowsDifferentCredential(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+	sourceID := createTestSource(t, ctx, db, projectID, "wildcard") // carries the backfill wildcard
+
+	keyID := uuid.New()
+	pushCtx := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &keyID)
+
+	resp, err := svc.ApplyChangeset(pushCtx, projectID, &graph.ApplyChangesetRequest{
+		SourceID: sourceID,
+		Objects: []graph.ChangesetObjectItem{{
+			Type:                "Person",
+			ExternalID:          "wildcard-1",
+			ExternalRevisionSeq: seq(1),
+		}},
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, graph.ChangesetOutcomeCreated, resp.Results[0].Outcome)
 }

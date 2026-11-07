@@ -15,6 +15,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -497,6 +498,21 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
+
+	// Bind the creating credential to the new source (slice 2 of #2376). A
+	// source created after migration 00265 carries no wildcard grant, so an
+	// api_key creator must hold an exact grant to push as the source it just
+	// created — without it the very next POST /api/graph/changesets as this
+	// source is refused. A session creator gets no grant: its source is pushed
+	// by the system sync worker (exempt from the grant check), and a
+	// ('session', NULL) row would be the hidden wildcard 00265 forbids. The row
+	// is recorded so the binding is auditable and revocable.
+	if kind, credID, ok := auth.CredentialFromContext(ctx); ok && kind == auth.CredentialAPIKey && credID != nil {
+		if err := s.repo.InsertSourceGrant(ctx, projectID, created.ID, kind, *credID); err != nil {
+			return nil, err
+		}
+	}
+
 	return s.toIntegration(created), nil
 }
 

@@ -28,7 +28,14 @@ CREATE TABLE IF NOT EXISTS kb.source_grants (
     granted_by_id   uuid,
     granted_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT source_grants_credential_kind_check
-        CHECK (credential_kind = ANY (ARRAY['api_key'::text, 'mcp_link'::text, 'session'::text, 'project'::text]))
+        CHECK (credential_kind = ANY (ARRAY['api_key'::text, 'mcp_link'::text, 'session'::text, 'project'::text])),
+    -- Only the synthetic 'project' wildcard may carry a NULL credential_id: a
+    -- ('session', NULL) or ('api_key', NULL) row would read back as a hidden
+    -- wildcard that authorises every session / every api_key, exactly the
+    -- impersonation window this table closes. Concrete kinds must name a
+    -- credential (pairing the id with the kind, like 00257's stamp check).
+    CONSTRAINT source_grants_credential_id_pairs_with_kind
+        CHECK (credential_kind = 'project' OR credential_id IS NOT NULL)
 );
 
 -- One grant per (source, credential). credential_id is nullable, and NULLs are
@@ -45,6 +52,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_source_grants_source_credential_wildcard
 -- Backfill: every source that exists at migration time may be pushed as by any
 -- project credential. Existing integrations keep working without an explicit
 -- grant; the impersonation window closes for sources created after this runs.
+-- One-shot: never re-run this INSERT against an upgraded database — a goose
+-- down/up would resurrect wildcard grants that were since revoked by a DELETE.
 INSERT INTO kb.source_grants (project_id, source_id, credential_kind, credential_id, granted_by_type, granted_by_id)
 SELECT project_id, id, 'project', NULL, 'system', NULL
 FROM kb.sources

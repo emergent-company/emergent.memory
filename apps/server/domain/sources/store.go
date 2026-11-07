@@ -40,6 +40,30 @@ func (r *Repository) Create(ctx context.Context, src *Source) (*Source, error) {
 	return src, nil
 }
 
+// InsertSourceGrant records that the concrete credential (credentialKind,
+// credentialID) may act as sourceID in projectID. It is written from the
+// source-create path so the credential that created a source can push as it: a
+// source created after migration 00265 carries no wildcard, so without this
+// exact grant its creator could never push as it.
+//
+// Only a concrete credential (an api_key with a non-null id) is ever granted;
+// a session creator gets no row — its source is pushed by the system sync
+// worker, which is exempt from the grant check — and a ('session', NULL) row is
+// deliberately never written because it would read back as a hidden wildcard.
+func (r *Repository) InsertSourceGrant(ctx context.Context, projectID, sourceID uuid.UUID, credentialKind string, credentialID uuid.UUID) error {
+	_, err := r.db.NewRaw(`
+		INSERT INTO kb.source_grants (project_id, source_id, credential_kind, credential_id, granted_by_type)
+		VALUES (?, ?, ?, ?, 'system')
+		ON CONFLICT DO NOTHING`,
+		projectID, sourceID, credentialKind, credentialID,
+	).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to record source grant", logger.Error(err))
+		return apperror.NewDatabase("failed to record source grant", err)
+	}
+	return nil
+}
+
 // GetByID retrieves a source by id, scoped to projectID. encrypted_credentials
 // is never selected. A missing row (or a row belonging to another project)
 // resolves to not-found.

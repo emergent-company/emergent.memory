@@ -2524,6 +2524,22 @@ Table "kb"."source_generations" {
   }
 }
 
+Table "kb"."source_grants" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "credential_kind" text [not null]
+  "credential_id" uuid
+  "granted_by_type" text [not null, default: 'system']
+  "granted_by_id" uuid
+  "granted_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, source_id, credential_kind, credential_id) [name: "uq_source_grants_source_credential", unique, note: '(credential_id IS NOT NULL)']
+    (project_id, source_id, credential_kind) [name: "uq_source_grants_source_credential_wildcard", unique, note: '(credential_id IS NULL)']
+  }
+}
+
 Table "kb"."source_sync_jobs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "status" text [not null, default: 'pending']
@@ -2866,6 +2882,7 @@ Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_grants"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"

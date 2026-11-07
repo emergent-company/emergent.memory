@@ -56,6 +56,14 @@ func createTestSourceUngranted(t *testing.T, ctx context.Context, db bun.IDB, pr
 	return id
 }
 
+// sourcePushCtx stamps the system actor — the principal a source's sync worker
+// pushes under. The changeset-mechanics tests exercise apply behaviour, not
+// source authority (that lives in source_authority_test.go), so they push as the
+// internal writer rather than a specific credential.
+func sourcePushCtx(ctx context.Context) context.Context {
+	return auth.WithActor(ctx, graph.ActorSystem, nil)
+}
+
 func seq(v int64) *int64 { return &v }
 
 func resultFor(t *testing.T, resp *graph.ApplyChangesetResponse, externalID string) graph.ChangesetItemResult {
@@ -116,7 +124,7 @@ func TestApplyChangesetCreatesSourceOwnedObject(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "create-half")
 
-	resp, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	resp, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -165,7 +173,7 @@ func TestApplyChangesetRePushVersionsAndMovesContribution(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "update-half")
 
-	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	first, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -178,7 +186,7 @@ func TestApplyChangesetRePushVersionsAndMovesContribution(t *testing.T) {
 	objectID := *first.Results[0].SubjectID
 	canonicalID := *first.Results[0].CanonicalID
 
-	second, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	second, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -218,7 +226,7 @@ func TestApplyChangesetStaleRevisionIsSkipped(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "stale")
 
-	newer, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	newer, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -230,7 +238,7 @@ func TestApplyChangesetStaleRevisionIsSkipped(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, staleSeq := range []int64{5, 3} {
-		stale, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+		stale, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 			SourceID: sourceID,
 			Objects: []graph.ChangesetObjectItem{{
 				Type:                "Person",
@@ -265,7 +273,7 @@ func TestApplyChangesetRollsBackOnRejectedItem(t *testing.T) {
 	sourceID := createTestSource(t, ctx, db, projectID, "rollback")
 
 	key := "taken-key"
-	_, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -280,7 +288,7 @@ func TestApplyChangesetRollsBackOnRejectedItem(t *testing.T) {
 	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.provenance_contributions WHERE project_id = ?`, projectID).Scan(ctx, &contributionsBefore))
 
 	// The second item collides on (project, type, key) inside the transaction.
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Type: "Person", ExternalID: "fresh-1", ExternalRevisionSeq: seq(1)},
@@ -317,11 +325,11 @@ func TestApplyChangesetReplayedGenerationConflicts(t *testing.T) {
 			ExternalRevisionSeq: seq(1),
 		}},
 	}
-	first, err := svc.ApplyChangeset(ctx, projectID, req, nil)
+	first, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, req, nil)
 	require.NoError(t, err)
 	assert.Equal(t, gen, first.Generation)
 
-	_, err = svc.ApplyChangeset(ctx, projectID, req, nil)
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, req, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already been applied")
 
@@ -338,7 +346,7 @@ func TestApplyChangesetWithdrawalLeavesTheOtherContribution(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "withdraw-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "withdraw-b")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -361,7 +369,7 @@ func TestApplyChangesetWithdrawalLeavesTheOtherContribution(t *testing.T) {
 		ExternalRevisionSeq: 1,
 	}))
 
-	withdrawn, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	withdrawn, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID:    sourceA,
 		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "shared-1"}},
 	}, nil)
@@ -383,7 +391,7 @@ func TestApplyChangesetWithdrawalLeavesTheOtherContribution(t *testing.T) {
 	assert.Equal(t, 1, objects)
 
 	// Withdrawing an unknown record is reported per item, not an error.
-	unknown, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	unknown, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID:    sourceA,
 		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "never-pushed"}},
 	}, nil)
@@ -397,7 +405,7 @@ func TestApplyChangesetResolvesRefsAndCreatesRelationship(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "refs")
 
-	resp, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	resp, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Ref: "ada", Type: "Person", ExternalID: "ref-ada", ExternalRevisionSeq: seq(1)},
@@ -422,7 +430,7 @@ func TestApplyChangesetResolvesRefsAndCreatesRelationship(t *testing.T) {
 	assert.Equal(t, relID, contribs[0].SubjectVersionID)
 
 	// An unresolved reference rejects the whole changeset.
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects:  []graph.ChangesetObjectItem{{Ref: "x", Type: "Person", ExternalID: "ref-x", ExternalRevisionSeq: seq(1)}},
 		Relationships: []graph.ChangesetRelationshipItem{{
@@ -446,7 +454,7 @@ func TestApplyChangesetNormalisesRelationshipType(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "reltype")
 
-	resp, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	resp, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Ref: "ada", Type: "Person", ExternalID: "rt-ada", ExternalRevisionSeq: seq(1)},
@@ -485,7 +493,7 @@ func TestApplyChangesetNormalisesRelationshipType(t *testing.T) {
 	// (Repository.CreateRelationshipVersion inherits the head's type), so the
 	// rename is accepted as an update of properties and the head keeps the
 	// normalised type it was created with.
-	renamed, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	renamed, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Relationships: []graph.ChangesetRelationshipItem{{
 			Type:                "Works With",
@@ -525,7 +533,7 @@ func TestApplyChangesetRejectsOverCapAndForeignSource(t *testing.T) {
 			ExternalRevisionSeq: seq(1),
 		})
 	}
-	_, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{SourceID: sourceID, Objects: objects}, nil)
+	_, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{SourceID: sourceID, Objects: objects}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must not exceed")
 
@@ -536,7 +544,7 @@ func TestApplyChangesetRejectsOverCapAndForeignSource(t *testing.T) {
 		RETURNING id
 	`, uuid.New(), otherProject).Scan(ctx, &foreign))
 
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: foreign,
 		Objects:  []graph.ChangesetObjectItem{{Type: "Person", ExternalID: "foreign-1", ExternalRevisionSeq: seq(1)}},
 	}, nil)
@@ -575,7 +583,7 @@ func TestForkAndMergeCarryContributions(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "merge-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "merge-b")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -618,7 +626,7 @@ func TestForkAndMergeCarryContributions(t *testing.T) {
 		ExternalID:          "merge-1-b",
 		ExternalRevisionSeq: 1,
 	}))
-	branchApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	branchApplied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -642,7 +650,7 @@ func TestForkAndMergeCarryContributions(t *testing.T) {
 	assert.Equal(t, 1, carriedForward, "a revision by one source must not evict another source")
 
 	// An object that exists only on the branch arrives as an added clone.
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceB,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -703,7 +711,7 @@ func TestConflictResolvedMergeUnionsContributions(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "conflict-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "conflict-b")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -719,7 +727,7 @@ func TestConflictResolvedMergeUnionsContributions(t *testing.T) {
 	require.NoError(t, err)
 	branchID := uuid.MustParse(forkResp.BranchID)
 
-	branchApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	branchApplied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -743,7 +751,7 @@ func TestConflictResolvedMergeUnionsContributions(t *testing.T) {
 	}))
 
 	// The main line moves on independently, so the merge cannot fast-forward.
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -806,7 +814,7 @@ func TestSimilarityAbsorbedMergeUnionsContributions(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "sim-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "sim-b")
 
-	target, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	target, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -833,7 +841,7 @@ func TestSimilarityAbsorbedMergeUnionsContributions(t *testing.T) {
 	require.NoError(t, err)
 	branchID := uuid.MustParse(forkResp.BranchID)
 
-	intruder, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	intruder, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -890,7 +898,7 @@ func TestMergeOfDifferentSourceOwnersIsRefused(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "own-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "own-b")
 
-	target, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	target, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -906,7 +914,7 @@ func TestMergeOfDifferentSourceOwnersIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	branchID := uuid.MustParse(forkResp.BranchID)
 
-	intruder, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	intruder, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceB,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -1029,7 +1037,7 @@ func TestPushAfterMergeAddressesTheBranchCopy(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "post-merge")
 
-	created, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	created, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1045,7 +1053,7 @@ func TestPushAfterMergeAddressesTheBranchCopy(t *testing.T) {
 	require.NoError(t, err)
 	branchID := uuid.MustParse(forkResp.BranchID)
 
-	onBranch, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	onBranch, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -1066,7 +1074,7 @@ func TestPushAfterMergeAddressesTheBranchCopy(t *testing.T) {
 	require.NoError(t, err)
 
 	// The branch still owns its record: a further push addresses the copy.
-	after, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	after, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -1094,7 +1102,7 @@ func TestCrossBranchRelationshipEndpointIsRejected(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "cross-branch")
 
-	mainObj, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	mainObj, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type: "Person", ExternalID: "main-endpoint", ExternalRevisionSeq: seq(1),
@@ -1107,7 +1115,7 @@ func TestCrossBranchRelationshipEndpointIsRejected(t *testing.T) {
 	require.NoError(t, err)
 	branchID := uuid.MustParse(forkResp.BranchID)
 
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -1131,7 +1139,7 @@ func TestApplyLeavesSourcesArrayIntact(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "sources-array")
 
-	created, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	created, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1147,7 +1155,7 @@ func TestApplyLeavesSourcesArrayIntact(t *testing.T) {
 	_, err = db.NewRaw(`UPDATE kb.graph_objects SET properties = properties || jsonb_build_object('_sources', ?::jsonb) WHERE id = ?`, sources, objectID).Exec(ctx)
 	require.NoError(t, err)
 
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1177,7 +1185,7 @@ func TestWithdrawalIsIdempotent(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "double-withdraw")
 
-	_, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type: "Person", ExternalID: "double-1", ExternalRevisionSeq: seq(1),
@@ -1185,7 +1193,7 @@ func TestWithdrawalIsIdempotent(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	first, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID:    sourceID,
 		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "double-1"}},
 	}, nil)
@@ -1195,7 +1203,7 @@ func TestWithdrawalIsIdempotent(t *testing.T) {
 	var withdrawnAt string
 	require.NoError(t, db.NewRaw(`SELECT withdrawn_at::text FROM kb.provenance_contributions WHERE project_id = ? AND external_id = 'double-1'`, projectID).Scan(ctx, &withdrawnAt))
 
-	second, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	second, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID:    sourceID,
 		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "double-1"}},
 	}, nil)
@@ -1219,7 +1227,7 @@ func TestPatchKeepsContributions(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "patch-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "patch-b")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1281,7 +1289,7 @@ func TestPatchKeepsContributions(t *testing.T) {
 
 	// A later revision by source A replaces its own inherited row and leaves
 	// source B's alone: one present row per (version, source), no duplicate.
-	revised, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	revised, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1315,7 +1323,7 @@ func TestPatchRelationshipKeepsContributions(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "patch-rel")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Ref: "a", Type: "Person", ExternalID: "patch-rel-a", ExternalRevisionSeq: seq(1)},
@@ -1360,7 +1368,7 @@ func TestBranchTombstoneCarriesContributions(t *testing.T) {
 	require.NoError(t, err)
 	branchID := uuid.MustParse(forkResp.BranchID)
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1426,7 +1434,7 @@ func TestBranchTombstoneSkipsRecordTheBranchAlreadyCarries(t *testing.T) {
 		ExternalID:          "collide-1",
 		ExternalRevisionSeq: seq(1),
 	}
-	mainApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	mainApplied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects:  []graph.ChangesetObjectItem{item},
 	}, nil)
@@ -1436,7 +1444,7 @@ func TestBranchTombstoneSkipsRecordTheBranchAlreadyCarries(t *testing.T) {
 
 	// The same external id is legitimate once per branch: the branch has its own
 	// object for the record, with its own contribution.
-	branchApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	branchApplied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		BranchID: &branchID,
 		Objects:  []graph.ChangesetObjectItem{item},
@@ -1491,7 +1499,7 @@ func TestObjectDetailExposesContributions(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "detail")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1535,7 +1543,7 @@ func TestHistoryExposesContributionsPerVersionInOneQuery(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "history")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1593,7 +1601,7 @@ func TestObjectDetailReportsWithdrawnContribution(t *testing.T) {
 	sourceA := createTestSource(t, ctx, db, projectID, "wd-a")
 	sourceB := createTestSource(t, ctx, db, projectID, "wd-b")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceA,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -1614,7 +1622,7 @@ func TestObjectDetailReportsWithdrawnContribution(t *testing.T) {
 		ExternalRevisionSeq: 2,
 	}))
 
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID:    sourceA,
 		Withdrawals: []graph.ChangesetWithdrawalItem{{ExternalID: "wd-1"}},
 	}, nil)
@@ -1642,7 +1650,7 @@ func TestRelationshipReadsExposeContributions(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "rel-read")
 
-	applied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	applied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Ref: "a", Type: "Person", ExternalID: "r-a", ExternalRevisionSeq: seq(1)},
@@ -1697,7 +1705,7 @@ func TestRelationshipHistoryExposesContributions(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "rel-history")
 
-	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	first, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Ref: "a", Type: "Person", ExternalID: "rh-a", ExternalRevisionSeq: seq(1)},
@@ -1712,7 +1720,7 @@ func TestRelationshipHistoryExposesContributions(t *testing.T) {
 	srcA := *resultFor(t, first, "rh-a").SubjectID
 	dstB := *resultFor(t, first, "rh-b").SubjectID
 
-	_, err = svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err = svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Relationships: []graph.ChangesetRelationshipItem{
 			{Type: "KNOWS", SrcID: &srcA, DstID: &dstB, ExternalID: "rh-knows", ExternalRevisionSeq: seq(2)},
@@ -1801,7 +1809,7 @@ func TestApplyReportsOneResultPerItemInRequestOrder(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
 	sourceID := createTestSource(t, ctx, db, projectID, "mixed")
 
-	first, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	first, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Ref: "a", Type: "Person", Properties: map[string]any{"name": "A"}, ExternalID: "m-a", ExternalRevisionSeq: seq(1)},
@@ -1817,7 +1825,7 @@ func TestApplyReportsOneResultPerItemInRequestOrder(t *testing.T) {
 	// changeset that defines it.
 	srcA := *resultFor(t, first, "m-a").SubjectID
 
-	mixed, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	mixed, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{
 			{Type: "Person", Properties: map[string]any{"name": "A2"}, ExternalID: "m-a", ExternalRevisionSeq: seq(2)},

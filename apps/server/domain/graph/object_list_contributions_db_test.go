@@ -26,7 +26,7 @@ func applyContributedObjects(t *testing.T, ctx context.Context, svc *graph.Servi
 			ExternalRevisionSeq: seq(1),
 		})
 	}
-	_, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	_, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects:  items,
 	}, nil)

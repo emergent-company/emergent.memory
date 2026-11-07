@@ -307,11 +307,23 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 		}
 	}
 
+	// ItemCount is the number of items that actually changed state, not the
+	// number sent: a skipped (stale revision), not_found (missing withdrawal
+	// target) or refused (cross-owner without a grant) item is reported in
+	// Results but applied nothing, so counting it would overstate the batch.
+	applied := 0
+	for _, res := range results {
+		switch res.Outcome {
+		case ChangesetOutcomeCreated, ChangesetOutcomeUpdated, ChangesetOutcomeWithdrawn:
+			applied++
+		}
+	}
+
 	gen := &SourceGeneration{
 		ProjectID:  projectID,
 		SourceID:   req.SourceID,
 		Generation: generation,
-		ItemCount:  len(req.Objects) + len(req.Relationships) + len(req.Withdrawals),
+		ItemCount:  applied,
 	}
 	if err := s.repo.InsertSourceGeneration(ctx, tx.Tx, gen); err != nil {
 		return nil, err

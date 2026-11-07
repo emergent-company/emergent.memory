@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // CredentialGrantProject is the synthetic credential_kind used only by a grant
@@ -40,7 +41,14 @@ type SourceGrant struct {
 // act as sourceID in projectID. Two grant shapes satisfy it: an exact match on
 // the credential, and the project wildcard (credential_kind = 'project',
 // credential_id NULL) that the migration backfill seeds for pre-existing
-// sources. The wildcard is kind-agnostic: it authorises any project credential.
+// sources.
+//
+// The exact branch requires the grant row to carry a non-null credential_id, so
+// a ('session', NULL) or ('api_key', NULL) row — which the 00265 CHECK now
+// forbids anyway — cannot read back as a hidden wildcard. The wildcard branch
+// authorises any project credential (api_key / mcp_link / session) but never a
+// caller with no credential at all (CredentialNone): background/internal work
+// without a credential must not ride a backfill wildcard.
 func (r *Repository) HasSourceGrant(ctx context.Context, db bun.IDB, projectID, sourceID uuid.UUID, credentialKind string, credentialID *uuid.UUID) (bool, error) {
 	// Normalise the credential id to a plain value so a nil pointer renders as
 	// SQL NULL (a typed nil would confuse the query formatter).
@@ -56,11 +64,11 @@ func (r *Repository) HasSourceGrant(ctx context.Context, db bun.IDB, projectID, 
 			WHERE project_id = ?
 			  AND source_id = ?
 			  AND (
-			        (credential_kind = ? AND credential_id IS NOT DISTINCT FROM ?)
-			     OR (credential_kind = 'project' AND credential_id IS NULL)
+			        (credential_kind = ? AND credential_id IS NOT DISTINCT FROM ? AND credential_id IS NOT NULL)
+			     OR (credential_kind = 'project' AND credential_id IS NULL AND ? <> ?)
 			  )
 		)`,
-		projectID, sourceID, credentialKind, credID,
+		projectID, sourceID, credentialKind, credID, credentialKind, auth.CredentialNone,
 	).Scan(ctx, &exists)
 	if err != nil {
 		return false, apperror.NewDatabase("Database operation failed", err)
