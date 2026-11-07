@@ -776,8 +776,8 @@ type AgentDefinition struct {
 	Skills         []string     `bun:"skills,array" json:"skills"`
 	AutoLoadSkills bool         `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
 	// SkillCapture is the typed per-agent override of the project's skill-capture
-	// policy (added in migration 00269). nil inherits the project policy; an
-	// explicit override may only constrain it.
+	// policy (added in migration 00270_add_agent_skill_capture.sql). nil inherits
+	// the project policy; an explicit override may only constrain it.
 	SkillCapture     *skills.AgentSkillCapture `bun:"skill_capture,type:jsonb" json:"skillCapture,omitempty"`
 	IsDefault        bool                      `bun:"is_default,notnull,default:false" json:"isDefault"`
 	Enabled          bool                      `bun:"enabled,notnull,default:true" json:"enabled"`
