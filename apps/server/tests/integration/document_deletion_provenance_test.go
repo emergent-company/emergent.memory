@@ -309,3 +309,110 @@ func (s *DocumentDeletionProvenanceSuite) TestProvenanceStampingOnGraphUpsert() 
 	s.Equal(jobUUID.String(), s.extractionJobIDOf(second.ID),
 		"updated version must carry extraction_job_id in the column")
 }
+
+// TestDeleteRemovesExtractionBranches covers the cleanup half of #246: deleting a
+// document leaves the branches its extraction jobs created behind, because
+// origin_id has no foreign key to the job. Those branches (and anything staged on
+// them) then keep showing in the Objects list. The cascade must remove them, and
+// must not touch branches belonging to another document or a merged one.
+func (s *DocumentDeletionProvenanceSuite) TestDeleteRemovesExtractionBranches() {
+	docID := s.createDocument("pending-branches.txt")
+	jobID := s.createExtractionJob(docID)
+	jobUUID, err := uuid.Parse(jobID)
+	s.Require().NoError(err)
+
+	// A branch created by this job, linked through origin_id, with an object and a
+	// relationship staged on it.
+	originBranchID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin, origin_id)
+		VALUES (?, ?, 'extraction/pending-branches.txt/1', 'extraction', ?)
+	`, originBranchID, s.projectID, jobUUID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// An older-shaped branch: no origin_id, linked only by a staging_branch_id on
+	// the job.
+	stagingBranchID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin)
+		VALUES (?, ?, 'extraction/pending-branches.txt/legacy', 'extraction')
+	`, stagingBranchID, s.projectID).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.testDB.DB.NewRaw(`
+		UPDATE kb.object_extraction_jobs SET staging_branch_id = ? WHERE id = ?
+	`, stagingBranchID, jobID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// Stage one object on each branch. They carry no extraction_job_id, so only the
+	// branch cleanup can remove them.
+	stagedIDs := make([]uuid.UUID, 0, 2)
+	for _, branchID := range []uuid.UUID{originBranchID, stagingBranchID} {
+		obj := s.createObject("Person", map[string]any{"name": "Staged " + branchID.String()[:8]}, nil)
+		_, err := s.testDB.DB.NewRaw(
+			`UPDATE kb.graph_objects SET branch_id = ? WHERE id = ?`, branchID, obj.ID).Exec(s.ctx)
+		s.Require().NoError(err)
+		stagedIDs = append(stagedIDs, obj.ID)
+	}
+
+	// A relationship staged on the origin branch.
+	relID := s.createRelationship(uuid.New(), uuid.New(), "staged_on")
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.graph_relationships SET branch_id = ? WHERE id = ?`, originBranchID, relID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// A main-graph object must survive.
+	mainObj := s.createObject("Person", map[string]any{"name": "Main"}, nil)
+
+	// A merged branch for the same job is merge history, not pending work.
+	mergedBranchID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin, origin_id, merged_at)
+		VALUES (?, ?, 'extraction/pending-branches.txt/merged', 'extraction', ?, now())
+	`, mergedBranchID, s.projectID, jobUUID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// A branch belonging to another document's job must survive.
+	otherDocID := s.createDocument("other-doc.txt")
+	otherJobID := s.createExtractionJob(otherDocID)
+	otherJobUUID, err := uuid.Parse(otherJobID)
+	s.Require().NoError(err)
+	otherBranchID := uuid.New()
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.branches (id, project_id, name, origin, origin_id)
+		VALUES (?, ?, 'extraction/other-doc.txt/1', 'extraction', ?)
+	`, otherBranchID, s.projectID, otherJobUUID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	// The preview counts the same branches the delete removes, so the dialog can
+	// tell the user that pending work goes with the document.
+	impact, err := s.docsRepo.GetDeletionImpact(s.ctx, s.projectID, docID)
+	s.Require().NoError(err)
+	s.Require().NotNil(impact)
+	s.Equal(2, impact.Impact.Branches, "both branches are counted in the impact")
+
+	summary, err := s.docsRepo.DeleteWithCascade(s.ctx, s.projectID, docID)
+	s.Require().NoError(err)
+	s.Require().NotNil(summary)
+	s.Equal(2, summary.Branches, "both of this document's branches are removed")
+
+	for _, id := range []uuid.UUID{originBranchID, stagingBranchID} {
+		s.False(s.branchExists(id), "branch %s should be deleted", id)
+	}
+	for _, id := range stagedIDs {
+		s.False(s.objectExists(id), "staged object %s should be deleted", id)
+	}
+	s.False(s.relationshipExists(relID), "staged relationship should be deleted")
+
+	s.True(s.objectExists(mainObj.ID), "a main-graph object must survive")
+	s.True(s.branchExists(mergedBranchID), "a merged branch is history and must survive")
+	s.True(s.branchExists(otherBranchID), "another document's branch must survive")
+}
+
+// branchExists reports whether a kb.branches row still exists.
+func (s *DocumentDeletionProvenanceSuite) branchExists(id uuid.UUID) bool {
+	s.T().Helper()
+	var exists bool
+	s.Require().NoError(s.testDB.DB.NewRaw(
+		"SELECT EXISTS(SELECT 1 FROM kb.branches WHERE id = ?)", id).Scan(s.ctx, &exists))
+	return exists
+}

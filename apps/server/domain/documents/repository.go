@@ -898,6 +898,115 @@ func (r *Repository) repairSurvivingVersionChains(ctx context.Context, db bun.ID
 	return nil
 }
 
+// documentExtractionBranchIDs returns the unmerged extraction branches a
+// document's extraction jobs created, in either link shape the jobs use: a branch
+// that names the job through origin_id, or an older branch a job still points at
+// through staging_branch_id. Deleting a document deletes its jobs, and nothing
+// else follows the link: origin_id has no foreign key, so the branch (and its
+// staged objects) survived and kept showing in the Objects list as if the
+// extraction were still pending (#246). The same two shapes the read boundary
+// treats as "source deleted" are collected here, so cleanup and reads cannot
+// disagree about which branches belong to the document.
+func documentExtractionBranchIDs(ctx context.Context, db bun.IDB, projectID string, jobIDs []string) ([]string, error) {
+	if len(jobIDs) == 0 {
+		return nil, nil
+	}
+	var branchIDs []string
+	err := db.NewSelect().
+		TableExpr("kb.branches AS b").
+		Column("b.id").
+		Where("b.project_id = ?", projectID).
+		Where("b.origin = 'extraction'").
+		Where("b.merged_at IS NULL").
+		Where("(b.origin_id IN (?) OR b.id IN (SELECT j.staging_branch_id FROM kb.object_extraction_jobs j WHERE j.id IN (?) AND j.staging_branch_id IS NOT NULL))",
+			bun.In(jobIDs), bun.In(jobIDs)).
+		Scan(ctx, &branchIDs)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("resolve extraction branches: %w", err)
+	}
+	return branchIDs, nil
+}
+
+// deleteDocumentExtractionBranches removes those branches and everything staged
+// on them. Merged branches are left alone: their content was merged into the main
+// graph and the attribution cascade above already removes the rows it can
+// attribute to the jobs, so the branch row is merge history rather than pending
+// work.
+func deleteDocumentExtractionBranches(ctx context.Context, db bun.IDB, projectID string, jobIDs []string) (int, error) {
+	branchIDs, err := documentExtractionBranchIDs(ctx, db, projectID, jobIDs)
+	if err != nil || len(branchIDs) == 0 {
+		return 0, err
+	}
+
+	// Relationships first: they reference the objects by canonical id.
+	if _, err := db.NewDelete().
+		TableExpr("kb.graph_relationships").
+		Where("project_id = ?", projectID).
+		Where("branch_id IN (?)", bun.In(branchIDs)).
+		Exec(ctx); err != nil {
+		return 0, fmt.Errorf("delete branch relationships: %w", err)
+	}
+
+	// Remember the rows first: a surviving version (a branch forked off this one)
+	// may point at them through supersedes_id, and a version chain must not carry a
+	// reference to a row that no longer exists.
+	var objectIDs []string
+	if err := db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("id").
+		Where("project_id = ?", projectID).
+		Where("branch_id IN (?)", bun.In(branchIDs)).
+		Scan(ctx, &objectIDs); err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("load branch objects: %w", err)
+	}
+
+	if _, err := db.NewDelete().
+		TableExpr("kb.graph_objects").
+		Where("project_id = ?", projectID).
+		Where("branch_id IN (?)", bun.In(branchIDs)).
+		Exec(ctx); err != nil {
+		return 0, fmt.Errorf("delete branch objects: %w", err)
+	}
+	if len(objectIDs) > 0 {
+		if _, err := db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("supersedes_id = NULL").
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IN (?)", bun.In(objectIDs)).
+			Exec(ctx); err != nil {
+			return 0, fmt.Errorf("detach superseded branch objects: %w", err)
+		}
+	}
+
+	// Lineage rows and child links are metadata; drop the former and detach the
+	// latter so no branch is left pointing at a branch that no longer exists.
+	if _, err := db.NewDelete().
+		TableExpr("kb.branch_lineage").
+		Where("branch_id IN (?) OR ancestor_branch_id IN (?)", bun.In(branchIDs), bun.In(branchIDs)).
+		Exec(ctx); err != nil {
+		return 0, fmt.Errorf("delete branch lineage: %w", err)
+	}
+	if _, err := db.NewUpdate().
+		TableExpr("kb.branches").
+		Set("parent_branch_id = NULL").
+		Where("project_id = ?", projectID).
+		Where("parent_branch_id IN (?)", bun.In(branchIDs)).
+		Exec(ctx); err != nil {
+		return 0, fmt.Errorf("detach child branches: %w", err)
+	}
+
+	result, err := db.NewDelete().
+		TableExpr("kb.branches").
+		Where("project_id = ?", projectID).
+		Where("id IN (?)", bun.In(branchIDs)).
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("delete branches: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
 // DeleteWithCascade deletes a document and all related entities in a transaction
 // Returns a summary of what was deleted
 func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentID string) (*DeleteSummary, error) {
@@ -977,6 +1086,15 @@ func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentI
 			if err := r.repairSurvivingVersionChains(ctx, tx, projectID, survivingCanonicals, objectRowIDs); err != nil {
 				return err
 			}
+
+			// 5b. Delete the branches these jobs created, with anything staged on
+			// them. Must run before the jobs, which are what link a branch to the
+			// document (#246).
+			branches, err := deleteDocumentExtractionBranches(ctx, tx, projectID, jobIDs)
+			if err != nil {
+				return err
+			}
+			summary.Branches += branches
 
 			// 6. Delete extraction jobs
 			result, err = tx.NewDelete().
@@ -1139,6 +1257,15 @@ func (r *Repository) BulkDeleteWithCascade(ctx context.Context, projectID string
 			if err := r.repairSurvivingVersionChains(ctx, tx, projectID, survivingCanonicals, objectRowIDs); err != nil {
 				return err
 			}
+
+			// 5b. Delete the branches these jobs created, with anything staged on
+			// them. Must run before the jobs, which are what link a branch to the
+			// document (#246).
+			branches, err := deleteDocumentExtractionBranches(ctx, tx, projectID, jobIDs)
+			if err != nil {
+				return err
+			}
+			summary.Branches += branches
 
 			// 6. Delete extraction jobs
 			result, err = tx.NewDelete().
@@ -1329,6 +1456,12 @@ func (r *Repository) GetDeletionImpact(ctx context.Context, projectID, documentI
 		}
 	}
 
+	// Count the pending extraction branches the cascade removes with the jobs.
+	branchIDs, err := documentExtractionBranchIDs(ctx, r.db, projectID, jobIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	// Count notifications
 	notificationsCount, err := r.db.NewSelect().
 		TableExpr("kb.notifications").
@@ -1354,6 +1487,7 @@ func (r *Repository) GetDeletionImpact(ctx context.Context, projectID, documentI
 			CreatedAt: doc.CreatedAt.Format(time.RFC3339),
 		},
 		Impact: ImpactSummary{
+			Branches:           len(branchIDs),
 			Chunks:             chunksCount,
 			ExtractionJobs:     len(jobIDs),
 			GraphObjects:       objectsCount,
@@ -1517,6 +1651,31 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 		notificationsMap[n.DocumentID] = n.Count
 	}
 
+	// Count pending extraction branches per document (the cascade removes them
+	// with the extraction jobs, #246).
+	type branchCountResult struct {
+		DocumentID string `bun:"document_id"`
+		Count      int    `bun:"count"`
+	}
+	var branchCounts []branchCountResult
+	err = r.db.NewSelect().
+		TableExpr("kb.branches AS b").
+		ColumnExpr("j.document_id AS document_id, COUNT(DISTINCT b.id)::int AS count").
+		Join("JOIN kb.object_extraction_jobs AS j ON (j.id = b.origin_id OR j.staging_branch_id = b.id)").
+		Where("b.project_id = ?", projectID).
+		Where("b.origin = 'extraction'").
+		Where("b.merged_at IS NULL").
+		Where("j.document_id IN (?)", bun.In(existingIDs)).
+		Group("j.document_id").
+		Scan(ctx, &branchCounts)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("count extraction branches: %w", err)
+	}
+	branchesMap := make(map[string]int)
+	for _, b := range branchCounts {
+		branchesMap[b.DocumentID] = b.Count
+	}
+
 	// Build per-document results
 	documents := make([]DeletionImpact, len(docs))
 	totalImpact := ImpactSummary{}
@@ -1529,6 +1688,7 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 		}
 
 		impact := ImpactSummary{
+			Branches:           branchesMap[doc.ID],
 			Chunks:             chunksMap[doc.ID],
 			ExtractionJobs:     jobsMap[doc.ID],
 			GraphObjects:       docObjects[doc.ID],
@@ -1545,6 +1705,7 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 			Impact: impact,
 		}
 
+		totalImpact.Branches += impact.Branches
 		totalImpact.Chunks += impact.Chunks
 		totalImpact.ExtractionJobs += impact.ExtractionJobs
 		totalImpact.Notifications += impact.Notifications
