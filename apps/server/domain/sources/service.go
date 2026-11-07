@@ -501,19 +501,30 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	// created — without it the very next POST /api/graph/changesets as this
 	// source is refused. A session creator gets no grant: its source is pushed
 	// by the system sync worker (exempt from the grant check), and a
-	// ('session', NULL) row would be the hidden wildcard 00268 forbids. The row
-	// records the granting actor (the authenticated user), so a user's api_key
-	// create stays distinguishable from the 00266 backfill ('system'/NULL) in
-	// the audit read.
+	// ('session', NULL) row would be the hidden wildcard 00268 forbids.
+	//
+	// The row records the granting actor. A grant minted by a resolved user is
+	// ('user', <user_profiles.id>), so it stays distinguishable from the 00266
+	// backfill ('system'/NULL) in the audit read. An ownerless caller — an
+	// ephemeral sandbox token that carries an api_key credential but no user
+	// profile — must not record a 'user' actor that names nobody (issue #280):
+	// it falls back to the principal actually responsible, the system, with a
+	// NULL id.
 	var grant *graph.SourceGrant
 	if kind, credID, ok := auth.CredentialFromContext(ctx); ok && kind == auth.CredentialAPIKey && credID != nil {
+		grantedByType := graph.ActorSystem
+		var grantedByID *uuid.UUID
+		if userID := creatorUserID(ctx); userID != nil {
+			grantedByType = graph.ActorUser
+			grantedByID = userID
+		}
 		grant = &graph.SourceGrant{
 			ProjectID:      projectID,
 			SourceID:       src.ID,
 			CredentialKind: kind,
 			CredentialID:   credID,
-			GrantedByType:  graph.ActorUser,
-			GrantedByID:    creatorUserID(ctx),
+			GrantedByType:  grantedByType,
+			GrantedByID:    grantedByID,
 		}
 	}
 
