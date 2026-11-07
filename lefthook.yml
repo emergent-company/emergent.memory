@@ -182,7 +182,7 @@ pre-commit:
       root: apps/web-ui/gateway
       glob: "**/*.go"
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -192,7 +192,7 @@ pre-commit:
       root: apps/web-ui/gateway
       glob: "**/*.go"
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -204,7 +204,7 @@ pre-commit:
         - "*.templ"
         - "**/*.templ"
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -242,7 +242,7 @@ pre-commit:
     - name: webui-no-generated
       run: |
         bad=$(git diff --cached --name-only --diff-filter=ACM \
-          | grep -E 'webui/static/css/app\.css$|_templ\.go$' || true)
+          | grep -E 'webui/static/css/app\.css$|_templ\.go$|devgallery_(graph|adoption)_gen\.go$' || true)
         if [ -n "$bad" ]; then
           echo "Generated files staged (gitignored — regenerate via task build/css):"
           echo "$bad"
@@ -407,7 +407,7 @@ lint:
     - name: webui-go-vet
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -416,7 +416,7 @@ lint:
     - name: webui-go-build
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -425,7 +425,7 @@ lint:
     - name: webui-go-test
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -434,7 +434,7 @@ lint:
     - name: webui-golangci-lint
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -443,7 +443,7 @@ lint:
     - name: webui-templ
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -525,7 +525,7 @@ lint-webui:
     - name: webui-go-vet
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -534,7 +534,7 @@ lint-webui:
     - name: webui-go-build
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -543,7 +543,7 @@ lint-webui:
     - name: webui-go-test
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -552,7 +552,7 @@ lint-webui:
     - name: webui-golangci-lint
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi
@@ -561,7 +561,7 @@ lint-webui:
     - name: webui-templ
       root: apps/web-ui/gateway
       run: |
-        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1 || [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
           echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
           exit 0
         fi

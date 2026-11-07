@@ -340,10 +340,10 @@ func TestGraphStaleCheck(t *testing.T) {
 	}
 	want, err := os.ReadFile("devgallery_graph_gen.go")
 	if err != nil {
-		t.Fatalf("read committed: %v", err)
+		t.Fatalf("read generated on disk: %v", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Fatal("devgallery_graph_gen.go is stale; run `templ generate ./...` then `go generate ./...`")
+		t.Fatal("devgallery_graph_gen.go differs from a fresh run; regenerate with `templ generate ./...` then `go generate ./...`")
 	}
 }
 
@@ -362,10 +362,10 @@ func TestAdoptionStaleCheck(t *testing.T) {
 	}
 	want, err := os.ReadFile("devgallery_adoption_gen.go")
 	if err != nil {
-		t.Fatalf("read committed: %v", err)
+		t.Fatalf("read generated on disk: %v", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Fatal("devgallery_adoption_gen.go is stale; run `templ generate ./...` then `go generate ./...`")
+		t.Fatal("devgallery_adoption_gen.go differs from a fresh run; regenerate with `templ generate ./...` then `go generate ./...`")
 	}
 }
 
