@@ -141,8 +141,8 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # Base images resolve through mirror.gcr.io in the buildkitd config above
-      # (#215). Daemon-side `docker compose pull` is covered by infra #937; the
-      # 429 annotation in the build steps below stays as the backstop (#50).
+      # (#215). Daemon-side `docker compose pull` is tracked by the runner-side
+      # fix (see #211); the 429 annotation below stays as the backstop (#50).
       # Distinct infrastructure step (issue #50): a base-image pull that hits the
       # Docker Hub anonymous quota returns `429 Too Many Requests`, which is
       # infrastructure, not a failing test. Capture the build output so the 429
@@ -300,8 +300,8 @@ jobs:
               mirrors = ["mirror.gcr.io"]
 
       # Base images resolve through mirror.gcr.io in the buildkitd config above
-      # (#215). Daemon-side `docker compose pull` is covered by infra #937; the
-      # 429 annotation in the build steps below stays as the backstop (#50).
+      # (#215). Daemon-side `docker compose pull` is tracked by the runner-side
+      # fix (see #211); the 429 annotation below stays as the backstop (#50).
       # Distinct infrastructure step (issue #50): a base-image pull that hits the
       # Docker Hub anonymous quota returns `429 Too Many Requests`, which is
       # infrastructure, not a failing test. Capture the build output so the 429
@@ -518,8 +518,8 @@ jobs:
               mirrors = ["mirror.gcr.io"]
 
       # Base images resolve through mirror.gcr.io in the buildkitd config above
-      # (#215). Daemon-side `docker compose pull` is covered by infra #937; the
-      # 429 annotation in the build steps below stays as the backstop (#50).
+      # (#215). Daemon-side `docker compose pull` is tracked by the runner-side
+      # fix (see #211); the 429 annotation below stays as the backstop (#50).
       # Distinct infrastructure step (issue #50): a base-image pull that hits the
       # Docker Hub anonymous quota returns `429 Too Many Requests`, which is
       # infrastructure, not a failing test. Capture the build output so the 429
