@@ -269,11 +269,13 @@ jobs:
             docker logs "$PG_CONTAINER" || true
             exit 1
           fi
+          # 60 × 2 s = 120 s of patience, the same as server.yml's DB-backed
+          # job; both are the shipped image starting cold on a hosted runner.
           for _ in $(seq 1 60); do
             if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
               break
             fi
-            sleep 1
+            sleep 2
           done
           docker exec "$PG_CONTAINER" pg_isready -U postgres \
             || { echo "::error::Postgres did not become ready"; docker logs "$PG_CONTAINER" || true; exit 1; }
