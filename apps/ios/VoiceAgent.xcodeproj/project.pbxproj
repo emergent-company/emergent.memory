@@ -9,11 +9,19 @@
 /* Begin PBXBuildFile section */
 		A110C0DF2D14E9EC00A38C01 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = A110C0DE2D14E9EC00A38C03 /* Markdown */; };
 		A110C0DF2D14E9EC00A38C02 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = A110C0DE2D14E9EC00A38C04 /* Splash */; };
+		AC5A7E0100000000000000AE /* MemoryShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AC5A7E0100000000000000A2 /* MemoryShare.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B5E1B90F2D14E9EC00A38CB6 /* LiveKitComponents in Frameworks */ = {isa = PBXBuildFile; productRef = B5E1B90E2D14E9EC00A38CB6 /* LiveKitComponents */; };
 		B5E1B9122D14E9F500A38CB6 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = B5E1B9112D14E9F500A38CB6 /* LiveKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		AC5A7E0100000000000000AB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B5B5E3AA2D124AE00099C9BE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AC5A7E0100000000000000A1;
+			remoteInfo = MemoryShare;
+		};
 		ACC280262DEDDA1D0023C13D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B5B5E3AA2D124AE00099C9BE /* Project object */;
@@ -23,12 +31,35 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		AC5A7E0100000000000000AD /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				AC5A7E0100000000000000AE /* MemoryShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		AC5A7E0100000000000000A2 /* MemoryShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MemoryShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B5B5E3B22D124AE00099C9BE /* VoiceAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ACC280262DEDDA1D0023C138 /* VoiceAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoiceAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AC5A7E0100000000000000A4 /* Exceptions for "MemoryShare" folder in "MemoryShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				MemoryShare.entitlements,
+			);
+			target = AC5A7E0100000000000000A1 /* MemoryShare */;
+		};
 		B577A91F2D15FDB800B59A0B /* Exceptions for "VoiceAgent" folder in "VoiceAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -40,6 +71,19 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		AC5A7E0100000000000000A3 /* MemoryShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AC5A7E0100000000000000A4 /* Exceptions for "MemoryShare" folder in "MemoryShare" target */,
+			);
+			path = MemoryShare;
+			sourceTree = "<group>";
+		};
+		AC5A7E0100000000000000AF /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		B5B5E3B42D124AE00099C9BE /* VoiceAgent */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -56,6 +100,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		AC5A7E0100000000000000A6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B5B5E3AF2D124AE00099C9BE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -81,6 +132,8 @@
 			isa = PBXGroup;
 			children = (
 				B5B5E3B42D124AE00099C9BE /* VoiceAgent */,
+				AC5A7E0100000000000000AF /* Shared */,
+				AC5A7E0100000000000000A3 /* MemoryShare */,
 				ACC280262DEDDA1D0023C139 /* VoiceAgentTests */,
 				B5B5E3B32D124AE00099C9BE /* Products */,
 			);
@@ -90,6 +143,7 @@
 			isa = PBXGroup;
 			children = (
 				B5B5E3B22D124AE00099C9BE /* VoiceAgent.app */,
+				AC5A7E0100000000000000A2 /* MemoryShare.appex */,
 				ACC280262DEDDA1D0023C138 /* VoiceAgentTests.xctest */,
 			);
 			name = Products;
@@ -98,6 +152,27 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		AC5A7E0100000000000000A1 /* MemoryShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AC5A7E0100000000000000A8 /* Build configuration list for PBXNativeTarget "MemoryShare" */;
+			buildPhases = (
+				AC5A7E0100000000000000A5 /* Sources */,
+				AC5A7E0100000000000000A6 /* Frameworks */,
+				AC5A7E0100000000000000A7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AC5A7E0100000000000000A3 /* MemoryShare */,
+				AC5A7E0100000000000000AF /* Shared */,
+			);
+			name = MemoryShare;
+			productName = MemoryShare;
+			productReference = AC5A7E0100000000000000A2 /* MemoryShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		B5B5E3B12D124AE00099C9BE /* VoiceAgent */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B5B5E3C12D124AE20099C9BE /* Build configuration list for PBXNativeTarget "VoiceAgent" */;
@@ -105,13 +180,16 @@
 				B5B5E3AE2D124AE00099C9BE /* Sources */,
 				B5B5E3AF2D124AE00099C9BE /* Frameworks */,
 				B5B5E3B02D124AE00099C9BE /* Resources */,
+				AC5A7E0100000000000000AD /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				AC5A7E0100000000000000AC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				B5B5E3B42D124AE00099C9BE /* VoiceAgent */,
+				AC5A7E0100000000000000AF /* Shared */,
 			);
 			name = VoiceAgent;
 			packageProductDependencies = (
@@ -155,6 +233,9 @@
 				LastSwiftUpdateCheck = 1630;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+					AC5A7E0100000000000000A1 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 					ACC280262DEDDA1D0023C137 = {
 						CreatedOnToolsVersion = 16.3;
 						TestTargetID = B5B5E3B12D124AE00099C9BE;
@@ -185,12 +266,20 @@
 			projectRoot = "";
 			targets = (
 				B5B5E3B12D124AE00099C9BE /* VoiceAgent */,
+				AC5A7E0100000000000000A1 /* MemoryShare */,
 				ACC280262DEDDA1D0023C137 /* VoiceAgentTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		AC5A7E0100000000000000A7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B5B5E3B02D124AE00099C9BE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -208,6 +297,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		AC5A7E0100000000000000A5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B5B5E3AE2D124AE00099C9BE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -225,6 +321,14 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		AC5A7E0100000000000000AC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilters = (
+				ios,
+			);
+			target = AC5A7E0100000000000000A1 /* MemoryShare */;
+			targetProxy = AC5A7E0100000000000000AB /* PBXContainerItemProxy */;
+		};
 		ACC280262DEDDA1D0023C13E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = B5B5E3B12D124AE00099C9BE /* VoiceAgent */;
@@ -233,6 +337,71 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		AC5A7E0100000000000000A9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = B5B5E3B42D124AE00099C9BE /* VoiceAgent */;
+			baseConfigurationReferenceRelativePath = VoiceAgent.xcconfig;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MemoryShare/MemoryShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MemoryShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Memory;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.91.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.share;
+				PRODUCT_NAME = MemoryShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AC5A7E0100000000000000AA /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = B5B5E3B42D124AE00099C9BE /* VoiceAgent */;
+			baseConfigurationReferenceRelativePath = VoiceAgent.xcconfig;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MemoryShare/MemoryShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MemoryShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Memory;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.91.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.share;
+				PRODUCT_NAME = MemoryShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		B5B5E3BF2D124AE20099C9BE /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -494,6 +663,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		AC5A7E0100000000000000A8 /* Build configuration list for PBXNativeTarget "MemoryShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC5A7E0100000000000000A9 /* Debug */,
+				AC5A7E0100000000000000AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		B5B5E3AD2D124AE00099C9BE /* Build configuration list for PBXProject "VoiceAgent" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

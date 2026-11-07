@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<!-- What makes Memory appear in the share sheet: a Safari link (or a
+			     shared web page), a photo, a document, an audio memo, or selected
+			     text. Video is deliberately absent: Memory's converter has no
+			     video path, and offering a share it will refuse is worse than not
+			     appearing. -->
+			<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+			<integer>1</integer>
+			<key>NSExtensionActivationSupportsWebPageWithMaxCount</key>
+			<integer>1</integer>
+			<key>NSExtensionActivationSupportsImageWithMaxCount</key>
+			<integer>4</integer>
+			<key>NSExtensionActivationSupportsFileWithMaxCount</key>
+			<integer>4</integer>
+			<key>NSExtensionActivationSupportsText</key>
+			<true/>
+		</dict>
+	</dict>
+	<!-- The extension talks to the same gateway the app does, which may be a
+	     private-network (tailnet) or plain-HTTP host, so it carries the same ATS
+	     story as the app's Info.plist. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>100.64.0.0/10</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Memory sends what you share to your Memory server, which may be on your private network (Tailscale).</string>
+</dict>
+</plist>

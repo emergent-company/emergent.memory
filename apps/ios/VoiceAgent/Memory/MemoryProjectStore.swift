@@ -172,6 +172,23 @@ final class MemoryProjectStore: ObservableObject {
     /// Writes the active connection's values into `MemoryConfig` and returns
     /// whether any value actually changed (so same-value mutations stay quiet).
     private func mirrorActiveConnection() -> Bool {
+        // The share extension is a separate process and cannot read this store:
+        // mirror the same connection into the App Group so a share knows which
+        // gateway and project to post to (and so removing the last project also
+        // stops the extension capturing into nowhere).
+        if let active = activeConnection {
+            ShareConnection.mirror(
+                ShareConnection(
+                    apiBaseURL: active.apiBaseURL,
+                    apiKey: active.apiKey,
+                    projectID: active.projectID,
+                    projectName: active.projectName
+                )
+            )
+        } else {
+            ShareConnection.mirror(nil)
+        }
+
         let current = MemoryConfig(defaults: defaults)
         var updated = current
         if let active = activeConnection {
