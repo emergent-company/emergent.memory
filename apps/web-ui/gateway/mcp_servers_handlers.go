@@ -337,11 +337,12 @@ func (s *Server) uiMCPOAuthDisconnect(c echo.Context) error {
 }
 
 // uiMCPOAuthClient handles POST /settings/mcp-servers/:id/oauth/client (PRG).
-// It stores a pre-registered OAuth client (id + optional secret) for a server
-// whose authorization provider rejects dynamic registration. A blank client id
-// and a backend failure both redirect back to the list with an error flash;
-// success redirects with ?oauthClient=1. The client secret never round-trips
-// into any page: failures PRG with a fixed error message that never carries it.
+// It stores a pre-registered OAuth client (id + optional secret) and the
+// optional scope set to request for a server whose authorization provider
+// rejects dynamic registration. A blank client id and a backend failure both
+// redirect back to the list with an error flash; success redirects with
+// ?oauthClient=1. The client secret never round-trips into any page: failures
+// PRG with a fixed error message that never carries it.
 func (s *Server) uiMCPOAuthClient(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := strings.TrimSpace(c.Param("id"))
@@ -353,7 +354,8 @@ func (s *Server) uiMCPOAuthClient(c echo.Context) error {
 		return redirectWithError(c, mcpServerSettingsBase, errMCPOAuthClientIDRequired())
 	}
 	clientSecret := c.FormValue("client_secret")
-	if _, err := s.memory.SetMCPServerOAuthClient(ctx, id, clientID, clientSecret); err != nil {
+	scope := strings.Join(strings.Fields(c.FormValue("scope")), " ")
+	if _, err := s.memory.SetMCPServerOAuthClient(ctx, id, clientID, clientSecret, scope); err != nil {
 		return redirectWithError(c, mcpServerSettingsBase, err)
 	}
 	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?oauthClient=1")

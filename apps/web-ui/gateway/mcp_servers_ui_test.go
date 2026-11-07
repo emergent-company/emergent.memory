@@ -393,6 +393,23 @@ func TestRenderMCPServersOAuthConnect(t *testing.T) {
 	}
 }
 
+// TestRenderMCPServersOAuthClientScopePrefill asserts the pre-registered client
+// form prefills the operator's requested scope set, so editing it does not
+// silently drop back to "request no scope".
+func TestRenderMCPServersOAuthClientScopePrefill(t *testing.T) {
+	srv := mcpOAuthServerFixture(false)
+	scope := "repo read:org"
+	srv.OAuth.RequestedScope = &scope
+
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{srv}}))
+	if !strings.Contains(html, `name="scope"`) {
+		t.Fatal("client form has no scope input")
+	}
+	if !strings.Contains(html, `value="repo read:org"`) {
+		t.Error("scope input is not prefilled with the stored requested scope set")
+	}
+}
+
 // TestRenderMCPServersOAuthConnected asserts a connected server renders the
 // Connected chip (with the authorization server) plus the Disconnect form.
 func TestRenderMCPServersOAuthConnected(t *testing.T) {
@@ -441,6 +458,7 @@ func TestRenderMCPServersOAuthClientDisclosure(t *testing.T) {
 		`action="/settings/mcp-servers/srv-oauth/oauth/client"`,
 		`name="client_id"`,
 		`name="client_secret"`,
+		`name="scope"`,
 		"Use a pre-registered OAuth client",
 		`data-testid="mcp-oauth-client-save"`,
 		"Save client",

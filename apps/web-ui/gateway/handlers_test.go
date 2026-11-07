@@ -1105,8 +1105,12 @@ func (f *fakeMemory) AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAu
 
 func (f *fakeMemory) DisconnectMCPServer(ctx context.Context, id string) error { return nil }
 
-func (f *fakeMemory) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error) {
-	return &MCPOAuthStatus{ServerID: id, ClientConfigured: true}, nil
+func (f *fakeMemory) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret, scope string) (*MCPOAuthStatus, error) {
+	out := &MCPOAuthStatus{ServerID: id, ClientConfigured: true}
+	if scope != "" {
+		out.RequestedScope = &scope
+	}
+	return out, nil
 }
 
 func (f *fakeMemory) ClearMCPServerOAuthClient(ctx context.Context, id string) error { return nil }

@@ -140,6 +140,7 @@ type mcpTestBackend struct {
 	lastClientServer  string
 	lastClientID      string
 	lastClientSecret  string
+	lastClientScope   string
 }
 
 func newMCPTestBackend(servers []MCPServer) *mcpTestBackend {
@@ -328,10 +329,11 @@ func (b *mcpTestBackend) DisconnectMCPServer(ctx context.Context, id string) err
 	return b.disconnectErr
 }
 
-func (b *mcpTestBackend) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error) {
+func (b *mcpTestBackend) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret, scope string) (*MCPOAuthStatus, error) {
 	b.lastClientServer = id
 	b.lastClientID = clientID
 	b.lastClientSecret = clientSecret
+	b.lastClientScope = scope
 	if b.oauthClientErr != nil {
 		return nil, b.oauthClientErr
 	}
@@ -1324,13 +1326,16 @@ func TestUIMCPOAuthClientRedirectsWithFlash(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpServerTestServer(s)
 
-	body := "client_id=client-abc&client_secret=secret-xyz"
+	body := "client_id=client-abc&client_secret=secret-xyz&scope=repo+read%3Aorg"
 	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", body)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
 		t.Fatalf("oauth/client = %d %q, want 303 /settings/mcp-servers?oauthClient=1", rec.Code, rec.Header().Get("Location"))
 	}
 	if f.lastClientServer != "srv-http" || f.lastClientID != "client-abc" || f.lastClientSecret != "secret-xyz" {
 		t.Errorf("backend record = %s %q %q, want srv-http client-abc secret-xyz", f.lastClientServer, f.lastClientID, f.lastClientSecret)
+	}
+	if f.lastClientScope != "repo read:org" {
+		t.Errorf("backend scope = %q, want the submitted scope set", f.lastClientScope)
 	}
 }
 

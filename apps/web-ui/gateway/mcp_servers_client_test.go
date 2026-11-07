@@ -515,7 +515,7 @@ func TestSetMCPServerOAuthClient(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	res, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "secret-xyz")
+	res, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "secret-xyz", "repo read:org")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,6 +524,9 @@ func TestSetMCPServerOAuthClient(t *testing.T) {
 	}
 	if gotBody["clientId"] != "client-abc" || gotBody["clientSecret"] != "secret-xyz" {
 		t.Errorf("body = %v, want clientId client-abc + clientSecret secret-xyz", gotBody)
+	}
+	if gotBody["scope"] != "repo read:org" {
+		t.Errorf("body.scope = %q, want the configured scope set", gotBody["scope"])
 	}
 	if !res.ClientConfigured {
 		t.Errorf("status = %+v, want clientConfigured true", res)
@@ -540,7 +543,7 @@ func TestSetMCPServerOAuthClientOmitsBlankSecret(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", ""); err != nil {
+	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "", "repo"); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody["clientId"] != "client-abc" {
@@ -548,6 +551,9 @@ func TestSetMCPServerOAuthClientOmitsBlankSecret(t *testing.T) {
 	}
 	if _, ok := gotBody["clientSecret"]; ok {
 		t.Errorf("body = %v, want clientSecret omitted when blank", gotBody)
+	}
+	if gotBody["scope"] != "repo" {
+		t.Errorf("body.scope = %q, want the configured scope set", gotBody["scope"])
 	}
 }
 
@@ -559,7 +565,7 @@ func TestSetMCPServerOAuthClientError(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "", ""); err == nil ||
+	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "", "", ""); err == nil ||
 		!strings.Contains(err.Error(), "memory 400 bad_request") {
 		t.Fatalf("error = %v, want memory 400 bad_request", err)
 	}
