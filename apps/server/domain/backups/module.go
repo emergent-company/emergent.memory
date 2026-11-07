@@ -13,5 +13,8 @@ var Module = fx.Module("backups",
 	fx.Provide(NewRestorer),
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
+	fx.Provide(NewScheduleRunner),
+	fx.Provide(NewRetentionTask),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(RegisterScheduledBackupTasks),
 )

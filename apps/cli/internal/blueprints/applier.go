@@ -841,6 +841,7 @@ type relTypeAPI struct {
 	SourceType  string         `json:"sourceType"`
 	TargetType  string         `json:"targetType"`
 	Properties  map[string]any `json:"properties,omitempty"`
+	Required    []string       `json:"required,omitempty"`
 }
 
 // expandRelationshipTypes expands plural sourceTypes/targetTypes declarations
@@ -877,6 +878,7 @@ func expandRelationshipTypes(defs []RelationshipTypeDef) ([]relTypeAPI, error) {
 				SourceType:  d.SourceType,
 				TargetType:  d.TargetType,
 				Properties:  d.Properties,
+				Required:    d.Required,
 			})
 			continue
 		}
@@ -889,6 +891,7 @@ func expandRelationshipTypes(defs []RelationshipTypeDef) ([]relTypeAPI, error) {
 					SourceType:  src,
 					TargetType:  tgt,
 					Properties:  d.Properties,
+					Required:    d.Required,
 				})
 			}
 		}

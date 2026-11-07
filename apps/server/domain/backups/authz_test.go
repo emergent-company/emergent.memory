@@ -132,6 +132,55 @@ func TestBackupsAuthzProjectTier(t *testing.T) {
 	}
 }
 
+// TestBackupsAuthzSchedule pins the recurring-schedule tier: reading, writing
+// and deleting a project's schedule require the same project authority as
+// creating a backup (project_admin of the project OR org_admin of its owning
+// org). A bare user or a plain org member is refused; an absent schedule is a
+// 404 and an invalid cron is a 400, neither of which leaks past the authority
+// check.
+func TestBackupsAuthzSchedule(t *testing.T) {
+	testDB, e := newAuthzServer(t)
+	f := seedAuthzFixture(t, testDB.DB)
+
+	path := "/api/v1/projects/" + f.projectA + "/backup-schedule"
+	validBody := `{"enabled":true,"cronSchedule":"0 2 * * *","retentionDays":30}`
+
+	probes := []struct {
+		name   string
+		method string
+		body   string
+		token  string
+		want   int
+	}{
+		{"unauthenticated get", http.MethodGet, "", "", http.StatusUnauthorized},
+		{"bare get", http.MethodGet, "", f.bareToken, http.StatusForbidden},
+		{"member get", http.MethodGet, "", f.orgMemberAToken, http.StatusForbidden},
+		{"project_admin get (none configured)", http.MethodGet, "", f.projectAdminAToken, http.StatusNotFound},
+
+		{"bare put", http.MethodPut, validBody, f.bareToken, http.StatusForbidden},
+		{"member put", http.MethodPut, validBody, f.orgMemberAToken, http.StatusForbidden},
+		{"project_admin put invalid cron", http.MethodPut, `{"cronSchedule":"*/5 * * * *"}`, f.projectAdminAToken, http.StatusBadRequest},
+		{"project_admin put", http.MethodPut, validBody, f.projectAdminAToken, http.StatusOK},
+		{"org_admin get after put", http.MethodGet, "", f.orgAdminAToken, http.StatusOK},
+
+		{"member delete", http.MethodDelete, "", f.orgMemberAToken, http.StatusForbidden},
+		{"org_admin delete", http.MethodDelete, "", f.orgAdminAToken, http.StatusNoContent},
+		{"org_admin delete absent", http.MethodDelete, "", f.orgAdminAToken, http.StatusNotFound},
+	}
+
+	for _, p := range probes {
+		t.Run(p.name, func(t *testing.T) {
+			var rec = do(e, p.method, path, p.token)
+			if p.body != "" {
+				rec = doJSON(e, p.method, path, p.token, p.body)
+			}
+			if rec.Code != p.want {
+				t.Errorf("got %d, want %d (body: %s)", rec.Code, p.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestBackupsAuthzRestoreChildTier pins the child-resource tier: reading a
 // restore requires org_admin of the restore's owning org, and a foreign or
 // missing id is a 404 (not-found-on-foreign), not a 403.

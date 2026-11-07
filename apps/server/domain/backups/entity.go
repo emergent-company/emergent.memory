@@ -136,11 +136,14 @@ type ListResult struct {
 	NextCursor *Cursor  `json:"nextCursor,omitempty"`
 }
 
-// CreateBackupRequest contains parameters for creating a backup
+// CreateBackupRequest contains parameters for creating a backup.
 type CreateBackupRequest struct {
 	ProjectID      string
 	OrganizationID string
-	CreatedBy      string
+	// CreatedBy is the initiating user, or nil for a system-initiated backup
+	// (the scheduled runner). A nil value must stay nil: created_by is a
+	// foreign key, and an empty string is not a valid uuid.
+	CreatedBy      *string
 	IncludeDeleted bool
 	IncludeChat    bool
 	IncludeJournal bool

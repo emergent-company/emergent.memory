@@ -90,6 +90,7 @@ func TestObjectTypeDefRoundTripPreservesBehaviouralFields(t *testing.T) {
 				SourceType: "Note",
 				TargetType: "*",
 				Properties: map[string]any{"description": "links a note to its target"},
+				Required:   []string{"description"},
 			}},
 		}},
 	}
@@ -110,6 +111,7 @@ func TestObjectTypeDefRoundTripPreservesBehaviouralFields(t *testing.T) {
 
 	rt := back.Packs[0].RelationshipTypes[0]
 	assert.Equal(t, "links a note to its target", rt.Properties["description"], "relationship properties must round-trip")
+	assert.Equal(t, []string{"description"}, rt.Required, "relationship required must round-trip")
 }
 
 // TestObjectTypeDefMarshalsBoardFields verifies the object-driven work fields

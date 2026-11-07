@@ -423,3 +423,125 @@ func TestBackupStatRows(t *testing.T) {
 		t.Errorf("partial stats = %+v, want just documents", partial)
 	}
 }
+
+// TestGetBackupSchedule exercises GET /api/v1/projects/:projectId/backup-schedule:
+// the project-scoped path and the full schedule entity decode.
+func TestGetBackupSchedule(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"s1","organizationId":"org-1","projectId":"proj-1","enabled":true,
+			"cronSchedule":"0 2 * * *","timezone":"UTC","retentionDays":30,
+			"includeChat":true,"includeJournal":false,"includeDeleted":false,
+			"nextRunAt":"2026-11-08T02:00:00Z","lastRunAt":"2026-11-07T02:00:00Z",
+			"lastBackupId":"b1","createdAt":"2026-11-01T10:00:00Z","updatedAt":"2026-11-06T10:00:00Z"
+		}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	s, err := m.GetBackupSchedule(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/api/v1/projects/proj-1/backup-schedule" {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if s == nil {
+		t.Fatal("schedule is nil")
+	}
+	if s.CronSchedule != "0 2 * * *" || !s.Enabled || s.RetentionDays != 30 || !s.IncludeChat {
+		t.Errorf("schedule = %+v", s)
+	}
+	if s.NextRunAt.IsZero() || s.LastRunAt == nil || s.LastBackupID == nil {
+		t.Errorf("runner bookkeeping not decoded: %+v", s)
+	}
+}
+
+// TestGetBackupScheduleUnset covers memory answering 404 for a project with no
+// schedule: that is the "not configured" state, not an error.
+func TestGetBackupScheduleUnset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"backup schedule proj-1 not found"}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	s, err := m.GetBackupSchedule(context.Background())
+	if err != nil {
+		t.Fatalf("unset schedule should not be an error: %v", err)
+	}
+	if s != nil {
+		t.Errorf("schedule = %+v, want nil", s)
+	}
+}
+
+// TestSaveBackupSchedule exercises PUT /api/v1/projects/:projectId/backup-schedule:
+// the request body mirrors the schedule fields and the saved entity is decoded.
+func TestSaveBackupSchedule(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody BackupScheduleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"s1","organizationId":"org-1","projectId":"proj-1","enabled":true,"cronSchedule":"0 */6 * * *","timezone":"UTC","retentionDays":7,"includeChat":false,"includeJournal":true,"includeDeleted":false,"nextRunAt":"2026-11-07T18:00:00Z","createdAt":"2026-11-01T10:00:00Z","updatedAt":"2026-11-07T12:00:00Z"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	s, err := m.SaveBackupSchedule(context.Background(), BackupScheduleRequest{
+		Enabled:        true,
+		CronSchedule:   "0 */6 * * *",
+		RetentionDays:  7,
+		IncludeJournal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/api/v1/projects/proj-1/backup-schedule" {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotBody.CronSchedule != "0 */6 * * *" || gotBody.RetentionDays != 7 || !gotBody.IncludeJournal || gotBody.IncludeChat {
+		t.Errorf("body = %+v", gotBody)
+	}
+	if s.CronSchedule != "0 */6 * * *" || s.RetentionDays != 7 || !s.IncludeJournal {
+		t.Errorf("schedule = %+v", s)
+	}
+}
+
+// TestSaveBackupScheduleRejected covers memory rejecting an invalid cron: the
+// error surfaces for the ?err= flash instead of a phantom saved schedule.
+func TestSaveBackupScheduleRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"bad_request","message":"invalid backup schedule: cron schedule \"*/5 * * * *\" fires every 5m0s; the minimum interval is 15 minutes"}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	if _, err := m.SaveBackupSchedule(context.Background(), BackupScheduleRequest{CronSchedule: "*/5 * * * *"}); err == nil {
+		t.Fatal("want error, got nil")
+	}
+}
+
+// TestDeleteBackupSchedule exercises DELETE .../backup-schedule (204).
+func TestDeleteBackupSchedule(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	if err := m.DeleteBackupSchedule(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/api/v1/projects/proj-1/backup-schedule" {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+}

@@ -2,8 +2,9 @@
 # Connects to external memory / LiveKit / LiteLLM / Deepgram / Cartesia.
 #
 # templ-generated Go files AND the compiled Tailwind CSS (webui/static/css/app.css)
-# are gitignored, so the builder stage must run `templ generate` and the Tailwind
-# build before `go build`. go-daisy is a published module
+# and the component gallery's generated graph (devgallery_*_gen.go) are build
+# output, so the builder stage must run `templ generate`, `go generate` and the
+# Tailwind build before `go build`. go-daisy is a published module
 # (github.com/emergent-company/go-daisy), so `go mod vendor` resolves it and
 # supplies the component source + custom.css the Tailwind build @sources/@imports.
 
@@ -37,10 +38,14 @@ RUN go install "github.com/a-h/templ/cmd/templ@$(go list -m -f '{{.Version}}' gi
 ARG VERSION=dev
 ARG GIT_SHA=unknown
 COPY gateway/ ./
-# Order matters: templ generate (CSS @sources generated *_templ.go) -> vendor
-# (CSS @sources/@imports go-daisy) -> Tailwind compile -> go build (embeds
-# webui/static via go:embed, which FAILS if app.css is missing).
+# Order matters: templ generate (CSS @sources generated *_templ.go) -> go
+# generate (the gallery's dependency graph, derived from those *_templ.go call
+# sites and gitignored) -> vendor (CSS @sources/@imports go-daisy) -> Tailwind
+# compile -> go build (embeds webui/static via go:embed, which FAILS if app.css
+# is missing). Skipping `go generate` fails the build outright, not silently:
+# the graph files are compiled in.
 RUN templ generate ./... \
+ && go generate ./... \
  && GOWORK=off go mod vendor \
  && node_modules/.bin/tailwindcss -i webui/css/app.css -o webui/static/css/app.css --minify \
  && CGO_ENABLED=0 go build \
