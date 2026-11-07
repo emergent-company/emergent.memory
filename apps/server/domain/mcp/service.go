@@ -2138,6 +2138,13 @@ func expandScopesSet(scopes []string) map[string]bool {
 var toolIndexMu sync.RWMutex
 var toolIndex = map[string]*ToolDefinition{}
 
+// toolIndexReady reports whether the tool index has been built in this process.
+func toolIndexReady() bool {
+	toolIndexMu.RLock()
+	defer toolIndexMu.RUnlock()
+	return len(toolIndex) > 0
+}
+
 // buildToolIndex rebuilds the tool index from the provided tool list.
 func buildToolIndex(tools []ToolDefinition) {
 	idx := make(map[string]*ToolDefinition, len(tools))

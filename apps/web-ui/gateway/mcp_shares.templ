@@ -107,7 +107,23 @@ templ mcpShareRow(inst MCPShareInstance) {
 					// Legacy instances cannot be edited, rotated or revoked here,
 					// but they CAN be copied: the copy is an ordinary named share,
 					// which is the documented way off a legacy share. Nothing about
-					// the source changes.
+					// the source changes. Their writes are still attributable — the
+					// row id IS the token id — so the activity link stays.
+					if inst.TokenID != "" {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    mcpShareActivityHref(inst),
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+							Shape:   ui.ButtonShapeSquare,
+							Icon:    "lucide--history",
+							Attrs: templ.Attributes{
+								"title":       "View writes from " + inst.Name,
+								"aria-label":  "View writes from " + inst.Name,
+								"data-testid": "mcp-share-activity-link-" + inst.ID,
+							},
+						})
+					}
 					@mcpShareDuplicateButton(inst)
 				} else {
 					@mcpShareActionsMenu(inst)

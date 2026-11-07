@@ -1330,19 +1330,46 @@ func TestRecordShareRecipients(t *testing.T) {
 	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
 	require.NoError(t, store.Create(ctx, &MCPShareInstance{ID: "s1", ProjectID: "proj", Name: "analyst", TokenID: "tok-1"}))
 
-	require.NoError(t, svc.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"Alice@Example.com", "bob@example.com"}))
+	merged, err := svc.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"Alice@Example.com", "bob@example.com"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"alice@example.com", "bob@example.com"}, merged)
 	assert.Equal(t, []string{"alice@example.com", "bob@example.com"}, store.byID["s1"].RecipientEmails)
 
 	// A later invite merges rather than replaces.
-	require.NoError(t, svc.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"bob@example.com", "carol@example.com"}))
+	merged, err = svc.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"bob@example.com", "carol@example.com"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"alice@example.com", "bob@example.com", "carol@example.com"}, merged)
 	assert.Equal(t, []string{"alice@example.com", "bob@example.com", "carol@example.com"}, store.byID["s1"].RecipientEmails)
 
 	// No addresses means no write at all.
-	require.NoError(t, svc.RecordShareRecipients(ctx, "proj", "user", "s1", nil))
+	merged, err = svc.RecordShareRecipients(ctx, "proj", "user", "s1", nil)
+	require.NoError(t, err)
+	require.Nil(t, merged)
 	assert.Len(t, store.byID["s1"].RecipientEmails, 3)
 
 	// Non-admins cannot write share metadata.
 	denied := newTestService(store, &fakeTokenSvc{role: "member"}, &fakeAgentDir{})
-	require.Error(t, denied.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"dave@example.com"}))
+	_, err = denied.RecordShareRecipients(ctx, "proj", "user", "s1", []string{"dave@example.com"})
+	require.Error(t, err)
 	assert.Len(t, store.byID["s1"].RecipientEmails, 3)
+}
+
+// TestShareInstanceDTOAlwaysCarriesRecipientEmails pins the field's shape: an
+// array, never null or absent, because the share row reads it directly and a
+// "no invitees" share should not need a special case in every client.
+func TestShareInstanceDTOAlwaysCarriesRecipientEmails(t *testing.T) {
+	now := time.Now().UTC()
+
+	plain := (&MCPShareInstance{
+		ID: "s1", ProjectID: "proj", Name: "analyst", TokenID: "tok-1",
+		CreatedAt: now, UpdatedAt: now,
+	}).toDTO(now)
+	b, err := json.Marshal(plain)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"recipientEmails":[]`)
+
+	legacy := legacyTokenToDTO("proj", &LegacyTokenRef{ID: "tok-2", Name: "MCP Share"}, now)
+	b, err = json.Marshal(legacy)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"recipientEmails":[]`)
 }

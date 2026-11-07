@@ -500,6 +500,24 @@ func TestMCPShareRowShowsInviteesAndWriteScope(t *testing.T) {
 		}
 	}
 
+	// A legacy token is not editable but its writes are still attributable: the
+	// row id is the token id, so the activity link renders beside Duplicate.
+	legacy := renderHTML(t, MCPSharesPage(mcpSharesPageData{Shares: []MCPShareInstance{{
+		ID: "tok-legacy", Name: "MCP Share", Status: "active", TokenID: "tok-legacy",
+		IsLegacy: true, ReadOnly: true,
+	}}}))
+	for _, want := range []string{
+		`data-testid="mcp-share-activity-link-tok-legacy"`,
+		"credential_id=tok-legacy",
+	} {
+		if !strings.Contains(legacy, want) {
+			t.Errorf("legacy row missing %q", want)
+		}
+	}
+	if strings.Contains(legacy, "read &amp; write") {
+		t.Error("legacy row advertised write access")
+	}
+
 	// A read-only share does not advertise write access, and a share nobody was
 	// emailed to renders no invitee chip.
 	quiet := renderHTML(t, MCPSharesPage(mcpSharesPageData{Shares: []MCPShareInstance{{

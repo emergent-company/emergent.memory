@@ -63,7 +63,11 @@ func (h *Handler) HandleCreateShareInstance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	h.recordShareRecipients(ctx, projectID, user.ID, resp.ID, emails)
+	// Record before replying so the response already names the invitees it was
+	// sent to, instead of reporting an empty list for a share that has one.
+	if merged := h.recordShareRecipients(ctx, projectID, user.ID, resp.ID, emails); merged != nil {
+		resp.RecipientEmails = merged
+	}
 	h.sendShareInstanceInvites(ctx, user, projectID, baseURL, emails, resp)
 	return c.JSON(http.StatusCreated, resp)
 }
@@ -85,16 +89,19 @@ func (h *Handler) sendShareInstanceInvites(ctx context.Context, user *auth.AuthU
 // records who holds it. It is best-effort: the key was already minted and the
 // invite is about to be queued, so a metadata failure must not fail the
 // request — it is logged so the loss is visible.
-func (h *Handler) recordShareRecipients(ctx context.Context, projectID, userID, id string, emails []string) {
+func (h *Handler) recordShareRecipients(ctx context.Context, projectID, userID, id string, emails []string) []string {
 	if len(emails) == 0 {
-		return
+		return nil
 	}
-	if err := h.svc.RecordShareRecipients(ctx, projectID, userID, id, emails); err != nil {
+	merged, err := h.svc.RecordShareRecipients(ctx, projectID, userID, id, emails)
+	if err != nil {
 		h.log.Warn("failed to record mcp share invite recipients",
 			"share_id", id,
 			"project_id", projectID,
 			"error", err)
+		return nil
 	}
+	return merged
 }
 
 // HandleListShareInstances handles GET /api/projects/:projectId/mcp/shares.
@@ -203,7 +210,9 @@ func (h *Handler) HandleRotateShareInstance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	h.recordShareRecipients(ctx, projectID, user.ID, resp.ID, emails)
+	if merged := h.recordShareRecipients(ctx, projectID, user.ID, resp.ID, emails); merged != nil {
+		resp.RecipientEmails = merged
+	}
 	h.sendShareInstanceInvites(ctx, user, projectID, baseURL, emails, resp)
 	return c.JSON(http.StatusOK, resp)
 }
