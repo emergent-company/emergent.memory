@@ -237,7 +237,7 @@ func (s *Service) branchScopeClause(ctx context.Context, projectID string, branc
 	}
 	// Main-first dedup: keep the main head when it exists, else the branch head.
 	return " AND (go.branch_id IS NULL OR (go.branch_id IN (?) AND go.canonical_id NOT IN (" +
-		"SELECT canonical_id FROM kb.graph_objects WHERE project_id = ? " +
-		"AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL)))",
+			"SELECT canonical_id FROM kb.graph_objects WHERE project_id = ? " +
+			"AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL)))",
 		[]any{bun.In(ids), projectUUID}, nil
 }
