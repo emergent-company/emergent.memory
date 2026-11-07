@@ -178,37 +178,49 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
 | **Integer**    | `integer`   | `"type": "integer", "minimum": 0`              |
 | **Boolean**    | `boolean`   | `"type": "boolean", "default": false`          |
 | **Date**       | `date`      | `"type": "date"` (ISO 8601 stored as RFC 3339) |
+| **Time**       | `time`      | `"type": "time"` (24-hour `HH:MM`, stored as `HH:MM`) |
+| **Email**      | `email`     | `"type": "email"` (one bare address, stored lower-case) |
+| **Phone**      | `phone`     | `"type": "phone"` (7–15 digits with `+`, spaces, dashes, dots or parentheses) |
+| **Country**    | `country`   | `"type": "country"` (ISO 3166-1; `de`/`DEU` stored as `DE`) |
+| **Currency**   | `currency`  | `"type": "currency"` (ISO 4217; `usd` stored as `USD`) |
 | **Array**      | `array`     | `"type": "array", "items": {"type": "string"}` |
 | **Object**     | `object`    | `"type": "object", "properties": {...}`        |
 | **Enum**       | `enum`      | `"enum": ["draft", "published", "archived"]`   |
-| **Format**     | `format`    | `"format": "email"` — documentation only (not enforced) |
-| **Validation** | constraints | `minLength`, `maxLength`, `minimum`, `maximum` — documentation only (not enforced) |
+| **Format**     | `format`    | `"format": "email"` on a `string` property validates like `type: email` (`phone`, `country`, `currency`, `time` too) |
+| **Validation** | constraints | `minimum`/`maximum` are enforced on `number`/`integer`; `minLength`, `maxLength`, `minItems`, `maxItems` are documentation only |
 | **Required**   | `required`  | `"required": ["field1", "field2"]`             |
 
 Only the types above are interpreted: `type` drives coercion and validation for
-`date`, `url`, the four hex-digest types, `number`, `boolean`, `array` and
-`object`. An array's `items.type` is interpreted as well: every element is
-coerced to that type, and an element of the wrong type is rejected with its
-index (`authors: element 2: expected string, got float64`). A nested array's
-own `items` recurses the same way; an `items` schema with no `type` constrains
+`number`, `integer`, `boolean`, `date`, `time`, `url`, `email`, `phone`,
+`country`, `currency`, the four hex-digest types, `array` and `object`. An
+array's `items.type` is interpreted as well: every element is coerced to that
+type, and an element of the wrong type is rejected with its index
+(`authors: element 2: expected string, got float64`). A nested array's own
+`items` recurses the same way; an `items` schema with no `type` constrains
 nothing. `required` is interpreted per property, `default` is applied when an
 object is created, and `enum` drives the editor's select. The remaining
-JSON-Schema keywords (`format`, `pattern`, `minLength`, `maxLength`, `minItems`,
-`maxItems`, `minimum`, `maximum`) are carried through for documentation and
-tooling but are **not** enforced when an object is written — including `enum`:
-a write that bypasses the form is not rejected. Use `date`, `url`, a
-hex-digest type, or an array's `items` when you need write-time validation.
+JSON-Schema keywords (`pattern`, `minLength`, `maxLength`, `minItems`,
+`maxItems`) are carried through for documentation and tooling but are **not**
+enforced when an object is written — including `enum`: a write that bypasses
+the form is not rejected. Use `date`, `url`, a semantic or hex-digest type, or
+an array's `items` when you need write-time validation.
 
-`url` and the four hex-digest types are validated on write: a URL must be an
-absolute `http`/`https` URL with a host, and a hash must be exactly its digest
-length of hexadecimal characters (upper-case input is stored lower-case). A
-`title` is display-only — it becomes the property's label in the UI (schemas and
-object forms), with the machine key shown beneath it; extraction still uses the
-keyed property name.
+`minimum` and `maximum` are enforced on `number` and `integer` properties: a
+write above or below the bound is rejected. `format` on a `string` property is
+enforced for `email`, `phone`, `country`, `currency` and `time`, and is
+documentation-only for anything else.
 
-These types have no "empty" value: an unknown URL, date or digest must be left
-out of the payload (or sent as `null`), not sent as `""` — `{"source_url": ""}`
-is rejected and fails the whole write.
+The semantic and digest types normalize what they store: `url` must be an
+absolute `http`/`https` URL with a host; a hash must be exactly its digest
+length of hexadecimal characters; email is stored lower-case; country and
+currency are stored as their canonical upper-case codes; a time is stored as
+`HH:MM`. A `title` is display-only — it becomes the property's label in the UI
+(schemas and object forms), with the machine key shown beneath it; extraction
+still uses the keyed property name.
+
+These types have no "empty" value: an unknown URL, date, email, phone, country,
+currency, time or digest must be left out of the payload (or sent as `null`),
+not sent as `""` — `{"source_url": ""}` is rejected and fails the whole write.
 
 ---
 

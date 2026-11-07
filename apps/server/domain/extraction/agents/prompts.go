@@ -116,6 +116,15 @@ type PropertyDef struct {
 	Description string       `json:"description,omitempty"`
 	Default     any          `json:"default,omitempty"`
 	Items       *PropertyDef `json:"items,omitempty"`
+	// Minimum/Maximum bound a number/integer property. They are nil when the
+	// schema declares no bound, so 0 stays distinguishable from "unset".
+	Minimum *float64 `json:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty"`
+	// Format names a semantic string format (email, phone, country, currency,
+	// time). It validates a `type: string` property the same way the matching
+	// type does, so the JSON-Schema spelling the authoring guides recommend is
+	// not a no-op.
+	Format string `json:"format,omitempty"`
 }
 
 // promptTypeLabel renders the type the extraction prompt shows for a property.

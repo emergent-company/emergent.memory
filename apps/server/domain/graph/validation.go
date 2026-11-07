@@ -2,14 +2,18 @@ package graph
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"golang.org/x/text/currency"
+	"golang.org/x/text/language"
 )
 
 func coerceToNumber(value any) (float64, error) {
@@ -155,6 +159,129 @@ func coerceToDate(value any) (string, error) {
 	}
 }
 
+// coerceToEmail validates an email-typed property: one bare RFC 5322 address
+// with no display name. The address is trimmed and stored lower-case, which is
+// how mail providers treat it and what makes duplicate detection useful; the
+// local part's theoretical case sensitivity is not preserved.
+func coerceToEmail(value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected email string, got %T", value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty string cannot be converted to email")
+	}
+	addr, err := mail.ParseAddress(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid email %q", trimmed)
+	}
+	if addr.Name != "" || addr.Address != trimmed {
+		return "", fmt.Errorf("invalid email %q: expected a bare address, not a display form", trimmed)
+	}
+	return strings.ToLower(addr.Address), nil
+}
+
+// coerceToPhone validates a phone-typed property: an optional leading "+",
+// then digits with spaces, dashes, dots or parentheses, 7–15 digits in total
+// (the E.164 range). The trimmed input is stored as typed — normalizing to
+// E.164 needs a default region, which a schema property does not carry.
+func coerceToPhone(value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected phone string, got %T", value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty string cannot be converted to phone")
+	}
+	digits := 0
+	for i, r := range trimmed {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
+		case r == '+' && i == 0:
+		default:
+			return "", fmt.Errorf("invalid phone %q: unexpected character %q", trimmed, r)
+		}
+	}
+	if digits < 7 || digits > 15 {
+		return "", fmt.Errorf("invalid phone %q: expected 7-15 digits, got %d", trimmed, digits)
+	}
+	return trimmed, nil
+}
+
+// coerceToCountry validates a country-typed property as an ISO 3166-1 region
+// (two- or three-letter code) and stores the canonical two-letter upper-case
+// form.
+func coerceToCountry(value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected country string, got %T", value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty string cannot be converted to country")
+	}
+	region, err := language.ParseRegion(trimmed)
+	if err != nil || !region.IsCountry() {
+		return "", fmt.Errorf("invalid country %q: expected an ISO 3166-1 country code", trimmed)
+	}
+	return region.String(), nil
+}
+
+// coerceToCurrency validates a currency-typed property as an ISO 4217 code and
+// stores the canonical upper-case form.
+func coerceToCurrency(value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected currency string, got %T", value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty string cannot be converted to currency")
+	}
+	unit, err := currency.ParseISO(strings.ToUpper(trimmed))
+	if err != nil {
+		return "", fmt.Errorf("invalid currency %q: expected an ISO 4217 code", trimmed)
+	}
+	return unit.String(), nil
+}
+
+// coerceToTime validates a time-typed property as a 24-hour wall-clock time and
+// stores it as HH:MM (seconds are dropped, which is the precision a time-of-day
+// property is used at).
+func coerceToTime(value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected time string, got %T", value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty string cannot be converted to time")
+	}
+	for _, layout := range []string{"15:04", "15:04:05"} {
+		if t, err := time.Parse(layout, trimmed); err == nil {
+			return t.Format("15:04"), nil
+		}
+	}
+	return "", fmt.Errorf("invalid time %q: expected HH:MM (24-hour)", trimmed)
+}
+
+// checkNumericBounds rejects a number outside the property's declared
+// minimum/maximum. The bound keywords were documented but never enforced, so a
+// latitude could be stored as 1234 and a rating as 9.
+func checkNumericBounds(n float64, def agents.PropertyDef) (float64, error) {
+	if def.Minimum != nil && n < *def.Minimum {
+		return 0, fmt.Errorf("%v is below the minimum %v", n, *def.Minimum)
+	}
+	if def.Maximum != nil && n > *def.Maximum {
+		return 0, fmt.Errorf("%v is above the maximum %v", n, *def.Maximum)
+	}
+	return n, nil
+}
+
 type ValidationError struct {
 	Field   string `json:"field"`
 	Message string `json:"message"`
@@ -234,13 +361,52 @@ func (v *PropertyValidator) ValidateProperties(
 func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
 	switch def.Type {
 	case "number":
-		return coerceToNumber(value)
+		n, err := coerceToNumber(value)
+		if err != nil {
+			return nil, err
+		}
+		return checkNumericBounds(n, def)
+	case "integer":
+		n, err := coerceToNumber(value)
+		if err != nil {
+			return nil, err
+		}
+		if n != math.Trunc(n) {
+			return nil, fmt.Errorf("expected integer, got %v", n)
+		}
+		return checkNumericBounds(n, def)
+	case "string":
+		// A `format` names a semantic string format; it validates exactly like
+		// the matching type so the JSON-Schema spelling is not a no-op.
+		switch strings.ToLower(strings.TrimSpace(def.Format)) {
+		case "email":
+			return coerceToEmail(value)
+		case "phone":
+			return coerceToPhone(value)
+		case "country":
+			return coerceToCountry(value)
+		case "currency":
+			return coerceToCurrency(value)
+		case "time":
+			return coerceToTime(value)
+		}
+		return value, nil
 	case "boolean":
 		return coerceToBoolean(value)
 	case "date":
 		return coerceToDate(value)
 	case "url":
 		return coerceToURL(value)
+	case "email":
+		return coerceToEmail(value)
+	case "phone":
+		return coerceToPhone(value)
+	case "country":
+		return coerceToCountry(value)
+	case "currency":
+		return coerceToCurrency(value)
+	case "time":
+		return coerceToTime(value)
 	case "md5", "sha1", "sha256", "sha512":
 		return coerceToHash(value, def.Type)
 	case "array":
@@ -260,6 +426,21 @@ func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
 // names its index, so a rejected document points at the element to fix.
 func coerceArrayElements(value any, items *agents.PropertyDef) ([]any, error) {
 	vals, ok := value.([]any)
+	if !ok {
+		// Legacy storage: a list was previously kept as its serialized JSON
+		// string. Accept one so converting a property from string to array does
+		// not strand existing rows, and so a writer that serialized a list still
+		// lands a real array.
+		if s, isString := value.(string); isString {
+			trimmed := strings.TrimSpace(s)
+			if strings.HasPrefix(trimmed, "[") {
+				var parsed []any
+				if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+					vals, ok = parsed, true
+				}
+			}
+		}
+	}
 	if !ok {
 		return nil, fmt.Errorf("expected array, got %T", value)
 	}

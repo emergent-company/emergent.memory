@@ -901,3 +901,202 @@ func TestValidateArrayItemsIgnoredOnScalarProperty(t *testing.T) {
 
 // sha256Value is a valid SHA-256 digest reused by the element tests.
 const sha256Value = "3b1f2e4c5d6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e"
+
+func TestCoerceToEmail(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"plain address", "alice@example.com", "alice@example.com", false},
+		{"trimmed and lower-cased", "  Alice.Smith@Example.COM  ", "alice.smith@example.com", false},
+		{"display form rejected", "Alice <alice@example.com>", "", true},
+		{"missing at", "alice.example.com", "", true},
+		{"empty string", "", "", true},
+		{"non-string", 42, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToEmail(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCoerceToPhone(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"e164", "+4915112345678", "+4915112345678", false},
+		{"spaces and dashes", "+1 (555) 123-4567", "+1 (555) 123-4567", false},
+		{"national format", "555.123.4567", "555.123.4567", false},
+		{"too few digits", "12345", "", true},
+		{"too many digits", "+1234567890123456", "", true},
+		{"letters rejected", "+1 555 CALLNOW", "", true},
+		{"plus not leading", "555+1234567", "", true},
+		{"empty string", "", "", true},
+		{"non-string", 5551234567, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToPhone(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCoerceToCountry(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"alpha-2", "de", "DE", false},
+		{"alpha-3", "usa", "US", false},
+		{"already canonical", "FR", "FR", false},
+		{"unknown code", "ZZ", "", true},
+		{"country name", "Germany", "", true},
+		{"empty string", "", "", true},
+		{"non-string", 49, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToCountry(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCoerceToCurrency(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"lower-case code", "usd", "USD", false},
+		{"canonical code", "EUR", "EUR", false},
+		{"unknown code", "ZZZ", "", true},
+		{"too short", "EU", "", true},
+		{"empty string", "", "", true},
+		{"non-string", 978, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToCurrency(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCoerceToTime(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"hh:mm", "07:30", "07:30", false},
+		{"with seconds drops them", "07:30:45", "07:30", false},
+		{"out of range", "25:00", "", true},
+		{"unpadded hour is normalized", "7:30", "07:30", false},
+		{"empty string", "", "", true},
+		{"non-string", 730, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToTime(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// The semantic types are also reachable through the JSON-Schema `format`
+// spelling, which the authoring guides recommend.
+func TestValidatePropertiesFormatAlias(t *testing.T) {
+	schema := agents.ObjectSchema{
+		Properties: map[string]agents.PropertyDef{
+			"contact": {Type: "string", Format: "email"},
+		},
+	}
+	out, err := validateProperties(map[string]any{"contact": " Alice@Example.com "}, schema)
+	assert.NoError(t, err)
+	assert.Equal(t, "alice@example.com", out["contact"])
+
+	_, err = validateProperties(map[string]any{"contact": "not-an-email"}, schema)
+	assert.Error(t, err)
+}
+
+// minimum/maximum were documented but never enforced; a latitude must be
+// rejected outside its range, and a bound of exactly 0 must still apply.
+func TestValidatePropertiesNumericBounds(t *testing.T) {
+	zero := 0.0
+	ninety := 90.0
+	schema := agents.ObjectSchema{
+		Properties: map[string]agents.PropertyDef{
+			"lat":      {Type: "number", Minimum: &ninety, Maximum: &ninety},
+			"negative": {Type: "number", Minimum: &zero},
+			"streak":   {Type: "integer", Minimum: &zero},
+		},
+	}
+
+	out, err := validateProperties(map[string]any{"negative": 0.0, "streak": 3.0}, schema)
+	assert.NoError(t, err)
+	assert.Equal(t, 0.0, out["negative"])
+
+	_, err = validateProperties(map[string]any{"lat": 120.0}, schema)
+	assert.Error(t, err)
+
+	_, err = validateProperties(map[string]any{"negative": -1.0}, schema)
+	assert.Error(t, err)
+
+	_, err = validateProperties(map[string]any{"streak": -2.0}, schema)
+	assert.Error(t, err)
+}
+
+// A list that was stored as its serialized JSON string (the shape every pack
+// used before array-typed properties) is accepted and becomes a real array.
+func TestCoerceArrayFromJSONString(t *testing.T) {
+	items := &agents.PropertyDef{Type: "email"}
+	got, err := coerceArrayElements(`["a@example.com","b@example.com"]`, items)
+	assert.NoError(t, err)
+	assert.Equal(t, []any{"a@example.com", "b@example.com"}, got)
+
+	_, err = coerceArrayElements(`not json`, items)
+	assert.Error(t, err)
+}
