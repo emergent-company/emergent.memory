@@ -626,6 +626,8 @@ definitions:
         items:
           type: string
         type: array
+      skillCapture:
+        $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_skills.AgentSkillCapture'
       skills:
         items:
           type: string
@@ -2406,6 +2408,15 @@ definitions:
           while the branch is still open.
         type: string
       name:
+        type: string
+      origin:
+        description: |-
+          Origin is who or what created the branch (extraction | agent | manual |
+          system), OriginID its id and OriginLabel the human-readable source.
+        type: string
+      origin_id:
+        type: string
+      origin_label:
         type: string
       parent_branch_id:
         type: string
@@ -7412,6 +7423,12 @@ definitions:
         type: string
       project_info:
         type: string
+      skill_capture:
+        allOf:
+        - $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig'
+        description: |-
+          SkillCapture is the project-level automatic skill-capture policy (added in
+          migration 00269). The zero value means "off", so the feature is opt-in.
       stats:
         allOf:
         - $ref: '#/definitions/domain_projects.ProjectStats'
@@ -7465,6 +7482,8 @@ definitions:
         type: string
       project_info:
         type: string
+      skill_capture:
+        $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig'
       stats:
         $ref: '#/definitions/domain_projects.ProjectStats'
     type: object
@@ -7555,6 +7574,12 @@ definitions:
         type: string
       project_info:
         type: string
+      skill_capture:
+        allOf:
+        - $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig'
+        description: |-
+          SkillCapture replaces the project capture policy when present. An object
+          with mode "off" disables capture; omitting the field leaves it untouched.
     type: object
   domain_projects.currentProjectResponse:
     properties:
@@ -10303,6 +10328,11 @@ definitions:
       status:
         $ref: '#/definitions/domain_sessiontodos.TodoStatus'
     type: object
+  domain_skills.ApproveProposalDTO:
+    properties:
+      note:
+        type: string
+    type: object
   domain_skills.CreateSkillDTO:
     properties:
       content:
@@ -10316,12 +10346,77 @@ definitions:
     required:
     - name
     type: object
+  domain_skills.LintFinding:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+      severity:
+        type: string
+    type: object
   domain_skills.ListSkillsResponse:
     properties:
       skills:
         items:
           $ref: '#/definitions/domain_skills.SkillDTO'
         type: array
+    type: object
+  domain_skills.ProposalDTO:
+    properties:
+      agentId:
+        type: string
+      agentName:
+        type: string
+      agentRunId:
+        type: string
+      appliedAt:
+        type: string
+      autoApplied:
+        type: boolean
+      baseContentHash:
+        type: string
+      baseSkillId:
+        type: string
+      confidence:
+        type: number
+      content:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      evidence:
+        type: string
+      findings:
+        items:
+          $ref: '#/definitions/domain_skills.LintFinding'
+        type: array
+      id:
+        type: string
+      kind:
+        type: string
+      name:
+        type: string
+      patchNew:
+        type: string
+      patchOld:
+        type: string
+      projectId:
+        type: string
+      reviewId:
+        type: string
+      reviewNote:
+        type: string
+      source:
+        type: string
+      status:
+        type: string
+    type: object
+  domain_skills.RejectProposalDTO:
+    properties:
+      note:
+        type: string
     type: object
   domain_skills.SkillDTO:
     properties:
@@ -10351,17 +10446,42 @@ definitions:
     type: object
   domain_skills.SkillMetadata:
     properties:
+      author:
+        description: |-
+          Capture provenance. Populated when an agent-created skill is applied from
+          a proposal; empty for user-authored skills.
+        type: string
       content_hash:
         description: SHA-256 of content, computed server-side
+        type: string
+      created_by:
+        description: '"agent" | "user" | "cli" | "blueprint"'
         type: string
       license:
         description: SPDX identifier or free text
         type: string
+      lifecycle_state:
+        description: |-
+          LifecycleState is maintained by the deterministic curator for
+          agent-created skills: active | stale | archived. Archived skills are not
+          auto-loaded or semantically retrieved; they remain readable by name.
+        type: string
       location:
         description: source file path (e.g. from import)
         type: string
+      locked:
+        type: boolean
       origin_id:
         description: external identifier of the source skill
+        type: string
+      pinned:
+        description: |-
+          Lifecycle guards. Pinned skills are never aged by the curator; locked
+          skills refuse agent-initiated writes and deletes (human REST writes still
+          work). Both default to false.
+        type: boolean
+      run_id:
+        description: source agent run
         type: string
       source:
         description: |-
@@ -11731,6 +11851,77 @@ definitions:
         description: Resolution is always "existing_wins" — existing properties are
           never overwritten.
         type: string
+    type: object
+  github_com_emergent-company_emergent_memory_domain_skills.AgentSkillCapture:
+    properties:
+      autoApply:
+        type: boolean
+      mode:
+        type: string
+    type: object
+  github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig:
+    properties:
+      archiveAfterDays:
+        type: integer
+      autoApply:
+        description: |-
+          AutoApply is the project-level second key. Auto-application requires this
+          to be true AND mode == "auto" AND the per-agent override not to opt out.
+        type: boolean
+      autoApplyConfidence:
+        description: AutoApplyConfidence is the minimum model confidence for auto-apply
+          (0..1).
+        type: number
+      autoCreatesPerDay:
+        description: AutoCreatesPerDay / AutoPatchesPerDay are per-agent rate caps.
+        type: integer
+      autoPatchesPerDay:
+        type: integer
+      dedupThreshold:
+        description: |-
+          DedupThreshold is the cosine similarity above which a candidate is
+          considered a duplicate of an existing skill.
+        type: number
+      linter:
+        description: |-
+          Linter enables the advisory linter (default true). The security scan is
+          deliberately not configurable: it is an unconditional hard gate on every
+          staged candidate.
+        type: boolean
+      maxAgentSkills:
+        description: MaxAgentSkills caps how many learned skills one agent may own.
+        type: integer
+      maxCandidates:
+        description: MaxCandidates bounds how many proposals one review may stage.
+        type: integer
+      maxInputTokens:
+        description: MaxInputTokens bounds the digest sent to the review model.
+        type: integer
+      maxSkillBytes:
+        description: MaxSkillBytes bounds a captured skill's content size.
+        type: integer
+      minApprovedBeforeAuto:
+        description: |-
+          MinApprovedBeforeAuto is the earned-trust floor: the agent must have had
+          at least this many proposals approved by a human before auto-apply starts.
+        type: integer
+      mode:
+        type: string
+      nudgeInterval:
+        description: |-
+          NudgeInterval is how many completed runs may pass without a capture
+          attempt before the next run is reviewed. 0 means the default (3).
+        type: integer
+      reviewModel:
+        description: |-
+          ReviewModel optionally overrides the model used by the background review.
+          Empty means the run's model, then the project default.
+        type: string
+      staleAfterDays:
+        description: |-
+          StaleAfterDays / ArchiveAfterDays drive the deterministic curator for
+          agent-created, unpinned, unlocked skills.
+        type: integer
     type: object
   github_com_emergent-company_emergent_memory_pkg_apperror.Error:
     properties:
@@ -15641,7 +15832,8 @@ paths:
       - application/json
       description: Apply a batch of upserts and withdrawals for one source in a single
         transaction. Items are addressed by the source's external_id and external_revision_seq;
-        a stale revision is skipped, never applied.
+        a stale revision is skipped and a cross-owner item the caller holds no grant
+        for is refused, both reported per item and never applied.
       parameters:
       - description: Changeset to apply (max 500 objects, 500 relationships, 500 withdrawals)
         in: body
@@ -22108,6 +22300,130 @@ paths:
       security:
       - bearerAuth: []
       summary: Update a project skill
+      tags:
+      - skills
+  /api/projects/{projectId}/skills/proposals:
+    get:
+      description: List the agent skill-capture proposal inbox for a project. Use
+        status=pending (default) for review, status=all for history.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: pending|applied|rejected|failed|all
+        in: query
+        name: status
+        type: string
+      - description: Maximum rows (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - bearerAuth: []
+      summary: List staged skill proposals
+      tags:
+      - skills
+  /api/projects/{projectId}/skills/proposals/{proposalId}:
+    get:
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Proposal ID (UUID)
+        in: path
+        name: proposalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_skills.ProposalDTO'
+      security:
+      - bearerAuth: []
+      summary: Get a staged skill proposal
+      tags:
+      - skills
+  /api/projects/{projectId}/skills/proposals/{proposalId}/approve:
+    post:
+      consumes:
+      - application/json
+      description: Applies the proposal through the normal skills store. The security
+        scan always runs and can still block the write.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Proposal ID (UUID)
+        in: path
+        name: proposalId
+        required: true
+        type: string
+      - description: Optional review note
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/domain_skills.ApproveProposalDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - bearerAuth: []
+      summary: Approve and apply a staged skill proposal
+      tags:
+      - skills
+  /api/projects/{projectId}/skills/proposals/{proposalId}/reject:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Proposal ID (UUID)
+        in: path
+        name: proposalId
+        required: true
+        type: string
+      - description: Optional review note
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/domain_skills.RejectProposalDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - bearerAuth: []
+      summary: Reject a staged skill proposal
       tags:
       - skills
   /api/projects/{projectId}/tokens:

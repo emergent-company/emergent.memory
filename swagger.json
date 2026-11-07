@@ -5914,7 +5914,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.",
+                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped and a cross-owner item the caller holds no grant for is refused, both reported per item and never applied.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15566,6 +15566,198 @@
                         "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills/proposals": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "List the agent skill-capture proposal inbox for a project. Use status=pending (default) for review, status=all for history.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List staged skill proposals",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "pending|applied|rejected|failed|all",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum rows (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills/proposals/{proposalId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Get a staged skill proposal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Proposal ID (UUID)",
+                        "name": "proposalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.ProposalDTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills/proposals/{proposalId}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Applies the proposal through the normal skills store. The security scan always runs and can still block the write.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Approve and apply a staged skill proposal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Proposal ID (UUID)",
+                        "name": "proposalId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional review note",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.ApproveProposalDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills/proposals/{proposalId}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Reject a staged skill proposal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Proposal ID (UUID)",
+                        "name": "proposalId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional review note",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.RejectProposalDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -28875,6 +29067,9 @@
                         "type": "string"
                     }
                 },
+                "skillCapture": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_skills.AgentSkillCapture"
+                },
                 "skills": {
                     "type": "array",
                     "items": {
@@ -31332,6 +31527,16 @@
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "origin": {
+                    "description": "Origin is who or what created the branch (extraction | agent | manual |\nsystem), OriginID its id and OriginLabel the human-readable source.",
+                    "type": "string"
+                },
+                "origin_id": {
+                    "type": "string"
+                },
+                "origin_label": {
                     "type": "string"
                 },
                 "parent_branch_id": {
@@ -38364,6 +38569,14 @@
                 "project_info": {
                     "type": "string"
                 },
+                "skill_capture": {
+                    "description": "SkillCapture is the project-level automatic skill-capture policy (added in\nmigration 00269). The zero value means \"off\", so the feature is opt-in.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig"
+                        }
+                    ]
+                },
                 "stats": {
                     "description": "Populated only when requested",
                     "allOf": [
@@ -38427,6 +38640,9 @@
                 },
                 "project_info": {
                     "type": "string"
+                },
+                "skill_capture": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig"
                 },
                 "stats": {
                     "$ref": "#/definitions/domain_projects.ProjectStats"
@@ -38560,6 +38776,14 @@
                 },
                 "project_info": {
                     "type": "string"
+                },
+                "skill_capture": {
+                    "description": "SkillCapture replaces the project capture policy when present. An object\nwith mode \"off\" disables capture; omitting the field leaves it untouched.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig"
+                        }
+                    ]
                 }
             }
         },
@@ -42275,6 +42499,14 @@
                 }
             }
         },
+        "domain_skills.ApproveProposalDTO": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_skills.CreateSkillDTO": {
             "type": "object",
             "required": [
@@ -42295,6 +42527,20 @@
                 }
             }
         },
+        "domain_skills.LintFinding": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "severity": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_skills.ListSkillsResponse": {
             "type": "object",
             "properties": {
@@ -42303,6 +42549,91 @@
                     "items": {
                         "$ref": "#/definitions/domain_skills.SkillDTO"
                     }
+                }
+            }
+        },
+        "domain_skills.ProposalDTO": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "agentName": {
+                    "type": "string"
+                },
+                "agentRunId": {
+                    "type": "string"
+                },
+                "appliedAt": {
+                    "type": "string"
+                },
+                "autoApplied": {
+                    "type": "boolean"
+                },
+                "baseContentHash": {
+                    "type": "string"
+                },
+                "baseSkillId": {
+                    "type": "string"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "evidence": {
+                    "type": "string"
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_skills.LintFinding"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "patchNew": {
+                    "type": "string"
+                },
+                "patchOld": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "reviewId": {
+                    "type": "string"
+                },
+                "reviewNote": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_skills.RejectProposalDTO": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string"
                 }
             }
         },
@@ -42348,20 +42679,43 @@
         "domain_skills.SkillMetadata": {
             "type": "object",
             "properties": {
+                "author": {
+                    "description": "Capture provenance. Populated when an agent-created skill is applied from\na proposal; empty for user-authored skills.",
+                    "type": "string"
+                },
                 "content_hash": {
                     "description": "SHA-256 of content, computed server-side",
+                    "type": "string"
+                },
+                "created_by": {
+                    "description": "\"agent\" | \"user\" | \"cli\" | \"blueprint\"",
                     "type": "string"
                 },
                 "license": {
                     "description": "SPDX identifier or free text",
                     "type": "string"
                 },
+                "lifecycle_state": {
+                    "description": "LifecycleState is maintained by the deterministic curator for\nagent-created skills: active | stale | archived. Archived skills are not\nauto-loaded or semantically retrieved; they remain readable by name.",
+                    "type": "string"
+                },
                 "location": {
                     "description": "source file path (e.g. from import)",
                     "type": "string"
                 },
+                "locked": {
+                    "type": "boolean"
+                },
                 "origin_id": {
                     "description": "external identifier of the source skill",
+                    "type": "string"
+                },
+                "pinned": {
+                    "description": "Lifecycle guards. Pinned skills are never aged by the curator; locked\nskills refuse agent-initiated writes and deletes (human REST writes still\nwork). Both default to false.",
+                    "type": "boolean"
+                },
+                "run_id": {
+                    "description": "source agent run",
                     "type": "string"
                 },
                 "source": {
@@ -44346,6 +44700,83 @@
                 "resolution": {
                     "description": "Resolution is always \"existing_wins\" — existing properties are never overwritten.",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_skills.AgentSkillCapture": {
+            "type": "object",
+            "properties": {
+                "autoApply": {
+                    "type": "boolean"
+                },
+                "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_skills.ProjectSkillCaptureConfig": {
+            "type": "object",
+            "properties": {
+                "archiveAfterDays": {
+                    "type": "integer"
+                },
+                "autoApply": {
+                    "description": "AutoApply is the project-level second key. Auto-application requires this\nto be true AND mode == \"auto\" AND the per-agent override not to opt out.",
+                    "type": "boolean"
+                },
+                "autoApplyConfidence": {
+                    "description": "AutoApplyConfidence is the minimum model confidence for auto-apply (0..1).",
+                    "type": "number"
+                },
+                "autoCreatesPerDay": {
+                    "description": "AutoCreatesPerDay / AutoPatchesPerDay are per-agent rate caps.",
+                    "type": "integer"
+                },
+                "autoPatchesPerDay": {
+                    "type": "integer"
+                },
+                "dedupThreshold": {
+                    "description": "DedupThreshold is the cosine similarity above which a candidate is\nconsidered a duplicate of an existing skill.",
+                    "type": "number"
+                },
+                "linter": {
+                    "description": "Linter enables the advisory linter (default true). The security scan is\ndeliberately not configurable: it is an unconditional hard gate on every\nstaged candidate.",
+                    "type": "boolean"
+                },
+                "maxAgentSkills": {
+                    "description": "MaxAgentSkills caps how many learned skills one agent may own.",
+                    "type": "integer"
+                },
+                "maxCandidates": {
+                    "description": "MaxCandidates bounds how many proposals one review may stage.",
+                    "type": "integer"
+                },
+                "maxInputTokens": {
+                    "description": "MaxInputTokens bounds the digest sent to the review model.",
+                    "type": "integer"
+                },
+                "maxSkillBytes": {
+                    "description": "MaxSkillBytes bounds a captured skill's content size.",
+                    "type": "integer"
+                },
+                "minApprovedBeforeAuto": {
+                    "description": "MinApprovedBeforeAuto is the earned-trust floor: the agent must have had\nat least this many proposals approved by a human before auto-apply starts.",
+                    "type": "integer"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "nudgeInterval": {
+                    "description": "NudgeInterval is how many completed runs may pass without a capture\nattempt before the next run is reviewed. 0 means the default (3).",
+                    "type": "integer"
+                },
+                "reviewModel": {
+                    "description": "ReviewModel optionally overrides the model used by the background review.\nEmpty means the run's model, then the project default.",
+                    "type": "string"
+                },
+                "staleAfterDays": {
+                    "description": "StaleAfterDays / ArchiveAfterDays drive the deterministic curator for\nagent-created, unpinned, unlocked skills.",
+                    "type": "integer"
                 }
             }
         },
