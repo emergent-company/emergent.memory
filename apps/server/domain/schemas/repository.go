@@ -60,6 +60,7 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 		Where("ptp.active = true").
 		Where("ptp.removed_at IS NULL").
 		Order("ptp.installed_at ASC").
+		Order("ptp.id ASC").
 		Scan(ctx)
 	if err != nil {
 		r.log.Error("failed to get project schemas", logger.Error(err))
@@ -402,8 +403,22 @@ func (r *Repository) ListPackClaims(ctx context.Context, projectID string) ([]Pa
 // same name as the incoming pack (a same-pack re-apply/update is not a
 // collision). A manual registry row with no schema_id still collides; its
 // existing schema name/version are simply empty.
+//
+// The same rule applies WITHIN one request: two packs in the same blueprint
+// declaring the same type name is a collision even before either is installed,
+// so the second pack's declaration is reported against the first.
 func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs []MergePreviewPack) (*MergePreviewResult, error) {
 	result := &MergePreviewResult{Conflicts: []MergePreviewConflict{}}
+
+	// claimed records, per type name, which pack in THIS request declared it
+	// first. Two packs in one blueprint declaring the same type collide even on
+	// a first install (nothing is registered yet), so the intra-manifest check
+	// must not depend on the registry.
+	type incomingClaim struct {
+		pack   string
+		schema json.RawMessage
+	}
+	claimed := map[string]incomingClaim{}
 
 	for _, pack := range packs {
 		typeMap, err := parseIncomingObjectTypesStrict(pack.GetObjectTypes())
@@ -412,6 +427,28 @@ func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs [
 		}
 
 		for typeName, incomingSchema := range typeMap {
+			if prior, ok := claimed[typeName]; ok && prior.pack != pack.Name {
+				conflict := MergePreviewConflict{
+					TypeName:           typeName,
+					IncomingPackName:   pack.Name,
+					ExistingSchema:     prior.schema,
+					ExistingSchemaName: prior.pack,
+					IncomingSchema:     incomingSchema,
+				}
+				if merged, added, propConflicts, mergeErr := mergeSchemas(prior.schema, incomingSchema); mergeErr == nil {
+					conflict.MergedSchema = merged
+					sort.Strings(added)
+					sort.Slice(propConflicts, func(i, j int) bool {
+						return propConflicts[i].Property < propConflicts[j].Property
+					})
+					conflict.AddedProperties = added
+					conflict.ConflictingProperties = propConflicts
+				}
+				result.Conflicts = append(result.Conflicts, conflict)
+				continue
+			}
+			claimed[typeName] = incomingClaim{pack: pack.Name, schema: incomingSchema}
+
 			var row struct {
 				JSONSchema    json.RawMessage `bun:"json_schema"`
 				SchemaID      *string         `bun:"schema_id"`
@@ -1154,7 +1191,7 @@ func (r *Repository) DeletePack(ctx context.Context, packID, projectID string) e
 type typeAction struct {
 	name           string
 	incomingSchema json.RawMessage
-	action         string // "install", "skip", "merge", or "restore"
+	action         string // "install", "skip", "merge", "replace", or "restore"
 	conflict       *SchemaConflict
 	mergedSchema   json.RawMessage
 	// ownedSchemaIDs scopes a "restore" action to registry rows owned by one of
@@ -1173,8 +1210,12 @@ func nullableUUID(id string) any {
 
 // AssignPackWithTypes assigns a schema to a project AND populates the type registry.
 // When req.DryRun is true, no database changes are made — only the preview is returned.
-// When req.Merge is true, incoming type schemas are additively merged into existing types
-// instead of being silently skipped.
+//
+// The registry follows one precedence rule, shared with the compiled-types view
+// and graph validation: the newest install defines a type. Re-assigning an
+// installed pack is idempotent and refreshes the types it owns (an upgrade);
+// types owned by another pack are skipped unless req.Merge is set, in which case
+// they are additively merged and the incoming pack becomes the owner.
 func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
 	// Get the full schema
 	var pack GraphMemorySchema
@@ -1187,7 +1228,11 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
-	// Check if already assigned (only consider active/non-removed assignments)
+	// Check if already assigned (only consider active/non-removed assignments).
+	// A re-assign is NOT an error: assigning an already-installed pack is the
+	// idempotent "refresh this pack's definitions" operation, and it is how an
+	// upgrade reaches the type registry. Types this pack owns are replaced;
+	// types owned by other packs still follow the merge/conflict rules below.
 	var existingAssignment ProjectMemorySchema
 	alreadyAssigned := false
 	err = r.db.NewSelect().
@@ -1198,10 +1243,6 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		Scan(ctx)
 	if err == nil {
 		alreadyAssigned = true
-	}
-
-	if alreadyAssigned && !req.Merge && !req.DryRun {
-		return nil, apperror.ErrBadRequest.WithMessage("schema already assigned to project")
 	}
 
 	// Look for a soft-deleted assignment to reactivate (re-assign after unapply
@@ -1255,12 +1296,17 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		InstalledTypes:   []string{},
 		SkippedTypes:     []string{},
 		MergedTypes:      []string{},
+		ReplacedTypes:    []string{},
 		Conflicts:        []SchemaConflict{},
 		AlreadyInstalled: alreadyAssigned,
 	}
 
-	// If already installed and merge=true and not dry-run, return early with the existing assignment.
-	if alreadyAssigned && req.Merge && !req.DryRun {
+	// Re-assigning an installed pack must still reconcile the type registry:
+	// an upgrade re-writes the pack row (same schema_id, new content) so the
+	// project's registry would otherwise keep serving the first install's
+	// definitions forever. Fall through to the per-type plan below instead of
+	// returning early; the plan is idempotent for unchanged definitions.
+	if alreadyAssigned {
 		// Stamp the owning blueprint onto an existing assignment so blueprint
 		// unapply can remove it; a pre-existing row may have been assigned
 		// outside any blueprint (source_blueprint_id IS NULL). Only stamp when
@@ -1268,7 +1314,7 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		// family (a version upgrade), mirroring applyAgents: never overwrite a
 		// different blueprint's ownership. DeleteAssignmentIfOwned's claims
 		// guard remains the real correctness gate.
-		if req.SourceBlueprintID != nil {
+		if req.SourceBlueprintID != nil && !req.DryRun {
 			if _, err := r.db.NewRaw(`
 				UPDATE kb.project_schemas ps
 				SET source_blueprint_id = ?, updated_at = now()
@@ -1289,19 +1335,31 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			}
 		}
 		result.AssignmentID = existingAssignment.ID
-		return result, nil
 	}
 
-	// Pre-compute per-type actions: new / skip / merge
+	// Pre-compute per-type actions: install / skip / merge / replace
 	var actions []typeAction
 
 	for typeName, incomingSchema := range objectTypeSchemas {
-		// Read existing registry entry (if any)
-		var existingJSON string
+		// Read the existing registry entry and the pack that owns it. A pack
+		// owns a type when the registry row's schema_id points at a pack with
+		// the same name (versions of one pack share the name), so an upgrade of
+		// the owning pack replaces the definition instead of being treated as a
+		// cross-pack collision. There is no unique index on
+		// (project_id, type_name), so the read is ordered newest-row-first to
+		// stay deterministic if duplicates ever exist.
+		var existingRow struct {
+			JSONSchema json.RawMessage `bun:"json_schema"`
+			SchemaName *string         `bun:"schema_name"`
+		}
 		scanErr := r.db.NewRaw(`
-			SELECT json_schema FROM kb.project_object_schema_registry
-			WHERE project_id = ? AND type_name = ?
-		`, projectID, typeName).Scan(ctx, &existingJSON)
+			SELECT por.json_schema, gs.name AS schema_name
+			FROM kb.project_object_schema_registry por
+			LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
+			WHERE por.project_id = ? AND por.type_name = ?
+			ORDER BY por.updated_at DESC, por.id DESC
+			LIMIT 1
+		`, projectID, typeName).Scan(ctx, &existingRow)
 
 		typeExists := scanErr == nil
 
@@ -1314,8 +1372,23 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			continue
 		}
 
-		// Type exists — compute conflict diff regardless (needed for dry-run + merge output)
-		existing := json.RawMessage(existingJSON)
+		// Same pack family (same pack name, possibly a new version): the pack
+		// owns the type, so an upgrade replaces the registered definition. This
+		// is what makes `memory blueprints install --upgrade` and a builtin pack
+		// refresh actually reach the registry, and it needs no merge
+		// confirmation because no other pack's definition is involved.
+		if existingRow.SchemaName != nil && *existingRow.SchemaName == pack.Name {
+			actions = append(actions, typeAction{
+				name:           typeName,
+				incomingSchema: incomingSchema,
+				action:         "replace",
+			})
+			continue
+		}
+
+		// Type exists and is owned by another pack — compute the conflict diff
+		// regardless (needed for dry-run + merge output).
+		existing := existingRow.JSONSchema
 		merged, added, propConflicts, mergeErr := mergeSchemas(existing, incomingSchema)
 		conflict := SchemaConflict{
 			TypeName:              typeName,
@@ -1351,6 +1424,8 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		switch a.action {
 		case "install":
 			result.InstalledTypes = append(result.InstalledTypes, a.name)
+		case "replace":
+			result.ReplacedTypes = append(result.ReplacedTypes, a.name)
 		case "skip":
 			result.SkippedTypes = append(result.SkippedTypes, a.name)
 			result.Conflicts = append(result.Conflicts, *a.conflict)
@@ -1380,6 +1455,21 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	err = r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		switch {
 		case alreadyAssigned:
+			// A re-assign refreshes the pack's definitions; bump installed_at so
+			// the refreshed pack is the newest assignment in the last-wins
+			// ordering used by the compiled-types and graph-validation reads.
+			// Re-activate too: assigning a pack is a request to use it, and an
+			// assignment deactivated through UpdateAssignment would otherwise
+			// refresh the registry while staying invisible to compiled types.
+			if _, err := tx.NewUpdate().
+				Model((*ProjectMemorySchema)(nil)).
+				Set("active = ?", true).
+				Set("installed_at = ?", now).
+				Set("updated_at = ?", now).
+				Where("id = ?", existingAssignment.ID).
+				Exec(ctx); err != nil {
+				return err
+			}
 			assignment.ID = existingAssignment.ID
 		case hasSoftDeleted:
 			if _, err := tx.NewUpdate().
@@ -1412,6 +1502,29 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	return result, nil
 }
 
+// appendDeclaredConfigColumns extends an UPDATE's SET list with the config
+// columns the incoming pack actually declares for typeName. Columns the pack
+// does not mention are left alone, so a refresh or a cross-pack merge never
+// wipes a per-project customisation of a type whose pack carries no ui/extraction
+// data for it.
+func appendDeclaredConfigColumns(
+	set string,
+	args []any,
+	typeName string,
+	uiConfigs, extractionPrompts map[string]json.RawMessage,
+	uiJSON, extractionJSON string,
+) (string, []any) {
+	if _, ok := uiConfigs[typeName]; ok {
+		set += ", ui_config = ?"
+		args = append(args, uiJSON)
+	}
+	if _, ok := extractionPrompts[typeName]; ok {
+		set += ", extraction_config = ?"
+		args = append(args, extractionJSON)
+	}
+	return set, args
+}
+
 // assignPackWithTypesTx applies precomputed per-type registry actions inside an
 // existing transaction. AssignPackWithTypes and RestoreTypeRegistryTx share it
 // so install/merge/restore semantics live in one place. Callers own the
@@ -1425,17 +1538,23 @@ func (r *Repository) assignPackWithTypesTx(
 	now time.Time,
 ) error {
 	for _, a := range actions {
-		uiConfigJSON := "{}"
+		uiConfigJSON := ""
 		if uiConfigs != nil {
 			if cfg, ok := uiConfigs[a.name]; ok {
 				uiConfigJSON = string(cfg)
 			}
 		}
-		extractionConfigJSON := "{}"
+		extractionConfigJSON := ""
 		if extractionPrompts != nil {
 			if cfg, ok := extractionPrompts[a.name]; ok {
 				extractionConfigJSON = string(cfg)
 			}
+		}
+		if uiConfigJSON == "" {
+			uiConfigJSON = "{}"
+		}
+		if extractionConfigJSON == "" {
+			extractionConfigJSON = "{}"
 		}
 
 		switch a.action {
@@ -1449,14 +1568,43 @@ func (r *Repository) assignPackWithTypesTx(
 				return err
 			}
 
+		case "replace":
+			// The pack owns the type (an upgrade): the incoming definition is
+			// authoritative, so removed properties are removed too, and the type
+			// is re-enabled — re-installing a pack is a request for its types to
+			// be available, and a stale per-type disable would otherwise leave an
+			// upgraded type invisible. Config columns the pack does not declare
+			// keep their current value: a per-project customisation
+			// (schemaregistry.UpdateType) must not be wiped by a version bump
+			// that carries no appearance/extraction data.
+			set := "json_schema = ?, schema_id = ?, enabled = true, updated_at = ?"
+			args := []any{string(a.incomingSchema), schemaID, now}
+			set, args = appendDeclaredConfigColumns(set, args, a.name, uiConfigs, extractionPrompts, uiConfigJSON, extractionConfigJSON)
+			args = append(args, projectID, a.name)
+			if _, err := tx.NewRaw(`
+				UPDATE kb.project_object_schema_registry
+				SET `+set+`
+				WHERE project_id = ? AND type_name = ?
+			`, args...).Exec(ctx); err != nil {
+				return err
+			}
+
 		case "merge":
 			if len(a.mergedSchema) > 0 {
-				_, err := tx.NewRaw(`
+				// The merged definition becomes the effective one and ownership
+				// moves to the pack just installed, so all read paths (registry,
+				// compiled types, graph validation) agree that the newest
+				// install defines the type. Existing property definitions still
+				// win over incoming ones (mergeSchemas), so a merge is additive.
+				set := "json_schema = ?, schema_id = ?, enabled = true, updated_at = ?"
+				args := []any{string(a.mergedSchema), schemaID, now}
+				set, args = appendDeclaredConfigColumns(set, args, a.name, uiConfigs, extractionPrompts, uiConfigJSON, extractionConfigJSON)
+				args = append(args, projectID, a.name)
+				if _, err := tx.NewRaw(`
 					UPDATE kb.project_object_schema_registry
-					SET json_schema = ?, updated_at = ?
+					SET `+set+`
 					WHERE project_id = ? AND type_name = ?
-				`, string(a.mergedSchema), now, projectID, a.name).Exec(ctx)
-				if err != nil {
+				`, args...).Exec(ctx); err != nil {
 					return err
 				}
 			}

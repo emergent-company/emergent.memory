@@ -2,6 +2,7 @@ package blueprints
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -74,7 +75,120 @@ func TestMarshalPackSchemas_PreservesFullMetadata(t *testing.T) {
 	assertStringSlice(t, rels[0], "required", []string{"weight"})
 
 	if string(uiCfgs) != string(p.UIConfigs.Raw()) {
-		t.Fatalf("uiConfigs not preserved: got %s want %s", uiCfgs, p.UIConfigs.Raw())
+		// The map is rebuilt so inline `ui:` blocks can win, so compare
+		// semantically rather than byte-for-byte.
+		var got, want map[string]any
+		if err := json.Unmarshal(uiCfgs, &got); err != nil {
+			t.Fatalf("unmarshal uiConfigs: %v", err)
+		}
+		if err := json.Unmarshal(p.UIConfigs.Raw(), &want); err != nil {
+			t.Fatalf("unmarshal expected uiConfigs: %v", err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("uiConfigs not preserved: got %v want %v", got, want)
+		}
+	}
+}
+
+// TestMergePackUIConfigs_PromotesInlineUI pins #291 on the CLI install path:
+// `memory blueprints install` marshals the pack client-side and sends it to
+// POST /api/schemas, so a pack that declares appearance only as an inline `ui:`
+// block must still produce a type-keyed uiConfigs map — otherwise the registry
+// row lands with ui_config='{}' and the UI renders no icon/colour.
+func TestMergePackUIConfigs_PromotesInlineUI(t *testing.T) {
+	p := PackFile{
+		Name: "p",
+		ObjectTypes: []ObjectTypeDef{
+			{Name: "Doc", UI: map[string]any{"icon": "file-text", "color": "#3B82F6"}},
+			{Name: "Note"}, // no inline ui, no pack-level entry
+		},
+	}
+
+	raw, err := mergePackUIConfigs(p)
+	if err != nil {
+		t.Fatalf("mergePackUIConfigs: %v", err)
+	}
+	var got map[string]map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal uiConfigs %s: %v", raw, err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected only the type with inline ui, got %v", got)
+	}
+	if got["Doc"]["icon"] != "file-text" || got["Doc"]["color"] != "#3B82F6" {
+		t.Fatalf("inline ui block not promoted: %v", got)
+	}
+	if _, ok := got["Note"]; ok {
+		t.Fatalf("type without ui must not appear: %v", got)
+	}
+}
+
+// TestMergePackUIConfigs_NullBlockDoesNotPanic pins the guard for a JSON pack
+// that spells the block as `"uiConfigs": null`: json.Unmarshal nils the map,
+// and assigning the inline overlay into it would panic during `blueprints
+// install` (the validator already treats null as absent). The install must go
+// through with just the inline appearance.
+func TestMergePackUIConfigs_NullBlockDoesNotPanic(t *testing.T) {
+	for name, p := range map[string]PackFile{
+		"null with inline ui": {
+			Name:        "p",
+			UIConfigs:   JSONBlob(`null`),
+			ObjectTypes: []ObjectTypeDef{{Name: "Doc", UI: map[string]any{"icon": "inline-icon"}}},
+		},
+		"null only": {
+			Name:        "p",
+			UIConfigs:   JSONBlob(`null`),
+			ObjectTypes: []ObjectTypeDef{{Name: "Doc"}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := mergePackUIConfigs(p)
+			if err != nil {
+				t.Fatalf("mergePackUIConfigs: %v", err)
+			}
+			if len(p.ObjectTypes[0].UI) == 0 {
+				if len(raw) != 0 {
+					t.Fatalf("expected no uiConfigs payload, got %s", raw)
+				}
+				return
+			}
+			var got map[string]map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("unmarshal uiConfigs %s: %v", raw, err)
+			}
+			if got["Doc"]["icon"] != "inline-icon" {
+				t.Fatalf("inline ui block lost next to a null pack block: %v", got)
+			}
+		})
+	}
+}
+
+// TestMergePackUIConfigs_InlineWinsOverPackLevel pins the documented precedence
+// on ObjectTypeDef.UI: the inline block is used when present, the pack-level
+// uiConfigs entry is the fallback.
+func TestMergePackUIConfigs_InlineWinsOverPackLevel(t *testing.T) {
+	p := PackFile{
+		Name: "p",
+		ObjectTypes: []ObjectTypeDef{
+			{Name: "Doc", UI: map[string]any{"icon": "inline-icon"}},
+			{Name: "Note"},
+		},
+		UIConfigs: JSONBlob(`{"Doc":{"icon":"pack-icon"},"Note":{"icon":"note-icon"}}`),
+	}
+
+	raw, err := mergePackUIConfigs(p)
+	if err != nil {
+		t.Fatalf("mergePackUIConfigs: %v", err)
+	}
+	var got map[string]map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal uiConfigs %s: %v", raw, err)
+	}
+	if got["Doc"]["icon"] != "inline-icon" {
+		t.Fatalf("inline ui must win over pack-level: %v", got["Doc"])
+	}
+	if got["Note"]["icon"] != "note-icon" {
+		t.Fatalf("pack-level fallback lost for a type without inline ui: %v", got["Note"])
 	}
 }
 

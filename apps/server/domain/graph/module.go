@@ -139,6 +139,14 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		Where("ps.project_id = ?", projectID).
 		Where("ps.active = true").
 		Where("ps.removed_at IS NULL").
+		// The last install wins, matching GetCompiledTypesByProject and the
+		// registry write path: assignments are read oldest-first and each pack's
+		// definitions overwrite the map, so the newest install of a type name (or
+		// of a relationship type) is the one validation uses. Without this ORDER
+		// BY Postgres returns rows in arbitrary order and the effective
+		// definition is unpredictable (issue #295).
+		Order("ps.installed_at ASC").
+		Order("ps.id ASC").
 		Scan(ctx)
 
 	objectSchemas := make(map[string]agents.ObjectSchema)
