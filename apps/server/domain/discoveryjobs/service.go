@@ -1466,7 +1466,7 @@ func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose str
 	budget := s.effectiveTypeBudget(typeBudget)
 	var combinedContent strings.Builder
 	for _, doc := range docs {
-		combinedContent.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", doc.Filename, doc.Content))
+		fmt.Fprintf(&combinedContent, "=== %s ===\n%s\n\n", doc.Filename, doc.Content)
 	}
 
 	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
@@ -2636,12 +2636,12 @@ func (s *Service) generateExtractionPrompts(
 	sb.WriteString(kbPurpose)
 	sb.WriteString("\n\nDiscovered entity types:\n")
 	for _, t := range types {
-		sb.WriteString(fmt.Sprintf("- %s: %s\n", t.TypeName, t.Description))
+		fmt.Fprintf(&sb, "- %s: %s\n", t.TypeName, t.Description)
 	}
 	if len(relationships) > 0 {
 		sb.WriteString("\nDiscovered relationships:\n")
 		for _, r := range relationships {
-			sb.WriteString(fmt.Sprintf("- %s -[%s]-> %s\n", r.SourceType, r.RelationType, r.TargetType))
+			fmt.Fprintf(&sb, "- %s -[%s]-> %s\n", r.SourceType, r.RelationType, r.TargetType)
 		}
 	}
 
