@@ -110,3 +110,19 @@ func TestPropertyDefPromptTypeLabel(t *testing.T) {
 		Items: &PropertyDef{Type: "array", Items: &PropertyDef{Type: "string"}},
 	}.promptTypeLabel(), "nested arrays keep the plain type label")
 }
+
+// A declared format and bounds are enforced at write time, so the prompt must
+// render them or it asks the model for a value it cannot know is invalid.
+func TestPropertyDefPromptTypeLabel_Constraints(t *testing.T) {
+	zero, ten := 0.0, 10.0
+
+	assert.Equal(t, "string, format email", PropertyDef{Type: "string", Format: "email"}.promptTypeLabel())
+	assert.Equal(t, "number, min 0", PropertyDef{Type: "number", Minimum: &zero}.promptTypeLabel())
+	assert.Equal(t, "integer, max 10", PropertyDef{Type: "integer", Maximum: &ten}.promptTypeLabel())
+	assert.Equal(t, "number, min 0, max 10", PropertyDef{Type: "number", Minimum: &zero, Maximum: &ten}.promptTypeLabel())
+	assert.Equal(t, "string, format email, min 0", PropertyDef{Type: "string", Format: "email", Minimum: &zero}.promptTypeLabel())
+	assert.Equal(t, "array of string", PropertyDef{
+		Type:  "array",
+		Items: &PropertyDef{Type: "string"},
+	}.promptTypeLabel(), "element type label is unaffected by bounds on the array")
+}

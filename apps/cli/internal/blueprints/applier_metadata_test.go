@@ -32,6 +32,7 @@ func TestMarshalPackSchemas_PreservesFullMetadata(t *testing.T) {
 			{
 				Name: "links", Label: "Links", SourceType: "Doc", TargetType: "Doc",
 				Properties: map[string]any{"weight": map[string]any{"type": "number"}},
+				Required:   []string{"weight"},
 			},
 		},
 		UIConfigs: JSONBlob(`{"Doc":{"icon":"file-text","color":"#3B82F6"}}`),
@@ -70,6 +71,7 @@ func TestMarshalPackSchemas_PreservesFullMetadata(t *testing.T) {
 	if _, ok := props["weight"]; !ok {
 		t.Fatalf("relationship properties lost weight: %v", props)
 	}
+	assertStringSlice(t, rels[0], "required", []string{"weight"})
 
 	if string(uiCfgs) != string(p.UIConfigs.Raw()) {
 		t.Fatalf("uiConfigs not preserved: got %s want %s", uiCfgs, p.UIConfigs.Raw())
@@ -114,6 +116,7 @@ func TestExpandRelationshipTypes_CrossProduct(t *testing.T) {
 			SourceTypes: []string{"A", "B"},
 			TargetTypes: []string{"C", "D"},
 			Properties:  map[string]any{"weight": map[string]any{"type": "number"}},
+			Required:    []string{"weight"},
 		},
 	}
 	got, err := expandRelationshipTypes(defs)
@@ -133,6 +136,9 @@ func TestExpandRelationshipTypes_CrossProduct(t *testing.T) {
 		}
 		if len(got[i].Properties) == 0 {
 			t.Fatalf("entry %d lost properties", i)
+		}
+		if len(got[i].Required) != 1 || got[i].Required[0] != "weight" {
+			t.Fatalf("entry %d lost required: %+v", i, got[i].Required)
 		}
 	}
 }

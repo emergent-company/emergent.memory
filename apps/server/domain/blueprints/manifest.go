@@ -115,7 +115,9 @@ func (o *ObjectTypeDef) UnmarshalJSON(data []byte) error {
 
 // RelationshipTypeDef is a single relationship type schema in a pack manifest.
 // Properties carries any relationship-level sub-block (e.g. a description
-// property) as a raw map for lossless pass-through.
+// property) as a raw map for lossless pass-through, and Required names the
+// subset the write path enforces — both are dropped otherwise, which is the
+// same class of bug as a lost `migrations` passthrough.
 //
 // It accepts both singular (sourceType/targetType) and plural
 // (sourceTypes/targetTypes) field names, mirroring the CLI loader
@@ -131,6 +133,7 @@ type RelationshipTypeDef struct {
 	SourceTypes []string       `json:"sourceTypes,omitempty"`
 	TargetTypes []string       `json:"targetTypes,omitempty"`
 	Properties  map[string]any `json:"properties,omitempty"`
+	Required    []string       `json:"required,omitempty"`
 }
 
 // GetSourceTypes returns the effective source types, preferring the plural

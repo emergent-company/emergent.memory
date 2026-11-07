@@ -996,10 +996,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			continue
 		}
 
-		properties := map[string]any{
-			"description":        rel.Description,
-			"_extraction_job_id": job.ID,
-		}
+		properties := relationshipPersistProperties(rel, job.ID)
 
 		_, err := w.graphService.CreateRelationship(ctx, projectID, &graph.CreateGraphRelationshipRequest{
 			Type:       rel.Type,
@@ -1351,6 +1348,23 @@ func convertToRelationshipSchema(m map[string]any) agents.RelationshipSchema {
 	}
 
 	return schema
+}
+
+// relationshipPersistProperties assembles the properties map written for one
+// extracted relationship: its description and extraction provenance, plus every
+// relationship-level property the model emitted. The emitted properties are
+// merged last so a declared property named `description` wins, mirroring the
+// object-side loop in persistResults; graph.CreateRelationship's schema
+// validation (validateRelationshipProperties) then coerces and enforces them.
+func relationshipPersistProperties(rel agents.ExtractedRelationship, jobID string) map[string]any {
+	properties := map[string]any{
+		"description":        rel.Description,
+		"_extraction_job_id": jobID,
+	}
+	for name, value := range rel.Properties {
+		properties[name] = value
+	}
+	return properties
 }
 
 // stringPtr returns a pointer to a string.

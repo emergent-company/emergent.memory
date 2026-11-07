@@ -333,6 +333,19 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 			}
 
 			r.validateProperties(p.Name, p.SourceFile, field+".properties", fmt.Sprintf("relationshipType %q", rt.Name), rt.Properties)
+
+			// Mirror the object-side check: a required name the type does not
+			// declare is stored but never enforced, so the author should hear
+			// about it while the pack is still being written.
+			if len(rt.Required) > 0 {
+				for j, req := range rt.Required {
+					if _, ok := rt.Properties[req]; !ok {
+						r.add(ValidationWarning, "pack", p.Name, p.SourceFile,
+							fmt.Sprintf("%s.required[%d]", field, j),
+							fmt.Sprintf("relationshipType %q: required property %q is not declared in properties", rt.Name, req))
+					}
+				}
+			}
 		}
 
 		r.validatePackMigrations(p)
