@@ -1635,7 +1635,8 @@ func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
 	// layers). Nothing in the flat form can trigger this loop, because the flat
 	// form names each entry with a descriptor object and has no scalar `type`.
 	for depth := 0; depth < 4; depth++ {
-		required = append(required, propertyNames(properties["required"])...)
+		names, _ := requiredNames(properties)
+		required = append(required, names...)
 		if inner, ok := jsonSchemaObjectProperties(properties); ok {
 			properties = inner
 			unwrapped = true
@@ -1666,7 +1667,7 @@ func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
 func withoutSchemaKeywords(schema map[string]any) map[string]any {
 	out := make(map[string]any, len(schema))
 	for key, value := range schema {
-		if looksLikeSchemaKeyword(key, value) {
+		if isSchemaKeyword(schema, key) {
 			continue
 		}
 		out[key] = value
@@ -1692,7 +1693,7 @@ func jsonSchemaObjectProperties(schema map[string]any) (map[string]any, bool) {
 	if typeName, _ := schema["type"].(string); typeName == "object" {
 		return properties, true
 	}
-	if _, isArray := schema["required"].([]any); isArray {
+	if _, ok := requiredNames(schema); ok {
 		return properties, true
 	}
 	if looksLikePropertiesMap(properties) && onlySchemaKeywordSiblings(schema, "properties") {
@@ -1733,11 +1734,11 @@ func looksLikePropertiesMap(m map[string]any) bool {
 // onlySchemaKeywordSiblings reports whether every key in schema except `except`
 // is a structural keyword with the keyword's value shape.
 func onlySchemaKeywordSiblings(schema map[string]any, except string) bool {
-	for key, value := range schema {
+	for key := range schema {
 		if key == except {
 			continue
 		}
-		if !looksLikeSchemaKeyword(key, value) {
+		if !isSchemaKeyword(schema, key) {
 			return false
 		}
 	}
@@ -1753,11 +1754,6 @@ func looksLikeSchemaKeyword(key string, value any) bool {
 	case "type", "$schema", "$id", "$ref", "title", "description", "format":
 		_, ok := value.(string)
 		return ok
-	case "required":
-		switch value.(type) {
-		case []any, []string, string:
-			return true
-		}
 	case "properties", "definitions", "$defs", "items":
 		_, ok := value.(map[string]any)
 		return ok
@@ -1768,6 +1764,71 @@ func looksLikeSchemaKeyword(key string, value any) bool {
 		}
 	}
 	return false
+}
+
+// isSchemaKeyword reports whether key holds the JSON Schema keyword of that
+// name rather than a property that happens to share it. The value must have the
+// keyword's shape, and `required` must additionally name properties the schema
+// defines, so {"required": "yes"} stays a property (#258).
+func isSchemaKeyword(schema map[string]any, key string) bool {
+	if key == "required" {
+		_, ok := requiredNames(schema)
+		return ok
+	}
+	value, ok := schema[key]
+	if !ok {
+		return false
+	}
+	return looksLikeSchemaKeyword(key, value)
+}
+
+// requiredNames reads a schema's `required` keyword. An array marks the keyword
+// even when it yields no names: {"properties": {…}, "required": []} is still a
+// wrapper. A model that answers with one comma-separated string is believed
+// only when every name in it is a property the schema defines, so a property
+// literally named "required" whose value is a string ({"required": "yes"}) is
+// not read as a required list (#258). A one-name string is therefore accepted
+// when the schema also defines that property; that ambiguity is inherent to
+// reading the value's shape.
+func requiredNames(schema map[string]any) ([]string, bool) {
+	value, ok := schema["required"]
+	if !ok {
+		return nil, false
+	}
+	switch value.(type) {
+	case []any, []string:
+		return propertyNames(value), true
+	}
+	list, isString := value.(string)
+	if !isString {
+		return nil, false
+	}
+	defined := schemaPropertyKeys(schema)
+	for _, part := range strings.Split(list, ",") {
+		name := strings.TrimSpace(part)
+		if _, known := defined[name]; name == "" || !known {
+			return nil, false
+		}
+	}
+	return propertyNames(list), true
+}
+
+// schemaPropertyKeys returns the names a `required` list could legitimately
+// refer to: the keys of the nested `properties` map when the schema has one,
+// otherwise the flat map's own keys.
+func schemaPropertyKeys(schema map[string]any) map[string]struct{} {
+	if properties, ok := schema["properties"].(map[string]any); ok {
+		keys := make(map[string]struct{}, len(properties))
+		for name := range properties {
+			keys[name] = struct{}{}
+		}
+		return keys
+	}
+	keys := make(map[string]struct{}, len(schema))
+	for name := range schema {
+		keys[name] = struct{}{}
+	}
+	return keys
 }
 
 // propertyNames reads a JSON `required` array into names, dropping anything
@@ -2015,6 +2076,10 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 		seenRequired[name] = true
 		required = append(required, name)
 	}
+	// The list is rendered into the extraction prompt, and the union order
+	// follows the candidates (which can tie on confidence), so sort it to keep
+	// the same document producing the same prompt (#258).
+	sort.Strings(required)
 
 	// Calculate average confidence
 	var totalConfidence float32
