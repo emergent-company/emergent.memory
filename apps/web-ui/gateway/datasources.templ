@@ -932,6 +932,35 @@ templ dsPickerBlockedNotice(summary dsCredentialSummary) {
 	</div>
 }
 
+// dsSyncScopeAction returns the sync-scope header action, or nil when the
+// folder picker is blocked (nothing to place in the header's second column).
+func dsSyncScopeAction(folders []DSFolderTarget, summary *dsCredentialSummary) templ.Component {
+	if summary != nil && summary.PickerBlocked {
+		return nil
+	}
+	return dsSyncScopeChooseFolders(folders)
+}
+
+// dsSyncScopeChooseFolders is the button that opens the Drive folder picker.
+templ dsSyncScopeChooseFolders(folders []DSFolderTarget) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: ui.ButtonOutline,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--folder-search",
+		Attrs: templ.Attributes{
+			"data-ds-open-folder-picker": "true",
+			"data-testid":                "ds-choose-folders",
+		},
+	}) {
+		if len(folders) == 0 {
+			Choose folders
+		} else {
+			Change folders
+		}
+	}
+}
+
 // dsSyncScopeCard is the Drive source's folder targets: the folders it ingests,
 // with the always-available "Choose folders" action that opens the Google
 // Picker modal. It replaces the raw folder-id inputs the settings form used to
@@ -940,7 +969,7 @@ templ dsSyncScopeCard(src *DSIntegration, summary *dsCredentialSummary) {
 	{{ folders := dsFolders(src) }}
 	<div class="mb-4" data-testid="ds-sync-scope">
 		@components.PanelCard("", nil) {
-			<div class="flex flex-wrap items-start justify-between gap-3">
+			@components.CardHeader(components.CardHeaderProps{Action: dsSyncScopeAction(folders, summary)}) {
 				<div class="flex items-center gap-3">
 					@ui.IconTile("lucide--folder-tree", ui.IconTileProps{Tone: "info"})
 					<div>
@@ -950,25 +979,7 @@ templ dsSyncScopeCard(src *DSIntegration, summary *dsCredentialSummary) {
 						}
 					</div>
 				</div>
-				if summary == nil || !summary.PickerBlocked {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeButton,
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--folder-search",
-						Attrs: templ.Attributes{
-							"data-ds-open-folder-picker": "true",
-							"data-testid":                "ds-choose-folders",
-						},
-					}) {
-						if len(folders) == 0 {
-							Choose folders
-						} else {
-							Change folders
-						}
-					}
-				}
-			</div>
+			}
 			<div class="mt-3">
 				if len(folders) == 0 {
 					@ui.EmptyNote(ui.EmptyNoteProps{
