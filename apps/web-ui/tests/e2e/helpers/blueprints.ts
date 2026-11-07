@@ -5,12 +5,12 @@ import { scopedPath } from './scope';
 // the e2e fixture cannot silently change with a future push to the repo's HEAD.
 export const PERSONAL_MEMORY_BLUEPRINT_URL =
   'https://github.com/mkucharz/personal-memory-blueprint';
-export const PERSONAL_MEMORY_BLUEPRINT_REF = 'v3.0.0';
+export const PERSONAL_MEMORY_BLUEPRINT_REF = 'v3.1.0';
 // The blueprint manifest version declared at that pinned tag
-// (packs/personal-memory.yaml `version: "3.0.0"`). The installed-blueprints API
+// (schemas/personal-memory.yaml `version: "3.1.0"`). The installed-blueprints API
 // reports it, so setup can reject a stale pack that predates the pin — matching
 // on name alone let an old v2.x silently satisfy the guard.
-export const PERSONAL_MEMORY_BLUEPRINT_VERSION = '3.0.0';
+export const PERSONAL_MEMORY_BLUEPRINT_VERSION = '3.1.0';
 
 // The import backend allows the archive fetch alone up to 60s; give the
 // post-submit wait a budget consistent with that (button/form waits stay at 10s).
