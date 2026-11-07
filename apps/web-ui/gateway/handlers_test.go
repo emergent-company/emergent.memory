@@ -699,6 +699,13 @@ type fakeMemory struct {
 	eventStreamBody           io.ReadCloser // returned by NotificationEventStream
 	eventStreamErr            error
 	lastEventStreamProject    string
+
+	// Share capture (iOS share extension; see remember.go).
+	captureCalls  []captureCall     // text captures received, in order
+	captureFiles  []captureFileCall // file captures received, in order
+	captureStatus int               // status to report (default 202)
+	captureRaw    []byte            // body to report (default {"run_id":"r1","status":"submitted"})
+	captureErr    error             // transport failure for both capture methods
 }
 
 // projectSettingWrite records one SetProjectSetting call on the fake.
