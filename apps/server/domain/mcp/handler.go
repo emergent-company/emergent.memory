@@ -357,7 +357,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		return NewErrorResponse(req.ID, ErrCodeInternalError,
 			"Failed to resolve share instance scope", nil)
 	}
-	if InstanceDeniesTool(scope, params.Name) {
+	if InstanceDeniesTool(scope, legacyDispatchName(params.Name, params.Arguments)) {
 		return NewErrorResponse(req.ID, ErrCodeForbidden,
 			"Tool not allowed: "+params.Name, nil)
 	}
@@ -372,7 +372,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 
 	if projectID == "" {
 		// Some tools require project ID
-		if requiresProject(params.Name) {
+		if requiresProject(params.Name, params.Arguments) {
 			return NewErrorResponse(req.ID, ErrCodeInvalidParams,
 				"Project ID is required. Provide project_id in initialize params or X-Project-Id header.",
 				map[string]string{"hint": "Call initialize with project_id parameter or set X-Project-Id header"},
@@ -428,9 +428,13 @@ func extractToken(c echo.Context) string {
 	return ""
 }
 
-// requiresProject returns true if the tool requires a project context
-func requiresProject(toolName string) bool {
-	switch toolName {
+// requiresProject returns true if the call needs a project context. The gate is
+// per dispatch target, not per advertised tool: the consolidation merged actions
+// that disagreed (schema-write action=create never needed a project, while
+// schema action=owned does), so decide on the per-verb name the call resolves to
+// and keep the pre-consolidation list verbatim.
+func requiresProject(toolName string, args map[string]any) bool {
+	switch legacyDispatchName(toolName, args) {
 	case "entity-type-list", "entity-query", "entity-search", "entity-edges-get",
 		"schema-version", "schema-list", "schema-get", "schema-delete",
 		"schema-list-available", "schema-list-installed",

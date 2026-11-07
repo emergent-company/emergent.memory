@@ -1576,7 +1576,9 @@ func pickEffectiveModel(override, projectDefault string) string {
 func (h *Handler) toDefinitionDTO(ctx context.Context, def *AgentDefinition) *AgentDefinitionDTO {
 	dto := def.ToDTO()
 	if h.mcpService != nil {
-		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetToolDefinitionsForProject(ctx, def.ProjectID))
+		// Per-verb catalog: tool groups are policy units the agent tool pool
+		// resolves by name, and the pool works in per-verb names.
+		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetInternalToolDefinitionsForProject(ctx, def.ProjectID))
 	}
 	return dto
 }
@@ -1608,7 +1610,10 @@ func (h *Handler) ListBuiltinToolGroups(c echo.Context) error {
 		return c.JSON(http.StatusOK, SuccessResponse([]ToolGroupDTO{}))
 	}
 
-	catalog := h.mcpService.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
+	// Per-verb catalog, matching what the agent tool pool resolves: a group that
+	// named consolidated tools would grant nothing when it fans out into an
+	// agent's tool whitelist.
+	catalog := h.mcpService.GetInternalToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	groups := ToolGroupsFromCatalog(catalog)
 	return c.JSON(http.StatusOK, SuccessResponse(groups))
 }

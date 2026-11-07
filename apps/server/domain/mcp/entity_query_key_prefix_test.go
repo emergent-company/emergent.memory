@@ -19,13 +19,13 @@ import (
 func TestEntityQueryLimitSchemaStatesFullCap(t *testing.T) {
 	t.Run("default cap", func(t *testing.T) {
 		svc := &Service{}
-		limit := toolDefByName(t, svc.GetToolDefinitions(), "entity-query").InputSchema.Properties["limit"]
+		limit := toolDefByName(t, svc, "entity-query").InputSchema.Properties["limit"]
 		assert.Contains(t, limit.Description, `field_strategy="full"`)
 		assert.Contains(t, limit.Description, "25")
 	})
 	t.Run("configured cap is reflected", func(t *testing.T) {
 		svc := &Service{entityQueryFullMaxLimit: 7}
-		limit := toolDefByName(t, svc.GetToolDefinitions(), "entity-query").InputSchema.Properties["limit"]
+		limit := toolDefByName(t, svc, "entity-query").InputSchema.Properties["limit"]
 		assert.Contains(t, limit.Description, "7")
 		assert.NotContains(t, limit.Description, "capped to 25")
 	})

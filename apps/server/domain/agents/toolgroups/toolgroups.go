@@ -127,6 +127,8 @@ var staticToolGroup = map[string]string{
 	"session-todo-list":   GroupSession,
 	"session-todo-update": GroupSession,
 	"set_session_title":   GroupSession,
+	// Consolidated catalog (see domain/mcp/consolidated_catalog.go).
+	"session-todo": GroupSession,
 }
 
 // branchToolGroup keeps the branch tools in GroupBranches now that they are
@@ -142,6 +144,9 @@ var branchToolGroup = map[string]bool{
 	"graph-branch-merge-readiness": true,
 	"graph-branch-fork":            true,
 	"graph-branch-delete":          true,
+	// Consolidated catalog (see domain/mcp/consolidated_catalog.go).
+	"branch":       true,
+	"branch-write": true,
 }
 
 // GroupForScope returns the group id for a tool given its required scope (the
