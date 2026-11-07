@@ -62,6 +62,9 @@ func resolveConfiguration(f Failure, state modelstate.State, kind modelstate.Kin
 	model := state.Model(kind)
 	f.Verified = true
 	f.Model = model
+	if model != "" {
+		f.ModelType = string(kind)
+	}
 
 	switch {
 	case f.Cause == CauseBaseURL:
@@ -117,9 +120,11 @@ func resolveConfiguration(f Failure, state modelstate.State, kind modelstate.Kin
 }
 
 // applyModelState rewrites the failures that depend on the project's model
-// state: configuration copy, and the model a permission failure is about (an
-// invalid key is a model problem when the queue needs one). Every other class is
-// left exactly as the classifier wrote it.
+// state: configuration copy, and the model a credential failure is about (an
+// invalid key is a model problem when the queue needs one). A resource-access
+// permission failure is left alone: the provider may be fine, so naming a model
+// would point at the wrong fix. Every other class is left exactly as the
+// classifier wrote it.
 //
 // It is separate from List so the selection rule — which problem gets which
 // model family — is testable without a database.
@@ -133,10 +138,14 @@ func applyModelState(byArea map[Area][]Problem, state modelstate.State) {
 			}
 			// A rejected credential on a model-dependent queue is a model
 			// problem: name the model so the row can offer a live test, but
-			// leave the classifier's summary and remediation alone.
+			// leave the classifier's summary and remediation alone. The cause
+			// check is what keeps a resource-access refusal from getting the
+			// same chip.
 			if problems[i].Failure.Class == ClassPermission &&
+				problems[i].Failure.Cause == CauseCredential &&
 				isModelQueue(problems[i].Queue) && state.Configured(kind) {
 				problems[i].Failure.Model = state.Model(kind)
+				problems[i].Failure.ModelType = string(kind)
 			}
 		}
 		byArea[area] = problems

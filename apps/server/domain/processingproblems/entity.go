@@ -113,6 +113,11 @@ type Failure struct {
 	// for an embedding queue. Empty when nothing resolves or the class is
 	// unrelated.
 	Model string `json:"model,omitempty"`
+	// ModelType is the family Model belongs to ("generative" or "embedding").
+	// The server owns the queue → family mapping, so clients use this instead
+	// of inferring it from the queue name; a second copy of that map is how the
+	// two drift apart.
+	ModelType string `json:"modelType,omitempty"`
 	// Verified reports whether the copy was checked against the project's
 	// effective model configuration before being written. A configuration
 	// failure with Verified=false is a guess and must read as one.
@@ -141,6 +146,15 @@ const (
 	CauseModelUnavailable FailureCause = "model_unavailable"
 	// CauseBaseURL means the configured provider endpoint is not usable.
 	CauseBaseURL FailureCause = "base_url"
+	// CauseCredential means the provider rejected or was missing the
+	// credential. On a queue that needs a model this is a model problem: the
+	// row can name the model and offer a live test.
+	CauseCredential FailureCause = "credential"
+	// CauseResourceAccess means the run was refused access to a document or
+	// other resource, not to the provider. The provider may be perfectly
+	// configured, so naming a model and offering to test it would point at the
+	// wrong fix.
+	CauseResourceAccess FailureCause = "resource_access"
 )
 
 // FixTarget is a page that fixes one recorded cause, plus the link text.

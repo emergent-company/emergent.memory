@@ -8,40 +8,47 @@ import Foundation
 /// therefore returns the same truncated record, so the reply is waited for
 /// instead: the record is read until it holds the finished text, and the
 /// truncated live copy is dropped in the same step so the turn cannot render
-/// twice.
+/// twice. The wait itself is ``InterruptedTurnRecovery``.
 ///
 /// Text mode cannot ask whether the run is still going (a device credential has
 /// no run-status route, `emergent.memory#81`), so this polls for a bounded
 /// window. The limits, stated rather than implied:
-/// - it is one poll per drop and is not cancelled if the user sends another
+/// - it is one wait per drop and is not cancelled if the user sends another
 ///   message meanwhile — that turn's own live copy is unaffected because only
 ///   the interrupted message id is dropped;
+/// - the wait stops as soon as the transcript is no longer the one it was
+///   started for (another chat was opened, or its records were replaced), so a
+///   slow read cannot land in a view that moved on;
 /// - a run that never records a longer reply leaves the truncated copy in place
 ///   (the text the user already saw) rather than surfacing an error: there is
 ///   nothing actionable to tell them, and reopening the chat loads the record.
 extension ChatSessionView {
-    /// One-second record reads spent waiting for a finished reply.
-    private static let recoveryAttempts = 20
-
     func recoverInterruptedTurn() async {
         guard
             let interrupted = transport.interruptedTurn,
             let conversationID = openConversationID
         else { return }
         let baseline = transcript.lastRecordCount
-        let client = SessionLogClient(config: MemoryConfig())
-        for _ in 0 ..< Self.recoveryAttempts {
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            guard let detail = try? await client.detail(room: conversationID) else { continue }
-            guard ChatSessionTranscriptStore.recordedReply(
-                extending: interrupted.partialText,
-                in: detail,
-                since: baseline
-            ) else { continue }
-            transcript.loadHistory(from: detail)
-            transport.discardInterruptedLiveCopy(in: transcript)
-            return
-        }
+        let scope = TranscriptWaitScope(conversationID: conversationID, baseline: baseline)
+        let recovery = InterruptedTurnRecovery(client: SessionLogClient(config: MemoryConfig()))
+        await recovery.run(
+            conversationID: conversationID,
+            partialText: interrupted.partialText,
+            baseline: baseline,
+            isCurrent: {
+                transport.interruptedTurn?.liveMessageID == interrupted.liveMessageID
+                    && scopeIsCurrent(scope)
+            },
+            apply: { detail in
+                transcript.loadHistory(from: detail)
+                // Also clears this drop's banner: the record now supersedes the
+                // partial, so the failure message would be the only thing still
+                // claiming the turn was cut short. Only this drop's — a later
+                // turn may have failed over the same slot meanwhile (#213). A
+                // drop that never recovers keeps it: that is the signal the
+                // reply was lost.
+                transport.discardInterruptedLiveCopy(in: transcript)
+            }
+        )
     }
 }

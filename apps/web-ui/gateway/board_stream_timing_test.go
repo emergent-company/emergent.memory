@@ -204,9 +204,9 @@ func TestBoardStreamHeartbeatsAnIdleStream(t *testing.T) {
 }
 
 // A background re-render whose item count and agent-health signature are
-// unchanged touches only the columns: re-sending the header and the health
-// readout would morph regions the user may be reading for no reason (the
-// behaviour the board-ux spec now states).
+// unchanged touches only the columns: re-sending the health readout would morph
+// a region the user may be reading for no reason (the behaviour the board-ux
+// spec now states). The header is never re-sent at all.
 func TestBoardStreamSendsOnlyTheBoardWhenNothingElseChanged(t *testing.T) {
 	setBoardStreamTiming(t, 20*time.Millisecond, time.Hour)
 
@@ -215,16 +215,16 @@ func TestBoardStreamSendsOnlyTheBoardWhenNothingElseChanged(t *testing.T) {
 	rec, stop := startBoardStream(t, boardStreamTestMemory(pr))
 	defer stop()
 
-	// Catch-up sends all three regions once.
+	// Catch-up sends the columns and the health readout once. The header carries
+	// no count, so it is never a frame target.
 	waitForFrames(t, rec, "#board", 1, 2*time.Second)
-	waitForFrames(t, rec, "#board-header", 1, 2*time.Second)
 	waitForFrames(t, rec, "#board-health", 1, 2*time.Second)
 
 	writeUpstreamEvents(t, pw, "entity.status_changed", `{"entity":"graph_object","id":"w1"}`)
 	waitForFrames(t, rec, "#board", 2, 2*time.Second)
 
-	if got := frameCount(rec.body(), "#board-header"); got != 1 {
-		t.Errorf("unchanged item count re-sent the header (%d frames, want 1)", got)
+	if got := frameCount(rec.body(), "#board-header"); got != 0 {
+		t.Errorf("the header carries no count, so no frame may target it (%d frames, want 0)", got)
 	}
 	if got := frameCount(rec.body(), "#board-health"); got != 1 {
 		t.Errorf("unchanged agent health re-sent the health readout (%d frames, want 1)", got)

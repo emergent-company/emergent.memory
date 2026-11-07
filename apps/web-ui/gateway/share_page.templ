@@ -113,30 +113,6 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			<meta name="robots" content="noindex,nofollow"/>
 			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
 			<title>{ shareDocTitle(props) }</title>
-			<meta name="sentry-dsn" content={ props.SentryDSN }/>
-			<meta name="sentry-environment" content={ props.SentryEnvironment }/>
-			<meta name="sentry-traces-sample-rate" content={ props.SentryTracesSampleRate }/>
-			<meta name="sentry-replay-session-sample-rate" content={ props.SentryReplaySessionSampleRate }/>
-			<meta name="sentry-replay-on-error-sample-rate" content={ props.SentryReplayOnErrorSampleRate }/>
-			if props.SentryDSN != "" {
-				<script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.replay.feedback.min.js" crossorigin="anonymous"></script>
-				<script>
-				(function () {
-					var m = function (n) { var e = document.querySelector('meta[name="' + n + '"]'); return e ? e.content : ""; };
-					Sentry.init({
-						dsn: m("sentry-dsn"),
-						environment: m("sentry-environment"),
-						integrations: [
-							Sentry.browserTracingIntegration(),
-							Sentry.replayIntegration({ maskAllText: true, maskAllInputs: true, blockAllMedia: true })
-						],
-						tracesSampleRate: parseFloat(m("sentry-traces-sample-rate")),
-						replaysSessionSampleRate: parseFloat(m("sentry-replay-session-sample-rate")),
-						replaysOnErrorSampleRate: parseFloat(m("sentry-replay-on-error-sample-rate"))
-					});
-				})();
-				</script>
-			}
 			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
 			@foucBackgroundGuard()
 			<style>
@@ -236,6 +212,16 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			}
 			</style>
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- Sentry sits after the stylesheet, as in the app shell: the SDK is
+			     deferred today (see sentry_head.templ), so position blocks
+			     nothing — this keeps it behind app.css even if that regresses. -->
+			@sentryHead(sentryHeadOpts{
+				DSN:                     props.SentryDSN,
+				Environment:             props.SentryEnvironment,
+				TracesSampleRate:        props.SentryTracesSampleRate,
+				ReplaySessionSampleRate: props.SentryReplaySessionSampleRate,
+				ReplayOnErrorSampleRate: props.SentryReplayOnErrorSampleRate,
+			})
 		</head>
 		<body class="bg-base-200">
 			if props.State != ShareStateReady {

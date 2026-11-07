@@ -29,7 +29,6 @@ templ MCPServersPage(data mcpServersPageData) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers")) }}
 		@detailHeader(crumbs, "", "MCP Servers", "Register and maintain the MCP servers that power agent tools.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
-				@countBadge(len(data.Servers), "server", "lucide--server")
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpShareSettingsBase,
@@ -52,7 +51,7 @@ templ MCPServersPage(data mcpServersPageData) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
-			@pageError("MCP servers unavailable", data.LoadErr)
+			@pageErrorNotice("MCP servers unavailable", data.LoadErr)
 		} else if len(data.Servers) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--server",
@@ -65,10 +64,11 @@ templ MCPServersPage(data mcpServersPageData) {
 				ActionIcon:  "lucide--plus",
 			})
 		} else {
+			@sectionCount(countLabel(len(data.Servers), "server", "servers"))
 			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, srv := range data.Servers {
-						@mcpServerRow(srv, data.BuiltinGroups)
+						@mcpServerRow(srv)
 					}
 				</div>
 			}
@@ -83,9 +83,10 @@ templ MCPServersPage(data mcpServersPageData) {
 // tool count) and whose body lists the cached tools. Builtin servers render
 // read-only: no action buttons, no enabled toggle, no per-tool toggles. The
 // builtin row shows "Memory tools" with a package mark and a "Built-in" badge
-// instead of the literal name + duplicated type badge; when builtinGroups is
-// non-empty its cached tools render grouped by capability instead of flat.
-templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
+// instead of the literal name + duplicated type badge; its cached tools render
+// grouped by capability, fetched when the row is first opened (see
+// mcpServerToolsList).
+templ mcpServerRow(srv MCPServer) {
 	{{ builtin := mcpServerIsBuiltin(srv) }}
 	<details
 		class="group rounded-box border border-base-content/10 bg-base-200/40"
@@ -177,7 +178,7 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 					Runs <span class="font-mono">{ srv.Command }</span> on the memory host.
 				}
 			}
-			@mcpServerToolsList(srv, srv.Tools, builtinGroups)
+			@mcpServerToolsList(srv)
 			@mcpServerInspectArea(srv.ID)
 			if !builtin {
 				@mcpServerDeleteDialog(srv)
@@ -376,20 +377,49 @@ templ mcpOAuthClientDisclosureLeading() {
 	</div>
 }
 
-// mcpServerToolsList renders the "Cached tools" section header above the rows
-// container for one server. The rows container itself is rendered by
-// mcpServerToolsContainer so a completed sync can swap in the exact same
-// subtree (mcpToolsFragment). builtinGroups is only consulted for the builtin
-// server (its grouped view); external servers ignore it.
-templ mcpServerToolsList(srv MCPServer, tools []MCPTool, builtinGroups []BuiltinToolGroup) {
+// mcpServerToolsList renders the "Cached tools" section for one server. The
+// rows are NOT part of the page: a project whose builtin catalogue is fully
+// populated carries ~140 kB of tool-row markup — half the page's weight — inside
+// a row the user has not opened (#210). The rows are fetched on the row's first
+// expand and swapped into data-mcp-tools-host, which is also the hook a
+// completed sync swaps into (mcpToolsFragment).
+templ mcpServerToolsList(srv MCPServer) {
 	<div class="flex flex-col">
 		<div class="flex items-center justify-between px-3 pt-2">
 			@ui.Eyebrow("Cached tools", ui.EyebrowProps{Size: "text-[10px]", Margin: ""})
-			if len(tools) > 0 && !mcpServerIsBuiltin(srv) && !mcpServerIsDevice(srv) {
+			if len(srv.Tools) > 0 && !mcpServerIsBuiltin(srv) && !mcpServerIsDevice(srv) {
 				<span class="text-muted-faint text-[10px]">sync refreshes this list</span>
 			}
 		</div>
-		@mcpServerToolsContainer(srv, tools, builtinGroups)
+		<div data-mcp-tools-host={ srv.ID } data-mcp-tools-url={ mcpServerToolsFragmentPath(srv.ID) }>
+			@mcpServerToolsPlaceholder(srv)
+		</div>
+	</div>
+}
+
+// mcpServerToolsPlaceholder stands in for the rows until the row is opened. It
+// keeps the data-mcp-tools hook so a sync that lands before the first expand
+// replaces it exactly as it replaces a loaded container.
+templ mcpServerToolsPlaceholder(srv MCPServer) {
+	<div class="flex flex-col" data-mcp-tools={ srv.ID }>
+		<div class="text-muted-faint px-3 py-2 text-[11px]" data-mcp-tools-pending>
+			if mcpServerIsDevice(srv) {
+				Expand to load the tools discovered on the device.
+			} else {
+				Expand to load the cached tools.
+			}
+		</div>
+	</div>
+}
+
+// mcpServerToolsError is the rows container's content when the deferred fetch
+// fails. htmx does not swap a non-2xx response, so the failure has to arrive as
+// readable markup instead of a status code.
+templ mcpServerToolsError(serverID string, msg string) {
+	<div class="flex flex-col" data-mcp-tools={ serverID }>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "px-3 py-2"}) {
+			Could not load cached tools: { msg }
+		}
 	</div>
 }
 
@@ -657,7 +687,7 @@ templ MCPServerEditPage(data mcpServerFormData) {
 	if data.LoadErr != nil {
 		@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
 			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
-			@pageError("Server unavailable", data.LoadErr)
+			@pageErrorNotice("Server unavailable", data.LoadErr)
 			@mcpServersScript()
 		}
 	} else if data.NotFound || data.ID == "" {
@@ -1493,6 +1523,27 @@ templ mcpServersScript() {
 				var tool = t.closest('[data-mcp-tool-toggle]');
 				if (tool) { toggleTool(tool); return; }
 			});
+
+			// Deferred cached-tool rows (#210): a row's tool rows are fetched on
+			// its first expand. `toggle` does not bubble, so the listener is
+			// registered in the capture phase and reuses the same container the
+			// sync path swaps in.
+			document.addEventListener('toggle', function (e) {
+				var row = e.target;
+				if (!row || row.tagName !== 'DETAILS' || !row.open) return;
+				if (!row.hasAttribute('data-mcp-row')) return;
+				var host = row.querySelector('[data-mcp-tools-host]');
+				if (!host || host.hasAttribute('data-mcp-tools-loaded')) return;
+				var url = host.getAttribute('data-mcp-tools-url');
+				if (!url) return;
+				// App paths are emitted unscoped; the session's scope base lives in
+				// the URL, so resolve it the way app.js resolves every JS-built path.
+				if (window.MemoryScope && window.MemoryScope.path) {
+					url = window.MemoryScope.path(url);
+				}
+				host.setAttribute('data-mcp-tools-loaded', '1');
+				htmx.ajax('GET', url, { target: host, swap: 'innerHTML' });
+			}, true);
 
 			// One-time panel visibility per current radio state.
 			var forms = document.querySelectorAll('[data-mcp-form-fields]');

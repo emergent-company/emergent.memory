@@ -598,12 +598,16 @@ func main() {
 	e.GET("/settings/mcp-servers/shares", s.uiMCPShares)
 	e.GET("/settings/mcp-servers/shares/new", s.uiMCPShareNewPage)
 	e.POST("/settings/mcp-servers/shares/new", s.uiMCPShareCreate)
+	e.GET("/settings/mcp-servers/shares/:id/duplicate", s.uiMCPShareDuplicatePage)
 	e.GET("/settings/mcp-servers/shares/:id/edit", s.uiMCPShareEditPage)
 	e.POST("/settings/mcp-servers/shares/:id/update", s.uiMCPShareUpdate)
 	e.POST("/settings/mcp-servers/shares/:id/revoke", s.uiMCPShareRevoke)
 	e.POST("/settings/mcp-servers/shares/:id/rotate", s.uiMCPShareRotate)
 	e.POST("/settings/mcp-servers/shares/:id/invite", s.uiMCPShareInvite)
 	e.GET("/settings/mcp-servers/:id/edit", s.uiMCPEditPage)
+	// Deferred cached-tool rows for one list row, fetched on first expand
+	// (see mcpServerToolsList; #210).
+	e.GET("/settings/mcp-servers/:id/tools", s.uiMCPServerToolsFragment)
 	e.POST("/settings/mcp-servers/:id/update", s.uiMCPUpdate)
 	e.POST("/settings/mcp-servers/:id/delete", s.uiMCPDelete)
 	e.POST("/settings/mcp-servers/:id/toggle", s.uiMCPToggle)

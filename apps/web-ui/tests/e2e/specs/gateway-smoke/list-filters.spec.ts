@@ -105,8 +105,8 @@ test.describe('list filters refresh only the results region', () => {
     await expect(page).toHaveURL(/[?&]type=documents\b/);
     await expect(page.getByTestId('search-hit-object')).toHaveCount(0);
     await expect(page.getByTestId('search-hit-document')).toHaveCount(1);
-    // The count badge sits in the header, outside the swapped region, so it is
-    // refreshed out of band with the results.
+    // The count is part of the results summary, inside the swapped region, so
+    // it always describes the results currently on screen.
     await expect(page.getByTestId('search-result-count')).toContainText(
       '1 result',
     );

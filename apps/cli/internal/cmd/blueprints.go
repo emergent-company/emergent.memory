@@ -1023,7 +1023,7 @@ func init() {
 
 	// install subcommand flags
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsUpgradeFlag, "upgrade", false, "Update existing resources instead of skipping them")
-	blueprintsInstallCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
+	blueprintsInstallCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without writing anything (it still reads project context)")
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsMergeTypesFlag, "merge-types", false, "Merge incoming object types into existing registered types (required non-interactively on a type-name collision)")
 	blueprintsInstallCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
 	blueprintsInstallCmd.Flags().StringArrayVar(&blueprintsMapModelFlag, "map-model", nil, "Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)")
@@ -1031,7 +1031,7 @@ func init() {
 
 	// deprecated bare form also needs these flags
 	blueprintsCmd.Flags().BoolVar(&blueprintsUpgradeFlag, "upgrade", false, "Update existing resources instead of skipping them")
-	blueprintsCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
+	blueprintsCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without writing anything (it still reads project context)")
 	blueprintsCmd.Flags().BoolVar(&blueprintsMergeTypesFlag, "merge-types", false, "Merge incoming object types into existing registered types (required non-interactively on a type-name collision)")
 	blueprintsCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
 	blueprintsCmd.Flags().StringArrayVar(&blueprintsMapModelFlag, "map-model", nil, "Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)")

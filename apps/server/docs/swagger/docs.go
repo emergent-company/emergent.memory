@@ -3441,6 +3441,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/chat/runs/{runId}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stops an agent-backed run that belongs to one of the caller's own conversations.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Cancel a chat run",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent run ID (UUID)",
+                        "name": "runId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Run cancellation requested",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid run id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Run not found or not owned by the caller",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/chat/stream": {
             "post": {
                 "security": [
@@ -31557,9 +31619,6 @@ const docTemplate = `{
         },
         "domain_chat.StreamRequest": {
             "type": "object",
-            "required": [
-                "message"
-            ],
             "properties": {
                 "agentDefinitionId": {
                     "type": "string"
@@ -31575,6 +31634,26 @@ const docTemplate = `{
                     "maxLength": 100000
                 },
                 "namespace": {
+                    "type": "string"
+                },
+                "surfaceAction": {
+                    "description": "SurfaceAction is an A2UI surface action the user took. The server frames it\nas the user message the agent receives\n(agents.A2UIActionMessage), so no client invents that wording; Message may\nthen be empty, or carry free-form text typed alongside the action.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_chat.SurfaceAction"
+                        }
+                    ]
+                }
+            }
+        },
+        "domain_chat.SurfaceAction": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "The clicked component's payload: ` + "`" + `{componentId, response}` + "`" + ` for the cards\nthe shared renderer builds. Typed as an object, not free JSON, so the\npublished schema says what clients actually send.",
+                    "type": "object"
+                },
+                "surfaceId": {
                     "type": "string"
                 }
             }
@@ -31595,6 +31674,10 @@ const docTemplate = `{
         "domain_chunking.ChunkingConfigResponse": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "description": "AutoProfile selects chunking parameters per document from its detected\ndocument shape instead of applying Strategy/MaxChunkSize/Overlap/\nParentChild project-wide. Writing the configuration is a full\nreplacement: turning it on stores the other fields as given (they are\nthen unused), so turning it off later lands on those stored values, not\non the ones in force before it was enabled.",
+                    "type": "boolean"
+                },
                 "maxChunkSize": {
                     "type": "integer"
                 },
@@ -31603,6 +31686,13 @@ const docTemplate = `{
                 },
                 "parentChild": {
                     "type": "boolean"
+                },
+                "profiles": {
+                    "description": "Profiles lists the per-shape parameters auto-profile will use. Present\nonly when AutoProfile is true.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_chunking.ShapeProfile"
+                    }
                 },
                 "strategy": {
                     "type": "string"
@@ -31623,6 +31713,9 @@ const docTemplate = `{
         "domain_chunking.RecreateChunksSummary": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "type": "boolean"
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -31645,6 +31738,29 @@ const docTemplate = `{
                 "preservedEdited": {
                     "type": "integer"
                 },
+                "shape": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunking.ShapeProfile": {
+            "type": "object",
+            "properties": {
+                "maxChunkSize": {
+                    "type": "integer"
+                },
+                "overlap": {
+                    "type": "integer"
+                },
+                "parentChild": {
+                    "type": "boolean"
+                },
+                "shape": {
+                    "type": "string"
+                },
                 "strategy": {
                     "type": "string"
                 }
@@ -31653,6 +31769,9 @@ const docTemplate = `{
         "domain_chunking.UpdateChunkingConfigRequest": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "type": "boolean"
+                },
                 "maxChunkSize": {
                     "type": "integer"
                 },
@@ -31819,6 +31938,10 @@ const docTemplate = `{
         "domain_chunks.ChunkMetadata": {
             "type": "object",
             "properties": {
+                "autoProfile": {
+                    "description": "parameters came from the shape profile, not the project config",
+                    "type": "boolean"
+                },
                 "boundaryType": {
                     "description": "sentence, paragraph, character, section",
                     "type": "string"
@@ -31838,6 +31961,10 @@ const docTemplate = `{
                 "oversized": {
                     "description": "atomic protected segment larger than the chunk size",
                     "type": "boolean"
+                },
+                "shape": {
+                    "description": "detected document shape when auto-profile chose the parameters",
+                    "type": "string"
                 },
                 "stale": {
                     "description": "preserved edited chunk whose source span no longer exists",
@@ -37990,6 +38117,10 @@ const docTemplate = `{
                     "description": "Model is the model this project resolves to for the failure's family\n(routed \"instance/model\"): the generative model, or the embedding model\nfor an embedding queue. Empty when nothing resolves or the class is\nunrelated.",
                     "type": "string"
                 },
+                "modelType": {
+                    "description": "ModelType is the family Model belongs to (\"generative\" or \"embedding\").\nThe server owns the queue → family mapping, so clients use this instead\nof inferring it from the queue name; a second copy of that map is how the\ntwo drift apart.",
+                    "type": "string"
+                },
                 "remediation": {
                     "type": "string"
                 },
@@ -38013,14 +38144,18 @@ const docTemplate = `{
                 "no_default_model",
                 "model_unusable",
                 "model_unavailable",
-                "base_url"
+                "base_url",
+                "credential",
+                "resource_access"
             ],
             "x-enum-varnames": [
                 "CauseNoProvider",
                 "CauseNoDefaultModel",
                 "CauseModelUnusable",
                 "CauseModelUnavailable",
-                "CauseBaseURL"
+                "CauseBaseURL",
+                "CauseCredential",
+                "CauseResourceAccess"
             ]
         },
         "domain_processingproblems.FailureClass": {
@@ -44255,7 +44390,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.90.1",
+	Version:          "0.91.0",
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

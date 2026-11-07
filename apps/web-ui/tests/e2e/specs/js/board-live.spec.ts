@@ -18,10 +18,11 @@ const HTMX_JS = path.resolve(__dirname, '../../../../gateway/webui/static/js/htm
 const SSE_JS = path.resolve(__dirname, '../../../../gateway/webui/static/js/hx-sse.js');
 
 // Markup mirroring board.templ: the stable swap regions, the connection anchor,
-// and the #board region the stream replaces.
+// and the #board region the stream replaces. The header node is part of the
+// initial render only — the stream never targets it.
 const BASE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
-  <div id="board-header" data-testid="board-header"><h1>Board</h1><span id="board-count">1 item</span></div>
+  <div id="board-header" data-testid="board-header"><h1>Board</h1></div>
   <div id="board-health" data-testid="board-health"></div>
   <div id="board-live" hx-sse:connect="/board/stream" aria-hidden="true"></div>
   <div id="board" data-testid="board" tabindex="-1" data-board-status-map='{"ready":"ready"}'>
@@ -38,8 +39,6 @@ const BASE_HTML = `<!doctype html>
 // refresh cannot close it.
 const FRAMES =
   'data: <hx-partial hx-target="#board" hx-swap="outerMorph"><div id="board" data-testid="board" tabindex="-1" data-board-status-map=\'{"ready":"ready"}\'><section class="memory-board__lane" data-board-column="ready"><div class="lane-body">Live card</div></section></div></hx-partial>\n' +
-  '\n' +
-  'data: <hx-partial hx-target="#board-header" hx-swap="outerMorph"><div id="board-header" data-testid="board-header"><h1>Board</h1><span id="board-count">2 items</span></div></hx-partial>\n' +
   '\n' +
   'data: <hx-partial hx-target="#board-health" hx-swap="outerMorph"><div id="board-health" data-testid="board-health"><p id="health">degraded</p></div></hx-partial>\n' +
   '\n';
@@ -73,7 +72,7 @@ async function routePage(page: Page): Promise<string[]> {
 }
 
 test.describe('board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
-  test('the stream morphs #board, #board-header and #board-health in place', async ({ page }) => {
+  test('the stream morphs #board and #board-health in place', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
     const streamRequests = await routePage(page);
@@ -86,10 +85,9 @@ test.describe('board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
     // #board is replaced by the frame's fragment (outerMorph on the same id).
     await expect(page.locator('#board .lane-body')).toHaveText('Live card');
 
-    // The header and health regions are outside #board; they update only if the
-    // extra partials are applied, which is what makes the count and the agent
-    // health readout live.
-    await expect(page.locator('#board-count')).toHaveText('2 items');
+    // The health readout is outside #board; it updates only if the extra partial
+    // is applied, which is what makes it live. The page header is not a frame
+    // target at all: it carries no count or state, so nothing about it changes.
     await expect(page.locator('#health')).toHaveText('degraded');
 
     // A background frame must never clear the drawer: that OOB clear belongs to

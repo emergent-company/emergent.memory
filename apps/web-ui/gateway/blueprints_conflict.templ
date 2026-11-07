@@ -10,11 +10,13 @@ import (
 // import, or update would collide with object type names already registered in
 // the project. Nothing is applied from here: the user reviews the property-level
 // impact and explicitly confirms the merge, or cancels without side effects.
+templ blueprintConflictMeta() {
+	@ui.Badge(ui.BadgeProps{Label: "Merge required", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeSM, Icon: "lucide--shield-alert"})
+}
+
 templ BlueprintTypeConflictPage(d BlueprintTypeConflictData) {
 	<div class={ pageFormChromeClass }>
-		@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", d.Title)), "", d.Title, d.Subtitle, detailHeaderOpts{Margin: "mb-6"}) {
-			@ui.Badge(ui.BadgeProps{Label: "Merge required", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeSM, Icon: "lucide--shield-alert"})
-		}
+		@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", d.Title)), "", d.Title, d.Subtitle, detailHeaderOpts{Margin: "mb-6", Meta: blueprintConflictMeta()})
 	</div>
 	<form method="post" action={ d.Action } data-testid="blueprint-type-conflict-page">
 		<div class={ pageFormFieldsClass, "flex flex-col gap-5" }>

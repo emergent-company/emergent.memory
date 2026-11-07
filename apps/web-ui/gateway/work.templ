@@ -21,16 +21,7 @@ templ WorkPage(data workData) {
 		}
 	} else {
 		@layout.Container(layout.ContainerFull, nil) {
-			@nav.PageHeading(nav.PageHeadingProps{
-				Kicker:          "Control plane",
-				Title:           "Work",
-				Subtitle:        "How agents pick up and move work items across every object type.",
-				Margin:          "mb-4",
-				Dashboard:       true,
-				HideBreadcrumbs: true,
-				NoTopMargin:     true,
-				Flat:            true,
-			})
+			@pageHeader("Work", "Work", "How agents pick up and move work items across every object type.")
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			if data.Section == workBoardSection {
 				@workBoardView(data)

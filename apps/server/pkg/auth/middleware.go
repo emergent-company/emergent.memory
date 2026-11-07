@@ -263,8 +263,11 @@ func deviceScopesMatchCeiling(scopes []string) bool {
 // the device surface: the voice/read paths the gateway relays on a device
 // credential's behalf (agent picker, chat/session relay, conversation
 // archive/unarchive/delete, memory browsing, and the /api/auth/me introspection
-// the gateway uses to recognise the token). Everything else — token mint,
-// members, org/project admin, other writes — is out.
+// the gateway uses to recognise the token). It also admits exactly one write
+// the iOS text composer needs to stop its own turn: the chat-scoped run
+// cancellation route (issue #81), which is owner-checked in the chat handler.
+// Everything else — token mint, members, org/project admin, other writes — is
+// out.
 func deviceSurfaceAllowed(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -301,6 +304,12 @@ func deviceSurfaceAllowed(method, path string) bool {
 		return false
 	case http.MethodPost:
 		if path == "/api/chat/stream" || path == "/api/search/unified" {
+			return true
+		}
+		// The one device write beyond conversation/question lifecycle: stopping
+		// a chat run the credential's user owns. The handler owns the ownership
+		// check; this only bounds the route shape.
+		if deviceChatRunCancelPath(path) {
 			return true
 		}
 		if deviceConversationLifecyclePath(path, "archive") ||
@@ -359,6 +368,21 @@ func deviceProjectQuestionActionPath(path, action string) bool {
 	return len(parts) == 4 &&
 		parts[0] != "" && parts[1] == "agent-questions" &&
 		parts[2] != "" && parts[3] == action
+}
+
+// deviceChatRunCancelPath reports whether path is exactly
+// `/api/chat/runs/{runId}/cancel`: the literal collection segment `runs`, one
+// non-empty run id, then `cancel`, and nothing deeper. The sibling
+// `.../agent-runs/{runId}` read and `agents/{agent}/runs/{runId}/cancel` write
+// stay off-surface.
+func deviceChatRunCancelPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/chat/runs/")
+	if !ok {
+		return false
+	}
+	// modelref:allow — URL path segmentation, not a routed model name.
+	parts := strings.Split(rest, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] == "cancel"
 }
 
 // deviceConversationLifecyclePath reports whether path is exactly

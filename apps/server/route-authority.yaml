@@ -358,6 +358,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
     - method: POST
+      path: /api/chat/runs/:runId/cancel
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
+    - method: POST
       path: /api/chat/stream
       level: project-member
       note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember

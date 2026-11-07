@@ -32,11 +32,13 @@ templ APITokensPage(data apiTokensPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens")), "", "API Tokens", "Scoped tokens that let programs act as this project without a browser session.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
-				@countBadge(apiTokenActiveCount(data.Tokens), "token", "lucide--key-round")
 				@apiTokenNewTokenLink("/settings/tokens")
 			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr == nil {
+			@sectionCount(countLabel(apiTokenActiveCount(data.Tokens), "token", "tokens"))
+		}
 		@apiTokenListState("/settings/tokens", data, "No API tokens yet", "Scoped tokens let programs act as this project without a browser session.")
 	}
 }
@@ -46,16 +48,16 @@ templ APITokensPage(data apiTokensPageData) {
 // tokens" active) with a "New token" action linking to /profile/tokens/new.
 templ AccountTokensPage(data apiTokensPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Account", "API tokens", "Account tokens act as you across every project you can access — use them for personal scripts and tools that keep working wherever you log in.") {
+		@pageHeader("", "API tokens", "Account tokens act as you across every project you can access — use them for personal scripts and tools that keep working wherever you log in.") {
 			if data.LoadErr == nil {
-				<div class="flex items-center gap-2">
-					@countBadge(apiTokenActiveCount(data.Tokens), "token", "lucide--key-round")
-					@apiTokenNewTokenLink("/profile/tokens")
-				</div>
+				@apiTokenNewTokenLink("/profile/tokens")
 			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(profileSubNav("tokens"), nil) {
+			if data.LoadErr == nil {
+				@sectionCount(countLabel(apiTokenActiveCount(data.Tokens), "token", "tokens"))
+			}
 			@apiTokenListState("/profile/tokens", data, "No account tokens yet", "Account tokens give personal scripts and tools the same access you have across every project.")
 		}
 	}
@@ -93,7 +95,7 @@ templ apiTokenListState(actionBase string, data apiTokensPageData, emptyTitle, e
 				Message: "Couldn't refresh the token list: " + data.LoadErr.Error(),
 			})
 		} else {
-			@pageError("API tokens unavailable", data.LoadErr)
+			@pageErrorNotice("API tokens unavailable", data.LoadErr)
 		}
 	} else {
 		@apiTokenTable(data.Tokens, actionBase, emptyTitle, emptyDesc)
@@ -302,7 +304,7 @@ templ APITokenCreatePage(data apiTokenCreatePageData) {
 // shared create body posting to POST /profile/tokens/new.
 templ AccountTokenCreatePage(data apiTokenCreatePageData) {
 	<div class={ pageFormChromeClass }>
-		@pageHeader("Account", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.") {}
+		@pageHeader("", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.") {}
 		@flashToasts("", data.FlashErr)
 		if data.Reveal != nil {
 			@apiTokenRevealContent(*data.Reveal)
@@ -376,7 +378,7 @@ templ APITokenEditPage(data apiTokenEditPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
 			@detailHeader(crumbs, "", "Edit scopes", "", detailHeaderOpts{Margin: "mb-6"}) {}
-			@pageError("Token unavailable", data.LoadErr)
+			@pageErrorNotice("Token unavailable", data.LoadErr)
 		} else if data.NotFound || data.Token == nil {
 			@detailHeader(crumbs, "", "Edit scopes", "", detailHeaderOpts{Margin: "mb-6"}) {}
 			@ui.EmptyState(ui.EmptyStateProps{
@@ -399,11 +401,11 @@ templ APITokenEditPage(data apiTokenEditPageData) {
 templ AccountTokenEditPage(data apiTokenEditPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
-			@pageHeader("Account", "Edit scopes", "") {}
+			@pageHeader("", "Edit scopes", "") {}
 			@flashToasts("", data.FlashErr)
-			@pageError("Token unavailable", data.LoadErr)
+			@pageErrorNotice("Token unavailable", data.LoadErr)
 		} else if data.NotFound || data.Token == nil {
-			@pageHeader("Account", "Edit scopes", "") {}
+			@pageHeader("", "Edit scopes", "") {}
 			@flashToasts("", data.FlashErr)
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--key-round",
@@ -412,7 +414,7 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 				Bordered:    true,
 			})
 		} else {
-			@pageHeader("Account", "Edit scopes", "Scopes for "+data.Token.Name+". Changes apply immediately.") {}
+			@pageHeader("", "Edit scopes", "Scopes for "+data.Token.Name+". Changes apply immediately.") {}
 			@flashToasts("", data.FlashErr)
 			@layout.Rail(profileSubNav("tokens"), nil) {
 				@apiTokenEditBody("/profile/tokens", *data.Token, data.Picker)

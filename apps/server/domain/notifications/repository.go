@@ -199,6 +199,20 @@ func (r *Repository) countBase(userID string, params CountParams) *bun.SelectQue
 	return applyScopeFilter(q, params.Scope, params.ProjectID, params.RequiresAction)
 }
 
+// countBaseActionRequired builds the base query for the Action-required bucket.
+// That bucket always needs requires_action = true, but applyScopeFilter already
+// adds the predicate when the caller asked for it (the Action required tab), so
+// add it here only when it is absent. Appending it unconditionally produced the
+// same clause twice and made the SQL depend on the caller in a way that was easy
+// to misread.
+func (r *Repository) countBaseActionRequired(userID string, params CountParams) *bun.SelectQuery {
+	q := r.countBase(userID, params)
+	if !params.RequiresAction {
+		q = q.Where("requires_action = true")
+	}
+	return q
+}
+
 // GetCounts returns notification counts by tab for a user, honouring the scope
 // / project / requires_action filters.
 func (r *Repository) GetCounts(ctx context.Context, userID string, params CountParams) (*NotificationCounts, error) {
@@ -231,10 +245,9 @@ func (r *Repository) GetCounts(ctx context.Context, userID string, params CountP
 	// Count action-required (not cleared, not snoozed, requires_action = true) —
 	// the "Action required" tab's badge. It mirrors that tab's list filter, so
 	// the badge and the rows it labels can never disagree.
-	actionRequired, err := r.countBase(userID, params).
+	actionRequired, err := r.countBaseActionRequired(userID, params).
 		Where("cleared_at IS NULL").
 		Where("(snoozed_until IS NULL OR snoozed_until <= ?)", now).
-		Where("requires_action = true").
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count action-required notifications", logger.Error(err))

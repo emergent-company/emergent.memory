@@ -19,16 +19,20 @@ func TestRenderMCPServersPage(t *testing.T) {
 		"MCP Servers", "github-mcp", "files", "builtin",
 		"3 servers",
 		"2 tools", "1 tool",
-		"search_issues", "create_issue", "read_file", "memory_lookup",
 		"New server", `href="/settings/mcp-servers/new"`,
-		`data-mcp-tools="srv-http"`, `data-mcp-tools="srv-stdio"`,
+		// The tool rows are deferred: every row carries a load-on-expand host
+		// pointing at the fragment endpoint (#210).
+		`data-mcp-tools-host="srv-http"`, `data-mcp-tools-host="srv-stdio"`,
+		`data-mcp-tools-host="srv-builtin"`,
+		`data-mcp-tools-url="/settings/mcp-servers/srv-http/tools"`,
+		"Expand to load the cached tools.",
 		// external row actions
 		`href="/settings/mcp-servers/srv-http/edit"`,
 		`href="/settings/mcp-servers/srv-stdio/edit"`,
 		`action="/settings/mcp-servers/srv-http/delete"`,
 		`action="/settings/mcp-servers/srv-stdio/delete"`,
 		`data-mcp-action="sync"`, `data-mcp-action="inspect"`,
-		"data-mcp-enabled-toggle", "data-mcp-tool-toggle",
+		"data-mcp-enabled-toggle",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("MCPServersPage missing %q", want)
@@ -48,15 +52,48 @@ func TestRenderMCPServersPage(t *testing.T) {
 	if got := strings.Count(html, `data-mcp-action="sync"`); got != 2 {
 		t.Errorf("sync action occurrences = %d, want 2 (external rows only)", got)
 	}
-	// per-tool toggles render only for the three external tools (builtin rows
-	// are read-only); the enabled toggle only on the two external rows
-	if got := strings.Count(html, `class="toggle toggle-sm shrink-0"`); got != 3 {
-		t.Errorf("per-tool toggle occurrences = %d, want 3 (builtin tools read-only)", got)
+	// The tool rows are not part of the page any more: rendering a 141-row
+	// builtin catalogue up front was half the page's weight inside a collapsed
+	// row (#210). They arrive from the fragment endpoint on first expand.
+	for _, unwanted := range []string{
+		"search_issues", "create_issue", "read_file", "memory_lookup", "graph_write",
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("list page still renders deferred tool-row markup %q", unwanted)
+		}
 	}
 	for _, want := range []string{`aria-label="Enable github-mcp"`, `aria-label="Enable files"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("external row enabled toggle missing %q", want)
 		}
+	}
+}
+
+// TestRenderMCPServerToolsContainer covers the deferred half: the container the
+// fragment endpoint returns on a row's first expand must render the full rows,
+// including the per-tool toggles the page no longer ships.
+func TestRenderMCPServerToolsContainer(t *testing.T) {
+	fixture := mcpTestRegistryFixture()
+
+	httpServer := renderHTML(t, mcpServerToolsContainer(fixture[0], fixture[0].Tools, nil))
+	for _, want := range []string{
+		"search_issues", "create_issue",
+		`data-mcp-tools="srv-http"`, `data-mcp-tool="t1"`, `data-mcp-tool-toggle`,
+	} {
+		if !strings.Contains(httpServer, want) {
+			t.Errorf("external tools container missing %q", want)
+		}
+	}
+	if got := strings.Count(httpServer, `class="toggle toggle-sm shrink-0"`); got != 2 {
+		t.Errorf("per-tool toggle occurrences = %d, want 2", got)
+	}
+
+	builtin := renderHTML(t, mcpServerToolsContainer(fixture[2], fixture[2].Tools, nil))
+	if !strings.Contains(builtin, "memory_lookup") {
+		t.Error("builtin tools container missing its rows")
+	}
+	if strings.Contains(builtin, `data-mcp-tool-toggle`) {
+		t.Error("builtin rows are read-only: no per-tool toggles")
 	}
 }
 
@@ -85,15 +122,15 @@ func TestRenderMCPServersBuiltinIdentity(t *testing.T) {
 
 // TestRenderMCPServersBuiltinGrouped asserts the builtin server's cached tools
 // render grouped (collapsible per-capability disclosures + the dashed Other
-// fallback) when the taxonomy is present.
+// fallback) when the taxonomy is present. The groups live in the deferred
+// fragment now, so this renders the container the fragment endpoint returns.
 func TestRenderMCPServersBuiltinGrouped(t *testing.T) {
 	groups := []BuiltinToolGroup{
 		{ID: "graph", Label: "Graph", Description: "Entity and relation tools", Enabled: true, Tools: []string{"memory_lookup"}},
 	}
-	html := renderHTML(t, MCPServersPage(mcpServersPageData{
-		Servers:       mcpTestRegistryFixture(),
-		BuiltinGroups: groups,
-	}))
+	fixture := mcpTestRegistryFixture()
+	builtin := fixture[2]
+	html := renderHTML(t, mcpServerToolsContainer(builtin, builtin.Tools, groups))
 	for _, want := range []string{
 		"data-mcp-builtin-groups",
 		`data-testid="mcp-builtin-group"`,
@@ -104,7 +141,7 @@ func TestRenderMCPServersBuiltinGrouped(t *testing.T) {
 		"Other",
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("grouped MCPServersPage missing %q", want)
+			t.Errorf("grouped builtin tools container missing %q", want)
 		}
 	}
 }
@@ -134,7 +171,9 @@ func TestMCPBuiltinToolGroupsJoin(t *testing.T) {
 // button, and the page mounts the shared invoke dialog with its args input,
 // run button, and result region.
 func TestRenderMCPServersInvokeAffordances(t *testing.T) {
-	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
+	// The dialog is page-level; the per-tool Run affordances live in the
+	// deferred rows container, so both halves are asserted.
+	page := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
 	for _, want := range []string{
 		`data-testid="mcp-tool-invoke-dialog"`,
 		`data-testid="mcp-tool-invoke-args"`,
@@ -142,12 +181,22 @@ func TestRenderMCPServersInvokeAffordances(t *testing.T) {
 		`data-testid="mcp-tool-invoke-result"`,
 		"data-mcp-invoke-open",
 		"data-mcp-invoke-run",
-		`data-mcp-tool="memory_lookup"`,
-		`data-mcp-tool="search_issues"`,
 	} {
-		if !strings.Contains(html, want) {
+		if !strings.Contains(page, want) {
 			t.Errorf("MCPServersPage missing invoke affordance %q", want)
 		}
+	}
+
+	fixture := mcpTestRegistryFixture()
+	rows := renderHTML(t, mcpServerToolsContainer(fixture[0], fixture[0].Tools, nil))
+	for _, want := range []string{`data-mcp-tool="search_issues"`, `data-mcp-tool="create_issue"`} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("tools container missing invoke affordance %q", want)
+		}
+	}
+	builtin := renderHTML(t, mcpServerToolsContainer(fixture[2], fixture[2].Tools, nil))
+	if !strings.Contains(builtin, `data-mcp-tool="memory_lookup"`) {
+		t.Error("builtin tools container missing its invoke affordance")
 	}
 }
 
@@ -156,7 +205,6 @@ func TestRenderMCPServersPageEmpty(t *testing.T) {
 	html := renderHTML(t, MCPServersPage(mcpServersPageData{}))
 	for _, want := range []string{
 		"No MCP servers yet", `href="/settings/mcp-servers/new"`, "Register a server",
-		"0 servers",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("empty MCPServersPage missing %q", want)

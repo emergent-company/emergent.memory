@@ -195,6 +195,11 @@
     onSubagent: function (evt) { if (subagentTrack) subagentTrack.upsert(evt); },
     onActivity: function (type) { activityBoundary(type); },
     onMeta: function (evt) {
+      // The agent-backed stream emits a second meta frame once the run exists,
+      // carrying runId (#67). Prefer it for stop; the timeline/refresh path in
+      // onNewestRun/handleRefreshPayload remains the fallback when a server
+      // predates the frame or the run is direct-LLM.
+      if (evt.runId) liveRunId = evt.runId;
       if (evt.conversationId) {
         // A brand-new conversation (id not yet in the rail) should appear
         // in the session list immediately — no full reload needed.
@@ -329,6 +334,17 @@
     agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
+
+    // An A2UI card inside this transcript reports its click; the page turns it
+    // into the conversation's next turn. Bound to the transcript, not document,
+    // so the side panel's cards (same renderer, its own host) stay inert here.
+    if (messages) {
+      messages.addEventListener("a2ui:action", function (evt) {
+        var detail = evt && evt.detail;
+        if (!detail) return;
+        dispatchSurfaceAction(detail.surfaceId, detail.action);
+      });
+    }
 
     subagentTrack = MemoryChatComponents.createSubagentTrack({
       mount: function () { return document.getElementById("chat-subagents"); },
@@ -2057,6 +2073,26 @@
     dispatchMessage(text);
   }
 
+  // leaveRunScope abandons an open run transcript for a fresh chat: a run is not
+  // an /api/chat conversation, so its bubbles and scope go before a turn.
+  function leaveRunScope() {
+    if (!activeRunId) return;
+    activeRunId = "";
+    // The header names the run's agent while a run is open; the fresh chat
+    // belongs to the selected agent again (leaving the run's name there was a
+    // stale attribution — a brand-new chat titled "Extraction").
+    activeRunAgentName = "";
+    closeLiveStream(); // drop the abandoned run's push channel
+    clearActiveRailItem();
+    clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
+    updateUrl();
+    updateChatHeader();
+    if (messages) messages.innerHTML = "";
+    bubble = null; bubbleHTML = ""; bubbleText = "";
+  }
+
   // dispatchMessage runs one turn through the shared engine. Returns false when
   // it could not start (so a queue pump can put the message back).
   function dispatchMessage(text) {
@@ -2066,24 +2102,7 @@
       notify("error", "Pick an agent first.");
       return false;
     }
-    // Sending from a run transcript starts a fresh chat: a run is not an
-    // /api/chat conversation, so abandon the run scope and clear its bubbles.
-    if (activeRunId) {
-      activeRunId = "";
-      // The header names the run's agent while a run is open; the fresh chat
-      // belongs to the selected agent again (leaving the run's name there was a
-      // stale attribution — a brand-new chat titled "Extraction").
-      activeRunAgentName = "";
-      closeLiveStream(); // drop the abandoned run's push channel
-      clearActiveRailItem();
-      clearThinking();
-      replayFrames = [];
-      transcriptReady = false;
-      updateUrl();
-      updateChatHeader();
-      if (messages) messages.innerHTML = "";
-      bubble = null; bubbleHTML = ""; bubbleText = "";
-    }
+    leaveRunScope();
     if (input) {
       input.value = "";
       autoGrow();
@@ -2093,6 +2112,31 @@
     setStreaming(true); // before the bubble: it shows the typing indicator
     openAssistantBubble();
     streamChat(agent, text);
+    return true;
+  }
+
+  // dispatchSurfaceAction sends an A2UI surface action as this conversation's
+  // next turn. The server frames the message the agent receives, so the page
+  // reports the click rather than prose about it. No user bubble is added: the
+  // card that was clicked is the visible action, and a reload shows the framed
+  // record.
+  function dispatchSurfaceAction(surfaceId, action) {
+    if (!surfaceId || streaming) return false;
+    var agent = currentAgent();
+    if (!agent) {
+      notify("error", "Pick an agent first.");
+      return false;
+    }
+    // A surface belongs to the conversation that rendered it; the server
+    // rejects a surface-action turn that would open a new conversation.
+    if (!conversationId) {
+      notify("error", "Open a conversation before answering a card.");
+      return false;
+    }
+    leaveRunScope();
+    setStreaming(true);
+    openAssistantBubble();
+    streamChat(agent, "", { surfaceId: surfaceId, action: action });
     return true;
   }
 

@@ -233,7 +233,7 @@ func cancelBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 
 func TestCancelAgentRunHandler(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		f := &fakeMemory{agentRuns: map[string]*AgentRun{"r1": {AgentID: "a1"}}}
+		f := &fakeMemory{}
 		_, e := newCancelEcho(f)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/r1/cancel", nil))
@@ -244,8 +244,8 @@ func TestCancelAgentRunHandler(t *testing.T) {
 		if body["ok"] != true || body["runId"] != "r1" {
 			t.Errorf("body = %+v, want ok:true runId:r1", body)
 		}
-		if f.cancelAgentID != "a1" || f.cancelRunID != "r1" {
-			t.Errorf("cancel forwarded as agent=%q run=%q, want a1/r1", f.cancelAgentID, f.cancelRunID)
+		if f.cancelRunID != "r1" {
+			t.Errorf("cancel forwarded run=%q, want r1", f.cancelRunID)
 		}
 	})
 	t.Run("already-terminal reports not cancelled", func(t *testing.T) {
@@ -253,46 +253,52 @@ func TestCancelAgentRunHandler(t *testing.T) {
 		// success: memory reports cancelled:false and the gateway surfaces
 		// ok:false so the response matches the (terminal) run row.
 		no := false
-		f := &fakeMemory{
-			agentRuns:               map[string]*AgentRun{"r1": {AgentID: "a1"}},
-			cancelAgentRunCancelled: &no,
-		}
+		f := &fakeMemory{cancelAgentRunCancelled: &no}
 		_, e := newCancelEcho(f)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/r1/cancel", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
 		body := cancelBody(t, rec)
 		if body["ok"] != false || body["reason"] == "" {
 			t.Errorf("terminal-run cancel body = %+v, want ok:false with a reason", body)
 		}
 	})
-	t.Run("unresolvable run id", func(t *testing.T) {
-		f := &fakeMemory{}
-		_, e := newCancelEcho(f)
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/missing/cancel", nil))
-		body := cancelBody(t, rec)
-		if body["ok"] != false || body["reason"] == "" {
-			t.Errorf("body = %+v, want ok:false with a reason", body)
-		}
-	})
-	t.Run("unresolvable agent id", func(t *testing.T) {
-		f := &fakeMemory{agentRuns: map[string]*AgentRun{"r1": {}}}
+	// Authorization/absence failures must keep their status. Rewriting them to
+	// 200 {"ok":false} made "not allowed" indistinguishable from "no such run"
+	// and from a real cancel.
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"upstream 401", http.StatusUnauthorized},
+		{"upstream 403", http.StatusForbidden},
+		{"upstream 404", http.StatusNotFound},
+	} {
+		t.Run(tc.name+" is propagated", func(t *testing.T) {
+			f := &fakeMemory{cancelAgentRunErr: &memoryHTTPError{
+				Status: tc.status, Code: "forbidden", Message: "not allowed",
+			}}
+			_, e := newCancelEcho(f)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/r1/cancel", nil))
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.status, rec.Body.String())
+			}
+			body := cancelBody(t, rec)
+			if body["ok"] != false || body["reason"] == "" {
+				t.Errorf("body = %+v, want ok:false with a reason", body)
+			}
+		})
+	}
+	t.Run("upstream 5xx maps to 502", func(t *testing.T) {
+		f := &fakeMemory{cancelAgentRunErr: errTestCancel}
 		_, e := newCancelEcho(f)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/r1/cancel", nil))
-		body := cancelBody(t, rec)
-		if body["ok"] != false || body["reason"] == "" {
-			t.Errorf("body = %+v, want ok:false with a reason", body)
-		}
-	})
-	t.Run("upstream failure", func(t *testing.T) {
-		f := &fakeMemory{agentRuns: map[string]*AgentRun{"r1": {AgentID: "a1"}}, cancelAgentRunErr: errTestCancel}
-		_, e := newCancelEcho(f)
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/r1/cancel", nil))
-		body := cancelBody(t, rec)
-		if body["ok"] != false || body["reason"] == "" {
-			t.Errorf("body = %+v, want ok:false with a reason", body)
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
 		}
 	})
 }
@@ -309,15 +315,15 @@ func TestCancelAgentRunClient(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "static-proj")
-	cancelled, err := m.CancelAgentRun(sessProjCtx("static-token", "static-proj"), "a1", "r1")
+	cancelled, err := m.CancelAgentRun(sessProjCtx("static-token", "static-proj"), "r1")
 	if err != nil {
 		t.Fatalf("CancelAgentRun: %v", err)
 	}
 	if !cancelled {
 		t.Fatal("CancelAgentRun: cancelled = false, want true")
 	}
-	if gotPath != "/api/projects/static-proj/agents/a1/runs/r1/cancel" || gotMethod != http.MethodPost {
-		t.Errorf("request = %s %s, want POST /api/projects/static-proj/agents/a1/runs/r1/cancel", gotMethod, gotPath)
+	if gotPath != "/api/chat/runs/r1/cancel" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/chat/runs/r1/cancel", gotMethod, gotPath)
 	}
 	if gotAuth != "Bearer static-token" {
 		t.Errorf("auth = %q, want static bearer", gotAuth)
@@ -333,7 +339,7 @@ func TestCancelAgentRunClient_AlreadyTerminal(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	cancelled, err := m.CancelAgentRun(context.Background(), "a1", "r1")
+	cancelled, err := m.CancelAgentRun(context.Background(), "r1")
 	if err != nil {
 		t.Fatalf("CancelAgentRun: %v", err)
 	}
@@ -351,7 +357,7 @@ func TestCancelAgentRunClient_LegacyResponseWithoutFlag(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	cancelled, err := m.CancelAgentRun(context.Background(), "a1", "r1")
+	cancelled, err := m.CancelAgentRun(context.Background(), "r1")
 	if err != nil {
 		t.Fatalf("CancelAgentRun: %v", err)
 	}
@@ -368,7 +374,7 @@ func TestCancelAgentRunClientNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	_, err := m.CancelAgentRun(context.Background(), "a1", "r1")
+	_, err := m.CancelAgentRun(context.Background(), "r1")
 	if err == nil {
 		t.Fatal("non-2xx cancel must return an error")
 	}

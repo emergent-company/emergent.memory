@@ -74,13 +74,19 @@ type ProcessingProblemFailure struct {
 	Summary     string `json:"summary"`
 	Remediation string `json:"remediation"`
 	Retryable   bool   `json:"retryable"`
-	// Cause narrows a configuration failure to the element that is missing
-	// (no_provider, no_default_model, model_unusable, model_unavailable,
-	// base_url). Empty for classes the copy already describes exactly.
+	// Cause narrows a failure to the element that failed: a configuration
+	// failure's missing element (no_provider, no_default_model, model_unusable,
+	// model_unavailable, base_url), or a permission failure's shape
+	// (credential vs resource_access). Empty for classes the copy already
+	// describes exactly.
 	Cause string `json:"cause,omitempty"`
 	// Model is the generative model the project resolves to, when the failure is
 	// a model-provider problem. The row names it so "the model" is not anonymous.
 	Model string `json:"model,omitempty"`
+	// ModelType is the family Model belongs to ("generative" or "embedding").
+	// The server owns the queue → family mapping and sends it here; the gateway
+	// must not keep a second copy of that map.
+	ModelType string `json:"modelType,omitempty"`
 	// Verified is true when the summary was checked against the project's model
 	// configuration. A configuration failure with Verified=false is a guess.
 	Verified bool `json:"verified"`
@@ -459,17 +465,19 @@ func processingProblemFixLabel(p ProcessingProblem) string {
 
 // processingProblemCanTestModel reports whether the row can offer a live model
 // test. It needs a model the server actually resolved, a class a test can
-// settle (configuration and permission), and a caller allowed to exercise the
-// project's provider credentials.
+// settle (configuration and permission), a known model family, and a caller
+// allowed to exercise the project's provider credentials.
 func processingProblemCanTestModel(p ProcessingProblem, canManage bool) bool {
 	if !canManage || p.Failure.Model == "" {
 		return false
 	}
 	switch p.Failure.Class {
 	case "configuration", "permission":
-		return true
+	default:
+		return false
 	}
-	return false
+	_, ok := processingProblemTestModelField(p)
+	return ok
 }
 
 // processingProblemModelLabel is the model chip's text. The server only sets
@@ -479,21 +487,25 @@ func processingProblemModelLabel(p ProcessingProblem) string {
 }
 
 // processingProblemTestModelType is the model family a row's live test must
-// exercise. The embedding queues resolve their own model, so testing one through
-// the generative field would test something the failure is not about.
+// exercise, as the server resolved it. It deliberately does not switch on the
+// queue: the queue → family map lives in the server's classifier, and a second
+// copy here is how the two drift apart. An embedding queue tested through the
+// generative field would test something the failure is not about.
 func processingProblemTestModelType(p ProcessingProblem) string {
-	switch p.Queue {
-	case "chunk_embedding", "graph_embedding", "graph_relationship_embedding":
-		return "embedding"
-	default:
-		return "generative"
-	}
+	return p.Failure.ModelType
 }
 
 // processingProblemTestModelField is the form field the providers test endpoint
-// reads for that type, so the row posts the value the endpoint expects.
-func processingProblemTestModelField(p ProcessingProblem) string {
-	return defaultModelTestFields[processingProblemTestModelType(p)]
+// reads for that type, so the row posts the value the endpoint expects. ok is
+// false when the server sent no family or one this page does not know; callers
+// omit the form rather than rendering an <input> with an empty name.
+func processingProblemTestModelField(p ProcessingProblem) (field string, ok bool) {
+	modelType := processingProblemTestModelType(p)
+	if modelType == "" {
+		return "", false
+	}
+	field, ok = defaultModelTestFields[modelType]
+	return field, ok && field != ""
 }
 
 // processingAreaHasFixableFailures reports whether an area holds a terminal

@@ -1319,20 +1319,21 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 	for _, group := range groups {
 		for _, t := range group.Types {
 			candidate := &DiscoveryTypeCandidate{
-				ID:                uuid.New(),
-				JobID:             jobID,
-				BatchNumber:       batchNum,
-				TypeName:          t.TypeName,
-				Description:       &t.Description,
-				Confidence:        t.Confidence,
-				InferredSchema:    t.Properties,
-				ExampleInstances:  toJSONArray(t.ExampleInstances),
-				Frequency:         len(t.ExampleInstances),
-				SourceDocumentIDs: group.DocumentIDs,
-				ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(group.DocumentIDs))),
-				Status:            CandidateStatusCandidate,
-				CreatedAt:         time.Now(),
-				UpdatedAt:         time.Now(),
+				ID:                 uuid.New(),
+				JobID:              jobID,
+				BatchNumber:        batchNum,
+				TypeName:           t.TypeName,
+				Description:        &t.Description,
+				Confidence:         t.Confidence,
+				InferredSchema:     t.Properties,
+				RequiredProperties: toJSONStringArray(t.RequiredProperties),
+				ExampleInstances:   toJSONArray(t.ExampleInstances),
+				Frequency:          len(t.ExampleInstances),
+				SourceDocumentIDs:  group.DocumentIDs,
+				ExtractionContext:  strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(group.DocumentIDs))),
+				Status:             CandidateStatusCandidate,
+				CreatedAt:          time.Now(),
+				UpdatedAt:          time.Now(),
 			}
 			if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
 				s.log.Error("failed to store type candidate", logger.Error(err))
@@ -1562,12 +1563,13 @@ func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType,
 			)
 			continue
 		}
+		properties, required := normalizeInferredSchema(t.InferredSchema)
 		types = append(types, DiscoveredType{
 			TypeName:           t.TypeName,
 			Description:        t.Description,
 			Confidence:         t.Confidence,
-			Properties:         normalizePropertyCrossRefs(t.InferredSchema),
-			RequiredProperties: []string{},
+			Properties:         properties,
+			RequiredProperties: required,
 			ExampleInstances:   t.ExampleInstances,
 			Frequency:          t.Occurrences,
 		})
@@ -1581,6 +1583,102 @@ func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType,
 // Only suffix-matches on unambiguously relational nouns to avoid false positives.
 func isReifiedType(name string) bool {
 	return strings.HasSuffix(name, "Relationship") || strings.HasSuffix(name, "Association")
+}
+
+// normalizeInferredSchema reads the property schema a discovery model returned
+// and returns the property map plus the required property names.
+//
+// The prompt asks for a flat map of property name → descriptor, but models
+// routinely answer with a complete JSON Schema object instead:
+//
+//	{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}
+//
+// Taken literally that produced three properties named "type", "properties" and
+// "required" and an empty required list — the schema the reporter saw (#234).
+// The object form is unwrapped when present; the flat form passes through.
+func normalizeInferredSchema(schema map[string]any) (map[string]any, []string) {
+	if schema == nil {
+		return nil, []string{}
+	}
+
+	properties := schema
+	required := propertyNames(schema["required"])
+	if inner, ok := jsonSchemaObjectProperties(schema); ok {
+		properties = inner
+	} else if len(required) > 0 {
+		// A wrapper that lists `required` but no nested `properties` map, e.g.
+		// {"type":"object","title":{"type":"string"},"required":["title"]}.
+		// Drop only the structural keywords; everything else is a property.
+		properties = withoutSchemaKeywords(schema)
+	}
+	return normalizePropertyCrossRefs(properties), required
+}
+
+// withoutSchemaKeywords removes the JSON Schema structural keywords from a
+// wrapper that declared `required` without a nested `properties` map, leaving
+// the property descriptors behind.
+func withoutSchemaKeywords(schema map[string]any) map[string]any {
+	out := make(map[string]any, len(schema))
+	for key, value := range schema {
+		switch key {
+		case "type", "required", "properties", "$schema", "additionalProperties", "definitions", "$defs":
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+// jsonSchemaObjectProperties reports whether schema is a JSON Schema object
+// wrapper and returns its properties map.
+//
+// The wrapper is recognised only by markers that cannot occur in the flat form
+// the prompt defines: a top-level `type` of "object" (flat maps hold descriptors
+// under each property name, never a scalar type at the top) or a `required`
+// array. A flat schema that happens to contain a property literally named
+// "properties" or "type" therefore stays flat.
+func jsonSchemaObjectProperties(schema map[string]any) (map[string]any, bool) {
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if typeName, _ := schema["type"].(string); typeName == "object" {
+		return properties, true
+	}
+	if _, isArray := schema["required"].([]any); isArray {
+		return properties, true
+	}
+	return nil, false
+}
+
+// propertyNames reads a JSON `required` array into names, dropping anything
+// that is not a non-empty string.
+func propertyNames(value any) []string {
+	var items []any
+	switch v := value.(type) {
+	case []any:
+		items = v
+	case []string:
+		items = make([]any, len(v))
+		for i, name := range v {
+			items[i] = name
+		}
+	case string:
+		// Models sometimes answer with one comma-separated string.
+		for _, part := range strings.Split(v, ",") {
+			items = append(items, strings.TrimSpace(part))
+		}
+	default:
+		return []string{}
+	}
+
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		if name, ok := item.(string); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // normalizePropertyCrossRefs walks an inferred_schema properties map and flattens
@@ -1775,15 +1873,28 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 		}
 	}
 
-	// Merge properties
+	// Merge properties. A required name only survives if the property itself
+	// did: requiring a field the merged schema cannot offer would make the
+	// extraction prompt demand a value nothing defines (#234).
 	allProperties := make(map[string]any)
 	allExamples := make([]any, 0)
+	requiredUnion := make([]string, 0)
 
 	for _, c := range candidates {
 		for k, v := range c.InferredSchema {
 			allProperties[k] = v
 		}
 		allExamples = append(allExamples, c.ExampleInstances...)
+		requiredUnion = append(requiredUnion, propertyNames([]any(c.RequiredProperties))...)
+	}
+	required := make([]string, 0, len(requiredUnion))
+	seenRequired := make(map[string]bool, len(requiredUnion))
+	for _, name := range requiredUnion {
+		if _, present := allProperties[name]; !present || seenRequired[name] {
+			continue
+		}
+		seenRequired[name] = true
+		required = append(required, name)
 	}
 
 	// Calculate average confidence
@@ -1810,7 +1921,7 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 		Description:        description,
 		Confidence:         avgConfidence,
 		Properties:         allProperties,
-		RequiredProperties: []string{},
+		RequiredProperties: required,
 		ExampleInstances:   allExamples,
 		Frequency:          totalFrequency,
 	}
@@ -2248,6 +2359,18 @@ func toJSONArray(items []any) JSONArray {
 		return JSONArray{}
 	}
 	return JSONArray(items)
+}
+
+// toJSONStringArray converts names into the jsonb array a candidate row stores.
+func toJSONStringArray(names []string) JSONArray {
+	if len(names) == 0 {
+		return JSONArray{}
+	}
+	out := make(JSONArray, len(names))
+	for i, name := range names {
+		out[i] = name
+	}
+	return out
 }
 
 // extractionPrompts is a local mirror of extraction.SchemaExtractionPrompts

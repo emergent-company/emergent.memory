@@ -127,11 +127,151 @@ struct HTTPChatTransportFailureTests {
         ))
         await task.value
 
+        // The drop reports itself at the composer while it is the last word.
+        #expect(transport.errorMessage != nil)
+
         transport.discardInterruptedLiveCopy(in: transcript)
 
         #expect(transport.interruptedTurn == nil)
+        // The record supersedes the partial, so the banner goes with the copy.
+        #expect(transport.errorMessage == nil)
         #expect(transcript.liveMessages.contains { $0.role == .assistant } == false)
         // The user's turn stays: only the assistant copy was superseded.
         #expect(transcript.liveMessages.map(\.role) == [.user])
+    }
+
+    /// A recovered drop clears only its own banner. The composer's banner slot is
+    /// shared by every turn, so a later failure that landed while the wait ran
+    /// has to survive the recovery (#213).
+    @Test func aRecoveredDropDoesNotClearAnotherTurnsBanner() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = HTTPChatTransport(
+            config: MemoryConfig(),
+            stream: SequencedChatStream(turns: [
+                StubTurn(
+                    payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA],
+                    error: URLError(.networkConnectionLost)
+                ),
+                // The second turn's stream ends on its own failure frame.
+                StubTurn(payloads: [#"{"type":"error","error":"Model timed out"}"#]),
+            ]),
+            session: URLSession(configuration: .ephemeral)
+        )
+
+        let first = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await first.value
+        #expect(transport.interruptedTurn != nil)
+
+        // The user sends another turn while the first drop's wait is running; it
+        // fails, and its failure now owns the banner.
+        let second = try #require(transport.send(
+            "and again",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await second.value
+        #expect(transport.errorMessage == "Model timed out")
+
+        // The wait then finds the first reply's record and settles that drop.
+        transport.discardInterruptedLiveCopy(in: transcript)
+
+        #expect(transport.interruptedTurn == nil)
+        // The second turn's failure survives: the user must still see why it
+        // produced nothing.
+        #expect(transport.errorMessage == "Model timed out")
+    }
+
+    /// The deliberate other half of the rule: when the wait gives up, nothing
+    /// settles the drop, so the truncated copy and its banner stay — that banner
+    /// is the only signal the reply was lost (#213).
+    @Test func aDropThatNeverRecoversKeepsItsBanner() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(
+            payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA],
+            error: URLError(.networkConnectionLost)
+        )
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        let interrupted = try #require(transport.interruptedTurn)
+        let banner = try #require(transport.errorMessage)
+        // The banner belongs to this drop, which is what lets a settlement tell
+        // it apart from a later turn's failure.
+        #expect(banner == interrupted.failureMessage)
+
+        // The wait spends its whole window on a record that still holds only the
+        // truncated copy, so it gives up and never settles the drop.
+        let client = SequencedSessionLogClient([.success([
+            SessionRecord(kind: "turn", role: "user", text: "hello"),
+            SessionRecord(kind: "turn", role: "assistant", text: "hi the"),
+        ])])
+        await InterruptedTurnRecovery(client: client, attempts: 2, sleep: { _ in }).run(
+            conversationID: "c1",
+            partialText: interrupted.partialText,
+            baseline: 2,
+            isCurrent: { true },
+            apply: { detail in
+                transcript.loadHistory(from: detail)
+                transport.discardInterruptedLiveCopy(in: transcript)
+            }
+        )
+
+        #expect(client.detailCallCount == 2)
+        // Both the wait's signal and the banner survive the give-up.
+        #expect(transport.interruptedTurn != nil)
+        #expect(transport.errorMessage == banner)
+        // And the text the user already saw is still on screen.
+        #expect(transcript.liveMessages.contains { $0.role == .assistant })
+    }
+}
+
+/// One turn as ``SequencedChatStream`` serves it.
+struct StubTurn {
+    var payloads: [String] = []
+    var error: Error?
+}
+
+/// Serves one turn per `frames` call, so two sends can run through one transport —
+/// the composer banner slot they share is the subject of one test here.
+struct SequencedChatStream: ChatStreaming {
+    let turns: [StubTurn]
+    private let served = ServedTurns()
+
+    func frames(_: ChatTurnRequest) -> AsyncThrowingStream<String, Error> {
+        let next = served.next(of: turns)
+        return AsyncThrowingStream { continuation in
+            for payload in next.payloads {
+                continuation.yield(payload)
+            }
+            continuation.finish(throwing: next.error)
+        }
+    }
+}
+
+/// Hands ``SequencedChatStream`` its turns in order (written from `frames`).
+final class ServedTurns: @unchecked Sendable {
+    private var index = 0
+
+    func next(of turns: [StubTurn]) -> StubTurn {
+        defer { index += 1 }
+        guard !turns.isEmpty else { return StubTurn() }
+        return turns[min(index, turns.count - 1)]
     }
 }

@@ -203,15 +203,22 @@ func TestUsageRouteRangeSelector(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("days=%s status = %d", days, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), days+" day range") {
-			t.Errorf("days=%s range badge missing", days)
+		body := rec.Body.String()
+		if !strings.Contains(body, `href="/usage?days=`+days+`"`) {
+			t.Errorf("days=%s range link missing", days)
+		}
+		if got := strings.Count(body, "btn btn-primary btn-sm join-item"); got != 1 {
+			t.Errorf("days=%s: want exactly one highlighted range link, got %d", days, got)
 		}
 	}
 	// Invalid / absent days fall back to the 30-day default.
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage?days=5", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "30 day range") {
-		t.Errorf("fallback days: status=%d body=%s", rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(body, `href="/usage?days=30"`) ||
+		strings.Count(body, "btn btn-primary btn-sm join-item") != 1 {
+		t.Errorf("fallback days: status=%d body=%s", rec.Code, body)
 	}
 }
 

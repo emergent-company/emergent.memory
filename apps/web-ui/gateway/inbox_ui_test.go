@@ -808,6 +808,50 @@ func TestInboxListPartialFlipsEmptyState(t *testing.T) {
 	}
 }
 
+// TestInboxListPartialRefreshesProjectScopeSwitch pins the second out-of-band
+// fragment: on the Project scope the switch's Project badge is part of the live
+// state, so the list fragment re-renders the switch itself (outerHTML) with the
+// fresh count. Other scopes render no badge and must not carry the extra swap.
+func TestInboxListPartialRefreshesProjectScopeSwitch(t *testing.T) {
+	d := inboxView{
+		Scope:           inboxScopeProject,
+		Tab:             inboxTabAll,
+		Project:         &Project{ID: "p1", Name: "Acme"},
+		ProjectSelected: true,
+		Counts:          &NotificationCounts{All: 1, Unread: 7},
+		Notifications:   []Notification{},
+	}
+	html := renderHTML(t, inboxListPartial(d))
+	for _, want := range []string{
+		`id="inbox-scope-switch"`,
+		`hx-swap-oob="true"`,
+		`data-inbox-scope-switch`,
+		`data-inbox-scope="project"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("project fragment missing OOB scope switch marker %q", want)
+		}
+	}
+
+	// The refreshed Project badge carries the fresh unread count; it appears
+	// after the switch id and before the list region.
+	_, afterSwitch, ok := strings.Cut(html, `id="inbox-scope-switch"`)
+	if !ok {
+		t.Fatal("project fragment has no scope switch")
+	}
+	switchBlock, _, _ := strings.Cut(afterSwitch, `id="inbox-list"`)
+	if !strings.Contains(switchBlock, ">7<") {
+		t.Errorf("scope switch did not refresh the Project badge to 7:\n%s", switchBlock)
+	}
+
+	// The Everything scope renders no Project badge, so its switch is identical
+	// to the page's and the fragment must not carry the extra swap.
+	all := renderHTML(t, inboxListPartial(inboxView{Scope: inboxScopeAll, Tab: inboxTabAll}))
+	if strings.Contains(all, "inbox-scope-switch") {
+		t.Error("non-project fragment must not emit the scope switch out-of-band")
+	}
+}
+
 // TestInboxListPartialProjectWithoutProject asserts a Project scope with no
 // active project renders the select-a-project state and no tab strip (which the
 // page does not render either), so the out-of-band swap has no missing target.

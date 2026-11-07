@@ -8,11 +8,7 @@ import Observation
 /// A seam rather than a concrete client so the transport (and its frame
 /// mapping) is testable without a network: tests feed recorded frames.
 protocol ChatStreaming: Sendable {
-    func frames(
-        conversationID: String?,
-        agentDefinitionID: String?,
-        message: String
-    ) -> AsyncThrowingStream<String, Error>
+    func frames(_ turn: ChatTurnRequest) -> AsyncThrowingStream<String, Error>
 }
 
 /// The live implementation: `POST {gateway}/api/chat` with the device
@@ -25,19 +21,11 @@ struct HTTPChatStreamClient: ChatStreaming {
     let config: MemoryConfig
     var session: URLSession = .shared
 
-    func frames(
-        conversationID: String?,
-        agentDefinitionID: String?,
-        message: String
-    ) -> AsyncThrowingStream<String, Error> {
+    func frames(_ turn: ChatTurnRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let request = try makeRequest(
-                        conversationID: conversationID,
-                        agentDefinitionID: agentDefinitionID,
-                        message: message
-                    )
+                    let request = try makeRequest(turn)
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {
                         throw GatewayError.transport("The chat stream returned no HTTP response.")
@@ -71,29 +59,14 @@ struct HTTPChatStreamClient: ChatStreaming {
         }
     }
 
-    private func makeRequest(
-        conversationID: String?,
-        agentDefinitionID: String?,
-        message: String
-    ) throws -> URLRequest {
+    private func makeRequest(_ turn: ChatTurnRequest) throws -> URLRequest {
         guard let base = config.gatewayBaseURL else {
             throw GatewayError.invalidConfiguration(
                 "Could not derive the chat URL from the token endpoint: \(config.tokenEndpoint)"
             )
         }
         let url = base.appending(path: "api").appending(path: "chat")
-        // Absent fields stay absent: the server creates a conversation when
-        // `conversationId` is missing, and the project default agent is used when
-        // `agentDefinitionId` is. A dictionary keeps that true without a
-        // hand-rolled `CodingKeys` (which would nest a type two levels deep).
-        var fields = ["message": message]
-        if let agentDefinitionID {
-            fields["agentDefinitionId"] = agentDefinitionID
-        }
-        if let conversationID {
-            fields["conversationId"] = conversationID
-        }
-        let body = try JSONEncoder().encode(fields)
+        let body = try JSONEncoder().encode(ChatTurnBody(turn))
         return GatewayHTTP.makeRequest(
             method: "POST",
             url: url,
@@ -154,6 +127,11 @@ final class HTTPChatTransport {
         let liveMessageID: String
         /// What the user already saw, used to recognise the finished reply.
         let partialText: String
+        /// The banner this drop raised. The composer's banner slot is shared by
+        /// every turn, so settling this drop must not clear a later turn's
+        /// failure: `discardInterruptedLiveCopy` only clears the banner when it
+        /// is still this one (`emergent.memory#213`).
+        let failureMessage: String
     }
 
     /// The turn whose reply was cut off mid-stream, set only once text is on
@@ -197,31 +175,40 @@ final class HTTPChatTransport {
     /// Returns immediately with the turn's task (so tests, and anything else
     /// that needs to, can await it) while ``reset()`` can cancel it. One turn at
     /// a time — a second send while streaming is dropped.
+    ///
+    /// A `surfaceAction` sends a click on an A2UI card instead of typed text:
+    /// the message is then empty and the server frames the turn.
     @discardableResult
     func send(
         _ text: String,
+        surfaceAction: ChatSurfaceAction? = nil,
         conversationID: String?,
         agentName: String,
         transcript: ChatSessionTranscriptStore,
         activity: ChatActivityStore
     ) -> Task<Void, Never>? {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, !isStreaming else { return nil }
+        guard !message.isEmpty || surfaceAction != nil, !isStreaming else { return nil }
         if let conversationID, !conversationID.isEmpty {
             self.conversationID = conversationID
         }
         errorMessage = nil
         isStreaming = true
 
-        let userMessageID = "http-user-\(UUID().uuidString)"
-        liveMessages.append(LiveTranscriptMessage(id: userMessageID, role: .user, text: message))
-        transcript.syncLive(liveMessages)
-        activity.userTurnStarted(anchorMessageID: userMessageID)
+        // A surface action has no typed text: the card the user clicked is the
+        // visible turn, and the record holds the framed message on reload.
+        if !message.isEmpty {
+            let userMessageID = "http-user-\(UUID().uuidString)"
+            liveMessages.append(LiveTranscriptMessage(id: userMessageID, role: .user, text: message))
+            transcript.syncLive(liveMessages)
+            activity.userTurnStarted(anchorMessageID: userMessageID)
+        }
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await runTurn(
                 message: message,
+                surfaceAction: surfaceAction,
                 agentName: agentName,
                 transcript: transcript,
                 activity: activity
@@ -259,12 +246,18 @@ final class HTTPChatTransport {
 
     /// Trades the truncated live copy for the finished reply the record now
     /// holds: the record renders on its own, so keeping the partial would stack
-    /// a shorter duplicate underneath it.
+    /// a shorter duplicate underneath it. The banner goes with it — the drop is
+    /// no longer the last word on the turn — but only if that banner is still
+    /// this drop's: the slot is shared, and a later turn may have failed in the
+    /// meantime (`emergent.memory#213`).
     func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
         guard let interrupted = interruptedTurn else { return }
         liveMessages.removeAll { $0.id == interrupted.liveMessageID }
         transcript.syncLive(liveMessages)
         interruptedTurn = nil
+        if errorMessage == interrupted.failureMessage {
+            errorMessage = nil
+        }
     }
 
     // MARK: - Streaming
@@ -278,6 +271,7 @@ final class HTTPChatTransport {
 
     private func runTurn(
         message: String,
+        surfaceAction: ChatSurfaceAction?,
         agentName: String,
         transcript: ChatSessionTranscriptStore,
         activity: ChatActivityStore
@@ -286,11 +280,12 @@ final class HTTPChatTransport {
 
         do {
             let agentID = await resolveAgentDefinitionID(name: agentName)
-            let frames = stream.frames(
+            let frames = stream.frames(ChatTurnRequest(
                 conversationID: conversationID,
                 agentDefinitionID: agentID,
-                message: message
-            )
+                message: message,
+                surfaceAction: surfaceAction
+            ))
             for try await payload in frames {
                 if Task.isCancelled {
                     break
@@ -312,14 +307,18 @@ final class HTTPChatTransport {
             // Stop pressed: keep whatever streamed in.
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = ChatTurnFailure.message(for: error)
+            let failure = ChatTurnFailure.message(for: error)
+            errorMessage = failure
             // Text on screen means the run got going: it is still going
             // server-side and will be recorded when it ends, so the view can
             // wait for the finished reply. Without text there is nothing to
             // recover and nothing to reload.
             interruptedTurn = state.text.isEmpty ? nil : InterruptedTurn(
                 liveMessageID: state.assistantMessageID,
-                partialText: state.text
+                partialText: state.text,
+                // Remembered so settling this drop does not clear a banner a
+                // later turn raised over the same slot.
+                failureMessage: failure
             )
             activity.markReplyFinished()
         }

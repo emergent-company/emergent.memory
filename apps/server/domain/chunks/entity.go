@@ -31,6 +31,8 @@ type Chunk struct {
 // ChunkMetadata contains metadata about how the chunk was created
 type ChunkMetadata struct {
 	Strategy     string `json:"strategy,omitempty"`     // recursive_character, markdown_structure
+	Shape        string `json:"shape,omitempty"`        // detected document shape when auto-profile chose the parameters
+	AutoProfile  bool   `json:"autoProfile,omitempty"`  // parameters came from the shape profile, not the project config
 	StartOffset  int    `json:"startOffset,omitempty"`  // Character offset in original document
 	EndOffset    int    `json:"endOffset,omitempty"`    // Character offset in original document
 	BoundaryType string `json:"boundaryType,omitempty"` // sentence, paragraph, character, section

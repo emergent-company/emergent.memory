@@ -24,6 +24,7 @@ func configurationProblem() ProcessingProblem {
 			Retryable:   true,
 			Verified:    true,
 			Model:       "openai/deepseek-v4-flash",
+			ModelType:   "generative",
 			Fix:         &ProcessingProblemFix{Href: "/settings/providers", Label: "Review model settings"},
 		},
 	}
@@ -134,6 +135,7 @@ func TestPanelTestsTheEmbeddingModelForAnEmbeddingFailure(t *testing.T) {
 	p.Area = "documents"
 	p.Label = "Chunk embedding"
 	p.Failure.Model = "openai/text-embedding-3-small"
+	p.Failure.ModelType = "embedding"
 	p.Failure.Cause = "model_unusable"
 	p.Failure.Summary = "An embedding model is configured (openai/text-embedding-3-small), but this run could not use it."
 
@@ -153,6 +155,55 @@ func TestPanelTestsTheEmbeddingModelForAnEmbeddingFailure(t *testing.T) {
 	}
 }
 
+// The server owns the queue → model-family mapping. The panel must use the
+// family on the payload even when it disagrees with the queue, so a second copy
+// of the map here cannot drift: a queue switch would post the generative field.
+func TestPanelUsesTheServersModelFamilyNotTheQueue(t *testing.T) {
+	p := configurationProblem()
+	p.Queue = "object_extraction"
+	p.Area = "documents"
+	p.Failure.Model = "openai/text-embedding-3-small"
+	p.Failure.ModelType = "embedding"
+
+	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(p), CanManage: true})
+
+	for _, want := range []string{
+		`name="model_type" value="embedding"`,
+		`name="embedding_model" value="openai/text-embedding-3-small"`,
+		"Test model",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("panel missing %q\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `name="generative_model"`) {
+		t.Errorf("panel re-derived the model family from the queue instead of using the payload:\n%s", html)
+	}
+}
+
+// An unknown family must omit the test form. The old lookup returned "" and
+// rendered <input name="" ...>, which posts nowhere and hides the bug.
+func TestPanelOmitsModelTestForUnknownModelType(t *testing.T) {
+	p := configurationProblem()
+	p.Failure.ModelType = "reranker"
+
+	if field, ok := processingProblemTestModelField(p); ok || field != "" {
+		t.Fatalf("field, ok = %q, %v for an unknown model type; want omitted", field, ok)
+	}
+
+	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(p), CanManage: true})
+
+	if strings.Contains(html, "Test model") {
+		t.Errorf("unknown model type still offered the test:\n%s", html)
+	}
+	if strings.Contains(html, `name=""`) {
+		t.Errorf("unknown model type rendered an empty field name:\n%s", html)
+	}
+	if !strings.Contains(html, "Review model settings") {
+		t.Errorf("unknown model type lost the fix link:\n%s", html)
+	}
+}
+
 // A rejected credential now carries the model it is about, so the row can name
 // it and offer the live test — but the copy and the disclosure stay the
 // classifier's, because the cause was read from the error, not checked.
@@ -164,6 +215,7 @@ func TestPanelNamesTheModelOnARejectedKey(t *testing.T) {
 		Remediation: "Update the provider's API key in Project settings → Providers, then retry.",
 		Retryable:   false,
 		Model:       "openai/deepseek-v4-flash",
+		ModelType:   "generative",
 		Fix:         &ProcessingProblemFix{Href: "/settings/providers", Label: "Reconnect provider"},
 	}
 

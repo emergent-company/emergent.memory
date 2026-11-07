@@ -82,6 +82,31 @@ func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	return sidebarGroupsWithWarn(base, isOrgAdmin, 0)
 }
 
+// sidebarSettingsHref reports whether href points at the sidebar's Settings hub
+// for any link base — "/settings" unscoped, "/o/{org}/settings" for an org
+// scope, "/o/{org}/p/{project}/settings" for a project scope. It exists so the
+// no-provider warning binds to the hub without depending on the base value (a
+// base is always prepended by sidebarGroupsWithWarn). A plain suffix test is
+// not enough: the same nav also carries "<base>/work/settings" (Work Settings)
+// and settings sub-pages such as "<base>/settings/approvals".
+func sidebarSettingsHref(href string) bool {
+	path := href
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	if path == "/settings" {
+		return true
+	}
+	if m := scopePathRe.FindStringSubmatch(path); m != nil {
+		rest := m[3]
+		if rest == "" {
+			rest = "/"
+		}
+		return rest == "/settings"
+	}
+	return false
+}
+
 // sidebarGroupsWithWarn is sidebarGroups plus the Documents attention badge.
 // The badge counts document-related terminal failures only (extraction,
 // conversion, chunk embeddings); other areas surface in the Documents panel
@@ -308,7 +333,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	w, r := c.Response().Writer, c.Request()
 	// Scope base for link generation and the pre-rewrite path for sidebar
 	// active-state matching. Both come from the scope stashed by scopeRewrite;
-	// an unscoped request leaves the base empty (legacy absolute links).
+	// an unscoped request leaves the content base empty (legacy absolute links).
 	linkBase := ""
 	activePath := r.URL.Path
 	if rs, ok := scopeFromContext(r.Context()); ok {
@@ -383,12 +408,35 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 			}
 		}
 	}
+	// The project nav also renders on a global page (account, org list) when the
+	// session has an active project, but those pages carry no scope prefix, so
+	// linkBase is empty there. Emitting the nav with unscoped hrefs would 404
+	// every click under the session-mode hard cut — hidden in practice because
+	// boosted navigation keeps the previous page's scoped sidebar DOM until a
+	// full load re-renders the shell. Carry the session's active project into the
+	// *nav* base, i.e. the scope boosted navigation already preserves. The
+	// content base stays linkBase: a global page's own forms and links (invite
+	// accept/decline, org create) are deliberately global.
+	navBase := linkBase
+	suppressProjectNav := false
+	if navBase == "" && activeProjectID != "" {
+		orgID := activeOrgID
+		if current != nil && current.OrgID != "" {
+			orgID = current.OrgID
+		}
+		navBase = projectScopeURL(orgID, activeProjectID)
+		// Never emit a project nav whose hrefs the session-mode hard cut would
+		// 404: if no project base can be resolved for an unscoped page, drop the
+		// nav entirely rather than fall back to flat links. (Dev mode has no
+		// session and keeps its legacy unscoped links by design.)
+		suppressProjectNav = navBase == "" && s.cfg.AuthMode == "session"
+	}
 	// Sidebar selection by context: project → project nav; org → org nav;
 	// none → no sidebar (wizard / account pages). The governing org's admin
 	// role (from the access tree) gates the Backups and Members entries.
 	var groups []layout.SidebarGroup
 	providersMissing := false
-	if activeProjectID != "" {
+	if activeProjectID != "" && !suppressProjectNav {
 		// The active project's owning org governs the Backups gate. Fall back
 		// to the session org when the project list didn't resolve (best-effort).
 		backupsOrgID := activeOrgID
@@ -404,7 +452,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			documentsWarn = processingDocumentsCount(report)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(linkBase, isOrgAdmin(tree, backupsOrgID), documentsWarn), activePath)
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(navBase, isOrgAdmin(tree, backupsOrgID), documentsWarn), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())

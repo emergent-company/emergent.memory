@@ -377,10 +377,7 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 			continue
 		}
 
-		var schemas map[string]struct {
-			InverseType  string `json:"inverseType"`
-			InverseLabel string `json:"inverseLabel"`
-		}
+		var schemas map[string]relationshipTypeSchema
 		if err := json.Unmarshal(row.RelationshipTypeSchemas, &schemas); err != nil {
 			p.log.Warn("failed to parse relationship type schemas",
 				slog.String("project_id", projectID),
@@ -391,20 +388,16 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		for relType, schema := range schemas {
 			// Normalize the forward type key so it matches the stored type
 			// (CreateRelationship always writes lower_snake_case via normalizeRelationType).
-			normalizedKey := labelToTypeKey(relType) // "EX_SPOUSE_OF" → "ex_spouse_of"
-			if schema.InverseType != "" {
-				inverseMap[normalizedKey] = labelToTypeKey(schema.InverseType)
-			} else if schema.InverseLabel != "" {
-				// Derive the inverse type key from the human-readable label when
-				// inverseType is not explicitly set. Converts "Has Employees" → "has_employees".
-				derived := labelToTypeKey(schema.InverseLabel)
-				if derived != "" {
-					inverseMap[normalizedKey] = derived
-					p.log.Debug("derived inverse type from inverseLabel",
-						slog.String("rel_type", normalizedKey),
-						slog.String("inverse_label", schema.InverseLabel),
-						slog.String("derived_type", derived))
-				}
+			normalizedKey, inverse, derived := inverseEntry(relType, schema)
+			if normalizedKey == "" {
+				continue
+			}
+			inverseMap[normalizedKey] = inverse
+			if derived {
+				p.log.Debug("derived inverse type from inverseLabel",
+					slog.String("rel_type", normalizedKey),
+					slog.String("inverse_label", schema.InverseLabel),
+					slog.String("derived_type", inverse))
 			}
 		}
 	}
@@ -421,23 +414,71 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 	return inverseMap
 }
 
-// labelToTypeKey converts a human-readable relationship label to a snake_case type key.
-// E.g. "Has Employees" → "has_employees", "CHILD_OF" → "child_of".
-// Returns empty string if the input is blank.
+// relationshipTypeSchema is the subset of a pack's relationship-type schema the
+// inverse map needs.
+type relationshipTypeSchema struct {
+	InverseType  string `json:"inverseType"`
+	InverseLabel string `json:"inverseLabel"`
+}
+
+// inverseEntry maps one declared relationship type to the (lookup key, inverse
+// type) pair GetInverseType answers with, and reports whether the inverse was
+// derived from the human-readable label.
+//
+// Both sides are type keys that are compared against, or written as, a STORED
+// type: maybeCreateInverse looks the map up with the normalised write type, and
+// the value it returns is itself written through CreateRelationship. They
+// therefore use the write path's normaliser, not the label conversion — keying
+// them with the weaker helper made a pack declaring `inverseType: hasEmployees`
+// store "hasemployees" against a stored "has_employees", so the lookup missed
+// silently and no inverse relationship was ever created (#198).
+//
+// Only inverseLabel is human text, so only it goes through labelToTypeKey.
+func inverseEntry(relType string, schema relationshipTypeSchema) (key, inverse string, derived bool) {
+	key = normalizeRelationType(strings.TrimSpace(relType))
+	if key == "" {
+		return "", "", false
+	}
+	if schema.InverseType != "" {
+		// Trim first: a declaration padded with whitespace would otherwise become
+		// "_has_employees_" (normalizeRelationType only maps inner spaces), and a
+		// whitespace-only declaration would pass the empty guard below.
+		if inverse := normalizeRelationType(strings.TrimSpace(schema.InverseType)); inverse != "" {
+			return key, inverse, false
+		}
+	}
+	if schema.InverseLabel != "" {
+		if inv := labelToTypeKey(schema.InverseLabel); inv != "" {
+			return key, inv, true
+		}
+	}
+	return "", "", false
+}
+
+// labelToTypeKey converts a human-readable relationship label to a snake_case
+// type key. E.g. "Has Employees" → "has_employees", "CHILD_OF" → "child_of",
+// "hasEmployees" → "has_employees".
+//
+// The camelCase split matters (#198): an inverseLabel is converted here and the
+// result is written back as a relationship type through CreateRelationship, so
+// it has to agree with normalizeRelationType — "hasemployees" would never match
+// a stored "has_employees". Declared type keys (the forward type and
+// inverseType) are converted by inverseEntry directly.
 func labelToTypeKey(label string) string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return ""
 	}
-	// Lowercase and replace spaces/hyphens with underscores.
-	key := strings.ToLower(label)
-	key = strings.ReplaceAll(key, " ", "_")
+	// Human labels use spaces and hyphens where a type key uses underscores.
+	// This runs before normalizeRelationType, which splits camelCase but knows
+	// nothing about hyphens or repeated separators.
+	key := strings.ReplaceAll(label, " ", "_")
 	key = strings.ReplaceAll(key, "-", "_")
 	// Collapse consecutive underscores.
 	for strings.Contains(key, "__") {
 		key = strings.ReplaceAll(key, "__", "_")
 	}
-	return key
+	return normalizeRelationType(key)
 }
 
 // objectSchemaFromMap converts a single decoded object-type definition (the
