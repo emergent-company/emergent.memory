@@ -1352,6 +1352,97 @@ templ mcpServersScript() {
 				try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { return t; }
 			}
 
+			// JSON highlighter for MCP tool invoke results.
+			//
+			// Tool output is untrusted, so every token is an element whose
+			// text is set via textContent (or a document.createTextNode); this
+			// path never injects markup through an HTML-parsing sink. The
+			// highlighter runs only after JSON.parse succeeds, and only below
+			// jsonHighlightLimit, so a very large response or plain text keeps
+			// the unhighlighted baseline.
+			var jsonHighlightLimit = 200 * 1024; // 200 KB of pretty-printed text
+
+			function jsonTokenSpan(cls, text) {
+				var el = document.createElement('span');
+				el.className = cls;
+				el.textContent = text;
+				return el;
+			}
+
+			// jsonTokenNodes splits already-parsed, pretty-printed JSON into
+			// text nodes and token spans. Whitespace is preserved verbatim, so
+			// pre.textContent still equals the copyable JSON exactly.
+			function jsonTokenNodes(text) {
+				var nodes = [];
+				var i = 0, n = text.length;
+				function isSpace(c) { return c === ' ' || c === '\t' || c === '\n' || c === '\r'; }
+				function isDigit(c) { return c >= '0' && c <= '9'; }
+				while (i < n) {
+					var c = text.charAt(i);
+					if (c === '"') {
+						var start = i;
+						i++;
+						while (i < n) {
+							var ch = text.charAt(i);
+							if (ch === '\\') { i += 2; continue; }
+							i++;
+							if (ch === '"') break;
+						}
+						var raw = text.slice(start, i);
+						var j = i;
+						while (j < n && isSpace(text.charAt(j))) j++;
+						nodes.push(jsonTokenSpan(text.charAt(j) === ':' ? 'text-info' : 'text-success', raw));
+						continue;
+					}
+					if (c === '-' || isDigit(c)) {
+						var numStart = i;
+						i++;
+						while (i < n) {
+							var nc = text.charAt(i);
+							if (isDigit(nc) || nc === '.' || nc === 'e' || nc === 'E' || nc === '+' || nc === '-') i++;
+							else break;
+						}
+						nodes.push(jsonTokenSpan('text-warning', text.slice(numStart, i)));
+						continue;
+					}
+					if (text.substr(i, 4) === 'true') { nodes.push(jsonTokenSpan('text-primary', 'true')); i += 4; continue; }
+					if (text.substr(i, 5) === 'false') { nodes.push(jsonTokenSpan('text-primary', 'false')); i += 5; continue; }
+					if (text.substr(i, 4) === 'null') { nodes.push(jsonTokenSpan('text-primary', 'null')); i += 4; continue; }
+					if (c === '{' || c === '}' || c === '[' || c === ']' || c === ',' || c === ':') {
+						nodes.push(jsonTokenSpan('text-base-content/50', c));
+						i++;
+						continue;
+					}
+					var ws = i;
+					while (i < n && isSpace(text.charAt(i))) i++;
+					if (i > ws) {
+						nodes.push(document.createTextNode(text.slice(ws, i)));
+						continue;
+					}
+					// jsonTokenNodes only sees text JSON.parse accepted; keep
+					// any unexpected byte literal rather than dropping it.
+					nodes.push(document.createTextNode(c));
+					i++;
+				}
+				return nodes;
+			}
+
+			// highlightJSONText writes the pretty-printed text into pre, then
+			// replaces it with token nodes only when the text is valid JSON and
+			// within the size guard. It returns true when highlighting applied.
+			function highlightJSONText(pre, raw) {
+				var text = prettyJSONText(raw);
+				pre.textContent = text;
+				if (text.length > jsonHighlightLimit) return false;
+				try { JSON.parse(text); } catch (e) { return false; }
+				var nodes = jsonTokenNodes(text);
+				if (!nodes.length) return false;
+				pre.textContent = '';
+				for (var i = 0; i < nodes.length; i++) pre.appendChild(nodes[i]);
+				return true;
+			}
+			// End JSON highlighter.
+
 			async function runInvoke(btn) {
 				var dlg = btn.closest('dialog');
 				if (!dlg) return;
@@ -1418,7 +1509,7 @@ templ mcpServersScript() {
 					if (b.type === 'text') {
 						var pre = document.createElement('pre');
 						pre.className = 'mt-1 max-h-80 overflow-auto break-words whitespace-pre-wrap font-mono text-[11px] leading-relaxed';
-						pre.textContent = prettyJSONText(b.text || '');
+						highlightJSONText(pre, b.text || '');
 						wrap.appendChild(pre);
 						rendered++;
 					} else {
@@ -1432,7 +1523,7 @@ templ mcpServersScript() {
 				if (!rendered && r && r.structuredContent) {
 					var pre = document.createElement('pre');
 					pre.className = 'mt-1 max-h-80 overflow-auto break-words whitespace-pre-wrap font-mono text-[11px] leading-relaxed';
-					pre.textContent = prettyJSONText(JSON.stringify(r.structuredContent));
+					highlightJSONText(pre, JSON.stringify(r.structuredContent));
 					wrap.appendChild(pre);
 					rendered++;
 				}
