@@ -48,6 +48,11 @@ type ExtractedRelationship struct {
 	Type string `json:"type"`
 	// Description is an optional description of the relationship.
 	Description string `json:"description,omitempty"`
+	// Properties holds the relationship-level attributes the type declares
+	// (e.g. a meeting attendance's `role`). Write-time validation enforces
+	// the declared schema, so a property the prompt never asks for cannot be
+	// extracted.
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 // RelationshipExtractionOutput is the output schema for relationship extraction.
@@ -131,6 +136,10 @@ func RelationshipExtractionSchema() *genai.Schema {
 						"description": {
 							Type:        genai.TypeString,
 							Description: "Optional description of this specific relationship instance",
+						},
+						"properties": {
+							Type:        genai.TypeObject,
+							Description: "Relationship-level attributes declared for the chosen relationship type (e.g. role, response_status)",
 						},
 					},
 				},
@@ -239,6 +248,10 @@ func BuildRelationshipSchemaFromMemorySchema(relationshipSchemas map[string]Rela
 						"description": {
 							Type:        genai.TypeString,
 							Description: "Description of this specific relationship instance",
+						},
+						"properties": {
+							Type:        genai.TypeObject,
+							Description: "Relationship-level attributes declared for the chosen relationship type",
 						},
 					},
 				},
