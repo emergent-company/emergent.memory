@@ -2294,7 +2294,7 @@ func (s *Service) GetToolByName(name string) *ToolDefinition {
 	// A caller can resolve a tool without ever listing the catalog (share
 	// template resolution does). Build the index on demand so a name lookup
 	// never silently reports "no such tool".
-	s.ensureToolIndex()
+	s.GetToolDefinitions()
 	return lookupToolIndex(name)
 }
 
@@ -2310,17 +2310,6 @@ func lookupToolIndex(name string) *ToolDefinition {
 		}
 	}
 	return nil
-}
-
-// ensureToolIndex builds the global tool index when it is empty.
-func (s *Service) ensureToolIndex() {
-	toolIndexMu.RLock()
-	empty := len(toolIndex) == 0
-	toolIndexMu.RUnlock()
-	if empty {
-		// GetToolDefinitions builds the index as a side effect.
-		s.GetToolDefinitions()
-	}
 }
 
 // ErrToolForbidden is returned by AuthorizeToolCall when a caller is not

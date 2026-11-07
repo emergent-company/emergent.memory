@@ -472,16 +472,18 @@ Consolidated tools (`action` selects the operation):
 | `token` | `projects:write` | `list`, `get` |
 | `token-write` | `projects:write` | `create`, `revoke` |
 
-That is 29 consolidated tools. 135 per-verb definitions collapse to 56; the
-project endpoint advertises 41 of them (the operator tools stay superadmin-only
-and are listed per-verb on the admin surface).
+That is 29 consolidated tools. 135 per-verb definitions collapse to 56; 41 of
+them are visible to a project token before the per-project enrichment below (the
+other 15 are 12 superadmin-only and 3 agent-only tools, and both sets keep their
+per-verb names on the surface that serves them). A project's endpoint adds its
+registry and relay tools on top of that.
 
 Tools that had no sibling keep their name: `relationship-list`,
-`session-get-messages`, `remember`, `forget`, `remember-status`, `search-knowledge`, `journal-list`,
-`journal-add-note`, `agent-hook-list`, `agent-question-respond`,
-`web-search-brave`, `web-fetch`, `web-search-reddit`, the `embedding-*`,
-`provider-*` and `trace-*` operator tools (their surface is the admin endpoint,
-which stays per-verb) and the `mcp-*` registry tools.
+`session-get-messages`, `remember`, `forget`, `remember-status`,
+`search-knowledge`, `journal-list`, `journal-add-note`, `agent-hook-list`,
+`agent-question-respond`, `web-search-brave`, `web-fetch`, `web-search-reddit`,
+the `embedding-*`, `provider-*` and `trace-*` operator tools (their surface is
+the admin endpoint, which stays per-verb) and the `mcp-*` registry tools.
 
 Authority is the strictest of the folded tools: a family that folds an
 operator-only or agent-only tool stays operator-only / agent-only, and a family
