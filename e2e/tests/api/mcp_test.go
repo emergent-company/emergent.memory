@@ -320,7 +320,9 @@ func TestMCP_RPC_ToolsList(t *testing.T) {
 		tool := tt.(map[string]any)
 		toolNames[tool["name"].(string)] = true
 	}
-	for _, name := range []string{"schema-version", "entity-type-list", "entity-query", "entity-search"} {
+	// Consolidated catalog names (see domain/mcp/consolidated_catalog.go); the
+	// legacy per-verb names remain callable as aliases but are not advertised.
+	for _, name := range []string{"schema", "entity", "search", "project"} {
 		if !toolNames[name] {
 			t.Errorf("expected tool %q", name)
 		}

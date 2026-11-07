@@ -141,10 +141,12 @@ func TestMCPSSE_ToolsList_DiscoverAll18Tools(t *testing.T) {
 		tool := tt.(map[string]any)
 		toolNames[tool["name"].(string)] = true
 	}
-	expected := []string{
-		"schema-version", "entity-type-list", "entity-query", "entity-search",
-		"schema-list", "schema-get", "schema-list-available", "schema-list-installed",
-	}
+	// tools/list advertises the consolidated catalog: one tool per resource and
+	// permission pair, with an `action` argument selecting the operation. The
+	// pre-consolidation per-verb names are still callable as deprecated aliases
+	// but are deliberately not advertised any more, so assert on the
+	// consolidated names.
+	expected := []string{"schema", "schema-types", "entity", "search"}
 	for _, name := range expected {
 		if !toolNames[name] {
 			t.Errorf("expected tool %q", name)
