@@ -117,6 +117,26 @@ func TestDetectShape(t *testing.T) {
 			want: ShapeProse,
 		},
 		{
+			// #278: a plan with structured metadata labels (Status/Owner/Risk) must
+			// not be read as a transcript. These extra labels used to register as
+			// distinct "speaker" names and defeat the single-repeating-label guard.
+			name: "plan with status owner risk labels is not a transcript",
+			text: "Objective: cut latency.\nObjective: cut cost.\nObjective: ship the API.\n" +
+				"Objective: fix the flaky test.\nObjective: document the schema.\n" +
+				"Objective: onboard the team.\nObjective: close the audit.\n" +
+				"Objective: publish the release.\n" +
+				"Status: draft\nOwner: platform\nRisk: high\n",
+			want: ShapeProse,
+		},
+		{
+			name: "plan with priority assignee due labels is not a transcript",
+			text: "Objective: ship the API.\nObjective: document the schema.\n" +
+				"Objective: close the audit.\nObjective: publish the release.\n" +
+				"Objective: onboard the team.\nObjective: fix the flaky test.\n" +
+				"Objective: cut cost.\nPriority: P1\nAssignee: platform\nDue: Friday\n",
+			want: ShapeProse,
+		},
+		{
 			name: "glossary with repeated term labels",
 			text: "Term: chunk.\nTerm: embedding.\nTerm: namespace.\nTerm: projection.\n" +
 				"Term: branch.\nTerm: journal.\nTerm: schema.\nTerm: retrieval.\n",
@@ -319,6 +339,13 @@ func TestIsSpeakerAndTimestampLines(t *testing.T) {
 		"Example: curl it",
 		"Question: is it fast?",
 		"Answer: yes",
+		// Plan metadata labels are structural, not speakers (#278).
+		"Status: draft",
+		"Owner: platform",
+		"Risk: high",
+		"Priority: P1",
+		"Assignee: platform",
+		"Due: Friday",
 	}
 	for _, line := range notSpeakers {
 		if got := speakerName(line); got != "" {

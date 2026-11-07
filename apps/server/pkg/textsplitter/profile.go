@@ -324,6 +324,14 @@ var labelPrefixes = map[string]struct{}{
 	"result": {}, "results": {}, "section": {}, "step": {}, "steps": {},
 	"summary": {}, "table": {}, "task": {}, "tip": {}, "tips": {}, "todo": {},
 	"warning": {}, "warnings": {},
+	// Plan/task metadata labels. A plan uses "Objective:", "Status:", "Owner:",
+	// "Risk:", "Priority:", "Assignee:", "Due:" etc. as structural fields, not
+	// speaker turns. Treating them as turns is what made a plan with one repeated
+	// label plus these extra fields look like a multi-speaker transcript (#278).
+	"acceptance": {}, "assignee": {}, "blocker": {}, "criteria": {}, "deadline": {},
+	"decision": {}, "decisions": {}, "deliverable": {}, "due": {}, "estimate": {},
+	"milestone": {}, "objective": {}, "outcome": {}, "owner": {}, "priority": {},
+	"risk": {}, "status": {},
 }
 
 func isLabelPrefix(word string) bool {
