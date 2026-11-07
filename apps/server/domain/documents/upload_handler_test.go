@@ -201,13 +201,18 @@ func TestValidateUploadContent(t *testing.T) {
 		{"pdf", "application/pdf", "report.pdf", 12, 0},
 		{"legacy office on a generic sniff", "application/octet-stream", "legacy.doc", 900, 0},
 		{"audio is transcribed", "audio/mpeg", "call.mp3", 900, 0},
+		// What a browser or curl actually sends: parameters on text, and a
+		// generic sniff for flac/opus or a video type for webm.
+		{"text with a charset parameter", "text/plain; charset=utf-8", "notes.log", 11, 0},
+		{"flac on a generic sniff", "application/octet-stream", "memo.flac", 900, 0},
+		{"webm voice memo", "video/webm", "memo.webm", 900, 0},
 		{"random binary", "application/octet-stream", "data.bin", 4096, http.StatusUnsupportedMediaType},
 		{"binary without extension", "application/octet-stream", "blob", 4096, http.StatusUnsupportedMediaType},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateUploadContent(tt.mimeType, tt.filename, tt.size)
+			err := ValidateUploadContent(tt.mimeType, tt.filename, tt.size)
 			if tt.wantCode == 0 {
 				assert.NoError(t, err)
 				return

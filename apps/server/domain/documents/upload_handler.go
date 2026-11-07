@@ -158,7 +158,7 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	if err := h.validateMIMEType(mimeType); err != nil {
 		return err
 	}
-	if err := validateUploadContent(mimeType, file.Filename, n); err != nil {
+	if err := ValidateUploadContent(mimeType, file.Filename, n); err != nil {
 		return err
 	}
 
@@ -319,7 +319,7 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 		errMsg := "file type not allowed: " + mimeType
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
 	}
-	if err := validateUploadContent(mimeType, filename, n); err != nil {
+	if err := ValidateUploadContent(mimeType, filename, n); err != nil {
 		errMsg := err.Error()
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
 	}
@@ -411,7 +411,7 @@ func (h *UploadHandler) UploadForRemember(ctx context.Context, orgID, projectID,
 	if err := h.validateMIMEType(mimeType); err != nil {
 		return nil, err
 	}
-	if err := validateUploadContent(mimeType, filename, n); err != nil {
+	if err := ValidateUploadContent(mimeType, filename, n); err != nil {
 		return nil, err
 	}
 
@@ -488,19 +488,21 @@ func detectMIMEType(header interface{ Get(string) string }, data []byte, filenam
 // Ensure textproto.MIMEHeader satisfies the detectMIMEType interface at compile time.
 var _ interface{ Get(string) string } = textproto.MIMEHeader{}
 
-// validateUploadContent rejects files the parsing pipeline cannot turn into
+// ValidateUploadContent rejects files the parsing pipeline cannot turn into
 // text: an empty file, or a binary no parser supports. Without this guard the
 // upload is stored, parsing "succeeds" with empty content, and the document
 // renders Ready with zero chunks — the failure surfaces much later as a
 // permanent extraction error, with nothing pointing at the upload (#243).
-func validateUploadContent(mimeType, filename string, size int64) error {
+func ValidateUploadContent(mimeType, filename string, size int64) error {
 	if size <= 0 {
 		return apperror.New(http.StatusBadRequest, "empty_file",
 			"file is empty: upload a file with text content")
 	}
 	// Audio is transcribed by Whisper; every other format must be readable by
 	// the text pipeline (plain text, email, or an Xberg-supported document).
-	if strings.HasPrefix(mimeType, "audio/") || xberg.CanExtract(mimeType, filename) {
+	// Both predicates live in pkg/xberg so this guard cannot disagree with the
+	// worker about what it will accept.
+	if xberg.CanExtract(mimeType, filename) || xberg.IsAudioFile(mimeType, filename) {
 		return nil
 	}
 	return apperror.New(http.StatusUnsupportedMediaType, "unsupported_media_type",

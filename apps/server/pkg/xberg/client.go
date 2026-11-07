@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -542,7 +543,51 @@ var XbergSupportedExtensions = map[string]bool{
 	".zip": true, ".tar": true, ".gz": true, ".tgz": true, ".7z": true,
 }
 
-// CanExtract reports whether the parsing pipeline has a reader for an upload:
+// audioExtensions are the extensions the speech-to-text path can transcribe.
+// A browser or curl sends a generic Content-Type for some of them (.flac and
+// .opus sniff as application/octet-stream, .m4a and .webm as video/*), so the
+// extension is the only reliable evidence.
+var audioExtensions = map[string]bool{
+	".mp3":  true,
+	".wav":  true,
+	".m4a":  true,
+	".ogg":  true,
+	".flac": true,
+	".aac":  true,
+	".opus": true,
+	".webm": true,
+}
+
+// IsAudioFile reports whether the speech-to-text path should read the upload.
+// This is the same predicate the parsing worker dispatches on, so an upload the
+// worker would transcribe is never rejected by the upload guard.
+func IsAudioFile(mimeType, filename string) bool {
+	if strings.HasPrefix(normalizeMIMEType(mimeType), "audio/") {
+		return true
+	}
+	if filename == "" {
+		return false
+	}
+	return audioExtensions[strings.ToLower(filepath.Ext(filename))]
+}
+
+// normalizeMIMEType strips media-type parameters and lowercases the result.
+// Sniffing and browsers attach parameters routinely ("text/plain; charset=utf-8"),
+// and every MIME set in this package keys on the bare type.
+func normalizeMIMEType(mimeType string) string {
+	if mimeType == "" {
+		return ""
+	}
+	if mediaType, _, err := mime.ParseMediaType(mimeType); err == nil {
+		return strings.ToLower(mediaType)
+	}
+	if i := strings.IndexByte(mimeType, ';'); i >= 0 {
+		mimeType = mimeType[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(mimeType))
+}
+
+// CanExtract reports whether the text pipeline has a reader for an upload:
 // plain text (by MIME type or extension), an email, or a binary format Xberg
 // supports by MIME type or extension. An unrecognised binary — random bytes,
 // or a renamed blob — returns false, because storing it only produces a
@@ -552,6 +597,11 @@ func CanExtract(mimeType, filename string) bool {
 		return true // plain text, read directly
 	}
 	if IsEmailFile(mimeType, filename) {
+		return true
+	}
+	// Any text/* type is readable even when it is not in the plain-text set
+	// (text/x-python, text/x-shellscript from a client that names the type).
+	if strings.HasPrefix(normalizeMIMEType(mimeType), "text/") {
 		return true
 	}
 	if IsXbergSupported(mimeType) {
@@ -566,7 +616,7 @@ func CanExtract(mimeType, filename string) bool {
 // ShouldUseXberg determines if a file should be processed by Xberg
 func ShouldUseXberg(mimeType, filename string) bool {
 	// Check MIME type first
-	if mimeType != "" && PlainTextMIMETypes[mimeType] {
+	if m := normalizeMIMEType(mimeType); m != "" && PlainTextMIMETypes[m] {
 		return false
 	}
 
@@ -585,7 +635,7 @@ func ShouldUseXberg(mimeType, filename string) bool {
 // IsEmailFile checks if a file is an email file that should use native parser
 func IsEmailFile(mimeType, filename string) bool {
 	// Check MIME type first
-	if mimeType != "" && EmailMIMETypes[mimeType] {
+	if m := normalizeMIMEType(mimeType); m != "" && EmailMIMETypes[m] {
 		return true
 	}
 
@@ -602,5 +652,5 @@ func IsEmailFile(mimeType, filename string) bool {
 
 // IsXbergSupported checks if a MIME type is supported by Xberg
 func IsXbergSupported(mimeType string) bool {
-	return XbergSupportedMIMETypes[mimeType]
+	return XbergSupportedMIMETypes[normalizeMIMEType(mimeType)]
 }

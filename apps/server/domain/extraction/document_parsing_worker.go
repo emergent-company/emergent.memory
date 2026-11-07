@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -285,7 +284,7 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 
 	// Check processing path
 	isEmail := xberg.IsEmailFile(mimeType, filename)
-	isAudio := !isEmail && isAudioFile(mimeType, filename)
+	isAudio := !isEmail && xberg.IsAudioFile(mimeType, filename)
 	useXberg := !isEmail && !isAudio && xberg.ShouldUseXberg(mimeType, filename)
 
 	var parsedContent string
@@ -455,28 +454,6 @@ func (w *DocumentParsingWorker) extractWithXberg(ctx context.Context, storageKey
 	}
 
 	return result.Content, nil
-}
-
-// audioExtensions is the set of file extensions treated as audio regardless of MIME type
-var audioExtensions = map[string]bool{
-	".mp3":  true,
-	".wav":  true,
-	".m4a":  true,
-	".ogg":  true,
-	".flac": true,
-	".aac":  true,
-	".opus": true,
-	".webm": true,
-}
-
-// isAudioFile returns true if the file should be treated as audio.
-// It checks the MIME type prefix first, then falls back to the file extension.
-func isAudioFile(mimeType, filename string) bool {
-	if strings.HasPrefix(mimeType, "audio/") {
-		return true
-	}
-	ext := strings.ToLower(filepath.Ext(filename))
-	return audioExtensions[ext]
 }
 
 // extractWithWhisper downloads an audio file and sends it to Whisper for transcription.

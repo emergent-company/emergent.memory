@@ -347,6 +347,12 @@ func TestCanExtract(t *testing.T) {
 		{"unknown binary", "application/octet-stream", "data.bin", false},
 		{"unknown binary without extension", "application/octet-stream", "blob", false},
 		{"unknown text-ish type", "application/x-made-up", "thing.xyz", false},
+		// Sniffing and browsers attach parameters; every set in this package
+		// keys on the bare media type.
+		{"plain text with charset parameter", "text/plain; charset=utf-8", "notes.log", true},
+		{"plain text without a known extension", "text/plain; charset=utf-8", "README", true},
+		{"pdf with a parameter", "application/pdf; charset=binary", "report.pdf", true},
+		{"client-named text subtype", "text/x-python", "script.py", true},
 	}
 
 	for _, tt := range tests {
@@ -355,6 +361,48 @@ func TestCanExtract(t *testing.T) {
 				t.Errorf("CanExtract(%q, %q) = %v, want %v", tt.mimeType, tt.filename, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIsAudioFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		mimeType string
+		filename string
+		want     bool
+	}{
+		{"audio by mime", "audio/mpeg", "recording.bin", true},
+		{"audio by mime with parameter", "audio/ogg; codecs=opus", "recording.bin", true},
+		// A browser or curl sends these as a generic or video type.
+		{"flac on a generic sniff", "application/octet-stream", "memo.flac", true},
+		{"opus on a generic sniff", "application/octet-stream", "memo.opus", true},
+		{"webm sniffed as video", "video/webm", "memo.webm", true},
+		{"unknown binary", "application/octet-stream", "data.bin", false},
+		{"document", "application/pdf", "report.pdf", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsAudioFile(tt.mimeType, tt.filename); got != tt.want {
+				t.Errorf("IsAudioFile(%q, %q) = %v, want %v", tt.mimeType, tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeMIMEType(t *testing.T) {
+	tests := map[string]string{
+		"":                            "",
+		"text/plain":                  "text/plain",
+		"text/plain; charset=utf-8":   "text/plain",
+		"APPLICATION/PDF":             "application/pdf",
+		"text/csv; header=present":    "text/csv",
+		"application/octet-stream ; ": "application/octet-stream",
+	}
+	for in, want := range tests {
+		if got := normalizeMIMEType(in); got != want {
+			t.Errorf("normalizeMIMEType(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
