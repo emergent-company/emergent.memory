@@ -409,3 +409,65 @@ func TestDaisyBareNameCollisionRatchet(t *testing.T) {
 		t.Errorf("go-daisy bare-name collisions = %v, want %v — declare the new collision and ensure the scanner qualifies it, rather than merging the nodes", got, want)
 	}
 }
+
+// hasTemplGenerated is the cold-tree refusal in main(): without templ's
+// generated output the scan yields an empty catalog, so the command must fail
+// rather than overwrite a real graph with an empty one. These cases pin which
+// files count as evidence and which must not.
+func TestHasTemplGenerated(t *testing.T) {
+	tests := []struct {
+		name string
+		// files maps a path relative to the fixture dir to its content.
+		files map[string]string
+		want  bool
+	}{
+		{
+			name:  "empty tree",
+			files: nil,
+			want:  false,
+		},
+		{
+			name:  "only hand-written sources",
+			files: map[string]string{"devgallery.go": "package main\n", "componentgraph.go": "package main\n"},
+			want:  false,
+		},
+		{
+			name:  "test files are not templ output",
+			files: map[string]string{"devgallery_test.go": "package main\n", "components/thing_test.go": "package components\n"},
+			want:  false,
+		},
+		{
+			name:  "the components package's test-only fixture output is not a catalog source",
+			files: map[string]string{"components/fixtures_test_templ.go": "package components\n"},
+			want:  false,
+		},
+		{
+			name:  "templ output in the main package",
+			files: map[string]string{"devgallery_templ.go": "package main\n"},
+			want:  true,
+		},
+		{
+			name:  "templ output only in the components package",
+			files: map[string]string{"components/card_templ.go": "package components\n"},
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, body := range tt.files {
+				path := filepath.Join(dir, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+					t.Fatalf("write %s: %v", path, err)
+				}
+			}
+			if got := hasTemplGenerated(dir); got != tt.want {
+				t.Errorf("hasTemplGenerated(%v) = %v, want %v", tt.files, got, tt.want)
+			}
+		})
+	}
+}

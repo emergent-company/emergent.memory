@@ -48,7 +48,11 @@ tasks:
     cmds:
       - templ generate ./...
       # The component graph (cmd/componentgraph) reads the generated *_templ.go
-      # files, so it MUST run after `templ generate`.
+      # files, so it MUST run after `templ generate`. Its outputs
+      # (devgallery_{graph,adoption}_gen.go) are gitignored build output; the
+      # go:generate directive lives in devgallery_generate.go, because a
+      # directive written inside the generated files vanishes exactly when they
+      # are missing.
       - go generate ./...
 
   build:
@@ -62,11 +66,16 @@ tasks:
 
   test:
     desc: Run unit tests
+    # Both generated inputs (templ output, component graph) are needed to
+    # compile, and templ output is not checked in either — `test` on a cold tree
+    # must generate rather than fail on missing files.
+    deps: [generate]
     cmds:
       - go test ./...
 
   vet:
     desc: Run go vet
+    deps: [generate]
     cmds:
       - go vet ./...
 
@@ -77,6 +86,7 @@ tasks:
 
   lint:
     desc: Run golangci-lint
+    deps: [generate]
     cmds:
       - golangci-lint run ./...
 

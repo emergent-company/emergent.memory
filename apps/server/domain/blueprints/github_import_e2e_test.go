@@ -140,7 +140,7 @@ func TestExpandRelationshipTypes(t *testing.T) {
 		assert.Empty(t, out[0].TargetType)
 	})
 
-	t.Run("preserves label description and properties", func(t *testing.T) {
+	t.Run("preserves label description properties and required", func(t *testing.T) {
 		in := []RelationshipTypeDef{{
 			Name:        "delivered_in",
 			Label:       "Delivered In",
@@ -148,6 +148,7 @@ func TestExpandRelationshipTypes(t *testing.T) {
 			SourceTypes: []string{"Alpha", "Beta"},
 			TargetType:  "Gamma",
 			Properties:  map[string]any{"weight": 1},
+			Required:    []string{"weight"},
 		}}
 		out, err := expandRelationshipTypes(in)
 		require.NoError(t, err)
@@ -156,6 +157,8 @@ func TestExpandRelationshipTypes(t *testing.T) {
 			assert.Equal(t, "Delivered In", o.Label)
 			assert.Equal(t, "Where an item is delivered", o.Description)
 			assert.Equal(t, map[string]any{"weight": 1}, o.Properties)
+			assert.Equal(t, []string{"weight"}, o.Required,
+				"a relationship-level required list must survive plural expansion")
 			assert.Empty(t, o.SourceTypes, "expanded entries must be singular-only")
 			assert.Empty(t, o.TargetTypes, "expanded entries must be singular-only")
 		}

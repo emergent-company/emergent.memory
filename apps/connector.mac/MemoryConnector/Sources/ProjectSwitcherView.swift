@@ -9,6 +9,14 @@ import SwiftUI
 /// toolbar's baseline. The organisation now lives in the panel header, where
 /// there is room for it.
 ///
+/// `MainWindowView` installs this control only while the account is effectively
+/// signed in — signed out there is nothing to switch, and the trigger's own
+/// "Sign in" label would sit beside the account control's button, one action
+/// twice. So this view has no signed-out label of its own: losing the session
+/// removes the control rather than relettering it, and the labels below describe
+/// the project store's own states should it report a signed-out session under a
+/// window the account store still calls signed in.
+///
 /// The panel itself is `ProjectSwitcherPanel`, a real view in a `.popover`
 /// rather than a `Menu` (see that type for why).
 struct ProjectSwitcherView: View {
@@ -98,9 +106,6 @@ struct ProjectSwitcherView: View {
     /// Active project name (runtime data), or the state that stands in for it —
     /// all on the localizable path.
     private var triggerTitle: Text {
-        if !accountStore.isEffectivelySignedIn {
-            return Text("Sign in")
-        }
         if let name = projectStore.activeProjectName?
             .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
         {
@@ -126,9 +131,6 @@ struct ProjectSwitcherView: View {
     /// VoiceOver value for the trigger. The accessible NAME stays the stable
     /// action ("Switch project"); the live context travels as the value.
     private var accessibilityValue: Text {
-        if !accountStore.isEffectivelySignedIn {
-            return Text("Signed out")
-        }
         if projectStore.projects.isEmpty {
             switch projectStore.state {
             case .idle, .loading:

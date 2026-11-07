@@ -31,11 +31,12 @@ done
 unset _port
 
 # Build the gateway binary. On an unwarmed tree (e.g. a fresh worktree) the
-# generated *_templ.go files and the compiled Tailwind stylesheet
-# (webui/static/css/app.css) are gitignored and absent, and `go build` fails
-# without them — webui.go's cssGuard turns a missing app.css into a compile
-# error. Generate whichever is missing, then build fresh so a stale binary is
-# never served.
+# generated *_templ.go files, the gallery's derived graph
+# (devgallery_*_gen.go) and the compiled Tailwind stylesheet
+# (webui/static/css/app.css) are all gitignored build output and absent, and
+# `go build` fails without them — webui.go's cssGuard turns a missing app.css
+# into a compile error, and the graph files are compiled in. Generate whichever
+# is missing, then build fresh so a stale binary is never served.
 (cd gateway && {
   if ! compgen -G '*_templ.go' >/dev/null; then
     # Install the pinned CLI rather than `go run`-ing it. In module mode
@@ -45,6 +46,11 @@ unset _port
     # gateway/go.mod, like the image and the `gateway` CI job (#2314).
     go install "github.com/a-h/templ/cmd/templ@$(GOWORK=off go list -m -f '{{.Version}}' github.com/a-h/templ)"
     "$(go env GOPATH)/bin/templ" generate ./...
+  fi
+  # componentgraph derives the gallery graph from the *_templ.go call sites, so
+  # this must follow templ generate above.
+  if [ ! -f devgallery_graph_gen.go ] || [ ! -f devgallery_adoption_gen.go ]; then
+    go generate ./...
   fi
   if [ ! -f webui/static/css/app.css ]; then
     command -v task >/dev/null || { echo "run-e2e.sh: task not found — add it to PATH (e.g. export PATH=\"/root/go/bin:\$PATH\") to compile app.css" >&2; exit 1; }

@@ -93,7 +93,15 @@ cd "$root"
 # that file, which is the prevailing idiom here by a wide margin, so no helper is
 # introduced for it. The message names (#2383), so BASELINE_NO_REF does not move.
 # This is the count, not headroom.
-BASELINE_SKIPS=336
+#
+# Raised 2026-11-07 (336→337): #24.1 adds one database-backed test to
+# apps/server/domain/schemas/schemas_list_db_test.go (the install picker must not
+# offer a retired pack, while a pack already installed stays visible). It takes
+# the same `if testing.Short() { t.Skip(...) }` gate as the three tests already
+# in that file, which is the prevailing idiom here by a wide margin, so no
+# helper is introduced for it. The message names (#24.1), so BASELINE_NO_REF
+# does not move. This is the count, not headroom.
+BASELINE_SKIPS=337
 BASELINE_NO_REF=331
 
 mapfile -t files < <(git ls-files '*_test.go')

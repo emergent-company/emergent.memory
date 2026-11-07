@@ -572,7 +572,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list",
 			OutputSchema: objectOutputSchema(),
-			Description:  "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
+			Description:  "List the schema packs in the current project's catalog (id, name, version, project, source) — the same rows the REST GET /api/schemas/projects/:id route returns — with optional search and pagination. Deprecated packs are hidden by default; set include_deprecated to audit retirement. This is the project catalog, not the install picker (schema-list-available) or the assignment list (schema-list-installed).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -621,7 +621,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list-available",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
+			Description:  "Get the packs this project can still install: its own packs that are not installed and not deprecated. This is the install picker, not the project catalog (schema-list) or the assigned list (schema-list-installed); an already-installed pack stays visible there even after it is deprecated.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -631,7 +631,17 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list-installed",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get all schemas currently installed in the project with their configuration and active status.",
+			Description:  "Get all schemas currently installed in the project with their configuration and active status. Includes installed packs whose catalog row has since been deprecated, so an existing project keeps sight of what it uses.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:         "schema-pack-claims",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List which applied blueprints claim which of the project's schema packs — the pack → blueprint provenance map. Answers \"which blueprint owns this pack\" and is the counterpart of the schema-list catalog. Only packs claimed by an applied blueprint are returned; an unclaimed pack is absent rather than listed with an empty blueprint set.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -692,7 +702,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-create",
-			Description: "Create a new memory schema in the global registry. Requires object type schemas at minimum.",
+			Description: "Create a new memory schema owned by the current project. Packs are project-scoped, not global: the new pack is written to this project's schema catalog and its object types are registered in this project's type registry. Requires object type schemas at minimum. Global built-in packs are readable but immutable.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1791,6 +1801,7 @@ var toolRequiredScope = map[string]string{
 	"schema-get":            "schema:read",
 	"schema-list-available": "schema:read",
 	"schema-list-installed": "schema:read",
+	"schema-pack-claims":    "schema:read",
 	"schema-history":        "schema:read",
 	"schema-compiled-types": "graph:read",
 	"schema-icon-list":      "schema:read",
@@ -2330,6 +2341,12 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		}
 	}
 
+	// Refuse a mistyped boolean for every tool that declares one, before the
+	// handler silently reads it as false (#24).
+	if err := validateBooleanArgs(toolDef, args); err != nil {
+		return nil, err
+	}
+
 	// Intra-run tool-result cache (issue #1192). Authority is enforced above on
 	// every call, including cache hits; the cache wraps only the tool-specific
 	// dispatch below. Returns uncached when the run context carries no cache
@@ -2370,6 +2387,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeGetAvailableTemplates(ctx, projectID, args)
 	case "schema-list-installed":
 		return s.executeGetInstalledTemplates(ctx, projectID, args)
+	case "schema-pack-claims":
+		return s.executeSchemaPackClaims(ctx, projectID, args)
 	case "schema-assign":
 		return s.executeAssignSchema(ctx, projectID, args)
 	case "schema-assignment-update":
@@ -2646,7 +2665,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
 		"blueprint-apply", "blueprint-apply-preview", "blueprint-unapply", "blueprint-versions",
-		"blueprint-list-applied", "blueprint-new-version", "blueprint-update":
+		"blueprint-list-applied", "blueprint-new-version", "blueprint-update",
+		"blueprint-updates-status", "blueprint-import-preview", "blueprint-model-overrides-get":
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
@@ -6340,6 +6360,12 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 		return s.blueprintToolHandler.ExecuteBlueprintNewVersion(ctx, projectID, args)
 	case "blueprint-update":
 		return s.blueprintToolHandler.ExecuteBlueprintUpdate(ctx, projectID, args)
+	case "blueprint-updates-status":
+		return s.blueprintToolHandler.ExecuteBlueprintUpdatesStatus(ctx, projectID, args)
+	case "blueprint-import-preview":
+		return s.blueprintToolHandler.ExecuteBlueprintImportPreview(ctx, projectID, args)
+	case "blueprint-model-overrides-get":
+		return s.blueprintToolHandler.ExecuteBlueprintModelOverridesGet(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("unknown blueprint tool: %s", toolName)
 	}
