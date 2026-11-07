@@ -697,6 +697,10 @@ func validatePatchDelta(
 // `knows` schema (#176) and hand-built maps keyed by the literal type keep
 // working. Without this, same-named relationship types from different packs
 // validated against whichever definition was read last (#322).
+//
+// Both relationship writes resolve through this one helper: create validates
+// the caller's properties against it, and patch validates its delta against the
+// schema for the stored edge's own endpoints (#361).
 func relationshipSchemaFor(
 	schemas map[string]agents.RelationshipSchema,
 	relType string,
