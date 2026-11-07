@@ -218,6 +218,7 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 		RelationshipTypeSchemasSnake: relSchemas,
 		UIConfigsSnake:               uiCfgs,
 		ExtractionPromptsSnake:       exPrompts,
+		Migrations:                   p.Migrations,
 	}
 	if p.Description != "" {
 		req.Description = &p.Description
@@ -267,6 +268,7 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 		RelationshipTypeSchemas: relSchemas,
 		UIConfigs:               uiCfgs,
 		ExtractionPrompts:       exPrompts,
+		Migrations:              p.Migrations,
 	}
 	if p.Description != "" {
 		req.Description = &p.Description

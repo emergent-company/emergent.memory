@@ -36,7 +36,7 @@ func branchPushAndMainPushForTheSameRecord(
 	require.NoError(t, repo.CreateBranch(ctx, branch))
 	branchID = branch.ID
 
-	mainApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	mainApplied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		Objects: []graph.ChangesetObjectItem{{
 			Type:                "Person",
@@ -49,7 +49,7 @@ func branchPushAndMainPushForTheSameRecord(
 	mainVersion = *mainApplied.Results[0].SubjectID
 	mainCanonical = *mainApplied.Results[0].CanonicalID
 
-	branchApplied, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+	branchApplied, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 		SourceID: sourceID,
 		BranchID: &branchID,
 		Objects: []graph.ChangesetObjectItem{{
@@ -270,7 +270,7 @@ func TestMergeOccupantLookupStaysBounded(t *testing.T) {
 		// The same source owns a record on the target branch and a different
 		// object for it on the source branch.
 		push := func(branchID *uuid.UUID) *graph.ApplyChangesetResponse {
-			resp, err := svc.ApplyChangeset(ctx, projectID, &graph.ApplyChangesetRequest{
+			resp, err := svc.ApplyChangeset(sourcePushCtx(ctx), projectID, &graph.ApplyChangesetRequest{
 				SourceID: sourceID, BranchID: branchID,
 				Objects: []graph.ChangesetObjectItem{{
 					Type: "Person", ExternalID: "occupant-branch-1", ExternalRevisionSeq: seq(1),

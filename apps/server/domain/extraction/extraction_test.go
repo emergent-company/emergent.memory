@@ -716,6 +716,40 @@ func TestParseRelationshipTypeSchemas(t *testing.T) {
 	}
 }
 
+// Relationship-level properties and required lists are declared in a pack and
+// preserved by the CLI, so the extraction schema must carry them: an edge
+// property such as `role` was otherwise untyped and invisible to the prompt.
+func TestParseRelationshipTypeSchemasCarriesEdgeProperties(t *testing.T) {
+	raw, err := json.Marshal(JSON{
+		"involves_person": map[string]any{
+			"properties": map[string]any{
+				"role":            map[string]any{"type": "string", "title": "Role"},
+				"response_status": map[string]any{"type": "string", "enum": []any{"accepted", "declined"}},
+			},
+			"required": []any{"role"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+
+	got := parseRelationshipTypeSchemas(raw)["involves_person"]
+
+	role, ok := got.Properties["role"]
+	if !ok {
+		t.Fatalf("Properties[role] missing; got %v", got.Properties)
+	}
+	if role.Type != "string" {
+		t.Errorf("Properties[role].Type = %q, want string", role.Type)
+	}
+	if status, ok := got.Properties["response_status"]; !ok || status.Type != "string" {
+		t.Errorf("Properties[response_status] = %+v, want a string property", status)
+	}
+	if len(got.Required) != 1 || got.Required[0] != "role" {
+		t.Errorf("Required = %v, want [role]", got.Required)
+	}
+}
+
 func TestApplySchemaOverrides(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -2552,7 +2552,7 @@ func (h *Handler) ReindexEmbeddings(c echo.Context) error {
 // ApplyChangeset applies a source's changeset atomically: upserts and
 // withdrawals addressed by the source's own external ids and revisions.
 // @Summary      Apply a source changeset
-// @Description  Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.
+// @Description  Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped and a cross-owner item the caller holds no grant for is refused, both reported per item and never applied.
 // @Tags         graph
 // @Accept       json
 // @Produce      json
