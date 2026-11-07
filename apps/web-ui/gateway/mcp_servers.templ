@@ -1360,7 +1360,11 @@ templ mcpServersScript() {
 			// highlighter runs only after JSON.parse succeeds, and only below
 			// jsonHighlightLimit, so a very large response or plain text keeps
 			// the unhighlighted baseline.
-			var jsonHighlightLimit = 200 * 1024; // 200 KB of pretty-printed text
+			// Size guard: 32 KB of pretty-printed text. Worst case (a lone
+			// number per line) is ~20k DOM nodes; the same shape measured
+			// 123k nodes at 200 KB, which janked the dialog. Above this
+			// limit the result keeps the plain unhighlighted baseline.
+			var jsonHighlightLimit = 32 * 1024; // 32 KB of pretty-printed text
 
 			function jsonTokenSpan(cls, text) {
 				var el = document.createElement('span');

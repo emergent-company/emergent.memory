@@ -523,7 +523,7 @@ func TestRenderMCPServersInvokeJSONHighlight(t *testing.T) {
 
 	for _, want := range []string{
 		// Explicit size guard: oversized output stays plain.
-		"var jsonHighlightLimit = 200 * 1024",
+		"var jsonHighlightLimit = 32 * 1024",
 		// Detection rule: only JSON.parse-accepted text is tokenised.
 		"JSON.parse(text)",
 		// Plain baseline is written before any token work.
