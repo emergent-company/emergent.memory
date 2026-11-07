@@ -109,9 +109,10 @@ func sortedAdoptionKeys(actual map[adoptionKey]int, budget map[adoptionKey]adopt
 // --- pattern budgets ---
 
 // patternID names the drift/consolidation patterns the ratchet tracks. The
-// first three are design-token drift; the last four are the component-
-// consolidation surfaces (each seeded at its pre-adoption count and lowered as
-// the matching adoption lands — see consistency_ratchet_budget_test.go).
+// first three are design-token drift; the rest are the component-consolidation
+// surfaces (each seeded at its pre-adoption count and lowered as the matching
+// adoption lands — see consistency_ratchet_budget_test.go). A surface with no
+// remaining hand-rolled site has no budget entry at all, so any new hit fails.
 const (
 	patternLegacyBordered     = "legacy-bordered"
 	patternSurfaceOpacity     = "surface-opacity-drift"
@@ -121,6 +122,7 @@ const (
 	patternDialogTitleSection = "dialog-title-section"
 	patternSoftBoxSurface     = "soft-box-surface"
 	patternClipboard          = "clipboard"
+	patternIconCircle         = "status-icon-circle"
 )
 
 type patternKey struct {
@@ -176,6 +178,12 @@ var (
 	// body (navigator.clipboard). Any of them re-introduces the surface
 	// form.ClipboardCopy retires.
 	clipboardTokenRE = regexp.MustCompile(`data-copy-target|data-copy-link|data-reveal-url|apiTokenCopyScript|shareManageScriptOnce|navigator\.clipboard`)
+	// statusIconCircleRE matches a hand-rolled tinted status circle: an opened
+	// <div> whose static class is the tinted-circle shape. The class is matched
+	// through the tag so components.IconCircle — which passes a computed class
+	// attribute, and whose tone classes are the quoted strings of a switch — is
+	// not mistaken for a hand-rolled copy.
+	statusIconCircleRE = regexp.MustCompile(`<div class="bg-[a-z-]+/10 text-[a-z-]+ grid size-10 shrink-0 place-items-center rounded-full"`)
 )
 
 func TestTemplPatternConsistencyRatchet(t *testing.T) {
@@ -345,6 +353,12 @@ func scanPatternFile(path string, out map[string]map[string][]int, scanDrift boo
 		// clipboard: hand-rolled copy markup/wiring/script.
 		if clipboardTokenRE.MatchString(stripped) {
 			addPatternHit(out, patternClipboard, base, lineNo)
+		}
+		// status-icon-circle: a hand-rolled tinted status circle. The canonical
+		// forms are ui.ConfirmDialog (destructive confirm) and components.IconCircle
+		// (every other dialog/callout heading).
+		if statusIconCircleRE.MatchString(stripped) {
+			addPatternHit(out, patternIconCircle, base, lineNo)
 		}
 	}
 	return nil

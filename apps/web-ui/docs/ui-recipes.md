@@ -443,11 +443,12 @@ Two mechanisms:
   (`ui-patterns.md` §4, blueprint edit-gate).
 
 **Contract:** destructive control is omitted (role), not disabled; copy names
-the object; `components.ConfirmIcon`/`DeleteWarning`
-(`components/confirm.templ:14,32`) for the shared warning body.
+the object; the page renders `ui.ConfirmDialog` and passes a description built
+from `components.DeleteWarning` (`components/confirm.templ`) for the shared
+warning body.
 
 **Source:** `ui.templ:649` (`deleteConfirmDialog`), `ui.templ:644`
-(`deleteAgentDescription`), `components/confirm.templ:14,32`,
+(`deleteAgentDescription`), `components/confirm.templ` (`DeleteWarning`),
 `webui/static/js/app.js:390,435,441`.
 
 ---
@@ -593,7 +594,7 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 | `edit.inline-htmx` | `project_settings.templ:19,256`; `settings_handlers.go:870`; `settings_providers.go:372` |
 | `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1337` |
 | `edit.modal` | `ui.templ:549,329`; `components/dialog.templ:9`; `webui/static/js/app.js:180,644,666` |
-| `edit.confirm` | `ui.templ:649`; `components/confirm.templ:14,32`; `webui/static/js/app.js:390` |
+| `edit.confirm` | `ui.templ` (`deleteConfirmDialog`); `components/confirm.templ` (`DeleteWarning`); `webui/static/js/app.js:390` |
 | `edit.row-menu` | `org_context.templ:93,458` |
 | `edit.row-action` | `schedules.templ:94,120`; `components/form.templ:50` |
 | `feedback.toast` | `ui.go:163`; `ui.templ:1337`; `webui/static/js/app.js:135`; go-daisy `components/ui/toast-queue.templ` |
