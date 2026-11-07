@@ -569,6 +569,13 @@ definitions:
         items:
           type: string
         type: array
+      branchScope:
+        allOf:
+        - $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_branchscope.Config'
+        description: |-
+          BranchScope declares which unmerged graph branches this agent may read
+          (#265). Absent means main only, which is the default; stored in Config under
+          key "branchScope".
       config:
         additionalProperties: {}
         type: object
@@ -1948,6 +1955,56 @@ definitions:
       storageKey:
         description: Storage
         type: string
+    type: object
+  domain_backups.BackupSchedule:
+    properties:
+      createdAt:
+        type: string
+      createdBy:
+        type: string
+      cronSchedule:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      includeChat:
+        type: boolean
+      includeDeleted:
+        type: boolean
+      includeJournal:
+        type: boolean
+      lastBackupId:
+        type: string
+      lastRunAt:
+        type: string
+      nextRunAt:
+        type: string
+      organizationId:
+        type: string
+      projectId:
+        type: string
+      retentionDays:
+        type: integer
+      timezone:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  domain_backups.BackupScheduleRequestDTO:
+    properties:
+      cronSchedule:
+        type: string
+      enabled:
+        type: boolean
+      includeChat:
+        type: boolean
+      includeDeleted:
+        type: boolean
+      includeJournal:
+        type: boolean
+      retentionDays:
+        type: integer
     type: object
   domain_backups.CreateBackupRequestDTO:
     properties:
@@ -5836,9 +5893,29 @@ definitions:
         type: string
       projectId:
         type: string
+      readOnly:
+        description: |-
+          ReadOnly reports whether the allowlist grants only read scopes. Invite
+          emails use it so a read-write share is never described as read-only.
+        type: boolean
+      recipientEmails:
+        description: |-
+          RecipientEmails lists the addresses this share key was invited to. It is
+          the attribution label for the share, not a revocation list: the key is
+          shared by every recipient.
+        items:
+          type: string
+        type: array
       status:
         type: string
       token:
+        type: string
+      tokenId:
+        description: |-
+          TokenID is the credential id that authenticates this share. It is the
+          value graph write stamps record as kb.graph_objects.credential_id, so it
+          is the join key behind the "objects written via this share" view. The
+          token's secret is never exposed.
         type: string
       tools:
         items:
@@ -9965,6 +10042,34 @@ definitions:
       total_objects:
         type: integer
     type: object
+  domain_search.BranchRead:
+    properties:
+      id:
+        type: string
+      label:
+        type: string
+      name:
+        type: string
+      origin:
+        type: string
+    type: object
+  domain_search.BranchScopeInfo:
+    properties:
+      branches:
+        description: Branches are the unmerged branches that were read, in fan-out
+          order.
+        items:
+          $ref: '#/definitions/domain_search.BranchRead'
+        type: array
+      note:
+        description: |-
+          Note is a one-sentence statement of the fan-out for a model to repeat when
+          its answer is bounded; empty when the read was complete.
+        type: string
+      omitted:
+        description: Omitted counts matching branches the cap excluded.
+        type: integer
+    type: object
   domain_search.PreFusionCounts:
     properties:
       graph:
@@ -10054,6 +10159,13 @@ definitions:
     - ItemTypeRelationship
   domain_search.UnifiedSearchMetadata:
     properties:
+      branchScope:
+        allOf:
+        - $ref: '#/definitions/domain_search.BranchScopeInfo'
+        description: |-
+          BranchScope describes the unmerged branches this search fanned out to
+          (#265). Absent when the search read the main graph only, which is the
+          default.
       executionTime:
         $ref: '#/definitions/domain_search.UnifiedSearchExecutionTime'
       fusionStrategy:
@@ -10168,6 +10280,11 @@ definitions:
     type: object
   domain_search.UnifiedSearchResultItem:
     properties:
+      branch_id:
+        description: Branch provenance, copied from UnifiedSearchGraphResult (#265).
+        type: string
+      branch_name:
+        type: string
       canonical_id:
         type: string
       document_id:
@@ -10191,6 +10308,10 @@ definitions:
         description: Graph-specific fields
         type: string
       object_type:
+        type: string
+      origin:
+        type: string
+      origin_label:
         type: string
       properties:
         additionalProperties: {}
@@ -11936,6 +12057,30 @@ definitions:
       message:
         type: string
     type: object
+  github_com_emergent-company_emergent_memory_pkg_branchscope.Config:
+    properties:
+      branches:
+        description: Branches narrows by name glob. Empty means any name.
+        items:
+          type: string
+        type: array
+      maxBranches:
+        description: |-
+          MaxBranches caps how many branches one read fans out to. Zero means
+          DefaultMaxBranches.
+        type: integer
+      origins:
+        description: Origins narrows the branches by why they exist. Empty means any
+          origin.
+        items:
+          type: string
+        type: array
+      unmerged:
+        description: |-
+          Unmerged enables reads from unmerged branches. False/absent means main
+          only and is the default.
+        type: boolean
+    type: object
   map_string_string:
     additionalProperties:
       type: string
@@ -11950,7 +12095,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.91.0
+  version: 0.91.1
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -11966,9 +12111,25 @@ paths:
       - oauth
   /.well-known/oauth-protected-resource:
     get:
-      description: Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals
-        that the MCP server accepts bearer token authentication without an OAuth authorization
-        flow.
+      description: Returns OAuth 2.0 Protected Resource Metadata per RFC 9728 for
+        the addressed resource, advertising the built-in authorization server when
+        OAuth is enabled.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Protected resource metadata
+          schema:
+            additionalProperties: true
+            type: object
+      summary: OAuth Protected Resource Metadata
+      tags:
+      - mcp
+  /.well-known/oauth-protected-resource/{resourcePath}:
+    get:
+      description: Returns OAuth 2.0 Protected Resource Metadata per RFC 9728 for
+        the addressed resource, advertising the built-in authorization server when
+        OAuth is enabled.
       produces:
       - application/json
       responses:
@@ -19524,8 +19685,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: RFC 7591 dynamic client registration. Only public clients (token_endpoint_auth_method=none)
-        using the authorization_code grant are accepted.
+      description: RFC 7591 dynamic client registration. Clients are always registered
+        public (token_endpoint_auth_method=none, PKCE); a requested confidential method
+        is downgraded. grant_types are narrowed to authorization_code and unknown
+        scopes are dropped.
       parameters:
       - description: Client registration request
         in: body
@@ -27766,6 +27929,123 @@ paths:
       security:
       - bearerAuth: []
       summary: Import backup archive
+      tags:
+      - backups
+  /api/v1/projects/{projectId}/backup-schedule:
+    delete:
+      description: Removes the project's recurring backup configuration. Returns 404
+        when no schedule is configured.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Schedule deleted
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: No schedule configured
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete project backup schedule
+      tags:
+      - backups
+    get:
+      description: Returns the project's recurring backup configuration, or 404 when
+        no schedule is configured.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Backup schedule
+          schema:
+            $ref: '#/definitions/domain_backups.BackupSchedule'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: No schedule configured
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get project backup schedule
+      tags:
+      - backups
+    put:
+      consumes:
+      - application/json
+      description: Creates or replaces the project's one recurring backup schedule.
+        cronSchedule is a standard 5-field cron expression evaluated in UTC (minimum
+        interval 15 minutes); retentionDays defaults to 30 and must be 1-365.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Schedule configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_backups.BackupScheduleRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved schedule
+          schema:
+            $ref: '#/definitions/domain_backups.BackupSchedule'
+        "400":
+          description: Invalid cron expression or retention
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create or replace project backup schedule
       tags:
       - backups
   /api/v1/projects/{projectId}/backups:

@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.91.0"
+        "version": "0.91.1"
     },
     "basePath": "/",
     "paths": {
@@ -39,7 +39,28 @@
         },
         "/.well-known/oauth-protected-resource": {
             "get": {
-                "description": "Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals that the MCP server accepts bearer token authentication without an OAuth authorization flow.",
+                "description": "Returns OAuth 2.0 Protected Resource Metadata per RFC 9728 for the addressed resource, advertising the built-in authorization server when OAuth is enabled.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "OAuth Protected Resource Metadata",
+                "responses": {
+                    "200": {
+                        "description": "Protected resource metadata",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/.well-known/oauth-protected-resource/{resourcePath}": {
+            "get": {
+                "description": "Returns OAuth 2.0 Protected Resource Metadata per RFC 9728 for the addressed resource, advertising the built-in authorization server when OAuth is enabled.",
                 "produces": [
                     "application/json"
                 ],
@@ -11463,7 +11484,7 @@
         },
         "/api/oauth/register": {
             "post": {
-                "description": "RFC 7591 dynamic client registration. Only public clients (token_endpoint_auth_method=none) using the authorization_code grant are accepted.",
+                "description": "RFC 7591 dynamic client registration. Clients are always registered public (token_endpoint_auth_method=none, PKCE); a requested confidential method is downgraded. grant_types are narrowed to authorization_code and unknown scopes are dropped.",
                 "consumes": [
                     "application/json"
                 ],
@@ -23989,6 +24010,182 @@
                 }
             }
         },
+        "/api/v1/projects/{projectId}/backup-schedule": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the project's recurring backup configuration, or 404 when no schedule is configured.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Get project backup schedule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Backup schedule",
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.BackupSchedule"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "No schedule configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates or replaces the project's one recurring backup schedule. cronSchedule is a standard 5-field cron expression evaluated in UTC (minimum interval 15 minutes); retentionDays defaults to 30 and must be 1-365.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Create or replace project backup schedule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Schedule configuration",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.BackupScheduleRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved schedule",
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.BackupSchedule"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid cron expression or retention",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes the project's recurring backup configuration. Returns 404 when no schedule is configured.",
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Delete project backup schedule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Schedule deleted"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "No schedule configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/projects/{projectId}/backups": {
             "post": {
                 "security": [
@@ -29000,6 +29197,14 @@
                         "type": "string"
                     }
                 },
+                "branchScope": {
+                    "description": "BranchScope declares which unmerged graph branches this agent may read\n(#265). Absent means main only, which is the default; stored in Config under\nkey \"branchScope\".",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_branchscope.Config"
+                        }
+                    ]
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -30856,6 +31061,82 @@
                 "storageKey": {
                     "description": "Storage",
                     "type": "string"
+                }
+            }
+        },
+        "domain_backups.BackupSchedule": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "cronSchedule": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "includeChat": {
+                    "type": "boolean"
+                },
+                "includeDeleted": {
+                    "type": "boolean"
+                },
+                "includeJournal": {
+                    "type": "boolean"
+                },
+                "lastBackupId": {
+                    "type": "string"
+                },
+                "lastRunAt": {
+                    "type": "string"
+                },
+                "nextRunAt": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "retentionDays": {
+                    "type": "integer"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_backups.BackupScheduleRequestDTO": {
+            "type": "object",
+            "properties": {
+                "cronSchedule": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "includeChat": {
+                    "type": "boolean"
+                },
+                "includeDeleted": {
+                    "type": "boolean"
+                },
+                "includeJournal": {
+                    "type": "boolean"
+                },
+                "retentionDays": {
+                    "type": "integer"
                 }
             }
         },
@@ -36332,10 +36613,25 @@
                 "projectId": {
                     "type": "string"
                 },
+                "readOnly": {
+                    "description": "ReadOnly reports whether the allowlist grants only read scopes. Invite\nemails use it so a read-write share is never described as read-only.",
+                    "type": "boolean"
+                },
+                "recipientEmails": {
+                    "description": "RecipientEmails lists the addresses this share key was invited to. It is\nthe attribution label for the share, not a revocation list: the key is\nshared by every recipient.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "status": {
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                },
+                "tokenId": {
+                    "description": "TokenID is the credential id that authenticates this share. It is the\nvalue graph write stamps record as kb.graph_objects.credential_id, so it\nis the join key behind the \"objects written via this share\" view. The\ntoken's secret is never exposed.",
                     "type": "string"
                 },
                 "tools": {
@@ -41974,6 +42270,43 @@
                 }
             }
         },
+        "domain_search.BranchRead": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "origin": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_search.BranchScopeInfo": {
+            "type": "object",
+            "properties": {
+                "branches": {
+                    "description": "Branches are the unmerged branches that were read, in fan-out order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_search.BranchRead"
+                    }
+                },
+                "note": {
+                    "description": "Note is a one-sentence statement of the fan-out for a model to repeat when\nits answer is bounded; empty when the read was complete.",
+                    "type": "string"
+                },
+                "omitted": {
+                    "description": "Omitted counts matching branches the cap excluded.",
+                    "type": "integer"
+                }
+            }
+        },
         "domain_search.PreFusionCounts": {
             "type": "object",
             "properties": {
@@ -42103,6 +42436,14 @@
         "domain_search.UnifiedSearchMetadata": {
             "type": "object",
             "properties": {
+                "branchScope": {
+                    "description": "BranchScope describes the unmerged branches this search fanned out to\n(#265). Absent when the search read the main graph only, which is the\ndefault.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_search.BranchScopeInfo"
+                        }
+                    ]
+                },
                 "executionTime": {
                     "$ref": "#/definitions/domain_search.UnifiedSearchExecutionTime"
                 },
@@ -42262,6 +42603,13 @@
         "domain_search.UnifiedSearchResultItem": {
             "type": "object",
             "properties": {
+                "branch_id": {
+                    "description": "Branch provenance, copied from UnifiedSearchGraphResult (#265).",
+                    "type": "string"
+                },
+                "branch_name": {
+                    "type": "string"
+                },
                 "canonical_id": {
                     "type": "string"
                 },
@@ -42295,6 +42643,12 @@
                     "type": "string"
                 },
                 "object_type": {
+                    "type": "string"
+                },
+                "origin": {
+                    "type": "string"
+                },
+                "origin_label": {
                     "type": "string"
                 },
                 "properties": {
@@ -44796,6 +45150,33 @@
                 "internal": {},
                 "message": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_pkg_branchscope.Config": {
+            "type": "object",
+            "properties": {
+                "branches": {
+                    "description": "Branches narrows by name glob. Empty means any name.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "maxBranches": {
+                    "description": "MaxBranches caps how many branches one read fans out to. Zero means\nDefaultMaxBranches.",
+                    "type": "integer"
+                },
+                "origins": {
+                    "description": "Origins narrows the branches by why they exist. Empty means any origin.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "unmerged": {
+                    "description": "Unmerged enables reads from unmerged branches. False/absent means main\nonly and is the default.",
+                    "type": "boolean"
                 }
             }
         },

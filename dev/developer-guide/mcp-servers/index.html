@@ -3888,6 +3888,14 @@ ready-to-paste client configs, so anyone already using the share keeps working.
 stops working immediately and its dialog offers the same optional email field.
 A share whose key was stored before the deployment enabled key encryption cannot
 be re-sent — the invite dialog says so and offers <strong>Issue a new key instead</strong>.</p>
+<p><strong>Who has the key, and what it did.</strong> A share records the addresses its key was
+emailed to: the Sharing list shows them (hover the chip for the full list) and
+marks a share <strong>read &amp; write</strong> when its tools can modify the graph. The invite
+email says the same thing, so a recipient is never told a writable key is
+read-only. Choose <strong>View writes</strong> on a share to open the object browser filtered
+to the objects that share's key created or last updated. The filter follows the
+share's <em>current</em> key, so after <strong>Issue a new key</strong> it starts from that rotation
+instead of covering the retired key.</p>
 <p><strong>From the CLI:</strong> <code>memory projects share-mcp --project my-project
 --email alice@example.com</code> does the same through the legacy share endpoint and
 mints one key per recipient.</p>

@@ -1384,6 +1384,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#scheduled-backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scheduled backups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scheduled backups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retention
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managing-schedules-from-the-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing schedules from the CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#backup-status-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3077,6 +3116,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#scheduled-backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scheduled backups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scheduled backups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retention
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managing-schedules-from-the-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing schedules from the CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#backup-status-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3216,6 +3294,112 @@
 </tbody>
 </table>
 <hr />
+<h2 id="scheduled-backups">Scheduled backups<a class="headerlink" href="#scheduled-backups" title="Permanent link">&para;</a></h2>
+<p>A project can run its backups automatically. Each project has at most one
+schedule: enable it, set a cadence, and the server starts a normal backup every
+time the cadence fires.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">PUT /api/v1/projects/{projectId}/backup-schedule</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="err">{</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="err">  "enabled": true,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="err">  "cronSchedule": "0 2 * * *",</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="err">  "retentionDays": 30,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="err">  "includeChat": false,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="err">  "includeJournal": false,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="err">  "includeDeleted": false</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="err">}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>Whether the schedule runs. Defaults to <code>true</code> when omitted on save.</td>
+</tr>
+<tr>
+<td><code>cronSchedule</code></td>
+<td>Standard <strong>5-field</strong> cron (<code>minute hour day-of-month month day-of-week</code>) evaluated in <strong>UTC</strong>.</td>
+</tr>
+<tr>
+<td><code>retentionDays</code></td>
+<td>Retention applied to every backup the schedule creates. Default 30, range 1–365.</td>
+</tr>
+<tr>
+<td><code>includeChat</code> / <code>includeJournal</code> / <code>includeDeleted</code></td>
+<td>What each scheduled archive includes.</td>
+</tr>
+</tbody>
+</table>
+<p>Reading, and removing, the schedule:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">GET    /api/v1/projects/{projectId}/backup-schedule   # 404 when no schedule is configured</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">DELETE /api/v1/projects/{projectId}/backup-schedule   # 204</span>
+</code></pre></div>
+<p>Rules:</p>
+<ul>
+<li><strong>Minimum interval is 15 minutes.</strong> A cron expression that fires more often is
+  rejected with <code>400</code>. Common cadences: <code>0 * * * *</code> (hourly), <code>0 */6 * * *</code>
+  (every 6 hours), <code>0 2 * * *</code> (daily 02:00 UTC), <code>0 2 * * 0</code> (weekly, Sunday).</li>
+<li><strong>Schedules are evaluated in UTC</strong>, so they do not follow the viewer's
+  timezone or daylight-saving shifts.</li>
+<li><strong>Editing recomputes the next run immediately</strong> — a new cadence applies at once
+  instead of waiting out the old expression.</li>
+<li><strong>Missed fires collapse into one catch-up run.</strong> If the server was down across
+  several slots, the schedule runs once and then resumes at the next slot rather
+  than firing a burst.</li>
+<li><strong>No pile-up.</strong> A due fire is skipped when the project already has a backup in
+  progress (<code>status: "creating"</code>).</li>
+<li>Scheduled backups are attributed to the user who saved the schedule, and the
+  <code>lastBackupId</code> on the schedule points at the most recent one.</li>
+</ul>
+<p>The schedule's response also carries the runner's bookkeeping:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nextRunAt</code></td>
+<td>Next time the schedule will fire (UTC)</td>
+</tr>
+<tr>
+<td><code>lastRunAt</code></td>
+<td>When a fire last started a backup (a fire skipped by the pile-up guard does not move it)</td>
+</tr>
+<tr>
+<td><code>lastBackupId</code></td>
+<td>The backup the last fire started</td>
+</tr>
+</tbody>
+</table>
+<h3 id="retention">Retention<a class="headerlink" href="#retention" title="Permanent link">&para;</a></h3>
+<p><code>expiresAt</code> is written at creation (<code>createdAt + retentionDays</code>, default 30
+days). A daily sweep enforces it:</p>
+<ol>
+<li>A backup whose <code>expiresAt</code> has passed is <strong>soft-deleted</strong> — it disappears from
+   the backups list but its row and archive are kept.</li>
+<li>After a <strong>14-day grace window</strong>, the archive object and row are purged.</li>
+</ol>
+<p>The grace window is deliberate: an over-aggressive <code>retentionDays</code> costs a
+support request, not the data.</p>
+<h3 id="managing-schedules-from-the-cli">Managing schedules from the CLI<a class="headerlink" href="#managing-schedules-from-the-cli" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>memory<span class="w"> </span>backups<span class="w"> </span>schedule<span class="w"> </span><span class="nb">set</span><span class="w"> </span>--cron<span class="w"> </span><span class="s2">"0 2 * * *"</span><span class="w">                 </span><span class="c1"># create or replace</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>memory<span class="w"> </span>backups<span class="w"> </span>schedule<span class="w"> </span><span class="nb">set</span><span class="w"> </span>--cron<span class="w"> </span><span class="s2">"0 */6 * * *"</span><span class="w"> </span>--retention-days<span class="w"> </span><span class="m">14</span><span class="w"> </span>--include-chat
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>memory<span class="w"> </span>backups<span class="w"> </span>schedule<span class="w"> </span><span class="nb">set</span><span class="w"> </span>--cron<span class="w"> </span><span class="s2">"0 2 * * *"</span><span class="w"> </span>--disabled<span class="w">      </span><span class="c1"># save, but do not run</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>memory<span class="w"> </span>backups<span class="w"> </span>schedule<span class="w"> </span>get<span class="w">                                     </span><span class="c1"># "No backup schedule configured." when unset</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>memory<span class="w"> </span>backups<span class="w"> </span>schedule<span class="w"> </span>delete
+</code></pre></div>
+<p>The same controls are on the <strong>Backups</strong> page in the web UI, in the <em>Scheduled
+backups</em> card.</p>
+<hr />
 <h2 id="backup-status-fields">Backup status fields<a class="headerlink" href="#backup-status-fields" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3247,7 +3431,7 @@
 </tr>
 <tr>
 <td><code>expiresAt</code></td>
-<td>Optional expiry after which the backup is auto-deleted</td>
+<td>Expiry after which the backup is auto-deleted (set from the create request's <code>retentionDays</code>, default 30 days)</td>
 </tr>
 <tr>
 <td><code>stats</code></td>
@@ -3257,15 +3441,15 @@
 </table>
 <hr />
 <h2 id="listing-backups">Listing Backups<a class="headerlink" href="#listing-backups" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">GET /api/v1/organizations/{orgId}/backups</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/v1/organizations/{orgId}/backups</span>
 </code></pre></div>
 <hr />
 <h2 id="getting-a-backup">Getting a Backup<a class="headerlink" href="#getting-a-backup" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">GET /api/v1/organizations/{orgId}/backups/{backupId}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">GET /api/v1/organizations/{orgId}/backups/{backupId}</span>
 </code></pre></div>
 <hr />
 <h2 id="downloading-a-backup">Downloading a Backup<a class="headerlink" href="#downloading-a-backup" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">GET /api/v1/organizations/{orgId}/backups/{backupId}/download</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /api/v1/organizations/{orgId}/backups/{backupId}/download</span>
 </code></pre></div>
 <p>Returns a signed download URL or streams the backup archive directly.</p>
 <hr />
@@ -3274,28 +3458,28 @@
 <p class="admonition-title">Destructive operation</p>
 <p>Restoring a backup <strong>overwrites</strong> the current project state. This cannot be undone. Create a fresh backup before restoring if you want to preserve the current state.</p>
 </div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">POST /api/v1/projects/{projectId}/restore</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="err">{</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="err">  "backupId": "&lt;backup-id&gt;"</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /api/v1/projects/{projectId}/restore</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="err">{</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="err">  "backupId": "&lt;backup-id&gt;"</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="err">}</span>
 </code></pre></div>
 <p>Monitor the restore job:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">GET /api/v1/projects/{projectId}/restores/{restoreId}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">GET /api/v1/projects/{projectId}/restores/{restoreId}</span>
 </code></pre></div>
 <hr />
 <h2 id="deleting-a-backup">Deleting a Backup<a class="headerlink" href="#deleting-a-backup" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">DELETE /api/v1/organizations/{orgId}/backups/{backupId}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">DELETE /api/v1/organizations/{orgId}/backups/{backupId}</span>
 </code></pre></div>
 <hr />
 <h2 id="importing-an-archive-from-another-deployment">Importing an archive from another deployment<a class="headerlink" href="#importing-an-archive-from-another-deployment" title="Permanent link">&para;</a></h2>
 <p>Backups are self-describing ZIP archives (<code>manifest.json</code>, <code>project/config.json</code>, <code>database/*.ndjson</code>, <code>files/*</code>). You can import an archive produced by another deployment so it can be restored locally.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /api/v1/organizations/{orgId}/backups/import</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">Content-Type: multipart/form-data</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="err">file: &lt;backup.zip&gt;</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="err">retentionDays: 30   # optional, 1-365 (default 30)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">POST /api/v1/organizations/{orgId}/backups/import</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="err">Content-Type: multipart/form-data</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="err">file: &lt;backup.zip&gt;</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="err">retentionDays: 30   # optional, 1-365 (default 30)</span>
 </code></pre></div>
 <p>Requirements and limits:</p>
 <table>
@@ -3330,13 +3514,13 @@
 </table>
 <p>On success the endpoint returns <code>201 Created</code> with a backup record that has <code>status: "ready"</code> and <code>imported: true</code>. Its <code>projectId</code> records the archive's <em>source</em> project — a foreign project that does not exist in this deployment.</p>
 <p>Imported backups are <strong>clone-only</strong>. They cannot be used for an overwrite restore (overwrite requires a local project matching the source project id). To restore an imported backup, clone it into the target organization:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/v1/organizations/{orgId}/restore</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="err">{</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="err">  "backupId": "&lt;imported-backup-id&gt;",</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="err">  "targetProjectName": "Restored project"</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="err">POST /api/v1/organizations/{orgId}/restore</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="err">{</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="err">  "backupId": "&lt;imported-backup-id&gt;",</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="err">  "targetProjectName": "Restored project"</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="err">}</span>
 </code></pre></div>
 <p>The clone creates a new project with a new project id, drops foreign user references, and adds the restoring user to the new project.</p>
 <hr />

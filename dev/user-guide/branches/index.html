@@ -1387,6 +1387,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#letting-an-agent-read-unmerged-branches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Letting an agent read unmerged branches
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3164,6 +3175,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#letting-an-agent-read-unmerged-branches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Letting an agent read unmerged branches
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3330,6 +3352,80 @@
 <p class="admonition-title">Note</p>
 <p>The main graph itself is not a branch and has no ID. To merge a branch into the main graph, you need the main graph's branch record ID — use <code>GET /api/graph/branches</code> to list all branches and identify the one representing main (typically the one with no parent and the earliest creation date).</p>
 </div>
+<hr />
+<h2 id="letting-an-agent-read-unmerged-branches">Letting an agent read unmerged branches<a class="headerlink" href="#letting-an-agent-read-unmerged-branches" title="Permanent link">&para;</a></h2>
+<p>By default an agent searches <strong>the main graph only</strong> — pending work sitting on an
+unmerged branch is invisible to it. An agent definition can opt into reading
+branches that have not been merged yet, narrowed by why a branch exists and by
+its name:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="err">PATCH /api/projects/{projectId}/agent-definitions/{id}</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="err">{</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="err">  "branchScope": {</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="err">    "unmerged": true,</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="err">    "origins": ["extraction"],</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="err">    "branches": ["extraction/*"],</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="err">    "maxBranches": 3</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="err">  }</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="err">}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>unmerged</code></td>
+<td><code>true</code> enables branch reads. Absent or <code>false</code> means main only.</td>
+</tr>
+<tr>
+<td><code>origins</code></td>
+<td>Only branches created by these sources: <code>extraction</code>, <code>agent</code>, <code>manual</code>, <code>system</code>. Empty/omitted allows any.</td>
+</tr>
+<tr>
+<td><code>branches</code></td>
+<td>Name globs. <code>*</code> is the only wildcard and it matches across <code>/</code>, so <code>extraction/*</code> covers every extraction branch.</td>
+</tr>
+<tr>
+<td><code>maxBranches</code></td>
+<td>How many branches one search may read, newest first. Default 3, maximum 20.</td>
+</tr>
+</tbody>
+</table>
+<p>When both <code>origins</code> and <code>branches</code> are set, a branch must match both.</p>
+<p>A search under a scope reads the main graph plus each matching branch and merges
+the results. Every object that exists only on a branch comes back flagged with
+<code>branch_id</code>, <code>branch_name</code>, <code>origin</code> and <code>origin_label</code>, so a model can say
+"on the pending extraction branch for Invoice.pdf…" rather than presenting it as
+settled fact. When the cap leaves branches unread, the response metadata carries a
+<code>branch_scope_note</code> saying so.</p>
+<p>The boundary also follows the agent's calls: <code>search-knowledge</code> runs its internal
+research agent under the same boundary (it cannot be steered into reading a branch
+outside it), and a read tool that names a branch outside the boundary is refused.</p>
+<div class="admonition note">
+<p class="admonition-title">It narrows reads; it grants nothing</p>
+<p>A branch scope only restricts. <strong>No scope means main only</strong>: an agent that
+declares no <code>branchScope</code> reads the main graph, and a read tool that names a
+branch is refused — declaring a scope is what lets it read unmerged work. A
+scoped run may name only branches inside its scope, on any tool, so it cannot
+reach the rest by asking for one. Branch <em>management</em> is separate: an agent
+that could already create a branch and write to it still can (branch creation
+and writes are not gated by the read scope), and an agent allowed to merge a
+branch can always surface its content through main — that is a write-permission
+question, so grant write and merge rights on their own merits. A delegated
+sub-agent receives the intersection of its own scope and its caller's: a child
+can never read more than its parent, and a child that declares nothing of its
+own reads the main graph only.</p>
+</div>
+<p>Edge reads are bounded the same way: a scoped run sees relationships on the main
+graph and on the branches in its scope, and an agent run that declares no scope
+sees main edges only. Graph traversal is not widened by a scope yet — it walks the main graph — so
+a scoped agent reaches branch content through search, a branch named on a read
+tool, and <code>search-knowledge</code>.</p>
 
 
 
