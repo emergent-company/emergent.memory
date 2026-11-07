@@ -24,7 +24,7 @@ import (
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
 // @Failure      422 {object} apperror.Error "Provider publishes no OAuth authorization metadata — configure a token header instead"
-// @Failure      502 {object} apperror.Error "Authorization server metadata could not be fetched"
+// @Failure      503 {object} apperror.Error "Authorization server metadata could not be fetched"
 // @Router       /api/admin/mcp-servers/{id}/oauth/authorize [post]
 // @Security     bearerAuth
 func (h *Handler) StartMCPOAuth(c echo.Context) error {
@@ -202,7 +202,8 @@ func (h *Handler) CompleteMCPOAuth(c echo.Context) error {
 
 // mcpOAuthError maps the OAuth connect flow's sentinel errors onto HTTP
 // responses. Errors the user can act on are 400/404; an upstream authorization
-// server failure is 502.
+// server failure is 503, while a provider that publishes no metadata at all is
+// 422.
 func mcpOAuthError(err error) error {
 	switch {
 	case errors.Is(err, ErrServerNotFound):

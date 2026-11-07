@@ -17,36 +17,24 @@ final class ProjectSwitcherModelTests: XCTestCase {
 
     // MARK: - Rows
 
-    func testRowCarriesNameAndOrganization() {
+    func testRowCarriesProjectNameOnly() {
         let row = ProjectSwitcherModel.row(project("p1", "Alpha", org: "o1"),
-                                           organizationName: "Acme",
                                            connectedIDs: [],
                                            activeID: nil)
         XCTAssertEqual(row.title, "Alpha")
-        XCTAssertEqual(row.subtitle, "Acme")
         XCTAssertFalse(row.isActive)
         XCTAssertFalse(row.isConnected)
     }
 
     func testRowFallsBackToUntitledProject() {
         let row = ProjectSwitcherModel.row(project("p1", "   "),
-                                           organizationName: nil,
                                            connectedIDs: [],
                                            activeID: nil)
         XCTAssertEqual(row.title, String(localized: "Untitled project"))
     }
 
-    func testRowOmitsBlankOrganizationSubtitle() {
-        let row = ProjectSwitcherModel.row(project("p1", "Alpha"),
-                                           organizationName: "  ",
-                                           connectedIDs: [],
-                                           activeID: nil)
-        XCTAssertNil(row.subtitle)
-    }
-
     func testRowMarksActiveAndConnected() {
         let row = ProjectSwitcherModel.row(project("p1", "Alpha"),
-                                           organizationName: nil,
                                            connectedIDs: ["p1", "p2"],
                                            activeID: "p1")
         XCTAssertTrue(row.isActive)
@@ -60,7 +48,6 @@ final class ProjectSwitcherModelTests: XCTestCase {
         let sections = ProjectSwitcherModel.sections(
             groups: [group("o1", "Acme", projects)],
             recents: projects,
-            organizationNames: ["o1": "Acme"],
             connectedIDs: [],
             activeID: nil
         )
@@ -73,7 +60,6 @@ final class ProjectSwitcherModelTests: XCTestCase {
         let sections = ProjectSwitcherModel.sections(
             groups: [group("o1", "Acme", projects)],
             recents: [],
-            organizationNames: ["o1": "Acme"],
             connectedIDs: [],
             activeID: nil
         )
@@ -86,15 +72,15 @@ final class ProjectSwitcherModelTests: XCTestCase {
         let sections = ProjectSwitcherModel.sections(
             groups: [group("o1", "Acme", projects)],
             recents: recents,
-            organizationNames: ["o1": "Acme"],
             connectedIDs: ["p1"],
             activeID: "p3"
         )
         XCTAssertEqual(sections.count, 2)
         XCTAssertEqual(sections[0].title, String(localized: "Recent"))
-        // Recent keeps the store's newest-first order.
+        // Recent keeps the store's newest-first order, and its rows are still
+        // plain project names — the section header carries the context.
         XCTAssertEqual(sections[0].rows.map(\.id), ["p3", "p1"])
-        XCTAssertEqual(sections[0].rows[0].subtitle, "Acme")
+        XCTAssertEqual(sections[0].rows.map(\.title), ["Project 3", "Project 1"])
         XCTAssertTrue(sections[0].rows[0].isActive)
         XCTAssertTrue(sections[0].rows[1].isConnected)
         XCTAssertEqual(sections[1].rows.count, 12)
@@ -106,7 +92,6 @@ final class ProjectSwitcherModelTests: XCTestCase {
             let sections = ProjectSwitcherModel.sections(
                 groups: [group("o1", "Acme", projects)],
                 recents: [projects[0]],
-                organizationNames: ["o1": "Acme"],
                 connectedIDs: [],
                 activeID: nil
             )
@@ -124,12 +109,11 @@ final class ProjectSwitcherModelTests: XCTestCase {
         let sections = ProjectSwitcherModel.sections(
             groups: [group("o1", "Acme", [project("p1", "Alpha")]), unknown],
             recents: [],
-            organizationNames: [:],
             connectedIDs: [],
             activeID: nil
         )
         XCTAssertEqual(sections.map(\.id), ["org:o1", "org:__unknown__"])
         XCTAssertEqual(sections.map(\.title), ["Acme", "Other"])
-        XCTAssertNil(sections[1].rows.first?.subtitle)
+        XCTAssertEqual(sections[1].rows.map(\.title), ["Loose"])
     }
 }

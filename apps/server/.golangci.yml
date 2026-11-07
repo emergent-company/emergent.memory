@@ -43,6 +43,7 @@ linters:
             - github.com/emergent-company/emergent.memory/domain/email       # email.JobsService (MCP invite emails)
             - github.com/emergent-company/emergent.memory/domain/graph       # graph.Service + DTO types (no direct Repository)
             - github.com/emergent-company/emergent.memory/domain/journal     # journal.Service (journal-list/add-note)
+            - github.com/emergent-company/emergent.memory/domain/oauthas     # oauthas.SupportedScopes only (protected-resource metadata advertises the AS scope allowlist; no service/repository)
             - github.com/emergent-company/emergent.memory/domain/provider    # provider.CredentialService/ModelCatalogService + DTO types
             - github.com/emergent-company/emergent.memory/domain/schemas     # schemas.Service (schema migration tools)
             - github.com/emergent-company/emergent.memory/domain/search      # search.Service + DTO types

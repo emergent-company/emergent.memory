@@ -15,6 +15,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/rerank"
@@ -190,6 +191,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 
 	// Build metadata
 	metadata := s.makeMetadata(fusedResults, graphCount, textCount, relationshipCount, fusionStrategy, fusionElapsed, graphRes, textRes, relationshipRes, resultTypes, relationshipElapsed, startTime)
+	metadata.BranchScope = graphRes.branchScope
 
 	// Build debug info if requested
 	var debug *UnifiedSearchDebug
@@ -297,10 +299,11 @@ func marshalJSON(v any) []byte {
 
 // graphOutcome wraps graph search results with timing and debug data
 type graphOutcome struct {
-	results  []*UnifiedSearchGraphResult
-	elapsed  time.Duration
-	rawDebug any
-	err      error
+	results     []*UnifiedSearchGraphResult
+	elapsed     time.Duration
+	rawDebug    any
+	branchScope *BranchScopeInfo
+	err         error
 }
 
 // textOutcome wraps text search results with timing, mode, and debug data
@@ -390,8 +393,8 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 			return
 		}
 		start := time.Now()
-		results, rawDebug, err := s.executeGraphSearch(ctx, projectID, req, searchCtx, queryVector, req.MinScore)
-		graphCh <- graphOutcome{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+		results, rawDebug, branchScope, err := s.executeGraphSearch(ctx, projectID, req, searchCtx, queryVector, req.MinScore)
+		graphCh <- graphOutcome{results: results, elapsed: time.Since(start), rawDebug: rawDebug, branchScope: branchScope, err: err}
 	}()
 
 	// Text search
@@ -528,9 +531,14 @@ func hybridSearchRequestFromUnified(req *UnifiedSearchRequest, vector []float32)
 	return hybridReq
 }
 
-// executeGraphSearch runs the graph search using the graph service.
-// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
-func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext, queryVector []float32, minScore *float32) ([]*UnifiedSearchGraphResult, any, error) {
+// executeGraphSearch runs the graph search using the graph service. When the
+// run carries a branch read scope (#265) it fans out over the main graph and
+// every unmerged branch in scope; otherwise it is the single main-graph query
+// it always was.
+//
+// If queryVector is non-nil, it is used directly; otherwise falls back to
+// embedding the query once for all legs.
+func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext, queryVector []float32, minScore *float32) ([]*UnifiedSearchGraphResult, any, *BranchScopeInfo, error) {
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
@@ -547,16 +555,54 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	hybridReq := hybridSearchRequestFromUnified(req, vector)
 
 	// Execute search (pass nil opts since unified search has its own debug handling)
-	searchResp, err := s.graphService.HybridSearch(ctx, projectID, hybridReq, nil)
+	results, accessed, rawDebug, err := s.graphSearchOnce(ctx, projectID, hybridReq, minScore, req.IncludeDebug)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	// Convert to unified search results
-	results := make([]*UnifiedSearchGraphResult, len(searchResp.Data))
-	graphObjectIDs := make([]uuid.UUID, 0, len(searchResp.Data))
+	// Track access asynchronously (don't block response). This is the main leg,
+	// exactly as before branch scoping existed: a branch head is a separate head
+	// of the same canonical object and is not what the access log describes, so
+	// fanning out must not change which objects are marked read.
+	if ids := accessed; len(ids) > 0 {
+		go func() {
+			bgCtx := context.Background()
+			if err := s.graphService.UpdateAccessTimestamps(bgCtx, ids); err != nil {
+				s.log.Warn("failed to update access timestamps", logger.Error(err))
+			}
+		}()
+	}
 
+	// A branch scope fans out over the main graph and each in-scope unmerged
+	// branch. An explicit BranchID request is honoured as-is: it is the HTTP
+	// caller asking for one branch, and the agent tool layer never sets it.
+	var branchInfo *BranchScopeInfo
+	if scope := branchscope.FromContext(ctx); !scope.IsMainOnly() && req.BranchID == nil {
+		results, branchInfo = s.fanOutGraphSearch(ctx, projectID, hybridReq, scope, minScore, results)
+	}
+
+	return results, rawDebug, branchInfo, nil
+}
+
+// graphSearchOnce runs one hybrid graph search against one branch target (nil
+// BranchID = the main graph) and maps it to unified graph results, applying the
+// per-mode min-score cut-off. It is the only query path, so the main-only
+// behaviour is byte-for-byte what it was before branch scoping existed.
+//
+// accessed carries the head object ids of every raw result, BEFORE the min-score
+// cut-off, because the access log has always recorded what the search saw rather
+// than what survived the caller's filter; returning it here keeps that true after
+// the fan-out refactor.
+func (s *Service) graphSearchOnce(ctx context.Context, projectID uuid.UUID, hybridReq *graph.HybridSearchRequest, minScore *float32, includeDebug bool) ([]*UnifiedSearchGraphResult, []uuid.UUID, any, error) {
+	searchResp, err := s.graphService.HybridSearch(ctx, projectID, hybridReq, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	results := make([]*UnifiedSearchGraphResult, len(searchResp.Data))
+	accessed := make([]uuid.UUID, 0, len(searchResp.Data))
 	for i, item := range searchResp.Data {
+		accessed = append(accessed, item.Object.ID)
 		key := ""
 		if item.Object.Key != nil {
 			key = *item.Object.Key
@@ -574,29 +620,16 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 			VectorScore:   item.VectorScore,
 			Relationships: []UnifiedSearchRelationship{},
 		}
-		graphObjectIDs = append(graphObjectIDs, item.Object.ID)
 	}
 
 	// Per-mode cutoff: drop graph results below the requested min score (nil/0 keeps baseline).
 	results = filterBelowMinScore(results, minScore, func(g *UnifiedSearchGraphResult) float32 { return g.Score })
 
-	// Track access asynchronously (don't block response)
-	if len(graphObjectIDs) > 0 {
-		go func() {
-			bgCtx := context.Background()
-			if err := s.graphService.UpdateAccessTimestamps(bgCtx, graphObjectIDs); err != nil {
-				s.log.Warn("failed to update access timestamps", logger.Error(err))
-			}
-		}()
-	}
-
-	// Return raw debug items if debug is enabled
 	var rawDebug any
-	if req.IncludeDebug {
+	if includeDebug {
 		rawDebug = searchResp.Data
 	}
-
-	return results, rawDebug, nil
+	return results, accessed, rawDebug, nil
 }
 
 // executeTextSearch runs text search on document chunks.
@@ -1118,18 +1151,22 @@ func (s *Service) fuseTextFirst(graphResults []*UnifiedSearchGraphResult, textRe
 // graphResultToItem converts a graph result to a unified search result item
 func (s *Service) graphResultToItem(g *UnifiedSearchGraphResult) UnifiedSearchResultItem {
 	return UnifiedSearchResultItem{
-		Type:          ItemTypeGraph,
-		ID:            g.ObjectID,
-		Score:         g.Score,
-		ObjectID:      g.ObjectID,
-		CanonicalID:   g.CanonicalID,
-		Rank:          g.Rank,
-		ObjectType:    g.ObjectType,
-		Key:           g.Key,
-		Fields:        g.Fields,
-		Labels:        g.Labels,
-		Relationships: g.Relationships,
-		Explanation:   g.Explanation,
+		Type:              ItemTypeGraph,
+		ID:                g.ObjectID,
+		Score:             g.Score,
+		ObjectID:          g.ObjectID,
+		CanonicalID:       g.CanonicalID,
+		Rank:              g.Rank,
+		ObjectType:        g.ObjectType,
+		Key:               g.Key,
+		Fields:            g.Fields,
+		Labels:            g.Labels,
+		Relationships:     g.Relationships,
+		Explanation:       g.Explanation,
+		BranchID:          g.BranchID,
+		BranchName:        g.BranchName,
+		BranchOrigin:      g.BranchOrigin,
+		BranchOriginLabel: g.BranchOriginLabel,
 	}
 }
 

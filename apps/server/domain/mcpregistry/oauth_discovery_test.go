@@ -138,6 +138,52 @@ func TestDiscoverServerAuthRequirement_TransientFailureWinsOverAbsence(t *testin
 	}
 }
 
+// TestDiscoverServerAuthRequirement_PRMWellKnown5xxIsDiscoveryFailure pins the
+// registry-visible consequence of the PRM 5xx rule. An authorization_uri-only
+// challenge is the registry-reachable route into the well-known
+// protected-resource fallback; a 5xx there must surface as a discovery failure
+// (the 503 class via ErrOAuthDiscoveryFailed), never degrade silently into the
+// authorization-server walk and report success.
+func TestDiscoverServerAuthRequirement_PRMWellKnown5xxIsDiscoveryFailure(t *testing.T) {
+	withTestOAuthHTTP(t)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer authorization_uri="`+srv.URL+`/.well-known/oauth-authorization-server"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	// The optional PRM document is an upstream outage, not absence. Pre-change
+	// code swallowed this and fell through to the authorization-server walk.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	// A usable authorization-server document exists behind the challenge, so
+	// the pre-change silent fallthrough would otherwise complete successfully.
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 srv.URL,
+			"authorization_endpoint": srv.URL + "/authorize",
+			"token_endpoint":         srv.URL + "/token",
+		})
+	})
+
+	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr(srv.URL + "/mcp")}
+	req, err := discoverServerAuthRequirement(context.Background(), server)
+	if err == nil {
+		t.Fatalf("discoverServerAuthRequirement() = %+v, error = nil, want a discovery failure", req)
+	}
+	if !errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, want ErrOAuthDiscoveryFailed (PRM 5xx is the 503 class)", err)
+	}
+	if errors.Is(err, ErrOAuthMetadataUnavailable) {
+		t.Errorf("err = %v, must NOT be ErrOAuthMetadataUnavailable (a 5xx is not absence)", err)
+	}
+}
+
 func TestDiscoverServerAuthRequirement_401MetadataIsNotAbsence(t *testing.T) {
 	withTestOAuthHTTP(t)
 

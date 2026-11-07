@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // errorIs is errors.Is, kept local so the test reads the same as the assertions.
@@ -319,6 +322,43 @@ func TestRegisterClient_RejectedExcerptIsCappedAndSanitized(t *testing.T) {
 	}
 }
 
+// TestRegisterClient_2xxErrorBodyMapsToClientRequired pins the 200/201 DCR
+// response that carries an `error` field: mcpauth.Register wraps
+// ErrClientRequired, and the registry must map it to ErrOAuthClientRequired so
+// the handler answers 400 with the actionable pre-registered-client message,
+// not an opaque 500.
+func TestRegisterClient_2xxErrorBodyMapsToClientRequired(t *testing.T) {
+	withTestOAuthHTTP(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"error":"invalid_client_metadata","error_description":"not in the provider catalog"}`))
+	}))
+	defer srv.Close()
+
+	_, err := registerClient(context.Background(), srv.URL, "n", "https://cb.test", nil)
+	if err == nil {
+		t.Fatal("expected an error for a 2xx registration response carrying an error")
+	}
+	if !errorIs(err, ErrOAuthClientRequired) {
+		t.Errorf("err = %v, want it to wrap ErrOAuthClientRequired", err)
+	}
+
+	// StartMCPOAuth wraps the registration error before the handler sees it.
+	mapped := mcpOAuthError(fmt.Errorf("registering an OAuth client with the authorization server: %w", err))
+	status, body := apperror.ToHTTPError(mapped)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(map[string]any)["message"].(string)
+	if want := oauthClientRequiredMessage(err); msg != want {
+		t.Errorf("message = %q, want %q", msg, want)
+	}
+	if strings.Contains(msg, "internal") {
+		t.Errorf("message = %q, must not be an opaque internal error", msg)
+	}
+}
+
 // TestDiscoverAuthRequirement_RejectsBlockedMetadataURL asserts a challenge
 // cannot steer the server at internal infrastructure: a protected-resource
 // metadata URL in a blocked range is rejected before any request, and the
@@ -334,6 +374,21 @@ func TestDiscoverAuthRequirement_RejectsBlockedMetadataURL(t *testing.T) {
 	}
 	if !errors.Is(err, ErrOutboundURLNotAllowed) {
 		t.Errorf("err = %v, want ErrOutboundURLNotAllowed", err)
+	}
+}
+
+// TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe pins
+// that discoverServerAuthRequirement validates the resource URL before probing.
+// That ordering is why probeAuthChallenge needs no ErrURLNotAllowed arm of its
+// own: no rejected URL can reach the probe.
+func TestDiscoverServerAuthRequirement_BlockedResourceURLRejectedBeforeProbe(t *testing.T) {
+	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr("http://169.254.169.254/mcp")}
+	_, err := discoverServerAuthRequirement(context.Background(), server)
+	if !errors.Is(err, ErrOutboundURLNotAllowed) {
+		t.Errorf("err = %v, want ErrOutboundURLNotAllowed from the pre-probe guard", err)
+	}
+	if errors.Is(err, ErrOAuthDiscoveryFailed) {
+		t.Errorf("err = %v, must be the pre-probe guard, not a probe failure", err)
 	}
 }
 

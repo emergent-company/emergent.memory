@@ -47,15 +47,22 @@ func (s *Server) uiOAuthAuthorize(c echo.Context) error {
 		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "A PKCE code_challenge is required.")
 	}
 
-	scope := strings.TrimSpace(q.Get("scope"))
-	scopes := strings.Fields(scope)
-	if len(scopes) == 0 {
+	// Grant the supported subset of the requested scope. OAuth permits a partial
+	// grant (RFC 6749 §3.3), and MCP clients routinely ask for scopes this server
+	// does not understand (offline_access, vendor-specific ones); rejecting the
+	// whole request would make the consent page unusable for them. The
+	// all-supported fallback applies only when the client asked for no scope at
+	// all: a request that named only unsupported scopes must not widen to
+	// everything.
+	requested := strings.Fields(q.Get("scope"))
+	scopes := clampScopes(requested, ctxResp.ScopesSupported)
+	if len(requested) == 0 {
 		scopes = ctxResp.ScopesSupported
-		scope = strings.Join(scopes, " ")
 	}
-	if !scopesSubset(scopes, ctxResp.ScopesSupported) {
-		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "One or more requested scopes are not supported.")
+	if len(scopes) == 0 {
+		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "None of the requested scopes are supported by this server.")
 	}
+	scope := strings.Join(scopes, " ")
 
 	data := oauthConsentData{
 		ClientID:            ctxResp.ClientID,
@@ -113,13 +120,15 @@ func (s *Server) uiOAuthAuthorizeDecision(c echo.Context) error {
 		return c.Redirect(http.StatusFound, u.String())
 	}
 
-	scope := strings.TrimSpace(c.FormValue("scope"))
-	scopes := strings.Fields(scope)
-	if len(scopes) == 0 {
+	// Same partial grant as the GET: keep the supported scopes, drop the rest,
+	// and only fall back to all supported scopes when the form carried none.
+	requested := strings.Fields(c.FormValue("scope"))
+	scopes := clampScopes(requested, ctxResp.ScopesSupported)
+	if len(requested) == 0 {
 		scopes = ctxResp.ScopesSupported
 	}
-	if !scopesSubset(scopes, ctxResp.ScopesSupported) {
-		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "One or more requested scopes are not supported.")
+	if len(scopes) == 0 {
+		return oauthErrorPage(c, http.StatusBadRequest, "Invalid authorization request", "None of the requested scopes are supported by this server.")
 	}
 	projectID := c.FormValue("project_id")
 	if projectID == "" {
@@ -144,17 +153,24 @@ func (s *Server) uiOAuthAuthorizeDecision(c echo.Context) error {
 	return c.Redirect(http.StatusFound, res.RedirectURL)
 }
 
-func scopesSubset(want, supported []string) bool {
+// clampScopes keeps the supported scopes from a client's request, preserving
+// order and de-duplicating. Anything the server does not understand is dropped
+// rather than rejected.
+func clampScopes(want, supported []string) []string {
 	allowed := make(map[string]bool, len(supported))
 	for _, s := range supported {
 		allowed[s] = true
 	}
+	out := make([]string, 0, len(want))
+	seen := make(map[string]bool, len(want))
 	for _, s := range want {
-		if !allowed[s] {
-			return false
+		if !allowed[s] || seen[s] {
+			continue
 		}
+		seen[s] = true
+		out = append(out, s)
 	}
-	return true
+	return out
 }
 
 // uiConnectedApps lists the signed-in user's grants across projects.

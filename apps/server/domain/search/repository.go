@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/branchsql"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -659,4 +660,44 @@ func buildRelationshipSearchQuery(vectorStr string, projectID uuid.UUID, namespa
 	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector\n\t\tLIMIT ?"
 	queryArgs = append(queryArgs, vectorStr, limit)
 	return query, queryArgs
+}
+
+// BranchTarget is one unmerged branch a scoped search may read (#265).
+type BranchTarget struct {
+	ID          uuid.UUID `bun:"id"`
+	Name        string    `bun:"name"`
+	Origin      string    `bun:"origin"`
+	OriginLabel *string   `bun:"origin_label"`
+}
+
+// branchReadCandidateLimit bounds how many unmerged branches one scoped search
+// considers before the scope's own maxBranches cap applies. It is a defensive
+// ceiling for a project that accumulated thousands of open branches, not a
+// policy: a branch beyond it is reported as omitted like any other.
+const branchReadCandidateLimit = 500
+
+// ListUnmergedBranches returns a project's open branches, newest first, minus
+// any extraction branch whose source document no longer exists. Origins, when
+// non-empty, restricts the query to those origins; name globs are applied by the
+// caller because they are a scope rule, not a SQL predicate.
+func (r *Repository) ListUnmergedBranches(ctx context.Context, projectID uuid.UUID, origins []string) ([]*BranchTarget, error) {
+	var out []*BranchTarget
+	q := r.db.NewSelect().
+		TableExpr("kb.branches AS b").
+		ColumnExpr("b.id").
+		ColumnExpr("b.name").
+		ColumnExpr("b.origin").
+		ColumnExpr("b.origin_label").
+		Where("b.project_id = ?", projectID).
+		Where("b.merged_at IS NULL").
+		Where(branchsql.DeletedExtractionSourceExclusion).
+		Order("b.created_at DESC").
+		Limit(branchReadCandidateLimit)
+	if len(origins) > 0 {
+		q = q.Where("b.origin IN (?)", bun.In(origins))
+	}
+	if err := q.Scan(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

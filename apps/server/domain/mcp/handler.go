@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/oauthas"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -44,36 +46,53 @@ func NewHandler(svc *Service, log *slog.Logger, userProfileSvc *auth.UserProfile
 	}
 }
 
+// prmWellKnownPath is the RFC 9728 protected-resource-metadata path prefix. The
+// metadata for a resource at https://host/api/mcp lives at
+// https://host/.well-known/oauth-protected-resource/api/mcp: the well-known
+// segment is inserted before the resource's own path (RFC 9728 §3.1). A client
+// that requests metadata for a path-bearing resource looks there first, so
+// serving only the origin form makes discovery fail before the OAuth flow
+// starts.
+const prmWellKnownPath = "/.well-known/oauth-protected-resource"
+
 // HandleOAuthProtectedResource handles GET /.well-known/oauth-protected-resource
-// This endpoint is required by the MCP 2025-11-25 authorization spec (RFC 9728).
-// Returning an empty authorization_servers array tells MCP clients (e.g. mcp-remote)
-// that this server uses bearer token / API key auth and does NOT require an OAuth flow.
+// and its path-inserted form (RFC 9728 §3.1). This endpoint is required by the
+// MCP 2025-11-25 authorization spec. The returned "resource" must be the
+// identifier the client addressed: a client that connects to
+// https://host/api/mcp MUST reject metadata whose resource is the bare origin
+// (RFC 9728 §3.3), which is what strict clients (e.g. Google's Gemini
+// connector) do. An empty authorization_servers array means bearer token /
+// API key auth with no OAuth flow available.
 //
 // @Summary      OAuth Protected Resource Metadata
-// @Description  Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals that the MCP server accepts bearer token authentication without an OAuth authorization flow.
+// @Description  Returns OAuth 2.0 Protected Resource Metadata per RFC 9728 for the addressed resource, advertising the built-in authorization server when OAuth is enabled.
 // @Tags         mcp
 // @Produce      json
 // @Success      200 {object} map[string]any "Protected resource metadata"
 // @Router       /.well-known/oauth-protected-resource [get]
+// @Router       /.well-known/oauth-protected-resource/{resourcePath} [get]
 func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
-	// Build resource URL from the request host
-	scheme := "https"
-	if c.Request().TLS == nil && c.Request().Header.Get("X-Forwarded-Proto") == "" {
-		scheme = "http"
+	origin := requestOrigin(c)
+	resourceURL := origin
+	// Keep the addressed path verbatim: RFC 9728 §3.3 requires the returned
+	// "resource" to be identical to the identifier the client used, and a
+	// trailing slash makes it a different URI. Only the bare well-known path
+	// (which addresses the origin) collapses to the origin.
+	if rest := strings.TrimPrefix(c.Request().URL.Path, prmWellKnownPath); rest != "" && rest != "/" {
+		resourceURL += rest
 	}
-	if fwdProto := c.Request().Header.Get("X-Forwarded-Proto"); fwdProto != "" {
-		scheme = fwdProto
-	}
-	resourceURL := scheme + "://" + c.Request().Host
 
 	// When the built-in authorization server is enabled, advertise it so MCP
 	// clients can run the OAuth flow. The issuer comes from config when set,
-	// else from the request origin.
+	// else from the request origin - never from resourceURL, which carries the
+	// resource path and would make the issuer look like
+	// https://host/api/mcp (the issuer is the origin: PRM's
+	// authorization_servers entries are issuer identifiers, RFC 9728 §2/§3.3).
 	authorizationServers := []string{}
 	if h.svc != nil && h.svc.oauthASEnabled {
 		issuer := h.svc.oauthASIssuer
 		if issuer == "" {
-			issuer = resourceURL
+			issuer = origin
 		}
 		authorizationServers = []string{issuer}
 	}
@@ -82,7 +101,24 @@ func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
 		"resource":                 resourceURL,
 		"bearer_methods_supported": []string{"header"},
 		"authorization_servers":    authorizationServers,
+		// Advertised so clients can ask for exactly the scopes this server
+		// understands; an MCP client SHOULD use these instead of inventing
+		// scopes of its own.
+		"scopes_supported": oauthas.SupportedScopes,
 	})
+}
+
+// requestOrigin returns the externally visible origin of the request, honouring
+// the reverse proxy's X-Forwarded-Proto.
+func requestOrigin(c echo.Context) string {
+	scheme := "https"
+	if c.Request().TLS == nil && c.Request().Header.Get("X-Forwarded-Proto") == "" {
+		scheme = "http"
+	}
+	if fwdProto := c.Request().Header.Get("X-Forwarded-Proto"); fwdProto != "" {
+		scheme = fwdProto
+	}
+	return scheme + "://" + c.Request().Host
 }
 
 // HandleRPC handles POST /mcp/rpc - JSON-RPC 2.0 endpoint (legacy)
