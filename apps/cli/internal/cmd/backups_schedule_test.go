@@ -71,3 +71,28 @@ func TestPrintBackupSchedule(t *testing.T) {
 	assert.Contains(t, out, "disabled")
 	assert.NotContains(t, out, "Last run")
 }
+
+// TestBackupScheduleStructuredOutputs pins the machine-readable contract the
+// spec promises for all three commands: delete reports the project it cleared,
+// and get on a project with no schedule answers an explicit null rather than
+// prose that a script would have to parse.
+func TestBackupScheduleStructuredOutputs(t *testing.T) {
+	var jsonBuf bytes.Buffer
+	handled, err := emitStructuredTo(&jsonBuf, "json", scheduleDeletion{ProjectID: "p-1", Deleted: true})
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.JSONEq(t, `{"projectId":"p-1","deleted":true}`, jsonBuf.String())
+
+	var yamlBuf bytes.Buffer
+	handled, err = emitStructuredTo(&yamlBuf, "yaml", scheduleDeletion{ProjectID: "p-1", Deleted: true})
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Contains(t, yamlBuf.String(), "projectId: p-1")
+	assert.Contains(t, yamlBuf.String(), "deleted: true")
+
+	var nilBuf bytes.Buffer
+	handled, err = emitStructuredTo(&nilBuf, "json", nil)
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Equal(t, "null\n", nilBuf.String())
+}

@@ -383,27 +383,29 @@ func (s *Server) uiBackups(c echo.Context) error {
 	if err != nil {
 		// Unreachable/gated Memory or a project with no org: a clear error
 		// state, never a 500.
-		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, "", backupsLoadErr(err), flashMsg, flashErr))
+		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, false, "", backupsLoadErr(err), flashMsg, flashErr))
 	}
 	backups, total, err := s.memory.ListBackups(ctx, orgID)
 	if err != nil {
 		if isMemoryNotFound(err) {
 			// Memory deployment has backups disabled (design D6): degrade to
 			// an unavailable state instead of a hard error.
-			return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, "The connected Memory service does not expose backups.", nil, flashMsg, flashErr))
+			return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, false, "The connected Memory service does not expose backups.", nil, flashMsg, flashErr))
 		}
-		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, "", userFacingError(err), flashMsg, flashErr))
+		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, false, "", userFacingError(err), flashMsg, flashErr))
 	}
 	if backups == nil {
 		backups = []Backup{}
 	}
 	// The schedule load is best-effort: a failure here must not hide the backup
-	// list that already loaded. An unset schedule is 404 → nil, not an error.
+	// list that already loaded. An unset schedule is 404 → nil, not an error;
+	// any other failure marks the card unavailable so its form (which would be
+	// prefilled with defaults) cannot overwrite the schedule it could not read.
 	schedule, schedErr := s.memory.GetBackupSchedule(ctx)
 	if flashErr == nil && schedErr != nil {
 		flashErr = userFacingError(schedErr)
 	}
-	return s.page(c, pageTitle("Backups"), BackupsPage(backups, total, schedule, "", nil, flashMsg, flashErr))
+	return s.page(c, pageTitle("Backups"), BackupsPage(backups, total, schedule, schedErr != nil, "", nil, flashMsg, flashErr))
 }
 
 // uiBackupDetail renders the dedicated backup page (GET /backups/:id): the
@@ -597,7 +599,10 @@ func backupScheduleRetentionValue(schedule *BackupSchedule) string {
 }
 
 // backupScheduleStateLabel is the card badge's label.
-func backupScheduleStateLabel(schedule *BackupSchedule) string {
+func backupScheduleStateLabel(schedule *BackupSchedule, unavailable bool) string {
+	if unavailable {
+		return "Unavailable"
+	}
 	if schedule == nil {
 		return "Not configured"
 	}
@@ -608,8 +613,10 @@ func backupScheduleStateLabel(schedule *BackupSchedule) string {
 }
 
 // backupScheduleStateIntent colours the schedule state badge.
-func backupScheduleStateIntent(schedule *BackupSchedule) ui.BadgeIntent {
+func backupScheduleStateIntent(schedule *BackupSchedule, unavailable bool) ui.BadgeIntent {
 	switch {
+	case unavailable:
+		return ui.BadgeWarning
 	case schedule == nil:
 		return ui.BadgeGhost
 	case schedule.Enabled:

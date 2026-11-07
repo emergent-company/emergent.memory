@@ -128,8 +128,8 @@ func TestScheduleClaimIsExclusiveAndAdvances(t *testing.T) {
 	if len(claimed) != 1 {
 		t.Fatalf("claimed %d schedules, want 1", len(claimed))
 	}
-	if claimed[0].LastRunAt == nil {
-		t.Fatal("claim did not stamp last_run_at")
+	if claimed[0].LastRunAt != nil {
+		t.Fatal("claim must not stamp last_run_at: it records the last fire that started a backup")
 	}
 	if !claimed[0].NextRunAt.After(now) {
 		t.Fatalf("claim left next_run_at in the past: %s", claimed[0].NextRunAt)

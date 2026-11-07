@@ -51,6 +51,12 @@ func runBackupsScheduleGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get backup schedule: %w", err)
 	}
 	if schedule == nil {
+		// An absent schedule is a valid answer, not an error: --output json|yaml
+		// gets an explicit null instead of prose, so a script can tell the two
+		// apart without parsing English.
+		if handled, err := emitStructured(cmd, nil); handled {
+			return err
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "No backup schedule configured.")
 		return nil
 	}
@@ -157,8 +163,18 @@ func runBackupsScheduleDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete backup schedule: %w", err)
 	}
 
+	if handled, err := emitStructured(cmd, scheduleDeletion{ProjectID: projectID, Deleted: true}); handled {
+		return err
+	}
 	fmt.Fprintln(cmd.OutOrStdout(), "Backup schedule deleted.")
 	return nil
+}
+
+// scheduleDeletion is the machine-readable result of `schedule delete`, so
+// --output json|yaml reports which project lost its schedule.
+type scheduleDeletion struct {
+	ProjectID string `json:"projectId" yaml:"projectId"`
+	Deleted   bool   `json:"deleted" yaml:"deleted"`
 }
 
 // printBackupSchedule renders a schedule for humans.

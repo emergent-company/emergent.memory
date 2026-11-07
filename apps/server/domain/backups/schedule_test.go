@@ -24,12 +24,16 @@ func TestValidateBackupCron(t *testing.T) {
 	}
 
 	invalid := map[string]string{
-		"":               "required",
-		"   ":            "required",
-		"0 2 * *":        "5 fields",
-		"0 0 2 * * *":    "5 fields",
-		"*/5 * * * *":    "minimum interval",
-		"* * * * *":      "minimum interval",
+		"":            "required",
+		"   ":         "required",
+		"0 2 * *":     "5 fields",
+		"0 0 2 * * *": "5 fields",
+		"*/5 * * * *": "minimum interval",
+		"* * * * *":   "minimum interval",
+		// A short gap hidden behind a long one: 00:05, 00:55, 01:05, 01:55 is a
+		// 50-minute then a 10-minute gap, so checking only the first interval
+		// would accept it.
+		"5,55 0,1 * * *": "minimum interval",
 		"not a schedule": "5 fields",
 		"99 2 * * *":     "invalid cron",
 	}

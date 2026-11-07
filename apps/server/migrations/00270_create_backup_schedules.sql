@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_schedules_due
     WHERE enabled;
 
 COMMENT ON TABLE kb.backup_schedules IS
-    'Per-project recurring backup schedule; one row per project, executed by the project_backup_schedules scheduler task';
+    'Per-project recurring backup schedule; one row per project, executed by the backups:project_schedules scheduler task';
 COMMENT ON COLUMN kb.backup_schedules.cron_schedule IS
     'Standard 5-field cron expression evaluated in UTC, e.g. "0 2 * * *" for 02:00 UTC daily';
 COMMENT ON COLUMN kb.backup_schedules.retention_days IS

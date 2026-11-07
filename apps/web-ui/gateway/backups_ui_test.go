@@ -49,7 +49,7 @@ func pt(t time.Time) *time.Time { return &t }
 
 func TestRenderBackupsPage(t *testing.T) {
 	backups := testBackups()
-	html := renderHTML(t, BackupsPage(backups, 3, nil, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(backups, 3, nil, false, "", nil, "", nil))
 
 	// list content: names/ids/status/size/created + header count
 	for _, want := range []string{
@@ -111,7 +111,7 @@ func TestRenderBackupsPage(t *testing.T) {
 
 func TestRenderBackupsPageCreatingPolls(t *testing.T) {
 	creating := []Backup{{ID: "b2", ProjectName: "Acme", Status: backupStatusCreating, Progress: 40, CreatedAt: time.Now()}}
-	html := renderHTML(t, BackupsPage(creating, 1, nil, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(creating, 1, nil, false, "", nil, "", nil))
 	if !strings.Contains(html, "window.location.reload") {
 		t.Error("auto-refresh poll missing while a backup is creating")
 	}
@@ -120,14 +120,14 @@ func TestRenderBackupsPageCreatingPolls(t *testing.T) {
 	}
 
 	terminal := []Backup{{ID: "b1", ProjectName: "Acme", Status: backupStatusReady, Progress: 100, CreatedAt: time.Now()}}
-	htmlDone := renderHTML(t, BackupsPage(terminal, 1, nil, "", nil, "", nil))
+	htmlDone := renderHTML(t, BackupsPage(terminal, 1, nil, false, "", nil, "", nil))
 	if strings.Contains(htmlDone, "window.location.reload") {
 		t.Error("poll must stop once every backup is terminal")
 	}
 }
 
 func TestRenderBackupsPageEmpty(t *testing.T) {
-	html := renderHTML(t, BackupsPage(nil, 0, nil, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, false, "", nil, "", nil))
 	if !strings.Contains(html, "No backups yet") {
 		t.Error("empty state missing")
 	}
@@ -138,7 +138,7 @@ func TestRenderBackupsPageEmpty(t *testing.T) {
 
 func TestRenderBackupsPageUnavailable(t *testing.T) {
 	// feature-gated degrade (design D6): unavailable state, not an error
-	html := renderHTML(t, BackupsPage(nil, 0, nil, "The connected Memory service does not expose backups.", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, false, "The connected Memory service does not expose backups.", nil, "", nil))
 	for _, want := range []string{"Backups unavailable", "does not expose backups"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("unavailable state missing %q", want)
@@ -154,7 +154,7 @@ func TestRenderBackupsPageUnavailable(t *testing.T) {
 
 func TestRenderBackupsPageError(t *testing.T) {
 	// Memory unreachable / non-404 failure: real error state
-	html := renderHTML(t, BackupsPage(nil, 0, nil, "", errTest, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, false, "", errTest, "", nil))
 	for _, want := range []string{"Failed to load backups", "backend unreachable"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("error state missing %q", want)
@@ -654,7 +654,7 @@ func TestRenderBackupsPageSchedule(t *testing.T) {
 		LastRunAt:     &last,
 		LastBackupID:  &lastID,
 	}
-	html := renderHTML(t, BackupsPage(nil, 0, schedule, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, schedule, false, "", nil, "", nil))
 
 	for _, want := range []string{
 		"Scheduled backups",
@@ -683,7 +683,7 @@ func TestRenderBackupsPageSchedule(t *testing.T) {
 // renders with the daily preset and enabled defaulted, and there is nothing to
 // delete yet.
 func TestRenderBackupsPageScheduleAbsent(t *testing.T) {
-	html := renderHTML(t, BackupsPage(nil, 0, nil, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, nil, false, "", nil, "", nil))
 
 	for _, want := range []string{
 		"Scheduled backups",
@@ -710,7 +710,7 @@ func TestRenderBackupsPageScheduleCustomCron(t *testing.T) {
 		RetentionDays: 14,
 		NextRunAt:     time.Date(2026, 11, 9, 4, 15, 0, 0, time.UTC),
 	}
-	html := renderHTML(t, BackupsPage(nil, 0, schedule, "", nil, "", nil))
+	html := renderHTML(t, BackupsPage(nil, 0, schedule, false, "", nil, "", nil))
 
 	for _, want := range []string{
 		"Disabled",
@@ -860,5 +860,54 @@ func TestUIBackupsPageShowsSchedule(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
+	}
+}
+
+// TestRenderBackupsPageScheduleUnavailable covers a schedule that could not be
+// read: the card says so and offers no form, so a user cannot overwrite a
+// schedule the page could not see with the form's default values.
+func TestRenderBackupsPageScheduleUnavailable(t *testing.T) {
+	html := renderHTML(t, BackupsPage(nil, 0, nil, true, "", nil, "", nil))
+
+	for _, want := range []string{
+		"Scheduled backups",
+		"Unavailable",
+		"Could not load the saved backup schedule",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("unavailable schedule card missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`action="/backups/schedule"`, `action="/backups/schedule/delete"`, "Not configured"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("unavailable schedule card must not render %q", unwanted)
+		}
+	}
+}
+
+// TestUIBackupsPageScheduleLoadFailure proves the page distinguishes "could not
+// read the schedule" from "not configured" while still rendering the backup
+// list that loaded.
+func TestUIBackupsPageScheduleLoadFailure(t *testing.T) {
+	f := &fakeMemory{
+		project:           backupProject(),
+		backups:           testBackups(),
+		backupScheduleErr: fmt.Errorf("memory 503: upstream unavailable"),
+	}
+	_, e := newBackupsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/backups", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Unavailable") {
+		t.Error("page should mark the schedule unavailable when the read fails")
+	}
+	if strings.Contains(body, `action="/backups/schedule"`) {
+		t.Error("the schedule form must not render when the schedule could not be read")
+	}
+	if !strings.Contains(body, `href="/backups/b1/download"`) {
+		t.Error("a schedule read failure must not hide the backup list")
 	}
 }

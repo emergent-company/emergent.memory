@@ -155,12 +155,9 @@ func NewRetentionTask(service *Service, log *slog.Logger) *RetentionTask {
 func (t *RetentionTask) Run(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	expired, err := t.service.repo.GetExpiredBackups(ctx)
+	expired, err := t.service.repo.GetExpiredBackups(ctx, retentionMaxPerRun)
 	if err != nil {
 		return fmt.Errorf("list expired backups: %w", err)
-	}
-	if len(expired) > retentionMaxPerRun {
-		expired = expired[:retentionMaxPerRun]
 	}
 	for i := range expired {
 		backup := &expired[i]
@@ -179,12 +176,9 @@ func (t *RetentionTask) Run(ctx context.Context) error {
 	}
 
 	cutoff := now.AddDate(0, 0, -retentionSoftDeleteGraceDays)
-	purgeable, err := t.service.repo.GetSoftDeletedBackups(ctx, cutoff)
+	purgeable, err := t.service.repo.GetSoftDeletedBackups(ctx, cutoff, retentionMaxPerRun)
 	if err != nil {
 		return fmt.Errorf("list purgeable backups: %w", err)
-	}
-	if len(purgeable) > retentionMaxPerRun {
-		purgeable = purgeable[:retentionMaxPerRun]
 	}
 	for i := range purgeable {
 		backup := &purgeable[i]

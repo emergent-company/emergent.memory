@@ -24,6 +24,14 @@ const (
 
 	// BackupScheduleDefaultRetentionDays matches the manual-create default.
 	BackupScheduleDefaultRetentionDays = 30
+
+	// backupCronIntervalSamples is how many consecutive fires ValidateBackupCron
+	// compares. A cron expression's minute/hour pattern repeats within a day, so
+	// the shortest gap always appears in the first few fires; sampling a hundred
+	// covers more than four days of an hourly schedule and catches composite
+	// minute sets ("5,55 0,1 * * *" has a 50-minute gap followed by a 10-minute
+	// one) that a single first-gap check misses.
+	backupCronIntervalSamples = 100
 )
 
 // BackupSchedule is a project's recurring backup configuration
@@ -87,16 +95,22 @@ func NextBackupRun(expr string, from time.Time) (time.Time, error) {
 }
 
 // ValidateBackupCron validates the expression and enforces the minimum
-// interval between consecutive fires.
+// interval between consecutive fires. Every gap in the first
+// backupCronIntervalSamples fires is checked, not just the first: composite
+// field sets can hide a short gap behind a long one (see the constant above).
 func ValidateBackupCron(expr string, from time.Time) error {
 	schedule, err := ParseBackupCron(expr)
 	if err != nil {
 		return err
 	}
-	first := schedule.Next(from.UTC())
-	second := schedule.Next(first)
-	if gap := second.Sub(first); gap < BackupScheduleMinIntervalMinutes*time.Minute {
-		return fmt.Errorf("cron schedule %q fires every %s; the minimum interval is %d minutes", expr, gap, BackupScheduleMinIntervalMinutes)
+
+	prev := schedule.Next(from.UTC())
+	for i := 0; i < backupCronIntervalSamples; i++ {
+		next := schedule.Next(prev)
+		if gap := next.Sub(prev); gap < BackupScheduleMinIntervalMinutes*time.Minute {
+			return fmt.Errorf("cron schedule %q fires every %s; the minimum interval is %d minutes", expr, gap, BackupScheduleMinIntervalMinutes)
+		}
+		prev = next
 	}
 	return nil
 }

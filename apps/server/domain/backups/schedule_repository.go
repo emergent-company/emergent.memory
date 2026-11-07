@@ -32,13 +32,25 @@ func (r *Repository) GetScheduleByProject(ctx context.Context, projectID string)
 	return &schedule, nil
 }
 
-// UpsertSchedule creates or updates the project's single schedule. Row locking
-// serializes concurrent saves for one project without relying on an ON CONFLICT
-// clause whose target-table references are easy to get wrong.
+// UpsertSchedule creates or updates the project's single schedule. Both
+// branches run under a row lock: the project row is locked first (so two
+// concurrent *first* saves serialize instead of racing into the unique index
+// and surfacing a 500), then the schedule row itself. Without the project lock
+// the SELECT ... FOR UPDATE finds no row on both sides and both inserts run.
 func (r *Repository) UpsertSchedule(ctx context.Context, schedule *BackupSchedule) error {
 	schedule.UpdatedAt = time.Now().UTC()
 
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var lockedProjectID string
+		if err := tx.NewSelect().
+			Table("kb.projects").
+			Column("id").
+			Where("id = ?", schedule.ProjectID).
+			For("UPDATE").
+			Scan(ctx, &lockedProjectID); err != nil {
+			return fmt.Errorf("lock project for backup schedule: %w", err)
+		}
+
 		var existing BackupSchedule
 		err := tx.NewSelect().
 			Model(&existing).
@@ -155,13 +167,15 @@ func (r *Repository) ClaimDueSchedules(ctx context.Context, now time.Time, limit
 				continue
 			}
 
-			runAt := now
 			schedule.NextRunAt = next
-			schedule.LastRunAt = &runAt
 			schedule.UpdatedAt = now
+			// last_run_at is deliberately NOT stamped here: it records the last
+			// fire that actually started a backup (SetLastBackup), so a fire
+			// skipped by the pile-up guard does not look like a completed run in
+			// the UI. The claim itself shows up in the logs.
 			if _, err := tx.NewUpdate().
 				Model(schedule).
-				Column("next_run_at", "last_run_at", "updated_at").
+				Column("next_run_at", "updated_at").
 				WherePK().
 				Exec(ctx); err != nil {
 				return fmt.Errorf("advance backup schedule %s: %w", schedule.ID, err)
@@ -178,11 +192,14 @@ func (r *Repository) ClaimDueSchedules(ctx context.Context, now time.Time, limit
 	return claimed, nil
 }
 
-// SetLastBackup records the backup a schedule most recently started.
+// SetLastBackup records the backup a schedule just started, and only then
+// stamps last_run_at: the column means "the last time this schedule started a
+// backup", so a fire skipped by the pile-up guard leaves it untouched.
 func (r *Repository) SetLastBackup(ctx context.Context, scheduleID, backupID string) error {
 	_, err := r.db.NewUpdate().
 		Model((*BackupSchedule)(nil)).
 		Set("last_backup_id = ?", backupID).
+		Set("last_run_at = ?", time.Now().UTC()).
 		Where("id = ?", scheduleID).
 		Exec(ctx)
 	if err != nil {

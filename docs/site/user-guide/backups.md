@@ -63,7 +63,7 @@ DELETE /api/v1/projects/{projectId}/backup-schedule   # 204
 Rules:
 
 - **Minimum interval is 15 minutes.** A cron expression that fires more often is
-  rejected with `400`. Common cadences: `0 * * * *` (hourly), `0 */6 * * *
+  rejected with `400`. Common cadences: `0 * * * *` (hourly), `0 */6 * * *`
   (every 6 hours), `0 2 * * *` (daily 02:00 UTC), `0 2 * * 0` (weekly, Sunday).
 - **Schedules are evaluated in UTC**, so they do not follow the viewer's
   timezone or daylight-saving shifts.
@@ -82,7 +82,7 @@ The schedule's response also carries the runner's bookkeeping:
 | Field | Description |
 |---|---|
 | `nextRunAt` | Next time the schedule will fire (UTC) |
-| `lastRunAt` | When the runner last fired it |
+| `lastRunAt` | When a fire last started a backup (a fire skipped by the pile-up guard does not move it) |
 | `lastBackupId` | The backup the last fire started |
 
 ### Retention

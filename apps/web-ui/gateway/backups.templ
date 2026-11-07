@@ -21,7 +21,7 @@ import (
 // degrades to an "unavailable" state instead of an error (design D6); an empty
 // list renders the "no backups" empty state. flashMsg/flashErr surface PRG
 // feedback from the create/download/delete flows.
-templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, unavailable string, loadErr error, flashMsg string, flashErr error) {
+templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, scheduleUnavailable bool, unavailable string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@backupsHeader()
 		@flashToasts(flashMsg, flashErr)
@@ -30,7 +30,7 @@ templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, unavail
 		} else if unavailable != "" {
 			@backupsUnavailable(unavailable)
 		} else {
-			@backupScheduleCard(schedule)
+			@backupScheduleCard(schedule, scheduleUnavailable)
 			@backupCreateForm()
 			if len(backups) == 0 {
 				@backupsEmpty()
@@ -113,12 +113,14 @@ templ backupCreateForm() {
 	}
 }
 
-// backupsProgressNote shows while any backup is still creating, next to the
-// auto-refresh poll.
 // backupScheduleCard renders the project's recurring backup configuration:
 // enable/disable, cadence, retention and archive includes, plus the next and
 // last fire once a schedule exists. Schedules are evaluated in UTC.
-templ backupScheduleCard(schedule *BackupSchedule) {
+//
+// scheduleUnavailable means the schedule could not be read (a failed request,
+// not the 404 that means "not configured"): the card then shows that state and
+// offers no form, so a user cannot overwrite a schedule the page could not see.
+templ backupScheduleCard(schedule *BackupSchedule, scheduleUnavailable bool) {
 	@ui.Section("Scheduled backups", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
@@ -128,8 +130,8 @@ templ backupScheduleCard(schedule *BackupSchedule) {
 		</p>
 		<div class="mt-3 flex flex-wrap items-center gap-2">
 			@ui.Badge(ui.BadgeProps{
-				Label:   backupScheduleStateLabel(schedule),
-				Variant: backupScheduleStateIntent(schedule),
+				Label:   backupScheduleStateLabel(schedule, scheduleUnavailable),
+				Variant: backupScheduleStateIntent(schedule, scheduleUnavailable),
 				Size:    ui.BadgeSizeXS,
 				Icon:    "lucide--calendar-clock",
 			})
@@ -143,7 +145,12 @@ templ backupScheduleCard(schedule *BackupSchedule) {
 				}
 			}
 		</div>
-		<form class="mt-4 flex flex-col gap-4" method="post" action="/backups/schedule">
+		if scheduleUnavailable {
+			<p class="mt-3 text-sm text-error">
+				Could not load the saved backup schedule, so it cannot be edited here. Reload the page to retry — saving is disabled so a configured schedule is not overwritten.
+			</p>
+		} else {
+			<form class="mt-4 flex flex-col gap-4" method="post" action="/backups/schedule">
 			<label class="flex items-start justify-between gap-3">
 				<span class="text-sm font-medium">Enabled</span>
 				<input name="enabled" type="checkbox" class="checkbox checkbox-sm mt-0.5" checked?={ schedule == nil || schedule.Enabled }/>
@@ -189,17 +196,18 @@ templ backupScheduleCard(schedule *BackupSchedule) {
 				}
 			</div>
 		</form>
-		if schedule != nil {
-			<form class="mt-3 flex justify-end" method="post" action="/backups/schedule/delete">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonGhost,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--trash-2",
-				}) {
-					Delete schedule
-				}
-			</form>
+			if schedule != nil {
+				<form class="mt-3 flex justify-end" method="post" action="/backups/schedule/delete">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--trash-2",
+					}) {
+						Delete schedule
+					}
+				</form>
+			}
 		}
 	}
 }

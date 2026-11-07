@@ -40,6 +40,19 @@ async function readScheduleForm(page: Page) {
   };
 }
 
+// cardState reads the card's own state chip: "Enabled", "Disabled", or "Not
+// configured". It is what the rejection test compares before and after, so a
+// rejected save is proven to have left the stored schedule alone instead of the
+// assertion merely matching whichever label happens to render.
+async function cardState(page: Page) {
+  for (const label of ['Not configured', 'Enabled', 'Disabled', 'Unavailable']) {
+    if ((await card(page).getByText(label, { exact: true }).count()) > 0) {
+      return label;
+    }
+  }
+  throw new Error('the Scheduled backups card rendered no state');
+}
+
 // fillScheduleForm writes a configuration into the form without submitting.
 async function fillScheduleForm(
   page: Page,
@@ -133,12 +146,18 @@ test('scheduled backups: save, disable, delete, and restore the prior schedule',
 test('scheduled backups: a cron faster than 15 minutes is rejected', async ({ page }) => {
   // Custom cron is the path that can express a sub-interval cadence; the server
   // rejects it and the message arrives through the ?err= flash.
+  const before = await cardState(page);
+
   await fillScheduleForm(page, { enabled: true, cadence: 'custom', cron: '*/5 * * * *' });
   await page.getByRole('button', { name: 'Save schedule' }).click();
   await page.waitForURL(/\/backups\?err=/, { timeout: 30_000 });
   await page.waitForLoadState('domcontentloaded');
 
   await expect(page.getByText(/minimum interval is 15 minutes/)).toBeVisible();
-  // The rejection must not have created or replaced a schedule.
-  await expect(card(page).getByText(/Next run |Not configured/).first()).toBeVisible();
+  // The rejection must not have created or replaced a schedule: the card still
+  // shows exactly the state it showed before the submit.
+  await expect(card(page).getByText(before, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Delete schedule' })).toHaveCount(
+    before === 'Not configured' ? 0 : 1,
+  );
 });
