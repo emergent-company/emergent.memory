@@ -101,7 +101,7 @@ templ scheduleRow(rowID string, a ScheduledAgent, defs []AgentDefinitionSummary)
 			</a>
 		}
 		@table.TableCell("", nil) {
-			@ui.Badge(ui.BadgeProps{Label: a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+			<div class="whitespace-nowrap">@ui.Badge(ui.BadgeProps{Label: a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})</div>
 		}
 		@table.TableCell("", nil) {
 			@scheduleDefinitionCell(defs, a)
@@ -228,7 +228,7 @@ templ scheduleDetailMeta(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 	<div class="mb-6 flex flex-wrap items-center gap-2">
 		@scheduleEnabledBadge(*a)
 		@scheduleLastRunBadges(*a)
-		@ui.Badge(ui.BadgeProps{Label: "cron " + a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+		<span class="whitespace-nowrap">@ui.Badge(ui.BadgeProps{Label: "cron " + a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})</span>
 		if n := scheduleDefinitionName(defs, *a); n != "" {
 			{{ aui := scheduleDefinitionUI(defs, *a) }}
 			@agentNameChip("agent "+n, ui.BadgeGhost, aui.Icon, aui.Color)

@@ -149,7 +149,7 @@ templ approvalMetaSlot(a ToolApprovalItem) {
 			<span>Session</span>
 		</a>
 	}
-	<span class="text-xs text-muted">{ a.CreatedAt.Format("Jan 02, 15:04") }</span>
+	<span class="text-xs text-muted">{ a.CreatedAt.UTC().Format("Jan 02, 15:04 UTC") }</span>
 }
 
 // questionCardOptions maps the domain option list onto the card's option rows.

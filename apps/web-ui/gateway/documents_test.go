@@ -570,10 +570,11 @@ func TestRenderDocumentsPage(t *testing.T) {
 			t.Errorf("documents page missing %q", want)
 		}
 	}
-	// per-row delete affordance on every row, with the confirm copy
+	// per-row delete affordance on every row, with the confirm copy naming the
+	// document (templ escapes the inner quotes to &#34;).
 	for _, want := range []string{
 		`action="/documents/d1/delete"`, `action="/documents/d2/delete"`,
-		"Delete this document? This cannot be undone.", "lucide--trash-2",
+		"Delete &#34;Spec.md&#34;? This cannot be undone.", "Delete &#34;notes.txt&#34;? This cannot be undone.", "lucide--trash-2",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("documents page missing %q", want)
@@ -832,7 +833,7 @@ func TestRenderDocumentDetailPage(t *testing.T) {
 	for _, want := range []string{
 		"Spec.md", "completed", "15 objects extracted",
 		`action="/documents/d1/extract"`, `href="/documents"`,
-		`action="/documents/d1/delete"`, "Delete this document? This cannot be undone.", "lucide--trash-2", ">Delete<",
+		`action="/documents/d1/delete"`, "Delete &#34;Spec.md&#34;? This cannot be undone.", "lucide--trash-2", ">Delete<",
 		// sub-navigation rail (the chunk count is a badge on its Chunks entry)
 		`aria-label="Document sections"`, "Overview", "Chunks", "Extraction history",
 		`data-testid="document-chunks-count"`,

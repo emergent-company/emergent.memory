@@ -1560,7 +1560,7 @@ func (s *Server) uiUploadDocument(c echo.Context) error {
 		return redirectWithError(c, "/documents", fmt.Errorf("upload: select a file"))
 	}
 	if file.Size > maxUploadSize {
-		return redirectWithError(c, "/documents", fmt.Errorf("upload: file too large (max %d bytes)", maxUploadSize))
+		return redirectWithError(c, "/documents", fmt.Errorf("upload: file too large (max 10 MB)"))
 	}
 	src, err := file.Open()
 	if err != nil {
