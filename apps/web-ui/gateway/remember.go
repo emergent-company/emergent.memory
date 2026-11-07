@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -107,8 +108,22 @@ func (s *Server) rememberFileCapture(c echo.Context) error {
 		return captureFailure(c, http.StatusBadRequest, "invalid_project", "projectId is required")
 	}
 
+	// The route is exempt from the gateway's global body limit, so bound the
+	// read here. `fh.Size` below is the precise check, but it is only known
+	// once the whole multipart body has been buffered — without this an
+	// authenticated caller could stream unbounded bytes first. The allowance
+	// covers part headers, so a file exactly at the cap is not refused for the
+	// envelope's sake.
+	request := c.Request()
+	request.Body = http.MaxBytesReader(c.Response(), request.Body, maxCaptureUploadSize+(1<<20))
+
 	fh, err := c.FormFile("file")
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return captureFailure(c, http.StatusRequestEntityTooLarge, "file_too_large",
+				"the shared file is larger than the 25 MB capture limit")
+		}
 		return captureFailure(c, http.StatusBadRequest, "missing_file", "a shared file is required")
 	}
 	if fh.Size > maxCaptureUploadSize {
@@ -144,7 +159,7 @@ func writeCaptureResponse(c echo.Context, status int, raw []byte) error {
 		}
 		return c.NoContent(status)
 	}
-	return c.Blob(status, echo.MIMEApplicationJSONCharsetUTF8, raw)
+	return c.Blob(status, echo.MIMEApplicationJSON, raw)
 }
 
 // captureFailure answers in memory's error envelope so a device client parses

@@ -349,6 +349,49 @@ func TestRememberFileCapture_RequiresFile(t *testing.T) {
 	}
 }
 
+// The route is exempt from the gateway's 4 MB limit, so the read itself must be
+// bounded: a small `file` part plus an unrelated bulk part would pass the
+// `fh.Size` check while streaming unbounded bytes into the process.
+func TestRememberFileCapture_BoundsTheWholeBodyNotJustTheFilePart(t *testing.T) {
+	f := &fakeMemory{}
+	e := captureEcho(f)
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("file", "small.jpg")
+	if err != nil {
+		t.Fatalf("create file part: %v", err)
+	}
+	if _, err := part.Write([]byte("jpegbytes")); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	padding, err := w.CreateFormField("padding")
+	if err != nil {
+		t.Fatalf("create padding part: %v", err)
+	}
+	chunk := bytes.Repeat([]byte("a"), 1<<20)
+	for i := 0; i < 26; i++ {
+		if _, err := padding.Write(chunk); err != nil {
+			t.Fatalf("write padding: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/p1/remember/file", &buf)
+	req.Header.Set(echo.HeaderContentType, w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (body %s)", rec.Code, rec.Body.String())
+	}
+	if len(f.captureFiles) != 0 {
+		t.Errorf("oversized body was forwarded to memory")
+	}
+}
+
 // The capture route is exempt from the gateway's 4 MB body limit and enforces
 // its own ceiling instead.
 func TestBodyLimitSkipper_ExemptsCaptureUpload(t *testing.T) {

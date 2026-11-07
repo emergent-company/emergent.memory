@@ -800,8 +800,9 @@ func bodyLimitSkipper(c echo.Context) bool {
 	p := c.Request().URL.Path
 	return strings.HasPrefix(p, "/documents") ||
 		strings.HasPrefix(p, "/api/documents") ||
-		// A shared photo/PDF is a multipart capture; remember.go enforces its
-		// own 25 MB cap (rememberCaptureUploadLimit).
+		// A shared photo/PDF is a multipart capture far larger than 4 MB;
+		// remember.go bounds the read itself (maxCaptureUploadSize) and answers
+		// 413 there.
 		strings.HasSuffix(p, "/remember/file") ||
 		p == "/profile/avatar"
 }

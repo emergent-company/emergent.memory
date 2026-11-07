@@ -200,10 +200,14 @@ struct AppShellView: View {
                     .foregroundStyle(.fg3)
             }
             Spacer()
+            // A capture can queue with no project connected — a file share
+            // always does, and a link share queues when nothing is mirrored — so
+            // the badge must not depend on one: it is the only sign that
+            // something is waiting.
+            shareInboxButton
             // No project, no switcher: a pill that says "No project" is a dead
             // control, and the picker body already offers the connect action.
             if hasProject {
-                shareInboxButton
                 MemoryProjectSwitcher(onSwitch: switchProject, onAddProject: { qrPresented = true })
                     .padding(.top, 2 * .grid)
             }
