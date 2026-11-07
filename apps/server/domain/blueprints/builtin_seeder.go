@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"path"
@@ -112,21 +113,34 @@ func builtinKey(name, version string) string {
 
 // staleBuiltin is one global origin='builtin' row found in the database.
 type staleBuiltin struct {
-	ID      string `bun:"id"`
-	Name    string `bun:"name"`
-	Version string `bun:"version"`
+	ID       string `bun:"id"`
+	Name     string `bun:"name"`
+	Version  string `bun:"version"`
+	Status   string `bun:"status"`
+	Checksum string `bun:"checksum"`
 }
+
+// errLiveApplication aborts the retirement of one blueprint without failing the
+// pass: a project started applying it between the listing read and the
+// transaction, so the row is still live.
+var errLiveApplication = errors.New("blueprint carries a live application")
 
 // retireStaleBuiltins deletes global origin='builtin' blueprints the binary no
 // longer bundles. A built-in is delivered by the binary, so a row whose
 // (name, version) has disappeared from builtin_packs/ is a residue of an earlier
 // release — typically a pack that was moved out to an external GitHub blueprint
 // (personal-memory was, in #1513) — and no surface can remove it: built-ins
-// carry no Remove action, and DeleteBlueprint refuses origin='builtin'
-// altogether. Without this step every long-lived deployment keeps offering a
-// stale Built-in entry forever.
+// carry no Remove action, and DeleteBlueprint refuses every global blueprint
+// (guardMutable rejects project_id IS NULL) altogether. Without this step every
+// long-lived deployment keeps offering a stale Built-in entry forever.
 //
 // Retirement is deliberately narrow:
+//   - it only retires rows this seeder could have written. A global
+//     origin='builtin' row that is not `published` with a checksum never came
+//     from Seed (upsertBlueprint always writes both), so it is a row the
+//     origin backfill in 00228 labelled 'builtin' — or one inserted outside the
+//     seeder — and it is left alone with a warning instead of being hard-deleted
+//     as "stale".
 //   - it never touches a blueprint with a live application. `applied` means a
 //     project is currently on it, so deleting the record would silently detach
 //     an installed blueprint; the row is left in place and a warning names it.
@@ -135,9 +149,15 @@ type staleBuiltin struct {
 //   - it never touches a schema pack. The packs a retired blueprint claimed
 //     were materialized into the projects that applied it, and those rows — and
 //     the objects written against them — are project data that must outlive the
-//     gallery entry.
+//     gallery entry. It only clears the attribution the deleted blueprint owned
+//     (source_blueprint_id on the project's schema assignments and agent
+//     definitions), so the pointer cannot dangle and block a later same-name
+//     stamp.
 //   - it does nothing when the embedded set is empty, so a mis-built binary
 //     cannot wipe the registry.
+//
+// It is hygiene, not correctness: every failure is logged and the pass
+// continues, because a stale gallery entry must never stop the server booting.
 func (s *BuiltinSeeder) retireStaleBuiltins(ctx context.Context, bundled map[string]struct{}) error {
 	if len(bundled) == 0 {
 		s.log.Warn("no builtin blueprints are bundled; skipping stale-builtin retirement")
@@ -146,7 +166,7 @@ func (s *BuiltinSeeder) retireStaleBuiltins(ctx context.Context, bundled map[str
 
 	var rows []staleBuiltin
 	if err := s.repo.DB().NewRaw(`
-		SELECT id::text AS id, name, version
+		SELECT id::text AS id, name, version, status, checksum
 		FROM kb.blueprints
 		WHERE project_id IS NULL AND origin = 'builtin'
 		ORDER BY name, version
@@ -161,27 +181,32 @@ func (s *BuiltinSeeder) retireStaleBuiltins(ctx context.Context, bundled map[str
 			continue
 		}
 
-		live, err := s.liveApplicationCount(ctx, row.ID)
-		if err != nil {
-			return err
-		}
-		if live > 0 {
-			s.log.Warn("builtin blueprint is no longer bundled but is still applied; leaving it in place",
+		if row.Status != StatusPublished || row.Checksum == "" {
+			s.log.Warn("global builtin blueprint was not written by this binary; leaving it in place",
 				slog.String("name", row.Name),
 				slog.String("version", row.Version),
-				slog.Int("applied_projects", live),
+				slog.String("status", row.Status),
 			)
 			continue
 		}
 
-		if err := s.deleteBuiltinBlueprint(ctx, row.ID); err != nil {
+		err := s.retireBuiltin(ctx, row.ID)
+		switch {
+		case errors.Is(err, errLiveApplication):
+			s.log.Warn("builtin blueprint is no longer bundled but is still applied; leaving it in place",
+				slog.String("name", row.Name),
+				slog.String("version", row.Version),
+			)
+			continue
+		case err != nil:
 			s.log.Error("failed to retire builtin blueprint",
 				slog.String("name", row.Name),
 				slog.String("version", row.Version),
 				logger.Error(err),
 			)
-			return err
+			continue
 		}
+
 		retired++
 		s.log.Info("retired builtin blueprint that is no longer bundled",
 			slog.String("name", row.Name),
@@ -195,34 +220,49 @@ func (s *BuiltinSeeder) retireStaleBuiltins(ctx context.Context, bundled map[str
 	return nil
 }
 
-// liveApplicationCount counts applications that say a project is currently on
-// this blueprint. Superseded and unapplied rows are history, not a live install.
-func (s *BuiltinSeeder) liveApplicationCount(ctx context.Context, blueprintID string) (int, error) {
-	var n int
-	err := s.repo.DB().NewRaw(`
-		SELECT COUNT(*)
-		FROM kb.blueprint_applications
-		WHERE blueprint_id = ?
-		  AND status NOT IN ('superseded', 'unapplied')
-	`, blueprintID).Scan(ctx, &n)
-	if err != nil {
-		s.log.Error("failed to count blueprint applications", logger.Error(err))
-		return 0, err
-	}
-	return n, nil
-}
-
-// deleteBuiltinBlueprint removes a retired built-in in one transaction: the
-// non-cascading blueprint_id foreign keys make the order mandatory.
-func (s *BuiltinSeeder) deleteBuiltinBlueprint(ctx context.Context, blueprintID string) error {
+// retireBuiltin removes one retired built-in in a single transaction, so a
+// concurrent apply can never observe a half-deleted blueprint. The order is
+// forced by the non-cascading blueprint_id foreign keys: claims and historical
+// applications first, then attribution, then the blueprint itself. A row that
+// still has a live application rolls the whole transaction back with
+// errLiveApplication; the foreign key also refuses the final delete if an apply
+// commits in between, which fails the row and leaves it intact.
+func (s *BuiltinSeeder) retireBuiltin(ctx context.Context, blueprintID string) error {
 	return s.repo.DB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewDelete().TableExpr("kb.blueprint_pack_claims").Where("blueprint_id = ?", blueprintID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`
+			DELETE FROM kb.blueprint_applications
+			WHERE blueprint_id = ? AND status IN ('superseded', 'unapplied')
+		`, blueprintID).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewDelete().TableExpr("kb.blueprint_applications").Where("blueprint_id = ?", blueprintID).Exec(ctx); err != nil {
+
+		var live int
+		if err := tx.NewRaw(`
+			SELECT COUNT(*) FROM kb.blueprint_applications WHERE blueprint_id = ?
+		`, blueprintID).Scan(ctx, &live); err != nil {
 			return err
 		}
-		_, err := tx.NewDelete().TableExpr("kb.blueprints").Where("id = ?", blueprintID).Exec(ctx)
+		if live > 0 {
+			return errLiveApplication
+		}
+
+		if _, err := tx.NewRaw(`DELETE FROM kb.blueprint_pack_claims WHERE blueprint_id = ?`, blueprintID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`
+			UPDATE kb.project_schemas SET source_blueprint_id = NULL, updated_at = now()
+			WHERE source_blueprint_id = ?
+		`, blueprintID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`
+			UPDATE kb.agent_definitions SET source_blueprint_id = NULL, updated_at = now()
+			WHERE source_blueprint_id = ?
+		`, blueprintID).Exec(ctx); err != nil {
+			return err
+		}
+
+		_, err := tx.NewRaw(`DELETE FROM kb.blueprints WHERE id = ?`, blueprintID).Exec(ctx)
 		return err
 	})
 }

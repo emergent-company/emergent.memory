@@ -32,6 +32,15 @@ func insertBlueprintApplication(t *testing.T, db bun.IDB, blueprintID, projectID
 	require.NoError(t, err)
 }
 
+func insertSchemaAssignment(t *testing.T, db bun.IDB, projectID, schemaID, sourceBlueprintID string) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.project_schemas (id, project_id, schema_id, source_blueprint_id)
+		VALUES (?, ?, ?, ?)
+	`, uuid.NewString(), projectID, schemaID, sourceBlueprintID)
+	require.NoError(t, err)
+}
+
 func countRowsForRetire(t *testing.T, db bun.IDB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -58,6 +67,7 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 	staleID := insertBuiltinBlueprintRow(t, db, "personal-memory", "2.0.0")
 	schemaID := insertSchemaPack(t, db, projectID, "personal-memory", "2.0.0")
 	insertPackClaim(t, db, staleID, projectID, schemaID)
+	insertSchemaAssignment(t, db, projectID, schemaID, staleID)
 	insertBlueprintApplication(t, db, staleID, projectID, "2.0.0", "superseded")
 
 	// A project-scoped blueprint of the same name is the user's own install
@@ -74,6 +84,13 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 	// The materialized schema pack is project data and outlives the gallery
 	// entry: retiring the blueprint must never delete a project's schema.
 	assert.Equal(t, 1, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.graph_schemas WHERE id = ?`, schemaID))
+
+	// Its attribution is cleared, though, so the pointer cannot dangle and block
+	// a later same-name blueprint from stamping the assignment.
+	assert.Equal(t, 0, countRowsForRetire(t, db,
+		`SELECT COUNT(*) FROM kb.project_schemas WHERE source_blueprint_id = ?`, staleID))
+	assert.Equal(t, 1, countRowsForRetire(t, db,
+		`SELECT COUNT(*) FROM kb.project_schemas WHERE schema_id = ? AND source_blueprint_id IS NULL`, schemaID))
 
 	// The project's own personal-memory 2.1.0 survives.
 	assert.Equal(t, 1, countRowsForRetire(t, db,
@@ -104,10 +121,9 @@ func TestBuiltinSeeder_KeepsAppliedStaleBuiltin(t *testing.T) {
 	assert.Equal(t, 1, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprint_applications WHERE blueprint_id = ?`, staleID))
 }
 
-// TestBuiltinSeeder_RetirementIgnoresUnappliedAndKeepsBundled guards the two
-// other shapes: an 'unapplied' application is history (the project explicitly
-// uninstalled it, so nothing is live) and a bundled pack must never be retired
-// even when a same-named row exists at another version.
+// TestBuiltinSeeder_RetirementIgnoresUnappliedAndKeepsBundled covers the
+// 'unapplied' shape: the project explicitly uninstalled the blueprint, so
+// nothing is live and the row is history rather than an install.
 func TestBuiltinSeeder_RetirementIgnoresUnappliedAndKeepsBundled(t *testing.T) {
 	db := connectTestDB(t)
 	seeder := NewBuiltinSeeder(NewRepository(db, testLogger()), testLogger())
@@ -124,4 +140,60 @@ func TestBuiltinSeeder_RetirementIgnoresUnappliedAndKeepsBundled(t *testing.T) {
 	assert.Equal(t, 0, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprints WHERE id = ?`, goneID))
 	// All five bundled packs survive a retirement pass.
 	assertBlueprintCount(t, db, 5)
+}
+
+// TestBuiltinSeeder_RetirementIsKeyedOnExactVersion guards the rollback case:
+// reconcile compares (name, version) pairs, so a row for a version the binary
+// does not embed is retired even while another version of the same name is
+// embedded — and the embedded version must survive.
+func TestBuiltinSeeder_RetirementIsKeyedOnExactVersion(t *testing.T) {
+	db := connectTestDB(t)
+	seeder := NewBuiltinSeeder(NewRepository(db, testLogger()), testLogger())
+	ctx := context.Background()
+
+	require.NoError(t, seeder.Seed(ctx))
+
+	var bundledVersion string
+	require.NoError(t, db.NewRaw(`
+		SELECT version FROM kb.blueprints
+		WHERE name = 'task-board' AND project_id IS NULL
+	`).Scan(ctx, &bundledVersion))
+	require.NotEmpty(t, bundledVersion)
+
+	_, projectID := seedProject(t, db)
+	newerID := insertBuiltinBlueprintRow(t, db, "task-board", "9.9.9")
+	insertBlueprintApplication(t, db, newerID, projectID, "9.9.9", "superseded")
+
+	require.NoError(t, seeder.Seed(ctx))
+
+	assert.Equal(t, 0, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprints WHERE id = ?`, newerID))
+	assert.Equal(t, 1, countRowsForRetire(t, db,
+		`SELECT COUNT(*) FROM kb.blueprints WHERE name = 'task-board' AND version = ? AND project_id IS NULL`, bundledVersion))
+}
+
+// TestBuiltinSeeder_LeavesGlobalRowsTheSeederDidNotWrite: migration 00228
+// backfilled every pre-existing global row to origin='builtin', so a global row
+// can exist that this binary never wrote. Seed always writes published + a
+// checksum, so anything else is not attributable to it and must not be
+// hard-deleted as stale — prod carries exactly such a row (alfred-assistant
+// 1.0.0, draft, empty checksum) and the origin backfill never touched its
+// content.
+func TestBuiltinSeeder_LeavesGlobalRowsTheSeederDidNotWrite(t *testing.T) {
+	db := connectTestDB(t)
+	seeder := NewBuiltinSeeder(NewRepository(db, testLogger()), testLogger())
+	ctx := context.Background()
+
+	require.NoError(t, seeder.Seed(ctx))
+
+	legacyID := uuid.NewString()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO kb.blueprints (id, name, version, status, manifest, checksum, project_id, origin, created_at, updated_at)
+		VALUES (?, 'alfred-assistant', '1.0.0', 'draft', '{}'::jsonb, '', NULL, 'builtin', now(), now())
+	`, legacyID)
+	require.NoError(t, err)
+
+	require.NoError(t, seeder.Seed(ctx))
+
+	assert.Equal(t, 1, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprints WHERE id = ?`, legacyID))
+	assertBlueprintCount(t, db, 6)
 }
