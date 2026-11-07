@@ -450,6 +450,34 @@ would need a stub gateway + memory fixtures that cover every surface. The
 data-source-integrations + document-version endpoints (see the data-sources
 note below); the remaining surfaces are still tracked as follow-up.
 
+### Ports for the hermetic suites (read before adding one)
+
+The hermetic suites (`share`, `datasources`, `gateway-smoke`, `mcp-inspect`,
+`dev-gallery`) **must not contain a port constant**. The `memory` pool runs
+concurrent jobs on shared hosts, so two runs of the *same* job can reach the
+same suite step at once; a pinned gateway/mock pair means the second job binds
+the first job's ports and dies in `run-e2e.sh`'s pre-flight (#810).
+
+Each config asks `ports.mjs` for a pair instead:
+
+- `ports.mjs` derives a candidate offset from `GITHUB_RUN_ID` + job name (so
+  concurrent runs prefer disjoint bands), probes each candidate by binding it
+  (so leftovers from a crashed sibling are skipped), and writes the chosen
+  `MEMORY_PORT`/`MOCK_PORT` pair to `E2E_PORTS_FILE` (under `$RUNNER_TEMP` in
+  CI, the platform temp dir locally).
+- The config builds its `baseURL` from that selection and passes the same file
+  to `run-e2e.sh` via the Playwright `webServer.env`. The runner reads that
+  file — it has no numeric default of its own — so the config and the servers
+  cannot disagree.
+- `reuseExistingServer: false` and the runner's pre-flight still make it fail
+  loudly rather than attach to a stranger's server. That guard is intentional:
+  the fix is *assigning different ports*, not reusing someone else's stack.
+
+When adding a suite, copy the `execFileSync(... '--lane', '<your-lane>')` block
+from an existing config and pass `E2E_PORTS_FILE: portsFile` to its `webServer`.
+A new job needs no workflow-level port step: each invocation of the suite
+selects its own pair, and the probe is what makes concurrent runs safe.
+
 ### Hermetic agent public-share gate
 
 The agent public-share suite — `specs/share/*` under `share.config.ts` — is
@@ -462,12 +490,13 @@ that job provisions the Go + templ + `task` prerequisites once for every suite;
 the suite is excluded from the live session-mode suite via `testIgnore`
 (`specs/share/**`).
 
-The suites in that job run one at a time, so each keeps its own default gateway +
-mock ports (`${MEMORY_PORT:-8097}` / `${MOCK_PORT:-5301}` here, 8096/5304 for
-`gateway-smoke`) rather than a job-level pin: only one stack is ever up, so
-nothing can collide with itself. `run-e2e.sh` still reads those variables and
-fails fast if either port is already served, instead of silently attaching to a
-sibling's gateway + stateful mock.
+The suites in that job run one at a time, so each boots and tears down its own
+stack. Ports are **derived per run** (see **Ports for the hermetic suites**
+above): the config probes a free gateway/mock pair, writes it to
+`E2E_PORTS_FILE`, and `run-e2e.sh` reads the same file. No default number is
+shared between suites or jobs, and the runner fails fast if either selected
+port is already served instead of silently attaching to a sibling's gateway +
+stateful mock.
 
 ```bash
 cd tests/e2e
@@ -488,8 +517,8 @@ Unlike the `js` gate it does need the gateway binary:
 `datasources.config.ts` boots `bash run-e2e.sh` as its Playwright `webServer`,
 which builds the gateway (generating the gitignored templ + `app.css` assets on
 a cold tree — see the cold-tree note under **Notes**) and starts
-`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on
-`http://localhost:${MEMORY_PORT:-8097}` (mock on `${MOCK_PORT:-5301}`).
+`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on a gateway/mock pair
+derived at run time (see **Ports for the hermetic suites** above).
 
 ```bash
 cd tests/e2e
@@ -508,13 +537,11 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 
 `specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
 gate (#564): the highest-risk UI contracts run on every PR without credentials.
-It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on
-`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`). That pair
-is this suite's own because each suite boots its own stack, but it is not
-reserved against the other two: `datasources` and `share` both default to
-8097/5301. What keeps them apart is time, not port number — in the single CI job
-the suites run sequentially, so each boots its stack, runs, and tears it down
-before the next one starts, and two suites never hold a port at once.
+It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on a
+gateway/mock pair derived at run time (see **Ports for the hermetic suites**
+above). Each invocation selects its own pair; safety comes from the probe, not
+from arithmetic over suite names or an assumption that only one lane is live on
+a host.
 
 It covers the documents upload dialog (the #2287 regression class — opener,
 modal dialog, file input and submit must stay together), the mobile shell
