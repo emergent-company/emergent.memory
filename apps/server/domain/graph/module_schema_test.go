@@ -148,8 +148,11 @@ func TestParseRelationshipTypeSchemasToMap(t *testing.T) {
 		if got == nil {
 			t.Fatal("expected non-nil result for array format")
 		}
-		if len(got) != 1 {
-			t.Fatalf("expected 1 relationship type (merged), got %d", len(got))
+		// Each declared (name, source, target) identity is keyed separately, plus
+		// the name-wide default (#322). Entries that share a property schema fold
+		// into one variant, so the default still carries all four source types.
+		if len(got) != 5 {
+			t.Fatalf("expected the name-wide default plus 4 endpoint variants, got %d: %v", len(got), got)
 		}
 
 		rel, ok := got["belongs_to"]
@@ -158,6 +161,11 @@ func TestParseRelationshipTypeSchemasToMap(t *testing.T) {
 		}
 		if len(rel.SourceTypes) != 4 {
 			t.Errorf("expected 4 source types merged, got %d: %v", len(rel.SourceTypes), rel.SourceTypes)
+		}
+		for _, src := range []string{"Scenario", "Service", "Job", "APIEndpoint"} {
+			if _, ok := got[relationshipSchemaKey("belongs_to", src, "Domain")]; !ok {
+				t.Errorf("missing endpoint-qualified schema for belongs_to %s→Domain", src)
+			}
 		}
 	})
 
@@ -168,14 +176,19 @@ func TestParseRelationshipTypeSchemasToMap(t *testing.T) {
 		]`)
 
 		got := parseRelationshipTypeSchemasToMap(data)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 distinct relationship types, got %d", len(got))
+		// Two names, each contributing its name-wide default and one
+		// endpoint-qualified entry (#322).
+		if len(got) != 4 {
+			t.Fatalf("expected 2 names × (default + one endpoint), got %d: %v", len(got), got)
 		}
 		if _, ok := got["belongs_to"]; !ok {
 			t.Error("missing 'belongs_to'")
 		}
 		if _, ok := got["uses"]; !ok {
 			t.Error("missing 'uses'")
+		}
+		if _, ok := got[relationshipSchemaKey("uses", "Service", "APIEndpoint")]; !ok {
+			t.Error("missing endpoint-qualified 'uses' schema")
 		}
 	})
 
@@ -186,8 +199,10 @@ func TestParseRelationshipTypeSchemasToMap(t *testing.T) {
 		}`)
 
 		got := parseRelationshipTypeSchemasToMap(data)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 relationship types, got %d", len(got))
+		// "belongs_to" contributes its default plus one entry per source type;
+		// "uses" contributes its default plus one (#322).
+		if len(got) != 5 {
+			t.Fatalf("expected 2 defaults plus 3 endpoint variants, got %d: %v", len(got), got)
 		}
 		rel := got["belongs_to"]
 		if len(rel.SourceTypes) != 2 {
@@ -205,8 +220,10 @@ func TestParseRelationshipTypeSchemasToMap(t *testing.T) {
 		]`)
 
 		got := parseRelationshipTypeSchemasToMap(data)
-		if len(got) != 1 {
-			t.Fatalf("expected the casings to merge into 1 type, got %d: %v", len(got), got)
+		// Both spellings fold into the same variant (same property schema), so
+		// the map holds the name-wide default plus one entry per declared pair.
+		if len(got) != 3 {
+			t.Fatalf("expected the default plus 2 endpoint variants, got %d: %v", len(got), got)
 		}
 		rel, ok := got["knows"]
 		if !ok {
