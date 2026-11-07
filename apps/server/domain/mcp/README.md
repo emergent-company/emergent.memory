@@ -662,7 +662,8 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
   "arguments": {
     "relationship_id": "uuid-here",
     "properties": { "role": "Senior Engineer" },
-    "weight": 0.9
+    "weight": 0.9,
+    "branch": "plan/my-feature"
   }
 }
 ```
@@ -673,10 +674,15 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 {
   "name": "relationship-delete",
   "arguments": {
-    "relationship_id": "uuid-here"
+    "relationship_id": "uuid-here",
+    "branch": "plan/my-feature"
   }
 }
 ```
+
+Both accept an optional `branch` (name or UUID) and write to that branch's
+version chain instead of the main graph — the same semantics as
+`entity-create`/`entity-update`. Omitting `branch` targets main.
 
 ---
 
@@ -688,10 +694,17 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 {
   "name": "entity-restore",
   "arguments": {
-    "entity_id": "uuid-here"
+    "entity_id": "uuid-here",
+    "branch": "plan/my-feature"
   }
 }
 ```
+
+`entity-delete` and `entity-restore` also accept an optional `branch`. A
+branch delete creates a branch-local tombstone that leaves the main object
+live; a branch restore clears the branch tombstone. Omitting `branch` targets
+main. A branch tombstone created by `entity-delete` is an ordinary object
+version, so merging the branch applies the delete to main.
 
 ---
 
@@ -744,6 +757,10 @@ Supply an optional `key` per entity for idempotent operations — if an entity w
   }
 }
 ```
+
+An optional `branch` (name or UUID) creates the relationships on that branch;
+both endpoints must resolve on the same branch, as with inline relationships on
+`entity-create`.
 
 ---
 
