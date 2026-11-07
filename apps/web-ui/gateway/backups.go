@@ -93,6 +93,57 @@ type CreateBackupRequest struct {
 	RetentionDays  int  `json:"retentionDays"`
 }
 
+// BackupSchedule mirrors memory's backups.BackupSchedule
+// (kb.backup_schedules): the project's one recurring backup configuration.
+// cronSchedule is a 5-field expression evaluated in UTC.
+type BackupSchedule struct {
+	ID             string     `json:"id"`
+	OrganizationID string     `json:"organizationId"`
+	ProjectID      string     `json:"projectId"`
+	Enabled        bool       `json:"enabled"`
+	CronSchedule   string     `json:"cronSchedule"`
+	Timezone       string     `json:"timezone"`
+	RetentionDays  int        `json:"retentionDays"`
+	IncludeChat    bool       `json:"includeChat"`
+	IncludeJournal bool       `json:"includeJournal"`
+	IncludeDeleted bool       `json:"includeDeleted"`
+	NextRunAt      time.Time  `json:"nextRunAt"`
+	LastRunAt      *time.Time `json:"lastRunAt"`
+	LastBackupID   *string    `json:"lastBackupId"`
+	CreatedBy      *string    `json:"createdBy"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+// BackupScheduleRequest mirrors memory's BackupScheduleRequestDTO
+// (PUT /api/v1/projects/:projectId/backup-schedule). The API defaults
+// retentionDays to 30 and rejects a cron that fires more often than every 15
+// minutes.
+type BackupScheduleRequest struct {
+	Enabled        bool   `json:"enabled"`
+	CronSchedule   string `json:"cronSchedule"`
+	RetentionDays  int    `json:"retentionDays"`
+	IncludeChat    bool   `json:"includeChat"`
+	IncludeJournal bool   `json:"includeJournal"`
+	IncludeDeleted bool   `json:"includeDeleted"`
+}
+
+// backupCadence is one entry of the cadence picker. The value posted is the
+// cron expression itself, so the server needs no cadence vocabulary.
+type backupCadence struct {
+	Label string
+	Cron  string
+}
+
+// backupCadencePresets are the human-friendly cadences offered ahead of the
+// custom-cron field.
+var backupCadencePresets = []backupCadence{
+	{Label: "Every hour", Cron: "0 * * * *"},
+	{Label: "Every 6 hours", Cron: "0 */6 * * *"},
+	{Label: "Daily at 02:00 UTC", Cron: "0 2 * * *"},
+	{Label: "Weekly (Sunday 02:00 UTC)", Cron: "0 2 * * 0"},
+}
+
 // listBackups lists the org's backups, filtered to the active project (most
 // recent first). A 404/not-found means the Memory deployment has the backup
 // feature gated off (design D6) — callers degrade it to an "unavailable"
@@ -202,6 +253,40 @@ func (m *MemoryClient) DeleteBackup(ctx context.Context, orgID, backupID string)
 	return m.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// GetBackupSchedule returns the project's recurring backup configuration, or
+// nil when none is configured. Memory answers 404 for an unset schedule, which
+// is the "not configured yet" state this page renders, not an error.
+func (m *MemoryClient) GetBackupSchedule(ctx context.Context) (*BackupSchedule, error) {
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/backup-schedule"
+	var out BackupSchedule
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		if isMemoryNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SaveBackupSchedule creates or replaces the project's recurring backup
+// configuration (PUT .../backup-schedule). Memory validates the cron expression
+// and rejects one that fires more often than every 15 minutes.
+func (m *MemoryClient) SaveBackupSchedule(ctx context.Context, req BackupScheduleRequest) (*BackupSchedule, error) {
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/backup-schedule"
+	var out BackupSchedule
+	if err := m.do(ctx, http.MethodPut, path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteBackupSchedule removes the project's recurring backup configuration
+// (DELETE .../backup-schedule → 204).
+func (m *MemoryClient) DeleteBackupSchedule(ctx context.Context) error {
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/backup-schedule"
+	return m.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
 // --- org resolution (design D3) ---
 
 // errBackupsNoOrg is the clear-error sentinel when the active project carries
@@ -289,6 +374,8 @@ func (s *Server) uiBackups(c echo.Context) error {
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Backup started — the page refreshes until it finishes."},
 		{key: "deleted", msg: "Backup deleted."},
+		{key: "schedule_saved", msg: "Backup schedule saved."},
+		{key: "schedule_deleted", msg: "Backup schedule deleted."},
 	})
 	flashErr := flashError(c)
 
@@ -296,21 +383,29 @@ func (s *Server) uiBackups(c echo.Context) error {
 	if err != nil {
 		// Unreachable/gated Memory or a project with no org: a clear error
 		// state, never a 500.
-		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "", backupsLoadErr(err), flashMsg, flashErr))
+		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, false, "", backupsLoadErr(err), flashMsg, flashErr))
 	}
 	backups, total, err := s.memory.ListBackups(ctx, orgID)
 	if err != nil {
 		if isMemoryNotFound(err) {
 			// Memory deployment has backups disabled (design D6): degrade to
 			// an unavailable state instead of a hard error.
-			return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "The connected Memory service does not expose backups.", nil, flashMsg, flashErr))
+			return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, false, "The connected Memory service does not expose backups.", nil, flashMsg, flashErr))
 		}
-		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "", userFacingError(err), flashMsg, flashErr))
+		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, nil, false, "", userFacingError(err), flashMsg, flashErr))
 	}
 	if backups == nil {
 		backups = []Backup{}
 	}
-	return s.page(c, pageTitle("Backups"), BackupsPage(backups, total, "", nil, flashMsg, flashErr))
+	// The schedule load is best-effort: a failure here must not hide the backup
+	// list that already loaded. An unset schedule is 404 → nil, not an error;
+	// any other failure marks the card unavailable so its form (which would be
+	// prefilled with defaults) cannot overwrite the schedule it could not read.
+	schedule, schedErr := s.memory.GetBackupSchedule(ctx)
+	if flashErr == nil && schedErr != nil {
+		flashErr = userFacingError(schedErr)
+	}
+	return s.page(c, pageTitle("Backups"), BackupsPage(backups, total, schedule, schedErr != nil, "", nil, flashMsg, flashErr))
 }
 
 // uiBackupDetail renders the dedicated backup page (GET /backups/:id): the
@@ -404,7 +499,132 @@ func (s *Server) uiBackupDelete(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/backups?deleted=1")
 }
 
+// uiBackupScheduleSave handles the schedule form (PRG → POST
+// /backups/schedule). The cadence select posts a cron expression directly;
+// "custom" falls back to the free-text cron field. Memory validates the
+// expression and the retention range, and its message surfaces through the
+// ?err= flash instead of a 500.
+func (s *Server) uiBackupScheduleSave(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	cron := c.FormValue("cadence")
+	if cron == "" || cron == "custom" {
+		cron = c.FormValue("cron")
+	}
+
+	retentionDays := 30
+	if raw := c.FormValue("retentionDays"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return redirectWithError(c, "/backups", fmt.Errorf("retentionDays must be a number of days"))
+		}
+		retentionDays = n
+	}
+
+	_, err := s.memory.SaveBackupSchedule(ctx, BackupScheduleRequest{
+		// An unchecked checkbox posts nothing: absent means disabled.
+		Enabled:        c.FormValue("enabled") != "",
+		CronSchedule:   strings.TrimSpace(cron),
+		RetentionDays:  retentionDays,
+		IncludeChat:    c.FormValue("includeChat") != "",
+		IncludeJournal: c.FormValue("includeJournal") != "",
+		IncludeDeleted: c.FormValue("includeDeleted") != "",
+	})
+	if err != nil {
+		return redirectWithError(c, "/backups", err)
+	}
+	redirectAfterMutation(c, "/backups?schedule_saved=1")
+	return nil
+}
+
+// uiBackupScheduleDelete handles the delete-schedule form (PRG → POST
+// /backups/schedule/delete).
+func (s *Server) uiBackupScheduleDelete(c echo.Context) error {
+	if err := s.memory.DeleteBackupSchedule(c.Request().Context()); err != nil {
+		return redirectWithError(c, "/backups", err)
+	}
+	redirectAfterMutation(c, "/backups?schedule_deleted=1")
+	return nil
+}
+
 // --- display helpers (shared with backups.templ) ---
+
+// backupCadenceSelected reports whether a preset cadence is the picker's
+// current selection. With no schedule yet the daily preset is preselected.
+func backupCadenceSelected(schedule *BackupSchedule, cron string) bool {
+	if schedule == nil {
+		return cron == "0 2 * * *"
+	}
+	return schedule.CronSchedule == cron
+}
+
+// backupCadenceIsCustom reports whether the schedule holds an expression
+// outside the preset list.
+func backupCadenceIsCustom(schedule *BackupSchedule) bool {
+	if schedule == nil {
+		return false
+	}
+	for _, p := range backupCadencePresets {
+		if p.Cron == schedule.CronSchedule {
+			return false
+		}
+	}
+	return true
+}
+
+// backupCustomCronValue is the custom-cron field's value: the stored expression
+// only when it is not a preset.
+func backupCustomCronValue(schedule *BackupSchedule) string {
+	if !backupCadenceIsCustom(schedule) {
+		return ""
+	}
+	return schedule.CronSchedule
+}
+
+// backupScheduleTimeLabel renders an instant in UTC for the schedule card.
+func backupScheduleTimeLabel(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// backupScheduleRetentionValue is the retention field's seed: the stored value,
+// or the server default of 30 when there is no schedule yet.
+func backupScheduleRetentionValue(schedule *BackupSchedule) string {
+	if schedule == nil || schedule.RetentionDays <= 0 {
+		return "30"
+	}
+	return strconv.Itoa(schedule.RetentionDays)
+}
+
+// backupScheduleStateLabel is the card badge's label.
+func backupScheduleStateLabel(schedule *BackupSchedule, unavailable bool) string {
+	if unavailable {
+		return "Unavailable"
+	}
+	if schedule == nil {
+		return "Not configured"
+	}
+	if schedule.Enabled {
+		return "Enabled"
+	}
+	return "Disabled"
+}
+
+// backupScheduleStateIntent colours the schedule state badge.
+func backupScheduleStateIntent(schedule *BackupSchedule, unavailable bool) ui.BadgeIntent {
+	switch {
+	case unavailable:
+		return ui.BadgeWarning
+	case schedule == nil:
+		return ui.BadgeGhost
+	case schedule.Enabled:
+		return ui.BadgeSuccess
+	default:
+		return ui.BadgeNeutral
+	}
+}
 
 // backupStatusIntent maps a backup status to a badge colour.
 func backupStatusIntent(status string) ui.BadgeIntent {

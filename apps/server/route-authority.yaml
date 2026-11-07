@@ -2305,6 +2305,18 @@ routes:
       path: /api/v1/pricing
       level: auth
       note: RequireAuth
+    - method: DELETE
+      path: /api/v1/projects/:projectId/backup-schedule
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/v1/projects/:projectId/backup-schedule
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/v1/projects/:projectId/backup-schedule
+      level: auth
+      note: RequireAuth
     - method: POST
       path: /api/v1/projects/:projectId/backups
       level: auth

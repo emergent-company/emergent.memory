@@ -161,6 +161,7 @@ var models = []any{
 	(*backups.DatabaseBackup)(nil),
 	(*backups.Backup)(nil),
 	(*backups.Restore)(nil),
+	(*backups.BackupSchedule)(nil),
 
 	// domain/projects
 	(*projects.Project)(nil),

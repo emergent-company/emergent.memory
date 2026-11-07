@@ -448,6 +448,19 @@ component — `components.DeleteWarning` where the copy is the shared "This
 permanently removes …" sentence, a bespoke note where it differs (the MCP
 revoke dialogs).
 
+**Exception — a rich title.** `ui.ConfirmDialogProps.Title` is a plain string, so
+a confirmation whose title carries markup is composed by hand instead of being
+forced through the shared component: `ui.Dialog` (`BoxClass: "max-w-sm"`) with
+`components.IconCircle(…, components.IconCircleToneError)`, `ui.DialogTitle`
+holding the rich text, a `components.DeleteWarning`/`ui.EmptyNote` description,
+and the action form. `mcpNodeRemoveDialog` (`mcp_nodes.templ:96`) is the one
+case — its title embeds `<span class="font-mono">{ node.InstanceID }</span>`.
+Everything else about the pattern (stable id, error tone, description component,
+cancel-then-destructive order) is unchanged. This is the single normative
+exception recorded in `web-ui-components` (the `web-ui-dialog-status-circle`
+change); upstream, go-daisy#149 asks for a rich title slot so it can adopt
+`ui.ConfirmDialog`.
+
 **Source:** `ui.templ` (`deleteConfirmDialog`), `ui.templ`
 (`deleteAgentDescription`), `components/confirm.templ` (`DeleteWarning`),
 `webui/static/js/app.js:390,435,441`.

@@ -21,7 +21,7 @@ import (
 // degrades to an "unavailable" state instead of an error (design D6); an empty
 // list renders the "no backups" empty state. flashMsg/flashErr surface PRG
 // feedback from the create/download/delete flows.
-templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error, flashMsg string, flashErr error) {
+templ BackupsPage(backups []Backup, total int, schedule *BackupSchedule, scheduleUnavailable bool, unavailable string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@backupsHeader()
 		@flashToasts(flashMsg, flashErr)
@@ -30,6 +30,7 @@ templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error
 		} else if unavailable != "" {
 			@backupsUnavailable(unavailable)
 		} else {
+			@backupScheduleCard(schedule, scheduleUnavailable)
 			@backupCreateForm()
 			if len(backups) == 0 {
 				@backupsEmpty()
@@ -112,8 +113,105 @@ templ backupCreateForm() {
 	}
 }
 
-// backupsProgressNote shows while any backup is still creating, next to the
-// auto-refresh poll.
+// backupScheduleCard renders the project's recurring backup configuration:
+// enable/disable, cadence, retention and archive includes, plus the next and
+// last fire once a schedule exists. Schedules are evaluated in UTC.
+//
+// scheduleUnavailable means the schedule could not be read (a failed request,
+// not the 404 that means "not configured"): the card then shows that state and
+// offers no form, so a user cannot overwrite a schedule the page could not see.
+templ backupScheduleCard(schedule *BackupSchedule, scheduleUnavailable bool) {
+	@ui.Section("Scheduled backups", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<p class="text-sm text-base-content/70">
+			Run this project's backup automatically on a cron schedule (UTC). The smallest allowed interval is 15 minutes.
+		</p>
+		<div class="mt-3 flex flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{
+				Label:   backupScheduleStateLabel(schedule, scheduleUnavailable),
+				Variant: backupScheduleStateIntent(schedule, scheduleUnavailable),
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--calendar-clock",
+			})
+			if schedule != nil {
+				<span class="text-xs text-base-content/60">Next run { backupScheduleTimeLabel(schedule.NextRunAt) }</span>
+				if schedule.LastRunAt != nil {
+					<span class="text-xs text-base-content/60">Last run { backupScheduleTimeLabel(*schedule.LastRunAt) }</span>
+				}
+				if schedule.LastBackupID != nil {
+					<a class="link text-xs" href={ "/backups/" + *schedule.LastBackupID }>Last backup</a>
+				}
+			}
+		</div>
+		if scheduleUnavailable {
+			<p class="mt-3 text-sm text-error">
+				Could not load the saved backup schedule, so it cannot be edited here. Reload the page to retry — saving is disabled so a configured schedule is not overwritten.
+			</p>
+		} else {
+			<form class="mt-4 flex flex-col gap-4" method="post" action="/backups/schedule">
+			<label class="flex items-start justify-between gap-3">
+				<span class="text-sm font-medium">Enabled</span>
+				<input name="enabled" type="checkbox" class="checkbox checkbox-sm mt-0.5" checked?={ schedule == nil || schedule.Enabled }/>
+			</label>
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				@form.FormControl("backup-schedule-cadence", "Cadence", form.LabelAbove, "Presets cover the common cases; choose Custom to enter a cron expression.", "", nil) {
+					<select id="backup-schedule-cadence" name="cadence" class="select w-full">
+						for _, preset := range backupCadencePresets {
+							<option value={ preset.Cron } selected?={ backupCadenceSelected(schedule, preset.Cron) }>{ preset.Label }</option>
+						}
+						<option value="custom" selected?={ backupCadenceIsCustom(schedule) }>Custom cron…</option>
+					</select>
+				}
+				@form.FormControl("backup-schedule-retention", "Retention (days)", form.LabelAbove, "How long each scheduled archive is kept. Default 30, valid 1–365.", "", nil) {
+					<input id="backup-schedule-retention" name="retentionDays" type="number" min="1" max="365" value={ backupScheduleRetentionValue(schedule) } class="input w-full"/>
+				}
+			</div>
+			@form.FormControl("backup-schedule-cron", "Custom cron", form.LabelAbove, "Five fields: minute hour day-of-month month day-of-week, in UTC. Used when Cadence is Custom.", "", nil) {
+				<input id="backup-schedule-cron" name="cron" type="text" value={ backupCustomCronValue(schedule) } placeholder="0 2 * * *" class="input w-full sm:max-w-60"/>
+			}
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+				<label class="flex items-start justify-between gap-3">
+					<span class="text-sm font-medium">Include chat</span>
+					<input name="includeChat" type="checkbox" class="checkbox checkbox-sm mt-0.5" checked?={ schedule != nil && schedule.IncludeChat }/>
+				</label>
+				<label class="flex items-start justify-between gap-3">
+					<span class="text-sm font-medium">Include journal</span>
+					<input name="includeJournal" type="checkbox" class="checkbox checkbox-sm mt-0.5" checked?={ schedule != nil && schedule.IncludeJournal }/>
+				</label>
+				<label class="flex items-start justify-between gap-3">
+					<span class="text-sm font-medium">Include deleted items</span>
+					<input name="includeDeleted" type="checkbox" class="checkbox checkbox-sm mt-0.5" checked?={ schedule != nil && schedule.IncludeDeleted }/>
+				</label>
+			</div>
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--calendar-clock",
+				}) {
+					Save schedule
+				}
+			</div>
+		</form>
+			if schedule != nil {
+				<form class="mt-3 flex justify-end" method="post" action="/backups/schedule/delete">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--trash-2",
+					}) {
+						Delete schedule
+					}
+				</form>
+			}
+		}
+	}
+}
+
 templ backupsProgressNote() {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex items-center gap-2"}) {
 		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-muted-faint")
