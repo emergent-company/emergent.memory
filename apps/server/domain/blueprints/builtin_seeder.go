@@ -26,6 +26,8 @@ var builtinPacksFS embed.FS
 // BuiltinSeeder seeds the platform's built-in blueprints at server startup: each
 // bundled pack becomes a global published blueprint (project_id NULL,
 // origin='builtin'). It runs on every boot and is idempotent by (name, version).
+// It also retires built-ins the binary no longer bundles, so a pack that moved
+// out to an external blueprint stops being offered as a stale Built-in entry.
 //
 // It does NOT seed schema packs: built-in blueprint packs materialize when their
 // blueprint is applied — and are refreshed from the embedded manifest on every
@@ -54,7 +56,8 @@ func RegisterBuiltinSeederLifecycle(lc fx.Lifecycle, seeder *BuiltinSeeder) {
 	})
 }
 
-// Seed upserts every bundled pack as a global published blueprint. Idempotent by
+// Seed upserts every bundled pack as a global published blueprint, then retires
+// any global built-in blueprint this binary no longer bundles. Idempotent by
 // (name, version); safe to call on every boot. Built-in schema packs are NOT
 // seeded here — they materialize, and are refreshed from the manifest, only when
 // their blueprint is applied.
@@ -64,6 +67,7 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 		return err
 	}
 
+	bundled := make(map[string]struct{}, len(entries))
 	seeded := 0
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -88,11 +92,139 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 			return err
 		}
 
+		bundled[builtinKey(desc.Name, desc.Version)] = struct{}{}
 		seeded++
 	}
 
 	s.log.Info("builtin blueprints seeded", slog.Int("count", seeded))
+
+	if err := s.retireStaleBuiltins(ctx, bundled); err != nil {
+		return err
+	}
 	return nil
+}
+
+// builtinKey identifies a bundled built-in blueprint by the pair that the
+// global (name, version) unique index uses.
+func builtinKey(name, version string) string {
+	return name + "@" + version
+}
+
+// staleBuiltin is one global origin='builtin' row found in the database.
+type staleBuiltin struct {
+	ID      string `bun:"id"`
+	Name    string `bun:"name"`
+	Version string `bun:"version"`
+}
+
+// retireStaleBuiltins deletes global origin='builtin' blueprints the binary no
+// longer bundles. A built-in is delivered by the binary, so a row whose
+// (name, version) has disappeared from builtin_packs/ is a residue of an earlier
+// release — typically a pack that was moved out to an external GitHub blueprint
+// (personal-memory was, in #1513) — and no surface can remove it: built-ins
+// carry no Remove action, and DeleteBlueprint refuses origin='builtin'
+// altogether. Without this step every long-lived deployment keeps offering a
+// stale Built-in entry forever.
+//
+// Retirement is deliberately narrow:
+//   - it never touches a blueprint with a live application. `applied` means a
+//     project is currently on it, so deleting the record would silently detach
+//     an installed blueprint; the row is left in place and a warning names it.
+//     Superseded and unapplied rows are history and are cleared, because the
+//     non-cascading blueprint_id foreign keys otherwise block the delete.
+//   - it never touches a schema pack. The packs a retired blueprint claimed
+//     were materialized into the projects that applied it, and those rows — and
+//     the objects written against them — are project data that must outlive the
+//     gallery entry.
+//   - it does nothing when the embedded set is empty, so a mis-built binary
+//     cannot wipe the registry.
+func (s *BuiltinSeeder) retireStaleBuiltins(ctx context.Context, bundled map[string]struct{}) error {
+	if len(bundled) == 0 {
+		s.log.Warn("no builtin blueprints are bundled; skipping stale-builtin retirement")
+		return nil
+	}
+
+	var rows []staleBuiltin
+	if err := s.repo.DB().NewRaw(`
+		SELECT id::text AS id, name, version
+		FROM kb.blueprints
+		WHERE project_id IS NULL AND origin = 'builtin'
+		ORDER BY name, version
+	`).Scan(ctx, &rows); err != nil {
+		s.log.Error("failed to list builtin blueprints for retirement", logger.Error(err))
+		return err
+	}
+
+	retired := 0
+	for _, row := range rows {
+		if _, ok := bundled[builtinKey(row.Name, row.Version)]; ok {
+			continue
+		}
+
+		live, err := s.liveApplicationCount(ctx, row.ID)
+		if err != nil {
+			return err
+		}
+		if live > 0 {
+			s.log.Warn("builtin blueprint is no longer bundled but is still applied; leaving it in place",
+				slog.String("name", row.Name),
+				slog.String("version", row.Version),
+				slog.Int("applied_projects", live),
+			)
+			continue
+		}
+
+		if err := s.deleteBuiltinBlueprint(ctx, row.ID); err != nil {
+			s.log.Error("failed to retire builtin blueprint",
+				slog.String("name", row.Name),
+				slog.String("version", row.Version),
+				logger.Error(err),
+			)
+			return err
+		}
+		retired++
+		s.log.Info("retired builtin blueprint that is no longer bundled",
+			slog.String("name", row.Name),
+			slog.String("version", row.Version),
+		)
+	}
+
+	if retired > 0 {
+		s.log.Info("builtin blueprints retired", slog.Int("count", retired))
+	}
+	return nil
+}
+
+// liveApplicationCount counts applications that say a project is currently on
+// this blueprint. Superseded and unapplied rows are history, not a live install.
+func (s *BuiltinSeeder) liveApplicationCount(ctx context.Context, blueprintID string) (int, error) {
+	var n int
+	err := s.repo.DB().NewRaw(`
+		SELECT COUNT(*)
+		FROM kb.blueprint_applications
+		WHERE blueprint_id = ?
+		  AND status NOT IN ('superseded', 'unapplied')
+	`, blueprintID).Scan(ctx, &n)
+	if err != nil {
+		s.log.Error("failed to count blueprint applications", logger.Error(err))
+		return 0, err
+	}
+	return n, nil
+}
+
+// deleteBuiltinBlueprint removes a retired built-in in one transaction: the
+// non-cascading blueprint_id foreign keys make the order mandatory.
+func (s *BuiltinSeeder) deleteBuiltinBlueprint(ctx context.Context, blueprintID string) error {
+	return s.repo.DB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().TableExpr("kb.blueprint_pack_claims").Where("blueprint_id = ?", blueprintID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewDelete().TableExpr("kb.blueprint_applications").Where("blueprint_id = ?", blueprintID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewDelete().TableExpr("kb.blueprints").Where("id = ?", blueprintID).Exec(ctx)
+		return err
+	})
 }
 
 // upsertBlueprint creates or updates the global published blueprint row for a
