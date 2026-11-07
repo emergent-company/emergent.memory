@@ -356,6 +356,25 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 		cfg.ProjectToken = v
 	}
 
+	// An explicit --project overrides a configured project token that is bound
+	// to a different project (issue #324). A token scoped to project A cannot
+	// address project B, so fall back to account credentials rather than
+	// silently operating on A or failing with a bare 403. Only the flag counts:
+	// config-file and environment values are defaults, not overrides.
+	if target := explicitProjectFlag(cmd); target != "" {
+		if !cmd.Flags().Changed("project-token") && projectTokenBoundElsewhere(cfg, target) {
+			cfg.ProjectToken = ""
+		}
+		// X-Project-ID must carry an ID, so only a UUID can be applied before
+		// the project name is resolved. A name clears the stale config project
+		// so commands resolve it themselves instead of addressing the old one.
+		if isUUID(target) {
+			cfg.ProjectID = target
+		} else {
+			cfg.ProjectID = ""
+		}
+	}
+
 	if cfg.ServerURL == "" {
 		return nil, fmt.Errorf("no server URL configured. Set MEMORY_SERVER_URL or run: memory config set-server <url>")
 	}
