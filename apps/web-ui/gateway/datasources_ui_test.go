@@ -3798,6 +3798,46 @@ func TestRenderConfigBooleanDescriptionAsInfoTip(t *testing.T) {
 	}
 }
 
+// TestRenderConfigBooleanSwitchKeepsItsWiring pins the wiring a boolean config
+// field's switch must keep now that it renders through form.ToggleInput. That
+// component deliberately forces no id, so the field id travels through Attrs:
+// a regression would silently drop the id while the label kept working.
+func TestRenderConfigBooleanSwitchKeepsItsWiring(t *testing.T) {
+	html := renderHTML(t, dsConfigFieldInput(dsConfigField{
+		Key:     "recursive",
+		Label:   "Recursive",
+		Type:    "boolean",
+		Checked: true,
+	}))
+	doc := parseDOM(t, html)
+
+	input := findElementByAttr(doc, "name", "recursive")
+	if input == nil {
+		t.Fatal("switch input not found")
+	}
+	if got := attrValue(input, "type"); got != "checkbox" {
+		t.Errorf("switch type = %q, want checkbox", got)
+	}
+	if got := attrValue(input, "id"); got != "recursive" {
+		t.Errorf("switch id = %q, want recursive (ToggleInput forces no id; it must come from Attrs)", got)
+	}
+	if got := attrValue(input, "data-testid"); got != "ds-field-recursive" {
+		t.Errorf("switch data-testid = %q, want ds-field-recursive", got)
+	}
+	if !hasClasses(input, "toggle") {
+		t.Error("switch should carry the canonical toggle class")
+	}
+	checked := false
+	for _, a := range input.Attr {
+		if a.Key == "checked" {
+			checked = true
+		}
+	}
+	if !checked {
+		t.Error("switch should render checked for a true field value")
+	}
+}
+
 // elementText returns the concatenated text nodes under n.
 func elementText(n *html.Node) string {
 	var b strings.Builder

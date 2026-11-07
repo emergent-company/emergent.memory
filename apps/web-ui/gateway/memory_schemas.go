@@ -152,6 +152,12 @@ type BlueprintSchema struct {
 // #389), retiring the MCP handshake + tools/call round-trip. Strictly
 // project-scoped: builtin/shared packs (NULL project_id) are never returned.
 // Source for the registry portion of the available-schemas list.
+//
+// This is a metadata join, not a picker: callers join the result against
+// compiled/assigned packs to render project, source and description. It must
+// therefore ask for deprecated rows too — a deprecated-but-assigned pack whose
+// metadata is missing from the join falls back to "Global" and routes edits
+// through the override pack instead of the pack itself (#24).
 func (m *MemoryClient) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error) {
 	project := m.projectIDFor(ctx)
 	if project == "" {
@@ -160,7 +166,7 @@ func (m *MemoryClient) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)
 	var out struct {
 		Schemas []SchemaInfo `json:"schemas"`
 	}
-	if err := m.do(ctx, http.MethodGet, "/api/schemas/projects/"+project+"?limit=100", nil, &out); err != nil {
+	if err := m.do(ctx, http.MethodGet, "/api/schemas/projects/"+project+"?limit=100&include_deprecated=true", nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Schemas, nil

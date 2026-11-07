@@ -434,7 +434,13 @@ func requiresProject(toolName string) bool {
 	case "entity-type-list", "entity-query", "entity-search", "entity-edges-get",
 		"schema-version", "schema-list", "schema-get", "schema-delete",
 		"schema-list-available", "schema-list-installed",
-		"schema-assign", "schema-assignment-update", "schema-uninstall":
+		"schema-assign", "schema-assignment-update", "schema-uninstall",
+		// Catalog/profile reads added for blueprint-schema parity (#18). All
+		// three read a project-scoped surface, so a context-less call must get
+		// the documented invalid-params error, not an internal tool error.
+		// blueprint-import-preview is deliberately absent: it supports a global
+		// (superadmin) preview with no project.
+		"schema-pack-claims", "blueprint-updates-status", "blueprint-model-overrides-get":
 		return true
 	default:
 		return false
