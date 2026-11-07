@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -130,12 +131,87 @@ func planRunVariance(previous *RunCountSnapshot, objects int) *RunVarianceWarnin
 // reviews the run. Best-effort like every recorder write: a missing warning
 // must never fail an extraction that otherwise succeeded.
 func (r *RunRecorder) RecordVariance(ctx context.Context, runID string, warning *RunVarianceWarning) error {
-	if r == nil || runID == "" || warning == nil {
+	if warning == nil {
 		return nil
 	}
-	payload, err := json.Marshal(map[string]any{"variance_warning": warning})
+	return r.recordRunWarning(ctx, runID, "variance_warning", warning, warning.Message)
+}
+
+// RunOutcomeWarning is a non-fatal condition attached to a completed run when
+// its outcome is not what the caller asked for: object types excluded by their
+// schema's skipExtraction flag and/or a run that produced no objects (#233).
+// It rides the same fields as the variance warning — result.DebugInfo, the run
+// summary jsonb, the transcript and the outcome notification — so there is one
+// warning surface, not two.
+type RunOutcomeWarning struct {
+	// Kind is "skipped_types", "zero_objects" or "skipped_types+zero_objects".
+	Kind string `json:"kind"`
+	// SkippedTypes names the object types the run was told to skip, sorted.
+	SkippedTypes []string `json:"skipped_types,omitempty"`
+	// Objects is the number of objects the run produced (created + merged).
+	Objects int `json:"objects"`
+	// Severity is "warning" when the run produced nothing and "info" when it
+	// produced objects but omitted some requested types.
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+// planRunOutcomeWarning decides whether a completed run needs an outcome
+// warning and builds it. It is pure so the rules are testable without a
+// database: a run that produced objects and skipped nothing is ordinary; a
+// skipped type is still named; a run that produced nothing always warns.
+func planRunOutcomeWarning(skippedTypes []string, objects int) *RunOutcomeWarning {
+	skipped := append([]string(nil), skippedTypes...)
+	sort.Strings(skipped)
+	if len(skipped) == 0 && objects > 0 {
+		return nil
+	}
+	warning := &RunOutcomeWarning{
+		SkippedTypes: skipped,
+		Objects:      objects,
+		Severity:     "info",
+	}
+	skippedPart := ""
+	if len(skipped) > 0 {
+		skippedPart = fmt.Sprintf(" %d object type(s) were skipped because the installed schema sets skipExtraction: %s.",
+			len(skipped), strings.Join(skipped, ", "))
+	}
+	switch {
+	case len(skipped) > 0 && objects == 0:
+		warning.Kind = "skipped_types+zero_objects"
+		warning.Severity = "warning"
+		warning.Message = "This run produced 0 objects." + skippedPart
+	case len(skipped) > 0:
+		warning.Kind = "skipped_types"
+		warning.Message = fmt.Sprintf("This run produced %d objects.", objects) + skippedPart
+	default:
+		warning.Kind = "zero_objects"
+		warning.Severity = "warning"
+		warning.Message = "This run produced 0 objects: nothing was written to the knowledge graph."
+	}
+	return warning
+}
+
+// RecordOutcomeWarning persists a skip/zero-object warning the same way the
+// variance warning is persisted: merged into the run summary jsonb and appended
+// to the transcript as a warning-labelled message.
+func (r *RunRecorder) RecordOutcomeWarning(ctx context.Context, runID string, warning *RunOutcomeWarning) error {
+	if warning == nil {
+		return nil
+	}
+	return r.recordRunWarning(ctx, runID, "outcome_warning", warning, warning.Message)
+}
+
+// recordRunWarning is the single writer behind every run-level warning. Keeping
+// one writer means a new warning cannot get a different persistence path from
+// the one the run API, chat workspace and notification payload all read.
+func (r *RunRecorder) recordRunWarning(ctx context.Context, runID, key string, warning any, message string) error {
+	if r == nil || runID == "" {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{key: warning})
 	if err != nil {
-		return fmt.Errorf("marshal run variance warning: %w", err)
+		return fmt.Errorf("marshal run %s: %w", key, err)
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runWriteTimeout)
 	defer cancel()
@@ -143,16 +219,16 @@ func (r *RunRecorder) RecordVariance(ctx context.Context, runID string, warning 
 		UPDATE kb.agent_runs
 		SET summary = coalesce(summary, '{}'::jsonb) || ?::jsonb
 		WHERE id = ?`, string(payload), runID).Exec(ctx); err != nil {
-		return fmt.Errorf("record run variance warning: %w", err)
+		return fmt.Errorf("record run %s: %w", key, err)
 	}
 	if err := r.RecordMessage(ctx, runID, RunMessage{
 		Role:      "assistant",
 		Step:      varianceMessageStep,
-		Text:      warning.Message,
+		Text:      message,
 		Stage:     extractionRunAgentName,
 		StageKind: stageKindWarning,
 	}); err != nil {
-		return fmt.Errorf("record run variance message: %w", err)
+		return fmt.Errorf("record run %s message: %w", key, err)
 	}
 	return nil
 }
