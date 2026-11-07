@@ -654,6 +654,7 @@ type MCPOAuthStatus struct {
 	RegistrationSupported bool       `json:"registrationSupported"`
 	Scopes                []string   `json:"scopes"`
 	Scope                 *string    `json:"scope,omitempty"`
+	RequestedScope        *string    `json:"requestedScope,omitempty"`
 	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
 	UpdatedAt             *time.Time `json:"updatedAt,omitempty"`
 }

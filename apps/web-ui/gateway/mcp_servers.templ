@@ -343,13 +343,13 @@ templ mcpServerOAuthControls(srv MCPServer) {
 		}, mcpOAuthClientDisclosureLeading()) {
 			<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/client") } data-testid="mcp-oauth-client-form">
 				<div class="flex flex-col gap-3">
-					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued. Leave blank to keep the stored client and only update the scopes.", "", nil) {
+					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued. Leave blank to set the scopes only.", "", nil) {
 						<input id="mcp-oauth-client-id" name="client_id" type="text" class="input w-full font-mono" autocomplete="off"/>
 					}
 					@form.FormControl("mcp-oauth-client-secret", "Client secret", form.LabelAbove, "Optional — leave blank if your provider issued only a client ID.", "", nil) {
 						<input id="mcp-oauth-client-secret" name="client_secret" type="password" class="input w-full font-mono" autocomplete="off"/>
 					}
-					@form.FormControl("mcp-oauth-scope", "Scopes", form.LabelAbove, "Optional, space-separated (for example: repo read:org). Leave blank to request no scope. The test result lists the scopes this server supports.", "", nil) {
+					@form.FormControl("mcp-oauth-scope", "Scopes", form.LabelAbove, "Optional, space-separated (for example: repo read:org). Leave blank to request no scopes; changing this set clears the current connection so the next Connect asks for the new one. The test result lists the scopes this server supports.", "", nil) {
 						<input id="mcp-oauth-scope" name="scope" type="text" value={ mcpOAuthRequestedScopeValue(srv) } class="input w-full font-mono" autocomplete="off"/>
 					}
 				</div>

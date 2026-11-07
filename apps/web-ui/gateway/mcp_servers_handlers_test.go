@@ -1339,17 +1339,19 @@ func TestUIMCPOAuthClientRedirectsWithFlash(t *testing.T) {
 	}
 }
 
-func TestUIMCPOAuthClientBlankIDRedirectsWithError(t *testing.T) {
+func TestUIMCPOAuthClientBlankIDAndScopeForward(t *testing.T) {
 	f := newMCPTestBackend(mcpTestRegistryFixture())
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpServerTestServer(s)
 
-	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&client_secret=secret-xyz")
-	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
-		t.Fatalf("blank-id oauth/client = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	// A blank client id and blank scope is the "request no scopes" path: the
+	// backend decides whether there is a configured set to clear.
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&scope=")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
+		t.Fatalf("blank oauth/client = %d %q, want 303 success", rec.Code, rec.Header().Get("Location"))
 	}
-	if f.lastClientServer != "" {
-		t.Error("blank client id must not reach the backend")
+	if f.lastClientServer != "srv-http" || f.lastClientID != "" || f.lastClientScope != "" {
+		t.Errorf("backend record = %s %q %q, want srv-http blank/blank forwarded", f.lastClientServer, f.lastClientID, f.lastClientScope)
 	}
 }
 

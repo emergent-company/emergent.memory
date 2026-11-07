@@ -285,10 +285,11 @@ func (m *MemoryClient) DisconnectMCPServer(ctx context.Context, id string) error
 }
 
 // SetMCPServerOAuthClient stores a pre-registered OAuth client (client id,
-// optional secret) and the optional scope set to request for a server whose
-// authorization provider rejects dynamic client registration. Memory answers
-// 200 with the refreshed status DTO; only the transport/status error matters
-// otherwise.
+// optional secret) and/or the scope set to request for a server whose challenge
+// names no scopes. A blank client id with a scope sets the requested set only
+// (creating a configuration-only row when none exists); a blank client id and
+// blank scope clears an existing requested set. Memory answers 200 with the
+// refreshed status DTO; only the transport/status error matters otherwise.
 func (m *MemoryClient) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret, scope string) (*MCPOAuthStatus, error) {
 	body := map[string]string{"clientId": clientID}
 	if clientSecret != "" {

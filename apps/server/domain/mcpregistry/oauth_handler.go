@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -99,15 +98,15 @@ func (h *Handler) DisconnectMCPOAuth(c echo.Context) error {
 }
 
 // ProvisionMCPOAuthClient handles PUT /api/admin/mcp-servers/:id/oauth/client.
-// @Summary      Provision a pre-registered OAuth client for an MCP server
-// @Description  Stores a pre-registered client id (and optional secret) plus the optional scope set to request for a remote server, clearing any token set issued to a previous client. A blank clientId with a scope updates only the stored client's requested scope set.
+// @Summary      Provision a pre-registered OAuth client or choose requested scopes
+// @Description  Stores a pre-registered client id (and optional secret) plus the optional scope set to request for a remote server, clearing any token set issued to a previous client. A blank clientId with a scope selects the requested scope set only, creating a configuration-only row when none exists; a blank clientId and blank scope clears an existing requested set. A changing scope set invalidates any current connection.
 // @Tags         mcp-registry
 // @Accept       json
 // @Produce      json
 // @Param        id path string true "Server ID"
 // @Param        body body mcpregistry.ProvisionMCPOAuthClientDTO true "Client identity"
 // @Success      200 {object} mcpregistry.APIResponse[mcpregistry.MCPServerOAuthStatusDTO]
-// @Failure      400 {object} apperror.Error "Server is not remote or both clientId and scope are blank"
+// @Failure      400 {object} apperror.Error "Server is not remote, both clientId and scope are blank with no stored scope set, or a secret was sent without a clientId"
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
 // @Router       /api/admin/mcp-servers/{id}/oauth/client [put]
@@ -124,9 +123,6 @@ func (h *Handler) ProvisionMCPOAuthClient(c echo.Context) error {
 	var body ProvisionMCPOAuthClientDTO
 	if err := c.Bind(&body); err != nil {
 		return apperror.NewBadRequest("invalid request body")
-	}
-	if strings.TrimSpace(body.ClientID) == "" && strings.TrimSpace(body.Scope) == "" {
-		return apperror.NewBadRequest("clientId is required until an OAuth client is provisioned")
 	}
 
 	status, err := h.svc.ProvisionOAuthClient(c.Request().Context(), user.ProjectID, id, user.ID, body.ClientID, body.ClientSecret, body.Scope)
@@ -212,6 +208,7 @@ func mcpOAuthError(err error) error {
 		errors.Is(err, ErrOAuthNotSupported),
 		errors.Is(err, ErrOAuthNotRequired),
 		errors.Is(err, ErrOAuthClientIDRequired),
+		errors.Is(err, ErrOAuthClientSecretRequiresClientID),
 		errors.Is(err, ErrOutboundURLNotAllowed):
 		return apperror.NewBadRequest(err.Error())
 	case errors.Is(err, ErrOAuthClientRequired):

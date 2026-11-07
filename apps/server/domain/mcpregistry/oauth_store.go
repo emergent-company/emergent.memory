@@ -140,15 +140,17 @@ func (r *Repository) UpsertOAuth(ctx context.Context, row *MCPServerOAuth) error
 
 // UpdateOAuthTokens persists a refreshed/new token set for a server and user
 // without touching the registered client identity or the discovered endpoints.
+// scope is the granted scope set for the new token: an empty value clears the
+// stored grant, because a re-issued token must never be reported with the
+// previous token's scopes. Refresh callers that received no scope keep the
+// existing grant by passing it explicitly (RFC 6749 §6).
 func (r *Repository) UpdateOAuthTokens(ctx context.Context, serverID, userID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
 	q := r.db.NewUpdate().
 		Model((*MCPServerOAuth)(nil)).
 		Set("access_token = ?", access).
 		Set("refresh_token = ?", refresh).
+		Set("scope = ?", scope).
 		Set("updated_at = now()")
-	if scope != "" {
-		q = q.Set("scope = ?", scope)
-	}
 	if expiresAt != nil {
 		q = q.Set("expires_at = ?", expiresAt)
 	}
@@ -211,26 +213,49 @@ func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID,
 	return nil
 }
 
-// UpdateOAuthRequestedScope stores a new requested scope set on an existing
-// row, leaving the client identity and token set untouched. A blank userID
-// targets the shared row.
-func (r *Repository) UpdateOAuthRequestedScope(ctx context.Context, serverID, userID, requestedScope string) error {
+// UpsertOAuthRequestedScope stores the operator's requested scope set for a
+// server and user, creating a configuration-only row when none exists and
+// leaving any stored client identity and token set untouched. A blank userID
+// targets the shared row. An empty requestedScope clears the stored set.
+func (r *Repository) UpsertOAuthRequestedScope(ctx context.Context, serverID, projectID, userID, requestedScope string) error {
 	if serverID == "" {
 		return fmt.Errorf("oauth row requires a server id")
 	}
 	uid := userIDOrNil(userID)
-	q := r.db.NewUpdate().
-		Model((*MCPServerOAuth)(nil)).
-		Set("requested_scope = ?", requestedScope).
+	_, err := r.db.NewInsert().
+		Model(&MCPServerOAuth{
+			ServerID:       serverID,
+			ProjectID:      projectID,
+			UserID:         uid,
+			RequestedScope: requestedScope,
+		}).
+		On(oauthConflictTarget(uid)).
+		Set("requested_scope = EXCLUDED.requested_scope").
 		Set("updated_at = now()").
-		Where("server_id = ?", serverID)
-	if uid == nil {
-		q = q.Where("user_id IS NULL")
-	} else {
-		q = q.Where("user_id = ?", uid)
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("upserting mcp server oauth requested scope: %w", err)
 	}
-	if _, err := q.Exec(ctx); err != nil {
-		return fmt.Errorf("updating mcp server oauth requested scope: %w", err)
+	return nil
+}
+
+// ClearOAuthTokens removes a stored token set and the granted scope, leaving the
+// client identity, the operator's requested scope set, and the discovered
+// endpoints in place. It is the non-destructive counterpart to
+// ClearOAuthClient, used when a configuration change invalidates the current
+// grant but the client should be kept for the next connect.
+func (r *Repository) ClearOAuthTokens(ctx context.Context, serverID, userID string) error {
+	if _, err := r.db.NewUpdate().
+		Model((*MCPServerOAuth)(nil)).
+		Set("scope = ?", "").
+		Set("access_token = ?", nil).
+		Set("refresh_token = ?", nil).
+		Set("expires_at = ?", nil).
+		Set("updated_at = now()").
+		Where("server_id = ?", serverID).
+		Where("user_id IS NOT DISTINCT FROM ?", userIDOrNil(userID)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("clearing mcp server oauth tokens: %w", err)
 	}
 	return nil
 }

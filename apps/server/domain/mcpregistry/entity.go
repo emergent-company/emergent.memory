@@ -265,10 +265,13 @@ type MCPServerOAuthStatusDTO struct {
 }
 
 // ProvisionMCPOAuthClientDTO is the request body for provisioning a
-// pre-registered OAuth client identity on a remote MCP server. ClientSecret is
-// optional (public clients have none); it is encrypted at rest and never echoed.
-// Scope is the optional space-delimited set of scopes to request; it overrides
-// discovery for both dynamic registration and the authorization URL.
+// pre-registered OAuth client identity or choosing requested scopes on a remote
+// MCP server. ClientSecret is optional (public clients have none); it is
+// encrypted at rest and never echoed. Scope is the optional space-delimited set
+// of scopes to request; it overrides discovery for both dynamic registration
+// and the authorization URL. Note the asymmetry with the status response: here
+// `scope` means requested, while MCPServerOAuthStatusDTO.Scope is the granted
+// set and RequestedScope is the configured one.
 type ProvisionMCPOAuthClientDTO struct {
 	ClientID     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
