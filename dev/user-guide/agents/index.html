@@ -3706,9 +3706,11 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>memory<span class="w"> </span>agents<span class="w"> </span>create<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--name<span class="w"> </span><span class="s2">"nightly-report"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--trigger-type<span class="w"> </span>schedule<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--cron<span class="w"> </span><span class="s2">"0 0 2 * * *"</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--cron<span class="w"> </span><span class="s2">"0 2 * * *"</span>
 </code></pre></div>
-<p>Cron format: <code>sec min hour dom month dow</code> (6-field).</p>
+<p>Cron format: <code>minute hour dom month dow</code> (standard 5-field).</p>
+<p>The server also rejects a schedule that fires more often than every 15
+minutes (its default safeguard).</p>
 </div>
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>memory<span class="w"> </span>agents<span class="w"> </span>create<span class="w"> </span><span class="se">\</span>
