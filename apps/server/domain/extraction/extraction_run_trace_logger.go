@@ -25,6 +25,10 @@ const (
 	stageKindPrompt = "prompt" // the stage's input
 	stageKindOutput = "output" // the stage's answer, or a processor's status line
 	stageKindError  = "error"  // a stage failure
+	// stageKindWarning labels a run-level warning (e.g. a run whose object
+	// count deviates strongly from the previous run, #240). It is a status
+	// line, not a stage failure, so it renders under "Extraction · warning".
+	stageKindWarning = "warning"
 )
 
 // runTraceLogger bridges the extraction pipeline's TraceLogger callbacks to the

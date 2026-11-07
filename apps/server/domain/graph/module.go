@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -141,16 +142,14 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		Where("ps.removed_at IS NULL").
 		// The last install wins, matching GetCompiledTypesByProject and the
 		// registry write path: assignments are read oldest-first and each pack's
-		// definitions overwrite the map, so the newest install of a type name (or
-		// of a relationship type) is the one validation uses. Without this ORDER
-		// BY Postgres returns rows in arbitrary order and the effective
-		// definition is unpredictable (issue #295).
+		// definitions overwrite the map, so the newest install defines an object
+		// type, a relationship type's name-wide default, and any identical
+		// (name, source, target) triple. Without this ORDER BY Postgres returns
+		// rows in arbitrary order and the effective definition is unpredictable
+		// (issues #295, #322).
 		Order("ps.installed_at ASC").
 		Order("ps.id ASC").
 		Scan(ctx)
-
-	objectSchemas := make(map[string]agents.ObjectSchema)
-	relationshipSchemas := make(map[string]agents.RelationshipSchema)
 
 	if err != nil && err != sql.ErrNoRows {
 		p.incrementDBLoadError()
@@ -158,10 +157,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 			slog.String("project_id", projectID),
 			slog.String("error", err.Error()))
 		// Still cache the empty result to avoid repeated DB queries
-		schemas := &ExtractionSchemas{
-			ObjectSchemas:       objectSchemas,
-			RelationshipSchemas: relationshipSchemas,
-		}
+		schemas := projectSchemasFromPacks(nil)
 		p.schemaCache[projectID] = &cachedSchemas{
 			schemas: schemas,
 			expiry:  time.Now().Add(schemaCacheTTL),
@@ -169,13 +165,51 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		return schemas, nil
 	}
 
+	packs := make([]projectSchemaPack, 0, len(assignments))
 	for _, assignment := range assignments {
 		if assignment.Schema == nil {
 			continue
 		}
+		packs = append(packs, projectSchemaPack{
+			Version:                 assignment.Schema.Version,
+			ObjectTypeSchemas:       assignment.Schema.ObjectTypeSchemas,
+			RelationshipTypeSchemas: assignment.Schema.RelationshipTypeSchemas,
+		})
+	}
 
-		pack := assignment.Schema
+	schemas := projectSchemasFromPacks(packs)
 
+	p.schemaCache[projectID] = &cachedSchemas{
+		schemas: schemas,
+		expiry:  time.Now().Add(schemaCacheTTL),
+	}
+
+	p.incrementDBLoadSuccess()
+	p.log.Debug("schema cached",
+		slog.String("project_id", projectID),
+		slog.Int("object_types", len(schemas.ObjectSchemas)),
+		slog.Int("relationship_types", countRelationshipTypeNames(schemas.RelationshipSchemas)))
+
+	return schemas, nil
+}
+
+// projectSchemaPack is the part of one active pack assignment the runtime schema
+// provider needs. Packs are supplied in precedence order — oldest install first
+// — so a later entry overrides an earlier one (#295, #336).
+type projectSchemaPack struct {
+	Version                 string
+	ObjectTypeSchemas       json.RawMessage
+	RelationshipTypeSchemas json.RawMessage
+}
+
+// projectSchemasFromPacks merges packs (in precedence order) into the schema maps
+// edge and object validation read. It is split out of GetProjectSchemas so the
+// merge can be tested without a database.
+func projectSchemasFromPacks(packs []projectSchemaPack) *ExtractionSchemas {
+	objectSchemas := make(map[string]agents.ObjectSchema)
+	relationshipSchemas := make(map[string]agents.RelationshipSchema)
+
+	for _, pack := range packs {
 		// parseObjectTypeSchemasToMap handles both storage formats:
 		//   - Array format: [{name, label, description, properties, ...}, ...]
 		//   - Map format:   {TypeName: {label, description, properties, ...}, ...}
@@ -191,28 +225,19 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 			objectSchemas[typeName] = objectSchemaFromMap(typeName, pack.Version, schemaMap)
 		}
 
-		for typeName, schema := range parseRelationshipTypeSchemasToMap(pack.RelationshipTypeSchemas) {
-			relationshipSchemas[typeName] = schema
+		// Relationship schemas are keyed by (name, source, target), not by name
+		// alone, so a same-named type from two packs keeps both definitions
+		// (#322). A later pack still wins for the name-wide default and for an
+		// identical triple, matching the object-type precedence above.
+		for key, schema := range parseRelationshipTypeSchemasToMap(pack.RelationshipTypeSchemas) {
+			relationshipSchemas[key] = schema
 		}
 	}
 
-	schemas := &ExtractionSchemas{
+	return &ExtractionSchemas{
 		ObjectSchemas:       objectSchemas,
 		RelationshipSchemas: relationshipSchemas,
 	}
-
-	p.schemaCache[projectID] = &cachedSchemas{
-		schemas: schemas,
-		expiry:  time.Now().Add(schemaCacheTTL),
-	}
-
-	p.incrementDBLoadSuccess()
-	p.log.Debug("schema cached",
-		slog.String("project_id", projectID),
-		slog.Int("object_types", len(objectSchemas)),
-		slog.Int("relationship_types", len(relationshipSchemas)))
-
-	return schemas, nil
 }
 
 func (p *schemaProviderAdapter) incrementCacheHit() {
@@ -545,25 +570,173 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 }
 
 // parseRelationshipTypeSchemasToMap normalises the two JSONB storage formats for
-// relationship_type_schemas into a map[name]agents.RelationshipSchema.
+// relationship_type_schemas into the map entries the graph runtime validates
+// against.
 //
 // Storage formats:
 //   - Map format:   {"belongs_to": {"sourceTypes": [...], "targetTypes": [...]}, ...}
 //   - Array format: [{"name": "belongs_to", "sourceType": "Service", "targetType": "Domain"}, ...]
 //
-// The array format allows multiple entries with the same relationship name but different
-// sourceType/targetType pairs. These are merged into a single RelationshipSchema with
-// combined SourceTypes/TargetTypes slices (avoiding last-one-wins overwriting).
+// The array format allows multiple entries with the same relationship name but
+// different sourceType/targetType pairs. Entries that repeat a name with the same
+// property schema are folded into one variant (issue #115: `belongs_to` from four
+// source types is one schema, not four). Entries that repeat a name with a
+// DIFFERENT property schema stay separate (#322): `owns` Person→Vehicle
+// (share_percent) and `owns` Person→Account (holder_role) are two schemas, and
+// edges of each shape must validate against their own.
+//
+// Each declared identity is keyed with relationshipSchemaKey(name, source,
+// target) — the identity domain/schemas uses for compiled types. The bare
+// normalised name is also kept as the name-wide default for callers that only
+// know the relationship type (the relationship patch path); within one pack the
+// first declaration of a name defines that default.
 //
 // Keys are canonicalised with normalizeRelationType: relationship rows are stored
 // lower_snake_case, so the registry must be keyed the same way or a declared
 // `knows` schema is skipped by a `KNOWS` write (#176).
 func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.RelationshipSchema {
-	if len(data) == 0 {
+	variants := parseRelationshipTypeVariants(data)
+	if len(variants) == 0 {
 		return nil
 	}
 
 	result := make(map[string]agents.RelationshipSchema)
+	for _, variant := range variants {
+		name := normalizeRelationType(variant.Schema.Name)
+		if name == "" {
+			continue
+		}
+
+		// Name-wide default. Per-pack this is the first declaration of the name,
+		// which is deterministic because variants keep their declaration order;
+		// across packs the newest install wins because the merge writes packs
+		// oldest-first and later entries overwrite earlier ones.
+		if _, exists := result[name]; !exists {
+			fallback := variant.Schema
+			fallback.SourceTypes = variant.SourceTypes
+			fallback.TargetTypes = variant.TargetTypes
+			result[name] = fallback
+		}
+
+		for _, endpoints := range variant.Endpoints {
+			schema := variant.Schema
+			schema.SourceTypes = narrowTypes(variant.SourceTypes, endpoints[0])
+			schema.TargetTypes = narrowTypes(variant.TargetTypes, endpoints[1])
+			result[relationshipSchemaKey(name, endpoints[0], endpoints[1])] = schema
+		}
+	}
+
+	return result
+}
+
+// relationshipSchemaKeySeparator joins the parts of a relationship schema
+// identity. A relationship type key is authored text and never carries a NUL, so
+// a qualified key cannot be mistaken for the bare name of another type.
+const relationshipSchemaKeySeparator = "\x00"
+
+// relationshipSchemaKey is the identity of one relationship schema variant: the
+// relationship type plus the endpoint object types it was declared for. An empty
+// source or target type means "any", so a declaration that names neither is keyed
+// by the bare name and acts as the name-wide default.
+func relationshipSchemaKey(name, srcType, tgtType string) string {
+	if srcType == "" && tgtType == "" {
+		return name
+	}
+	return name + relationshipSchemaKeySeparator + srcType + relationshipSchemaKeySeparator + tgtType
+}
+
+// countRelationshipTypeNames counts the distinct relationship type names in the
+// registry. The map also holds one entry per declared (name, source, target)
+// identity (#322), so len() would overstate the number of types a project has.
+func countRelationshipTypeNames(schemas map[string]agents.RelationshipSchema) int {
+	names := 0
+	for key := range schemas {
+		if !strings.Contains(key, relationshipSchemaKeySeparator) {
+			names++
+		}
+	}
+	return names
+}
+
+// wildcardOr returns the declared endpoint types, or a single empty string
+// ("any") when the declaration names none.
+func wildcardOr(types []string) []string {
+	if len(types) == 0 {
+		return []string{""}
+	}
+	return types
+}
+
+// narrowTypes narrows a declaration's endpoint list to the single type a
+// qualified key was built for, so the resolved schema describes its own identity.
+// A wildcard (empty) endpoint keeps the declaration as authored.
+func narrowTypes(declared []string, endpoint string) []string {
+	if endpoint == "" {
+		return declared
+	}
+	return []string{endpoint}
+}
+
+// relationshipSchemaVariant is one declared relationship schema together with the
+// endpoints it was declared for. An empty SourceTypes/TargetTypes slice means
+// "any" for that end; Endpoints holds the exact (source, target) pairs, so
+// folding two entries into one variant never invents a cross-product pair that
+// neither entry declared.
+type relationshipSchemaVariant struct {
+	Schema      agents.RelationshipSchema
+	SourceTypes []string
+	TargetTypes []string
+	Endpoints   [][2]string
+}
+
+// addEndpoint records a declared endpoint pair once per variant.
+func (v *relationshipSchemaVariant) addEndpoint(srcType, tgtType string) {
+	for _, existing := range v.Endpoints {
+		if existing[0] == srcType && existing[1] == tgtType {
+			return
+		}
+	}
+	v.Endpoints = append(v.Endpoints, [2]string{srcType, tgtType})
+}
+
+// relationshipVariantSignature identifies a variant's property schema. Repeated
+// declarations that differ only in their endpoints share a signature and are
+// folded into one variant; declarations that differ in name, description,
+// properties or required fields stay apart.
+func relationshipVariantSignature(schema agents.RelationshipSchema) string {
+	props := schema.Properties
+	if len(props) == 0 {
+		// A missing `properties` and an empty object declare the same thing.
+		props = nil
+	}
+	raw, err := json.Marshal(struct {
+		Name        string
+		Description string
+		Properties  map[string]agents.PropertyDef
+		Required    []string
+	}{
+		normalizeRelationType(schema.Name),
+		schema.Description,
+		props,
+		schema.Required,
+	})
+	if err != nil {
+		// Property definitions are plain JSON data, so this is unreachable in
+		// practice; fall back to the pre-#322 behaviour (fold by name) rather
+		// than inventing an unstable signature.
+		return "unhashable:" + normalizeRelationType(schema.Name)
+	}
+	return string(raw)
+}
+
+// parseRelationshipTypeVariants decodes relationship_type_schemas into one variant
+// per distinct property schema, preserving declaration order. Array-format
+// entries are read in file order; map-format names are read in sorted order so
+// map iteration can never decide the name-wide default.
+func parseRelationshipTypeVariants(data json.RawMessage) []relationshipSchemaVariant {
+	if len(data) == 0 {
+		return nil
+	}
 
 	// Try array format first (used by user-uploaded YAML/JSON schemas).
 	type relEntryRaw struct {
@@ -583,6 +756,28 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 
 	var arr []relEntryRaw
 	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
+		var variants []relationshipSchemaVariant
+		index := make(map[string]int, len(arr))
+		add := func(schema agents.RelationshipSchema, srcTypes, tgtTypes []string) {
+			srcs, tgts := wildcardOr(srcTypes), wildcardOr(tgtTypes)
+			signature := relationshipVariantSignature(schema)
+			i, ok := index[signature]
+			if !ok {
+				i = len(variants)
+				index[signature] = i
+				variants = append(variants, relationshipSchemaVariant{Schema: schema})
+			}
+			variants[i].SourceTypes = appendUnique(variants[i].SourceTypes, srcTypes...)
+			variants[i].TargetTypes = appendUnique(variants[i].TargetTypes, tgtTypes...)
+			// One entry expands to its own source×target product; folding a
+			// later entry in only adds the pairs that entry declared.
+			for _, srcType := range srcs {
+				for _, tgtType := range tgts {
+					variants[i].addEndpoint(srcType, tgtType)
+				}
+			}
+		}
+
 		for _, entry := range arr {
 			if entry.Name == "" {
 				continue
@@ -605,31 +800,23 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 				}
 			}
 
-			existing, alreadySeen := result[normalizeRelationType(entry.Name)]
-			if alreadySeen {
-				// Merge source/target types from this entry into the existing schema.
-				existing.SourceTypes = appendUnique(existing.SourceTypes, filteredSrc...)
-				existing.TargetTypes = appendUnique(existing.TargetTypes, filteredTgt...)
-				result[normalizeRelationType(entry.Name)] = existing
-			} else {
-				schema := agents.RelationshipSchema{
-					Name:        entry.Name,
-					Description: entry.Description,
-					SourceTypes: filteredSrc,
-					TargetTypes: filteredTgt,
-				}
-				if len(entry.Properties) > 0 {
-					var propMap map[string]agents.PropertyDef
-					if json.Unmarshal(entry.Properties, &propMap) == nil {
-						schema.Properties = propMap
-					}
-				}
-				schema.Required = entry.Required
-				result[normalizeRelationType(entry.Name)] = schema
+			schema := agents.RelationshipSchema{
+				Name:        entry.Name,
+				Description: entry.Description,
+				SourceTypes: filteredSrc,
+				TargetTypes: filteredTgt,
+				Required:    entry.Required,
 			}
+			if len(entry.Properties) > 0 {
+				var propMap map[string]agents.PropertyDef
+				if json.Unmarshal(entry.Properties, &propMap) == nil {
+					schema.Properties = propMap
+				}
+			}
+			add(schema, filteredSrc, filteredTgt)
 		}
-		if len(result) > 0 {
-			return result
+		if len(variants) > 0 {
+			return variants
 		}
 	}
 
@@ -645,7 +832,15 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 	}
 	var mapFmt map[string]relMapEntry
 	if err := json.Unmarshal(data, &mapFmt); err == nil && len(mapFmt) > 0 {
-		for name, entry := range mapFmt {
+		names := make([]string, 0, len(mapFmt))
+		for name := range mapFmt {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		variants := make([]relationshipSchemaVariant, 0, len(names))
+		for _, name := range names {
+			entry := mapFmt[name]
 			src := append(entry.SourceTypes, entry.SourceType)
 			tgt := append(entry.TargetTypes, entry.TargetType)
 			var filteredSrc, filteredTgt []string
@@ -672,10 +867,20 @@ func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.R
 					schema.Properties = propMap
 				}
 			}
-			result[normalizeRelationType(name)] = schema
+			variant := relationshipSchemaVariant{
+				Schema:      schema,
+				SourceTypes: filteredSrc,
+				TargetTypes: filteredTgt,
+			}
+			for _, srcType := range wildcardOr(filteredSrc) {
+				for _, tgtType := range wildcardOr(filteredTgt) {
+					variant.addEndpoint(srcType, tgtType)
+				}
+			}
+			variants = append(variants, variant)
 		}
-		if len(result) > 0 {
-			return result
+		if len(variants) > 0 {
+			return variants
 		}
 	}
 

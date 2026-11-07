@@ -1990,6 +1990,11 @@ The blueprint is validated offline before anything is applied, and agent model
 references are normalized to "provider/model" form. A validation error aborts
 the install with nothing applied.
 
+An agent with no triggerType (and no reactionConfig/cronSchedule) installs as a
+definition only — no runtime agent is created and it never runs on its own. The
+per-resource output says "definition" for those and "runtime agent (trigger: …)"
+for agents that get a runtime row, so the operator can see which will run.
+
 Examples:
 
   memory blueprints install ./my-config
@@ -2069,7 +2074,10 @@ Checks performed:
                target, embedding/extraction blocks, inline ui and pack uiConfigs
                (icon/color), and relationship properties.
   Agents     — required fields, enum values (visibility, dispatchMode),
-               model.name required when model block is present, duplicate names.
+               model.name required when model block is present, duplicate names,
+               and an info note for agents with no triggerType that install as
+               definitions only (add triggerType: schedule, reaction, or manual
+               to get a runtime agent).
   Skills     — required fields, non-empty content body, duplicate names.
   Seed data  — required fields, key presence (warning when missing), type
                cross-referenced against loaded pack definitions, srcKey/dstKey
@@ -2079,9 +2087,9 @@ This command is offline and checks relationship endpoints against the blueprint'
 own packs only; 'memory blueprints install' additionally accepts object types
 already present in the project.
 
-Exits 0 when only warnings are found, exits 1 when any error is found. With
---strict, warnings also make the command exit 1, so a blueprint must be fully
-clean to pass.
+Exits 0 when only warnings or info notes are found, exits 1 when any error is
+found. With --strict, warnings also make the command exit 1, so a blueprint must
+be fully clean to pass. Info notes never fail the command, even with --strict.
 
 Examples:
 
