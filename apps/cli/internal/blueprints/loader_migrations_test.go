@@ -1,8 +1,10 @@
 package blueprints_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
@@ -68,11 +70,28 @@ migrations:
 	if len(m.TypeRenames) != 1 || m.TypeRenames[0].From != "Memo" || m.TypeRenames[0].To != "Note" {
 		t.Errorf("TypeRenames = %+v, want [{Memo Note}]", m.TypeRenames)
 	}
-	if len(m.PropertyRenames) != 1 || m.PropertyRenames[0].To != "title" {
-		t.Errorf("PropertyRenames = %+v, want one to=title", m.PropertyRenames)
+	if len(m.PropertyRenames) != 1 {
+		t.Fatalf("PropertyRenames = %+v, want exactly one", m.PropertyRenames)
+	}
+	// TypeName is the field yaml.v3 could not fill while the type carried only
+	// json tags (it lowercased TypeName to "typename", not "type_name"), so a
+	// real blueprint's property renames decoded with an empty type name. Assert
+	// it explicitly: checking only To let that regression through.
+	if pr := m.PropertyRenames[0]; pr.TypeName != "Note" || pr.From != "name" || pr.To != "title" {
+		t.Errorf("PropertyRenames[0] = %+v, want {Note name title}", pr)
 	}
 	if len(m.RemovedProperties) != 1 || m.RemovedProperties[0].Name != "legacy" {
 		t.Errorf("RemovedProperties = %+v, want one named legacy", m.RemovedProperties)
+	}
+
+	// The block is sent to the API as JSON, so assert the wire shape too: the
+	// server's decoder wants `type_name`, and an empty one is rejected.
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal hints: %v", err)
+	}
+	if want := `"type_name":"Note"`; !strings.Contains(string(raw), want) {
+		t.Errorf("hints JSON %s does not carry %s", raw, want)
 	}
 }
 

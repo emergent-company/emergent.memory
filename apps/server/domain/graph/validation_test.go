@@ -1091,6 +1091,29 @@ func TestValidatePropertiesNumericBounds(t *testing.T) {
 
 // A list that was stored as its serialized JSON string (the shape every pack
 // used before array-typed properties) is accepted and becomes a real array.
+// An element schema's own keywords are a contract on every element: a declared
+// format validates the string, and a declared bound rejects an out-of-range
+// integer, exactly as they do for a scalar property. Without this, a pack could
+// declare `items: {type: string, format: email}` and store anything.
+func TestCoerceArrayElementConstraints(t *testing.T) {
+	min := float64(0)
+	emailItems := &agents.PropertyDef{Type: "string", Format: "email"}
+	got, err := coerceArrayElements([]any{"a@example.com"}, emailItems)
+	assert.NoError(t, err)
+	assert.Equal(t, []any{"a@example.com"}, got)
+
+	_, err = coerceArrayElements([]any{"not-an-email"}, emailItems)
+	assert.Error(t, err)
+
+	ageItems := &agents.PropertyDef{Type: "integer", Minimum: &min}
+	_, err = coerceArrayElements([]any{float64(-1)}, ageItems)
+	assert.Error(t, err)
+
+	got, err = coerceArrayElements([]any{float64(0)}, ageItems)
+	assert.NoError(t, err)
+	assert.Equal(t, []any{float64(0)}, got)
+}
+
 func TestCoerceArrayFromJSONString(t *testing.T) {
 	items := &agents.PropertyDef{Type: "email"}
 	got, err := coerceArrayElements(`["a@example.com","b@example.com"]`, items)

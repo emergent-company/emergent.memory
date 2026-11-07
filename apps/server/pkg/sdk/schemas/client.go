@@ -110,15 +110,15 @@ type ClaimingBlueprint struct {
 
 // TypeRename describes a single object or edge type rename.
 type TypeRename struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From string `json:"from" yaml:"from"`
+	To   string `json:"to" yaml:"to"`
 }
 
 // PropertyRename describes a property key rename scoped to a type.
 type PropertyRename struct {
-	TypeName string `json:"type_name"`
-	From     string `json:"from"`
-	To       string `json:"to"`
+	TypeName string `json:"type_name" yaml:"type_name"`
+	From     string `json:"from" yaml:"from"`
+	To       string `json:"to" yaml:"to"`
 }
 
 // MigrateRequest is the body for POST /api/schemas/projects/:projectId/migrate.

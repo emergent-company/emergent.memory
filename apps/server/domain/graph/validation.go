@@ -471,6 +471,11 @@ func coerceElementValue(value any, def *agents.PropertyDef) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected string, got %T", value)
 		}
+		// A declared `format` is a contract on the element too: route it through
+		// the scalar path so `items: {type: string, format: email}` validates.
+		if strings.TrimSpace(def.Format) != "" {
+			return coercePropertyValue(value, *def)
+		}
 		return s, nil
 	case "integer":
 		n, err := coerceToNumber(value)
@@ -480,7 +485,9 @@ func coerceElementValue(value any, def *agents.PropertyDef) (any, error) {
 		if n != math.Trunc(n) {
 			return nil, fmt.Errorf("expected integer, got %v", n)
 		}
-		return n, nil
+		// Bounds declared on the element schema apply to every element, exactly
+		// as they do for a scalar integer property.
+		return checkNumericBounds(n, *def)
 	default:
 		return coercePropertyValue(value, *def)
 	}
