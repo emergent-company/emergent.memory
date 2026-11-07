@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,12 +102,17 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 	// dropped. Later migrations may sit between head and 00232 (e.g. 00233 adds
 	// a column to it, 00238 adds blueprint model overrides, and 00239 adds a
 	// project_id column), so step back one at a time rather than assuming a
-	// fixed rollback depth. The bound is a safety cap well above the current
-	// head→00232 distance, not the expected depth. It must stay comfortably
-	// above the number of migrations between head and 00232: a new head
-	// migration otherwise exhausts the cap before the drop is reached.
+	// fixed rollback depth.
+	//
+	// The bound is derived from the embedded migration set, not hard-coded: it
+	// is the number of migrations above 00232 (the calls needed to reach
+	// version 232) plus the one call that runs 00232's own Down. A fixed cap
+	// was one short as soon as the head→00232 distance reached it — 00272
+	// landed and made the old cap of 40 exactly the distance, so the drop was
+	// never reached and this test failed on every branch.
+	maxRollbacks := migrationsAbove(t, 232) + 1
 	dropped := false
-	for range 40 {
+	for range maxRollbacks {
 		if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 			t.Fatalf("roll back one migration: %v", err)
 		}
@@ -116,7 +122,7 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 		}
 	}
 	if !dropped {
-		t.Fatalf("expected kb.oauth_client_configs to be dropped after rolling back migrations")
+		t.Fatalf("expected kb.oauth_client_configs to be dropped after rolling back migrations (gave up after %d rollbacks)", maxRollbacks)
 	}
 	if !tableExists(ctx, pool, "kb", "oauth_pending_states") {
 		t.Fatalf("expected kb.oauth_pending_states to survive rolling back the client-config migration")
@@ -143,4 +149,27 @@ func tableExists(ctx context.Context, pool *pgxpool.Pool, schema, name string) b
 		return false
 	}
 	return exists
+}
+
+// migrationsAbove counts the embedded migrations numbered above version. Goose
+// rolls back exactly one applied migration per call, so this is the number of
+// calls needed to reach version's own Down; the numeric distance overestimates
+// it when the list has gaps.
+func migrationsAbove(t *testing.T, version int) int {
+	t.Helper()
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read embedded migrations: %v", err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(entry.Name(), "%d_", &n); err == nil && n > version {
+			count++
+		}
+	}
+	return count
 }
