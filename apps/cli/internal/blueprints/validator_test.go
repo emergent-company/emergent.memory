@@ -84,6 +84,66 @@ func TestValidateAgents_ServerEnums(t *testing.T) {
 	})
 }
 
+// TestValidateAgents_CronSchedule verifies the validator parses a
+// schedule-triggered agent's cronSchedule with the same 5-field parser the
+// agents API uses (apps/server/domain/agents/triggers.go). A 6-field expression
+// used to pass validate and only fail at install with a 400 (#320).
+func TestValidateAgents_CronSchedule(t *testing.T) {
+	t.Run("6-field cron is rejected", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "six-field", Description: "d", CronSchedule: "0 0 2 * * *"},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		if !hasIssue(report.Errors(), "cronSchedule", "expected exactly 5 fields") {
+			t.Fatalf("expected a 6-field cron error, got: %v", report.Issues)
+		}
+	})
+
+	t.Run("malformed cron is rejected", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "garbage", Description: "d", TriggerType: "schedule", CronSchedule: "not-a-cron"},
+			{Name: "out-of-range", Description: "d", TriggerType: "schedule", CronSchedule: "0 25 * * *"},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		errs := report.Errors()
+		if len(errs) != 2 {
+			t.Fatalf("expected 2 cron errors, got %d: %v", len(errs), errs)
+		}
+		for _, e := range errs {
+			if e.Field != "cronSchedule" {
+				t.Fatalf("expected only cronSchedule errors, got field %q: %v", e.Field, e)
+			}
+		}
+	})
+
+	t.Run("5-field cron passes", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "daily", Description: "d", CronSchedule: "0 2 * * *"},
+			{Name: "quarter-hourly", Description: "d", TriggerType: "schedule", CronSchedule: "*/15 * * * *"},
+			{Name: "weekly", Description: "d", TriggerType: "schedule", CronSchedule: "0 0 * * 0"},
+			{Name: "implicit-schedule", Description: "d", CronSchedule: ""},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		if report.HasErrors() {
+			t.Fatalf("expected no cron errors, got: %v", report.Errors())
+		}
+	})
+
+	// The agents API only validates the cron for a schedule trigger; a cron on
+	// a reaction/manual agent is stored unused, so validate must match.
+	t.Run("non-schedule triggers skip the cron check", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "reaction", Description: "d", TriggerType: "reaction", CronSchedule: "0 0 2 * * *"},
+			{Name: "implicit-reaction", Description: "d", ReactionConfig: &blueprints.ReactionConfig{Events: []string{"created"}}, CronSchedule: "0 0 2 * * *"},
+			{Name: "manual", Description: "d", TriggerType: "manual", CronSchedule: "not-a-cron"},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		if report.HasErrors() {
+			t.Fatalf("expected no cron errors for non-schedule triggers, got: %v", report.Errors())
+		}
+	})
+}
+
 // TestValidateAgents_ModelNameProviderPrefix verifies the blueprint validator
 // rejects a model.name that is not in the server's required "provider/model"
 // form, so an offline `memory blueprints validate` fails before the server

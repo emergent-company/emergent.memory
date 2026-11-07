@@ -8,6 +8,7 @@ import (
 
 	sdkmodelref "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelref"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaicon"
+	"github.com/robfig/cron/v3"
 )
 
 // ──────────────────────────────────────────────
@@ -768,6 +769,27 @@ var validDispatchModes = map[string]bool{
 	"queued": true,
 }
 
+// agentCronParser mirrors the parser the server applies to a runtime agent's
+// cronSchedule (apps/server/domain/agents/triggers.go validateCronInterval):
+// standard 5-field cron, no seconds field. The internal scheduler is
+// seconds-precision, but it prefixes its own zero seconds field — a blueprint
+// that writes 6 fields is rejected by the agents API at install time with
+// "expected exactly 5 fields, found 6" (#320), so validate it offline first.
+var agentCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+// effectiveTriggerType mirrors the server applier's defaulting
+// (apps/server/domain/blueprints/apply.go applyAgent): an empty triggerType is a
+// reaction trigger when a reactionConfig is present, otherwise a schedule.
+func (a AgentFile) effectiveTriggerType() string {
+	if a.TriggerType != "" {
+		return a.TriggerType
+	}
+	if a.ReactionConfig != nil {
+		return "reaction"
+	}
+	return "schedule"
+}
+
 func (r *ValidationReport) validateAgents(agents []AgentFile) {
 	seen := make(map[string]string) // name → sourceFile
 
@@ -791,6 +813,16 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 		if a.DispatchMode != "" && !validDispatchModes[a.DispatchMode] {
 			r.add(ValidationError, "agent", a.Name, a.SourceFile, "dispatchMode",
 				fmt.Sprintf("invalid dispatchMode %q (valid: sync, queued)", a.DispatchMode))
+		}
+
+		// The agents API validates cronSchedule only for schedule-triggered
+		// agents (apps/server/domain/agents/handler.go); a cron on a reaction or
+		// manual agent is stored unused, so it must not fail validate.
+		if a.effectiveTriggerType() == "schedule" && strings.TrimSpace(a.CronSchedule) != "" {
+			if _, err := agentCronParser.Parse(a.CronSchedule); err != nil {
+				r.add(ValidationError, "agent", a.Name, a.SourceFile, "cronSchedule",
+					fmt.Sprintf("invalid cronSchedule %q: %v (runtime agents take standard 5-field cron: minute hour day-of-month month day-of-week — a seconds field is not accepted)", a.CronSchedule, err))
+			}
 		}
 
 		if a.Model != nil {

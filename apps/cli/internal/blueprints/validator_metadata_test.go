@@ -57,6 +57,24 @@ func TestValidateObjectMetadata_CanonicalExtendedTypes(t *testing.T) {
 	}
 }
 
+// TestValidateObjectMetadata_SemanticStringTypes pins the five semantic types
+// the server coerces (apps/server/domain/graph/validation.go coercePropertyValue)
+// and docs/site/developer-guide/schema.md documents, in both accepted spellings:
+// the bare type and `type: string` + `format`. A blueprint that followed the
+// docs used to fail --strict (#319).
+func TestValidateObjectMetadata_SemanticStringTypes(t *testing.T) {
+	p := validMetadataPack()
+	props := p.ObjectTypes[0].Properties
+	for _, typ := range []string{"email", "phone", "country", "currency", "time"} {
+		props[typ] = map[string]any{"type": typ}
+		props[typ+"Format"] = map[string]any{"type": "string", "format": typ}
+	}
+	report := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
+	if len(report.Issues) != 0 {
+		t.Fatalf("expected the documented semantic types to validate clean in both spellings, got: %v", report.Issues)
+	}
+}
+
 func TestValidateObjectMetadata_StyleWarnings(t *testing.T) {
 	t.Run("missing labels is a warning", func(t *testing.T) {
 		p := validMetadataPack()

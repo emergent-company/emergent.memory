@@ -59,10 +59,10 @@ The agent controls *when* the definition runs.
     memory agents create \
       --name "nightly-report" \
       --trigger-type schedule \
-      --cron "0 0 2 * * *"
+      --cron "0 2 * * *"
     ```
 
-    Cron format: `sec min hour dom month dow` (6-field).
+    Cron format: `minute hour dom month dow` (standard 5-field).
 
 === "Reaction (graph events)"
     ```bash
