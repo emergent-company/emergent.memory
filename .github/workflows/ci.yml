@@ -18,7 +18,7 @@ name: Meta CI
 #     calls migration-number.sh -> migration-immutability.sh --base origin/main),
 #   * migration workspace hygiene (stray untracked files / duplicate versions),
 #   * the route-authority guard,
-#   * the swagger spec drift guard (#2082).
+#   * the swagger raw-JSON guard (#162).
 # The heavy suites still run for the PRs that touch their paths; they stay
 # advisory. See emergent-company/emergent.memory#1673.
 #
@@ -217,22 +217,26 @@ jobs:
           # needed: an undeclared route, a vanished route, or a drifted tier all
           # fail. Same invocation as server.yml's `route-authority-guard` job.
           go run ./cmd/route-authority-guard
-      # Swagger spec drift guard (#2082). apps/server/docs/swagger/{docs.go,
-      # swagger.json,swagger.yaml} are generated from the handler/DTO
-      # annotations, committed, and published by docs.yml — but nothing
-      # regenerated them, so a stale artifact shipped silently. #2057 had to
-      # regenerate and picked up three source changes that had gone
-      # unregenerated (+220 lines); #931 was closed with "no CI verifies
-      # either". The script derives the swag version from go.mod (no second pin,
-      # per #2057), re-runs the generator, and fails on any difference —
-      # including an untracked docs_<handler>.go, which a bare `git diff` misses.
-      # It runs here rather than in server.yml because server.yml is
-      # path-filtered and advisory, so a guard there cannot gate. Measured cost
-      # ~5 s warm, ~14 s from an empty Go build cache. It is deliberately not in
-      # scripts/preflight/all.sh (run by the step below) so it runs exactly once.
-      - name: Swagger spec drift guard
+      # The generated swagger spec is no longer committed (#270): `task
+      # server:swagger` and both Dockerfiles regenerate it at build time, so
+      # there is no artifact left to drift from its annotations and the old
+      # #2082 drift guard is gone. It is still generated *here* because the
+      # swagger raw-JSON guard below reads the spec (spec-level half of #162),
+      # and that was previously satisfied as a side effect of the drift guard.
+      # Same generator invocation (and go.mod-derived version) as before.
+      - name: Generate swagger spec
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        run: bash scripts/preflight/swagger-drift.sh
+        working-directory: apps/server
+        run: |
+          set -euo pipefail
+          version="$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+          if [ -z "$version" ]; then
+            echo "ERROR: could not read github.com/swaggo/swag from apps/server/go.mod" >&2
+            exit 1
+          fi
+          mkdir -p docs/swagger
+          go run "github.com/swaggo/swag/cmd/swag@${version}" \
+            init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
       # Swagger raw-JSON guard (#162). swag cannot type a json.RawMessage, so
       # without a swaggertype tag it publishes the field as items:{type:integer}
       # and a generated client decodes []int. The same lie was fixed by hand in

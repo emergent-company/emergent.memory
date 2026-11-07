@@ -47,6 +47,12 @@ jobs:
         with:
           fetch-depth: 0  # mike needs full history
 
+      # The OpenAPI spec is generated, not committed (#270). The llms_files hook
+      # copies it into the built site and only warns when it is absent, so a docs
+      # build without this step would publish an /api-reference page whose
+      # Swagger UI points at a 404.
+      - uses: ./.github/actions/generate-openapi
+
       # uv pins one interpreter, so the docs build is identical on both hosts of
       # the self-hosted pool whatever their distro Python looks like. They do
       # differ — only one is Debian, and the other's Python state is not
@@ -83,6 +89,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The OpenAPI spec is generated, not committed (#270); it is copied to
+      # gh-pages below, so it must exist in the checkout first.
+      - uses: ./.github/actions/generate-openapi
 
       # uv pins one interpreter, so the docs build is identical on both hosts of
       # the self-hosted pool whatever their distro Python looks like. They do
@@ -154,6 +164,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The OpenAPI spec is generated, not committed (#270); it is copied to
+      # gh-pages below, so it must exist in the checkout first.
+      - uses: ./.github/actions/generate-openapi
 
       # uv pins one interpreter, so the docs build is identical on both hosts of
       # the self-hosted pool whatever their distro Python looks like. They do

@@ -167,11 +167,16 @@ any of them diverge (see "Canonical Version Source" above).
 task swagger   # from the product repo root
 ```
 
+The generated files under `apps/server/docs/swagger/` are build output and are
+gitignored (#270) — regenerate them locally to check the spec, but there is
+nothing to commit. `task release` and both Dockerfiles run the generator on the
+way to a build, and the docs workflow runs it before publishing.
+
 ### Step 3: Commit Changes
 
 ```bash
-git add apps/server/cmd/server/main.go apps/server/docs/swagger/
-git commit -m "chore(api): Update OpenAPI spec version to 0.5.0"
+git add VERSION apps/server/cmd/server/main.go
+git commit -m "chore(api): bump version to 0.5.0"
 ```
 
 ### Step 4: Tag and Push
@@ -237,7 +242,9 @@ All other versions (CLI, Docker, API runtime) are automatically derived from the
 **A:** Swagger spec is generated at **build time**, not runtime:
 
 1. `swag init` reads Go annotations and generates static `swagger.json`
-2. The generated file is committed to git
+2. The generated files are build output and are **not committed** (#270) —
+   `task server:swagger`, the Makefile, both Dockerfiles and the docs workflow
+   regenerate them, and the server serves the JSON from disk at runtime
 3. The file is served as-is by the API
 
 To inject runtime version, we would need to:

@@ -15,7 +15,7 @@
 #      value is one of the object-shaped forms (`object` or `array,object`). It
 #      fails while the author is editing the struct, before the spec is
 #      regenerated, and names the field, the value found and the accepted values.
-#   2. Spec-level (secondary): the committed swagger.json must not render any
+#   2. Spec-level (secondary): the generated swagger.json must not render any
 #      of those fields as an array of integers. This catches a present-but-wrong
 #      tag that happens to render the item type, which the source check alone
 #      cannot: presence is not correctness.

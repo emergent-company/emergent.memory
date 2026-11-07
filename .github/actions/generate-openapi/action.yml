@@ -1,0 +1,39 @@
+# Generate apps/server/docs/swagger/{swagger.json,swagger.yaml,docs.go} from the
+# handler/DTO annotations (#270).
+#
+# Those three files are build output: `swag init` rewrites all of them wholesale,
+# which made any two server PRs that touch annotations conflict on ~4 MB of
+# generated text. They are gitignored now, so every job that publishes or
+# validates the spec has to generate it. `task server:swagger`, apps/server's
+# Makefile and both Dockerfiles already do the same thing.
+#
+# The generator version comes from go.mod rather than a pin here, so the CLI can
+# never drift from the compiled github.com/swaggo/swag library (#2057).
+name: Generate OpenAPI spec
+description: Run `swag init` for apps/server, pinned to the version in go.mod.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.work
+        # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
+        # disk between jobs, so the built-in Actions cache only adds multi-GB
+        # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).
+        cache: false
+
+    - name: swag init
+      shell: bash
+      working-directory: apps/server
+      run: |
+        set -euo pipefail
+        version="$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+        if [ -z "$version" ]; then
+          echo "::error::could not read github.com/swaggo/swag from apps/server/go.mod"
+          exit 1
+        fi
+        mkdir -p docs/swagger
+        go run "github.com/swaggo/swag/cmd/swag@${version}" \
+          init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
