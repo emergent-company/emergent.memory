@@ -129,7 +129,7 @@ func (h *Handler) ProvisionMCPOAuthClient(c echo.Context) error {
 		return apperror.NewBadRequest("clientId is required")
 	}
 
-	status, err := h.svc.ProvisionOAuthClient(c.Request().Context(), user.ProjectID, id, user.ID, body.ClientID, body.ClientSecret)
+	status, err := h.svc.ProvisionOAuthClient(c.Request().Context(), user.ProjectID, id, user.ID, body.ClientID, body.ClientSecret, body.Scope)
 	if err != nil {
 		return mcpOAuthError(err)
 	}

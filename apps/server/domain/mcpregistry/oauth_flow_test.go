@@ -199,7 +199,7 @@ func TestStartMCPOAuth_UsesProvisionedClient(t *testing.T) {
 
 	// Provision a pre-registered client first; the authorize flow must reuse it
 	// and never hit the dynamic registration endpoint.
-	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret")
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret", "")
 	require.NoError(t, err)
 	require.True(t, status.ClientConfigured)
 
@@ -210,6 +210,32 @@ func TestStartMCPOAuth_UsesProvisionedClient(t *testing.T) {
 	u, err := url.Parse(resp.AuthorizeURL)
 	require.NoError(t, err)
 	require.Equal(t, "provisioned-client", u.Query().Get("client_id"), "authorize URL must carry the provisioned client_id")
+}
+
+// TestStartMCPOAuth_ConfiguredScopesOverrideDiscovery proves the operator-set
+// scope set wins over the challenge scope, so a provider whose advertised set
+// is far broader than needed (GitHub) can be asked for a chosen subset.
+func TestStartMCPOAuth_ConfiguredScopesOverrideDiscovery(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret", "repo read:org")
+	require.NoError(t, err)
+	require.NotNil(t, status.RequestedScope)
+	require.Equal(t, "repo read:org", *status.RequestedScope)
+
+	resp, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.NoError(t, err)
+
+	u, err := url.Parse(resp.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, "repo read:org", u.Query().Get("scope"),
+		"the authorize URL must carry the operator's scope set, not the challenge's")
 }
 
 func TestStartMCPOAuth_NoAuthorizationRequired(t *testing.T) {

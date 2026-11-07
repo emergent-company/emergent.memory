@@ -75,6 +75,9 @@ type oauthTestServer struct {
 	mcpMethod string
 	// failPRM makes the protected-resource metadata endpoint return 500.
 	failPRM bool
+	// noChallengeScope drops the scope parameter from the Bearer challenge,
+	// modelling a provider that only advertises scopes_supported.
+	noChallengeScope bool
 }
 
 func newOAuthTestServer(t *testing.T) *oauthTestServer {
@@ -90,8 +93,11 @@ func newOAuthTestServer(t *testing.T) *oauthTestServer {
 			// A credentialed caller is not what discovery probes.
 			t.Errorf("discovery probe sent an Authorization header: %q", r.Header.Get("Authorization"))
 		}
-		w.Header().Set("WWW-Authenticate",
-			`Bearer resource_metadata="`+srv.URL+`/.well-known/oauth-protected-resource",scope="mcp:connect"`)
+		challenge := `Bearer resource_metadata="` + srv.URL + `/.well-known/oauth-protected-resource"`
+		if !ts.noChallengeScope {
+			challenge += `,scope="mcp:connect"`
+		}
+		w.Header().Set("WWW-Authenticate", challenge)
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {

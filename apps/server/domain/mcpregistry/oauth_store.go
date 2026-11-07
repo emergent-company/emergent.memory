@@ -174,24 +174,27 @@ func (r *Repository) DeleteOAuthByServerID(ctx context.Context, serverID, userID
 // because tokens issued to a previous client are invalid. Discovered endpoints
 // (authorization_server, token_endpoint, registration_endpoint, resource,
 // scope) are left untouched when the row already exists; a new row starts with
-// their defaults and is filled in by the next authorize. clientSecret may be nil
-// for a public client.
-func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, userID, clientID string, clientSecret *EncryptedSecret) error {
+// their defaults and is filled in by the next authorize. requestedScope is the
+// operator's requested scope set (may be empty: request no scope). clientSecret
+// may be nil for a public client.
+func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, userID, clientID string, clientSecret *EncryptedSecret, requestedScope string) error {
 	if serverID == "" {
 		return fmt.Errorf("oauth row requires a server id")
 	}
 	uid := userIDOrNil(userID)
 	_, err := r.db.NewInsert().
 		Model(&MCPServerOAuth{
-			ServerID:     serverID,
-			UserID:       uid,
-			ProjectID:    projectID,
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
+			ServerID:       serverID,
+			UserID:         uid,
+			ProjectID:      projectID,
+			ClientID:       clientID,
+			ClientSecret:   clientSecret,
+			RequestedScope: requestedScope,
 		}).
 		On(oauthConflictTarget(uid)).
 		Set("client_id = EXCLUDED.client_id").
 		Set("client_secret = EXCLUDED.client_secret").
+		Set("requested_scope = EXCLUDED.requested_scope").
 		Set("access_token = ?", nil).
 		Set("refresh_token = ?", nil).
 		Set("expires_at = ?", nil).

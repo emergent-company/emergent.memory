@@ -404,15 +404,18 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientStoresEncryptedSecretAndClears
 	// clear the tokens issued to the old client.
 	s.seedCredential(server, "access-token-value")
 
-	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "provisioned-client", "provisioned-secret")
+	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "provisioned-client", "provisioned-secret", "repo read:org")
 	s.Require().NoError(err)
 	s.True(status.ClientConfigured)
 	s.False(status.Connected, "provisioning must clear the prior connection")
+	s.Require().NotNil(status.RequestedScope)
+	s.Equal("repo read:org", *status.RequestedScope)
 
 	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Require().NotNil(row)
 	s.Equal("provisioned-client", row.ClientID)
+	s.Equal("repo read:org", row.RequestedScope, "the requested scope set must persist with the client")
 
 	// The secret is encrypted at rest: the raw stored value is ciphertext, not
 	// the plaintext.
@@ -427,13 +430,13 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientStoresEncryptedSecretAndClears
 }
 
 func (s *MCPOAuthDBSuite) TestProvisionOAuthClientUnknownServer() {
-	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "", "cid", "sec")
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "", "cid", "sec", "")
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
 }
 
 func (s *MCPOAuthDBSuite) TestProvisionOAuthClientRejectsNonRemoteTransport() {
 	server := s.createServer("local-stdio", mcpregistry.ServerTypeStdio, "")
-	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "cid", "sec")
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "cid", "sec", "")
 	s.ErrorIs(err, mcpregistry.ErrOAuthNotSupported)
 }
 

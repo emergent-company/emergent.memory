@@ -193,9 +193,16 @@ type Requirement struct {
 	TokenEndpoint         string
 	RegistrationEndpoint  string
 	// Scopes are the scopes to request: explicit caller scopes, else the
-	// challenge scope, else the resource's supported scopes, else the
-	// authorization server's.
+	// challenge scope. The resource's advertised scopes_supported is
+	// deliberately NOT a request default: RFC 9728 §7.2 defines it as the list
+	// of scopes the server is willing to disclose that it supports, "not meant
+	// to indicate that an OAuth client should request all scopes in the list".
 	Scopes []string
+	// ScopesAvailable is the set of scopes the provider advertises as supported
+	// — the protected resource's scopes_supported, else the authorization
+	// server's. It is informational: callers surface it so an operator can
+	// choose a subset, and it is never requested implicitly.
+	ScopesAvailable []string
 	// RegistrationSupported is true when the authorization server offers
 	// dynamic client registration.
 	RegistrationSupported bool
@@ -240,7 +247,9 @@ type authServerMetadata struct {
 // Discover resolves a resource's authorization requirement: the protected
 // resource metadata (RFC 9728), then the authorization-server metadata
 // (RFC 8414 / OpenID Connect discovery, path-inserted before appended), then
-// the scopes to request.
+// the scopes to request. Only an explicit caller scope or the challenge's
+// scope is requested; the provider's advertised scopes_supported is reported
+// separately as available (RFC 9728 §7.2) rather than requested wholesale.
 //
 // The resource identifier is the protected resource URL unless its metadata
 // names a different canonical resource (Figma, for example, serves its metadata
@@ -290,8 +299,8 @@ func Discover(ctx context.Context, cfg DiscoveryConfig) (*Requirement, error) {
 	if len(prm.AuthorizationServers) > 0 && strings.TrimSpace(prm.AuthorizationServers[0]) != "" {
 		req.AuthorizationServer = strings.TrimSpace(prm.AuthorizationServers[0])
 	}
-	if len(req.Scopes) == 0 && len(prm.ScopesSupported) > 0 {
-		req.Scopes = append([]string(nil), prm.ScopesSupported...)
+	if len(prm.ScopesSupported) > 0 {
+		req.ScopesAvailable = append([]string(nil), prm.ScopesSupported...)
 	}
 
 	// The challenge may name the authorization server directly when no metadata
@@ -327,8 +336,8 @@ func Discover(ctx context.Context, cfg DiscoveryConfig) (*Requirement, error) {
 	req.TokenEndpoint = strings.TrimSpace(md.TokenEndpoint)
 	req.RegistrationEndpoint = strings.TrimSpace(md.RegistrationEndpoint)
 	req.RegistrationSupported = req.RegistrationEndpoint != ""
-	if len(req.Scopes) == 0 && len(md.ScopesSupported) > 0 {
-		req.Scopes = append([]string(nil), md.ScopesSupported...)
+	if len(req.ScopesAvailable) == 0 && len(md.ScopesSupported) > 0 {
+		req.ScopesAvailable = append([]string(nil), md.ScopesSupported...)
 	}
 	return req, nil
 }
