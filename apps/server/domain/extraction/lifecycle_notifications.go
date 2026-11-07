@@ -166,8 +166,10 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 	if filename != "" {
 		message = fmt.Sprintf("%s · %d objects, %d relationships", filename, result.ObjectsCreated, result.RelationshipsCreated)
 	}
-	if result.ObjectsCreated == 0 && result.RelationshipsCreated == 0 {
+	if result.ObjectsCreated == 0 && result.RelationshipsCreated == 0 && result.OutcomeWarning == nil {
 		// Nothing changed in the graph; announcing an empty run would be noise.
+		// A warning (zero objects, skipped types) is exactly the signal this
+		// guard must not swallow (#233).
 		return
 	}
 
@@ -184,6 +186,7 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 	}
 	severity := "info"
 	message, severity = withVarianceWarning(message, severity, detail, result.VarianceWarning)
+	message, severity = withOutcomeWarning(message, severity, detail, result.OutcomeWarning)
 	details, err := json.Marshal(detail)
 	if err != nil {
 		w.log.Warn("failed to marshal extraction-completed details",
@@ -193,9 +196,13 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 	}
 
 	sourceType := "extraction_job"
+	title := "Document extraction finished"
+	if result.OutcomeWarning != nil && result.OutcomeWarning.Severity == "warning" {
+		title = "Document extraction finished with warnings"
+	}
 	in := notifications.CreateInput{
 		EventKey:   taxonomy.EventDocumentExtractionCompleted,
-		Title:      "Document extraction finished",
+		Title:      title,
 		Message:    message,
 		Severity:   severity,
 		Importance: "other",
@@ -216,10 +223,10 @@ func (w *ObjectExtractionWorker) emitExtractionCompletedNotification(ctx context
 	}
 
 	var opts []notifications.FanoutOptions
-	if actorID != "" && result.VarianceWarning == nil {
+	if actorID != "" && result.VarianceWarning == nil && result.OutcomeWarning == nil {
 		// An ordinary completion is informational and the actor already knows.
-		// A variance warning is exactly what the person who re-ran the document
-		// needs to see before merging, so it is delivered to them too.
+		// A variance or skip/zero-object warning is exactly what the person who
+		// triggered the run needs to see, so it is delivered to them too.
 		opts = append(opts, notifications.FanoutOptions{ActorUserID: actorID})
 	}
 	if err := w.notificationsSvc.CreateForProjectMembers(ctx, job.ProjectID, in, opts...); err != nil {
@@ -279,4 +286,26 @@ func withVarianceWarning(message, severity string, detail map[string]any, warnin
 	detail["previous_job_id"] = warning.PreviousJobID
 	detail["variance_warning"] = warning.Message
 	return message + " — " + warning.Message, "warning"
+}
+
+// withOutcomeWarning folds a skip/zero-object warning into an outcome
+// notification the same way withVarianceWarning folds a variance warning: the
+// named types and the produced count travel in details, the message says them
+// out loud, and a zero-object run escalates the severity. With no warning the
+// inputs are unchanged, so callers keep one code path.
+func withOutcomeWarning(message, severity string, detail map[string]any, warning *RunOutcomeWarning) (string, string) {
+	if warning == nil {
+		return message, severity
+	}
+	detail["outcome_warning_kind"] = warning.Kind
+	detail["outcome_warning"] = warning.Message
+	detail["objects_produced"] = warning.Objects
+	if len(warning.SkippedTypes) > 0 {
+		detail["skipped_types"] = warning.SkippedTypes
+		detail["skipped_type_count"] = len(warning.SkippedTypes)
+	}
+	if warning.Severity == "warning" {
+		severity = "warning"
+	}
+	return message + " — " + warning.Message, severity
 }
