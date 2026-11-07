@@ -2652,3 +2652,63 @@ func TestRenderExtractionDetailReadinessOnlyWhileOpen(t *testing.T) {
 		t.Errorf("an open branch must still show readiness:\n%s", open)
 	}
 }
+
+// TestAssembleExtractionJobDetailSkipsReadinessWhenMerged pins the fetch half of
+// the #242 fix: a merged branch must not issue the merge-readiness request at
+// all, not merely hide its result. Rendering is covered separately.
+func TestAssembleExtractionJobDetailSkipsReadinessWhenMerged(t *testing.T) {
+	cases := []struct {
+		name               string
+		mergedAt           string
+		wantReadinessCalls int
+	}{
+		{name: "merged branch skips the request", mergedAt: "2026-11-06T10:00:00Z", wantReadinessCalls: 0},
+		{name: "open branch still asks", mergedAt: "", wantReadinessCalls: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var readinessCalls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/merge-readiness"):
+					readinessCalls++
+					_, _ = io.WriteString(w, `{"ready":true,"total_objects":3,"pending_embeddings":0}`)
+				case r.URL.Path == "/api/graph/branches":
+					_, _ = io.WriteString(w, `[{"id":"b1","name":"extraction/aaaa/bbbb","origin":"extraction","origin_label":"Invoice.pdf","merged_at":"`+tc.mergedAt+`"}]`)
+				case strings.HasPrefix(r.URL.Path, "/api/graph/objects/search"):
+					_, _ = io.WriteString(w, `{"items":[],"total":0}`)
+				case strings.HasPrefix(r.URL.Path, "/api/graph/relationships/search"):
+					_, _ = io.WriteString(w, `{"items":[],"total":0}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			s := &Server{
+				cfg:    Config{MemoryURL: srv.URL, MemoryProjectID: "proj-1"},
+				memory: NewMemoryClient(srv.URL, "proj-1"),
+			}
+			job := ExtractionJob{
+				ID:               "job1",
+				StagingBranchID:  "b1",
+				CreatedObjectIDs: []string{"obj-1"},
+			}
+
+			d := s.assembleExtractionJobDetail(context.Background(), job)
+			if d.Branch == nil {
+				t.Fatalf("branch did not resolve: %+v", d)
+			}
+			if readinessCalls != tc.wantReadinessCalls {
+				t.Errorf("merge-readiness requests = %d, want %d", readinessCalls, tc.wantReadinessCalls)
+			}
+			if tc.wantReadinessCalls == 0 && d.Readiness != nil {
+				t.Error("a merged branch must not carry readiness")
+			}
+			if tc.wantReadinessCalls == 1 && d.Readiness == nil {
+				t.Error("an open branch should still carry readiness")
+			}
+		})
+	}
+}

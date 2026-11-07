@@ -23,6 +23,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 	"github.com/emergent-company/emergent.memory/pkg/syshealth"
@@ -488,22 +489,8 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// graph until a reviewer explicitly merges them.
 	var stagingBranchID *uuid.UUID
 	if w.branchService != nil && !w.config.SkipStagingBranch {
-		branchName := w.stagingBranchName(job)
-		desc := fmt.Sprintf("Extraction job %s", job.ID)
-		if job.DocumentID != nil {
-			desc = fmt.Sprintf("Extraction job %s (doc %s)", job.ID, *job.DocumentID)
-		}
-		jobID := job.ID
-		branch, err := w.branchService.Create(ctx, &branches.CreateBranchRequest{
-			ProjectID:   &job.ProjectID,
-			Name:        branchName,
-			Description: &desc,
-			// Attribution: the UI labels this branch with its source document
-			// rather than the opaque extraction/<doc>/<job> name (issue #242).
-			Origin:      branches.OriginExtraction,
-			OriginID:    &jobID,
-			OriginLabel: w.stagingBranchLabel(ctx, job),
-		})
+		branch, err := w.branchService.Create(ctx,
+			extractionBranchRequest(job, w.stagingBranchName(job), w.stagingBranchLabel(ctx, job)))
 		if err != nil {
 			// Non-fatal: fall back to writing on main graph rather than blocking extraction.
 			w.log.Warn("failed to create staging branch, writing to main graph",
@@ -1059,6 +1046,30 @@ func (w *ObjectExtractionWorker) persistResults(
 			"orphan_rate":        agents.CalculateOrphanRate(output.Entities, output.Relationships),
 		},
 	}, nil
+}
+
+// extractionBranchRequest builds the staging-branch create request for a job.
+// Isolated as a pure function so the attribution — the extraction origin, the
+// job id and the source document's label — is testable without a database: the
+// UI labels this branch with its source document rather than the opaque
+// extraction/<doc>/<job> name (#242), and the id is what cleanup uses to find a
+// deleted document's branches (#246).
+func extractionBranchRequest(job *ObjectExtractionJob, name string, label *string) *branches.CreateBranchRequest {
+	desc := fmt.Sprintf("Extraction job %s", job.ID)
+	if job.DocumentID != nil {
+		desc = fmt.Sprintf("Extraction job %s (doc %s)", job.ID, *job.DocumentID)
+	}
+	jobID := job.ID
+	return &branches.CreateBranchRequest{
+		ProjectID:   &job.ProjectID,
+		Name:        name,
+		Description: &desc,
+		Attribution: &branchorigin.Attribution{
+			Origin: branchorigin.Extraction,
+			ID:     &jobID,
+			Label:  label,
+		},
+	}
 }
 
 // stagingBranchName builds a human-readable branch name for an extraction job.

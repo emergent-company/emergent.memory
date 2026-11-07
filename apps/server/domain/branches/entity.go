@@ -29,27 +29,3 @@ type Branch struct {
 	// list renders without a join.
 	OriginLabel *string `bun:"origin_label"`
 }
-
-// Branch origins. These describe *why* a branch exists, not who may read it.
-const (
-	// OriginExtraction marks a per-job staging branch written by the extraction
-	// worker; OriginID is the extraction job and OriginLabel the source
-	// document's filename.
-	OriginExtraction = "extraction"
-	// OriginAgent marks a branch created by an agent run.
-	OriginAgent = "agent"
-	// OriginManual marks a branch created by a person through the API or UI.
-	OriginManual = "manual"
-	// OriginSystem marks a branch created by a scheduled or blueprint-driven
-	// process.
-	OriginSystem = "system"
-)
-
-// ValidOrigin reports whether origin is one of the four stored values.
-func ValidOrigin(origin string) bool {
-	switch origin {
-	case OriginExtraction, OriginAgent, OriginManual, OriginSystem:
-		return true
-	}
-	return false
-}

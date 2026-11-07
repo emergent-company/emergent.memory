@@ -1,63 +1,21 @@
 package branches
 
 import (
-	"strings"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 )
 
-// TestNormalizeCreateOrigin pins the create-time attribution rules: empty means
-// manual, values are trimmed, and an unknown origin is rejected rather than
-// stored (a typo would hide a branch from an origin filter).
-func TestNormalizeCreateOrigin(t *testing.T) {
-	cases := []struct {
-		name    string
-		in      string
-		want    string
-		wantErr bool
-	}{
-		{name: "empty defaults to manual", in: "", want: OriginManual},
-		{name: "whitespace defaults to manual", in: "   ", want: OriginManual},
-		{name: "extraction", in: OriginExtraction, want: OriginExtraction},
-		{name: "agent", in: OriginAgent, want: OriginAgent},
-		{name: "manual", in: OriginManual, want: OriginManual},
-		{name: "system", in: OriginSystem, want: OriginSystem},
-		{name: "trimmed", in: "  agent  ", want: OriginAgent},
-		{name: "unknown rejected", in: "scheduled", wantErr: true},
-		{name: "case sensitive", in: "Extraction", wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := normalizeCreateOrigin(&CreateBranchRequest{Origin: tc.in})
-			if tc.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
-// TestValidOrigin keeps the stored vocabulary closed: the migration's CHECK
-// constraint accepts exactly these four values.
-func TestValidOrigin(t *testing.T) {
-	for _, origin := range []string{OriginExtraction, OriginAgent, OriginManual, OriginSystem} {
-		assert.True(t, ValidOrigin(origin), origin)
-	}
-	for _, origin := range []string{"", "extractions", "Extraction", "root"} {
-		assert.False(t, ValidOrigin(origin), origin)
-	}
-}
-
 // TestToResponseOrigin covers the legacy-row default and the attribution
-// passthrough (origin_id/origin_label are what the UI labels a branch with).
+// passthrough — origin_id/origin_label are what the UI labels a branch with.
 func TestToResponseOrigin(t *testing.T) {
 	legacy := ToResponse(&Branch{ID: "b1", Name: "old-branch"})
 	require.NotNil(t, legacy)
-	assert.Equal(t, OriginManual, legacy.Origin, "a row predating the column reads as manual")
+	assert.Equal(t, branchorigin.Manual, legacy.Origin, "a row predating the column reads as manual")
 	assert.Nil(t, legacy.OriginID)
 	assert.Nil(t, legacy.OriginLabel)
 
@@ -66,31 +24,27 @@ func TestToResponseOrigin(t *testing.T) {
 	resp := ToResponse(&Branch{
 		ID:          "b2",
 		Name:        "extraction/aaaa/bbbb",
-		Origin:      OriginExtraction,
+		Origin:      branchorigin.Extraction,
 		OriginID:    &jobID,
 		OriginLabel: &label,
 	})
 	require.NotNil(t, resp)
-	assert.Equal(t, OriginExtraction, resp.Origin)
+	assert.Equal(t, branchorigin.Extraction, resp.Origin)
 	assert.Equal(t, &jobID, resp.OriginID)
 	assert.Equal(t, &label, resp.OriginLabel)
+	assert.Equal(t, "extraction/aaaa/bbbb", resp.Name, "the name is still returned alongside the label")
 }
 
-// TestTrimHelpers pins the blank-to-NULL rule and rune-safe label truncation.
-func TestTrimHelpers(t *testing.T) {
-	assert.Nil(t, trimOptional(nil))
-	assert.Nil(t, trimOptional(strPtr("   ")))
-	assert.Equal(t, "value", *trimOptional(strPtr("  value  ")))
+// TestCreateBranchRequestIgnoresAttributionFromJSON pins the security property:
+// the attribution is server-derived, so a request body cannot claim an origin
+// or another source's id (cleanup deletes on origin — #246).
+func TestCreateBranchRequestIgnoresAttributionFromJSON(t *testing.T) {
+	var req CreateBranchRequest
+	body := []byte(`{"name":"x","origin":"extraction","origin_id":"11111111-1111-1111-1111-111111111111","origin_label":"Invoice.pdf"}`)
+	require.NoError(t, json.Unmarshal(body, &req))
+	assert.Nil(t, req.Attribution, "the attribution field must not be bindable from JSON")
 
-	assert.Nil(t, trimLabel(nil, 10))
-	assert.Nil(t, trimLabel(strPtr(" "), 10))
-	assert.Equal(t, "short", *trimLabel(strPtr(" short "), 10))
-	// Truncation is by rune, so a multibyte filename cannot be cut mid-character.
-	long := strings.Repeat("ż", 20)
-	got := trimLabel(&long, 5)
-	require.NotNil(t, got)
-	assert.Equal(t, strings.Repeat("ż", 5), *got)
-	assert.Len(t, []rune(*got), 5)
+	// A server-side caller sets it directly, which is the only way in.
+	req.Attribution = &branchorigin.Attribution{Origin: branchorigin.Extraction}
+	require.NotNil(t, req.Attribution)
 }
-
-func strPtr(s string) *string { return &s }

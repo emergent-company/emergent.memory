@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 )
 
 // Service handles business logic for branches
@@ -96,12 +97,13 @@ func (s *Service) Create(ctx context.Context, req *CreateBranchRequest) (*Branch
 		}
 	}
 
-	// Normalise the creator attribution.
-	origin, err := normalizeCreateOrigin(req)
+	// Normalise the caller's attribution. It is server-derived (the request DTO
+	// keeps it out of JSON binding); an unknown origin or malformed id is a
+	// client error rather than a stored value or a database error.
+	attribution, err := branchorigin.Resolve(req.Attribution)
 	if err != nil {
-		return nil, err
+		return nil, apperror.ErrBadRequest.WithMessage(err.Error())
 	}
-	originLabel := trimLabel(req.OriginLabel, 200)
 
 	// Create the branch
 	branch := &Branch{
@@ -109,9 +111,9 @@ func (s *Service) Create(ctx context.Context, req *CreateBranchRequest) (*Branch
 		Name:           name,
 		Description:    req.Description,
 		ParentBranchID: req.ParentBranchID,
-		Origin:         origin,
-		OriginID:       trimOptional(req.OriginID),
-		OriginLabel:    originLabel,
+		Origin:         attribution.Origin,
+		OriginID:       attribution.ID,
+		OriginLabel:    attribution.Label,
 	}
 
 	created, err := s.store.Create(ctx, branch)
@@ -186,48 +188,4 @@ func (s *Service) Delete(ctx context.Context, id, projectID string) error {
 	}
 
 	return nil
-}
-
-// normalizeCreateOrigin resolves a create request's origin: empty means manual,
-// whitespace is trimmed, and an unknown value is rejected rather than stored —
-// a typo would otherwise hide a branch from an origin filter. Origin is
-// immutable after creation (UpdateBranchRequest has no field for it).
-func normalizeCreateOrigin(req *CreateBranchRequest) (string, error) {
-	origin := strings.TrimSpace(req.Origin)
-	if origin == "" {
-		return OriginManual, nil
-	}
-	if !ValidOrigin(origin) {
-		return "", apperror.ErrBadRequest.WithMessage("invalid origin: must be one of extraction, agent, manual, system")
-	}
-	return origin, nil
-}
-
-// trimOptional trims a nullable string, returning nil when it is blank so an
-// empty origin_id/label is stored as NULL rather than ”.
-func trimOptional(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	s := strings.TrimSpace(*v)
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// trimLabel trims and truncates a human-readable label to max runes. Labels are
-// display-only (document filename, agent name), so truncation is safe where
-// truncating an id would corrupt it.
-func trimLabel(v *string, max int) *string {
-	s := trimOptional(v)
-	if s == nil {
-		return nil
-	}
-	runes := []rune(*s)
-	if len(runes) <= max {
-		return s
-	}
-	cut := string(runes[:max])
-	return &cut
 }

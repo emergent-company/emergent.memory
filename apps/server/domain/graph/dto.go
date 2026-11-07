@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 )
 
 // CreateGraphObjectRequest is the request body for creating a graph object.
@@ -1108,11 +1110,10 @@ type ForkBranchRequest struct {
 	Name        string   `json:"name" validate:"required"`
 	Description *string  `json:"description,omitempty"`
 	FilterTypes []string `json:"filter_types,omitempty"` // If set, only copy objects of these types
-	// Origin is who or what created the fork: extraction | agent | manual |
-	// system. Empty defaults to manual; immutable afterwards.
-	Origin      string  `json:"origin,omitempty"`
-	OriginID    *string `json:"origin_id,omitempty"`
-	OriginLabel *string `json:"origin_label,omitempty"`
+	// Attribution is who or what created the fork. Server-derived and never
+	// bound from a request body (json:"-"), so an API or MCP caller cannot claim
+	// to be another source. Nil means manual.
+	Attribution *branchorigin.Attribution `json:"-"`
 }
 
 // ForkBranchResponse is the response for a fork branch operation.

@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -6062,15 +6063,15 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 // ForkBranch creates a new branch from a source branch and copies all HEAD objects
 // and their relationships. This is the "copy-on-fork" semantics requested by
 // `branches create --parent --copy-objects`.
-// forkOrigin normalises a fork's origin to one of the four stored values,
-// defaulting to manual. Fork cannot import the branches package's constants
-// without a cycle, so the accepted set is repeated here and pinned by a test.
-func forkOrigin(origin string) string {
-	switch origin {
-	case "extraction", "agent", "manual", "system":
-		return origin
+// applyAttribution stamps a normalised, server-derived attribution onto a
+// branch. Resolve guarantees the id parses, so the typed form is used directly.
+func applyAttribution(b *Branch, a *branchorigin.Attribution) {
+	b.Origin = a.Origin
+	if a.ID != nil {
+		id := a.ParsedID
+		b.OriginID = &id
 	}
-	return "manual"
+	b.OriginLabel = a.Label
 }
 
 func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID *uuid.UUID, req *ForkBranchRequest) (*ForkBranchResponse, error) {
@@ -6090,23 +6091,19 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 		return nil, apperror.ErrConflict.WithMessage("a branch with that name already exists")
 	}
 
+	attribution, err := branchorigin.Resolve(req.Attribution)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+
 	// Create the new branch
 	newBranch := &Branch{
 		ID:          uuid.New(),
 		ProjectID:   projectID,
 		Name:        req.Name,
 		Description: req.Description,
-		Origin:      forkOrigin(req.Origin),
 	}
-	if req.OriginID != nil {
-		if id, err := uuid.Parse(*req.OriginID); err == nil {
-			newBranch.OriginID = &id
-		}
-	}
-	if req.OriginLabel != nil {
-		label := *req.OriginLabel
-		newBranch.OriginLabel = &label
-	}
+	applyAttribution(newBranch, attribution)
 	if sourceBranchID != nil {
 		newBranch.ParentBranchID = sourceBranchID
 	}

@@ -2,6 +2,8 @@ package branches
 
 import (
 	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 )
 
 // CreateBranchRequest is the request DTO for creating a branch
@@ -10,15 +12,11 @@ type CreateBranchRequest struct {
 	Name           string  `json:"name"`
 	Description    *string `json:"description,omitempty"`
 	ParentBranchID *string `json:"parent_branch_id"`
-	// Origin is who or what created the branch: extraction | agent | manual |
-	// system. Empty defaults to manual. Server-side creators set it; it is not
-	// mutable afterwards.
-	Origin string `json:"origin,omitempty"`
-	// OriginID is the creator's id (extraction job, agent run or user).
-	OriginID *string `json:"origin_id,omitempty"`
-	// OriginLabel is the creator rendered for humans (document filename, agent
-	// name, user name).
-	OriginLabel *string `json:"origin_label,omitempty"`
+	// Attribution is who or what created the branch. It is server-derived and
+	// never bound from a request body: the json:"-" tag keeps it out of
+	// decoding, so an API or MCP caller cannot claim to be another source
+	// (cleanup deletes on origin, #246). Nil means manual.
+	Attribution *branchorigin.Attribution `json:"-"`
 }
 
 // UpdateBranchRequest is the request DTO for updating a branch. Origin is
@@ -51,7 +49,7 @@ type BranchResponse struct {
 func ToResponse(b *Branch) *BranchResponse {
 	origin := b.Origin
 	if origin == "" {
-		origin = OriginManual
+		origin = branchorigin.Manual
 	}
 	resp := &BranchResponse{
 		ID:             b.ID,
