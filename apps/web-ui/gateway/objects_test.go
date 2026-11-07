@@ -1818,7 +1818,9 @@ func TestUIObjectsStatsPartialBranchScoped(t *testing.T) {
 	e.GET("/objects/stats", s.uiObjectsStatsPartial)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/stats?branch=b1", nil))
+	req := httptest.NewRequest(http.MethodGet, "/objects/stats?branch=b1", nil)
+	req.Header.Set("HX-Request", "true")
+	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -1827,6 +1829,25 @@ func TestUIObjectsStatsPartialBranchScoped(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "7") {
 		t.Errorf("stats partial missing branch-scoped count 7: %s", rec.Body.String())
+	}
+}
+
+// TestUIObjectsStatsPartialFullPageLoadRedirects pins that a full-page load of
+// the deferred stats route (no HX-Request) redirects to the objects page instead
+// of rendering a bare unstyled fragment (issue #235).
+func TestUIObjectsStatsPartialFullPageLoadRedirects(t *testing.T) {
+	f := &fakeMemory{objectCount: 7}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/stats", s.uiObjectsStatsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/stats", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("full-page stats load status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/objects" {
+		t.Errorf("full-page stats load location = %q, want /objects", loc)
 	}
 }
 

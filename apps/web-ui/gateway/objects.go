@@ -667,6 +667,13 @@ const optionalFetchTimeout = 10 * time.Second
 // with a short timeout; on any failure the section degrades to its "unavailable"
 // state without affecting the already-rendered list.
 func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
+	// This route answers the browser's deferred HTMX stats strip. A full-page
+	// load (reload, bookmark, open-in-new-tab) sends no HX-Request header and
+	// must land on the objects page, not on a bare unstyled fragment with only
+	// the counters (issue #235).
+	if c.Request().Header.Get("HX-Request") != "true" {
+		return c.Redirect(http.StatusSeeOther, "/objects")
+	}
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
 	branchID := c.QueryParam("branch")
