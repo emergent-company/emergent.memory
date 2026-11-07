@@ -495,23 +495,25 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		UpdatedAt:            now,
 	}
 
-	// Bind the creating credential to the new source (slice 2 of #2376). A
-	// source created after migration 00266 carries no wildcard grant, so an
-	// api_key creator must hold an exact grant to push as the source it just
+	// Bind the creating credential to the new source (slice 2 of #2376, issue
+	// #253). A source created after migration 00266 carries no wildcard grant,
+	// so the creator must hold an exact grant to push as the source it just
 	// created — without it the very next POST /api/graph/changesets as this
-	// source is refused. A session creator gets no grant: its source is pushed
-	// by the system sync worker (exempt from the grant check), and a
-	// ('session', NULL) row would be the hidden wildcard 00268 forbids.
+	// source is refused. Any credential kind that carries a stable id — api_key
+	// and mcp_link — gets that exact grant, so a source created by an MCP link
+	// is writable by that link. A session carries no stable id, so it gets none
+	// here: its source is pushed by the system sync worker (exempt from the
+	// grant check), except for a manual-sync source, which no credential can
+	// push until the grant-management surface (task 1.2) ships — see #253.
 	//
 	// The row records the granting actor. A grant minted by a resolved user is
 	// ('user', <user_profiles.id>), so it stays distinguishable from the 00266
 	// backfill ('system'/NULL) in the audit read. An ownerless caller — an
-	// ephemeral sandbox token that carries an api_key credential but no user
-	// profile — must not record a 'user' actor that names nobody (issue #280):
-	// it falls back to the principal actually responsible, the system, with a
-	// NULL id.
+	// ephemeral sandbox token that carries a credential but no user profile —
+	// must not record a 'user' actor that names nobody (issue #280): it falls
+	// back to the principal actually responsible, the system, with a NULL id.
 	var grant *graph.SourceGrant
-	if kind, credID, ok := auth.CredentialFromContext(ctx); ok && kind == auth.CredentialAPIKey && credID != nil {
+	if kind, credID, ok := auth.CredentialFromContext(ctx); ok && credID != nil && kind != auth.CredentialNone {
 		grantedByType := graph.ActorSystem
 		var grantedByID *uuid.UUID
 		if userID := creatorUserID(ctx); userID != nil {
