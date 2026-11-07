@@ -198,14 +198,33 @@ func TestContextRoundTrip(t *testing.T) {
 	if FromContext(ctx) != nil {
 		t.Fatal("empty context must be main only")
 	}
-	if got := ContextWith(ctx, nil); got != ctx {
-		t.Fatal("installing a nil scope must not allocate a context value")
+	if got := FromContext(ContextWith(ctx, nil)); got != nil {
+		t.Fatalf("installing a main-only scope must read back main only, got %+v", got)
 	}
 
 	scope := mustScope(t, Config{Unmerged: true, Origins: []string{"extraction"}})
 	ctx = ContextWith(ctx, scope)
 	if FromContext(ctx) != scope {
 		t.Fatal("scope must round-trip through context")
+	}
+
+	// A main-only install must CLEAR an inherited scope, not leave it in place:
+	// that is what makes a delegated child without a declaration unable to read
+	// the parent's branches.
+	cleared := ContextWith(ctx, nil)
+	if got := FromContext(cleared); got != nil {
+		t.Fatalf("ContextWith(nil) over an inherited scope must clear it, got %+v", got)
+	}
+	// The parent context itself is untouched.
+	if FromContext(ctx) != scope {
+		t.Fatal("clearing a derived context must not mutate the parent")
+	}
+
+	// Narrow(parent, nil) is main only, and installing it clears the parent scope,
+	// which is the whole delegation path.
+	child := ContextWith(ctx, Narrow(scope, nil))
+	if got := FromContext(child); got != nil {
+		t.Fatalf("a delegated run that declares no scope must be main only, got %+v", got)
 	}
 }
 

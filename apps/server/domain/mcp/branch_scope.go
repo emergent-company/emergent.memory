@@ -25,8 +25,9 @@ func NewBranchScope(cfg branchscope.Config) (*BranchScope, error) {
 	return branchscope.New(cfg)
 }
 
-// ContextWithBranchScope installs the per-run scope. A nil scope is a no-op so
-// the main-only default allocates nothing.
+// ContextWithBranchScope installs the per-run scope. A main-only (nil) scope
+// still installs, clearing any inherited scope: a delegated run must not read
+// its caller's branches just because it declared nothing of its own.
 func ContextWithBranchScope(ctx context.Context, scope *BranchScope) context.Context {
 	return branchscope.ContextWith(ctx, scope)
 }
@@ -47,12 +48,13 @@ func NarrowBranchScope(inherited, declared *BranchScope) *BranchScope {
 }
 
 // branchAllowedByScope checks a model-supplied branch id against the run's branch
-// scope, for the read tools that take a branch_id argument (currently
-// journal-list). A nil scope is not enforced here: nil is what a human MCP client
-// carries, and branch_id is an existing, legitimate argument for them. The
-// boundary this enforces is a scope-bearing agent's own declaration — an agent
-// that may read some unmerged branches must not reach the rest by naming one
-// (#265).
+// scope. It is the id-level check; branch references (names or ids) funnel
+// through Service.branchRefAllowedByScope, which is what every tool that takes a
+// `branch` argument uses. A nil scope is not enforced here: nil is what a human
+// MCP client carries, and a branch argument is existing, legitimate behaviour for
+// them. The boundary this enforces is a scope-bearing agent's own declaration —
+// an agent that may read some unmerged branches must not reach the rest by naming
+// one, on a read or a write (#265).
 func (s *Service) branchAllowedByScope(ctx context.Context, projectID, branchID uuid.UUID) error {
 	scope := BranchScopeFromContext(ctx)
 	if scope.IsMainOnly() {

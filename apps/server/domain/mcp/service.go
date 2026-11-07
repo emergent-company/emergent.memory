@@ -3862,6 +3862,9 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	}
 	// Try parsing as UUID first.
 	if id, err := uuid.Parse(branchRef); err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, id); err != nil {
+			return nil, err
+		}
 		return &id, nil
 	}
 	// Look up by name within the project.
@@ -3879,7 +3882,28 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	if err != nil {
 		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
 	}
+	if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
+		return nil, err
+	}
 	return &row.ID, nil
+}
+
+// branchRefAllowedByScope applies the run's branch scope to an already-resolved
+// branch reference, so no tool can name a branch outside the boundary the run
+// declared. It is the choke point for every read and every write that takes a
+// branch argument (entity query/search, type list, merge, delete), which is why
+// it lives here rather than in each tool. A nil scope — the main-only default,
+// and what a human MCP client carries — is not enforced: the boundary this
+// enforces is a scoped run's own declaration (#265).
+func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string, branchID uuid.UUID) error {
+	if BranchScopeFromContext(ctx).IsMainOnly() {
+		return nil
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("invalid project_id: %w", err)
+	}
+	return s.branchAllowedByScope(ctx, projectUUID, branchID)
 }
 
 // resolveOrCreateBranchID resolves a branch name or UUID to a branch UUID.
@@ -3891,6 +3915,9 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	}
 	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
 	if id, err := uuid.Parse(branchRef); err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, id); err != nil {
+			return nil, err
+		}
 		return &id, nil
 	}
 	// Look up by name.
@@ -3906,9 +3933,15 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 		Limit(1).
 		Scan(ctx, &row)
 	if err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
+			return nil, err
+		}
 		return &row.ID, nil
 	}
-	// Branch not found — auto-create it.
+	// Branch not found — auto-create it. A branch this run is creating itself is
+	// not gated by the read scope: the scope says which existing branches the run
+	// may read, and refusing a branch it just created would make the tool unusable
+	// without protecting anything.
 	if s.branchSvc == nil {
 		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
 	}

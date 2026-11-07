@@ -560,16 +560,10 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 		return nil, nil, nil, err
 	}
 
-	// A branch scope fans out over the main graph and each in-scope unmerged
-	// branch. An explicit BranchID request is honoured as-is: it is the HTTP
-	// caller asking for one branch, and the agent tool layer never sets it.
-	var branchInfo *BranchScopeInfo
-	if scope := branchscope.FromContext(ctx); !scope.IsMainOnly() && req.BranchID == nil {
-		results, branchInfo = s.fanOutGraphSearch(ctx, projectID, hybridReq, scope, minScore, results)
-	}
-
-	// Track access asynchronously (don't block response). Branch heads are
-	// ordinary graph objects and are tracked the same way.
+	// Track access asynchronously (don't block response). This is the main-leg
+	// result set, exactly as before branch scoping existed: a branch head is a
+	// separate head of the same canonical object and is not what the access log
+	// describes, so fanning out must not change which objects are marked read.
 	if ids := graphObjectIDs(results); len(ids) > 0 {
 		go func() {
 			bgCtx := context.Background()
@@ -577,6 +571,14 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 				s.log.Warn("failed to update access timestamps", logger.Error(err))
 			}
 		}()
+	}
+
+	// A branch scope fans out over the main graph and each in-scope unmerged
+	// branch. An explicit BranchID request is honoured as-is: it is the HTTP
+	// caller asking for one branch, and the agent tool layer never sets it.
+	var branchInfo *BranchScopeInfo
+	if scope := branchscope.FromContext(ctx); !scope.IsMainOnly() && req.BranchID == nil {
+		results, branchInfo = s.fanOutGraphSearch(ctx, projectID, hybridReq, scope, minScore, results)
 	}
 
 	return results, rawDebug, branchInfo, nil

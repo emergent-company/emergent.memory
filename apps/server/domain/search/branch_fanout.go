@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -92,14 +93,18 @@ func (s *Service) fanOutGraphSearch(
 	}
 
 	fused := fuseScopedGraphResults(sources, s.rrfConstant, limit)
-	switch {
-	case info.Omitted > 0:
-		info.Note = fmt.Sprintf(
+	// Both truncation causes can be true at once (cap omitted some, a read
+	// failed), and the model needs both: an incomplete answer must say so.
+	var notes []string
+	if info.Omitted > 0 {
+		notes = append(notes, fmt.Sprintf(
 			"read %d of %d matching unmerged branches; %d were omitted by the per-agent branch cap",
-			len(info.Branches), len(info.Branches)+info.Omitted, info.Omitted)
-	case failed > 0:
-		info.Note = fmt.Sprintf("read %d unmerged branches; %d could not be read", len(info.Branches), failed)
+			len(info.Branches), len(info.Branches)+info.Omitted, info.Omitted))
 	}
+	if failed > 0 {
+		notes = append(notes, fmt.Sprintf("%d matching unmerged branches could not be read", failed))
+	}
+	info.Note = strings.Join(notes, "; ")
 	return fused, info
 }
 

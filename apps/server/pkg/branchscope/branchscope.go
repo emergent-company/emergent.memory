@@ -13,9 +13,10 @@
 //   - The default is main only. An absent or empty configuration yields a nil
 //     Scope, and every consumer treats nil as "main only", reproducing the
 //     previous behaviour byte for byte.
-//   - The scope is read-only. Nothing here grants a write; write paths do not
-//     consult it. An agent that can read a reviewer's pending branch must not be
-//     able to change what that reviewer is about to merge.
+//   - The scope grants only reads. It bounds which branches a run can name on
+//     any tool, which includes the branch a write targets, so a scoped run cannot
+//     reach a branch outside its own boundary; whether it may write at all is
+//     governed by its write rules, never widened here.
 //
 // A Scope is immutable once built; Narrow returns a new Scope so a delegated
 // child can never widen its caller's boundary.
@@ -298,11 +299,14 @@ func GlobCovers(parent, child string) bool {
 // the MCP facade and the search layer on the same key.
 type branchScopeCtxKey struct{}
 
-// ContextWith returns a context carrying the scope. A nil scope is a no-op so
-// the main-only default is preserved without a value lookup.
+// ContextWith returns a context carrying the scope. A main-only (nil) scope is
+// stored explicitly rather than ignored: a delegated run whose definition
+// declares no scope must NOT inherit its caller's branch reads, and ignoring nil
+// would leave the caller's value in place. Storing a typed nil keeps FromContext
+// returning nil, so consumers still see the main-only default.
 func ContextWith(ctx context.Context, scope *Scope) context.Context {
-	if scope == nil || scope.IsMainOnly() {
-		return ctx
+	if scope.IsMainOnly() {
+		scope = nil
 	}
 	return context.WithValue(ctx, branchScopeCtxKey{}, scope)
 }

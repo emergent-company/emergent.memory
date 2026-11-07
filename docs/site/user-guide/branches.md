@@ -214,8 +214,12 @@ the results. Every object that exists only on a branch comes back flagged with
 settled fact. When the cap leaves branches unread, the response metadata carries a
 `branch_scope_note` saying so.
 
-!!! note "Read-only"
-    A branch scope never grants writes. An agent that can read a pending branch
-    cannot modify or merge it, and a delegated sub-agent receives the
-    intersection of its own scope and its caller's — a child can never read more
-    than its parent.
+!!! note "It narrows reads, and bounds every branch a run can name"
+    A branch scope grants no permission of its own: it only restricts. It bounds
+    every branch a run can name on any tool, so a scoped run cannot reach a branch
+    outside its scope — on a read or a write. Whether it may change an **in-scope**
+    branch at all is still decided by its ordinary write permissions, not by this
+    setting, so give read scope to a reviewing agent you would not give write
+    access to. A delegated sub-agent additionally receives the intersection of its
+    own scope and its caller's — a child can never read more than its parent, and a
+    child that declares nothing of its own reads the main graph only.
