@@ -7,6 +7,7 @@ import (
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -612,13 +613,13 @@ templ dsConfigFieldInput(f dsConfigField) {
 		if f.Description != "" {
 			tipID = "ds-tip-" + f.Key
 		}
-		inputAttrs := templ.Attributes{"data-testid": "ds-field-" + f.Key}
+		inputAttrs := templ.Attributes{"data-testid": "ds-field-" + f.Key, "id": f.Key}
 		if tipID != "" {
 			inputAttrs["aria-describedby"] = tipID
 		} }}
 		<div class="flex items-center gap-1.5">
 			<label class="flex cursor-pointer items-center gap-3">
-				<input type="checkbox" id={ f.Key } name={ f.Key } class="toggle" checked?={ f.Checked } { inputAttrs... }/>
+				@form.ToggleInput(form.ToggleInputProps{Name: f.Key, Checked: f.Checked, Attrs: inputAttrs})
 				<span class="text-sm font-medium">{ f.Label }</span>
 			</label>
 			if tipID != "" {
