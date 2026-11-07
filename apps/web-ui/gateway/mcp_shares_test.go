@@ -488,7 +488,8 @@ func TestMCPShareRowShowsInviteesAndWriteScope(t *testing.T) {
 	html := renderHTML(t, MCPSharesPage(mcpSharesPageData{Shares: []MCPShareInstance{inst}}))
 
 	for _, want := range []string{
-		"invited alice@example.com +1",
+		"invited alice@example.com, bob@example.com",
+		`title="alice@example.com, bob@example.com"`,
 		"read &amp; write",
 		`data-testid="mcp-share-activity-link-s1"`,
 		"credential_id=tok-9",

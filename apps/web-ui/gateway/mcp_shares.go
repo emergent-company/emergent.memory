@@ -628,16 +628,26 @@ func mcpShareGeneratedSnippet(key, mcpURL, token string) string {
 }
 
 // mcpShareRecipientsLabel renders a share's invite recipients for the row's meta
-// line: the first address plus a "+N" suffix, so a long invite list cannot push
-// the rest of the row meta out of line.
+// line. It names the addresses so an admin can see who holds the share, showing
+// up to two and summarising the tail as "+N" to keep the row on one line; the
+// full list is in the title (mcpShareRecipientsTitle).
 func mcpShareRecipientsLabel(emails []string) string {
-	if len(emails) == 0 {
+	switch len(emails) {
+	case 0:
 		return ""
-	}
-	if len(emails) == 1 {
+	case 1:
 		return "invited " + emails[0]
+	case 2:
+		return "invited " + emails[0] + ", " + emails[1]
+	default:
+		return fmt.Sprintf("invited %s, %s +%d", emails[0], emails[1], len(emails)-2)
 	}
-	return fmt.Sprintf("invited %s +%d", emails[0], len(emails)-1)
+}
+
+// mcpShareRecipientsTitle is the full recipient list, used as the chip's hover
+// text so the addresses the row had to summarise are still reachable.
+func mcpShareRecipientsTitle(emails []string) string {
+	return strings.Join(emails, ", ")
 }
 
 // mcpShareActivityHref links to the object browser scoped to the objects this

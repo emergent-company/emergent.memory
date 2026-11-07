@@ -119,7 +119,9 @@ templ mcpShareRow(inst MCPShareInstance) {
 			@components.MetaChip("lucide--calendar-plus", "created "+relTime(inst.CreatedAt))
 			@components.MetaChip("lucide--clock", "last used "+mcpShareLastUsedLabel(inst))
 			if len(inst.RecipientEmails) > 0 {
-				@components.MetaChip("lucide--mail", mcpShareRecipientsLabel(inst.RecipientEmails))
+				<span title={ mcpShareRecipientsTitle(inst.RecipientEmails) }>
+					@components.MetaChip("lucide--mail", mcpShareRecipientsLabel(inst.RecipientEmails))
+				</span>
 			}
 			if !inst.ReadOnly && !inst.IsLegacy {
 				@components.MetaChip("lucide--pencil", "read & write")
