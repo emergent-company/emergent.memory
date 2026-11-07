@@ -123,21 +123,29 @@ func (s *Service) GetChunkingConfig(ctx context.Context, projectID string) (*Chu
 		AutoProfile:  autoProfile,
 	}
 	if autoProfile {
-		resp.Profiles = shapeProfiles()
+		resp.Profiles = s.shapeProfiles()
 	}
 	return resp, nil
 }
 
-// shapeProfiles exposes the built-in per-shape parameters for discovery.
-func shapeProfiles() []ShapeProfile {
+// shapeProfiles exposes the built-in per-shape parameters for discovery. The
+// prose row reports the deployment's own defaults rather than the package
+// constant, because those are what a prose document is actually chunked with
+// (see RecreateChunks): a client reading the table must not be told 1000/200
+// when the deployment runs CHUNK_SIZE=4000.
+func (s *Service) shapeProfiles() []ShapeProfile {
 	profiles := textsplitter.DefaultProfiles()
 	out := make([]ShapeProfile, 0, len(profiles))
 	for _, p := range profiles {
+		size, overlap := p.Config.ChunkSize, p.Config.ChunkOverlap
+		if p.Shape == textsplitter.ShapeProse {
+			size, overlap = s.defaultChunkSize, s.defaultChunkOverlap
+		}
 		out = append(out, ShapeProfile{
 			Shape:        string(p.Shape),
 			Strategy:     string(p.Options.Strategy),
-			MaxChunkSize: p.Config.ChunkSize,
-			Overlap:      p.Config.ChunkOverlap,
+			MaxChunkSize: size,
+			Overlap:      overlap,
 			ParentChild:  p.Options.ParentChild,
 		})
 	}
@@ -183,7 +191,7 @@ func (s *Service) UpdateChunkingConfig(ctx context.Context, projectID string, re
 		AutoProfile:  autoProfile,
 	}
 	if autoProfile {
-		resp.Profiles = shapeProfiles()
+		resp.Profiles = s.shapeProfiles()
 	}
 	return resp, nil
 }

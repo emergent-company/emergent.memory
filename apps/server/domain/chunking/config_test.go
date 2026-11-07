@@ -106,7 +106,8 @@ func TestValidateChunkingUpdateAutoProfileAbsentMeansOff(t *testing.T) {
 }
 
 func TestShapeProfilesCoverEveryShape(t *testing.T) {
-	profiles := shapeProfiles()
+	svc := &Service{defaultChunkSize: 1000, defaultChunkOverlap: 200}
+	profiles := svc.shapeProfiles()
 	if len(profiles) != len(textsplitter.SupportedShapes()) {
 		t.Fatalf("shapeProfiles() has %d entries, want %d", len(profiles), len(textsplitter.SupportedShapes()))
 	}
@@ -125,4 +126,23 @@ func TestShapeProfilesCoverEveryShape(t *testing.T) {
 			t.Errorf("%s: overlap %d invalid for size %d", p.Shape, p.Overlap, p.MaxChunkSize)
 		}
 	}
+}
+
+// TestShapeProfilesReportEffectiveProseDefaults pins the discovery contract for
+// the one shape that does not have fixed parameters: prose is chunked with the
+// deployment's CHUNK_SIZE/CHUNK_OVERLAP, so the echoed table has to report those
+// rather than the package defaults.
+func TestShapeProfilesReportEffectiveProseDefaults(t *testing.T) {
+	svc := &Service{defaultChunkSize: 4000, defaultChunkOverlap: 400}
+	for _, p := range svc.shapeProfiles() {
+		if p.Shape != string(textsplitter.ShapeProse) {
+			continue
+		}
+		if p.MaxChunkSize != 4000 || p.Overlap != 400 {
+			t.Fatalf("prose profile reports %d/%d, want the deployment defaults 4000/400",
+				p.MaxChunkSize, p.Overlap)
+		}
+		return
+	}
+	t.Fatal("prose profile missing from the table")
 }

@@ -249,7 +249,7 @@ Documents are split into overlapping text segments (**chunks**) for retrieval. C
 
 Configure with `PUT /api/chunking/config`, and read the effective settings back with `GET /api/chunking/config`. The write is a full replacement: turning `autoProfile` on stores the other fields as sent (they are then unused), so turning it back off lands on those stored values rather than the ones that were in force beforehand.
 
-`autoProfile` is opt-in and replaces the project-wide size and strategy settings; it never blends with them. Documents with no dominant structure stay on the deployment's default split (`CHUNK_SIZE`/`CHUNK_OVERLAP`, 1000/200 when unset), so enabling it is a no-op for plain prose. A read of the project's chunking configuration returns the per-shape profile table when `autoProfile` is on.
+`autoProfile` is opt-in and replaces the project-wide size and strategy settings; it never blends with them. Documents with no dominant structure are split with the deployment's `CHUNK_SIZE`/`CHUNK_OVERLAP` defaults (1000/200 when unset) — not with a project-level `maxChunkSize` — so opting in changes nothing for plain prose unless the project had overridden those values. A read of the project's chunking configuration returns the per-shape profile table when `autoProfile` is on, reporting the effective prose defaults.
 
 To re-chunk a specific document after changing the config:
 
