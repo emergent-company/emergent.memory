@@ -1134,6 +1134,41 @@ templ mcpServersScript() {
 			function rowFor(el) { return el.closest('[data-mcp-row]'); }
 			function setBusy(btn, busy) { if (btn) btn.disabled = busy; }
 
+			// toolsHostForEvent resolves the deferred tool-rows host an htmx event
+			// belongs to. htmx.ajax() dispatches from document.body and carries the
+			// swap target in detail.ctx.target, so read the context first and fall
+			// back to the event target for element-bound requests.
+			function toolsHostForEvent(ev) {
+				var ctx = ev && ev.detail && ev.detail.ctx;
+				var target = ctx && ctx.target;
+				if (target && target.closest) return target.closest('[data-mcp-tools-host]');
+				var elt = ev && ev.target;
+				return elt && elt.closest ? elt.closest('[data-mcp-tools-host]') : null;
+			}
+
+			// A failed fragment fetch (non-2xx or a transport error) must not leave
+			// the row marked loaded: clear the guard so the next expand retries. The
+			// fragment's own error note is left in place — this only re-arms the
+			// fetch, it does not invent a second error UI.
+			function releaseToolsFetch(ev) {
+				var host = toolsHostForEvent(ev);
+				if (host) host.removeAttribute('data-mcp-tools-loaded');
+			}
+			document.addEventListener('htmx:response:error', releaseToolsFetch);
+			document.addEventListener('htmx:error', releaseToolsFetch);
+
+			// Sync swaps fresh rows into the same host. If a sync lands while the
+			// fragment request is still in flight, cancel the late swap so a stale
+			// fragment never overwrites the rows the sync just wrote.
+			function skipStaleToolsSwap(ev) {
+				var host = toolsHostForEvent(ev);
+				if (host && host.querySelector('[data-mcp-tool-row]')) {
+					ev.preventDefault();
+					return false;
+				}
+			}
+			document.addEventListener('htmx:before:swap', skipStaleToolsSwap);
+
 			async function readJSON(resp) {
 				var j = null;
 				try { j = await resp.json(); } catch (e) {}
@@ -1639,6 +1674,10 @@ templ mcpServersScript() {
 				if (!row.hasAttribute('data-mcp-row')) return;
 				var host = row.querySelector('[data-mcp-tools-host]');
 				if (!host || host.hasAttribute('data-mcp-tools-loaded')) return;
+				// A completed sync may already have written rows into this host
+				// before the first expand (sync-wins). Fetch nothing rather than
+				// replace fresher rows with a stale fragment.
+				if (host.querySelector('[data-mcp-tool-row]')) return;
 				var url = host.getAttribute('data-mcp-tools-url');
 				if (!url) return;
 				// App paths are emitted unscoped; the session's scope base lives in

@@ -26,6 +26,10 @@ func TestRenderMCPServersPage(t *testing.T) {
 		`data-mcp-tools-host="srv-builtin"`,
 		`data-mcp-tools-url="/settings/mcp-servers/srv-http/tools"`,
 		"Expand to load the cached tools.",
+		// The pending placeholder keeps the data-mcp-tools hook a sync writes
+		// into, so a sync that lands before the first expand is not lost (#221).
+		`data-mcp-tools="srv-http"`, `data-mcp-tools="srv-stdio"`,
+		`data-mcp-tools="srv-builtin"`, "data-mcp-tools-pending",
 		// external row actions
 		`href="/settings/mcp-servers/srv-http/edit"`,
 		`href="/settings/mcp-servers/srv-stdio/edit"`,
@@ -94,6 +98,56 @@ func TestRenderMCPServerToolsContainer(t *testing.T) {
 	}
 	if strings.Contains(builtin, `data-mcp-tool-toggle`) {
 		t.Error("builtin rows are read-only: no per-tool toggles")
+	}
+}
+
+// TestRenderMCPServersToolsPlaceholderHook pins the invariant behind "a sync
+// that lands before the first expand still works": every deferred host renders
+// exactly one pending placeholder carrying data-mcp-tools="<id>", which is the
+// container the sync path swaps fresh rows into (#221).
+func TestRenderMCPServersToolsPlaceholderHook(t *testing.T) {
+	fixture := mcpTestRegistryFixture()
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: fixture}))
+	for _, srv := range fixture {
+		hook := `data-mcp-tools="` + srv.ID + `"`
+		if got := strings.Count(html, hook); got != 1 {
+			t.Errorf("%s placeholder hook %q occurrences = %d, want 1", srv.ID, hook, got)
+		}
+	}
+	if got := strings.Count(html, "data-mcp-tools-pending"); got != len(fixture) {
+		t.Errorf("pending placeholders = %d, want %d (one per server)", got, len(fixture))
+	}
+}
+
+// TestRenderMCPServersToolsFetchRetryGuard pins the expand-fetch guard (#221):
+// both htmx error paths clear data-mcp-tools-loaded so the next expand retries,
+// and a host that already holds rendered rows is left alone (sync-wins).
+func TestRenderMCPServersToolsFetchRetryGuard(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
+	start := strings.Index(html, "function toolsHostForEvent")
+	if start < 0 {
+		t.Fatal("mcpServersScript missing the tools-host retry helpers")
+	}
+	script := html[start:]
+	for _, want := range []string{
+		"document.addEventListener('htmx:response:error', releaseToolsFetch)",
+		"document.addEventListener('htmx:error', releaseToolsFetch)",
+		"host.removeAttribute('data-mcp-tools-loaded')",
+		"window.MemoryScope.path(url)",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("mcpServersScript missing %q", want)
+		}
+	}
+	// The existing-rows check must precede marking the host loaded: rows a sync
+	// already wrote win over the fragment fetch.
+	rowsIdx := strings.Index(script, "host.querySelector('[data-mcp-tool-row]')")
+	markIdx := strings.Index(script, "host.setAttribute('data-mcp-tools-loaded', '1')")
+	if rowsIdx < 0 || markIdx < 0 || rowsIdx > markIdx {
+		t.Errorf("tools-rows guard order wrong: rows check at %d, mark-loaded at %d (want rows first)", rowsIdx, markIdx)
+	}
+	if got := strings.Count(script, "htmx.ajax('GET', url"); got != 1 {
+		t.Errorf("tool-rows fetch occurrences = %d, want 1", got)
 	}
 }
 
