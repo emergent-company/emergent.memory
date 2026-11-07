@@ -425,3 +425,166 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintModelOverridesGet(ctx context.
 	}
 	return h.wrapResult(map[string]any{"modelOverrides": overrides})
 }
+
+// ExecuteBlueprintDelete removes a project-private blueprint from the registry.
+// Global built-ins are immutable and any blueprint with a live application is
+// refused by the shared Service (guardMutable / uninstall-first), so no
+// additional global-write gate is needed here — mirroring the REST handler.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintDelete(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return errResult("id is required")
+	}
+
+	if err := h.svc.DeleteBlueprint(ctx, projectID, id); err != nil {
+		return errResult("failed to delete blueprint: " + err.Error())
+	}
+	return h.wrapResult(map[string]any{"deleted": true, "id": id})
+}
+
+// ExecuteBlueprintDeprecate marks a blueprint version deprecated. Deprecating a
+// global blueprint is a platform-global catalogue write (superadmin_full);
+// deprecating the caller's own private blueprint stays project-tier — the same
+// shared Service helper the REST handler uses (issue #1041).
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintDeprecate(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return errResult("id is required")
+	}
+
+	target, err := h.svc.GetBlueprint(ctx, projectID, id)
+	if err != nil {
+		return errResult("failed to get blueprint: " + err.Error())
+	}
+	if target.ProjectID == nil {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(ctx); err != nil {
+			return errResult("forbidden: global blueprint writes require superadmin_full")
+		}
+	}
+
+	bp, err := h.svc.DeprecateBlueprint(ctx, projectID, id)
+	if err != nil {
+		return errResult("failed to deprecate blueprint: " + err.Error())
+	}
+	return h.wrapResult(bp)
+}
+
+// ExecuteBlueprintImport imports a blueprint from a GitHub repo URL, mirroring
+// the REST POST /api/blueprints/import handler (create + publish, optional
+// atomic apply). A global (no project) import is a platform-global catalogue
+// write and requires superadmin_full.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintImport(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	url, _ := args["url"].(string)
+	if strings.TrimSpace(url) == "" {
+		return errResult("url is required")
+	}
+	ref, _ := args["ref"].(string)
+	token, _ := args["token"].(string)
+	apply, _ := args["apply"].(bool)
+	mergeTypeConflicts, _ := args["mergeTypeConflicts"].(bool)
+
+	if projectID == "" {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(ctx); err != nil {
+			return errResult("forbidden: global blueprint imports require superadmin_full")
+		}
+	}
+
+	modelOverrides, err := stringMapArg(args["modelOverrides"])
+	if err != nil {
+		return errResult("invalid modelOverrides: " + err.Error())
+	}
+
+	req := &ImportGitHubRequest{
+		URL:                url,
+		Ref:                ref,
+		Token:              token,
+		ModelOverrides:     modelOverrides,
+		Apply:              apply,
+		MergeTypeConflicts: mergeTypeConflicts,
+	}
+	bp, err := h.svc.ImportFromGitHub(ctx, projectID, req)
+	if err != nil {
+		return errResult("failed to import blueprint: " + err.Error())
+	}
+	return h.wrapResult(bp)
+}
+
+// ExecuteBlueprintUpdatesCheck enqueues an upstream-update check for the
+// caller's applied blueprint by name, mirroring POST /api/blueprints/:name/updates/check.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintUpdatesCheck(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	if projectID == "" {
+		return errResult("project context required for blueprint update check")
+	}
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return errResult("name is required")
+	}
+
+	job, err := h.svc.EnqueueUpdateCheck(ctx, projectID, name)
+	if err != nil {
+		return errResult("failed to enqueue blueprint update check: " + err.Error())
+	}
+	return h.wrapResult(job)
+}
+
+// ExecuteBlueprintUpdatesApply enqueues an upstream-update apply for the
+// caller's applied blueprint by name, mirroring POST /api/blueprints/:name/updates/apply.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintUpdatesApply(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	if projectID == "" {
+		return errResult("project context required for blueprint update apply")
+	}
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return errResult("name is required")
+	}
+	mergeTypeConflicts, _ := args["mergeTypeConflicts"].(bool)
+
+	job, err := h.svc.EnqueueBlueprintUpdateWithOptions(ctx, projectID, name, UpdateJobOptions{
+		MergeTypeConflicts: mergeTypeConflicts,
+	})
+	if err != nil {
+		return errResult("failed to enqueue blueprint update apply: " + err.Error())
+	}
+	return h.wrapResult(job)
+}
+
+// ExecuteBlueprintModelOverridesPut upserts the project-scoped model overrides
+// for a blueprint name, mirroring PUT /api/blueprints/model-overrides.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintModelOverridesPut(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	if projectID == "" {
+		return errResult("project context required for blueprint model overrides")
+	}
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return errResult("name is required")
+	}
+
+	modelOverrides, err := stringMapArg(args["modelOverrides"])
+	if err != nil {
+		return errResult("invalid modelOverrides: " + err.Error())
+	}
+
+	overrides, err := h.svc.UpsertModelOverrides(ctx, projectID, name, modelOverrides)
+	if err != nil {
+		return errResult("failed to upsert blueprint model overrides: " + err.Error())
+	}
+	return h.wrapResult(map[string]any{"modelOverrides": overrides})
+}
+
+// ExecuteBlueprintGithubCredentialsPut stores the project's encrypted GitHub PAT,
+// mirroring PUT /api/blueprints/github-credentials. The token is never echoed,
+// logged, or returned — only a confirmation is produced.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintGithubCredentialsPut(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	if projectID == "" {
+		return errResult("project context required for GitHub credentials")
+	}
+	token, _ := args["token"].(string)
+	if strings.TrimSpace(token) == "" {
+		return errResult("token is required")
+	}
+
+	if err := h.svc.SaveGithubCredential(ctx, projectID, token); err != nil {
+		return errResult("failed to store GitHub credentials: " + err.Error())
+	}
+	return h.wrapResult(map[string]any{"stored": true})
+}

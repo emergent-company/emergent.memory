@@ -2850,7 +2850,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
 		"blueprint-apply", "blueprint-apply-preview", "blueprint-unapply", "blueprint-versions",
 		"blueprint-list-applied", "blueprint-new-version", "blueprint-update",
-		"blueprint-updates-status", "blueprint-import-preview", "blueprint-model-overrides-get":
+		"blueprint-updates-status", "blueprint-import-preview", "blueprint-model-overrides-get",
+		"blueprint-delete", "blueprint-deprecate", "blueprint-import",
+		"blueprint-updates-check", "blueprint-updates-apply", "blueprint-model-overrides-put",
+		"blueprint-github-credentials-put":
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
@@ -6707,6 +6710,20 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 		return s.blueprintToolHandler.ExecuteBlueprintImportPreview(ctx, projectID, args)
 	case "blueprint-model-overrides-get":
 		return s.blueprintToolHandler.ExecuteBlueprintModelOverridesGet(ctx, projectID, args)
+	case "blueprint-delete":
+		return s.blueprintToolHandler.ExecuteBlueprintDelete(ctx, projectID, args)
+	case "blueprint-deprecate":
+		return s.blueprintToolHandler.ExecuteBlueprintDeprecate(ctx, projectID, args)
+	case "blueprint-import":
+		return s.blueprintToolHandler.ExecuteBlueprintImport(ctx, projectID, args)
+	case "blueprint-updates-check":
+		return s.blueprintToolHandler.ExecuteBlueprintUpdatesCheck(ctx, projectID, args)
+	case "blueprint-updates-apply":
+		return s.blueprintToolHandler.ExecuteBlueprintUpdatesApply(ctx, projectID, args)
+	case "blueprint-model-overrides-put":
+		return s.blueprintToolHandler.ExecuteBlueprintModelOverridesPut(ctx, projectID, args)
+	case "blueprint-github-credentials-put":
+		return s.blueprintToolHandler.ExecuteBlueprintGithubCredentialsPut(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("unknown blueprint tool: %s", toolName)
 	}

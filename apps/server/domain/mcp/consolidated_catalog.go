@@ -195,10 +195,13 @@ var consolidatedFamilies = []consolidatedFamily{
 	{
 		Name:  "blueprint-write",
 		Scope: "schema:write",
-		Description: "Author and apply blueprints. action=create starts a draft; action=update edits a draft; " +
+		Description: "Author, apply, import and retire blueprints. action=create starts a draft; action=update edits a draft; " +
 			"action=publish publishes a private draft; action=new-version forks a version; action=apply materialises a " +
 			"manifest (call blueprint action=apply-preview first when object types collide, then merge_types=true); " +
-			"action=unapply reverses an apply.",
+			"action=unapply reverses an apply; action=import fetches a blueprint from GitHub (optionally applying it); " +
+			"action=delete removes a project-private blueprint; action=deprecate marks a published version deprecated; " +
+			"action=updates-check enqueues an upstream check; action=updates-apply enqueues an upstream apply; " +
+			"action=model-overrides-put sets per-project model overrides; action=github-credentials stores the project GitHub PAT.",
 		Actions: []consolidatedAction{
 			{Action: "create", Handler: "blueprint-create", Description: "create a draft"},
 			{Action: "update", Handler: "blueprint-update", Description: "edit a draft"},
@@ -206,6 +209,13 @@ var consolidatedFamilies = []consolidatedFamily{
 			{Action: "new-version", Handler: "blueprint-new-version", Description: "fork a new version"},
 			{Action: "apply", Handler: "blueprint-apply", Description: "materialise a blueprint"},
 			{Action: "unapply", Handler: "blueprint-unapply", Description: "reverse an apply"},
+			{Action: "import", Handler: "blueprint-import", Description: "import a blueprint from GitHub"},
+			{Action: "delete", Handler: "blueprint-delete", Description: "remove a project-private blueprint"},
+			{Action: "deprecate", Handler: "blueprint-deprecate", Description: "mark a published version deprecated"},
+			{Action: "updates-check", Handler: "blueprint-updates-check", Description: "enqueue an upstream check"},
+			{Action: "updates-apply", Handler: "blueprint-updates-apply", Description: "enqueue an upstream apply"},
+			{Action: "model-overrides-put", Handler: "blueprint-model-overrides-put", Description: "set per-project model overrides"},
+			{Action: "github-credentials", Handler: "blueprint-github-credentials-put", Description: "store the project GitHub PAT"},
 		},
 	},
 	{
