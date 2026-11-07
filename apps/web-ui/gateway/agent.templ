@@ -782,9 +782,7 @@ templ agentWorkPickupNote() {
 templ agentWorkBlueprintWarning(data agentSettingsData) {
 	@ui.Dialog(ui.DialogProps{ID: "agent-work-blueprint-warning", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "agent-work-blueprint-warning-title", "aria-describedby": "agent-work-blueprint-warning-desc"}}) {
 		<div class="flex items-start gap-3">
-			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--alert-triangle", "size-5")
-			</div>
+			@components.IconCircle("lucide--alert-triangle", components.IconCircleToneWarning)
 			<div>
 				@ui.DialogTitle(ui.DialogTitleProps{ID: "agent-work-blueprint-warning-title"}) { Save changes to a blueprint-derived agent? }
 				@ui.EmptyNote(ui.EmptyNoteProps{ID: "agent-work-blueprint-warning-desc", Tone: ui.EmptyNoteToneStrong, Class: "mt-1"}) {

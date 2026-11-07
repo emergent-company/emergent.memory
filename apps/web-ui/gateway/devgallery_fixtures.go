@@ -199,11 +199,30 @@ func gallerySeed() []GalleryEntry {
 			},
 		},
 		{
-			ID: "ConfirmIcon", Slug: "confirm-icon", Name: "ConfirmIcon", Layer: LayerComposite,
+			ID: "IconCircle", Slug: "icon-circle", Name: "IconCircle", Layer: LayerComposite,
 			Category: "Feedback", Subcategory: "icon", SourceFile: "components/confirm.templ",
-			PropsType:   "icon string",
-			Description: "The destructive-confirm icon circle: the error-tinted rounded square holding an icon.",
-			Render:      func() templ.Component { return components.ConfirmIcon("") },
+			PropsType:   "icon string, IconCircleTone",
+			Description: "The tinted status circle that leads a dialog or callout heading: a 10×10 circle holding one icon, in a closed tone set.",
+			Render: func() templ.Component {
+				return components.IconCircle("lucide--trash-2", components.IconCircleToneError)
+			},
+			Stories: map[string]func() templ.Component{
+				"error": func() templ.Component {
+					return components.IconCircle("lucide--trash-2", components.IconCircleToneError)
+				},
+				"warning": func() templ.Component {
+					return components.IconCircle("lucide--refresh-cw", components.IconCircleToneWarning)
+				},
+				"primary": func() templ.Component {
+					return components.IconCircle("lucide--git-branch", components.IconCircleTonePrimary)
+				},
+				"info": func() templ.Component {
+					return components.IconCircle("lucide--info", components.IconCircleToneInfo)
+				},
+				"success": func() templ.Component {
+					return components.IconCircle("lucide--circle-check", components.IconCircleToneSuccess)
+				},
+			},
 		},
 		{
 			ID: "DeleteWarning", Slug: "delete-warning", Name: "DeleteWarning", Layer: LayerComposite,

@@ -62,21 +62,37 @@ func TestMetaGridRendersGapAndCols(t *testing.T) {
 	assertContains(t, html, `<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">`)
 }
 
-// --- confirm ---
+// --- confirm / status circle ---
 
-func TestConfirmIconRendersDefaultTrashGlyph(t *testing.T) {
-	html := renderHTML(t, ConfirmIcon(""))
-	assertContains(t, html,
-		`class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"`,
-		"lucide--trash-2",
-		"size-5",
-	)
+// The circle's class list is contractual: it is the component's whole API for
+// this surface (the conventions spec exempts the confirm-dialog icon circle
+// from the no-class-string-assertions policy).
+func TestIconCircleRendersEveryTone(t *testing.T) {
+	cases := []struct {
+		tone  IconCircleTone
+		class string
+	}{
+		{IconCircleToneError, "bg-error/10 text-error"},
+		{IconCircleToneWarning, "bg-warning/10 text-warning"},
+		{IconCircleTonePrimary, "bg-primary/10 text-primary"},
+		{IconCircleToneInfo, "bg-info/10 text-info"},
+		{IconCircleToneSuccess, "bg-success/10 text-success"},
+	}
+	for _, c := range cases {
+		html := renderHTML(t, IconCircle("lucide--trash-2", c.tone))
+		assertContains(t, html,
+			`class="`+c.class+` grid size-10 shrink-0 place-items-center rounded-full"`,
+			"lucide--trash-2",
+			"size-5",
+			`aria-hidden="true"`,
+		)
+	}
 }
 
-func TestConfirmIconRendersOverride(t *testing.T) {
-	html := renderHTML(t, ConfirmIcon("lucide--alert-triangle"))
-	assertContains(t, html, "lucide--alert-triangle")
-	assertNotContains(t, html, "lucide--trash-2")
+func TestIconCircleZeroToneIsDestructive(t *testing.T) {
+	html := renderHTML(t, IconCircle("lucide--alert-triangle", ""))
+	assertContains(t, html, "bg-error/10 text-error")
+	assertNotContains(t, html, "bg-warning/10")
 }
 
 func TestDeleteWarningRendersSentence(t *testing.T) {

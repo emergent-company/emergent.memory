@@ -1707,7 +1707,7 @@ templ providerExtraField(f ExtraField, value string) {
 templ providerConfigSaveErrorModal(err error) {
 	@ui.Dialog(ui.DialogProps{ID: "provider-save-error-modal", BoxClass: "max-w-md", Attrs: components.DialogAutoOpen()}) {
 		<div class="mb-3 flex items-start gap-3">
-			@components.ConfirmIcon("lucide--alert-triangle")
+			@components.IconCircle("lucide--alert-triangle", components.IconCircleToneError)
 			@ui.DialogTitle() { Couldn't save provider }
 		</div>
 		@ui.EmptyNote() {
