@@ -23,7 +23,7 @@ import (
 // insert so the test exercises the same path a management surface would.
 func grantSourceTo(t *testing.T, ctx context.Context, repo *graph.Repository, projectID, sourceID uuid.UUID, kind string, id *uuid.UUID) {
 	t.Helper()
-	require.NoError(t, repo.InsertSourceGrant(ctx, repo.DB(), &graph.SourceGrant{
+	require.NoError(t, graph.InsertSourceGrant(ctx, repo.DB(), &graph.SourceGrant{
 		ProjectID:      projectID,
 		SourceID:       sourceID,
 		CredentialKind: kind,
@@ -375,7 +375,7 @@ func TestHasSourceGrantWildcardExcludesNoCredential(t *testing.T) {
 }
 
 // TestSourceGrantRejectsNullCredentialIDForConcreteKind pins should-fix 2: the
-// 00265 CHECK (credential_kind = 'project' OR credential_id IS NOT NULL) forbids
+// 00268 CHECK (credential_kind = 'project' OR credential_id IS NOT NULL) forbids
 // the hidden-wildcard row — a ('session', NULL) or ('api_key', NULL) grant that
 // would authorise every session / every api_key.
 func TestSourceGrantRejectsNullCredentialIDForConcreteKind(t *testing.T) {
@@ -386,7 +386,7 @@ func TestSourceGrantRejectsNullCredentialIDForConcreteKind(t *testing.T) {
 		INSERT INTO kb.source_grants (project_id, source_id, credential_kind, credential_id, granted_by_type)
 		VALUES (?, ?, 'session', NULL, 'system')
 	`, projectID, sourceID)
-	require.Error(t, err, "a ('session', NULL) hidden wildcard must be rejected by the 00265 CHECK")
+	require.Error(t, err, "a ('session', NULL) hidden wildcard must be rejected by the 00268 CHECK")
 }
 
 // TestSourceAuthorityGrantDoesNotCrossProjects: a grant is project-scoped — the

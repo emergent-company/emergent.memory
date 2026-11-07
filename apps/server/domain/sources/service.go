@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -494,26 +495,50 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		UpdatedAt:            now,
 	}
 
-	created, err := s.repo.Create(ctx, src)
-	if err != nil {
-		return nil, err
-	}
-
 	// Bind the creating credential to the new source (slice 2 of #2376). A
-	// source created after migration 00265 carries no wildcard grant, so an
+	// source created after migration 00266 carries no wildcard grant, so an
 	// api_key creator must hold an exact grant to push as the source it just
 	// created — without it the very next POST /api/graph/changesets as this
 	// source is refused. A session creator gets no grant: its source is pushed
 	// by the system sync worker (exempt from the grant check), and a
-	// ('session', NULL) row would be the hidden wildcard 00265 forbids. The row
-	// is recorded so the binding is auditable and revocable.
+	// ('session', NULL) row would be the hidden wildcard 00268 forbids. The row
+	// records the granting actor (the authenticated user), so a user's api_key
+	// create stays distinguishable from the 00266 backfill ('system'/NULL) in
+	// the audit read.
+	var grant *graph.SourceGrant
 	if kind, credID, ok := auth.CredentialFromContext(ctx); ok && kind == auth.CredentialAPIKey && credID != nil {
-		if err := s.repo.InsertSourceGrant(ctx, projectID, created.ID, kind, *credID); err != nil {
-			return nil, err
+		grant = &graph.SourceGrant{
+			ProjectID:      projectID,
+			SourceID:       src.ID,
+			CredentialKind: kind,
+			CredentialID:   credID,
+			GrantedByType:  graph.ActorUser,
+			GrantedByID:    creatorUserID(ctx),
 		}
 	}
 
+	created, err := s.repo.CreateWithGrant(ctx, src, grant)
+	if err != nil {
+		return nil, err
+	}
+
 	return s.toIntegration(created), nil
+}
+
+// creatorUserID resolves the authenticated user who is creating the source, for
+// the grant's granting-actor record. A user id that is not a UUID (which should
+// not happen — user_profiles.id is a UUID primary key) leaves the id NULL
+// rather than failing the create.
+func creatorUserID(ctx context.Context) *uuid.UUID {
+	user := auth.UserFromContext(ctx)
+	if user == nil || user.ID == "" {
+		return nil
+	}
+	id, err := uuid.Parse(user.ID)
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 // Get returns a single source scoped by project (cross-project → not-found).

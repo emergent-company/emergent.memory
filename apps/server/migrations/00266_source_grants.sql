@@ -28,14 +28,7 @@ CREATE TABLE IF NOT EXISTS kb.source_grants (
     granted_by_id   uuid,
     granted_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT source_grants_credential_kind_check
-        CHECK (credential_kind = ANY (ARRAY['api_key'::text, 'mcp_link'::text, 'session'::text, 'project'::text])),
-    -- Only the synthetic 'project' wildcard may carry a NULL credential_id: a
-    -- ('session', NULL) or ('api_key', NULL) row would read back as a hidden
-    -- wildcard that authorises every session / every api_key, exactly the
-    -- impersonation window this table closes. Concrete kinds must name a
-    -- credential (pairing the id with the kind, like 00257's stamp check).
-    CONSTRAINT source_grants_credential_id_pairs_with_kind
-        CHECK (credential_kind = 'project' OR credential_id IS NOT NULL)
+        CHECK (credential_kind = ANY (ARRAY['api_key'::text, 'mcp_link'::text, 'session'::text, 'project'::text]))
 );
 
 -- One grant per (source, credential). credential_id is nullable, and NULLs are
@@ -62,7 +55,7 @@ ON CONFLICT DO NOTHING;
 -- Adoption (data_class = 'adopted') carries an owner, but the 00257 CHECK only
 -- permits an owner on a 'source' row. Relax it to admit 'adopted'. The weaker
 -- predicate is satisfied by every existing row, so ADD NOT VALID avoids a scan
--- under ACCESS EXCLUSIVE here; validation is split into 00266, matching the
+-- under ACCESS EXCLUSIVE here; validation is split into 00267, matching the
 -- 00257/00258 lock pattern on the busiest table in the schema.
 ALTER TABLE kb.graph_objects DROP CONSTRAINT graph_objects_owner_source_requires_source_class;
 ALTER TABLE kb.graph_objects

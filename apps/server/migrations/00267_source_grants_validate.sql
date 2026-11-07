@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- Validate the relaxed owner-source constraint added NOT VALID in 00265.
+-- Validate the relaxed owner-source constraint added NOT VALID in 00266.
 --
 -- Splitting this out matches 00257/00258: VALIDATE takes only SHARE UPDATE
 -- EXCLUSIVE and scans while the table stays fully readable and writable, rather
@@ -11,7 +11,7 @@ ALTER TABLE kb.graph_objects VALIDATE CONSTRAINT graph_objects_owner_source_requ
 
 -- +goose Down
 -- +goose StatementBegin
--- Validation is not reversible (and does not need to be): 00265 drops the
+-- Validation is not reversible (and does not need to be): 00266 drops the
 -- constraint itself.
 SELECT 1;
 -- +goose StatementEnd

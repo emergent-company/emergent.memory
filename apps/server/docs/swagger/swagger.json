@@ -5852,7 +5852,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped, never applied.",
+                "description": "Apply a batch of upserts and withdrawals for one source in a single transaction. Items are addressed by the source's external_id and external_revision_seq; a stale revision is skipped and a cross-owner item the caller holds no grant for is refused, both reported per item and never applied.",
                 "consumes": [
                     "application/json"
                 ],

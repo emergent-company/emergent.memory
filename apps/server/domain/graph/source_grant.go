@@ -15,7 +15,7 @@ import (
 // row to mean "any project-scoped credential may act as this source". It is not
 // a kind a caller authenticates with — the auth layer never produces it — but a
 // grant whose kind is 'project' and whose credential_id is NULL is the wildcard
-// the migration backfill (00265) seeds so pre-existing integrations keep
+// the migration backfill (00266) seeds so pre-existing integrations keep
 // working. An exact grant (credential_kind + credential_id) is the explicit
 // binding a new source gets.
 const CredentialGrantProject = "project"
@@ -44,7 +44,7 @@ type SourceGrant struct {
 // sources.
 //
 // The exact branch requires the grant row to carry a non-null credential_id, so
-// a ('session', NULL) or ('api_key', NULL) row — which the 00265 CHECK now
+// a ('session', NULL) or ('api_key', NULL) row — which the 00268 CHECK now
 // forbids anyway — cannot read back as a hidden wildcard. The wildcard branch
 // authorises any project credential (api_key / mcp_link / session) but never a
 // caller with no credential at all (CredentialNone): background/internal work
@@ -76,15 +76,33 @@ func (r *Repository) HasSourceGrant(ctx context.Context, db bun.IDB, projectID, 
 	return exists, nil
 }
 
-// InsertSourceGrant writes one grant row inside the caller's transaction.
-func (r *Repository) InsertSourceGrant(ctx context.Context, db bun.IDB, g *SourceGrant) error {
+// InsertSourceGrant writes one grant row inside the caller's transaction. It is
+// the single writer for kb.source_grants: the sources package delegates here
+// (via CreateWithGrant) instead of keeping a second INSERT, because graph owns
+// the table — the enforcement lookup (HasSourceGrant) it serves lives here.
+//
+// The ON CONFLICT targets the partial unique index that matches the grant's
+// credential_id shape, so a race that inserts the same (source, credential) is
+// a no-op rather than an error, while a conflict on a different row shape (the
+// primary key, or the other credential_id shape) still surfaces as an error
+// instead of being silently swallowed.
+func InsertSourceGrant(ctx context.Context, db bun.IDB, g *SourceGrant) error {
 	if g.ID == uuid.Nil {
 		g.ID = uuid.New()
 	}
 	if g.GrantedAt.IsZero() {
 		g.GrantedAt = time.Now()
 	}
-	if _, err := db.NewInsert().Model(g).Exec(ctx); err != nil {
+	q := db.NewInsert().Model(g)
+	if g.CredentialID == nil {
+		// Wildcard grant: dedupe on (project, source, kind) where credential_id
+		// is NULL.
+		q = q.On("CONFLICT (project_id, source_id, credential_kind) WHERE credential_id IS NULL DO NOTHING")
+	} else {
+		// Exact grant: dedupe on (project, source, kind, credential_id).
+		q = q.On("CONFLICT (project_id, source_id, credential_kind, credential_id) WHERE credential_id IS NOT NULL DO NOTHING")
+	}
+	if _, err := q.Exec(ctx); err != nil {
 		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil

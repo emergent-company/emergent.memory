@@ -30,7 +30,7 @@ func createTestSource(t *testing.T, ctx context.Context, db bun.IDB, projectID u
 		VALUES (?, ?, 'test-provider', ?)
 	`, id, projectID, name)
 	require.NoError(t, err)
-	// Mirror the migration backfill (00265, option 1): a source that predates
+	// Mirror the migration backfill (00266, option 1): a source that predates
 	// grants keeps a wildcard grant so integrations keep working. The majority
 	// of the changeset tests exercise the "existing integration" shape; the
 	// adversarial tests build an ungranted source with createTestSourceUngranted.
