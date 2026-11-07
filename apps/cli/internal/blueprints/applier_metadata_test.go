@@ -123,6 +123,46 @@ func TestMergePackUIConfigs_PromotesInlineUI(t *testing.T) {
 	}
 }
 
+// TestMergePackUIConfigs_NullBlockDoesNotPanic pins the guard for a JSON pack
+// that spells the block as `"uiConfigs": null`: json.Unmarshal nils the map,
+// and assigning the inline overlay into it would panic during `blueprints
+// install` (the validator already treats null as absent). The install must go
+// through with just the inline appearance.
+func TestMergePackUIConfigs_NullBlockDoesNotPanic(t *testing.T) {
+	for name, p := range map[string]PackFile{
+		"null with inline ui": {
+			Name:        "p",
+			UIConfigs:   JSONBlob(`null`),
+			ObjectTypes: []ObjectTypeDef{{Name: "Doc", UI: map[string]any{"icon": "inline-icon"}}},
+		},
+		"null only": {
+			Name:        "p",
+			UIConfigs:   JSONBlob(`null`),
+			ObjectTypes: []ObjectTypeDef{{Name: "Doc"}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := mergePackUIConfigs(p)
+			if err != nil {
+				t.Fatalf("mergePackUIConfigs: %v", err)
+			}
+			if len(p.ObjectTypes[0].UI) == 0 {
+				if len(raw) != 0 {
+					t.Fatalf("expected no uiConfigs payload, got %s", raw)
+				}
+				return
+			}
+			var got map[string]map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("unmarshal uiConfigs %s: %v", raw, err)
+			}
+			if got["Doc"]["icon"] != "inline-icon" {
+				t.Fatalf("inline ui block lost next to a null pack block: %v", got)
+			}
+		})
+	}
+}
+
 // TestMergePackUIConfigs_InlineWinsOverPackLevel pins the documented precedence
 // on ObjectTypeDef.UI: the inline block is used when present, the pack-level
 // uiConfigs entry is the fallback.

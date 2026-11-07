@@ -946,22 +946,27 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 // the pack-level uiConfigs blob overlaid with each object type's inline `ui:`
 // block (inline wins). Returns nil when the pack declares neither, so the
 // request omits the field instead of sending an empty map.
+//
+// The pack-level blob is read through decodePackUIConfigs so a JSON `null`
+// (which the validator already treats as absent) cannot nil the map out from
+// under the inline overlay.
 func mergePackUIConfigs(p PackFile) (json.RawMessage, error) {
-	ui := make(map[string]json.RawMessage, len(p.ObjectTypes))
-	if raw := p.UIConfigs.Raw(); len(raw) > 0 {
-		if err := json.Unmarshal(raw, &ui); err != nil {
-			return nil, fmt.Errorf("parse uiConfigs: %w", err)
+	entries, err := decodePackUIConfigs(p)
+	if err != nil {
+		return nil, err
+	}
+	ui := make(map[string]any, len(entries)+len(p.ObjectTypes))
+	for name, cfg := range entries {
+		if name == "" {
+			continue
 		}
+		ui[name] = cfg
 	}
 	for _, ot := range p.ObjectTypes {
 		if ot.Name == "" || len(ot.UI) == 0 {
 			continue
 		}
-		raw, err := json.Marshal(ot.UI)
-		if err != nil {
-			return nil, fmt.Errorf("marshal ui block for object type %s: %w", ot.Name, err)
-		}
-		ui[ot.Name] = raw
+		ui[ot.Name] = ot.UI
 	}
 	if len(ui) == 0 {
 		return nil, nil
