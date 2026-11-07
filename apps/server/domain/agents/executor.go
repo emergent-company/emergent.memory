@@ -4617,14 +4617,15 @@ func capabilityDisclosureInstruction(def *AgentDefinition, catalog []mcp.ToolDef
 	writeCapable := false
 	graphWriteCapable := false
 	for _, g := range groups {
-		if !g.Enabled {
-			continue
-		}
-		// A group is only available when at least one member tool survives the
-		// definition's effective policy (explicit → group → default). This covers
-		// a stored @group: deny, a per-tool deny, and DefaultToolPolicy=deny — the
-		// same resolution the executor's before-tool gate uses.
-		if !groupHasCallableTool(def, g.Tools, scopes) {
+		// A group is available only when at least one member tool is actually
+		// offered to this agent (whitelisted, default-on, or a workspace tool)
+		// and survives the definition's effective policy (explicit → group →
+		// default). g.Tools is the group's whole catalog membership, so the
+		// offered-set filter is essential: iterating raw members would let a
+		// non-whitelisted, default-allow tool make a disabled group look
+		// available. Mirrors toolpool.filterToolDefs and the executor's
+		// before-tool policy gate.
+		if !groupHasOfferedCallableTool(def, g.Tools, scopes) {
 			continue
 		}
 		available = append(available, g.Label)
@@ -4650,14 +4651,51 @@ func capabilityDisclosureInstruction(def *AgentDefinition, catalog []mcp.ToolDef
 	return b + capabilityWriteRule
 }
 
-// groupHasCallableTool reports whether at least one member tool survives the
-// definition's effective tool policy. scopes is the catalog's name→scope map
-// (nil entries fall back to the static lookup inside effectiveToolPolicyFor).
-func groupHasCallableTool(def *AgentDefinition, members []string, scopes map[string]string) bool {
+// groupHasOfferedCallableTool reports whether at least one member tool is both
+// offered to this agent and survives the definition's effective tool policy.
+// scopes is the catalog's name→scope map; a missing entry falls back to the
+// static lookup inside effectiveToolPolicyFor.
+func groupHasOfferedCallableTool(def *AgentDefinition, members []string, scopes map[string]string) bool {
 	for _, t := range members {
+		if !toolOfferedByDefinition(def, t) {
+			continue
+		}
 		p, has := def.effectiveToolPolicyFor(t, scopes[t])
 		if !toolPolicyBlocks(p, has) {
 			return true
+		}
+	}
+	return false
+}
+
+// toolOfferedByDefinition mirrors toolpool.filterToolDefs for a single tool: the
+// definition whitelist (exact names; glob whitelists are handled before this
+// runs), the always-injected session builtin, and the workspace tools offered
+// whenever a sandbox is configured. BannedTools always wins.
+func toolOfferedByDefinition(def *AgentDefinition, tool string) bool {
+	if tool == "" {
+		return false
+	}
+	for _, b := range def.BannedTools {
+		if b == tool {
+			return false
+		}
+	}
+	for _, t := range def.Tools {
+		if t == tool {
+			return true
+		}
+	}
+	for _, t := range sessionBuiltinToolNames {
+		if t == tool {
+			return true
+		}
+	}
+	if len(def.SandboxConfig) > 0 {
+		for _, t := range workspaceToolNames {
+			if t == tool {
+				return true
+			}
 		}
 	}
 	return false

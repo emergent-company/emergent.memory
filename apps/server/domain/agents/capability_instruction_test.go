@@ -142,6 +142,52 @@ func TestResolveInstructionCapabilityDisclosure(t *testing.T) {
 		}
 	})
 
+	t.Run("catalog members that are not offered do not make a group available", func(t *testing.T) {
+		// Production always has a catalog. A group's membership then includes
+		// every catalog tool, whitelisted or not; a non-offered member with
+		// default-allow policy must not keep the group on the available list.
+		scoped := &AgentExecutor{toolPool: &scopeOnlyToolPool{scopes: map[string]string{
+			"entity-create":     "graph:write",
+			"entity-update":     "graph:write",
+			"search-hybrid":     "search",
+			"set_session_title": "",
+		}}}
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt: &empty,
+				Tools:        []string{"entity-create"},
+				ToolPolicies: map[string]ToolPolicy{"entity-create": {Disabled: true}},
+			},
+		}
+		got := scoped.resolveInstruction(req)
+		if strings.Contains(got, "Graph · Write") {
+			t.Fatalf("resolveInstruction() listed Graph · Write because of a non-offered catalog member: %q", got)
+		}
+		if !strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() did not disclose the blocked write capability: %q", got)
+		}
+	})
+
+	t.Run("sandbox workspace tools count as write capability", func(t *testing.T) {
+		req := ExecuteRequest{
+			AgentDefinition: &AgentDefinition{
+				SystemPrompt:  &empty,
+				Tools:         []string{"search-hybrid"},
+				SandboxConfig: map[string]any{"enabled": true},
+			},
+		}
+		got := ae.resolveInstruction(req)
+		if !strings.Contains(got, "Workspace · Execute") {
+			t.Fatalf("resolveInstruction() omitted the workspace tools the sandbox offers: %q", got)
+		}
+		if strings.Contains(got, "No write-capable tool group is enabled") {
+			t.Fatalf("resolveInstruction() told a sandbox agent it cannot write files: %q", got)
+		}
+		if !strings.Contains(got, "Graph · Write is not enabled") {
+			t.Fatalf("resolveInstruction() did not distinguish graph writes from workspace writes: %q", got)
+		}
+	})
+
 	t.Run("glob whitelist degrades to the rule-only variant", func(t *testing.T) {
 		req := ExecuteRequest{
 			AgentDefinition: &AgentDefinition{
