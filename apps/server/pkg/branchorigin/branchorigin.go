@@ -19,7 +19,7 @@ import (
 )
 
 // The four stored origins. The database enforces the same set with a CHECK
-// constraint (migration 00266_branch_origin.sql); the values here must not
+// constraint (migration 00269_branch_origin.sql); the values here must not
 // drift from it.
 const (
 	// Extraction marks a per-job staging branch written by the extraction

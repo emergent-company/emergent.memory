@@ -331,14 +331,22 @@ func TestUIRouteSchedules(t *testing.T) {
 		t.Errorf("agentDefinitionId = %v", c.AgentDefinitionID)
 	}
 
-	// create with missing definition → ?err= (validation before memory call)
+	// create with missing definition → re-renders the form with the submitted
+	// values and the error (validation before the memory call).
 	bad := url.Values{"name": {"X"}, "cronSchedule": {"0 8 * * *"}}
 	rec = httptest.NewRecorder()
 	badReq := httptest.NewRequest(http.MethodPost, "/schedules", strings.NewReader(bad.Encode()))
 	badReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, badReq)
-	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || !strings.Contains(loc, "/schedules/new?err=") {
-		t.Fatalf("create validation: status=%d location=%q", rec.Code, loc)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create validation: status=%d, want 200 re-render", rec.Code)
+	}
+	badBody := rec.Body.String()
+	if !strings.Contains(badBody, `value="X"`) || !strings.Contains(badBody, `value="0 8 * * *"`) {
+		t.Errorf("create validation must preserve the submitted name and cron:\n%s", badBody)
+	}
+	if !strings.Contains(badBody, "pick an agent definition") {
+		t.Errorf("create validation must surface the missing-definition error:\n%s", badBody)
 	}
 	if len(f.createdScheduled) != 1 {
 		t.Error("no agent should be created for an invalid form")
@@ -346,14 +354,22 @@ func TestUIRouteSchedules(t *testing.T) {
 
 	// create with a 6-field cron (seconds included) → rejected before the
 	// memory call: memory expects exactly 5 fields (minute hour day month
-	// weekday), so the form must catch the mismatch with a friendly message.
+	// weekday), so the form must catch the mismatch with a friendly message and
+	// keep the submitted values.
 	badCron := url.Values{"name": {"X"}, "cronSchedule": {"0 30 9 * * *"}, "agentDefinitionId": {"def-1"}}
 	rec = httptest.NewRecorder()
 	badCronReq := httptest.NewRequest(http.MethodPost, "/schedules", strings.NewReader(badCron.Encode()))
 	badCronReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, badCronReq)
-	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || !strings.Contains(loc, "/schedules/new?err=") {
-		t.Fatalf("create cron validation: status=%d location=%q", rec.Code, loc)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create cron validation: status=%d, want 200 re-render", rec.Code)
+	}
+	badCronBody := rec.Body.String()
+	if !strings.Contains(badCronBody, `value="0 30 9 * * *"`) {
+		t.Errorf("create cron validation must preserve the submitted cron:\n%s", badCronBody)
+	}
+	if !strings.Contains(badCronBody, "must be 5 fields") {
+		t.Errorf("create cron validation must surface the friendly message:\n%s", badCronBody)
 	}
 	if len(f.createdScheduled) != 1 {
 		t.Error("no agent should be created for an invalid cron")

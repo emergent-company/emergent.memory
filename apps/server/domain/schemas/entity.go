@@ -359,8 +359,11 @@ type AssignPackRequest struct {
 	// DryRun, when true, computes and returns the full conflict/merge preview
 	// without making any database changes. The response uses HTTP 200.
 	DryRun bool `json:"dry_run,omitempty"`
-	// Merge, when true, additively merges incoming type schemas into existing
-	// registered types rather than skipping conflicting type names.
+	// Merge, when true, additively merges incoming type schemas into types
+	// owned by OTHER packs rather than skipping them. A pack's own types are
+	// always replaced on re-assign (an upgrade), with or without Merge. When
+	// merging across packs, existing property definitions win and the newest
+	// install becomes the owning definition.
 	Merge bool `json:"merge,omitempty"`
 	// Force, when true, allows migration to proceed even when the risk level is
 	// dangerous. Has no effect if the schema has no migration hints.
@@ -536,11 +539,16 @@ type AssignPackResult struct {
 	InstalledTypes []string `json:"installed_types"`
 	// SkippedTypes are type names that already existed and were not merged.
 	SkippedTypes []string `json:"skipped_types,omitempty"`
-	// MergedTypes are type names whose schemas were additively extended.
+	// MergedTypes are type names owned by another pack whose schemas were
+	// additively extended.
 	MergedTypes []string `json:"merged_types,omitempty"`
+	// ReplacedTypes are type names already registered by this same pack (an
+	// upgrade) whose definitions were replaced by the incoming version. A pack
+	// owns its types: refreshing them on upgrade is not a cross-pack conflict.
+	ReplacedTypes []string `json:"replaced_types,omitempty"`
 	// Conflicts contains full diff detail for each conflicting type.
 	Conflicts []SchemaConflict `json:"conflicts,omitempty"`
-	// AlreadyInstalled is true when merge=true and the pack was already assigned.
+	// AlreadyInstalled is true when the pack was already assigned to the project.
 	AlreadyInstalled bool `json:"already_installed,omitempty"`
 	// MigrationJobID is set when an async migration job was enqueued.
 	MigrationJobID *string `json:"migration_job_id,omitempty"`

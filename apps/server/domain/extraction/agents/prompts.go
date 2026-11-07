@@ -257,6 +257,10 @@ func BuildEntityExtractionPrompt(
 		for typeName := range objectSchemas {
 			typesToExtract = append(typesToExtract, typeName)
 		}
+		// Map iteration order is randomised per iteration in Go; an unordered
+		// type list makes the prompt (and therefore the model's answer) differ
+		// between two runs of the same document with no change in input.
+		sort.Strings(typesToExtract)
 	}
 
 	var sb strings.Builder
@@ -378,8 +382,16 @@ func BuildRelationshipPrompt(
 	sb.WriteString(RelationshipBuilderSystemPrompt)
 	sb.WriteString("\n\n## Available Relationship Types\n\n")
 
-	// Add relationship type definitions
-	for typeName, schema := range relationshipSchemas {
+	// Add relationship type definitions. Sorted so two runs over the same
+	// schemas build the same prompt: ranging the map directly randomised the
+	// section order and with it the model's input (see #240).
+	typeNames := make([]string, 0, len(relationshipSchemas))
+	for typeName := range relationshipSchemas {
+		typeNames = append(typeNames, typeName)
+	}
+	sort.Strings(typeNames)
+	for _, typeName := range typeNames {
+		schema := relationshipSchemas[typeName]
 		sb.WriteString(fmt.Sprintf("### %s\n", typeName))
 		if schema.Description != "" {
 			sb.WriteString(schema.Description)
@@ -627,6 +639,8 @@ func BuildEntityNormalizationPrompt(
 		for t := range objectSchemas {
 			typesToNorm = append(typesToNorm, t)
 		}
+		// Deterministic type order: see BuildEntityExtractionPrompt.
+		sort.Strings(typesToNorm)
 	}
 
 	var sb strings.Builder

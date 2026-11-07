@@ -438,22 +438,205 @@ func (w *DocumentParsingWorker) extractWithXberg(ctx context.Context, storageKey
 		return "", fmt.Errorf("xberg extraction: %w", err)
 	}
 
-	// Append extracted tables as markdown so structured data is not lost.
-	// Xberg returns tables separately from the content field; without this,
-	// table-heavy PDFs (e.g. financial reports) lose almost all their content.
-	if len(result.Tables) > 0 {
-		var sb strings.Builder
-		sb.WriteString(result.Content)
-		for _, t := range result.Tables {
-			if t.Markdown != "" {
-				sb.WriteString("\n\n")
-				sb.WriteString(t.Markdown)
-			}
+	// Merge the plain content with the structured table renders. Xberg returns
+	// tables twice: once flattened into Content (cell text, column separators
+	// lost) and once as Tables[].Markdown (proper pipe rows). Concatenating
+	// both duplicates every row, so the same row appears once run together and
+	// once as a pipe row (issue #241).
+	return composeXbergContent(result.Content, result.Tables), nil
+}
+
+// composeXbergContent merges Xberg's plain-text Content with its extracted
+// tables. Each table row must appear exactly once, in its pipe form:
+//
+//   - a table Content already carries as pipe rows is not appended again;
+//   - a table Content carries only as flattened, separator-less text has those
+//     duplicate lines removed before the pipe rendering is appended;
+//   - a table absent from Content (the common case for table-heavy PDFs, where
+//     Content contains no table text at all) is appended untouched.
+//
+// The append must not be dropped outright: without it, table-heavy PDFs (e.g.
+// financial reports) lose almost all their content. The dedupe must not keep
+// the flattened copy: that is the version whose column separators are lost.
+//
+// Rows are only considered duplicate when whitespace-normalised text matches a
+// two-or-more-column markdown row, and lines inside fenced code are never
+// touched, so the removal stays conservative.
+//
+// Headers are intentionally repeated in every chunk by textsplitter.splitTable
+// (each chunk stays self-describing); body rows are not repeated there, and
+// this boundary emits each data row once.
+func composeXbergContent(content string, tables []xberg.ExtractedTable) string {
+	var markdowns []string
+	seen := make(map[string]struct{}, len(tables))
+	for _, t := range tables {
+		md := strings.TrimSpace(t.Markdown)
+		if md == "" {
+			continue
 		}
-		return sb.String(), nil
+		key := normalizeTableText(md)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		markdowns = append(markdowns, md)
+	}
+	if len(markdowns) == 0 {
+		return content
 	}
 
-	return result.Content, nil
+	lines := strings.Split(content, "\n")
+	var appendable []string
+	for _, md := range markdowns {
+		rows := markdownDataRows(md)
+		if len(rows) > 0 {
+			if contentHasAllPipeRows(lines, rows) {
+				// Already present with its separators; appending would duplicate it.
+				continue
+			}
+			// Xberg flattened the same rows into Content without the pipes.
+			// Remove that copy so only the pipe rendering survives.
+			lines = removePlainRows(lines, rows)
+		}
+		appendable = append(appendable, md)
+	}
+	if len(appendable) == 0 {
+		return content
+	}
+
+	joined := strings.TrimRight(strings.Join(lines, "\n"), "\n")
+	var sb strings.Builder
+	sb.WriteString(joined)
+	for _, md := range appendable {
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(md)
+	}
+	return sb.String()
+}
+
+// normalizeTableText collapses whitespace and pipe separators so two renderings
+// of the same table compare equal.
+func normalizeTableText(s string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(s, "|", " ")), " ")
+}
+
+// normalizeRowCells joins markdown cells into the whitespace-normalised form
+// that Xberg's plain-text Content uses for the same row.
+func normalizeRowCells(cells []string) string {
+	parts := make([]string, 0, len(cells))
+	for _, c := range cells {
+		parts = append(parts, strings.TrimSpace(c))
+	}
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+// markdownDataRows returns the normalised, separator-less form of every data
+// row (header included) in a markdown table. Separator rows and single-cell
+// rows are skipped: single-cell text is indistinguishable from prose.
+func markdownDataRows(markdown string) []string {
+	var rows []string
+	for _, line := range strings.Split(markdown, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if len(cells) < 2 || isMarkdownSeparatorRow(cells) {
+			continue
+		}
+		if row := normalizeRowCells(cells); row != "" {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func isMarkdownSeparatorRow(cells []string) bool {
+	for _, c := range cells {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			return false
+		}
+		hasDash := false
+		for _, r := range c {
+			switch r {
+			case '-':
+				hasDash = true
+			case ':':
+			default:
+				return false
+			}
+		}
+		if !hasDash {
+			return false
+		}
+	}
+	return true
+}
+
+func isFenceLine(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
+}
+
+// contentHasAllPipeRows reports whether every normalised row already exists as
+// a pipe row in content, i.e. the table is already present with its separators.
+func contentHasAllPipeRows(lines, rows []string) bool {
+	found := make(map[string]bool, len(rows))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(trimmed, "|"), "|")
+		if len(cells) < 2 {
+			continue
+		}
+		row := normalizeRowCells(cells)
+		for _, want := range rows {
+			if row == want {
+				found[want] = true
+			}
+		}
+	}
+	for _, row := range rows {
+		if !found[row] {
+			return false
+		}
+	}
+	return true
+}
+
+// removePlainRows drops the separator-less copy of each table row that Xberg
+// flattened into Content. Pipe rows and fenced code are left untouched, and a
+// normalised row is removed at most as many times as the table contains it.
+func removePlainRows(lines, rows []string) []string {
+	remaining := make(map[string]int, len(rows))
+	for _, r := range rows {
+		remaining[r]++
+	}
+	kept := make([]string, 0, len(lines))
+	inFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isFenceLine(trimmed) {
+			inFence = !inFence
+			kept = append(kept, line)
+			continue
+		}
+		if inFence || strings.Contains(line, "|") {
+			kept = append(kept, line)
+			continue
+		}
+		normalized := strings.Join(strings.Fields(line), " ")
+		if remaining[normalized] > 0 {
+			remaining[normalized]--
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return kept
 }
 
 // extractWithWhisper downloads an audio file and sends it to Whisper for transcription.

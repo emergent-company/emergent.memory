@@ -539,8 +539,9 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 					}) {
 						<div class="flex flex-col gap-4">
 							<input type="hidden" name="type" value={ form.Type }/>
-							@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
-								<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
+							{{ keyRequired := objectTypeRequiresKey(objectTypes, form.Type) }}
+							@fm.FormControl("object-key", "Key", fm.LabelAbove, objectKeyHint(keyRequired), "", nil) {
+								<input id="object-key" name="key" type="text" value={ form.Key } required?={ keyRequired } class="input w-full"/>
 							}
 							if status != nil && status.Show {
 								@fm.FormControl("object-status", "Workflow status", fm.LabelAbove, "", "", nil) {

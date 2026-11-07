@@ -8,6 +8,7 @@ import (
 
 	sdkmodelref "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelref"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaicon"
+	"github.com/robfig/cron/v3"
 )
 
 // ──────────────────────────────────────────────
@@ -20,6 +21,10 @@ type ValidationSeverity string
 const (
 	ValidationError   ValidationSeverity = "error"
 	ValidationWarning ValidationSeverity = "warning"
+	// ValidationInfo is advisory: it flags a valid configuration whose runtime
+	// consequence an operator should know about. It never fails validate, even
+	// with --strict (#321).
+	ValidationInfo ValidationSeverity = "info"
 )
 
 // ValidationIssue is a single finding produced by Validate.
@@ -75,6 +80,17 @@ func (r *ValidationReport) Warnings() []ValidationIssue {
 	var out []ValidationIssue
 	for _, i := range r.Issues {
 		if i.Severity == ValidationWarning {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// Infos returns only info-severity issues.
+func (r *ValidationReport) Infos() []ValidationIssue {
+	var out []ValidationIssue
+	for _, i := range r.Issues {
+		if i.Severity == ValidationInfo {
 			out = append(out, i)
 		}
 	}
@@ -768,6 +784,14 @@ var validDispatchModes = map[string]bool{
 	"queued": true,
 }
 
+// agentCronParser mirrors the parser the server applies to a runtime agent's
+// cronSchedule (apps/server/domain/agents/triggers.go validateCronInterval):
+// standard 5-field cron, no seconds field. The internal scheduler is
+// seconds-precision, but it prefixes its own zero seconds field — a blueprint
+// that writes 6 fields is rejected by the agents API at install time with
+// "expected exactly 5 fields, found 6" (#320), so validate it offline first.
+var agentCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
 func (r *ValidationReport) validateAgents(agents []AgentFile) {
 	seen := make(map[string]string) // name → sourceFile
 
@@ -791,6 +815,28 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 		if a.DispatchMode != "" && !validDispatchModes[a.DispatchMode] {
 			r.add(ValidationError, "agent", a.Name, a.SourceFile, "dispatchMode",
 				fmt.Sprintf("invalid dispatchMode %q (valid: sync, queued)", a.DispatchMode))
+		}
+
+		// The agents API validates cronSchedule only for schedule-triggered
+		// agents (apps/server/domain/agents/handler.go); a cron on a reaction or
+		// manual agent is stored unused, so it must not fail validate. An empty
+		// value means "server default"; anything non-empty — including a
+		// whitespace-only value — must parse.
+		if a.effectiveTriggerType() == "schedule" && a.CronSchedule != "" {
+			if _, err := agentCronParser.Parse(a.CronSchedule); err != nil {
+				r.add(ValidationError, "agent", a.Name, a.SourceFile, "cronSchedule",
+					fmt.Sprintf("invalid cronSchedule %q: %v (runtime agents take standard 5-field cron: minute hour day-of-month month day-of-week — a seconds field is not accepted)", a.CronSchedule, err))
+			}
+		}
+
+		// No trigger configuration means install creates an agent definition and
+		// no runtime agent, so the agent silently never runs. This is valid (an
+		// operator may trigger it by hand, or it may be referenced by other
+		// agents), so it is an info note, never an error — including under
+		// --strict (#321).
+		if !a.hasRuntimeTrigger() {
+			r.add(ValidationInfo, "agent", a.Name, a.SourceFile, "triggerType",
+				"definition only; trigger manually or add triggerType (schedule, reaction, or manual) — without one, install creates no runtime agent and the agent never runs on its own")
 		}
 
 		if a.Model != nil {

@@ -414,6 +414,12 @@ func loadSeedObjects(dir string, envVars map[string]string) ([]SeedObjectRecord,
 			return rec, err
 		}
 		rec.SourceFile = path
+		// A dump of legacy untyped objects writes them to _untyped.jsonl with
+		// "type":"". Give them the visible placeholder type so a dump→install
+		// round-trip does not fail validation (the API rejects an empty type).
+		if rec.Type == "" && isUntypedSeedFile(path) {
+			rec.Type = UntypedTypeName
+		}
 		return rec, validateSeedObject(&rec)
 	})
 }
@@ -427,8 +433,22 @@ func loadSeedRelationships(dir string, envVars map[string]string) ([]SeedRelatio
 			return rec, err
 		}
 		rec.SourceFile = path
+		if rec.Type == "" && isUntypedSeedFile(path) {
+			rec.Type = UntypedTypeName
+		}
 		return rec, validateSeedRelationship(&rec)
 	})
+}
+
+// isUntypedSeedFile reports whether path is an _untyped.jsonl file (or one of
+// its split parts, _untyped.001.jsonl, …). Records dumped from legacy objects
+// with an empty type are written there and restored with UntypedTypeName.
+func isUntypedSeedFile(path string) bool {
+	base := filepath.Base(path)
+	if base == UntypedSeedBaseName+".jsonl" {
+		return true
+	}
+	return strings.HasPrefix(base, UntypedSeedBaseName+".") && strings.HasSuffix(base, ".jsonl")
 }
 
 // loadSeedJSONL is the generic JSONL reader. It reads all *.jsonl files in dir

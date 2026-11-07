@@ -841,6 +841,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Items:       &PropertySchema{Type: "object"},
 						Description: "Array of relationship specifications to create. Each item: {type (required), source_id (required), target_id (required), properties, weight}. source_id and target_id accept an entity key string (e.g. 'caroline-person') or UUID — entity keys are preferred and more reliable. source_id and target_id must refer to different entities.",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, relationships are created in this branch instead of the main graph.",
+					},
 				},
 				Required: []string{"relationships"},
 			},
@@ -900,6 +904,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
+					},
 				},
 				Required: []string{"entity_id"},
 			},
@@ -914,6 +922,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"entity_id": {
 						Type:        "string",
 						Description: "UUID or key of the entity to restore",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the entity is restored in this branch instead of the main graph.",
 					},
 					"verbose": {
 						Type:        "boolean",
@@ -1380,6 +1392,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "number",
 						Description: "Optional new weight for the relationship",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the update is applied to the relationship's version chain on this branch.",
+					},
 					"verbose": {
 						Type:        "boolean",
 						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
@@ -1402,6 +1418,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"reason": {
 						Type:        "string",
 						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
 				},
 				Required: []string{"relationship_id"},
@@ -3029,6 +3049,10 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	var types []typeRow
 	var relTypes []relTypeRow
+	// Untyped objects (type = '') have no registry row, so the registry-driven
+	// query below can never surface them. Count them separately and fold the
+	// result into a synthetic bucket after the transaction (issue #323).
+	var untypedCount int
 
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Set RLS context
@@ -3097,6 +3121,22 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			}
 		}
 
+		// Count legacy untyped objects. They have no schema-registry row and no
+		// namespace (the namespace filter is a registry column), so they are
+		// always reported irrespective of the requested namespace.
+		err = tx.NewRaw(`
+			SELECT COUNT(*)::int
+			FROM kb.graph_objects go
+			WHERE go.project_id = ?
+				AND go.deleted_at IS NULL
+				AND go.supersedes_id IS NULL
+				AND (go.type IS NULL OR go.type = '')
+				`+branchClause+`
+		`, append([]any{projectUUID}, branchArgs...)...).Scan(ctx, &untypedCount)
+		if err != nil {
+			return err
+		}
+
 		// Relationship type counts are opt-in (include_relationships=true): the
 		// aggregation is expensive on large graphs and only needed for questions
 		// about relationship types. When disabled, relTypes stays nil so the
@@ -3145,6 +3185,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	if err != nil {
 		return nil, fmt.Errorf("query entity types: %w", err)
+	}
+
+	// Fold legacy untyped objects into one visible bucket. Drop any empty-name
+	// row the branch fallback may have discovered so they are counted once.
+	kept := types[:0]
+	for _, t := range types {
+		if t.Name != "" {
+			kept = append(kept, t)
+		}
+	}
+	types = kept
+	if untypedCount > 0 {
+		types = append(types, typeRow{
+			Name:          UntypedEntityTypeBucket,
+			Description:   "Objects with an empty type",
+			InstanceCount: untypedCount,
+		})
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -4777,6 +4834,16 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		entityID = resolved
 	}
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist,
+	// matching entity-create/entity-update.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
 	// Optional reason
 	var reason *string
 	if r, ok := args["reason"].(string); ok && r != "" {
@@ -4794,7 +4861,7 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		}
 	}
 
-	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, nil, reason); err != nil {
+	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, branchID, reason); err != nil {
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
 
@@ -4824,6 +4891,15 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		entityID = resolved
 	}
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
 	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
 	// must not restore an object whose type is outside its allowlist. The row is
 	// soft-deleted, so the include-deleted lookup is required; a lookup error
@@ -4835,7 +4911,18 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		}
 	}
 
-	result, err := s.graphService.Restore(ctx, projectUUID, entityID, nil)
+	// Restore patches the version chain of the row it is given, and a chain
+	// cannot span branches. Resolve the branch-local HEAD (the tombstone) so a
+	// branch-scoped restore writes on the branch, not on main.
+	restoreID := entityID
+	if branchID != nil {
+		restoreID, err = s.objectVersionOnBranch(ctx, projectUUID, entityID, *branchID)
+		if err != nil {
+			return nil, fmt.Errorf("restore entity: %w", err)
+		}
+	}
+
+	result, err := s.graphService.Restore(ctx, projectUUID, restoreID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("restore entity: %w", err)
 	}
@@ -5651,6 +5738,17 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 
 	scope := TypeScopeFromContext(ctx)
 
+	// Resolve optional branch param — auto-creates the branch if it does not exist,
+	// matching entity-create. The graph service requires both endpoints to be on
+	// the same branch as the new relationship.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
 	// Support flat single-relationship form for backward compat
 	var relationshipsRaw []any
 	if arr, ok := args["relationships"].([]any); ok {
@@ -5791,6 +5889,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			DstID:      dstID,
 			Properties: properties,
 			Weight:     weight,
+			BranchID:   branchID,
 		}
 
 		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req, nil)

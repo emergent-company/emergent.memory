@@ -681,12 +681,61 @@ func validatePatchDelta(
 	return validated, nil
 }
 
+// relationshipSchemaFor resolves the property schema for an edge of relType
+// between srcType and dstType from the project's relationship schema registry.
+//
+// Lookup is by the same (name, source type, target type) identity that
+// domain/schemas keys compiled types on. The most specific declaration wins:
+//
+//  1. (name, source, target) — the exact pair;
+//  2. (name, source, any)   — a declaration that pins the source end only;
+//  3. (name, any, target)   — pins the target end only;
+//  4. (name, any, any)      — the name-wide default.
+//
+// Both the raw and the normalised relationship type are tried at each step, so a
+// caller that passes an un-normalised type (`KNOWS`) still finds the stored
+// `knows` schema (#176) and hand-built maps keyed by the literal type keep
+// working. Without this, same-named relationship types from different packs
+// validated against whichever definition was read last (#322).
+func relationshipSchemaFor(
+	schemas map[string]agents.RelationshipSchema,
+	relType string,
+	srcType string,
+	dstType string,
+) (agents.RelationshipSchema, bool) {
+	names := []string{relType}
+	if normalized := normalizeRelationType(relType); normalized != relType {
+		names = append(names, normalized)
+	}
+
+	for _, endpoints := range [][2]string{
+		{srcType, dstType},
+		{srcType, ""},
+		{"", dstType},
+		{"", ""},
+	} {
+		for _, name := range names {
+			if schema, ok := schemas[relationshipSchemaKey(name, endpoints[0], endpoints[1])]; ok {
+				return schema, true
+			}
+		}
+	}
+
+	return agents.RelationshipSchema{}, false
+}
+
 // validateRelationshipProperties validates a relationship create against the
 // installed schema and returns the coerced property map to store. It checks:
 // type is allowed, source/destination object types satisfy fromTypes/toTypes
 // constraints, and relationship properties are valid. The properties pass
 // through unchanged when the schema has no relationship schemas (nil map) or
 // no constraints for the type, meaning no schema is installed for it.
+//
+// The schema is resolved by (name, source type, target type), the identity the
+// rest of the system uses: a project may declare `owns` Person→Vehicle
+// (share_percent) in one pack and `owns` Person→Account (holder_role) in
+// another, and an edge must be validated against the schema for its own
+// endpoints rather than whichever pack happened to be read last (#322).
 //
 // The coerced map matters for element types as much as scalar ones: a create
 // that stores the caller's raw map would keep ["3"] as a string element even
@@ -702,7 +751,7 @@ func validateRelationshipProperties(
 		return props, nil
 	}
 
-	relSchema, ok := schemas.RelationshipSchemas[relType]
+	relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, relType, srcObjType, dstObjType)
 	if !ok {
 		// Unknown relationship types are allowed — the schema defines constraints
 		// for known types but does not act as an allowlist. Users may create

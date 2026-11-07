@@ -2,6 +2,8 @@
 package agents
 
 import (
+	"sort"
+
 	"google.golang.org/genai"
 )
 
@@ -158,6 +160,10 @@ func BuildEntitySchemaFromMemorySchema(objectSchemas map[string]ObjectSchema) *g
 	for typeName := range objectSchemas {
 		typeNames = append(typeNames, typeName)
 	}
+	// The enum order is part of the request sent to the model; ranging the map
+	// changed it on every run. Sort so identical schemas produce an identical
+	// request (and identical provider-side caching keys).
+	sort.Strings(typeNames)
 
 	if len(typeNames) == 0 {
 		return EntityExtractionSchema()
@@ -215,6 +221,8 @@ func BuildRelationshipSchemaFromMemorySchema(relationshipSchemas map[string]Rela
 	for typeName := range relationshipSchemas {
 		typeNames = append(typeNames, typeName)
 	}
+	// Deterministic enum order; see BuildEntitySchemaFromMemorySchema.
+	sort.Strings(typeNames)
 
 	if len(typeNames) == 0 {
 		return RelationshipExtractionSchema()
