@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/google/uuid"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
@@ -30,6 +31,12 @@ const SkillTopK = 10
 type SkillRepo interface {
 	FindForAgent(ctx context.Context, projectID string, orgID string) ([]*Skill, error)
 	FindRelevant(ctx context.Context, projectID string, orgID string, vec []float32, topK int) ([]*Skill, error)
+}
+
+// skillUsageRecorder is an optional capability of SkillRepo. *Repository
+// implements it; unit-test fakes need not.
+type skillUsageRecorder interface {
+	RecordSkillUse(ctx context.Context, skillID uuid.UUID, projectID string)
 }
 
 // SkillToolDeps holds the dependencies needed by BuildSkillTool.
@@ -120,6 +127,12 @@ func BuildSkillTool(ctx context.Context, deps SkillToolDeps) (tool.Tool, error) 
 					"error":           fmt.Sprintf("skill %q not found", name),
 					"available_names": available,
 				}, nil
+			}
+
+			// Runtime telemetry is best-effort and optional: the SkillRepo
+			// interface used by tests does not have to record usage.
+			if recorder, ok := deps.Repo.(skillUsageRecorder); ok {
+				recorder.RecordSkillUse(ctx, s.ID, deps.ProjectID)
 			}
 
 			content := fmt.Sprintf("<skill_content name=%q>\n%s\n</skill_content>", s.Name, s.Content)
