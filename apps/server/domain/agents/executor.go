@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -4597,6 +4598,182 @@ const citationInstruction = `Citing sources: cite every graph object you use as 
 // only the citation block and no behavioural guidance at all.
 const groundingInstruction = `Grounding: answer only from the tool results and source text you retrieved, and do not state a reason, number or fact those sources do not contain. When two sources disagree or the sources do not explain a difference, say plainly that they do not explain it — do not present a guess as fact. When an answer uses unmerged branch content, name the branch it came from (tool results carry branch_name/origin per item and branch_scope_note in meta) and say that it is pending, not merged main-graph memory.`
 
+// capabilityInstructionPrefix opens the capability-disclosure block. It is the
+// no-duplication marker too: resolveInstruction skips the block when the
+// resolved instruction already carries it.
+const capabilityInstructionPrefix = "Capabilities: the tool groups enabled for this agent are: "
+
+// capabilityWriteRule is the shared tail of every capability-disclosure block:
+// a save may only be reported after a write-capable tool actually executed.
+const capabilityWriteRule = " Only report that something was saved, remembered, created or updated after a write-capable tool call actually executed and returned success; read-only tools never change stored state."
+
+// capabilityUnenumerableInstruction is emitted when the definition whitelists
+// tools with globs or "*". The group of a glob cannot be resolved from the
+// definition alone, so the block discloses the rule without asserting which
+// groups are available — never a false "no write tool" claim.
+const capabilityUnenumerableInstruction = capabilityInstructionPrefix + "determined by the tools you are actually offered. Never claim to have saved, remembered, created or updated anything unless a write-capable tool call actually executed and returned success; read-only tools never change stored state."
+
+// durableWriteToolGroups are the groups whose tools persistently change stored
+// project state (graph, schema, branches, documents, journal, skills, agents,
+// projects, workspace files). Session-scoped tools (session title, to-dos,
+// chat administration) are deliberately excluded: they cannot make a fact
+// available in a later chat, so they must never suppress the "cannot save"
+// disclosure. Group "other" holds external/relay tools whose effect is unknown,
+// so it is treated as potentially write-capable (conservative).
+var durableWriteToolGroups = map[string]bool{
+	toolgroups.GroupGraphWrite:    true,
+	toolgroups.GroupSchemaWrite:   true,
+	toolgroups.GroupSchemaMigrate: true,
+	toolgroups.GroupBranches:      true,
+	toolgroups.GroupJournal:       true,
+	toolgroups.GroupDocuments:     true,
+	toolgroups.GroupSkills:        true,
+	toolgroups.GroupAgents:        true,
+	toolgroups.GroupProjects:      true,
+	toolgroups.GroupWorkspaceExec: true,
+}
+
+// capabilityDisclosureInstruction renders the block that tells the agent which
+// capability groups it actually has (issue #236). Without it an agent whose
+// write tools are all disabled answers "saved" and the fact is gone by the next
+// chat; with it the model is told, before it answers, that no write capability
+// exists and that a save may only be claimed after a write tool executed. The
+// group list comes from the definition's real Tools/BannedTools via
+// ToolGroupsWithCatalog, so a group is never named as available when it is not.
+// Returns "" when the definition is unknown (legacy/system agents have no
+// whitelist and therefore no enumerable boundary).
+func capabilityDisclosureInstruction(def *AgentDefinition, catalog []mcp.ToolDefinition) string {
+	if def == nil {
+		return ""
+	}
+	if hasToolWhitelistGlob(def.Tools) {
+		return capabilityUnenumerableInstruction
+	}
+
+	groups := def.ToolGroupsWithCatalog(catalog)
+	scopes := make(map[string]string, len(catalog))
+	for _, td := range catalog {
+		scopes[td.Name] = td.RequiredScope
+	}
+	available := make([]string, 0, len(groups))
+	writeCapable := false
+	graphWriteCapable := false
+	for _, g := range groups {
+		// A group is available only when at least one member tool is actually
+		// offered to this agent (whitelisted, default-on, or a workspace tool)
+		// and survives the definition's effective policy (explicit → group →
+		// default). g.Tools is the group's whole catalog membership, so the
+		// offered-set filter is essential: iterating raw members would let a
+		// non-whitelisted, default-allow tool make a disabled group look
+		// available. Mirrors toolpool.filterToolDefs and the executor's
+		// before-tool policy gate.
+		if !groupHasOfferedCallableTool(def, g.Tools, scopes) {
+			continue
+		}
+		available = append(available, g.Label)
+		if durableWriteToolGroups[g.ID] || g.ID == toolgroups.GroupOther {
+			writeCapable = true
+		}
+		if g.ID == toolgroups.GroupGraphWrite {
+			graphWriteCapable = true
+		}
+	}
+
+	list := "none"
+	if len(available) > 0 {
+		list = strings.Join(available, ", ")
+	}
+	b := capabilityInstructionPrefix + list + "."
+	switch {
+	case !writeCapable:
+		b += " No write-capable tool group is enabled, so you cannot save, remember, create or update anything: if the user asks you to save or remember something, say plainly that you cannot because no write tool is enabled, and do not claim it was saved."
+	case !graphWriteCapable:
+		b += " You cannot save a new fact to the knowledge graph because Graph · Write is not enabled: say plainly that you cannot persist it instead of claiming it was saved."
+	}
+	return b + capabilityWriteRule
+}
+
+// groupHasOfferedCallableTool reports whether at least one member tool is both
+// offered to this agent and survives the definition's effective tool policy.
+// scopes is the catalog's name→scope map; a missing entry falls back to the
+// static lookup inside effectiveToolPolicyFor.
+func groupHasOfferedCallableTool(def *AgentDefinition, members []string, scopes map[string]string) bool {
+	for _, t := range members {
+		if !toolOfferedByDefinition(def, t) {
+			continue
+		}
+		p, has := def.effectiveToolPolicyFor(t, scopes[t])
+		if !toolPolicyBlocks(p, has) {
+			return true
+		}
+	}
+	return false
+}
+
+// toolOfferedByDefinition mirrors toolpool.filterToolDefs for a single tool: the
+// definition whitelist (exact names; glob whitelists are handled before this
+// runs), the always-injected session builtin, and the workspace tools offered
+// whenever a sandbox is configured. BannedTools always wins.
+func toolOfferedByDefinition(def *AgentDefinition, tool string) bool {
+	if tool == "" {
+		return false
+	}
+	for _, b := range def.BannedTools {
+		if b == tool {
+			return false
+		}
+	}
+	for _, t := range def.Tools {
+		if t == tool {
+			return true
+		}
+	}
+	for _, t := range sessionBuiltinToolNames {
+		if t == tool {
+			return true
+		}
+	}
+	if len(def.SandboxConfig) > 0 {
+		for _, t := range workspaceToolNames {
+			if t == tool {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasToolWhitelistGlob reports whether the tools whitelist uses glob metacharacters
+// or the "*" wildcard. Such an entry cannot be mapped to a single group, so the
+// capability block degrades to the rule-only variant.
+func hasToolWhitelistGlob(tools []string) bool {
+	for _, t := range tools {
+		if strings.ContainsAny(t, "*?[") {
+			return true
+		}
+	}
+	return false
+}
+
+// toolCatalog returns the builtin tool catalog as minimal definitions, so the
+// capability disclosure can map every whitelisted tool to its real group. Nil
+// when the tool pool or its MCP service is unavailable (e.g. a zero-value
+// executor in unit tests); callers then fall back to the catalog-less resolver.
+func (ae *AgentExecutor) toolCatalog() []mcp.ToolDefinition {
+	if ae.toolPool == nil {
+		return nil
+	}
+	scopes := ae.toolPool.ToolScopes()
+	if len(scopes) == 0 {
+		return nil
+	}
+	defs := make([]mcp.ToolDefinition, 0, len(scopes))
+	for name, scope := range scopes {
+		defs = append(defs, mcp.ToolDefinition{Name: name, RequiredScope: scope})
+	}
+	return defs
+}
+
 // isKnowledgeBaseAgent reports whether the agent definition is KB-backed, i.e.
 // it can retrieve graph objects/relationships and should therefore cite them.
 func isKnowledgeBaseAgent(d *AgentDefinition) bool {
@@ -4772,6 +4949,15 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 	// prompt already carries the block so it is never injected twice.
 	if isKnowledgeBaseAgent(req.AgentDefinition) && !strings.Contains(inst, groundingInstruction) {
 		inst += "\n\n" + groundingInstruction
+	}
+
+	// Tell the agent which capability groups it actually has, and forbid it from
+	// claiming a save it cannot make (issue #236). Skip when the resolved
+	// instruction already carries the block so it is never injected twice.
+	if !strings.Contains(inst, capabilityInstructionPrefix) {
+		if block := capabilityDisclosureInstruction(req.AgentDefinition, ae.toolCatalog()); block != "" {
+			inst += "\n\n" + block
+		}
 	}
 
 	// If tool policies can reject or cancel a tool call, tell the model how to
