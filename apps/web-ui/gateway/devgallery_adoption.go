@@ -6,8 +6,9 @@ import "strings"
 // section of the component gallery. Like devgallery_ui.go it deliberately
 // contains no templ components and no render call sites: the component graph is
 // generated from render topology (cmd/componentgraph), so keeping the gallery's
-// component structure here would churn the generated graph. Everything in this
-// file is plain data shaping over the committed devgallery_adoption_gen.go data.
+// component structure here would churn the generated graph, which is build
+// output (gitignored), not a checked-in artifact. Everything in this file is
+// plain data shaping over the generated devgallery_adoption_gen.go data.
 
 // AdoptionViewSummary aggregates the adoption findings for one authored .templ
 // source file.
@@ -22,7 +23,7 @@ type AdoptionViewSummary struct {
 // markers (bare class names or element tags, e.g. "badge" or "dialog") whose
 // findings should be suppressed for that file. It is applied at render time, so
 // an author can exempt a file's known, acceptable ad-hoc markup without
-// regenerating the committed data file.
+// regenerating the derived data file.
 var adoptionAllowlist = map[string][]string{
 	// link-styled badges (<a class="badge" href>); ui.Badge renders a <span> with no href
 	"runs.templ": {"badge"},
