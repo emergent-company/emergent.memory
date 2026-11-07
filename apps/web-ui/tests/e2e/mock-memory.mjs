@@ -35,6 +35,9 @@ const models = [
 // In-memory conversation state (mutated by chat POSTs).
 const conversations = [
   { id: "conv-1", title: "Test conversation", agentDefinitionId: "agent-2", projectId: "p1", createdAt: "2026-08-25T09:00:00Z", updatedAt: "2026-08-25T09:00:05Z" },
+  // Seeded recorded session for the cross-surface tool-activity spec. It has a
+  // run timeline (see timelineByConversation) instead of stored messages.
+  { id: "conv-tool-steps", title: "SwiftUI notes", agentDefinitionId: "agent-2", projectId: "p1", createdAt: "2026-09-30T09:59:00Z", updatedAt: "2026-09-30T10:00:04Z" },
 ];
 const messages = {
   "conv-1": [
@@ -43,6 +46,38 @@ const messages = {
   ],
 };
 let convCounter = 2;
+
+// Full run-history items (the `/api/chat/:id/history` shape memory returns) for
+// conversations that need a recorded timeline rather than stored messages.
+//
+// `conv-tool-steps` is one turn with three consecutive `search-hybrid` calls.
+// Both surfaces read it: `/sessions/conv-tool-steps` renders the server-side
+// cards (real templ, no JS) and `/chat?c=conv-tool-steps` replays it through the
+// shipped chat JS. The envelope is the `envelope-search.json` fixture shape, so
+// the call reads "Searched memory · swiftui" with a "2 records" outcome on both
+// (see gateway/toolresult/testdata/envelope-search.step.json).
+const SEARCH_ENVELOPE = {
+  ok: true,
+  data: {
+    data: [
+      { object: { id: "e1", type: "person", key: "alice", name: "Alice", properties: { description: "Engineer" } }, score: 0.91 },
+      { object: { id: "e2", type: "topic", key: "retrieval", properties: { description: "How answers are found" } }, score: 0.72 },
+    ],
+    total: 2,
+    has_more: false,
+  },
+};
+const timelineByConversation = {
+  "conv-tool-steps": [
+    { kind: "run_start", run_id: "run-tool-steps", step_number: 0, created_at: "2026-09-30T10:00:00Z", run_status: "completed", run_model: "deepseek-v4-flash" },
+    { kind: "message", run_id: "run-tool-steps", step_number: 1, created_at: "2026-09-30T10:00:00Z", role: "user", content: { text: "What do we know about SwiftUI?" } },
+    { kind: "tool_call", run_id: "run-tool-steps", step_number: 2, created_at: "2026-09-30T10:00:01Z", id: "tc-steps-1", tool_name: "search-hybrid", tool_input: { query: "swiftui", limit: 5 }, tool_output: SEARCH_ENVELOPE, tool_status: "completed", duration_ms: 120 },
+    { kind: "tool_call", run_id: "run-tool-steps", step_number: 3, created_at: "2026-09-30T10:00:02Z", id: "tc-steps-2", tool_name: "search-hybrid", tool_input: { query: "swiftui", limit: 5 }, tool_output: SEARCH_ENVELOPE, tool_status: "completed", duration_ms: 90 },
+    { kind: "tool_call", run_id: "run-tool-steps", step_number: 4, created_at: "2026-09-30T10:00:03Z", id: "tc-steps-3", tool_name: "search-hybrid", tool_input: { query: "swiftui", limit: 5 }, tool_output: SEARCH_ENVELOPE, tool_status: "completed", duration_ms: 110 },
+    { kind: "message", run_id: "run-tool-steps", step_number: 5, created_at: "2026-09-30T10:00:04Z", role: "assistant", content: { text: "Found two relevant records." } },
+    { kind: "run_end", run_id: "run-tool-steps", step_number: 0, created_at: "2026-09-30T10:00:04Z", run_status: "completed", completed_at: "2026-09-30T10:00:04Z" },
+  ],
+};
 
 // --- public agent-share state ------------------------------------------------
 //
@@ -1436,6 +1471,13 @@ const server = http.createServer((req, res) => {
   const histMatch = path.match(/^\/api\/chat\/([^/]+)\/history$/);
   if (histMatch && req.method === "GET") {
     const cid = histMatch[1];
+    if (timelineByConversation[cid]) {
+      return json(res, {
+        session_id: `sess-${cid}`,
+        conversation_id: cid,
+        items: timelineByConversation[cid],
+      });
+    }
     const msgs = messages[cid] || [];
     return json(res, {
       session_id: `sess-${cid}`,

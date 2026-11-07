@@ -61,6 +61,17 @@ cp "${dmg[@]}" "${dest_rel}/"
 deltas=( "${source_dir}"/*.delta )
 [ "${#deltas[@]}" -gt 0 ] && cp "${deltas[@]}" "${dest_rel}/"
 
+# Stop the branch from growing: drop every archive in this channel that the new
+# appcast.xml no longer references. Such a file is unreachable to Sparkle (no
+# published feed points at it), so removing it cannot break an update, while a
+# file the feed *does* reference is always kept.
+bash "${script_dir}/prune-appcast-orphans.sh" "${channel}"
+
+# Aggregate guard: check-pages-file-size.sh protects GitHub's 100 MiB per-file
+# push limit; this protects the separate 1 GB limit on a *published* Pages site,
+# above which GitHub stops building and the feed/docs silently go stale.
+bash "${script_dir}/check-pages-tree-size.sh" .
+
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add "${dest_rel}"
