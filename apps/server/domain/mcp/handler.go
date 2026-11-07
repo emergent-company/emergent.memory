@@ -72,7 +72,8 @@ const prmWellKnownPath = "/.well-known/oauth-protected-resource"
 // @Router       /.well-known/oauth-protected-resource [get]
 // @Router       /.well-known/oauth-protected-resource/{resourcePath} [get]
 func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
-	resourceURL := requestOrigin(c)
+	origin := requestOrigin(c)
+	resourceURL := origin
 	// Keep the addressed path verbatim: RFC 9728 §3.3 requires the returned
 	// "resource" to be identical to the identifier the client used, and a
 	// trailing slash makes it a different URI. Only the bare well-known path
@@ -83,12 +84,15 @@ func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
 
 	// When the built-in authorization server is enabled, advertise it so MCP
 	// clients can run the OAuth flow. The issuer comes from config when set,
-	// else from the request origin.
+	// else from the request origin - never from resourceURL, which carries the
+	// resource path and would make the issuer look like
+	// https://host/api/mcp (the issuer is the origin: PRM's
+	// authorization_servers entries are issuer identifiers, RFC 9728 §2/§3.3).
 	authorizationServers := []string{}
 	if h.svc != nil && h.svc.oauthASEnabled {
 		issuer := h.svc.oauthASIssuer
 		if issuer == "" {
-			issuer = resourceURL
+			issuer = origin
 		}
 		authorizationServers = []string{issuer}
 	}
