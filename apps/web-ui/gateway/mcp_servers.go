@@ -127,6 +127,11 @@ type mcpKVField struct {
 // mcpServerSettingsBase is the base path for the MCP Servers management area.
 const mcpServerSettingsBase = "/settings/mcp-servers"
 
+// mcpServerAddDialogID is the header add-chooser dialog's element id. Kept next
+// to the base path so the header trigger (data-dialog-open) and the dialog
+// shell cannot drift.
+const mcpServerAddDialogID = "mcp-server-add-dialog"
+
 // mcpTransportOption is one selectable transport in the create/edit form.
 type mcpTransportOption struct {
 	Value string
