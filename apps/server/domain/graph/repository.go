@@ -3373,6 +3373,15 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 				Where("supersedes_id IS NULL").
 				Where("deleted_at IS NULL")
 
+			// Mirror the edge filter above: a traversal is confined to the main
+			// graph (or the one branch it was given), so a neighbour must not be
+			// resolved to a different branch's version of the same canonical id.
+			if params.BranchID != nil {
+				nq = nq.Where("branch_id = ?", *params.BranchID)
+			} else {
+				nq = nq.Where("branch_id IS NULL")
+			}
+
 			if len(params.ObjectTypes) > 0 {
 				nq = nq.Where("type IN (?)", bun.In(params.ObjectTypes))
 			}
