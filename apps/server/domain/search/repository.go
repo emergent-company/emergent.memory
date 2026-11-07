@@ -64,6 +64,11 @@ type TextSearchParams struct {
 	// the same scoping or it leaks chunks extracted into non-null-namespace
 	// objects (#1910).
 	NamespaceIsNull bool
+	// MinSimilarity, when > 0, is the cosine-similarity floor applied to vector
+	// candidates. Results whose similarity falls below it are dropped, giving a
+	// nonsense query (no lexical match, weak semantic similarity) an empty
+	// semantic path instead of confident-looking noise (#244).
+	MinSimilarity float32
 }
 
 // chunkNamespacePredicate returns the extra WHERE fragment (and its bind args)
@@ -117,11 +122,12 @@ func chunkNamespacePredicate(namespace *string, nullNamespace bool) (string, []a
 
 // TextSearchResultRow represents a single text search result from the database
 type TextSearchResultRow struct {
-	ID         uuid.UUID
-	DocumentID uuid.UUID
-	ChunkIndex int
-	Text       string
-	Score      float32
+	ID            uuid.UUID
+	DocumentID    uuid.UUID
+	ChunkIndex    int
+	Text          string
+	Score         float32
+	ParentChunkID *uuid.UUID
 }
 
 // TextSearchResponse contains the search results and metadata
@@ -129,6 +135,87 @@ type TextSearchResponse struct {
 	Results         []*TextSearchResult
 	Mode            TextSearchMode
 	TotalCandidates int
+}
+
+// maxParentContextChars bounds the parent text handed back as retrieval context
+// by small-to-big expansion. Parent chunks are stored up to 32 000 chars
+// (textsplitter.maxParentTextChars), far more than a model should receive
+// unmodified; the expansion returns a bounded section instead.
+const maxParentContextChars = 4000
+
+// ExpandToParent attaches each child chunk's stored parent text as retrieval
+// context (small-to-big retrieval). The child is what matched the query; the
+// parent is the coherent surrounding section a judge should see. Parents are
+// stored but deliberately never embedded, so they can only be reached through
+// their children. Text (the child snippet) is left unchanged; the parent text is
+// returned in the separate ParentText field so callers that want precision keep
+// the child and callers that want context read the parent. Results without a
+// parent (or whose parent is missing) are left untouched.
+func (r *Repository) ExpandToParent(ctx context.Context, results []*TextSearchResult) error {
+	parentIDs := make([]uuid.UUID, 0, len(results))
+	seen := make(map[uuid.UUID]bool, len(results))
+	for _, res := range results {
+		if res.ParentChunkID == nil || *res.ParentChunkID == uuid.Nil {
+			continue
+		}
+		id := *res.ParentChunkID
+		if !seen[id] {
+			seen[id] = true
+			parentIDs = append(parentIDs, id)
+		}
+	}
+	if len(parentIDs) == 0 {
+		return nil
+	}
+
+	texts, err := r.fetchParentTexts(ctx, parentIDs)
+	if err != nil {
+		return err
+	}
+	for _, res := range results {
+		if res.ParentChunkID == nil {
+			continue
+		}
+		if text, ok := texts[*res.ParentChunkID]; ok {
+			text = truncateRunes(text, maxParentContextChars)
+			res.ParentText = &text
+		}
+	}
+	return nil
+}
+
+// fetchParentTexts loads the text of the given parent chunks in one query.
+func (r *Repository) fetchParentTexts(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	var rows []struct {
+		ID   uuid.UUID `bun:"id"`
+		Text string    `bun:"text"`
+	}
+	err := r.db.NewSelect().
+		TableExpr("kb.chunks").
+		Column("id", "text").
+		Where("id IN (?)", bun.In(parentIDs)).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	out := make(map[uuid.UUID]string, len(rows))
+	for _, row := range rows {
+		out[row.ID] = row.Text
+	}
+	return out, nil
+}
+
+// truncateRunes shortens s to at most max runes without adding a marker. It
+// returns s unchanged when it already fits.
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
 
 // LexicalSearch performs full-text search on kb.chunks using tsv column
@@ -190,7 +277,7 @@ func (r *Repository) runChunkLexical(ctx context.Context, params TextSearchParam
 	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace, params.NamespaceIsNull)
 
 	query := `
-		SELECT c.id, c.document_id, c.chunk_index, c.text,
+		SELECT c.id, c.document_id, c.chunk_index, c.text, c.parent_chunk_id,
 			   ts_rank_cd(c.tsv, ` + tsqueryFn + `('simple', ?), 32) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
@@ -215,20 +302,21 @@ func (r *Repository) runChunkLexical(ctx context.Context, params TextSearchParam
 	var results []*TextSearchResult
 	for rows.Next() {
 		var row TextSearchResultRow
-		if err := rows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
+		if err := rows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.ParentChunkID, &row.Score); err != nil {
 			r.log.Error("lexical search row scan failed", logger.Error(err))
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 		mode := string(TextSearchModeLexical)
 		docID := row.DocumentID.String()
 		results = append(results, &TextSearchResult{
-			ID:         row.ID,
-			DocumentID: row.DocumentID,
-			ChunkIndex: row.ChunkIndex,
-			Text:       row.Text,
-			Score:      row.Score,
-			Mode:       &mode,
-			Source:     &docID,
+			ID:            row.ID,
+			DocumentID:    row.DocumentID,
+			ChunkIndex:    row.ChunkIndex,
+			Text:          row.Text,
+			Score:         row.Score,
+			ParentChunkID: row.ParentChunkID,
+			Mode:          &mode,
+			Source:        &docID,
 		})
 	}
 
@@ -252,7 +340,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	query := `
-		SELECT c.id, c.document_id, c.chunk_index, c.text,
+		SELECT c.id, c.document_id, c.chunk_index, c.text, c.parent_chunk_id,
 			   (1 - (c.embedding <=> ?::vector)) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
@@ -277,20 +365,26 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	var results []*TextSearchResult
 	for rows.Next() {
 		var row TextSearchResultRow
-		if err := rows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
+		if err := rows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.ParentChunkID, &row.Score); err != nil {
 			r.log.Error("vector search row scan failed", logger.Error(err))
 			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		// Relevance floor: drop candidates whose cosine similarity is too weak to
+		// mean anything (#244).
+		if params.MinSimilarity > 0 && row.Score < params.MinSimilarity {
+			continue
 		}
 		mode := string(TextSearchModeVector)
 		docID := row.DocumentID.String()
 		results = append(results, &TextSearchResult{
-			ID:         row.ID,
-			DocumentID: row.DocumentID,
-			ChunkIndex: row.ChunkIndex,
-			Text:       row.Text,
-			Score:      row.Score,
-			Mode:       &mode,
-			Source:     &docID,
+			ID:            row.ID,
+			DocumentID:    row.DocumentID,
+			ChunkIndex:    row.ChunkIndex,
+			Text:          row.Text,
+			Score:         row.Score,
+			ParentChunkID: row.ParentChunkID,
+			Mode:          &mode,
+			Source:        &docID,
 		})
 	}
 
@@ -339,11 +433,12 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	var lexicalScores []float32
 	for _, hit := range lexicalHits {
 		lexicalResults[hit.ID] = &hybridCandidate{
-			ID:           hit.ID,
-			DocumentID:   hit.DocumentID,
-			ChunkIndex:   hit.ChunkIndex,
-			Text:         hit.Text,
-			LexicalScore: hit.Score,
+			ID:            hit.ID,
+			DocumentID:    hit.DocumentID,
+			ChunkIndex:    hit.ChunkIndex,
+			Text:          hit.Text,
+			LexicalScore:  hit.Score,
+			ParentChunkID: hit.ParentChunkID,
 		}
 		lexicalScores = append(lexicalScores, hit.Score)
 	}
@@ -351,7 +446,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace, params.NamespaceIsNull)
 
 	vectorQuery := `
-		SELECT c.id, c.document_id, c.chunk_index, c.text,
+		SELECT c.id, c.document_id, c.chunk_index, c.text, c.parent_chunk_id,
 			   (1 - (c.embedding <=> ?::vector)) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
@@ -374,19 +469,24 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	var vectorScores []float32
 	for vectorRows.Next() {
 		var row TextSearchResultRow
-		if err := vectorRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
+		if err := vectorRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.ParentChunkID, &row.Score); err != nil {
 			vectorRows.Close()
 			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		// Relevance floor on the semantic leg (#244).
+		if params.MinSimilarity > 0 && row.Score < params.MinSimilarity {
+			continue
 		}
 		if existing, ok := lexicalResults[row.ID]; ok {
 			existing.VectorScore = row.Score
 		} else {
 			lexicalResults[row.ID] = &hybridCandidate{
-				ID:          row.ID,
-				DocumentID:  row.DocumentID,
-				ChunkIndex:  row.ChunkIndex,
-				Text:        row.Text,
-				VectorScore: row.Score,
+				ID:            row.ID,
+				DocumentID:    row.DocumentID,
+				ChunkIndex:    row.ChunkIndex,
+				Text:          row.Text,
+				VectorScore:   row.Score,
+				ParentChunkID: row.ParentChunkID,
 			}
 		}
 		vectorScores = append(vectorScores, row.Score)
@@ -421,8 +521,16 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		candidates = append(candidates, c)
 	}
 
-	// Sort by fused score descending
+	// Sort: a chunk that matched the query lexically (contains the term) outranks
+	// one that only matched semantically, then by fused score descending. This
+	// keeps a document that actually contains the query term above one the vector
+	// leg matched on similarity alone (#244).
 	sort.Slice(candidates, func(i, j int) bool {
+		iLex := candidates[i].LexicalScore > 0
+		jLex := candidates[j].LexicalScore > 0
+		if iLex != jLex {
+			return iLex
+		}
 		if candidates[i].FusedScore != candidates[j].FusedScore {
 			return candidates[i].FusedScore > candidates[j].FusedScore
 		}
@@ -440,13 +548,14 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	for i, c := range candidates {
 		docID := c.DocumentID.String()
 		results[i] = &TextSearchResult{
-			ID:         c.ID,
-			DocumentID: c.DocumentID,
-			ChunkIndex: c.ChunkIndex,
-			Text:       c.Text,
-			Score:      c.FusedScore,
-			Mode:       &mode,
-			Source:     &docID,
+			ID:            c.ID,
+			DocumentID:    c.DocumentID,
+			ChunkIndex:    c.ChunkIndex,
+			Text:          c.Text,
+			Score:         c.FusedScore,
+			ParentChunkID: c.ParentChunkID,
+			Mode:          &mode,
+			Source:        &docID,
 		}
 	}
 
@@ -459,13 +568,14 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 
 // hybridCandidate holds intermediate fusion data
 type hybridCandidate struct {
-	ID           uuid.UUID
-	DocumentID   uuid.UUID
-	ChunkIndex   int
-	Text         string
-	LexicalScore float32
-	VectorScore  float32
-	FusedScore   float32
+	ID            uuid.UUID
+	DocumentID    uuid.UUID
+	ChunkIndex    int
+	Text          string
+	LexicalScore  float32
+	VectorScore   float32
+	FusedScore    float32
+	ParentChunkID *uuid.UUID
 }
 
 // RelationshipSearchParams contains parameters for relationship vector search
