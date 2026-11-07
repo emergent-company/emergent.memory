@@ -194,6 +194,32 @@ func TestApplyRunOutcomeWarning_OrdinaryRunStaysQuiet(t *testing.T) {
 	require.NotContains(t, notifier.calls[0].input.Message, "skipExtraction")
 }
 
+// TestAccumulateBatchResults_CountsMergedAcrossBatches is the regression for
+// the multi-batch false positive the review caught: a later batch that merges
+// what an earlier one created is still "produced", so the run must not be
+// declared empty.
+func TestAccumulateBatchResults_CountsMergedAcrossBatches(t *testing.T) {
+	total := &ObjectExtractionResults{
+		ObjectsCreated:       10,
+		ObjectsMerged:        2,
+		RelationshipsCreated: 1,
+		CreatedObjectIDs:     []string{"a"},
+	}
+	accumulateBatchResults(total, &ObjectExtractionResults{
+		ObjectsCreated:       0,
+		ObjectsMerged:        5,
+		RelationshipsCreated: 3,
+		CreatedObjectIDs:     []string{"b"},
+	})
+
+	require.Equal(t, 10, total.ObjectsCreated)
+	require.Equal(t, 7, total.ObjectsMerged, "ObjectsMerged must survive batch aggregation")
+	require.Equal(t, 4, total.RelationshipsCreated)
+	require.Equal(t, []string{"a", "b"}, total.CreatedObjectIDs)
+	require.Nil(t, planRunOutcomeWarning(nil, total.ObjectsCreated+total.ObjectsMerged),
+		"a merge-heavy multi-batch run produced objects and must not warn as empty")
+}
+
 // TestWithOutcomeWarning_FoldsIntoSeverityAndDetails pins the shared fold helper
 // both notification producers use, including the no-warning identity.
 func TestWithOutcomeWarning_FoldsIntoSeverityAndDetails(t *testing.T) {

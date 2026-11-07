@@ -52,6 +52,10 @@ const (
 	// but before the job-failure message, so a transcript that both completed
 	// and carried a warning shows the warning last.
 	varianceMessageStep = 1 << 29
+	// outcomeWarningMessageStep sits just before the variance warning so two
+	// warnings in one run get distinct steps (a tie would leave their order to
+	// the timestamp), while still sorting after every stage message.
+	outcomeWarningMessageStep = varianceMessageStep - 1
 )
 
 // Run-to-run variance thresholds. A pipeline that calls a model cannot promise
@@ -134,7 +138,7 @@ func (r *RunRecorder) RecordVariance(ctx context.Context, runID string, warning 
 	if warning == nil {
 		return nil
 	}
-	return r.recordRunWarning(ctx, runID, "variance_warning", warning, warning.Message)
+	return r.recordRunWarning(ctx, runID, "variance_warning", warning, warning.Message, varianceMessageStep)
 }
 
 // RunOutcomeWarning is a non-fatal condition attached to a completed run when
@@ -199,13 +203,13 @@ func (r *RunRecorder) RecordOutcomeWarning(ctx context.Context, runID string, wa
 	if warning == nil {
 		return nil
 	}
-	return r.recordRunWarning(ctx, runID, "outcome_warning", warning, warning.Message)
+	return r.recordRunWarning(ctx, runID, "outcome_warning", warning, warning.Message, outcomeWarningMessageStep)
 }
 
 // recordRunWarning is the single writer behind every run-level warning. Keeping
 // one writer means a new warning cannot get a different persistence path from
 // the one the run API, chat workspace and notification payload all read.
-func (r *RunRecorder) recordRunWarning(ctx context.Context, runID, key string, warning any, message string) error {
+func (r *RunRecorder) recordRunWarning(ctx context.Context, runID, key string, warning any, message string, step int) error {
 	if r == nil || runID == "" {
 		return nil
 	}
@@ -223,7 +227,7 @@ func (r *RunRecorder) recordRunWarning(ctx context.Context, runID, key string, w
 	}
 	if err := r.RecordMessage(ctx, runID, RunMessage{
 		Role:      "assistant",
-		Step:      varianceMessageStep,
+		Step:      step,
 		Text:      message,
 		Stage:     extractionRunAgentName,
 		StageKind: stageKindWarning,

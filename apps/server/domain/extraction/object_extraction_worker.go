@@ -737,9 +737,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		if totalResult == nil {
 			totalResult = result
 		} else {
-			totalResult.ObjectsCreated += result.ObjectsCreated
-			totalResult.RelationshipsCreated += result.RelationshipsCreated
-			totalResult.CreatedObjectIDs = append(totalResult.CreatedObjectIDs, result.CreatedObjectIDs...)
+			accumulateBatchResults(totalResult, result)
 		}
 	}
 
@@ -766,6 +764,17 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	w.emitExtractionOutcome(ctx, job, stagingBranchID, totalResult)
 
 	return totalResult, nil
+}
+
+// accumulateBatchResults folds one extraction batch's counts into the run
+// total. It must add ObjectsMerged: persistResults upserts by (project, type,
+// name), so a later batch can merge what an earlier one created, and the
+// zero-object warning judges "produced" on created+merged (#233).
+func accumulateBatchResults(total, batch *ObjectExtractionResults) {
+	total.ObjectsCreated += batch.ObjectsCreated
+	total.ObjectsMerged += batch.ObjectsMerged
+	total.RelationshipsCreated += batch.RelationshipsCreated
+	total.CreatedObjectIDs = append(total.CreatedObjectIDs, batch.CreatedObjectIDs...)
 }
 
 // autoMergeEnabled reports whether the project has auto-merge enabled.
