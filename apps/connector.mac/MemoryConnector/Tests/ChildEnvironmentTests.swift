@@ -116,15 +116,16 @@ struct ChildEnvironmentTests {
         #expect(path == "/usr/bin:\(home.path)/.local/bin:\(home.path)/.cargo/bin")
     }
 
-    @Test func emptyCompositionLeavesPathUntouched() {
-        // Nothing inherited, nothing to add: an empty PATH would mean "current
-        // directory only", so the variable must survive as it was.
+    @Test func absentPathStaysAbsent() {
+        // Nothing inherited and nothing to append. Writing `PATH=` here would be
+        // worse than writing nothing: exec reads an empty PATH as "current
+        // directory only". Absent must stay absent.
         let environment = ChildEnvironment.launchEnvironment(
-            base: ["PATH": ""],
+            base: [:],
             home: "/nonexistent-home",
             systemDirectories: []
         )
-        #expect(environment["PATH"] == "")
+        #expect(environment["PATH"] == nil)
     }
 
     @Test func launchEnvironmentKeepsEveryOtherVariable() throws {
