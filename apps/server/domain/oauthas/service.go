@@ -126,9 +126,12 @@ func NewService(repo *Repository, tokens *apitoken.Service, tokenRepo *apitoken.
 
 // RegisterClient validates and persists a public client (RFC 7591).
 func (s *Service) RegisterClient(ctx context.Context, req ClientRegistrationRequest) (*ClientRegistrationResponse, error) {
+	// client_name is optional in RFC 7591; some clients (Google's Gemini
+	// connector among them) omit it. Give them a stable display name instead of
+	// failing the registration.
 	name := strings.TrimSpace(req.ClientName)
 	if name == "" {
-		return nil, newOAuthError(400, "invalid_client_metadata", "client_name is required")
+		name = "MCP client"
 	}
 	if len(name) > 255 {
 		return nil, newOAuthError(400, "invalid_client_metadata", "client_name must be at most 255 characters")
@@ -139,28 +142,44 @@ func (s *Service) RegisterClient(ctx context.Context, req ClientRegistrationRequ
 		return nil, oerr
 	}
 
-	authMethod := req.TokenEndpointAuthMethod
+	// This authorization server mints no client secret: clients are public and
+	// authenticate with PKCE. A client that asks for client_secret_basic/post
+	// (RFC 7591's default) is registered as a public client rather than
+	// rejected, so clients that default to a confidential method can still
+	// connect; the token endpoint ignores any Authorization header they send.
+	authMethod := strings.TrimSpace(req.TokenEndpointAuthMethod)
 	if authMethod == "" {
 		authMethod = "none"
 	}
 	if authMethod != "none" {
-		return nil, newOAuthError(400, "invalid_client_metadata", "only token_endpoint_auth_method=none (public clients) is supported")
+		s.log.Info("oauth client registration requested a confidential auth method; registering as public",
+			"requested_method", authMethod, "client_name", name)
+		authMethod = "none"
 	}
 
+	// Refresh tokens are not issued: an OAuth-minted token is a non-expiring
+	// project API token, so there is nothing to refresh. A client that asks for
+	// the refresh_token grant gets authorization_code only rather than a failed
+	// registration (RFC 7591 lets the server grant a subset of the request).
 	grantTypes := req.GrantTypes
 	if len(grantTypes) == 0 {
 		grantTypes = []string{"authorization_code"}
 	}
+	grantedGrants := make([]string, 0, 1)
 	for _, gt := range grantTypes {
-		if gt != "authorization_code" {
-			return nil, newOAuthError(400, "invalid_client_metadata", "only grant_types=[\"authorization_code\"] is supported")
+		if gt == "authorization_code" {
+			grantedGrants = append(grantedGrants, gt)
 		}
 	}
-
-	scopes, oerr := validateScopeList(splitScopeString(req.Scope))
-	if oerr != nil {
-		return nil, newOAuthError(400, "invalid_client_metadata", oerr.Description)
+	if len(grantedGrants) == 0 {
+		grantedGrants = []string{"authorization_code"}
 	}
+	grantTypes = grantedGrants
+
+	// Unknown scopes are dropped instead of failing: clients commonly request
+	// offline_access (a no-op here) or vendor-specific scopes alongside the
+	// ones this resource advertises.
+	scopes := clampSupportedScopes(splitScopeString(req.Scope))
 
 	clientID, err := randomString(32)
 	if err != nil {
@@ -689,6 +708,25 @@ func splitScopeString(raw string) []string {
 		return nil
 	}
 	return strings.Fields(raw)
+}
+
+// clampSupportedScopes keeps the requested scopes this server understands and
+// drops the rest, preserving order and de-duplicating. An empty result is legal
+// (it places no restriction beyond the server allowlist). Used where a client's
+// scope list must not fail the request - registration, and the consent page's
+// rendering of a client's scope request.
+func clampSupportedScopes(requested []string) []string {
+	out := make([]string, 0, len(requested))
+	seen := make(map[string]bool, len(requested))
+	for _, raw := range requested {
+		scope := strings.TrimSpace(raw)
+		if scope == "" || !supportedScopeSet[scope] || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		out = append(out, scope)
+	}
+	return out
 }
 
 // validateAgainstClientScope narrows the requested scopes to the set the client

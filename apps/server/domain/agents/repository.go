@@ -1432,6 +1432,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		"skill-get",
 		"skill-create",
 		"skill-update",
+		"skill-patch",
 		"skill-delete",
 		// Embeddings — read only (no pause/resume/config changes)
 		"embedding-status",

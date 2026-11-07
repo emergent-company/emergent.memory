@@ -112,6 +112,7 @@ Table "core"."mcp_share_instances" {
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
   "revoked_at" timestamptz
+  "recipient_emails" text[] [not null, default: '{}', note: 'Email addresses this share key was invited to (lowercased, de-duplicated); attribution label only, never a credential']
 
   Indexes {
     (project_id) [name: "idx_mcp_share_instances_project"]
@@ -317,6 +318,7 @@ Table "kb"."agent_definitions" {
   "ui_config" jsonb [not null, default: '{}']
   "default_queue" text [not null, default: 'default']
   "work_config" jsonb [not null, default: '{}', note: 'Object-driven work config: {status:{ready,inProgress,review,revision,blocked,done}, requiresReview, failureLimit, retryPolicy}.']
+  "skill_capture" jsonb
 
   Indexes {
     (product_id) [name: "idx_agent_definitions_product_id", note: '(product_id IS NOT NULL)']
@@ -697,6 +699,30 @@ Table "kb"."auth_introspection_cache" {
   }
 }
 
+Table "kb"."backup_schedules" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "organization_id" uuid [not null]
+  "project_id" uuid [not null, unique]
+  "enabled" boolean [not null, default: true]
+  "cron_schedule" text [not null, note: 'Standard 5-field cron expression evaluated in UTC, e.g. "0 2 * * *" for 02:00 UTC daily']
+  "timezone" text [not null, default: 'UTC']
+  "retention_days" integer [not null, default: 30, note: 'Retention applied to every backup the schedule creates: expires_at = created_at + retention_days']
+  "include_chat" boolean [not null, default: false]
+  "include_journal" boolean [not null, default: false]
+  "include_deleted" boolean [not null, default: false]
+  "next_run_at" timestamptz [not null, note: 'Next due instant; the runner claims rows where enabled AND next_run_at <= now()']
+  "last_run_at" timestamptz
+  "last_backup_id" uuid
+  "created_by" uuid
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (next_run_at) [name: "idx_backup_schedules_due", note: 'enabled']
+  }
+}
+// kb.backup_schedules: Per-project recurring backup schedule; one row per project, executed by the backups:project_schedules scheduler task
+
 Table "kb"."backups" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "organization_id" uuid [not null]
@@ -860,6 +886,13 @@ Table "kb"."branches" {
   "created_at" timestamptz [not null, default: `now()`]
   "description" text
   "merged_at" timestamptz
+  "origin" text [not null, default: 'manual']
+  "origin_id" uuid
+  "origin_label" text
+
+  Indexes {
+    (project_id, created_at) [name: "idx_branches_project_pending", note: '(merged_at IS NULL)']
+  }
 }
 
 Table "kb"."chat_conversations" {
@@ -1022,6 +1055,7 @@ Table "kb"."discovery_type_candidates" {
   "status" text [not null, default: 'candidate']
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+  "required_properties" jsonb [not null, default: '[]', note: 'Property names the model marked as required for this type; unioned (and filtered to surviving properties) when candidates merge.']
 
   Indexes {
     (job_id) [name: "idx_discovery_type_candidates_job_id"]
@@ -2167,6 +2201,7 @@ Table "kb"."projects" {
   "auto_merge_extraction_branches" boolean [not null, default: false]
   "deletion_scheduled_for" timestamptz
   "auto_discovery_enabled" boolean [not null, default: true]
+  "skill_capture" jsonb [not null, default: '{}']
 
   Indexes {
     (deleted_at) [name: "idx_projects_deleted_at", note: '(deleted_at IS NULL)']
@@ -2473,6 +2508,79 @@ Table "kb"."settings" {
   "updated_at" timestamptz [not null, default: `now()`]
 }
 
+Table "kb"."skill_proposals" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "agent_id" uuid
+  "agent_run_id" uuid
+  "agent_name" text [not null, default: '']
+  "review_id" uuid
+  "kind" text [not null]
+  "name" text [not null, default: '']
+  "description" text [not null, default: '']
+  "content" text [not null, default: '']
+  "base_skill_id" uuid
+  "base_content_hash" text [not null, default: '']
+  "patch_old" text [not null, default: '']
+  "patch_new" text [not null, default: '']
+  "evidence" text [not null, default: '']
+  "confidence" float8 [not null, default: 0]
+  "source" text [not null, default: 'background']
+  "status" text [not null, default: 'pending']
+  "auto_applied" boolean [not null, default: false]
+  "reviewed_by" uuid
+  "review_note" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "applied_at" timestamptz
+  "claimed_at" timestamptz
+
+  Indexes {
+    (agent_id, created_at) [name: "idx_skill_proposals_agent"]
+    (project_id, status, created_at) [name: "idx_skill_proposals_inbox"]
+  }
+}
+
+Table "kb"."skill_reviews" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "org_id" uuid
+  "agent_id" uuid
+  "agent_run_id" uuid
+  "agent_name" text [not null, default: '']
+  "status" text [not null, default: 'pending']
+  "model" text [not null, default: '']
+  "input" jsonb [not null, default: '{}']
+  "input_tokens" integer [not null, default: 0]
+  "output_tokens" integer [not null, default: 0]
+  "candidate_count" integer [not null, default: 0]
+  "error" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "finished_at" timestamptz
+
+  Indexes {
+    (agent_id, created_at) [name: "idx_skill_reviews_agent"]
+    (status, created_at) [name: "idx_skill_reviews_claim", note: '(status = \'pending\'::text)']
+    (agent_id) [name: "idx_skill_reviews_one_active", unique, note: '((status = ANY (ARRAY[\'pending\'::text, \'running\'::text])) AND (agent_id IS NOT NULL))']
+    (agent_run_id) [name: "idx_skill_reviews_run", unique, note: '(agent_run_id IS NOT NULL)']
+  }
+}
+
+Table "kb"."skill_usage" {
+  "skill_id" uuid [pk]
+  "project_id" uuid
+  "use_count" bigint [not null, default: 0]
+  "patch_count" bigint [not null, default: 0]
+  "last_used_at" timestamptz
+  "last_patched_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, last_used_at) [name: "idx_skill_usage_project"]
+  }
+}
+
 Table "kb"."skills" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "name" text [not null, note: 'Slug identifier: lowercase alphanumeric with hyphens, 1–64 chars']
@@ -2521,6 +2629,22 @@ Table "kb"."source_generations" {
 
   Indexes {
     (source_id, generation) [name: "uq_source_generations_source_generation", unique]
+  }
+}
+
+Table "kb"."source_grants" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "credential_kind" text [not null]
+  "credential_id" uuid
+  "granted_by_type" text [not null, default: 'system']
+  "granted_by_id" uuid
+  "granted_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, source_id, credential_kind, credential_id) [name: "uq_source_grants_source_credential", unique, note: '(credential_id IS NOT NULL)']
+    (project_id, source_id, credential_kind) [name: "uq_source_grants_source_credential_wildcard", unique, note: '(credential_id IS NULL)']
   }
 }
 
@@ -2762,6 +2886,10 @@ Ref: "kb"."agent_tool_approvals"."share_link_id" > "kb"."agent_share_links"."id"
 Ref: "kb"."agent_webhook_hooks"."agent_id" > "kb"."agents"."id"
 Ref: "kb"."agents"."agent_definition_id" > "kb"."agent_definitions"."id"
 Ref: "kb"."agents"."project_id" > "kb"."projects"."id"
+Ref: "kb"."backup_schedules"."created_by" > "core"."user_profiles"."id"
+Ref: "kb"."backup_schedules"."last_backup_id" > "kb"."backups"."id"
+Ref: "kb"."backup_schedules"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."backup_schedules"."project_id" > "kb"."projects"."id"
 Ref: "kb"."backups"."baseline_backup_id" > "kb"."backups"."id"
 Ref: "kb"."backups"."created_by" > "core"."user_profiles"."id"
 Ref: "kb"."backups"."organization_id" > "kb"."orgs"."id"
@@ -2863,9 +2991,16 @@ Ref: "kb"."schema_studio_messages"."session_id" > "kb"."schema_studio_sessions".
 Ref: "kb"."schema_studio_sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."schema_studio_sessions"."pack_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
+Ref: "kb"."skill_proposals"."base_skill_id" > "kb"."skills"."id"
+Ref: "kb"."skill_proposals"."project_id" > "kb"."projects"."id"
+Ref: "kb"."skill_proposals"."review_id" > "kb"."skill_reviews"."id"
+Ref: "kb"."skill_reviews"."project_id" > "kb"."projects"."id"
+Ref: "kb"."skill_usage"."project_id" > "kb"."projects"."id"
+Ref: "kb"."skill_usage"."skill_id" > "kb"."skills"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_grants"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"

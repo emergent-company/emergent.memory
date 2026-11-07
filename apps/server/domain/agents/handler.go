@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
@@ -1575,7 +1576,9 @@ func pickEffectiveModel(override, projectDefault string) string {
 func (h *Handler) toDefinitionDTO(ctx context.Context, def *AgentDefinition) *AgentDefinitionDTO {
 	dto := def.ToDTO()
 	if h.mcpService != nil {
-		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetToolDefinitionsForProject(ctx, def.ProjectID))
+		// Per-verb catalog: tool groups are policy units the agent tool pool
+		// resolves by name, and the pool works in per-verb names.
+		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetInternalToolDefinitionsForProject(ctx, def.ProjectID))
 	}
 	return dto
 }
@@ -1607,7 +1610,10 @@ func (h *Handler) ListBuiltinToolGroups(c echo.Context) error {
 		return c.JSON(http.StatusOK, SuccessResponse([]ToolGroupDTO{}))
 	}
 
-	catalog := h.mcpService.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
+	// Per-verb catalog, matching what the agent tool pool resolves: a group that
+	// named consolidated tools would grant nothing when it fans out into an
+	// agent's tool whitelist.
+	catalog := h.mcpService.GetInternalToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	groups := ToolGroupsFromCatalog(catalog)
 	return c.JSON(http.StatusOK, SuccessResponse(groups))
 }
@@ -1775,6 +1781,17 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		dispatchMode = dto.DispatchMode
 	}
 
+	if err := skills.ValidateAgentSkillCapture(dto.SkillCapture); err != nil {
+		return err
+	}
+	// Capture is only useful when the agent will auto-load the "{agent}." prefix
+	// on its next run, so enabling the override turns AutoLoadSkills on. An
+	// explicit mode=off is inert and does not flip the flag back.
+	autoLoadSkills := dto.AutoLoadSkills != nil && *dto.AutoLoadSkills
+	if dto.SkillCapture != nil && dto.SkillCapture.Enabled() {
+		autoLoadSkills = true
+	}
+
 	defaultToolPolicy := dto.DefaultToolPolicy
 	if defaultToolPolicy == "" {
 		defaultToolPolicy = ToolPolicyDefaultAllow
@@ -1789,7 +1806,8 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		Tools:             tools,
 		BannedTools:       dto.BannedTools,
 		Skills:            skillNames,
-		AutoLoadSkills:    dto.AutoLoadSkills != nil && *dto.AutoLoadSkills,
+		AutoLoadSkills:    autoLoadSkills,
+		SkillCapture:      dto.SkillCapture,
 		IsDefault:         isDefault,
 		Enabled:           enabled,
 		MaxSteps:          dto.MaxSteps,
@@ -1816,6 +1834,14 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	}
 	if dto.RelationshipTypes != nil {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
+	}
+	// Branch reads are a typed setting as well: validate it here so a bad origin
+	// or glob is a 400 rather than a run that silently reads less than asked
+	// (#265).
+	if dto.BranchScope != nil {
+		if err := def.SetBranchScope(dto.BranchScope); err != nil {
+			return apperror.NewBadRequest(err.Error())
+		}
 	}
 
 	// Write-path secret handling: a workspace config must never persist a
@@ -1903,6 +1929,15 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	if dto.AutoLoadSkills != nil {
 		def.AutoLoadSkills = *dto.AutoLoadSkills
 	}
+	if dto.SkillCapture != nil {
+		if err := skills.ValidateAgentSkillCapture(dto.SkillCapture); err != nil {
+			return err
+		}
+		def.SkillCapture = dto.SkillCapture
+		if dto.SkillCapture.Enabled() {
+			def.AutoLoadSkills = true
+		}
+	}
 	if dto.IsDefault != nil {
 		def.IsDefault = *dto.IsDefault
 	}
@@ -1949,6 +1984,14 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.RelationshipTypes != nil {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
+	}
+	// Branch reads are a typed setting as well: validate it here so a bad origin
+	// or glob is a 400 rather than a run that silently reads less than asked
+	// (#265).
+	if dto.BranchScope != nil {
+		if err := def.SetBranchScope(dto.BranchScope); err != nil {
+			return apperror.NewBadRequest(err.Error())
+		}
 	}
 	if dto.SandboxConfig != nil {
 		// Write-path secret handling against the stored config: carry forward the

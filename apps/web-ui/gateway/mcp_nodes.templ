@@ -96,7 +96,7 @@ templ mcpNodeStateBadge(live bool) {
 templ mcpNodeRemoveDialog(node mcpNodeView) {
 	@ui.Dialog(ui.DialogProps{ID: "mcp-node-remove-" + node.InstanceID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			@components.ConfirmIcon("")
+			@components.IconCircle("lucide--trash-2", components.IconCircleToneError)
 			<div>
 				@ui.DialogTitle() {
 					Remove node <span class="font-mono">{ node.InstanceID }</span>?

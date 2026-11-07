@@ -49,9 +49,11 @@ final class ConnectorUISmokeTests: XCTestCase {
         ("sidebar.about", "page.about"),
     ]
 
-    /// Chrome controls that must be present on the main window.
+    /// Chrome controls that must be present on the main window. The UI-test
+    /// profile is signed out, so the project control is deliberately absent:
+    /// it would repeat the account control's "Sign in" button (see
+    /// `assertChrome`).
     private static let chromeIdentifiers = [
-        "toolbar.project",
         "toolbar.account",
         "status.footer",
     ]
@@ -90,6 +92,12 @@ final class ConnectorUISmokeTests: XCTestCase {
                 "missing chrome control \(identifier)"
             )
         }
+        // Signed out, the account control is the only sign-in affordance. A
+        // project control here would render a second "Sign in" label beside it.
+        XCTAssertFalse(
+            element(app, "toolbar.project").exists,
+            "the project control must not be installed while signed out"
+        )
     }
 
     // MARK: - Helpers

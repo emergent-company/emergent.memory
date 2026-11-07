@@ -443,11 +443,26 @@ Two mechanisms:
   (`ui-patterns.md` §4, blueprint edit-gate).
 
 **Contract:** destructive control is omitted (role), not disabled; copy names
-the object; `components.ConfirmIcon`/`DeleteWarning`
-(`components/confirm.templ:14,32`) for the shared warning body.
+the object; the page renders `ui.ConfirmDialog` and passes its own description
+component — `components.DeleteWarning` where the copy is the shared "This
+permanently removes …" sentence, a bespoke note where it differs (the MCP
+revoke dialogs).
 
-**Source:** `ui.templ:649` (`deleteConfirmDialog`), `ui.templ:644`
-(`deleteAgentDescription`), `components/confirm.templ:14,32`,
+**Exception — a rich title.** `ui.ConfirmDialogProps.Title` is a plain string, so
+a confirmation whose title carries markup is composed by hand instead of being
+forced through the shared component: `ui.Dialog` (`BoxClass: "max-w-sm"`) with
+`components.IconCircle(…, components.IconCircleToneError)`, `ui.DialogTitle`
+holding the rich text, a `components.DeleteWarning`/`ui.EmptyNote` description,
+and the action form. `mcpNodeRemoveDialog` (`mcp_nodes.templ:96`) is the one
+case — its title embeds `<span class="font-mono">{ node.InstanceID }</span>`.
+Everything else about the pattern (stable id, error tone, description component,
+cancel-then-destructive order) is unchanged. This is the single normative
+exception recorded in `web-ui-components` (the `web-ui-dialog-status-circle`
+change); upstream, go-daisy#149 asks for a rich title slot so it can adopt
+`ui.ConfirmDialog`.
+
+**Source:** `ui.templ` (`deleteConfirmDialog`), `ui.templ`
+(`deleteAgentDescription`), `components/confirm.templ` (`DeleteWarning`),
 `webui/static/js/app.js:390,435,441`.
 
 ---
@@ -593,7 +608,7 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 | `edit.inline-htmx` | `project_settings.templ:19,256`; `settings_handlers.go:870`; `settings_providers.go:372` |
 | `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1337` |
 | `edit.modal` | `ui.templ:549,329`; `components/dialog.templ:9`; `webui/static/js/app.js:180,644,666` |
-| `edit.confirm` | `ui.templ:649`; `components/confirm.templ:14,32`; `webui/static/js/app.js:390` |
+| `edit.confirm` | `ui.templ` (`deleteConfirmDialog`); `components/confirm.templ` (`DeleteWarning`); `webui/static/js/app.js:390` |
 | `edit.row-menu` | `org_context.templ:93,458` |
 | `edit.row-action` | `schedules.templ:94,120`; `components/form.templ:50` |
 | `feedback.toast` | `ui.go:163`; `ui.templ:1337`; `webui/static/js/app.js:135`; go-daisy `components/ui/toast-queue.templ` |

@@ -110,15 +110,15 @@ type ClaimingBlueprint struct {
 
 // TypeRename describes a single object or edge type rename.
 type TypeRename struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From string `json:"from" yaml:"from"`
+	To   string `json:"to" yaml:"to"`
 }
 
 // PropertyRename describes a property key rename scoped to a type.
 type PropertyRename struct {
-	TypeName string `json:"type_name"`
-	From     string `json:"from"`
-	To       string `json:"to"`
+	TypeName string `json:"type_name" yaml:"type_name"`
+	From     string `json:"from" yaml:"from"`
+	To       string `json:"to" yaml:"to"`
 }
 
 // MigrateRequest is the body for POST /api/schemas/projects/:projectId/migrate.
@@ -409,6 +409,8 @@ type UpdatePackRequest struct {
 	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
 	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+	// Migrations carries optional migration hints for the new version.
+	Migrations *SchemaMigrationHints `json:"migrations,omitempty"`
 }
 
 // --- Internal helpers ---
@@ -685,10 +687,15 @@ func (c *Client) MigratePack(ctx context.Context, req *MigrateRequest) (*Migrate
 // ─────────────────────────────────────────────────────────────────────────────
 
 // SchemaMigrationHints describes how to migrate from a previous schema version.
+//
+// TypeRenames and PropertyRenames are arrays of from/to pairs, matching
+// domain_schemas.SchemaMigrationHints (what the server decodes). They were
+// previously maps, which the server could not unmarshal — a client using the
+// map form got a 400 on any pack that declared a rename.
 type SchemaMigrationHints struct {
 	FromVersion       string            `json:"from_version" yaml:"from_version"`
-	TypeRenames       map[string]string `json:"type_renames,omitempty" yaml:"type_renames,omitempty"`
-	PropertyRenames   map[string]string `json:"property_renames,omitempty" yaml:"property_renames,omitempty"`
+	TypeRenames       []TypeRename      `json:"type_renames,omitempty" yaml:"type_renames,omitempty"`
+	PropertyRenames   []PropertyRename  `json:"property_renames,omitempty" yaml:"property_renames,omitempty"`
 	RemovedProperties []RemovedProperty `json:"removed_properties,omitempty" yaml:"removed_properties,omitempty"`
 }
 

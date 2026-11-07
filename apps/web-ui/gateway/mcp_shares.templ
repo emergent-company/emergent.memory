@@ -107,7 +107,23 @@ templ mcpShareRow(inst MCPShareInstance) {
 					// Legacy instances cannot be edited, rotated or revoked here,
 					// but they CAN be copied: the copy is an ordinary named share,
 					// which is the documented way off a legacy share. Nothing about
-					// the source changes.
+					// the source changes. Their writes are still attributable — the
+					// row id IS the token id — so the activity link stays.
+					if inst.TokenID != "" {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    mcpShareActivityHref(inst),
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+							Shape:   ui.ButtonShapeSquare,
+							Icon:    "lucide--history",
+							Attrs: templ.Attributes{
+								"title":       "View writes from " + inst.Name,
+								"aria-label":  "View writes from " + inst.Name,
+								"data-testid": "mcp-share-activity-link-" + inst.ID,
+							},
+						})
+					}
 					@mcpShareDuplicateButton(inst)
 				} else {
 					@mcpShareActionsMenu(inst)
@@ -118,6 +134,14 @@ templ mcpShareRow(inst MCPShareInstance) {
 			@components.MetaChip("lucide--wrench", countLabel(inst.ToolCount, "tool", "tools"))
 			@components.MetaChip("lucide--calendar-plus", "created "+relTime(inst.CreatedAt))
 			@components.MetaChip("lucide--clock", "last used "+mcpShareLastUsedLabel(inst))
+			if len(inst.RecipientEmails) > 0 {
+				<span title={ mcpShareRecipientsTitle(inst.RecipientEmails) }>
+					@components.MetaChip("lucide--mail", mcpShareRecipientsLabel(inst.RecipientEmails))
+				</span>
+			}
+			if !inst.ReadOnly && !inst.IsLegacy {
+				@components.MetaChip("lucide--pencil", "read & write")
+			}
 		</div>
 	</div>
 	@mcpShareRevokeDialog(inst)
@@ -163,6 +187,14 @@ templ mcpShareActionsMenu(inst MCPShareInstance) {
 						<span>Duplicate share</span>
 					</a>
 				</li>
+				if inst.TokenID != "" {
+					<li>
+						<a href={ templ.URL(mcpShareActivityHref(inst)) } class="flex items-center gap-2" data-testid={ "mcp-share-activity-link-" + inst.ID }>
+							@ui.IconSpan("lucide--history", "size-4")
+							<span>View writes</span>
+						</a>
+					</li>
+				}
 				<li>
 					<button type="button" class="flex items-center gap-2" data-dialog-open={ "mcp-share-invite-" + inst.ID } data-testid={ "mcp-share-invite-open-" + inst.ID }>
 						@ui.IconSpan("lucide--mail-plus", "size-4")
@@ -214,20 +246,16 @@ templ mcpShareStatusBadge(inst MCPShareInstance) {
 	})
 }
 
+// mcpShareRevokeDescription is the share-revoke detail paragraph.
+templ mcpShareRevokeDescription(name string) {
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+		This immediately invalidates <span class="font-medium text-base-content">{ name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
+	}
+}
+
 // mcpShareRevokeDialog confirms revocation before POST .../shares/:id/revoke.
 templ mcpShareRevokeDialog(inst MCPShareInstance) {
-	@ui.Dialog(ui.DialogProps{ID: "mcp-share-revoke-" + inst.ID, BoxClass: "max-w-sm"}) {
-		<div class="mb-4 flex items-start gap-3">
-			@components.ConfirmIcon("")
-			<div>
-				@ui.DialogTitle() {
-					Revoke share? 
-				}
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
-					This immediately invalidates <span class="font-medium text-base-content">{ inst.Name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
-				}
-			</div>
-		</div>
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "mcp-share-revoke-" + inst.ID, Title: "Revoke share?"}, mcpShareRevokeDescription(inst.Name)) {
 		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/revoke") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
@@ -255,9 +283,7 @@ templ mcpShareRevokeDialog(inst MCPShareInstance) {
 templ mcpShareRotateDialog(inst MCPShareInstance) {
 	@ui.Dialog(ui.DialogProps{ID: "mcp-share-rotate-" + inst.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--refresh-cw", "size-5")
-			</div>
+			@components.IconCircle("lucide--refresh-cw", components.IconCircleToneWarning)
 			<div>
 				@ui.DialogTitle() {
 					Rotate key? 
@@ -304,9 +330,7 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 templ mcpShareInviteDialog(inst MCPShareInstance) {
 	@ui.Dialog(ui.DialogProps{ID: "mcp-share-invite-" + inst.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--mail-plus", "size-5")
-			</div>
+			@components.IconCircle("lucide--mail-plus", components.IconCircleTonePrimary)
 			<div>
 				@ui.DialogTitle() {
 					Email the share key? 

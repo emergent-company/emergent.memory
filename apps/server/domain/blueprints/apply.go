@@ -483,7 +483,7 @@ const maxExpandedRelationshipTypesPerPack = 10_000
 //
 //   - A def with plural source and/or target types yields the cross-product of
 //     GetSourceTypes() × GetTargetTypes() as singular entries, preserving
-//     Name/Label/Description/Properties.
+//     Name/Label/Description/Properties/Required.
 //   - A def with only singular fields passes through unchanged (one entry).
 //   - A def with neither source nor target yields one empty entry (matching the
 //     pre-expansion behaviour) so the schemas validator still reports a precise
@@ -528,6 +528,7 @@ func expandRelationshipTypes(defs []RelationshipTypeDef) ([]RelationshipTypeDef,
 				SourceType:  d.SourceType,
 				TargetType:  d.TargetType,
 				Properties:  d.Properties,
+				Required:    d.Required,
 			})
 			continue
 		}
@@ -541,6 +542,7 @@ func expandRelationshipTypes(defs []RelationshipTypeDef) ([]RelationshipTypeDef,
 					SourceType:  src,
 					TargetType:  tgt,
 					Properties:  d.Properties,
+					Required:    d.Required,
 				})
 			}
 		}

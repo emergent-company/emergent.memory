@@ -141,6 +141,15 @@ func webStubHitCount(t *testing.T, base, path string) int {
 // so the admit sweep could run a competing sync mid-test (#2493).
 func createWebSource(t *testing.T, rl *runLog, projectID string, cfg map[string]any) string {
 	t.Helper()
+	return createWebSourceAs(t, rl, projectID, e2eTestToken(), cfg)
+}
+
+// createWebSourceAs creates a web source with an explicit bearer token. The
+// provenance e2e uses a project token so the server records an exact source
+// grant for the creating credential — a session-created source gets no grant and
+// can only be pushed by the system sync worker, never over HTTP.
+func createWebSourceAs(t *testing.T, rl *runLog, projectID, token string, cfg map[string]any) string {
+	t.Helper()
 	body := jsonBody(map[string]any{
 		"name":         "web-stub-docs",
 		"providerType": "web",
@@ -148,7 +157,7 @@ func createWebSource(t *testing.T, rl *runLog, projectID string, cfg map[string]
 		"syncMode":     "manual",
 		"config":       cfg,
 	})
-	resp := doAPILogged(t, rl, "POST", "/api/data-source-integrations", e2eTestToken(), projectID, body)
+	resp := doAPILogged(t, rl, "POST", "/api/data-source-integrations", token, projectID, body)
 	raw := mustStatus(t, resp, http.StatusCreated)
 	return parseIDFromBody(t, raw)
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -1625,7 +1626,9 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 
 	// Cascade: soft-delete all live relationships touching this canonical object.
 	// This mirrors the expected behaviour: deleting a node orphans its edges.
-	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, current.CanonicalID, GetEdgesParams{})
+	// IncludeAllBranches: the cascade must remove every live relationship touching
+	// the object, including ones on branches the calling agent cannot read (#265).
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, current.CanonicalID, GetEdgesParams{IncludeAllBranches: true})
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete edges: %w", err))
 	}
@@ -6062,6 +6065,17 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 // ForkBranch creates a new branch from a source branch and copies all HEAD objects
 // and their relationships. This is the "copy-on-fork" semantics requested by
 // `branches create --parent --copy-objects`.
+// applyAttribution stamps a normalised, server-derived attribution onto a
+// branch. Resolve guarantees the id parses, so the typed form is used directly.
+func applyAttribution(b *Branch, a *branchorigin.Attribution) {
+	b.Origin = a.Origin
+	if a.ID != nil {
+		id := a.ParsedID
+		b.OriginID = &id
+	}
+	b.OriginLabel = a.Label
+}
+
 func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID *uuid.UUID, req *ForkBranchRequest) (*ForkBranchResponse, error) {
 	// Validate source branch exists (nil = main, no row to check)
 	if sourceBranchID != nil {
@@ -6079,6 +6093,11 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 		return nil, apperror.ErrConflict.WithMessage("a branch with that name already exists")
 	}
 
+	attribution, err := branchorigin.Resolve(req.Attribution)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+
 	// Create the new branch
 	newBranch := &Branch{
 		ID:          uuid.New(),
@@ -6086,6 +6105,7 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 		Name:        req.Name,
 		Description: req.Description,
 	}
+	applyAttribution(newBranch, attribution)
 	if sourceBranchID != nil {
 		newBranch.ParentBranchID = sourceBranchID
 	}

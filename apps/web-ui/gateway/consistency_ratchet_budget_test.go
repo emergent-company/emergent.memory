@@ -13,22 +13,28 @@ package main
 // Each entry carries the justification for tolerating it (the same reasoning the
 // gallery's adoptionAllowlist records), so a future author can read why the
 // ad-hoc markup is acceptable instead of adopting the shared component.
+//
+// A note must name the *pinned* library gap that blocks adoption, and it has to
+// be re-read when the go-daisy pin moves: five of these originally cited a gap
+// that v0.16.0 already closed (Alert.Body, Badge.Href/Position/DirectLabel), so
+// the real blocker is now narrower and different — mostly the absent
+// arbitrary-class prop (the share_manage card note was already accurate). A
+// justification that describes a fixed gap is how an adoptable site stays
+// unadopted for a year.
 func adoptionBudget() []adoptionBudgetEntry {
 	return []adoptionBudgetEntry{
 		{file: "chat.templ", marker: "class:alert", count: 1,
-			note: "rich children (icon + text + button); ui.Alert has no children slot"},
-		{file: "datasources.templ", marker: "class:toggle", count: 1,
-			note: "raw <input type=checkbox class=toggle> in dsConfigFieldInput; ui.ToggleInput/ToggleField own the toggle class but compose a label/description wrapper this inline field lays out manually"},
+			note: "chat.js reveals the banner by toggling the hidden class on #chat-model-warning; ui.Alert has a Body slot (so composed content is fine) but no Class prop, so a client-side hidden toggle cannot be expressed"},
 		{file: "inbox.templ", marker: "class:badge", count: 1,
-			note: "tab count badge renders the count as direct text (pinned by TestInboxPageTabsAndCounts); ui.Badge wraps the label in a nested <span>"},
+			note: "tab count badge needs tabular-nums so the digits do not jitter when a live refresh changes the count; ui.Badge has DirectLabel for the direct-text count but no Class prop"},
 		{file: "notifications_bell.templ", marker: "class:badge", count: 1,
-			note: "unread indicator badge: indicator-item positioning + direct-text count ui.Badge cannot reproduce (it emits gap-1 and nests the label in a <span>)"},
+			note: "unread indicator badge: ui.Badge has Position, DirectLabel and Attrs for indicator-item positioning and the data-notifications-badge hook, but no Class prop for tabular-nums"},
 		{file: "runs.templ", marker: "class:badge", count: 2,
-			note: "link-styled badges (<a class=badge href>); ui.Badge renders a <span> with no href"},
+			note: "link-styled ghost badges: ui.Badge has Href and DirectLabel, but no Class prop, so the hover:opacity-70 affordance cannot be expressed"},
 		{file: "share_manage.templ", marker: "class:card", count: 1,
-			note: "<form class='card border border-line'>; ui.CardRaw has no <form> element variant (As: div/a/button/section/article/li)"},
+			note: "<form class='card border border-line'>; ui.CardRaw has no <form> element variant (As: div/a/button/section/article/li), so the form element itself cannot be the card"},
 		{file: "share_page.templ", marker: "class:alert", count: 1,
-			note: "share-inline-terminal rich children; ui.Alert has no children slot"},
+			note: "the inline terminal is role=status, not role=alert, and needs its own share-inline-terminal/items-start/gap-3/hidden classes; ui.Alert hardcodes role=alert and has no Class prop"},
 	}
 }
 

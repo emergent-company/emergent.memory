@@ -39,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -174,6 +175,13 @@ type Service struct {
 	// the server's own address (e.g. containerised deployments).
 	internalBaseURL string
 
+	// publicBaseURL is the deployment's externally reachable API origin
+	// (MCP_PUBLIC_URL). Share invite emails and client snippets must use it:
+	// a request proxied from the web UI carries the internal compose service
+	// name in Host, which a recipient's MCP client cannot resolve. Empty falls
+	// back to the request-derived base URL.
+	publicBaseURL string
+
 	// Built-in OAuth authorization server advertisement (RFC 9728). When
 	// enabled, the protected-resource metadata lists this issuer so MCP clients
 	// can run the OAuth flow instead of being told to use a static token.
@@ -275,6 +283,7 @@ func NewService(p ServiceParams) *Service {
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
 		internalBaseURL:           cfg.InternalBaseURL,
+		publicBaseURL:             strings.TrimRight(strings.TrimSpace(cfg.MCP.PublicURL), "/"),
 		oauthASEnabled:            cfg.OAuthAS.Enabled,
 		oauthASIssuer:             strings.TrimRight(cfg.OAuthAS.IssuerURL, "/"),
 		journalSvc:                p.JournalSvc,
@@ -344,8 +353,11 @@ var dynamicToolBuilders = []func() []ToolDefinition{
 	blueprintsToolDefinitions,
 }
 
-// GetToolDefinitions returns all available MCP tools
-func (s *Service) GetToolDefinitions() []ToolDefinition {
+// legacyToolDefinitions builds the per-verb tool catalog. It is the input to
+// consolidation: GetToolDefinitions and GetToolDefinitionsForProject fold these
+// definitions into the consolidated catalog (see consolidated_catalog.go) and
+// project-enrichment still works against the legacy names.
+func (s *Service) legacyToolDefinitions() []ToolDefinition {
 	tools := []ToolDefinition{
 		{
 			Name:        "project-get",
@@ -533,7 +545,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"branch": {
 						Type:        "string",
-						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query across all branches.",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to search the main graph; branches are only readable when the agent definition declares a branchScope that covers them.",
 					},
 					"type_name": {
 						Type:        "string",
@@ -572,7 +584,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list",
 			OutputSchema: objectOutputSchema(),
-			Description:  "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
+			Description:  "List the schema packs in the current project's catalog (id, name, version, project, source) — the same rows the REST GET /api/schemas/projects/:id route returns — with optional search and pagination. Deprecated packs are hidden by default; set include_deprecated to audit retirement. This is the project catalog, not the install picker (schema-list-available) or the assignment list (schema-list-installed).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -621,7 +633,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list-available",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
+			Description:  "Get the packs this project can still install: its own packs that are not installed and not deprecated. This is the install picker, not the project catalog (schema-list) or the assigned list (schema-list-installed); an already-installed pack stays visible there even after it is deprecated.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -631,7 +643,17 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "schema-list-installed",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get all schemas currently installed in the project with their configuration and active status.",
+			Description:  "Get all schemas currently installed in the project with their configuration and active status. Includes installed packs whose catalog row has since been deprecated, so an existing project keeps sight of what it uses.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:         "schema-pack-claims",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List which applied blueprints claim which of the project's schema packs — the pack → blueprint provenance map. Answers \"which blueprint owns this pack\" and is the counterpart of the schema-list catalog. Only packs claimed by an applied blueprint are returned; an unclaimed pack is absent rather than listed with an empty blueprint set.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -692,7 +714,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-create",
-			Description: "Create a new memory schema in the global registry. Requires object type schemas at minimum.",
+			Description: "Create a new memory schema owned by the current project. Packs are project-scoped, not global: the new pack is written to this project's schema catalog and its object types are registered in this project's type registry. Requires object type schemas at minimum. Global built-in packs are readable but immutable.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1730,20 +1752,76 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	// scope — see agentToolRequiredScope).
 	applyRequiredScopes(tools)
 
-	buildToolIndex(tools)
 	return tools
 }
 
-// GetToolDefinitionsForProject returns tool definitions with dynamic content (e.g. agent
-// catalog injected into trigger_agent description) for a specific project.
-// Falls back to GetToolDefinitions when projectID is empty.
+// GetToolDefinitions returns all available MCP tools, consolidated: one tool
+// per resource and permission pair with an `action` discriminator. The legacy
+// per-verb names remain callable as aliases (see consolidated_catalog.go) and
+// keep their own definitions in the lookup index, so authority checks and
+// internal callers that name them still resolve a precise schema.
+func (s *Service) GetToolDefinitions() []ToolDefinition {
+	legacy := s.legacyToolDefinitions()
+	consolidated := consolidateToolDefinitions(legacy)
+	buildToolIndex(indexableTools(consolidated, legacy))
+	return consolidated
+}
+
+// GetInternalToolDefinitions returns the per-verb catalog the in-process agent
+// runtime uses: the agent tool pool, its per-project tool enable flags and the
+// builtin MCP registry are all keyed on these names, and consolidating them
+// would coarsen per-tool authorisation (a ban on `entity-delete` would either
+// stop matching or have to ban all of `entity-write`). External MCP clients get
+// the consolidated catalog from GetToolDefinitions; both spellings dispatch
+// through the same handlers.
+func (s *Service) GetInternalToolDefinitions() []ToolDefinition {
+	legacy := s.legacyToolDefinitions()
+	buildToolIndex(indexableTools(consolidateToolDefinitions(legacy), legacy))
+	return legacy
+}
+
+// indexableTools is the lookup set for GetToolByName: the advertised catalog
+// plus the deprecated definitions it replaced. tools/list never sees the
+// deprecated entries.
+func indexableTools(advertised, legacy []ToolDefinition) []ToolDefinition {
+	out := make([]ToolDefinition, 0, len(advertised)+len(legacy))
+	out = append(out, advertised...)
+	out = append(out, legacy...)
+	return out
+}
+
+// GetToolDefinitionsForProject returns the consolidated catalog with dynamic
+// content (e.g. the agent catalog injected into trigger_agent's description) for
+// a specific project. Falls back to GetToolDefinitions when projectID is empty.
 func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
+	legacy := s.legacyToolDefinitionsForProject(ctx, projectID)
+	consolidated := consolidateToolDefinitions(legacy)
+	buildToolIndex(indexableTools(consolidated, legacy))
+	return consolidated
+}
+
+// GetInternalToolDefinitionsForProject is GetToolDefinitionsForProject without
+// consolidation: the per-verb catalog the agent tool pool, its tool groups and
+// the per-project builtin enable flags are keyed on. Returns the per-verb
+// catalog unchanged when the project is unknown.
+func (s *Service) GetInternalToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
+	legacy := s.legacyToolDefinitionsForProject(ctx, projectID)
+	buildToolIndex(indexableTools(consolidateToolDefinitions(legacy), legacy))
+	return legacy
+}
+
+// legacyToolDefinitionsForProject builds the per-verb catalog with the dynamic
+// project content applied (enriched agent tools, relay-session tools). Both
+// public getters consolidate — or deliberately do not consolidate — on top.
+func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
 	if projectID == "" || s.agentToolHandler == nil {
-		return s.GetToolDefinitions()
+		return s.legacyToolDefinitions()
 	}
 
-	// Start with the full static tool list (includes static agent tools)
-	tools := s.GetToolDefinitions()
+	// Start with the full static tool list (includes static agent tools). This
+	// must be the legacy list: project enrichment below matches agent tools by
+	// their legacy names, and consolidation runs after it.
+	tools := s.legacyToolDefinitions()
 
 	// Find the range of agent tools and replace them with project-enriched versions
 	enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
@@ -1771,7 +1849,6 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 		}
 	}
 
-	buildToolIndex(tools)
 	return tools
 }
 
@@ -1791,6 +1868,7 @@ var toolRequiredScope = map[string]string{
 	"schema-get":            "schema:read",
 	"schema-list-available": "schema:read",
 	"schema-list-installed": "schema:read",
+	"schema-pack-claims":    "schema:read",
 	"schema-history":        "schema:read",
 	"schema-compiled-types": "graph:read",
 	"schema-icon-list":      "schema:read",
@@ -1850,6 +1928,32 @@ var toolRequiredScope = map[string]string{
 	// Journal (static tools; journal-list and journal-add-note are also appended below)
 	"journal-list":     "journal:read",
 	"journal-add-note": "journal:write",
+
+	// Consolidated catalog (see consolidated_catalog.go). These mirror the
+	// scopes of the legacy tools they replace, so LookupToolScope and
+	// tool-group derivation answer for the canonical names too.
+	"project":            "graph:read",
+	"entity":             "graph:read",
+	"entity-write":       "graph:write",
+	"relationship-write": "graph:write",
+	"branch":             "graph:read",
+	"branch-write":       "graph:write",
+	"schema-types":       "graph:read",
+	"schema":             "schema:read",
+	"schema-write":       "schema:write",
+	"schema-migrate":     "schema:migrate",
+	"blueprint":          "schema:read",
+	"blueprint-write":    "schema:write",
+	"search":             "search",
+	"document":           "documents:read",
+	"document-write":     "documents:write",
+	"skill":              "skills:read",
+	"skill-write":        "skills:write",
+	"project-write":      "projects:write",
+	"token":              "projects:write",
+	"token-write":        "projects:write",
+	// embedding*/provider/trace are SuperadminOnly operator tools with no token
+	// scope, so they have no entry here (the flag, not a scope, gates them).
 }
 
 // agentToolRequiredScope maps each agent-domain MCP tool name to the MCP scope
@@ -1885,6 +1989,16 @@ var agentToolRequiredScope = map[string]string{
 
 	// Agent catalog — derived from the agent-definitions read surface
 	"agent-list-available": "agents:read",
+
+	// Consolidated agent tools (see consolidated_catalog.go).
+	"agent-def":        "agents:read",
+	"agent-def-write":  "agents:write",
+	"agent":            "agents:read",
+	"agent-write":      "agents:write",
+	"agent-run":        "agents:read",
+	"agent-question":   "agents:read",
+	"agent-hook-write": "agents:write",
+	"adk-session":      "agents:read",
 }
 
 // applyRequiredScopes assigns RequiredScope to any tool that does not already
@@ -2023,7 +2137,17 @@ var superadminOnlyToolNames = func() map[string]bool {
 // IsSuperadminOnlyTool reports whether the named tool is a deployment-wide /
 // org-level operator tool gated on the superadmin_full authority.
 func (s *Service) IsSuperadminOnlyTool(name string) bool {
-	return superadminOnlyToolNames[name]
+	if superadminOnlyToolNames[name] {
+		return true
+	}
+	// A consolidated tool inherits the operator flag from the per-verb tools it
+	// replaces (see buildConsolidatedDefinition), so the static set — built from
+	// the pre-consolidation builders — does not cover the family name. Resolve
+	// the definition so the in-process gate and the transports agree.
+	if def := s.GetToolByName(name); def != nil {
+		return def.SuperadminOnly
+	}
+	return false
 }
 
 // sensitiveInProcessAdminTools is the set of privilege-sensitive tools whose
@@ -2056,6 +2180,12 @@ var sensitiveInProcessAdminTools = map[string]bool{
 	"project-create":             true,
 	"mcp-registry-install":       true,
 	"mcp-server-inspect":         true,
+	// Consolidated families that fold the sensitive tools above: the whole
+	// family carries the raised in-process bar, because the action is only known
+	// at dispatch and a family-level exemption would hand back the privilege.
+	"token":         true,
+	"token-write":   true,
+	"project-write": true,
 }
 
 // handlerProvidedToolScopes are the RequiredScope values declared only by
@@ -2125,10 +2255,21 @@ func expandScopesSet(scopes []string) map[string]bool {
 	return result
 }
 
-// toolIndex is built once from the full tool list for O(1) lookups in handleToolsCall.
-// Populated by buildToolIndex called from GetToolDefinitions and GetToolDefinitionsForProject.
+// toolIndex holds the full lookup set (advertised catalog plus the deprecated
+// per-verb definitions) for O(1) resolution in handleToolsCall and in the
+// authority checks. It is package-level but rebuilt on every catalog build, so
+// it reflects the most recently assembled Service — the helper tests build
+// several. Callers that need a specific Service's catalog must build it first
+// (GetToolByName does so lazily via ensureToolIndex).
 var toolIndexMu sync.RWMutex
 var toolIndex = map[string]*ToolDefinition{}
+
+// toolIndexReady reports whether the tool index has been built in this process.
+func toolIndexReady() bool {
+	toolIndexMu.RLock()
+	defer toolIndexMu.RUnlock()
+	return len(toolIndex) > 0
+}
 
 // buildToolIndex rebuilds the tool index from the provided tool list.
 func buildToolIndex(tools []ToolDefinition) {
@@ -2143,10 +2284,33 @@ func buildToolIndex(tools []ToolDefinition) {
 }
 
 // GetToolByName returns the ToolDefinition for a given tool name, or nil if not found.
+// Deprecated legacy names resolve to the consolidated definition that replaced
+// them, so authority checks, share-instance allowlists and tool-group
+// derivation see one definition per resource regardless of which name the
+// caller used.
 func (s *Service) GetToolByName(name string) *ToolDefinition {
+	if def := lookupToolIndex(name); def != nil {
+		return def
+	}
+	// A caller can resolve a tool without ever listing the catalog (share
+	// template resolution does). Build the index on demand so a name lookup
+	// never silently reports "no such tool".
+	s.GetToolDefinitions()
+	return lookupToolIndex(name)
+}
+
+func lookupToolIndex(name string) *ToolDefinition {
 	toolIndexMu.RLock()
 	defer toolIndexMu.RUnlock()
-	return toolIndex[name]
+	if def, ok := toolIndex[name]; ok {
+		return def
+	}
+	if canonical := canonicalToolName(name); canonical != name {
+		if def, ok := toolIndex[canonical]; ok {
+			return def
+		}
+	}
+	return nil
 }
 
 // ErrToolForbidden is returned by AuthorizeToolCall when a caller is not
@@ -2167,6 +2331,10 @@ var ErrToolForbidden = errors.New("tool not authorized")
 // failure returns a non-forbidden error (fail-closed) so the caller can map it
 // to a server error rather than a denial.
 func (s *Service) AuthorizeToolCall(ctx context.Context, toolName string, scopes []string) error {
+	// A deprecated legacy name carries the same authority as the consolidated
+	// tool that replaced it. Without this a legacy name would resolve to no
+	// definition and skip the scope gate entirely.
+	toolName = canonicalToolName(toolName)
 	toolDef := s.GetToolByName(toolName)
 	if toolDef == nil {
 		return nil
@@ -2251,7 +2419,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// during an agent run, which executes tools with the agent's context — and
 	// includes hidden built-ins such as set_session_title, which must not be
 	// reachable outside a restricted instance's allowlist.
-	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// Handle hidden built-in tools — these are always available, never listed,
@@ -2267,7 +2435,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// in the transports. This covers callers that do not pass through a transport
 	// pre-check — notably the ADK ToolPool during an agent run, which executes
 	// tools with the agent's context.
-	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// One authority decision for every transport. The three HTTP transports
@@ -2330,6 +2498,12 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		}
 	}
 
+	// Refuse a mistyped boolean for every tool that declares one, before the
+	// handler silently reads it as false (#24).
+	if err := validateBooleanArgs(toolDef, args); err != nil {
+		return nil, err
+	}
+
 	// Intra-run tool-result cache (issue #1192). Authority is enforced above on
 	// every call, including cache hits; the cache wraps only the tool-specific
 	// dispatch below. Returns uncached when the run context carries no cache
@@ -2343,6 +2517,13 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 // authority checks — ExecuteTool applies those before dispatch — and is split
 // out so the intra-run result cache can wrap it (issue #1192).
 func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
+	// A consolidated tool dispatches through the legacy case that implements the
+	// requested action. Unknown actions fail here, before any handler runs.
+	if handler, ok, err := resolveConsolidatedHandler(toolName, args); err != nil {
+		return nil, err
+	} else if ok {
+		toolName = handler
+	}
 	switch toolName {
 	case "project-get":
 		return s.executeGetProjectInfo(ctx, projectID)
@@ -2370,6 +2551,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeGetAvailableTemplates(ctx, projectID, args)
 	case "schema-list-installed":
 		return s.executeGetInstalledTemplates(ctx, projectID, args)
+	case "schema-pack-claims":
+		return s.executeSchemaPackClaims(ctx, projectID, args)
 	case "schema-assign":
 		return s.executeAssignSchema(ctx, projectID, args)
 	case "schema-assignment-update":
@@ -2558,6 +2741,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeCreateSkill(ctx, projectID, args)
 	case "skill-update":
 		return s.executeUpdateSkill(ctx, args)
+	case "skill-patch":
+		return s.executePatchSkill(ctx, args)
 	case "skill-delete":
 		return s.executeDeleteSkill(ctx, args)
 
@@ -2644,7 +2829,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
 		"blueprint-apply", "blueprint-apply-preview", "blueprint-unapply", "blueprint-versions",
-		"blueprint-list-applied", "blueprint-new-version", "blueprint-update":
+		"blueprint-list-applied", "blueprint-new-version", "blueprint-update",
+		"blueprint-updates-status", "blueprint-import-preview", "blueprint-model-overrides-get":
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
@@ -2819,7 +3005,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 	}
 
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil {
 		return nil, err
 	}
@@ -3230,7 +3416,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(queryCtx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(queryCtx, projectID, branchRef)
 	if err != nil {
 		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
@@ -3859,6 +4045,9 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	}
 	// Try parsing as UUID first.
 	if id, err := uuid.Parse(branchRef); err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, id); err != nil {
+			return nil, err
+		}
 		return &id, nil
 	}
 	// Look up by name within the project.
@@ -3876,7 +4065,44 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	if err != nil {
 		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
 	}
+	if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
+		return nil, err
+	}
 	return &row.ID, nil
+}
+
+// resolveReadableBranchID resolves a branch reference for a tool that READS branch
+// content, so it also enforces the read boundary: an agent run with no declared
+// scope reads the main graph only and cannot name a branch at all, while a run
+// inside a scope may name only its own branches. A caller with no boundary (a human
+// MCP client) keeps the pre-existing argument (#265).
+func (s *Service) resolveReadableBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	id, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || id == nil {
+		return id, err
+	}
+	if err := s.branchReadAllowedByScope(ctx, projectID, *id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+// branchRefAllowedByScope applies the run's branch scope to an already-resolved
+// branch reference, so no tool can name a branch outside the boundary the run
+// declared. It is the choke point for every read and every write that takes a
+// branch argument (entity query/search, type list, merge, delete), which is why
+// it lives here rather than in each tool. A nil scope — the main-only default,
+// and what a human MCP client carries — is not enforced: the boundary this
+// enforces is a scoped run's own declaration (#265).
+func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string, branchID uuid.UUID) error {
+	if BranchScopeFromContext(ctx).IsMainOnly() {
+		return nil
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("invalid project_id: %w", err)
+	}
+	return s.branchAllowedByScope(ctx, projectUUID, branchID)
 }
 
 // resolveOrCreateBranchID resolves a branch name or UUID to a branch UUID.
@@ -3888,6 +4114,9 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	}
 	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
 	if id, err := uuid.Parse(branchRef); err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, id); err != nil {
+			return nil, err
+		}
 		return &id, nil
 	}
 	// Look up by name.
@@ -3903,9 +4132,15 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 		Limit(1).
 		Scan(ctx, &row)
 	if err == nil {
+		if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
+			return nil, err
+		}
 		return &row.ID, nil
 	}
-	// Branch not found — auto-create it.
+	// Branch not found — auto-create it. A branch this run is creating itself is
+	// not gated by the read scope: the scope says which existing branches the run
+	// may read, and refusing a branch it just created would make the tool unusable
+	// without protecting anything.
 	if s.branchSvc == nil {
 		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
 	}
@@ -3946,7 +4181,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil {
 		return nil, err
 	}
@@ -3980,7 +4215,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			return err
 		}
 
-		branchFilter := ""
+		// Build the branch filter the same way every other read tool does: no
+		// branch named is the MAIN graph, never "all branches". An unfiltered scan
+		// would hand a main-only run (including a delegated child) unmerged work,
+		// and hand a scoped run branches outside its scope (#265).
+		branchFilter := " AND go.branch_id IS NULL"
 		branchArgs := []any{}
 		if branchID != nil {
 			branchFilter = " AND go.branch_id = ?"
@@ -4692,6 +4931,10 @@ func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string
 	req := &branches.CreateBranchRequest{
 		ProjectID: &projectID,
 		Name:      name,
+		// A branch created through an MCP tool was created by an agent, not a
+		// person. Attribution is server-derived (it is json:"-" on the request),
+		// so this is the only place that can say so.
+		Attribution: &branchorigin.Attribution{Origin: branchorigin.Agent},
 	}
 	if desc, ok := args["description"].(string); ok && desc != "" {
 		req.Description = &desc
@@ -4849,7 +5092,7 @@ func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectI
 	if branchRef == "" {
 		return nil, fmt.Errorf("missing required parameter: branch")
 	}
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil || branchID == nil {
 		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
@@ -6338,6 +6581,12 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 		return s.blueprintToolHandler.ExecuteBlueprintNewVersion(ctx, projectID, args)
 	case "blueprint-update":
 		return s.blueprintToolHandler.ExecuteBlueprintUpdate(ctx, projectID, args)
+	case "blueprint-updates-status":
+		return s.blueprintToolHandler.ExecuteBlueprintUpdatesStatus(ctx, projectID, args)
+	case "blueprint-import-preview":
+		return s.blueprintToolHandler.ExecuteBlueprintImportPreview(ctx, projectID, args)
+	case "blueprint-model-overrides-get":
+		return s.blueprintToolHandler.ExecuteBlueprintModelOverridesGet(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("unknown blueprint tool: %s", toolName)
 	}
@@ -6497,6 +6746,11 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 
 	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {
 		if id, err := uuid.Parse(branchIDStr); err == nil {
+			// Reading another branch's journal is a read: a main-only run cannot
+			// name one, and a scoped run may name only its own (#265).
+			if err := s.branchReadAllowedByScope(ctx, projectUUID.String(), id); err != nil {
+				return nil, err
+			}
 			params.BranchID = &id
 		}
 	}

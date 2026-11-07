@@ -333,6 +333,91 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 			}
 
 			r.validateProperties(p.Name, p.SourceFile, field+".properties", fmt.Sprintf("relationshipType %q", rt.Name), rt.Properties)
+
+			// Mirror the object-side check: a required name the type does not
+			// declare is stored but never enforced, so the author should hear
+			// about it while the pack is still being written.
+			if len(rt.Required) > 0 {
+				for j, req := range rt.Required {
+					if _, ok := rt.Properties[req]; !ok {
+						r.add(ValidationWarning, "pack", p.Name, p.SourceFile,
+							fmt.Sprintf("%s.required[%d]", field, j),
+							fmt.Sprintf("relationshipType %q: required property %q is not declared in properties", rt.Name, req))
+					}
+				}
+			}
+		}
+
+		r.validatePackMigrations(p)
+	}
+}
+
+// validatePackMigrations checks the pack's migration-hint block against the
+// types and properties the pack itself declares. The server enforces these
+// rules on install; checking them offline means an author sees a rename that
+// cannot apply ("to" names a type that does not exist) before pushing, instead
+// of in a 400 from the API. A rename's `from` is the previous version's name,
+// so only `to`/`type_name` are checked here.
+func (r *ValidationReport) validatePackMigrations(p PackFile) {
+	hints := p.Migrations
+	if hints == nil {
+		return
+	}
+	if strings.TrimSpace(hints.FromVersion) == "" {
+		r.add(ValidationError, "pack", p.Name, p.SourceFile, "migrations.from_version",
+			"from_version is required when a migrations block is present")
+	}
+
+	objProps := make(map[string]map[string]bool, len(p.ObjectTypes))
+	for _, ot := range p.ObjectTypes {
+		props := make(map[string]bool, len(ot.Properties))
+		for name := range ot.Properties {
+			props[name] = true
+		}
+		objProps[ot.Name] = props
+	}
+	relNames := make(map[string]bool, len(p.RelationshipTypes))
+	for _, rt := range p.RelationshipTypes {
+		relNames[rt.Name] = true
+	}
+	typeExists := func(name string) bool {
+		_, isObject := objProps[name]
+		return isObject || relNames[name]
+	}
+
+	for i, tr := range hints.TypeRenames {
+		field := fmt.Sprintf("migrations.type_renames[%d]", i)
+		if tr.From == "" || tr.To == "" {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, field, "from and to are both required")
+			continue
+		}
+		if !typeExists(tr.To) {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".to",
+				fmt.Sprintf("type %q does not exist in this pack", tr.To))
+		}
+	}
+	for i, pr := range hints.PropertyRenames {
+		field := fmt.Sprintf("migrations.property_renames[%d]", i)
+		props, ok := objProps[pr.TypeName]
+		if !ok {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".type_name",
+				fmt.Sprintf("type %q does not exist in this pack", pr.TypeName))
+			continue
+		}
+		if pr.From == "" || pr.To == "" {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, field, "from and to are both required")
+			continue
+		}
+		if !props[pr.To] {
+			r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".to",
+				fmt.Sprintf("property %q does not exist in type %q", pr.To, pr.TypeName))
+		}
+	}
+	for i, rp := range hints.RemovedProperties {
+		field := fmt.Sprintf("migrations.removed_properties[%d]", i)
+		if !typeExists(rp.TypeName) {
+			r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".type_name",
+				fmt.Sprintf("type %q does not exist in this pack", rp.TypeName))
 		}
 	}
 }
@@ -348,14 +433,16 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 // enforcing the canonical vocabulary.
 var validPropertyTypes = map[string]bool{
 	"string": true, "number": true, "integer": true, "boolean": true,
-	"date": true, "array": true, "object": true,
-	"url": true, "md5": true, "sha1": true, "sha256": true, "sha512": true,
+	"date": true, "time": true, "array": true, "object": true,
+	"url": true, "email": true, "phone": true, "country": true, "currency": true,
+	"md5": true, "sha1": true, "sha256": true, "sha512": true,
 }
 
 // stringPropertyTypes are the string-backed property types. They accept string
 // enum values and are the types where a string-shaped declaration makes sense.
 var stringPropertyTypes = map[string]bool{
-	"string": true, "date": true, "url": true,
+	"string": true, "date": true, "time": true, "url": true,
+	"email": true, "phone": true, "country": true, "currency": true,
 	"md5": true, "sha1": true, "sha256": true, "sha512": true,
 }
 
@@ -486,7 +573,7 @@ func (r *ValidationReport) validateProperties(packName, sourceFile, field, owner
 				fmt.Sprintf("%s property %q: type is not declared — the server accepts untyped properties, but --strict requires one", owner, propName))
 		case !validPropertyTypes[typ]:
 			r.add(ValidationWarning, "pack", packName, sourceFile, pf+".type",
-				fmt.Sprintf("%s property %q: unknown type %q (canonical: string, number, integer, boolean, date, array, object, url, md5, sha1, sha256, sha512) — the server accepts it leniently, but --strict rejects it", owner, propName, typ))
+				fmt.Sprintf("%s property %q: unknown type %q (canonical: string, number, integer, boolean, date, time, array, object, url, email, phone, country, currency, md5, sha1, sha256, sha512) — the server accepts it leniently, but --strict rejects it", owner, propName, typ))
 			validType = true
 		default:
 			validType = true

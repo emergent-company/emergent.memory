@@ -55,11 +55,11 @@ func TestMissingRequiredMCPTools_LegacyCatalog(t *testing.T) {
 }
 
 func TestMissingRequiredMCPTools_Partial(t *testing.T) {
-	actual := toolSet("schema-version", "entity-query", "not-a-real-tool")
+	actual := toolSet("schema-types", "entity", "not-a-real-tool")
 
 	missing := missingRequiredMCPTools(actual)
 
-	for _, present := range []string{"schema-version", "entity-query"} {
+	for _, present := range []string{"schema-types", "entity"} {
 		if slices.Contains(missing, present) {
 			t.Errorf("%q is advertised but reported missing: %v", present, missing)
 		}
@@ -83,10 +83,8 @@ func TestMissingRequiredMCPTools_Empty(t *testing.T) {
 // sample. Removing a name here must be a deliberate change to this test.
 func TestRequiredMCPToolsPinCore(t *testing.T) {
 	want := []string{
-		"entity-create", "entity-query", "entity-search", "forget",
-		"graph-traverse", "relationship-create", "remember",
-		"schema-get", "schema-list", "schema-version",
-		"search-hybrid", "search-semantic",
+		"entity", "entity-write", "relationship-write", "remember",
+		"schema", "schema-types", "search",
 	}
 	if !slices.Equal(requiredMCPTools, want) {
 		t.Fatalf("requiredMCPTools = %v, want %v", requiredMCPTools, want)

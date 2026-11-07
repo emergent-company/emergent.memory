@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 )
 
 // CreateGraphObjectRequest is the request body for creating a graph object.
@@ -375,6 +377,11 @@ type GetEdgesParams struct {
 	Types     []string // Multiple relationship type filters
 	Direction string   // "incoming", "outgoing", or "" (both)
 	Limit     int      // Max edges to return per direction; 0 = unbounded
+	// IncludeAllBranches bypasses the run's branch read boundary. Only internal
+	// mutating paths set it — the delete cascade must see every live relationship
+	// touching the object, not just the ones the caller may read (#265). It is
+	// never derived from a request or a tool argument.
+	IncludeAllBranches bool
 }
 
 // ObjectHistoryResponse is the response for version history.
@@ -587,6 +594,13 @@ type SearchResultItem struct {
 	LexicalScore *float32             `json:"lexicalScore,omitempty"`
 	VectorScore  *float32             `json:"vectorScore,omitempty"`
 	VectorDist   *float32             `json:"vectorDist,omitempty"`
+	// Branch provenance, set only when the item was read from an unmerged branch
+	// through an agent's branch scope (#265). Such a result is pending work, not
+	// merged fact; consumers must not present it as settled.
+	BranchID          *string `json:"branch_id,omitempty"`
+	BranchName        *string `json:"branch_name,omitempty"`
+	BranchOrigin      *string `json:"origin,omitempty"`
+	BranchOriginLabel *string `json:"origin_label,omitempty"`
 }
 
 // SearchResponse is the response for all search types.
@@ -603,6 +617,12 @@ type SearchResponseMeta struct {
 	ElapsedMs    float64             `json:"elapsed_ms"`
 	Timing       *SearchTimingDebug  `json:"timing,omitempty"`        // Only when debug=true
 	ChannelStats *SearchChannelStats `json:"channel_stats,omitempty"` // Only when debug=true
+	// BranchScopeNote, BranchesRead and BranchesOmitted describe a scoped search
+	// that fanned out over unmerged branches (#265). Empty/zero means the search
+	// read the main graph only.
+	BranchScopeNote string   `json:"branch_scope_note,omitempty"`
+	BranchesRead    []string `json:"branches_read,omitempty"`
+	BranchesOmitted int      `json:"branches_omitted,omitempty"`
 }
 
 // SearchTimingDebug contains timing breakdown for debug mode.
@@ -1108,6 +1128,10 @@ type ForkBranchRequest struct {
 	Name        string   `json:"name" validate:"required"`
 	Description *string  `json:"description,omitempty"`
 	FilterTypes []string `json:"filter_types,omitempty"` // If set, only copy objects of these types
+	// Attribution is who or what created the fork. Server-derived and never
+	// bound from a request body (json:"-"), so an API or MCP caller cannot claim
+	// to be another source. Nil means manual.
+	Attribution *branchorigin.Attribution `json:"-"`
 }
 
 // ForkBranchResponse is the response for a fork branch operation.

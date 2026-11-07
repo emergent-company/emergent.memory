@@ -37,6 +37,7 @@ var skillRepoRules = map[string]skillRepoRule{
 	"Create":               {why: "project-scoped create (ProjectID forced to the caller's project); cannot cross a project boundary"},
 	"Update":               {requiresAuthorizer: []string{"AuthorizeSkillWrite"}, why: "by-UUID mutation can cross a project boundary; must be gated by AuthorizeSkillWrite"},
 	"Delete":               {requiresAuthorizer: []string{"AuthorizeSkillWrite"}, why: "by-UUID mutation can cross a project boundary; must be gated by AuthorizeSkillWrite"},
+	"RecordSkillPatch":     {why: "usage telemetry upsert (patch_count/last_patched_at); no content read or write"},
 }
 
 // Violation is a single guard failure.

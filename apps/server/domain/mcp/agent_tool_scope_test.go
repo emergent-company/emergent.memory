@@ -92,9 +92,16 @@ func TestAgentToolsRequireHTTPEquivalentScope(t *testing.T) {
 			} else {
 				tools = svc.GetToolDefinitionsForProject(context.Background(), "proj-1")
 			}
+			_ = tools
 			for name, want := range agentToolScopeDecisions {
-				got := findToolByName(t, tools, name).RequiredScope
-				if got != want {
+				// Resolve through the index: the consolidated catalog may
+				// advertise the tool under a family name, but the deprecated
+				// per-verb name must resolve to the same scope.
+				def := svc.GetToolByName(name)
+				if def == nil {
+					t.Fatalf("tool %q not found in catalog", name)
+				}
+				if got := def.RequiredScope; got != want {
 					t.Errorf("tool %q scope = %q, want %q", name, got, want)
 				}
 			}

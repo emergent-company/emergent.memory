@@ -21,6 +21,8 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/branchscope"
+	"github.com/emergent-company/emergent.memory/pkg/branchsql"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
@@ -994,12 +996,13 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	if newVersion.DataClass == "" {
 		newVersion.DataClass = prevHead.DataClass
 	}
-	if newVersion.DataClass == DataClassSource {
+	if newVersion.DataClass == DataClassSource || newVersion.DataClass == DataClassAdopted {
 		if newVersion.OwnerSourceID == nil {
 			newVersion.OwnerSourceID = prevHead.OwnerSourceID
 		}
 	} else {
-		// The CHECK constraint allows an owner only on source-owned rows.
+		// The CHECK constraint allows an owner only on source- or adopted-owned
+		// rows.
 		newVersion.OwnerSourceID = nil
 	}
 
@@ -1199,6 +1202,48 @@ func (r *Repository) GetHistory(ctx context.Context, projectID, canonicalID uuid
 	return versions, nil
 }
 
+// branchReadPredicate returns a SQL predicate (and its args) bounding a
+// relationship query to the branches this run may read, or an empty predicate
+// when no boundary applies. A run with no branch boundary installed — a human API
+// client, which is every caller that predates agent branch scopes — is unbounded,
+// exactly as before. An agent run is bounded to the main graph, plus the branches
+// inside its declared scope when it has one (#265).
+func (r *Repository) branchReadPredicate(ctx context.Context, projectID uuid.UUID) (string, []any, error) {
+	if !branchscope.Installed(ctx) {
+		return "", nil, nil
+	}
+	scope := branchscope.FromContext(ctx)
+	if scope.IsMainOnly() {
+		return "branch_id IS NULL", nil, nil
+	}
+	var branches []Branch
+	err := r.db.NewSelect().
+		Model(&branches).
+		ColumnExpr("b.id, b.name, b.origin").
+		Where("b.project_id = ?", projectID).
+		Where("b.merged_at IS NULL").
+		Where(branchsql.DeletedExtractionSourceExclusion).
+		OrderExpr("b.created_at DESC").
+		Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return "", nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	ids := make([]uuid.UUID, 0, len(branches))
+	for _, b := range branches {
+		if !scope.AllowsOrigin(b.Origin) || !scope.AllowsName(b.Name) {
+			continue
+		}
+		ids = append(ids, b.ID)
+		if len(ids) >= scope.MaxBranches() {
+			break
+		}
+	}
+	if len(ids) == 0 {
+		return "branch_id IS NULL", nil, nil
+	}
+	return "(branch_id IS NULL OR branch_id IN (?))", []any{bun.In(ids)}, nil
+}
+
 // GetEdges returns incoming and outgoing relationships for an object by its canonical_id.
 // Relationships store canonical_id values in src_id/dst_id, so this matches directly.
 func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.UUID, params GetEdgesParams) ([]*GraphRelationship, []*GraphRelationship, error) {
@@ -1214,6 +1259,18 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.U
 		typeFilter = append(typeFilter, params.Types...)
 	}
 
+	// An agent run is bounded by its branch scope; a caller with no boundary is
+	// unbounded, exactly as before (#265). An internal cascade asks for every
+	// branch explicitly, so a write does not depend on the caller's read scope.
+	branchPredicate, branchArgs := "", []any(nil)
+	if !params.IncludeAllBranches {
+		var err error
+		branchPredicate, branchArgs, err = r.branchReadPredicate(ctx, projectID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	// Get incoming edges (object is destination) unless direction is "outgoing"
 	if params.Direction != "outgoing" {
 		q := r.db.NewSelect().
@@ -1223,6 +1280,9 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.U
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL").
 			OrderExpr("id ASC")
+		if branchPredicate != "" {
+			q = q.Where(branchPredicate, branchArgs...)
+		}
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -1244,6 +1304,9 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.U
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL").
 			OrderExpr("id ASC")
+		if branchPredicate != "" {
+			q = q.Where(branchPredicate, branchArgs...)
+		}
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -1284,6 +1347,17 @@ func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID
 		typeFilter = append(typeFilter, params.Types...)
 	}
 
+	// Same branch boundary as GetEdges (#265).
+	var branchPredicate string
+	var branchArgs []any
+	if !params.IncludeAllBranches {
+		var err error
+		branchPredicate, branchArgs, err = r.branchReadPredicate(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Get incoming edges (object is destination) unless direction is "outgoing"
 	if params.Direction != "outgoing" {
 		var incoming []*GraphRelationship
@@ -1294,6 +1368,9 @@ func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL").
 			OrderExpr("id ASC")
+		if branchPredicate != "" {
+			q = q.Where(branchPredicate, branchArgs...)
+		}
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -1324,6 +1401,9 @@ func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL").
 			OrderExpr("id ASC")
+		if branchPredicate != "" {
+			q = q.Where(branchPredicate, branchArgs...)
+		}
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -3304,6 +3384,15 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 				Where("project_id = ?", params.ProjectID).
 				Where("supersedes_id IS NULL").
 				Where("deleted_at IS NULL")
+
+			// Mirror the edge filter above: a traversal is confined to the main
+			// graph (or the one branch it was given), so a neighbour must not be
+			// resolved to a different branch's version of the same canonical id.
+			if params.BranchID != nil {
+				nq = nq.Where("branch_id = ?", *params.BranchID)
+			} else {
+				nq = nq.Where("branch_id IS NULL")
+			}
 
 			if len(params.ObjectTypes) > 0 {
 				nq = nq.Where("type IN (?)", bun.In(params.ObjectTypes))

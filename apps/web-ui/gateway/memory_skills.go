@@ -14,6 +14,38 @@ type Branch struct {
 	// MergedAt is set once the branch has been merged into main; empty while
 	// the branch is still open.
 	MergedAt string `json:"merged_at,omitempty"`
+	// Origin is who or what created the branch (extraction | agent | manual |
+	// system); OriginLabel is the human-readable source (source document
+	// filename, agent name, user name). Both are metadata for labels — every
+	// branch is read the same way.
+	Origin      string `json:"origin,omitempty"`
+	OriginID    string `json:"origin_id,omitempty"`
+	OriginLabel string `json:"origin_label,omitempty"`
+}
+
+// branchDisplayName is how a branch is presented to a person: its origin and
+// source when known ("Extraction · Invoice.pdf"), else its name. Extraction
+// branch names are opaque (extraction/<doc>/<job>) so the label is the only
+// readable thing in a picker.
+func branchDisplayName(b Branch) string {
+	switch b.Origin {
+	case "extraction":
+		if b.OriginLabel != "" {
+			return "Extraction · " + b.OriginLabel
+		}
+		return "Extraction · " + b.Name
+	case "agent":
+		if b.OriginLabel != "" {
+			return "Agent · " + b.OriginLabel
+		}
+		return "Agent · " + b.Name
+	case "system":
+		if b.OriginLabel != "" {
+			return "System · " + b.OriginLabel
+		}
+		return "System · " + b.Name
+	}
+	return b.Name
 }
 
 // ListBranches lists the project's graph branches (excluding the implicit main

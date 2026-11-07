@@ -91,6 +91,11 @@ var proseOnlyTools = []string{
 	"migration-archive-get",
 	"project-briefing",
 	"call_agent",
+	// Consolidated catalog: a family that mixes prose and envelope actions must
+	// not declare an outputSchema (see buildConsolidatedDefinition).
+	"project",
+	"schema-write",
+	"schema-migrate",
 }
 
 // envelopeSearchResponse wraps a graph search response in the uniform result

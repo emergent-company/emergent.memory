@@ -13,7 +13,7 @@ import (
 // shell, so the gallery has no sidebar, no topbar, and no project chrome. Its
 // body is passed in as a component: taking the content as a parameter keeps the
 // generated dependency graph stable (a render of a parameter is not a graph
-// edge), so the handler can compose it without changing the committed graph.
+// edge), so the handler can compose it without changing the derived graph.
 //
 // It embeds the feedback overlay (when configured), so the gallery itself is a
 // reportable surface — users can file feedback without leaving /dev/components.
@@ -103,7 +103,7 @@ templ ComponentGalleryPage(entries []GalleryEntry, gaps []AdoptionViewSummary) {
 // It is deliberately unexported: like galleryLayerSection / galleryEntryCard /
 // externalDepsList, it is a page-local section rendered with @ inside
 // ComponentGalleryPage, so the component-graph generator skips it (unexported
-// same-package callees are not catalog entries) and the committed graph does not
+// same-package callees are not catalog entries) and the derived graph does not
 // churn.
 templ adoptionGapSection(gaps []AdoptionViewSummary) {
 	{{ total := adoptionFindingCount(gaps) }}

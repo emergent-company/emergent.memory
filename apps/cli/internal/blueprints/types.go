@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"gopkg.in/yaml.v3"
 )
 
@@ -168,6 +169,11 @@ type PackFile struct {
 	UIConfigs               JSONBlob              `json:"uiConfigs"        yaml:"uiConfigs"`
 	ExtractionPrompts       JSONBlob              `json:"extractionPrompts" yaml:"extractionPrompts"`
 
+	// Migrations carries the pack's optional migration-hint block. The server
+	// accepts and validates it; without this field the CLI silently dropped it,
+	// so a blueprint's type/property renames never reached an upgrade.
+	Migrations *sdkschemas.SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
+
 	// SourceFile is the path from which this pack was loaded (not serialised).
 	SourceFile string `json:"-" yaml:"-"`
 }
@@ -279,6 +285,11 @@ type RelationshipTypeDef struct {
 	// service accepts them and the server's manifest round-trips them; the CLI
 	// must preserve them so install/update does not silently drop them.
 	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
+	// Required names the relationship-level properties the server enforces on
+	// every write of this type. It is preserved for the same reason as
+	// Properties: dropping it here makes the constraint unreachable from a
+	// pack, while a schema created through the API keeps it.
+	Required []string `json:"required,omitempty" yaml:"required,omitempty"`
 }
 
 // GetSourceTypes returns the effective source types, preferring the plural

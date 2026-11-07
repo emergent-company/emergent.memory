@@ -1,214 +1,136 @@
 import SwiftUI
 
-/// Project switcher at the leading edge of the window toolbar: a borderless
-/// dropdown showing the active project with its organisation above it — the
-/// same org-over-project hierarchy the web console's switcher uses, so a user
-/// who works in both surfaces reads the same label in the same place.
+/// Project switcher at the leading edge of the window toolbar.
 ///
-/// The list itself lives in `ProjectPickerMenu` (shared with the Project page
-/// card). This view only owns the trigger label and the loading/empty/error
-/// states that have no list to show.
+/// The trigger is one compact line — active project name, connection dot,
+/// disclosure chevron — the shape a Mac toolbar expects. The organisation used
+/// to be stacked above the name in a two-line label, which is a browser-navbar
+/// pattern: it was the only two-line item in the titlebar and it crowded the
+/// toolbar's baseline. The organisation now lives in the panel header, where
+/// there is room for it.
+///
+/// `MainWindowView` installs this control only while the account is effectively
+/// signed in — signed out there is nothing to switch, and the trigger's own
+/// "Sign in" label would sit beside the account control's button, one action
+/// twice. So this view has no signed-out label of its own: losing the session
+/// removes the control rather than relettering it, and the labels below describe
+/// the project store's own states should it report a signed-out session under a
+/// window the account store still calls signed in.
+///
+/// The panel itself is `ProjectSwitcherPanel`, a real view in a `.popover`
+/// rather than a `Menu` (see that type for why).
 struct ProjectSwitcherView: View {
     @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
 
-    /// Width the project name may occupy before it tail-truncates. The web
-    /// console caps its trigger label the same way instead of letting a long
-    /// project name widen the whole navbar.
-    private static let labelMaxWidth: CGFloat = 200
+    @State private var showsPanel = false
+
+    /// Width the project name may occupy before it tail-truncates, so a long
+    /// name cannot widen the toolbar.
+    private static let labelMaxWidth: CGFloat = 220
 
     var body: some View {
-        content
+        trigger
             .accessibilityIdentifier("toolbar.project")
             // Self-heal: if bootstrap ran before the session was restored (or
             // failed), load once when the picker appears with no projects.
             .task { await ensureProjectsLoaded() }
+            .popover(isPresented: $showsPanel, arrowEdge: .bottom) {
+                ProjectSwitcherPanel(onDismiss: { showsPanel = false })
+                    .padding(10)
+                    .frame(width: 320)
+            }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if !accountStore.isEffectivelySignedIn {
-            menu {
-                statusLabel(icon: "person.crop.circle.badge.questionmark",
-                            text: "Sign in to switch projects")
-            }
-        } else if !projectStore.projects.isEmpty {
-            menu { triggerLabel }
-        } else {
-            switch projectStore.state {
-            case .idle, .loading:
-                loadingLabel
-            case .signedOut:
-                menu {
-                    statusLabel(icon: "person.crop.circle.badge.questionmark",
-                                text: "Signed out")
-                }
-            case .error:
-                menu {
-                    statusLabel(icon: "exclamationmark.triangle",
-                                text: "Couldn't load projects", tint: .orange)
-                }
-            case .loaded:
-                menu {
-                    statusLabel(icon: "folder", text: "No projects")
-                }
-            }
-        }
-    }
+    // MARK: - Trigger
 
-    // MARK: - Menu chrome
-
-    /// One presentation for every state: the same label rhythm, the same
-    /// borderless menu chrome, and the same accessible name. The hand-rolled
-    /// horizontal padding per state is what made the old control read as a
-    /// loose glyph rather than a menu.
-    private func menu(@ViewBuilder label: () -> some View) -> some View {
-        Menu {
-            ProjectPickerMenu()
+    private var trigger: some View {
+        Button {
+            showsPanel.toggle()
         } label: {
-            label()
+            HStack(spacing: 5) {
+                if hasError {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                triggerTitle
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                connectionGlyph
+                trailingSlot
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .accessibilityLabel(Text(AccessibleNames.project))
         .accessibilityValue(accessibilityValue)
         .help(switchHelp)
-        // One switch at a time: the rows and the trigger both key off the
-        // store's `.loading`, so a second click can never race the first.
-        .disabled(projectStore.state == .loading)
-    }
-
-    // MARK: - Trigger label
-
-    /// Active project: organisation caption over the project name, with the
-    /// connected bolt kept only as a trailing status glyph. No leading icon —
-    /// the identity is the two words, and dropping the glyph is what stops the
-    /// symbol crowding the toolbar edge.
-    private var triggerLabel: some View {
-        switcherLabel {
-            VStack(alignment: .leading, spacing: 0) {
-                if let orgName = activeOrganizationName {
-                    Text(verbatim: orgName)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                HStack(spacing: 5) {
-                    if hasError {
-                        Image(systemName: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                    }
-                    activeProjectTitle
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    connectionGlyph
-                    trailingSlot
-                }
-            }
-            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
-        }
-    }
-
-    private func statusLabel(icon: String, text: LocalizedStringResource,
-                             tint: Color = .secondary) -> some View
-    {
-        switcherLabel {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .foregroundStyle(tint)
-                // The placeholder is a localization key, not runtime data.
-                Text(text)
-                    .foregroundStyle(tint)
-                    .lineLimit(1)
-                trailingSlot
-            }
-            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
-        }
-    }
-
-    private var loadingLabel: some View {
-        switcherLabel {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Loading projects…")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: Self.labelMaxWidth, alignment: .leading)
-        }
-    }
-
-    /// Single chrome entry point, so every label state shares one vertical and
-    /// horizontal rhythm. The trailing chevron/spinner sits in its own fixed
-    /// slot, so a switch in progress never changes the item's width.
-    private func switcherLabel(@ViewBuilder content: () -> some View) -> some View {
-        HStack(spacing: 5) {
-            content()
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 2)
-        .contentShape(Rectangle())
+        // One switch at a time: the first load has no list to show yet.
+        .disabled(projectStore.state == .loading && projectStore.projects.isEmpty)
     }
 
     @ViewBuilder
     private var connectionGlyph: some View {
         if let id = projectStore.activeProjectID, projectStore.isConnected(id) {
             Image(systemName: "bolt.fill")
-                .font(.caption2)
+                .font(.system(size: 9))
                 .foregroundStyle(.green)
                 .accessibilityLabel(Text("Connected"))
                 .help(Text("Connected — serving local tools"))
         }
     }
 
-    /// Chevron, or a spinner while a switch/list load is in flight, always in
-    /// the same reserved width so the toolbar does not jitter.
+    /// Chevron, or a spinner while a list load is in flight, always in the same
+    /// reserved width so the toolbar does not jitter.
     @ViewBuilder
     private var trailingSlot: some View {
-        if projectStore.state == .loading, !projectStore.projects.isEmpty {
+        if projectStore.state == .loading {
             ProgressView()
                 .controlSize(.small)
-                .frame(width: 12, height: 12)
+                .frame(width: 11, height: 11)
         } else {
             Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 12, height: 12)
+                .frame(width: 11, height: 11)
         }
     }
 
     // MARK: - Derived
+
+    /// Active project name (runtime data), or the state that stands in for it —
+    /// all on the localizable path.
+    private var triggerTitle: Text {
+        if let name = projectStore.activeProjectName?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        {
+            return Text(verbatim: name)
+        }
+        switch projectStore.state {
+        case .idle, .loading:
+            return Text("Loading projects…")
+        case .signedOut:
+            return Text("Signed out")
+        case .error:
+            return Text("Couldn't load projects")
+        case .loaded:
+            return Text("No projects")
+        }
+    }
 
     private var activeOrganizationName: String? {
         guard let project = projectStore.activeProject else { return nil }
         return projectStore.organizationName(for: project)
     }
 
-    /// Active project name (runtime data), or a localized placeholder when none
-    /// is selected — kept on the localizable path rather than folded into a
-    /// verbatim string.
-    private var activeProjectTitle: Text {
-        if let name = projectStore.activeProjectName?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
-        {
-            return Text(verbatim: name)
-        }
-        return Text("Select project")
-    }
-
     /// VoiceOver value for the trigger. The accessible NAME stays the stable
-    /// action ("Switch project"); the live context travels as the value, so
-    /// unlike a replaced label it keeps the organisation and project name the
-    /// previous control announced.
+    /// action ("Switch project"); the live context travels as the value.
     private var accessibilityValue: Text {
-        if !accountStore.isEffectivelySignedIn {
-            return Text("Signed out")
-        }
         if projectStore.projects.isEmpty {
             switch projectStore.state {
             case .idle, .loading:
@@ -249,8 +171,7 @@ struct ProjectSwitcherView: View {
     }
 
     /// A failed switch keeps the loaded list usable but must stay visible, so
-    /// the trigger carries a warning glyph (as it did before) rather than only
-    /// a tooltip.
+    /// the trigger carries a warning glyph rather than only a tooltip.
     private var hasError: Bool {
         if case .error = projectStore.state {
             return true

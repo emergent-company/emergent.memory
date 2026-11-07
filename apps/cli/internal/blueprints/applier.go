@@ -218,6 +218,7 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 		RelationshipTypeSchemasSnake: relSchemas,
 		UIConfigsSnake:               uiCfgs,
 		ExtractionPromptsSnake:       exPrompts,
+		Migrations:                   p.Migrations,
 	}
 	if p.Description != "" {
 		req.Description = &p.Description
@@ -267,6 +268,7 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 		RelationshipTypeSchemas: relSchemas,
 		UIConfigs:               uiCfgs,
 		ExtractionPrompts:       exPrompts,
+		Migrations:              p.Migrations,
 	}
 	if p.Description != "" {
 		req.Description = &p.Description
@@ -839,6 +841,7 @@ type relTypeAPI struct {
 	SourceType  string         `json:"sourceType"`
 	TargetType  string         `json:"targetType"`
 	Properties  map[string]any `json:"properties,omitempty"`
+	Required    []string       `json:"required,omitempty"`
 }
 
 // expandRelationshipTypes expands plural sourceTypes/targetTypes declarations
@@ -875,6 +878,7 @@ func expandRelationshipTypes(defs []RelationshipTypeDef) ([]relTypeAPI, error) {
 				SourceType:  d.SourceType,
 				TargetType:  d.TargetType,
 				Properties:  d.Properties,
+				Required:    d.Required,
 			})
 			continue
 		}
@@ -887,6 +891,7 @@ func expandRelationshipTypes(defs []RelationshipTypeDef) ([]relTypeAPI, error) {
 					SourceType:  src,
 					TargetType:  tgt,
 					Properties:  d.Properties,
+					Required:    d.Required,
 				})
 			}
 		}

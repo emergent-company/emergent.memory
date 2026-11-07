@@ -201,6 +201,9 @@ func getRelationshipsFromState(state session.State) ([]ExtractedRelationship, er
 					Type:        getString(m, "type"),
 					Description: getString(m, "description"),
 				}
+				if props, ok := m["properties"].(map[string]any); ok && len(props) > 0 {
+					rel.Properties = props
+				}
 				if rel.SourceRef != "" && rel.TargetRef != "" {
 					rels = append(rels, rel)
 				}

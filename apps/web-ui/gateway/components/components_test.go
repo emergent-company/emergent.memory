@@ -62,21 +62,37 @@ func TestMetaGridRendersGapAndCols(t *testing.T) {
 	assertContains(t, html, `<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">`)
 }
 
-// --- confirm ---
+// --- confirm / status circle ---
 
-func TestConfirmIconRendersDefaultTrashGlyph(t *testing.T) {
-	html := renderHTML(t, ConfirmIcon(""))
-	assertContains(t, html,
-		`class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"`,
-		"lucide--trash-2",
-		"size-5",
-	)
+// The circle's class list is contractual: it is the component's whole API for
+// this surface (the conventions spec exempts the confirm-dialog icon circle
+// from the no-class-string-assertions policy).
+func TestIconCircleRendersEveryTone(t *testing.T) {
+	cases := []struct {
+		tone  IconCircleTone
+		class string
+	}{
+		{IconCircleToneError, "bg-error/10 text-error"},
+		{IconCircleToneWarning, "bg-warning/10 text-warning"},
+		{IconCircleTonePrimary, "bg-primary/10 text-primary"},
+		{IconCircleToneInfo, "bg-info/10 text-info"},
+		{IconCircleToneSuccess, "bg-success/10 text-success"},
+	}
+	for _, c := range cases {
+		html := renderHTML(t, IconCircle("lucide--trash-2", c.tone))
+		assertContains(t, html,
+			`class="`+c.class+` grid size-10 shrink-0 place-items-center rounded-full"`,
+			"lucide--trash-2",
+			"size-5",
+			`aria-hidden="true"`,
+		)
+	}
 }
 
-func TestConfirmIconRendersOverride(t *testing.T) {
-	html := renderHTML(t, ConfirmIcon("lucide--alert-triangle"))
-	assertContains(t, html, "lucide--alert-triangle")
-	assertNotContains(t, html, "lucide--trash-2")
+func TestIconCircleZeroToneIsDestructive(t *testing.T) {
+	html := renderHTML(t, IconCircle("lucide--alert-triangle", ""))
+	assertContains(t, html, "bg-error/10 text-error")
+	assertNotContains(t, html, "bg-warning/10")
 }
 
 func TestDeleteWarningRendersSentence(t *testing.T) {
@@ -234,6 +250,52 @@ func TestToggleFieldTipIsDescribedBySwitch(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-tip="`+tip+`"`) {
 		t.Error("the visual tooltip must remain for pointer users")
+	}
+}
+
+// TestToggleFieldWiringStaysOnTheSwitch pins the handoff to form.ToggleInput
+// (#314). The wrapper now passes one Attrs map to a bare control that forces no
+// id, so the wiring the hand-rolled markup used to emit is assembled in the
+// wrapper: the name-derived id, the tip reference and the caller's htmx wiring
+// must all land on the <input> itself, exactly once.
+func TestToggleFieldWiringStaysOnTheSwitch(t *testing.T) {
+	html := renderHTML(t, ToggleField("enabled", "Enable voice", "Master switch for voice.", true,
+		templ.Attributes{
+			"hx-post":    "/settings/voice/enabled",
+			"hx-trigger": "change",
+			// A caller-supplied id must not win: the component owns the
+			// name-derived one, which is what the old markup produced too.
+			"id": "caller-supplied",
+		}))
+
+	start := strings.Index(html, "<input")
+	if start == -1 {
+		t.Fatalf("no switch rendered:\n%s", html)
+	}
+	end := strings.Index(html[start:], ">")
+	if end == -1 {
+		t.Fatalf("switch tag is not terminated:\n%s", html)
+	}
+	tag := html[start : start+end]
+	for _, want := range []string{
+		`type="checkbox"`,
+		`name="enabled"`,
+		`id="enabled"`,
+		`checked`,
+		`aria-describedby="toggle-tip-enabled"`,
+		`hx-post="/settings/voice/enabled"`,
+		`hx-trigger="change"`,
+	} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("switch tag lacks %s:\n%s", want, tag)
+		}
+	}
+	if strings.Contains(html, "caller-supplied") {
+		t.Error("a caller-supplied id must not replace the component's name-derived id")
+	}
+	// The switch id and the tip's description id; nothing else may carry one.
+	if got := strings.Count(html, `id="`); got != 2 {
+		t.Errorf("want exactly 2 id attributes (switch + tip description), got %d:\n%s", got, html)
 	}
 }
 

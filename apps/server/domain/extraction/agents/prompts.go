@@ -3,8 +3,15 @@ package agents
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 )
+
+// topLevelObjectFields are the object output's top-level fields. They are
+// carried beside `properties` in the entity output format, so the entity
+// prompt must not also list them as property slots.
+var topLevelObjectFields = map[string]bool{"name": true, "description": true, "type": true}
 
 // EntityExtractorSystemPrompt is the base system prompt for entity extraction.
 const EntityExtractorSystemPrompt = `You are a knowledge graph builder. Extract real-world objects from the document — the actual things the text is about, not the lines or messages themselves.
@@ -60,6 +67,7 @@ For EACH relationship you find:
 2. Identify the target entity (by temp_id)
 3. Choose a relationship type from the "Available Relationship Types" section below
 4. Provide a description of this specific relationship instance
+5. Fill the "properties" object with the attributes the chosen relationship type declares — include every property marked (required) when the document supports it
 
 ## CRITICAL RULES
 
@@ -116,12 +124,23 @@ type PropertyDef struct {
 	Description string       `json:"description,omitempty"`
 	Default     any          `json:"default,omitempty"`
 	Items       *PropertyDef `json:"items,omitempty"`
+	// Minimum/Maximum bound a number/integer property. They are nil when the
+	// schema declares no bound, so 0 stays distinguishable from "unset".
+	Minimum *float64 `json:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty"`
+	// Format names a semantic string format (email, phone, country, currency,
+	// time). It validates a `type: string` property the same way the matching
+	// type does, so the JSON-Schema spelling the authoring guides recommend is
+	// not a no-op.
+	Format string `json:"format,omitempty"`
 }
 
 // promptTypeLabel renders the type the extraction prompt shows for a property.
 // An array's declared element type is named ("array of string") so the model
 // emits elements of the declared type instead of guessing from the property
-// description.
+// description. The declared `format` and `minimum`/`maximum` bounds are shown
+// too: write-time validation enforces them, so a prompt that hid them asked
+// the model for a value it could not know was invalid.
 func (p PropertyDef) promptTypeLabel() string {
 	t := p.Type
 	if t == "" {
@@ -130,7 +149,67 @@ func (p PropertyDef) promptTypeLabel() string {
 	if t == "array" && p.Items != nil && p.Items.Type != "" && p.Items.Type != "array" {
 		t = "array of " + p.Items.Type
 	}
+	var constraints []string
+	if p.Format != "" {
+		constraints = append(constraints, "format "+p.Format)
+	}
+	if p.Minimum != nil {
+		constraints = append(constraints, "min "+formatBound(*p.Minimum))
+	}
+	if p.Maximum != nil {
+		constraints = append(constraints, "max "+formatBound(*p.Maximum))
+	}
+	if len(constraints) > 0 {
+		t += ", " + strings.Join(constraints, ", ")
+	}
 	return t
+}
+
+// formatBound renders a numeric bound without an exponent or a trailing ".0",
+// which is what a reader of the prompt expects for schema bounds.
+func formatBound(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// propertyListLines renders a type's declared properties as prompt bullet
+// lines: one per property, sorted by name so the same schema produces the same
+// prompt, naming the declared type (`promptTypeLabel`), the required marking
+// and the description. It is the single formatter both the object and the
+// relationship sections use.
+//
+// skipTopLevel drops the object output's top-level fields, which are carried
+// beside `properties` rather than inside it. Underscore-prefixed names are
+// internal provenance and never rendered.
+func propertyListLines(properties map[string]PropertyDef, required []string, skipTopLevel bool) []string {
+	if len(properties) == 0 {
+		return nil
+	}
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, name := range required {
+		requiredSet[name] = struct{}{}
+	}
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		if strings.HasPrefix(name, "_") {
+			continue
+		}
+		if skipTopLevel && topLevelObjectFields[name] {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		def := properties[name]
+		marker := ""
+		if _, ok := requiredSet[name]; ok {
+			marker = " (required)"
+		}
+		lines = append(lines, fmt.Sprintf("- `%s` (%s)%s: %s\n", name, def.promptTypeLabel(), marker, def.Description))
+	}
+	return lines
 }
 
 // RelationshipSchema represents a relationship type schema.
@@ -187,9 +266,7 @@ func BuildEntityExtractionPrompt(
 	sb.WriteString("\n\n## Entity Types and Their Properties\n\n")
 	sb.WriteString(fmt.Sprintf("Extract ONLY these types: %s\n\n", strings.Join(typesToExtract, ", ")))
 
-	// Top-level fields not to include in properties
-	topLevelFields := map[string]bool{"name": true, "description": true, "type": true}
-
+	// Top-level fields are carried beside `properties`, not inside it.
 	// Add type descriptions with property schemas
 	for _, typeName := range typesToExtract {
 		schema, ok := objectSchemas[typeName]
@@ -205,27 +282,10 @@ func BuildEntityExtractionPrompt(
 		}
 
 		// Include property definitions (excluding top-level fields)
-		if len(schema.Properties) > 0 {
-			additionalProps := make(map[string]PropertyDef)
-			for propName, propDef := range schema.Properties {
-				if !topLevelFields[propName] && !strings.HasPrefix(propName, "_") {
-					additionalProps[propName] = propDef
-				}
-			}
-
-			if len(additionalProps) > 0 {
-				sb.WriteString("**Additional Properties** (stored in `properties` object):\n")
-				for propName, propDef := range additionalProps {
-					propType := propDef.promptTypeLabel()
-					required := ""
-					for _, req := range schema.Required {
-						if req == propName {
-							required = " (required)"
-							break
-						}
-					}
-					sb.WriteString(fmt.Sprintf("- `%s` (%s)%s: %s\n", propName, propType, required, propDef.Description))
-				}
+		if lines := propertyListLines(schema.Properties, schema.Required, true); len(lines) > 0 {
+			sb.WriteString("**Additional Properties** (stored in `properties` object):\n")
+			for _, line := range lines {
+				sb.WriteString(line)
 			}
 		}
 		sb.WriteString("\n")
@@ -341,6 +401,18 @@ func BuildRelationshipPrompt(
 
 		if schema.ExtractionGuidelines != "" {
 			sb.WriteString(fmt.Sprintf("**Guidelines:**\n%s\n\n", schema.ExtractionGuidelines))
+		}
+
+		// Declared relationship-level properties are validated at write time,
+		// so the model must be told they exist: an edge property the prompt
+		// never mentions is never extracted, and a required one fails the
+		// write instead of being filled.
+		if lines := propertyListLines(schema.Properties, schema.Required, false); len(lines) > 0 {
+			sb.WriteString("**Properties** (stored in this relationship's `properties` object):\n")
+			for _, line := range lines {
+				sb.WriteString(line)
+			}
+			sb.WriteString("\n")
 		}
 	}
 
@@ -463,6 +535,7 @@ Each relationship must have:
 - target_ref (string): temp_id of the target entity
 - type (string): Relationship type from the allowed list above
 - description (string, optional): Description of this relationship instance
+- properties (object, optional): Relationship-level attributes declared for this type above. Fill every property the type declares, and always include the ones marked (required).
 
 Example:
 {
@@ -471,7 +544,8 @@ Example:
       "source_ref": "person_john",
       "target_ref": "organization_disciples",
       "type": "MEMBER_OF",
-      "description": "John was one of the twelve disciples"
+      "description": "John was one of the twelve disciples",
+      "properties": {"role": "apostle"}
     }
   ]
 }
@@ -578,8 +652,6 @@ Rules:
 		sb.WriteString("\n")
 	}
 
-	topLevelFields := map[string]bool{"name": true, "description": true, "type": true}
-
 	sb.WriteString("## Schema Types\n\n")
 	sb.WriteString(fmt.Sprintf("Normalise into ONLY these types: %s\n\n", strings.Join(typesToNorm, ", ")))
 
@@ -592,24 +664,10 @@ Rules:
 		if hint, ok := typeHints[typeName]; ok && hint != "" {
 			sb.WriteString(fmt.Sprintf("**Hint:** %s\n", hint))
 		}
-		if ok && len(schema.Properties) > 0 {
+		if lines := propertyListLines(schema.Properties, schema.Required, true); len(lines) > 0 {
 			sb.WriteString("**Properties** (in `properties` object):\n")
-			for propName, propDef := range schema.Properties {
-				if topLevelFields[propName] || strings.HasPrefix(propName, "_") {
-					continue
-				}
-				propType := propDef.Type
-				if propType == "" {
-					propType = "string"
-				}
-				required := ""
-				for _, req := range schema.Required {
-					if req == propName {
-						required = " (required)"
-						break
-					}
-				}
-				sb.WriteString(fmt.Sprintf("- `%s` (%s)%s: %s\n", propName, propType, required, propDef.Description))
+			for _, line := range lines {
+				sb.WriteString(line)
 			}
 		}
 		sb.WriteString("\n")

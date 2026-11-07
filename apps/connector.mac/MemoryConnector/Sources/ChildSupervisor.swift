@@ -132,6 +132,10 @@ final class ChildSupervisor {
         let proc = Process()
         proc.executableURL = url
         proc.arguments = EngineManager.launchArguments(configPath: configPath, port: port)
+        // The engine relays stdio MCP servers by `exec`-ing the configured
+        // command, so it needs the user's tool directories on PATH — a
+        // Finder-launched app never sees a login shell's (see ChildEnvironment).
+        proc.environment = ChildEnvironment.launchEnvironment()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         proc.standardOutput = stdoutPipe
@@ -147,6 +151,9 @@ final class ChildSupervisor {
             state = .running
             appendToLog("=== memory-connector engine start ===\n")
             appendToLog("engine running (pid \(proc.processIdentifier))\n")
+            // The relay resolves stdio MCP server commands through this PATH;
+            // printing it is what turns "uvx not found" into a diagnosable line.
+            appendToLog("engine PATH \(proc.environment?["PATH"] ?? "")\n")
         } catch {
             state = .failed
             lastError = "failed to launch engine: \(error.localizedDescription)"

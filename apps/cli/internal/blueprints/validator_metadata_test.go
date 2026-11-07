@@ -150,6 +150,37 @@ func TestValidateObjectMetadata_StructuralErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("relationship required names undeclared property", func(t *testing.T) {
+		p := blueprints.PackFile{
+			Name:       "p",
+			Version:    "1.0.0",
+			SourceFile: "schemas/p.yaml",
+			ObjectTypes: []blueprints.ObjectTypeDef{{
+				Name:       "Doc",
+				Label:      "Document",
+				Labels:     []string{"doc"},
+				Properties: map[string]any{"title": map[string]any{"type": "string"}},
+				UI:         map[string]any{"icon": "file-text", "color": "#3B82F6"},
+			}},
+			RelationshipTypes: []blueprints.RelationshipTypeDef{{
+				Name:       "links",
+				Label:      "Links",
+				SourceType: "Doc",
+				TargetType: "Doc",
+				Properties: map[string]any{"weight": map[string]any{"type": "number"}},
+				Required:   []string{"weight", "missing"},
+			}},
+		}
+
+		report := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
+		if !hasIssue(report.Warnings(), "relationshipTypes[0].required[1]", `required property "missing" is not declared`) {
+			t.Fatalf("expected a relationship required-property warning, got: %v", report.Warnings())
+		}
+		if report.HasErrors() {
+			t.Fatalf("a relationship required finding must not be an error, got: %v", report.Errors())
+		}
+	})
+
 	t.Run("property definition must be a mapping", func(t *testing.T) {
 		p := validMetadataPack()
 		p.ObjectTypes[0].Properties["bad"] = "string"
@@ -162,12 +193,12 @@ func TestValidateObjectMetadata_StructuralErrors(t *testing.T) {
 	t.Run("property type is required and constrained", func(t *testing.T) {
 		p := validMetadataPack()
 		p.ObjectTypes[0].Properties["noType"] = map[string]any{}
-		p.ObjectTypes[0].Properties["badType"] = map[string]any{"type": "currency"}
+		p.ObjectTypes[0].Properties["badType"] = map[string]any{"type": "uuid"}
 		report := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
 		if !hasIssue(report.Warnings(), "properties.noType.type", "type is not declared") {
 			t.Fatalf("expected a missing-type warning, got: %v", report.Warnings())
 		}
-		if !hasIssue(report.Warnings(), "properties.badType.type", `unknown type "currency"`) {
+		if !hasIssue(report.Warnings(), "properties.badType.type", `unknown type "uuid"`) {
 			t.Fatalf("expected an unknown-type warning, got: %v", report.Warnings())
 		}
 		if report.HasErrors() {
