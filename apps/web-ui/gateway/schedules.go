@@ -92,12 +92,11 @@ func (s *Server) uiSchedule(c echo.Context) error {
 	return s.page(c, pageTitle(agent.Name), ScheduleDetailPage(data))
 }
 
-// uiSchedulesNew renders the create form for a new schedule. ?err=1 surfaces
-// PRG feedback from the create flow.
+// uiSchedulesNew renders the create form for a new schedule.
 func (s *Server) uiSchedulesNew(c echo.Context) error {
 	defs, err := s.memory.ListAgentDefinitions(c.Request().Context())
 	captureError(err)
-	return s.page(c, pageTitle("New schedule"), SchedulesNewPage(defs, flashError(c)))
+	return s.page(c, pageTitle("New schedule"), SchedulesNewPage(defs, nil))
 }
 
 // scheduleFromForm parses the schedule create/edit form. strategyType is
@@ -137,17 +136,50 @@ func scheduleFromForm(c echo.Context) (*ScheduledAgent, error) {
 }
 
 // uiScheduleCreate handles the new-schedule form (PRG): it forwards the fields
-// to memory and redirects back to the list, or to ?err=1 when memory rejects
-// them (invalid cron, missing definition, …).
+// to memory and redirects back to the list, or re-renders the form with the
+// submitted values and the error when validation or memory rejects the write.
 func (s *Server) uiScheduleCreate(c echo.Context) error {
 	in, err := scheduleFromForm(c)
 	if err != nil {
-		return redirectWithError(c, "/schedules/new", err)
+		return s.renderScheduleCreate(c, scheduleDraftFromForm(c), err)
 	}
 	if _, err := s.memory.CreateScheduledAgent(c.Request().Context(), in); err != nil {
-		return redirectWithError(c, "/schedules/new", err)
+		return s.renderScheduleCreate(c, scheduleDraftFromForm(c), userFacingError(err))
 	}
 	return c.Redirect(http.StatusSeeOther, "/schedules?created=1")
+}
+
+// scheduleDraft carries the create form's submitted values so a rejected
+// submission re-renders the same fields instead of blanking them (issue #239).
+type scheduleDraft struct {
+	Name              string
+	Prompt            string
+	CronSchedule      string
+	AgentDefinitionID string
+	Enabled           bool
+	Error             string
+}
+
+// scheduleDraftFromForm reads the raw create-form values without validation, so
+// the re-rendered form keeps exactly what the user typed.
+func scheduleDraftFromForm(c echo.Context) scheduleDraft {
+	return scheduleDraft{
+		Name:              strings.TrimSpace(c.FormValue("name")),
+		Prompt:            c.FormValue("prompt"),
+		CronSchedule:      strings.TrimSpace(c.FormValue("cronSchedule")),
+		AgentDefinitionID: strings.TrimSpace(c.FormValue("agentDefinitionId")),
+		Enabled:           c.FormValue("enabled") == "on",
+	}
+}
+
+// renderScheduleCreate re-renders the new-schedule form with the submitted
+// values and the error, so a rejected save never blanks the fields the user
+// already filled in.
+func (s *Server) renderScheduleCreate(c echo.Context, draft scheduleDraft, err error) error {
+	draft.Error = err.Error()
+	defs, derr := s.memory.ListAgentDefinitions(c.Request().Context())
+	captureError(derr)
+	return s.page(c, pageTitle("New schedule"), SchedulesNewPage(defs, &draft))
 }
 
 // uiScheduleUpdate handles the edit form on the detail page (PRG). All form

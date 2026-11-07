@@ -99,6 +99,19 @@ func TestAccountMenuSingleAccountNoSwitch(t *testing.T) {
 	}
 }
 
+// TestAppSidebarVersionFooter asserts the sidebar footer renders the running
+// build version + commit, so a reporter can copy it into an issue instead of
+// answering "version not shown in the UI".
+func TestAppSidebarVersionFooter(t *testing.T) {
+	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, 0), false))
+	if !strings.Contains(html, `data-testid="app-version"`) {
+		t.Error("sidebar footer must render the build version")
+	}
+	if !strings.Contains(html, buildVersionLabel()) {
+		t.Errorf("sidebar footer missing the version label %q", buildVersionLabel())
+	}
+}
+
 // TestAppShellAccountMenuAbsentDevMode asserts the shell renders WITHOUT the
 // account menu in dev mode (no session identity → user nil).
 func TestAppShellAccountMenuAbsentDevMode(t *testing.T) {

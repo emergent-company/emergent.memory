@@ -793,11 +793,17 @@ func TestUIBackupScheduleSaveCustomCron(t *testing.T) {
 }
 
 // TestUIBackupScheduleSaveRejected covers memory rejecting the write (bad cron
-// or retention): the message goes to the ?err= flash, not a 500.
+// or retention): the message goes to the ?err= flash, not a 500 — and the flash
+// carries the sanitized validation copy, not the raw transport prefix or the
+// internal "invalid backup schedule:" sentinel.
 func TestUIBackupScheduleSaveRejected(t *testing.T) {
 	f := &fakeMemory{
-		project:         backupProject(),
-		saveScheduleErr: fmt.Errorf("memory 400 bad_request: cron schedule fires every 5m0s; the minimum interval is 15 minutes"),
+		project: backupProject(),
+		saveScheduleErr: &memoryHTTPError{
+			Status:  http.StatusBadRequest,
+			Code:    "bad_request",
+			Message: `invalid backup schedule: cron schedule "*/5 * * * *" fires every 5m0s; the minimum interval is 15 minutes`,
+		},
 	}
 	_, e := newBackupsEcho(f)
 
@@ -810,8 +816,23 @@ func TestUIBackupScheduleSaveRejected(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/backups?err=") {
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/backups?err=") {
 		t.Errorf("location = %q, want error flash", loc)
+	}
+	// The flash must be the sentence, stripped of both the transport prefix and
+	// the internal sentinel.
+	got, err := url.QueryUnescape(strings.TrimPrefix(loc, "/backups?err="))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	for _, unwanted := range []string{"memory 400 bad_request:", "invalid backup schedule:"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("flash leaks %q: %q", unwanted, got)
+		}
+	}
+	if !strings.Contains(got, "minimum interval is 15 minutes") {
+		t.Errorf("flash dropped the actionable copy: %q", got)
 	}
 }
 
@@ -909,5 +930,13 @@ func TestUIBackupsPageScheduleLoadFailure(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/backups/b1/download"`) {
 		t.Error("a schedule read failure must not hide the backup list")
+	}
+	// The failure must show exactly once — in the card's own "Could not load the
+	// saved backup schedule" paragraph, not also as a flash toast.
+	if !strings.Contains(body, "Could not load the saved backup schedule") {
+		t.Error("the card must explain the schedule read failure in place")
+	}
+	if strings.Contains(body, memoryUnavailableMessage) {
+		t.Error("the schedule read failure must not be flashed a second time")
 	}
 }

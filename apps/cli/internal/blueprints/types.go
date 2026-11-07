@@ -349,6 +349,20 @@ type AgentFile struct {
 	SourceFile string `json:"-" yaml:"-"`
 }
 
+// effectiveTriggerType mirrors the server applier's defaulting
+// (apps/server/domain/blueprints/apply.go applyAgent): an empty triggerType is a
+// reaction trigger when a reactionConfig is present, otherwise a schedule. The
+// validator and the CLI applier both branch on it, so it lives with the type.
+func (a AgentFile) effectiveTriggerType() string {
+	if a.TriggerType != "" {
+		return a.TriggerType
+	}
+	if a.ReactionConfig != nil {
+		return "reaction"
+	}
+	return "schedule"
+}
+
 // ReactionConfig mirrors the server's reaction trigger configuration for a
 // runtime agent, so memory blueprints round-trips the block losslessly.
 type ReactionConfig struct {

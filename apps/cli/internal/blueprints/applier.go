@@ -1095,14 +1095,7 @@ func (b *Blueprinter) ensureRuntimeAgent(ctx context.Context, ag AgentFile, defI
 		return nil
 	}
 
-	triggerType := ag.TriggerType
-	if triggerType == "" {
-		if ag.ReactionConfig != nil {
-			triggerType = "reaction"
-		} else {
-			triggerType = "schedule"
-		}
-	}
+	triggerType := ag.effectiveTriggerType()
 	cron := ag.CronSchedule
 	if cron == "" {
 		cron = "0 0 * * *"

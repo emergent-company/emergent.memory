@@ -606,30 +606,49 @@ func (m *openaiResponsesModel) GenerateContent(ctx context.Context, req *model.L
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			m.baseURL+"/responses",
-			bytes.NewReader(bodyBytes))
-		if err != nil {
-			yield(nil, fmt.Errorf("openai-responses: failed to create request: %w", err))
-			return
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		if err := ApplyAuth(httpReq, m.auth, m.apiKey); err != nil {
-			yield(nil, fmt.Errorf("openai-responses: %w", err))
-			return
-		}
+		// Answer a rate limit or a transient gateway fault here rather than
+		// letting it reach the job that owns this call: the extraction job's
+		// retry is immediate, so a 429 would otherwise consume its whole
+		// budget in seconds (#237, #254).
+		var (
+			resp     *http.Response
+			respBody []byte
+		)
+		for attempt := 0; ; attempt++ {
+			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost,
+				m.baseURL+"/responses",
+				bytes.NewReader(bodyBytes))
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("openai-responses: failed to create request: %w", reqErr))
+				return
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			if authErr := ApplyAuth(httpReq, m.auth, m.apiKey); authErr != nil {
+				yield(nil, fmt.Errorf("openai-responses: %w", authErr))
+				return
+			}
 
-		resp, err := m.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai-responses: request failed: %w", err))
-			return
-		}
-		defer resp.Body.Close()
+			resp, reqErr = m.client.Do(httpReq)
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("openai-responses: request failed: %w", reqErr))
+				return
+			}
 
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai-responses: failed to read response: %w", err))
-			return
+			respBody, reqErr = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if reqErr != nil {
+				yield(nil, fmt.Errorf("openai-responses: failed to read response: %w", reqErr))
+				return
+			}
+
+			wait, retry := providerRetryWait(attempt, resp.StatusCode, resp.Header.Get("Retry-After"))
+			if !retry {
+				break
+			}
+			if !sleepWithContext(ctx, wait) {
+				yield(nil, retryContextError("openai-responses", ctx))
+				return
+			}
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {

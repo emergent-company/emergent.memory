@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -177,6 +178,30 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.SDK.SetContext(orgID, projectID)
 	c.cfg.OrgID = orgID
 	c.cfg.ProjectID = projectID
+}
+
+// ResolveProjectContext scopes the client to projectID and keeps the X-Org-ID
+// header consistent with that project.
+//
+// When no org is configured, the org is derived from the target project itself
+// — the same lookup `memory projects get` performs. That is the only reliable
+// source: picking an arbitrary org (for example the first one the account
+// belongs to) makes the server reject project-scoped requests with "x-org-id
+// header does not match the project's organization" (issue #324).
+//
+// When the org cannot be derived — a project-scoped token without
+// projects:read, an unreachable server, or an unknown project — the org header
+// is left unset. The server derives the org from the project or credential and
+// never treats a bare X-Org-ID as a trust source, so omitting it is always
+// safer than guessing.
+func (c *Client) ResolveProjectContext(ctx context.Context, projectID string) {
+	orgID := c.cfg.OrgID
+	if orgID == "" && projectID != "" && !c.HasProjectToken() {
+		if project, err := c.SDK.Projects.Get(ctx, projectID, nil); err == nil && project != nil && project.OrgID != "" {
+			orgID = project.OrgID
+		}
+	}
+	c.SetContext(orgID, projectID)
 }
 
 // ProjectID returns the current project ID
