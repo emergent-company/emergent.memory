@@ -447,10 +447,10 @@ Consolidated tools (`action` selects the operation):
 | `entity-write` | `graph:write` | `create`, `update`, `delete`, `restore` |
 | `relationship-write` | `graph:write` | `create`, `update`, `delete` |
 | `schema-types` | `graph:read` | `version`, `compiled`, `types` |
-| `schema` | `schema:read` | `owned`, `available`, `installed`, `packs`, `get`, `history`, `icons`, `classify-document` |
+| `schema` | `schema:read` | `owned`, `available`, `installed`, `packs`, `get`, `history`, `icons`, `classify-document`, `pack-claims` |
 | `schema-write` | `schema:write` | `assign`, `update-assignment`, `uninstall`, `create`, `delete`, `finalize-discovery`, `queue-reextraction` |
 | `schema-migrate` | `schema:migrate` | `preview`, `execute`, `rollback`, `commit`, `status`, `archives`, `archive-get` |
-| `blueprint` | `schema:read` | `list`, `get`, `versions`, `applied`, `apply-preview` |
+| `blueprint` | `schema:read` | `list`, `get`, `versions`, `applied`, `apply-preview`, `updates-status`, `import-preview`, `model-overrides` |
 | `blueprint-write` | `schema:write` | `create`, `update`, `publish`, `new-version`, `apply`, `unapply` |
 | `branch` | `graph:read` | `list`, `get`, `readiness` |
 | `branch-write` | `graph:write` | `create`, `update`, `fork`, `merge`, `delete` |
@@ -470,24 +470,44 @@ Consolidated tools (`action` selects the operation):
 | `adk-session` | `agents:read` | `list`, `get` |
 | `session-todo` | *(session-owned, no scope)* | `list`, `update` |
 | `project-write` | `projects:write` | `update`, `create` |
-| `embedding` | *(operator: superadmin)* | `status`, `progress` |
-| `embedding-write` | *(operator: superadmin)* | `retrigger`, `pause`, `resume`, `config-update` |
-| `provider` | *(operator: superadmin)* | `list-org`, `test`, `usage` |
 | `token` | `projects:write` | `list`, `get` |
 | `token-write` | `projects:write` | `create`, `revoke` |
-| `trace` | *(operator: superadmin)* | `list`, `get` |
+
+That is 30 consolidated tools. 135 per-verb definitions collapse to 55; the
+project endpoint advertises 40 of them (the operator tools stay superadmin-only
+and are listed per-verb on the admin surface).
 
 Tools that had no sibling keep their name: `relationship-list`,
 `session-get-messages`, `remember-status`, `search-knowledge`, `journal-list`,
 `journal-add-note`, `agent-hook-list`, `agent-question-respond`,
-`web-search-brave`, `web-fetch`, `web-search-reddit`,
-`provider-configure-org`, `provider-configure-project`, `provider-models-list`
-and the `mcp-*` registry tools.
+`web-search-brave`, `web-fetch`, `web-search-reddit`, the `embedding-*`,
+`provider-*` and `trace-*` operator tools (their surface is the admin endpoint,
+which stays per-verb) and the `mcp-*` registry tools.
 
 Authority is the strictest of the folded tools: a family that folds an
 operator-only or agent-only tool stays operator-only / agent-only, and a family
 that folds a tool with a raised in-process bar (token minting, project creation)
 keeps that bar for the whole family.
+
+`action` is the only discriminator. `view` and `strategy` are **not** synonyms —
+legacy tools carry them as ordinary parameters, so reading them as an action
+would misroute a legacy call.
+
+A name that is both a family and one of its own legacy handlers keeps the old
+call working: `remember` without an action means `remember action=add`.
+
+### Share instances and the consolidated catalog
+
+A share-instance allowlist may name either spelling. A **consolidated** name
+(`entity`) grants the whole family; a **per-verb** name (`entity-search`) grants
+exactly that action, so a share saved before the merge keeps its granularity and
+`entity` + `action=query` is still refused. A share that grants part of a family
+advertises that family with its `action` enum narrowed to the granted actions,
+so `tools/list` never offers a call the allowlist would refuse.
+
+Share presets keep the names they declare (`classify-document`, not `schema`)
+for the same reason: canonicalising a one-action preset entry would widen it to
+the whole family and add the family's scope to the share.
 
 ---
 

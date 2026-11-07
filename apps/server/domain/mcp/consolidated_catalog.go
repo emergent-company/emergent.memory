@@ -124,7 +124,8 @@ var consolidatedFamilies = []consolidatedFamily{
 			"action=available lists everything installable with installation status and type counts; action=installed " +
 			"lists what is active; action=packs lists installed domain packs with their classification keywords; " +
 			"action=get returns one schema; action=history lists installation history; action=icons lists valid icon " +
-			"names; action=classify-document matches a document against installed packs (read-only).",
+			"names; action=classify-document matches a document against installed packs (read-only); " +
+			"action=pack-claims lists the packs a catalogue manifest claims.",
 		Actions: []consolidatedAction{
 			{Action: "owned", Handler: "schema-list", Description: "schemas owned by the project"},
 			{Action: "available", Handler: "schema-list-available", Description: "available schemas with install status"},
@@ -134,6 +135,7 @@ var consolidatedFamilies = []consolidatedFamily{
 			{Action: "history", Handler: "schema-history", Description: "installation history"},
 			{Action: "icons", Handler: "schema-icon-list", Description: "valid UI icon names"},
 			{Action: "classify-document", Handler: "classify-document", Description: "classify a document against packs"},
+			{Action: "pack-claims", Handler: "schema-pack-claims", Description: "packs claimed by catalogue manifests"},
 		},
 	},
 	{
@@ -176,13 +178,18 @@ var consolidatedFamilies = []consolidatedFamily{
 		Scope: "schema:read",
 		Description: "Inspect blueprints (schema packs + agent definitions + skills + seeds). action=list lists visible " +
 			"blueprints; action=get returns one manifest; action=versions lists a blueprint's versions; action=applied " +
-			"lists what this project applied; action=apply-preview reports collisions without materialising anything.",
+			"lists what this project applied; action=apply-preview reports collisions without materialising anything; " +
+			"action=updates-status reports the last upstream-update check for an applied blueprint; action=import-preview " +
+			"fetches and validates a blueprint without applying it; action=model-overrides returns the stored model overrides.",
 		Actions: []consolidatedAction{
 			{Action: "list", Handler: "blueprint-list", Description: "list visible blueprints"},
 			{Action: "get", Handler: "blueprint-get", Description: "one blueprint manifest"},
 			{Action: "versions", Handler: "blueprint-versions", Description: "versions of a blueprint"},
 			{Action: "applied", Handler: "blueprint-list-applied", Description: "blueprints applied to this project"},
 			{Action: "apply-preview", Handler: "blueprint-apply-preview", Description: "dry-run apply, reports collisions"},
+			{Action: "updates-status", Handler: "blueprint-updates-status", Description: "latest upstream-update check for an applied blueprint"},
+			{Action: "import-preview", Handler: "blueprint-import-preview", Description: "fetch and validate a blueprint without applying it"},
+			{Action: "model-overrides", Handler: "blueprint-model-overrides-get", Description: "stored model overrides for a blueprint"},
 		},
 	},
 	{
@@ -411,41 +418,6 @@ var consolidatedFamilies = []consolidatedFamily{
 		},
 	},
 	{
-		Name:  "embedding",
-		Scope: "",
-		Description: "Read embedding coverage (operator tool). action=status reports the configured model and overall " +
-			"state; action=progress reports in-flight embedding batches.",
-		Actions: []consolidatedAction{
-			{Action: "status", Handler: "embedding-status", Description: "embedding model and state"},
-			{Action: "progress", Handler: "embedding-progress", Description: "in-flight batch progress"},
-		},
-	},
-	{
-		Name:  "embedding-write",
-		Scope: "",
-		Description: "Drive and configure embeddings (operator tool). action=retrigger queues embedding jobs; " +
-			"action=pause stops processing; action=resume continues it; action=config-update changes batch size, model " +
-			"or the enabled flag.",
-		Actions: []consolidatedAction{
-			{Action: "retrigger", Handler: "embedding-retrigger", Description: "queue embedding jobs"},
-			{Action: "pause", Handler: "embedding-pause", Description: "pause embedding processing"},
-			{Action: "resume", Handler: "embedding-resume", Description: "resume embedding processing"},
-			{Action: "config-update", Handler: "embedding-config-update", Description: "change embedding config"},
-		},
-	},
-	{
-		Name:  "provider",
-		Scope: "",
-		Description: "Inspect and probe LLM providers at deployment level (operator tool). action=list-org lists " +
-			"org-level providers with their configured state; action=test makes a live test call through one; " +
-			"action=usage returns token/cost usage.",
-		Actions: []consolidatedAction{
-			{Action: "list-org", Handler: "provider-list-org", Description: "list org-level providers"},
-			{Action: "test", Handler: "provider-test", Description: "live test call"},
-			{Action: "usage", Handler: "provider-usage-get", Description: "token and cost usage"},
-		},
-	},
-	{
 		Name:  "token",
 		Scope: "projects:write",
 		Description: "Inspect project API tokens. action=list lists the project's tokens (metadata only, never the " +
@@ -465,16 +437,6 @@ var consolidatedFamilies = []consolidatedFamily{
 			{Action: "revoke", Handler: "token-revoke", Description: "revoke a token"},
 		},
 	},
-	{
-		Name:  "trace",
-		Scope: "",
-		Description: "Read distributed traces (operator tool). action=list lists recent traces; action=get returns " +
-			"one trace's spans.",
-		Actions: []consolidatedAction{
-			{Action: "list", Handler: "trace-list", Description: "list recent traces"},
-			{Action: "get", Handler: "trace-get", Description: "one trace with spans"},
-		},
-	},
 }
 
 // familyByName indexes consolidatedFamilies by tool name.
@@ -487,9 +449,11 @@ var familyByName = func() map[string]*consolidatedFamily {
 }()
 
 // toolAliases maps every deprecated legacy tool name to its consolidated tool
-// and implied action. Legacy names stay callable: ExecuteTool canonicalises
-// them before authority resolution, so a saved agent definition or share
-// instance that names `entity-search` keeps working and keeps its scope.
+// and implied action. Legacy names stay callable: dispatchTool resolves the
+// (tool, action) pair back to the per-verb case (legacyDispatchName), and the
+// authority checks canonicalise the name (canonicalToolName) so a saved agent
+// definition or share allowlist entry that names `entity-search` keeps working
+// and keeps its scope.
 var toolAliases = func() map[string]toolAlias {
 	m := make(map[string]toolAlias)
 	for _, fam := range consolidatedFamilies {
@@ -517,30 +481,12 @@ func canonicalToolName(name string) string {
 	return name
 }
 
-// canonicalizeToolCall rewrites a deprecated legacy call into its consolidated
-// form, injecting the implied action when the caller did not supply one.
-func canonicalizeToolCall(name string, args map[string]any) (string, map[string]any) {
-	a, ok := toolAliases[name]
-	if !ok {
-		return name, args
-	}
-	if args == nil {
-		args = make(map[string]any, 1)
-	}
-	if _, set := actionArg(args); !set {
-		args["action"] = a.Action
-	}
-	return a.Tool, args
-}
-
-// actionArg reads the action discriminator. `action` is canonical; `view` and
-// `strategy` are accepted as synonyms so the documented read-only spellings
-// keep working.
+// actionArg reads the action discriminator. Only `action` is a discriminator:
+// legacy tools carry their own `view` and `strategy` parameters, so treating
+// those as synonyms would misroute a legacy call that sets one of them.
 func actionArg(args map[string]any) (string, bool) {
-	for _, key := range []string{"action", "view", "strategy"} {
-		if v, ok := args[key].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v), true
-		}
+	if v, ok := args["action"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v), true
 	}
 	return "", false
 }
@@ -554,6 +500,14 @@ func resolveConsolidatedHandler(name string, args map[string]any) (string, bool,
 		return name, false, nil
 	}
 	action, _ := actionArg(args)
+	if action == "" {
+		// A name can be both a family and one of its own legacy handlers
+		// (`remember`). Such a call predates the action discriminator, so it
+		// keeps the action that handler used to perform instead of failing.
+		if alias, ok := toolAliases[name]; ok && alias.Tool == name {
+			action = alias.Action
+		}
+	}
 	if action == "" {
 		return "", true, fmt.Errorf("%s: 'action' is required (one of: %s)", name, familyActionList(fam))
 	}
@@ -582,10 +536,15 @@ func familyActionList(fam *consolidatedFamily) string {
 // surfaces that key on tool names keep their pre-consolidation granularity.
 // It returns the name unchanged when the call is not a consolidated tool.
 func legacyDispatchName(name string, args map[string]any) string {
-	// A deprecated name carries its action implicitly.
-	if alias, ok := toolAliases[name]; ok {
-		if handler, ok, err := resolveConsolidatedHandler(alias.Tool, map[string]any{"action": alias.Action}); err == nil && ok {
-			return handler
+	// A deprecated name carries its action implicitly, unless the caller chose
+	// one explicitly: `remember` is both a family and a legacy handler name, so
+	// `remember` + action=forget must resolve to forget and not to the implied
+	// add — otherwise a share instance that allows one action permits the other.
+	if _, explicit := actionArg(args); !explicit {
+		if alias, ok := toolAliases[name]; ok {
+			if handler, ok, err := resolveConsolidatedHandler(alias.Tool, map[string]any{"action": alias.Action}); err == nil && ok {
+				return handler
+			}
 		}
 	}
 	if handler, ok, err := resolveConsolidatedHandler(name, args); err == nil && ok {
@@ -682,7 +641,9 @@ func buildConsolidatedDefinition(fam *consolidatedFamily, byName map[string]*Too
 				outputSchema = src.OutputSchema
 			}
 			for k, v := range src.InputSchema.Properties {
-				if k == "action" || k == "view" || k == "strategy" {
+				// `action` is the discriminator the family adds; every other
+				// parameter a member declared is a real parameter and is kept.
+				if k == "action" {
 					continue
 				}
 				if existing, ok := props[k]; !ok || existing.Type == "" {

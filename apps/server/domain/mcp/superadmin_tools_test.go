@@ -2,8 +2,6 @@ package mcp
 
 import "testing"
 
-// toolByName returns the ToolDefinition with the given name from the package
-// catalog, or nil if absent.
 // toolByName resolves a definition through the catalog index, which holds both
 // the advertised consolidated tools and the deprecated per-verb aliases.
 func toolByName(t *testing.T, name string) *ToolDefinition {
@@ -23,13 +21,18 @@ func toolByName(t *testing.T, name string) *ToolDefinition {
 // read-only.
 func TestSuperadminOnlyToolClassification(t *testing.T) {
 	superadminOnly := []string{
-		// Consolidated families: the operator flag is the strictest of the
-		// per-verb tools each replaces.
-		"embedding",
-		"embedding-write",
-		"provider",
-		"trace",
+		"embedding-status",
+		"embedding-progress",
+		"embedding-retrigger",
+		"embedding-pause",
+		"embedding-resume",
+		"embedding-config-update",
+		"provider-list-org",
+		"provider-usage-get",
+		"provider-test",
 		"provider-configure-org",
+		"trace-list",
+		"trace-get",
 	}
 	for _, name := range superadminOnly {
 		tool := toolByName(t, name)

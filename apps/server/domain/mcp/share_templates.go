@@ -157,10 +157,6 @@ type ShareTemplateDTO struct {
 // follows the catalog, which is category then name sorted, so the same share
 // renders identically everywhere.
 func ResolveShareTemplates(catalog []CatalogToolDTO) []ShareTemplateDTO {
-	has := make(map[string]bool, len(catalog))
-	for _, tool := range catalog {
-		has[tool.Name] = true
-	}
 	out := make([]ShareTemplateDTO, 0, len(shareTemplates))
 	for _, t := range shareTemplates {
 		want := make(map[string]bool, len(t.Scopes)+len(t.Tools))
@@ -177,18 +173,26 @@ func ResolveShareTemplates(catalog []CatalogToolDTO) []ShareTemplateDTO {
 			}
 		}
 		for _, name := range t.Tools {
-			// A preset may name a per-verb tool from before the catalog
-			// consolidation; resolve it to the consolidated tool the catalog
-			// advertises so the preset keeps the capability it describes.
-			canonical := CanonicalToolName(name)
-			if has[canonical] {
-				want[canonical] = true
-			}
+			// Keep the name the preset gives. A preset is a curated grant: an
+			// explicit `classify-document` must not widen to the whole `schema`
+			// family (which would also add its schema:read scope), and the share
+			// catalog narrows the advertised `schema` action enum to it instead.
+			want[name] = true
 		}
 		tools := make([]string, 0, len(want))
+		seen := make(map[string]bool, len(want))
 		for _, tool := range catalog {
-			if want[tool.Name] {
+			if want[tool.Name] && !seen[tool.Name] {
 				tools = append(tools, tool.Name)
+				seen[tool.Name] = true
+			}
+		}
+		// Names the catalog does not advertise (a per-verb preset entry) follow
+		// in the preset's own order, so the payload is stable.
+		for _, name := range t.Tools {
+			if want[name] && !seen[name] {
+				tools = append(tools, name)
+				seen[name] = true
 			}
 		}
 		if len(tools) == 0 {

@@ -158,7 +158,7 @@ func TestConsolidatedToolUnionsLegacyParams(t *testing.T) {
 					continue
 				}
 				for prop := range src.InputSchema.Properties {
-					if prop == "action" || prop == "view" || prop == "strategy" {
+					if prop == "action" {
 						continue
 					}
 					if _, ok := def.InputSchema.Properties[prop]; !ok {
@@ -170,6 +170,34 @@ func TestConsolidatedToolUnionsLegacyParams(t *testing.T) {
 		if strings.Join(action.Enum, ",") != strings.Join(wantActions, ",") {
 			t.Errorf("%s action enum = %v, want %v", fam.Name, action.Enum, wantActions)
 		}
+	}
+}
+
+// TestFamilyInheritsStrictestAuthority pins the rule that makes a merge safe: a
+// family carries the strictest authority of the tools it folds, so folding an
+// operator-only or agent-only tool can never widen who may call the family.
+func TestFamilyInheritsStrictestAuthority(t *testing.T) {
+	fam := &consolidatedFamily{
+		Name:        "synthetic",
+		Description: "synthetic family",
+		Actions: []consolidatedAction{
+			{Action: "read", Handler: "synthetic-read", Description: "read"},
+			{Action: "admin", Handler: "synthetic-admin", Description: "admin"},
+		},
+	}
+	byName := map[string]*ToolDefinition{
+		"synthetic-read":  {Name: "synthetic-read"},
+		"synthetic-admin": {Name: "synthetic-admin", SuperadminOnly: true, AgentOnly: true},
+	}
+	def, ok := buildConsolidatedDefinition(fam, byName)
+	if !ok {
+		t.Fatal("synthetic family did not build")
+	}
+	if !def.SuperadminOnly {
+		t.Error("family must inherit SuperadminOnly from a folded operator tool")
+	}
+	if !def.AgentOnly {
+		t.Error("family must inherit AgentOnly from a folded agent tool")
 	}
 }
 
@@ -189,17 +217,38 @@ func TestConsolidatedDispatchContract(t *testing.T) {
 		t.Errorf("unknown action error = %v", err)
 	}
 
-	// `view` and `strategy` are accepted as synonyms of `action`.
+	// Only `action` is the discriminator. `view` and `strategy` are parameters
+	// of legacy tools (forget, entity-query, search-*), so reading them as an
+	// action synonym would misroute a legacy call that sets one.
 	for _, key := range []string{"view", "strategy"} {
-		handler, ok, err := resolveConsolidatedHandler("schema", map[string]any{key: "icons"})
-		if err != nil || !ok || handler != "schema-icon-list" {
-			t.Errorf("%s=icons resolved to %q (ok=%v err=%v), want schema-icon-list", key, handler, ok, err)
+		if _, ok, err := resolveConsolidatedHandler("schema", map[string]any{key: "icons"}); err == nil || !ok {
+			t.Errorf("%s=icons must not be read as an action: ok=%v err=%v", key, ok, err)
 		}
+	}
+	// The legacy call that carries such a parameter still resolves through its
+	// own name, and its per-verb dispatch name is unchanged.
+	if got := legacyDispatchName("forget", map[string]any{"strategy": "auto"}); got != "forget" {
+		t.Errorf("legacyDispatchName(forget, strategy=auto) = %q, want forget", got)
 	}
 
 	// A name that is not consolidated passes through untouched.
 	if handler, ok, err := resolveConsolidatedHandler("entity-search", nil); err != nil || ok || handler != "entity-search" {
 		t.Errorf("non-consolidated name must pass through: handler=%q ok=%v err=%v", handler, ok, err)
+	}
+
+	// A family whose name is also one of its own legacy handlers keeps the
+	// pre-consolidation call working: `remember` carried no action, so it must
+	// still mean action=add rather than failing with "'action' is required".
+	// Anything else breaks every saved client that calls it with `message`.
+	handler, ok, err := resolveConsolidatedHandler("remember", map[string]any{"message": "x"})
+	if err != nil || !ok || handler != "remember" {
+		t.Errorf("remember without action resolved to %q (ok=%v err=%v), want remember", handler, ok, err)
+	}
+	if got := legacyDispatchName("remember", map[string]any{"message": "x"}); got != "remember" {
+		t.Errorf("legacyDispatchName(remember) = %q, want remember", got)
+	}
+	if got := legacyDispatchName("remember", map[string]any{"action": "forget"}); got != "forget" {
+		t.Errorf("legacyDispatchName(remember, action=forget) = %q, want forget", got)
 	}
 }
 

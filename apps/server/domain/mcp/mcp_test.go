@@ -211,12 +211,33 @@ func TestRequiresProject(t *testing.T) {
 			toolName: "journal-add-note",
 			expected: false,
 		},
-		// Consolidated catalog: the family is project-scoped, except the one
-		// action that is project-less by design.
+		// Consolidated catalog: gating is per action, following the legacy tool
+		// the action dispatches to — not per family. `schema action=icons`
+		// (legacy schema-icon-list) never needed a project; the gate must not
+		// start requiring one just because it shares a tool with schema-list.
 		{
-			name:     "entity requires project",
+			name:     "entity query requires project",
 			toolName: "entity",
+			args:     map[string]any{"action": "query"},
 			expected: true,
+		},
+		{
+			name:     "entity tags does not require project",
+			toolName: "entity",
+			args:     map[string]any{"action": "tags"},
+			expected: false,
+		},
+		{
+			name:     "schema owned requires project",
+			toolName: "schema",
+			args:     map[string]any{"action": "owned"},
+			expected: true,
+		},
+		{
+			name:     "schema icons does not require project",
+			toolName: "schema",
+			args:     map[string]any{"action": "icons"},
+			expected: false,
 		},
 		{
 			name:     "schema-write assign requires project",

@@ -1781,12 +1781,32 @@ func indexableTools(advertised, legacy []ToolDefinition) []ToolDefinition {
 	return out
 }
 
-// GetToolDefinitionsForProject returns tool definitions with dynamic content (e.g. agent
-// catalog injected into trigger_agent description) for a specific project.
-// Falls back to GetToolDefinitions when projectID is empty.
+// GetToolDefinitionsForProject returns the consolidated catalog with dynamic
+// content (e.g. the agent catalog injected into trigger_agent's description) for
+// a specific project. Falls back to GetToolDefinitions when projectID is empty.
 func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
+	legacy := s.legacyToolDefinitionsForProject(ctx, projectID)
+	consolidated := consolidateToolDefinitions(legacy)
+	buildToolIndex(indexableTools(consolidated, legacy))
+	return consolidated
+}
+
+// GetInternalToolDefinitionsForProject is GetToolDefinitionsForProject without
+// consolidation: the per-verb catalog the agent tool pool, its tool groups and
+// the per-project builtin enable flags are keyed on. Returns the per-verb
+// catalog unchanged when the project is unknown.
+func (s *Service) GetInternalToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
+	legacy := s.legacyToolDefinitionsForProject(ctx, projectID)
+	buildToolIndex(indexableTools(consolidateToolDefinitions(legacy), legacy))
+	return legacy
+}
+
+// legacyToolDefinitionsForProject builds the per-verb catalog with the dynamic
+// project content applied (enriched agent tools, relay-session tools). Both
+// public getters consolidate — or deliberately do not consolidate — on top.
+func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
 	if projectID == "" || s.agentToolHandler == nil {
-		return s.GetToolDefinitions()
+		return s.legacyToolDefinitions()
 	}
 
 	// Start with the full static tool list (includes static agent tools). This
@@ -1820,9 +1840,6 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 		}
 	}
 
-	legacy := tools
-	tools = consolidateToolDefinitions(legacy)
-	buildToolIndex(indexableTools(tools, legacy))
 	return tools
 }
 
@@ -2229,8 +2246,12 @@ func expandScopesSet(scopes []string) map[string]bool {
 	return result
 }
 
-// toolIndex is built once from the full tool list for O(1) lookups in handleToolsCall.
-// Populated by buildToolIndex called from GetToolDefinitions and GetToolDefinitionsForProject.
+// toolIndex holds the full lookup set (advertised catalog plus the deprecated
+// per-verb definitions) for O(1) resolution in handleToolsCall and in the
+// authority checks. It is package-level but rebuilt on every catalog build, so
+// it reflects the most recently assembled Service — the helper tests build
+// several. Callers that need a specific Service's catalog must build it first
+// (GetToolByName does so lazily via ensureToolIndex).
 var toolIndexMu sync.RWMutex
 var toolIndex = map[string]*ToolDefinition{}
 

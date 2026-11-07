@@ -428,30 +428,13 @@ func extractToken(c echo.Context) string {
 	return ""
 }
 
-// requiresProject returns true if the call needs a project context. Most
-// per-project tools do; the exceptions are resolved per action where a
-// consolidated family mixes both (schema-write: create is project-less, the
-// assignment actions are not).
+// requiresProject returns true if the call needs a project context. The gate is
+// per dispatch target, not per advertised tool: the consolidation merged actions
+// that disagreed (schema-write action=create never needed a project, while
+// schema action=owned does), so decide on the per-verb name the call resolves to
+// and keep the pre-consolidation list verbatim.
 func requiresProject(toolName string, args map[string]any) bool {
-	action, _ := actionArg(args)
-	if action == "" {
-		// A deprecated per-verb name carries its action implicitly.
-		if alias, ok := toolAliases[toolName]; ok {
-			action = alias.Action
-		}
-	}
-	toolName = canonicalToolName(toolName)
-	if toolName == "schema-write" && action == "create" {
-		return false
-	}
-	switch toolName {
-	case "entity", "relationship-list", "relationship-write", "entity-write",
-		"branch", "branch-write", "schema-types", "schema", "schema-write",
-		"schema-migrate", "blueprint", "blueprint-write",
-		"agent-def", "agent-def-write", "agent", "agent-write", "agent-run",
-		"document", "document-write", "skill", "skill-write":
-		return true
-		// Per-verb names stay callable, so they still need the same gate.
+	switch legacyDispatchName(toolName, args) {
 	case "entity-type-list", "entity-query", "entity-search", "entity-edges-get",
 		"schema-version", "schema-list", "schema-get", "schema-delete",
 		"schema-list-available", "schema-list-installed",

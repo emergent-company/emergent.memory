@@ -257,8 +257,44 @@ func TestHandlerToolsListAppliesInstanceAllowlist(t *testing.T) {
 	result := resp.Result.(ToolsListResult)
 	require.Len(t, result.Tools, 1)
 	// The allowlist names the deprecated per-verb tool; the advertised catalog
-	// lists the consolidated tool that replaced it.
+	// lists the consolidated tool that replaced it, narrowed to the one action
+	// the allowlist grants so the share never advertises a call it would refuse.
 	assert.Equal(t, "entity", result.Tools[0].Name)
+	assert.Equal(t, []string{"search"}, result.Tools[0].InputSchema.Properties["action"].Enum)
+}
+
+func TestInstanceAllowsFamilyAndPerVerbCalls(t *testing.T) {
+	// A share created from the consolidated catalog names the family: every
+	// action of it must be callable, and nothing outside it.
+	family := &InstanceScope{HasToolAllowlist: true, AllowedTools: []string{"entity"}}
+	for _, action := range []string{"query", "search", "history", "edges", "traverse", "tags"} {
+		resolved := legacyDispatchName("entity", map[string]any{"action": action})
+		assert.False(t, InstanceDeniesTool(family, resolved), "entity action=%s resolved to %s and must be allowed", action, resolved)
+	}
+	assert.True(t, InstanceDeniesTool(family, legacyDispatchName("entity-write", map[string]any{"action": "create"})),
+		"a family grant must not reach the write family")
+
+	// A share saved before the consolidation keeps its per-verb granularity: the
+	// one action it names is callable, its siblings are not.
+	legacy := &InstanceScope{HasToolAllowlist: true, AllowedTools: []string{"entity-search"}}
+	assert.False(t, InstanceDeniesTool(legacy, legacyDispatchName("entity", map[string]any{"action": "search"})))
+	assert.False(t, InstanceDeniesTool(legacy, "entity-search"), "the deprecated call name resolves the same way")
+	assert.True(t, InstanceDeniesTool(legacy, legacyDispatchName("entity", map[string]any{"action": "query"})))
+}
+
+// TestShareTemplatesPermitTheirOwnCalls is the positive half of the template
+// contract: every tool a preset resolves to must actually be callable through
+// that preset's allowlist. Listing without calling was the pre-fix bug.
+func TestShareTemplatesPermitTheirOwnCalls(t *testing.T) {
+	for _, tmpl := range ResolveShareTemplates(testShareCatalog(t)) {
+		scope := &InstanceScope{HasToolAllowlist: true, AllowedTools: tmpl.Tools}
+		for _, name := range tmpl.Tools {
+			resolved := legacyDispatchName(name, nil)
+			assert.False(t, InstanceDeniesTool(scope, resolved),
+				"template %q lists %q (resolving to %q) but its own allowlist refuses it", tmpl.ID, name, resolved)
+			assert.True(t, InstanceAllowsTool(scope, name), "template %q must permit %q", tmpl.ID, name)
+		}
+	}
 }
 
 func TestHandlerToolsCallRejectsNonAllowlisted(t *testing.T) {
