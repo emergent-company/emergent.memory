@@ -526,6 +526,24 @@ type MergePreviewResult struct {
 	RequiresMerge bool                   `json:"requiresMerge"`
 }
 
+// ShadowedType describes a type the incoming pack declares but does not own,
+// installed without a merge confirmation (action "skip"). The registry row keeps
+// naming the pack that owns the type, but the read paths (compiled types, graph
+// validation) apply the newest assignment last-wins, so the newly installed pack
+// is the effective definition. Reporting it lets a caller see that
+// GET /api/schemas and the compiled view name different packs (#338).
+type ShadowedType struct {
+	TypeName string `json:"type_name"`
+	// RegistryOwnerPack is the pack the registry row still points at. Empty when
+	// the row's schema_id is NULL or dangles.
+	RegistryOwnerPack     string `json:"registry_owner_pack,omitempty"`
+	RegistryOwnerSchemaID string `json:"registry_owner_schema_id,omitempty"`
+	// ShadowingPack is the pack just assigned, whose declaration wins in the
+	// last-wins read ordering.
+	ShadowingPack     string `json:"shadowing_pack"`
+	ShadowingSchemaID string `json:"shadowing_schema_id"`
+}
+
 // AssignPackResult is the response from AssignPack / dry-run.
 // Replaces the bare *ProjectMemorySchema return so callers get conflict details.
 type AssignPackResult struct {
@@ -539,6 +557,11 @@ type AssignPackResult struct {
 	InstalledTypes []string `json:"installed_types"`
 	// SkippedTypes are type names that already existed and were not merged.
 	SkippedTypes []string `json:"skipped_types,omitempty"`
+	// ShadowedTypes details each skipped cross-pack type: the registry still
+	// names the old owner while the read paths resolve the type from this newer
+	// assignment (#338). Only populated when the type is owned by another pack
+	// and merge was not confirmed.
+	ShadowedTypes []ShadowedType `json:"shadowed_types,omitempty"`
 	// MergedTypes are type names owned by another pack whose schemas were
 	// additively extended.
 	MergedTypes []string `json:"merged_types,omitempty"`

@@ -248,6 +248,15 @@ func resolveInstalledAssignmentArgOrPick(cmd *cobra.Command, args []string) (id,
 	return id, name, nil
 }
 
+// shadowedOwner names the pack the registry still points at for a cross-pack
+// shadowed type, or "unknown" when the registry row has no resolvable pack.
+func shadowedOwner(s sdkschemas.ShadowedType) string {
+	if s.RegistryOwnerPack == "" {
+		return "unknown"
+	}
+	return s.RegistryOwnerPack
+}
+
 // ─────────────────────────────────────────────
 // schemas list  (installed schemas by default; --available for registry)
 // ─────────────────────────────────────────────
@@ -590,6 +599,13 @@ var schemasInstallCmd = &cobra.Command{
 					fmt.Fprintf(out, "  ~ %s\n", t)
 				}
 			}
+			if len(result.ShadowedTypes) > 0 {
+				fmt.Fprintf(out, "\nCross-pack shadows — registry owner keeps the type, reads use this pack (%d):\n", len(result.ShadowedTypes))
+				for _, s := range result.ShadowedTypes {
+					fmt.Fprintf(out, "  ! %s: registry owner %s, effective definition from %s\n",
+						s.TypeName, shadowedOwner(s), s.ShadowingPack)
+				}
+			}
 			if len(result.MergedTypes) > 0 {
 				fmt.Fprintf(out, "\nTypes to merge (%d):\n", len(result.MergedTypes))
 				for _, t := range result.MergedTypes {
@@ -631,6 +647,13 @@ var schemasInstallCmd = &cobra.Command{
 		}
 		if len(result.SkippedTypes) > 0 {
 			fmt.Fprintf(out, "  Skipped types   (%d): %s\n", len(result.SkippedTypes), strings.Join(result.SkippedTypes, ", "))
+		}
+		if len(result.ShadowedTypes) > 0 {
+			fmt.Fprintf(out, "  Shadowed types  (%d):\n", len(result.ShadowedTypes))
+			for _, s := range result.ShadowedTypes {
+				fmt.Fprintf(out, "    %s: registry owner %s, effective definition from %s\n",
+					s.TypeName, shadowedOwner(s), s.ShadowingPack)
+			}
 		}
 		if len(result.MergedTypes) > 0 {
 			fmt.Fprintf(out, "  Merged types    (%d): %s\n", len(result.MergedTypes), strings.Join(result.MergedTypes, ", "))

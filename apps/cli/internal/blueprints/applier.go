@@ -243,15 +243,22 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 	}
 
 	// Assign to current project.
-	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+	assigned, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
 		SchemaID: created.ID,
 		Merge:    b.mergeTypes,
-	}); err != nil {
+	})
+	if err != nil {
 		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
-	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionCreated}
+	return BlueprintsResult{
+		ResourceType:  "pack",
+		Name:          p.Name,
+		SourceFile:    p.SourceFile,
+		Action:        BlueprintsActionCreated,
+		ShadowedTypes: assigned.ShadowedTypes,
+	}
 }
 
 func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string) BlueprintsResult {
@@ -296,15 +303,22 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 	// operation). The server replaces types this pack owns and follows
 	// Merge for types owned by other packs, so Merge only needs to be set when
 	// the caller confirmed a cross-pack merge in the preflight.
-	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+	assigned, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
 		SchemaID: packID,
 		Merge:    b.mergeTypes,
-	}); err != nil {
+	})
+	if err != nil {
 		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
-	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionUpdated}
+	return BlueprintsResult{
+		ResourceType:  "pack",
+		Name:          p.Name,
+		SourceFile:    p.SourceFile,
+		Action:        BlueprintsActionUpdated,
+		ShadowedTypes: assigned.ShadowedTypes,
+	}
 }
 
 // ──────────────────────────────────────────────
@@ -571,6 +585,19 @@ func (b *Blueprinter) printResult(r BlueprintsResult) {
 		fmt.Fprintf(b.out, "  skipped  %s (already exists; use --upgrade to update)\n", label)
 	case BlueprintsActionError:
 		fmt.Fprintf(b.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
+	}
+
+	// A cross-pack skip leaves the registry naming the old owner while the
+	// compiled-types and graph-validation reads use the newly installed pack.
+	// Say so on the pack's output line group rather than leaving the operator to
+	// discover the disagreement with `memory schemas get` (#338).
+	for _, s := range r.ShadowedTypes {
+		owner := s.RegistryOwnerPack
+		if owner == "" {
+			owner = "unknown"
+		}
+		fmt.Fprintf(b.out, "           shadowed type %q: registry owner %q, effective definition from %q (pass --merge-types to merge)\n",
+			s.TypeName, owner, s.ShadowingPack)
 	}
 }
 
