@@ -2596,6 +2596,46 @@ func (s *Service) maybeCreateInverse(
 	return inverseRel.ToResponse(), inverseRel.ID.String()
 }
 
+// relationshipSchemaForEdge resolves the property schema that applies to an
+// existing relationship from the project's registry, using the edge's own
+// (name, source type, target type) identity — the same lookup the create path
+// performs. The endpoint types come from the live source/destination objects.
+//
+// A project may declare `owns` Person→Vehicle (share_percent) in one pack and
+// `owns` Person→Account (holder_role) in another, so a patch must validate
+// against the schema for its endpoints rather than the name-wide default,
+// which is merely the newest install's first declaration for the name (#361,
+// follow-up to #322/#357).
+//
+// A dangling edge (an endpoint that no longer resolves) falls back to the
+// name-wide default instead of failing the patch, which is the pre-#361
+// behaviour.
+func (s *Service) relationshipSchemaForEdge(ctx context.Context, projectID uuid.UUID, rel *GraphRelationship, schemas *ExtractionSchemas) (agents.RelationshipSchema, bool) {
+	if schemas == nil || schemas.RelationshipSchemas == nil {
+		return agents.RelationshipSchema{}, false
+	}
+
+	srcType, dstType := "", ""
+	if src, err := s.repo.GetObjectIdentity(ctx, projectID, rel.SrcID); err != nil {
+		s.log.Warn("failed to resolve relationship source for patch validation, using the name-wide schema default",
+			slog.String("relationship_id", rel.ID.String()),
+			slog.String("project_id", projectID.String()),
+			slog.String("error", err.Error()))
+	} else {
+		srcType = src.Type
+	}
+	if dst, err := s.repo.GetObjectIdentity(ctx, projectID, rel.DstID); err != nil {
+		s.log.Warn("failed to resolve relationship destination for patch validation, using the name-wide schema default",
+			slog.String("relationship_id", rel.ID.String()),
+			slog.String("project_id", projectID.String()),
+			slog.String("error", err.Error()))
+	} else {
+		dstType = dst.Type
+	}
+
+	return relationshipSchemaFor(schemas.RelationshipSchemas, rel.Type, srcType, dstType)
+}
+
 // PatchRelationship updates a relationship by creating a new version.
 func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
@@ -2662,27 +2702,26 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		return nil, apperror.ErrBadRequest.WithMessage("cannot_patch_non_head_version")
 	}
 
-	// Validate patch delta properties against schema (soft-fail on schema load error).
-	// Required fields are enforced against the merged result (existing properties +
-	// patch delta), so a patch can neither clear nor omit a required property.
-	if schemas != nil {
-		if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
-			objSchema := agents.ObjectSchema{
-				Properties: relSchema.Properties,
-				Required:   relSchema.Required,
+	// Validate patch delta properties against the schema for the edge's own
+	// endpoints (soft-fail on schema load error). Required fields are enforced
+	// against the merged result (existing properties + patch delta), so a patch
+	// can neither clear nor omit a required property.
+	if relSchema, ok := s.relationshipSchemaForEdge(ctx, projectID, current, schemas); ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
+		objSchema := agents.ObjectSchema{
+			Properties: relSchema.Properties,
+			Required:   relSchema.Required,
+		}
+		patchDelta := make(map[string]any)
+		for k, v := range req.Properties {
+			if v != nil {
+				patchDelta[k] = v
 			}
-			patchDelta := make(map[string]any)
-			for k, v := range req.Properties {
-				if v != nil {
-					patchDelta[k] = v
-				}
-			}
-			if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
-				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
-			} else {
-				for k, v := range validatedDelta {
-					newProps[k] = v
-				}
+		}
+		if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+		} else {
+			for k, v := range validatedDelta {
+				newProps[k] = v
 			}
 		}
 	}

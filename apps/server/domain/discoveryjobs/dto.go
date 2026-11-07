@@ -32,11 +32,16 @@ type StartDiscoveryRequest struct {
 	Scope string `json:"scope" validate:"omitempty,oneof=documents project"`
 	// Limit caps a DiscoveryScopeProject run. Zero means the server default;
 	// a value above the server cap is clamped to it.
-	Limit                int     `json:"limit" validate:"omitempty,min=1"`
-	BatchSize            int     `json:"batch_size" validate:"min=1,max=50"`
-	MinConfidence        float32 `json:"min_confidence" validate:"min=0,max=1"`
-	IncludeRelationships bool    `json:"include_relationships"`
-	MaxIterations        int     `json:"max_iterations" validate:"min=1,max=10"`
+	Limit         int     `json:"limit" validate:"omitempty,min=1"`
+	BatchSize     int     `json:"batch_size" validate:"min=1,max=50"`
+	MinConfidence float32 `json:"min_confidence" validate:"min=0,max=1"`
+	// IncludeRelationships controls whether the run also proposes relationship
+	// types. It is a pointer so an omitted field means "yes": a document that
+	// names entities also relates them, and clients that never sent the field
+	// (the web UI's document and project discovery actions) produced packs with
+	// zero relationship types (#234). An explicit `false` opts out.
+	IncludeRelationships *bool `json:"include_relationships"`
+	MaxIterations        int   `json:"max_iterations" validate:"min=1,max=10"`
 	// Trigger is resolved server-side (manual | source_sync) and is never read
 	// from the request body; it records why the job exists.
 	Trigger string `json:"-"`

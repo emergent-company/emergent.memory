@@ -362,7 +362,7 @@ templ objectTypeCard(t CompiledType, href string) {
 			@typeIconTile(compiledTypeIcon(t), compiledTypeColor(t))
 			<div class="min-w-0 flex-1">
 				<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-					<a class="truncate text-sm font-medium text-primary hover:underline" href={ templ.URL(href) }>{ compiledTypeLabel(t) }</a>
+					<a class="truncate text-sm font-medium text-base-content hover:underline" href={ templ.URL(href) }>{ compiledTypeLabel(t) }</a>
 					if compiledTypeLabel(t) != t.Name {
 						<span class="text-muted-faint truncate font-mono text-[11px]">{ t.Name }</span>
 					}
