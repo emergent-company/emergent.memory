@@ -869,6 +869,34 @@ func TestRenderRelationshipsSubpage(t *testing.T) {
 	if strings.Contains(populated, "No relationships") {
 		t.Error("non-empty relationship list should not show the empty state")
 	}
+
+	// #421: both endpoints are objects-table-style links: clickable, carrying
+	// their type icon tile, type name and short id, and the related object is
+	// reached through its canonical id (the edge stores the version id).
+	if got := strings.Count(populated, `data-testid="object-relationship-endpoint"`); got != 2 {
+		t.Errorf("relationship row rendered %d endpoint links, want 2:\n%s", got, populated)
+	}
+	for _, want := range []string{
+		`href="/objects/o1"`,
+		`href="/objects/c2"`,
+		`data-object-id="c2"`,
+		"person",
+		"#o1",
+		"#c2",
+	} {
+		if !strings.Contains(populated, want) {
+			t.Errorf("relationship endpoint link missing %q:\n%s", want, populated)
+		}
+	}
+
+	// The table-style accent follows the type's declared ui block.
+	accented := renderHTML(t, objectRelationshipsPage(
+		objectDetailShellData{Obj: obj, Active: "relationships", TypeUIByType: map[string]typeUI{"person": {Icon: "lucide--user", Color: "#4F46E5"}}},
+		relTypes, edges, related, nil,
+	))
+	if !strings.Contains(accented, "lucide--user") {
+		t.Errorf("endpoint link missing the type's declared icon:\n%s", accented)
+	}
 }
 
 func TestRenderObjectDetailSimilar(t *testing.T) {
