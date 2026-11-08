@@ -45,3 +45,35 @@ func TestCatalogInstruction(t *testing.T) {
 		t.Fatalf("Instruction() is not deterministic:\nfirst:  %q\nsecond: %q", got, again)
 	}
 }
+
+// TestBasicCatalogIDs pins the exact set of component ids the catalog exposes.
+// Adding, removing, or renaming a component changes the model-facing contract
+// (and the validator), so this must be updated deliberately — it is the guard
+// that makes a catalog change without an intentional instruction/prop review
+// fail loudly (issue #414 review nit).
+func TestBasicCatalogIDs(t *testing.T) {
+	want := map[string]bool{
+		"proposal":    true,
+		"approval":    true,
+		"question":    true,
+		"code":        true,
+		"entity":      true,
+		"object-form": true,
+		"todo":        true,
+		"result":      true,
+		"sources":     true,
+	}
+	if len(BasicCatalog) != len(want) {
+		t.Fatalf("BasicCatalog has %d components, want %d (a catalog change needs an intentional test update)", len(BasicCatalog), len(want))
+	}
+	for id := range BasicCatalog {
+		if !want[id] {
+			t.Fatalf("BasicCatalog exposes unexpected component %q", id)
+		}
+	}
+	for id := range want {
+		if !BasicCatalog.Contains(id) {
+			t.Fatalf("BasicCatalog is missing component %q", id)
+		}
+	}
+}

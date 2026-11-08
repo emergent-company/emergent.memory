@@ -12,8 +12,6 @@ import (
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
-
-	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 )
 
 // TestResolveInstructionProjectInfoOptIn locks the core issue #1694 contract:
@@ -35,7 +33,7 @@ func TestResolveInstructionProjectInfoOptIn(t *testing.T) {
 		if strings.Contains(got, knowledgeBaseContextHeading) {
 			t.Fatalf("resolveInstruction() injected project context without opt-in: %q", got)
 		}
-		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil) + "\n\n" + a2ui.BasicCatalog.Instruction(); got != want {
+		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil); got != want {
 			t.Fatalf("resolveInstruction() = %q, want exactly %q", got, want)
 		}
 	})
@@ -70,7 +68,7 @@ func TestResolveInstructionProjectInfoOptIn(t *testing.T) {
 		if !strings.Contains(got, projectInfo) {
 			t.Fatalf("resolveInstruction() = %q, want it to contain the project info %q", got, projectInfo)
 		}
-		want := base + "\n\n" + knowledgeBaseContextBlock(projectInfo) + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil) + "\n\n" + a2ui.BasicCatalog.Instruction()
+		want := base + "\n\n" + knowledgeBaseContextBlock(projectInfo) + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil)
 		if got != want {
 			t.Fatalf("resolveInstruction() = %q, want %q", got, want)
 		}
@@ -84,7 +82,7 @@ func TestResolveInstructionProjectInfoOptIn(t *testing.T) {
 				Config:       map[string]any{includeProjectInfoConfigKey: true},
 			},
 		}
-		if got, want := ae.resolveInstruction(req), base+"\n\n"+capabilityDisclosureInstruction(req.AgentDefinition, nil)+"\n\n"+a2ui.BasicCatalog.Instruction(); got != want {
+		if got, want := ae.resolveInstruction(req), base+"\n\n"+capabilityDisclosureInstruction(req.AgentDefinition, nil); got != want {
 			t.Fatalf("resolveInstruction() = %q, want %q (nothing to inject)", got, want)
 		}
 	})
