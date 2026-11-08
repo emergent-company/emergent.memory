@@ -6418,6 +6418,12 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 		}
 	}
 
+	// Date properties in merge/replace are written as supplied: the action
+	// applies one JSONB object to every matched row, and those rows may span
+	// several types whose schemas disagree about the same key, so per-type
+	// coercion cannot be done safely in this single UPDATE. Reads normalise, so
+	// these values still present as YYYY-MM-DD (issue #402; write-side gap
+	// tracked separately).
 	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
 		ProjectID:  projectID,
 		Filter:     req.Filter,

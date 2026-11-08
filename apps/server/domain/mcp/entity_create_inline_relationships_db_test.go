@@ -23,9 +23,10 @@ type inlineBatchResult struct {
 				Relationships       []inlineRelationship `json:"relationships"`
 				RelationshipsFailed int                  `json:"relationships_failed"`
 				RelationshipResults []struct {
-					OK     bool   `json:"ok"`
-					Index  int    `json:"index"`
-					Reason string `json:"reason"`
+					OK           bool                `json:"ok"`
+					Index        int                 `json:"index"`
+					Reason       string              `json:"reason"`
+					Relationship *inlineRelationship `json:"relationship,omitempty"`
 				} `json:"relationship_results"`
 			} `json:"entity"`
 		} `json:"results"`
@@ -81,11 +82,22 @@ func TestEntityCreateInlineRelationshipsSecondPassResolvesForwardKey(t *testing.
 	require.Len(t, out.Data.Results, 2)
 	require.Len(t, out.Data.Results[0].Entity.Relationships, 1)
 	edge := out.Data.Results[0].Entity.Relationships[0]
-	assert.Equal(t, "CITES", edge.Type)
+	// Relationship types are canonicalised to lower_snake_case by the graph
+	// write path (normalizeRelationType), and relationship-create reports that
+	// canonical value too. Canonicalisation is existing product behaviour.
+	assert.Equal(t, "cites", edge.Type)
 	assert.NotEmpty(t, edge.ID)
 	assert.Equal(t, out.Data.Results[0].Entity.ID, edge.SourceID, "the new entity is the edge source")
 	assert.Equal(t, out.Data.Results[1].Entity.ID, edge.TargetID, "the later key resolved to the second entity")
 	assert.Zero(t, out.Data.Results[0].Entity.RelationshipsFailed)
+
+	// The #401 contract is that the per-spec result reports the edge that was
+	// actually created, not merely that the batch counts it.
+	require.Len(t, out.Data.Results[0].Entity.RelationshipResults, 1)
+	result := out.Data.Results[0].Entity.RelationshipResults[0]
+	assert.True(t, result.OK)
+	require.NotNil(t, result.Relationship)
+	assert.Equal(t, edge, *result.Relationship, "the per-relationship result reports the created edge")
 }
 
 // TestEntityCreateInlineRelationshipsMalformedSpecIsReported proves a
