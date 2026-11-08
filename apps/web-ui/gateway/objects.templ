@@ -1335,6 +1335,7 @@ templ similarObjectRow(obj *GraphObject, so SimilarObject) {
 			Label:   similarityLabel(so.Distance),
 			Variant: ui.BadgeGhost,
 			Size:    ui.BadgeSizeXS,
+			Attrs:   templ.Attributes{"title": similarScoreHint},
 		})
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
@@ -1344,6 +1345,34 @@ templ similarObjectRow(obj *GraphObject, so SimilarObject) {
 			Icon:    "lucide--git-merge",
 		}) {
 			Merge
+		}
+	</div>
+}
+
+// objectSimilarError is the partial's failure state: it says the search failed
+// (a claim the UI can support) instead of rendering the empty state's "no other
+// objects look like this one" (a claim about the graph that a time-out does not
+// support). Retry re-requests the same partial and replaces this fragment.
+templ objectSimilarError(obj *GraphObject) {
+	<div id="object-similar" data-testid="object-similar-error">
+		@cardList("Similar objects", cardListProps{Margin: "mt-6"}) {
+			<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+				@ui.IconSpan("lucide--alert-triangle", "size-4 shrink-0 text-warning")
+				<span class="min-w-0 grow text-sm text-muted">Could not load similar objects.</span>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonSecondary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+					Attrs: templ.Attributes{
+						"hx-get":    "/objects/" + url.PathEscape(obj.ID) + "/similar/partial",
+						"hx-target": "#object-similar",
+						"hx-swap":   "outerHTML",
+					},
+				}) {
+					Retry
+				}
+			</div>
 		}
 	</div>
 }

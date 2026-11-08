@@ -1040,8 +1040,12 @@ func parseExtractionOrigin(from string) (docID, jobID string, ok bool) {
 
 // uiObjectSimilarPartial renders the "Similar objects" section as an HTMX
 // fragment. It is fetched after the object detail page paints (issue #1096), so
-// a slow /similar (vector search) can no longer hold the page render; a failure
-// degrades to the "no similar objects" empty state.
+// a slow /similar (vector search) can no longer hold the page render.
+//
+// A failure renders an error state with a retry action, NOT the empty state:
+// "No other objects look like this one yet" is a claim about the graph, and a
+// time-out or a 5xx must not be presented as one. (The rail's count badge still
+// degrades to blank on failure — an absent badge makes no claim.)
 func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
@@ -1049,7 +1053,8 @@ func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
 	similar, err := s.memory.GetSimilarObjects(ctx, id, objectSimilarFetchLimit)
 	if err != nil {
 		captureError(err)
-		similar = nil
+		renderPartial(c.Response().Writer, c.Request(), objectSimilarError(&GraphObject{ID: id}))
+		return nil
 	}
 	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(&GraphObject{ID: id}, filterSimilarMatches(similar)))
 	return nil
@@ -2039,12 +2044,19 @@ func similarObjectLabel(so SimilarObject) string {
 	return graphObjectLabel(GraphObject{ID: so.ID, Type: so.Type, Key: so.Key, Properties: so.Properties})
 }
 
-// similarMatchThresholdPercent is the minimum match percentage (0..100) a
-// similar object must exceed to be surfaced. 80 = "over 80% match".
+// similarMatchThresholdPercent is the minimum similarity percentage (0..100) a
+// similar object must exceed to be surfaced. 80 = "over 80% similar".
+//
+// This is a DISPLAY cutoff, not a duplicate threshold. The percentage is a
+// linear map of cosine similarity over stored embeddings, and same-domain
+// objects cluster high (in one corpus of ~400 legal documents: median 64%,
+// p90 72%, best 88%), so a sibling document can outrank nothing at all and
+// still look "very similar". Duplicate detection uses its own, stricter
+// threshold (0.85 in the entity-create near-duplicate check).
 const similarMatchThresholdPercent = 80
 
 // similarMatchPercent converts a pgvector cosine distance (0..2, lower = more
-// similar) into a match percentage (0..100), clamped. Higher = more similar.
+// similar) into a similarity percentage (0..100), clamped. Higher = more similar.
 func similarMatchPercent(d float32) int {
 	s := 1 - float64(d)
 	if s < 0 {
@@ -2056,7 +2068,7 @@ func similarMatchPercent(d float32) int {
 	return int(math.Round(s * 100))
 }
 
-// filterSimilarMatches keeps only similar objects whose match percentage
+// filterSimilarMatches keeps only similar objects whose similarity percentage
 // exceeds the threshold, preserving order.
 func filterSimilarMatches(similar []SimilarObject) []SimilarObject {
 	out := make([]SimilarObject, 0, len(similar))
@@ -2069,10 +2081,18 @@ func filterSimilarMatches(similar []SimilarObject) []SimilarObject {
 }
 
 // similarityLabel converts a pgvector cosine distance (0..2, lower = more
-// similar) into a match percentage label, e.g. "83% match".
+// similar) into a similarity percentage label, e.g. "83% similar".
+//
+// The wording is deliberate: the number ranks embedding closeness, it does not
+// assert that the two objects are the same thing, so calling it a "match" (as
+// this label did) overclaimed. The badge carries similarScoreHint to say what
+// the number actually measures.
 func similarityLabel(d float32) string {
-	return strconv.Itoa(similarMatchPercent(d)) + "% match"
+	return strconv.Itoa(similarMatchPercent(d)) + "% similar"
 }
+
+// similarScoreHint explains the similarity percentage on the badge tooltip.
+const similarScoreHint = "Cosine similarity of this object's embedding vector and the other object's, computed from type, key, and the name/title/summary/description and other property text. It ranks how close two objects are — it is not a probability that they are the same object."
 
 // mergeInstruction builds the first message for a merge session: it names both
 // objects (label, id, type, properties) and asks the agent to propose a merged
