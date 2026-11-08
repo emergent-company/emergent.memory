@@ -9,13 +9,13 @@ import Foundation
 /// drop away, a fenced block keeps its source (the source *is* the text) but
 /// loses its fence and language label, and blocks read as paragraphs.
 func markdownPlainText(_ text: String) -> String {
-    plainText(of: parseMarkdown(text))
+    joinedPlainText(of: parseMarkdown(text))
         .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 /// Joins a block list into reading text: a blank line between blocks, one line
 /// inside a list or table.
-func plainText(of blocks: [MarkdownBlock]) -> String {
+func joinedPlainText(of blocks: [MarkdownBlock]) -> String {
     blocks
         .map { $0.plainText.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
@@ -31,7 +31,7 @@ extension MarkdownBlock {
         case let .codeBlock(_, code):
             return code
         case let .blockQuote(blocks):
-            return plainText(of: blocks)
+            return joinedPlainText(of: blocks)
         case let .list(_, _, items):
             // The web's innerText omits generated list markers, so the text
             // reads as the items alone, one per line.
@@ -59,9 +59,9 @@ extension MarkdownListItem {
     var plainText: String {
         switch self {
         case let .plain(blocks):
-            plainText(of: blocks)
+            joinedPlainText(of: blocks)
         case let .task(_, blocks):
-            plainText(of: blocks)
+            joinedPlainText(of: blocks)
         }
     }
 }
