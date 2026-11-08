@@ -34,6 +34,9 @@ type Handler struct {
 type Session struct {
 	Initialized bool
 	ProjectID   string
+	// ClientName is the sanitized clientInfo.name from initialize, carried into
+	// tools/call so tools can name the real client (issue #472).
+	ClientName string
 }
 
 // NewHandler creates a new MCP handler
@@ -279,6 +282,7 @@ func (h *Handler) handleInitialize(c echo.Context, req *Request, user *auth.Auth
 		h.sessions[token] = &Session{
 			Initialized: true,
 			ProjectID:   projectID,
+			ClientName:  sanitizeClientName(params.ClientInfo.Name),
 		}
 		h.sessionsMu.Unlock()
 	}
@@ -418,6 +422,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 
 	// Execute tool
 	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	execCtx = withClientName(execCtx, session.ClientName)
 	// The transport already enforced per-tool AgentOnly / RequiredScope /
 	// SuperadminOnly above. Mark the call transport-enforced so ExecuteTool's
 	// in-process gate (which covers the agent-run path) does not re-fire for an

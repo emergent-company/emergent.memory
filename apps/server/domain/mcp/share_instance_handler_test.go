@@ -407,7 +407,7 @@ func TestSSEToolsCallRejectsNonAllowlisted(t *testing.T) {
 
 	e := echo.New()
 	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/mcp/sse/proj-1/message", nil), httptest.NewRecorder())
-	resp := h.handleToolsCall(c, &Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Params: params}, "proj-1", user)
+	resp := h.handleToolsCall(c, &Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Params: params}, "proj-1", user, "")
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeForbidden, resp.Error.Code)
 }
