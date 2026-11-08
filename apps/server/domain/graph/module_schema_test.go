@@ -79,6 +79,7 @@ func TestGraphPathArraySchemaPreservesBoardWorkConfig(t *testing.T) {
 			"description":"A single unit of work tracked on the Kanban board.",
 			"boardEnabled":true,
 			"allowedStatuses":["ready","in_progress","review","revision","blocked","done"],
+			"initialStatus":"ready",
 			"skipEmbeddings":true,
 			"skipExtraction":true,
 			"excludeFromSearch":true,
@@ -103,6 +104,9 @@ func TestGraphPathArraySchemaPreservesBoardWorkConfig(t *testing.T) {
 	want := []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
 	if !slices.Equal(task.AllowedStatuses, want) {
 		t.Errorf("graph path AllowedStatuses = %v, want %v", task.AllowedStatuses, want)
+	}
+	if task.InitialStatus != "ready" {
+		t.Errorf("graph path InitialStatus = %q, want ready", task.InitialStatus)
 	}
 	if !task.SkipEmbeddings || !task.SkipExtraction || !task.ExcludeFromSearch {
 		t.Errorf("graph path dropped skip flags: skipEmbeddings=%v skipExtraction=%v excludeFromSearch=%v",

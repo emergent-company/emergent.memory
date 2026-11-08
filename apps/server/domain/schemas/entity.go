@@ -278,6 +278,7 @@ type ObjectTypeSchema struct {
 	// status values, and operational pipeline skip-flags.
 	BoardEnabled      bool     `json:"boardEnabled,omitempty"`
 	AllowedStatuses   []string `json:"allowedStatuses,omitempty"`
+	InitialStatus     string   `json:"initialStatus,omitempty"`
 	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"`
 	SkipExtraction    bool     `json:"skipExtraction,omitempty"`
 	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty"`

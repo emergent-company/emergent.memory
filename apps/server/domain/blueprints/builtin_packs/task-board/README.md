@@ -9,9 +9,10 @@ concrete, working lane out of the box.
 
 - **Schema pack `task-board`** — a `Task` object type with
   `boardEnabled: true`, allowed statuses
-  `ready / in_progress / review / revision / blocked / done`, the operational
-  flags `skipEmbeddings / skipExtraction / excludeFromSearch` set, and a
-  `blocks` self-relationship (`Task → Task`).
+  `ready / in_progress / review / revision / blocked / done`, an explicit
+  `initialStatus: ready` (a create with no status lands in `ready`), the
+  operational flags `skipEmbeddings / skipExtraction / excludeFromSearch` set,
+  and a `blocks` self-relationship (`Task → Task`).
 - **Agent `task-worker`** — a queued, reaction-triggered agent that wakes on
   `created` events for `Task` objects, claims the item, does the work, writes
   deliverables (each linked back to its Task with a `delivers` edge created at
@@ -34,7 +35,9 @@ and a human request-for-changes moves it to `revision` with a rework run.
 
 ## Creating another Task
 
-Create a new object of type `Task` with a non-empty `key` and `status: ready`
-(from the UI object form or the graph API). Leave `assignee` empty to let any
-listening agent claim it, or set it to `task-worker` to route it to this
-worker.
+Create a new object of type `Task` with a non-empty `key` (from the UI object
+form or the graph API). The status is optional: a create with no status lands in
+the type's `initialStatus` (`ready`). Leave `assignee` empty to let any listening
+agent claim it, or set it to `task-worker` to route it to this worker. An agent
+may name `ready` explicitly on create; every later transition stays
+platform-owned.

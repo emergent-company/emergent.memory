@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	extractionagents "github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
@@ -310,6 +311,20 @@ func (s *Service) validateManifest(m *BlueprintManifest) error {
 	for _, p := range m.Packs {
 		if p.Name == "" || p.Version == "" {
 			return apperror.NewBadRequest("pack name and version are required")
+		}
+		// A board type's initialStatus is the lane a newly created item lands in
+		// (#422). Reject an initialStatus that is not one of the type's own
+		// allowed statuses before any pack is materialized, the same way the
+		// other pack-shape errors are surfaced as a 400 before writes.
+		for _, ot := range p.ObjectTypes {
+			cfg := extractionagents.ObjectTypeWorkConfig{
+				BoardEnabled:    ot.BoardEnabled,
+				AllowedStatuses: ot.AllowedStatuses,
+				InitialStatus:   ot.InitialStatus,
+			}
+			if err := cfg.Validate(); err != nil {
+				return apperror.NewBadRequest(fmt.Sprintf("pack %q type %q: %v", p.Name, ot.Name, err))
+			}
 		}
 	}
 	for _, sm := range m.Skills {

@@ -96,6 +96,7 @@ type ObjectTypeDef struct {
 	// carried through the pack's object_type_schemas JSON to the schema registry.
 	BoardEnabled      bool     `json:"boardEnabled,omitempty"`
 	AllowedStatuses   []string `json:"allowedStatuses,omitempty"`
+	InitialStatus     string   `json:"initialStatus,omitempty"`
 	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"`
 	SkipExtraction    bool     `json:"skipExtraction,omitempty"`
 	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty"`

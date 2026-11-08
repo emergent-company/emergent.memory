@@ -52,6 +52,7 @@ func ObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
 		// made runtime work-status enforcement inert.
 		BoardEnabled      json.RawMessage `json:"boardEnabled"`
 		AllowedStatuses   json.RawMessage `json:"allowedStatuses"`
+		InitialStatus     json.RawMessage `json:"initialStatus"`
 		SkipEmbeddings    json.RawMessage `json:"skipEmbeddings"`
 		SkipExtraction    json.RawMessage `json:"skipExtraction"`
 		ExcludeFromSearch json.RawMessage `json:"excludeFromSearch"`
@@ -85,6 +86,7 @@ func ObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
 			for key, raw := range map[string]json.RawMessage{
 				"boardEnabled":      item.BoardEnabled,
 				"allowedStatuses":   item.AllowedStatuses,
+				"initialStatus":     item.InitialStatus,
 				"skipEmbeddings":    item.SkipEmbeddings,
 				"skipExtraction":    item.SkipExtraction,
 				"excludeFromSearch": item.ExcludeFromSearch,
