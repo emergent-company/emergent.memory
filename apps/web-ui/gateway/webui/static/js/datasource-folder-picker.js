@@ -139,6 +139,22 @@
     });
   }
 
+  // The Google Picker overlay is appended to the document outside the native
+  // <dialog> top layer. A modal dialog (showModal) paints above it and swallows
+  // every click, so the host modal is closed for the duration of the picker and
+  // restored once Google reports the outcome. The timeout lets the picker tear
+  // down its own overlay first.
+  function reopenModal() {
+    setTimeout(function () {
+      if (dialog.open) return;
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "open");
+      }
+    }, 0);
+  }
+
   function onPicked(data) {
     var picker = window.google && window.google.picker;
     if (!picker || !data) return;
@@ -146,12 +162,17 @@
     if (action === picker.Action.ERROR) {
       // Google reports a bad developer key, app id, origin, or an API it cannot
       // reach here; without this branch the dialog just looks empty.
+      reopenModal();
       showError(
         "Google Picker could not load your Drive folders. Check Settings → Credentials: " +
           "the developer key must be an API key from a Cloud project with the Google Picker API " +
           "enabled and this site allowed as an origin, and the app ID must be that project's " +
           "numeric number."
       );
+      return;
+    }
+    if (action === picker.Action.CANCEL) {
+      reopenModal();
       return;
     }
     if (action !== picker.Action.PICKED) return;
@@ -169,6 +190,7 @@
     // Multi-select is enabled, but accumulating across openings keeps the flow
     // usable if a Google account only returns one selection per dialog.
     render();
+    reopenModal();
   }
 
   function openPicker() {
@@ -180,15 +202,27 @@
       })
       .then(function (session) {
         var picker = window.google.picker;
-        var view = new picker.DocsView(picker.ViewId.FOLDERS);
-        view.setIncludeFolders(true);
-        view.setSelectFolderEnabled(true);
-        view.setEnableDrives(true);
+        // setEnableDrives(true) restricts a view to shared drives only, so each
+        // nav entry needs its own view: My Drive first (the view the picker
+        // opens on), then shared drives. A single shared-drives view hides
+        // My Drive entirely.
+        var myDrive = new picker.DocsView(picker.ViewId.FOLDERS);
+        myDrive.setIncludeFolders(true);
+        myDrive.setSelectFolderEnabled(true);
+        myDrive.setEnableDrives(false);
+        if (picker.DocsViewMode) myDrive.setMode(picker.DocsViewMode.LIST);
+
+        var sharedDrives = new picker.DocsView(picker.ViewId.FOLDERS);
+        sharedDrives.setIncludeFolders(true);
+        sharedDrives.setSelectFolderEnabled(true);
+        sharedDrives.setEnableDrives(true);
+        if (picker.DocsViewMode) sharedDrives.setMode(picker.DocsViewMode.LIST);
 
         var builder = new picker.PickerBuilder()
           .setOAuthToken(session.accessToken)
           .setDeveloperKey(session.developerKey)
-          .addView(view)
+          .addView(myDrive)
+          .addView(sharedDrives)
           .setCallback(onPicked);
         if (session.appId) builder.setAppId(session.appId);
         // The picker verifies the origin of the page that mounted it, not the
@@ -198,9 +232,12 @@
         // server value only when the origin is unavailable (file:// pages).
         builder.setOrigin(window.location.origin || session.origin);
         builder.enableFeature(picker.Feature.MULTISELECT_ENABLED);
+        // Leave the top layer before mounting the picker; see reopenModal.
+        if (dialog.open) dialog.close();
         builder.build().setVisible(true);
       })
       .catch(function (err) {
+        reopenModal();
         showError(err && err.message ? err.message : "Could not open the Google Picker.");
       })
       .then(function () {
