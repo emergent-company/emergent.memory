@@ -38,6 +38,10 @@ struct StreamingMarkdownModel: Equatable {
     private(set) var appliedText = ""
     /// `true` once the whole message has been parsed as one document.
     private(set) var isSettled = false
+    /// `true` once the text has carried a link reference definition. A
+    /// definition resolves anywhere in the document, so from then on the message
+    /// is parsed as a whole instead of being split.
+    private(set) var hasReferenceDefinitions = false
 
     /// All blocks in document order.
     var blocks: [MarkdownBlock] {
@@ -56,7 +60,7 @@ struct StreamingMarkdownModel: Equatable {
         }
         var rest = String(text.dropFirst(committedSource.count))
         if let cut = MarkdownBlockBoundary.committedPrefix(of: rest) {
-            rest = commitPrefix(of: rest, upTo: cut)
+            rest = commitPrefix(of: rest, upTo: cut, wholeText: text)
         }
         tail = rest
         tailBlocks = parseMarkdown(MarkdownTailDisplay.renderable(rest))
@@ -76,15 +80,24 @@ struct StreamingMarkdownModel: Equatable {
     /// Promotes `rest[..<cut]` into `committed` and returns the new tail.
     ///
     /// A link reference definition resolves anywhere in a document, so pinning
-    /// part of it would change how earlier inlines parse; a message carrying one
-    /// (rare in agent output) falls back to re-parsing the whole text per delta.
-    private mutating func commitPrefix(of rest: String, upTo cut: String.Index) -> String {
-        let chunk = String(rest[..<cut])
-        guard !MarkdownBlockBoundary.hasLinkDefinition(chunk) else {
+    /// part of the text could leave a reference above it unresolved; the guard
+    /// therefore looks at the whole text, and a message carrying one (rare in
+    /// agent output) falls back to re-parsing the whole text per delta for the
+    /// rest of the stream.
+    private mutating func commitPrefix(
+        of rest: String,
+        upTo cut: String.Index,
+        wholeText text: String
+    ) -> String {
+        if !hasReferenceDefinitions, MarkdownBlockBoundary.hasLinkDefinition(text) {
+            hasReferenceDefinitions = true
+        }
+        guard !hasReferenceDefinitions else {
             committed = []
             committedSource = ""
-            return appliedText
+            return text
         }
+        let chunk = String(rest[..<cut])
         committed += parseMarkdown(chunk)
         committedSource += chunk
         return String(rest[cut...])
@@ -101,17 +114,36 @@ enum MarkdownBlockBoundary {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let starts = lineStarts(of: text, lines: lines)
         var fences = MarkdownFenceTracker()
+        var html = MarkdownRawHTMLBlock()
         var boundary: String.Index?
         for (index, line) in lines.enumerated() {
             let next = index + 1
-            if !fences.isInside, isBlank(line), next < lines.count,
+            if !fences.isInside, !html.isOpen, isBlank(line), next < lines.count,
                !isBlank(lines[next]), isFreshBlockStart(lines[next])
             {
                 boundary = starts[next]
             }
-            fences.consume(line)
+            consume(line, fences: &fences, html: &html)
         }
         return boundary
+    }
+
+    /// Feeds one line to the block trackers. A blank line inside a fenced code
+    /// block or a raw HTML block is not a boundary: both run until their own
+    /// closing marker, so the text after the blank line still belongs to them.
+    private static func consume(
+        _ line: Substring,
+        fences: inout MarkdownFenceTracker,
+        html: inout MarkdownRawHTMLBlock
+    ) {
+        if html.isOpen {
+            html.consume(line)
+            return
+        }
+        let isFenceLine = fences.consume(line)
+        if !isFenceLine, !fences.isInside {
+            html.consume(line)
+        }
     }
 
     /// Whether the chunk splits off a link reference definition.
