@@ -33,8 +33,7 @@ final class HTTPChatTransport {
     var onConversationLearned: ((String) -> Void)?
 
     /// Called when a turn ends on its own, so the composer releases the queue
-    /// parked behind it. Not called for a turn that was aborted (`stop()`,
-    /// `reset()`): its rows wait for the next explicit action.
+    /// parked behind it. Not called for an aborted turn (`stop()`, `reset()`).
     var onTurnFinished: (() -> Void)?
 
     /// The turn whose reply was cut off mid-stream, set only once text is on
@@ -168,21 +167,17 @@ final class HTTPChatTransport {
         liveMessages
     }
 
-    /// Drops one live message. The live-copy helpers in
-    /// `HTTPChatTransport+LiveCopy.swift` run in another file, so they cannot
-    /// write the `private` storage directly.
+    /// Drops one live message (see `HTTPChatTransport+LiveCopy.swift`).
     func removeLiveMessage(_ id: String) {
         liveMessages.removeAll { $0.id == id }
     }
 
-    /// Clears the turn whose reply was cut off, once its record has been
-    /// swapped in.
+    /// Clears the turn whose reply was cut off, once its record is swapped in.
     func clearInterruptedTurn() {
         interruptedTurn = nil
     }
 
-    /// Clears the turn that never streamed a reply, once its record has been
-    /// swapped in.
+    /// Clears the turn that never streamed a reply, once its record is in.
     func clearUnansweredTurn() {
         unansweredTurn = nil
     }
