@@ -345,9 +345,11 @@ func (t *thinkingTracker) reasoningWasPartial(step int) bool {
 // the answer and is emitted as a text delta so callers still receive a non-empty
 // final response. Nil and empty parts are skipped.
 //
-// When the plain answer text contains a valid ```a2ui fenced block, the surface
-// messages are emitted as a single StreamEventA2UI and the remaining text
-// (fences stripped) is emitted as a text delta, preserving reasoning alongside.
+// When the plain answer text contains a ```a2ui fenced block, the block is
+// removed from the answer text and — when it validates — its surface messages
+// are emitted as a single StreamEventA2UI. A block that does not validate still
+// gets stripped (the user must never read raw protocol JSONL); the run then
+// simply continues as plain text.
 func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 	hasAnswerText := false
 	for _, part := range parts {
@@ -359,13 +361,16 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 
 	// If there is plain answer text, check it for an embedded A2UI surface.
 	if hasAnswerText {
-		if msgs, plainText, surfaceID := extractA2UIFromParts(parts); len(msgs) > 0 {
+		msgs, plainText, surfaceID, hasBlock := extractA2UIFromParts(parts)
+		if hasBlock {
 			var events []StreamEvent
-			events = append(events, StreamEvent{
-				Type:      StreamEventA2UI,
-				SurfaceID: surfaceID,
-				A2UI:      msgs,
-			})
+			if len(msgs) > 0 {
+				events = append(events, StreamEvent{
+					Type:      StreamEventA2UI,
+					SurfaceID: surfaceID,
+					A2UI:      msgs,
+				})
+			}
 			if plainText != "" {
 				events = append(events, StreamEvent{
 					Type: StreamEventTextDelta,
@@ -408,9 +413,11 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 
 // extractA2UIFromParts concatenates the non-Thought text of a final response and
 // attempts to extract an A2UI surface from any ```a2ui fenced block. It returns
-// the decoded messages, the remaining plain text (fences stripped when found,
-// otherwise the full concatenated text), and the derived stable surface id.
-func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainText string, surfaceID string) {
+// the decoded messages (nil when no block validated), the plain text with every
+// fence stripped, the derived stable surface id, and whether the response
+// carried a fence at all — the last so a caller can tell "no surface" from "a
+// surface that failed validation".
+func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainText string, surfaceID string, hasBlock bool) {
 	var b strings.Builder
 	for _, part := range parts {
 		if part == nil || part.Text == "" || part.Thought {
@@ -421,10 +428,10 @@ func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainTe
 	text := b.String()
 
 	msgs, rest, found := a2ui.ExtractFromText(text)
-	if !found {
-		return nil, text, ""
+	if !found && rest == text {
+		return nil, text, "", false
 	}
-	return msgs, rest, deriveSurfaceID(msgs)
+	return msgs, rest, deriveSurfaceID(msgs), true
 }
 
 // deriveSurfaceID returns the first createSurface surfaceId if present, else a
@@ -2904,6 +2911,11 @@ func (ae *AgentExecutor) runPipeline(
 	thinkTrack := newThinkingTracker(req.StreamCallback)
 	defer thinkTrack.close()
 
+	// textFilter keeps a streaming ```a2ui surface out of the answer text. A
+	// surface is only extracted from the finished response, so without it the
+	// raw JSONL of a card (valid or not) is painted into the bubble mid-stream.
+	textFilter := a2ui.NewTextFilter()
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -3870,10 +3882,10 @@ func (ae *AgentExecutor) runPipeline(
 						step := tracker.current()
 						thinkTrack.markReasoningPartial(step)
 						thinkTrack.emit(step, "reasoning", part.Text)
-					} else {
+					} else if text := textFilter.Feed(part.Text); text != "" {
 						req.StreamCallback(StreamEvent{
 							Type: StreamEventTextDelta,
-							Text: part.Text,
+							Text: text,
 						})
 					}
 				}
