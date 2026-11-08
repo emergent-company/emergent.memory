@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Whether a chat transcript is pinned to its newest row.
+/// Whether a chat transcript is pinned to its newest row, and what a change of
+/// geometry should do about it.
 ///
 /// A chat follows its newest row only while the reader is already there. The
 /// opposite rule — jump to the bottom on every token and every activity change —
@@ -9,15 +10,25 @@ import SwiftUI
 /// last scroll the landing stayed short of it, leaving the tail of the reply
 /// outside the viewport (`emergent.memory#446`).
 ///
-/// The decision is a pure function of two measurements so it can be tested
-/// without a scroll view: the visible bottom edge and the content's height, both
-/// in content coordinates.
+/// Both decisions are pure functions of two measurements, so they are pinned by
+/// tests without a scroll view.
 enum ChatScrollPin {
     /// How far above the content's end still counts as "at the bottom".
     ///
     /// A few points of slack, because a drag does not land exactly on the edge
     /// and a rubber-banded overscroll must not unpin the reader.
     static let threshold: CGFloat = 24
+
+    /// What the decision is made from, in content coordinates.
+    ///
+    /// `viewportHeight` is here because the reader can be left behind by the
+    /// viewport moving rather than the content growing — the keyboard leaving on
+    /// send, or a composer that changes height.
+    struct Measurement: Equatable {
+        var visibleBottom: CGFloat
+        var contentHeight: CGFloat
+        var viewportHeight: CGFloat
+    }
 
     static func isPinned(
         visibleBottom: CGFloat,
@@ -27,63 +38,60 @@ enum ChatScrollPin {
         // Content shorter than the viewport has no bottom to be away from.
         visibleBottom >= contentHeight - threshold
     }
+
+    /// Whether a change of geometry should move the transcript to its newest row.
+    ///
+    /// Two conditions, and both used to be missing:
+    /// - only a change of size can leave a row outside the viewport, so a plain
+    ///   scroll must never move the view — re-scrolling on it is what undid the
+    ///   reader's drag;
+    /// - the pin is read from the geometry *before* the change, because growth
+    ///   moves the bottom away from the reader: judging the new geometry would
+    ///   read "the reader is 200 pt from the bottom" as "they scrolled away",
+    ///   and the view would stop following the moment a bubble grew past the
+    ///   slack.
+    static func shouldFollow(previous: Measurement, current: Measurement) -> Bool {
+        let resized = previous.contentHeight != current.contentHeight
+            || previous.viewportHeight != current.viewportHeight
+        guard resized else { return false }
+        return isPinned(
+            visibleBottom: previous.visibleBottom,
+            contentHeight: previous.contentHeight
+        )
+    }
 }
 
 /// Follows the newest row of a chat while the reader is at the bottom, and
 /// leaves the view alone while they are reading back.
 ///
 /// Applies to the `ScrollView` inside a `ScrollViewReader`, which supplies the
-/// proxy. A change of size is what moves the view: a streamed token, a recorded
-/// history load, a dismissing keyboard (the viewport grows), a composer that
-/// changes height, or Markdown that settles at a height other than the row it
-/// replaced.
+/// proxy. The scroll view's initial position is its own business
+/// (`defaultScrollAnchor(_:for: .initialOffset)`); everything after that is
+/// driven by ``ChatScrollPin/shouldFollow(previous:current:)``.
 struct ChatAutoScroll: ViewModifier {
     let proxy: ScrollViewProxy
     /// The zero-height sentinel at the end of the content.
     let bottomAnchorID: String
 
-    @State private var isPinned = true
-    /// The first measurement has no predecessor to compare against, and it is
-    /// the one that lands the view on the newest row.
-    @State private var hasMeasured = false
-
     func body(content: Content) -> some View {
         content
-            // Land on the newest row on open, whatever the first measurement
-            // reports: a chat must never open on the oldest message.
+            // A chat must never open on its oldest message. The initial anchor
+            // covers a transcript that is already populated; this covers content
+            // that lands before that anchor is applied.
             .onAppear {
                 proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
-            .onScrollGeometryChange(for: Measurements.self, of: Self.measure) { previous, current in
-                isPinned = ChatScrollPin.isPinned(
-                    visibleBottom: current.visibleBottom,
-                    contentHeight: current.contentHeight
-                )
-                let firstMeasurement = !hasMeasured
-                hasMeasured = true
-                // Only a change of size can leave the newest row outside the
-                // viewport. A plain scroll changes the offset alone, and
-                // re-scrolling on it would fight the reader's own drag.
-                guard isPinned,
-                      firstMeasurement
-                      || previous.contentHeight != current.contentHeight
-                      || previous.viewportHeight != current.viewportHeight
-                else { return }
+            .onScrollGeometryChange(for: ChatScrollPin.Measurement.self, of: Self.measure) { previous, current in
+                guard ChatScrollPin.shouldFollow(previous: previous, current: current) else { return }
                 proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
     }
 
-    private static func measure(_ geometry: ScrollGeometry) -> Measurements {
-        Measurements(
+    private static func measure(_ geometry: ScrollGeometry) -> ChatScrollPin.Measurement {
+        ChatScrollPin.Measurement(
             visibleBottom: geometry.visibleRect.maxY,
             contentHeight: geometry.contentSize.height,
             viewportHeight: geometry.containerSize.height
         )
-    }
-
-    private struct Measurements: Equatable {
-        var visibleBottom: CGFloat
-        var contentHeight: CGFloat
-        var viewportHeight: CGFloat
     }
 }

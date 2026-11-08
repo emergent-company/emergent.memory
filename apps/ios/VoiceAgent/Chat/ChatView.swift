@@ -70,6 +70,8 @@ struct ChatView: View {
                 .padding(.vertical, 2 * .grid)
             }
             .scrollDismissesKeyboard(.interactively)
+            // Open on the newest message; growth is the pin rule's job.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             // Follow the newest row while the reader is at the bottom, and never
             // while they are reading back (`emergent.memory#434`).
             .modifier(ChatAutoScroll(proxy: proxy, bottomAnchorID: Self.bottomAnchorID))

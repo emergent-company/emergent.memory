@@ -49,6 +49,16 @@ extension HTTPChatTransport {
         /// failure: `discardInterruptedLiveCopy` only clears the banner when it
         /// is still this one (`emergent.memory#213`).
         let failureMessage: String
+
+        /// The hand-over for a reply the stream stopped delivering before `done`
+        /// — no error, no end of turn, just no more frames.
+        static func cutShort(liveMessageID: String, partialText: String) -> InterruptedTurn {
+            InterruptedTurn(
+                liveMessageID: liveMessageID,
+                partialText: partialText,
+                failureMessage: ChatTurnFailure.cutShort
+            )
+        }
     }
 
     /// A turn that ended without any reply this client could show, and the

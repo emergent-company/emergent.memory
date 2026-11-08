@@ -244,6 +244,58 @@ struct HTTPChatTransportFailureTests {
         // And the text the user already saw is still on screen.
         #expect(transcript.liveMessages.contains { $0.role == .assistant })
     }
+
+    /// A stream that stops after part of the reply — no error, no `done` — is a
+    /// truncated reply, not a finished one: the server always closes a turn with
+    /// `done`, so a missing one means this client stopped receiving while the
+    /// run went on. It is handed over exactly like a mid-stream error, so the
+    /// recorded tail is loaded rather than leaving half a reply on screen.
+    @Test func aStreamThatStopsMidReplyIsHandedOverAsInterrupted() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(payloads: [ChatStreamFixtures.meta, ChatStreamFixtures.tokenA])
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        let interrupted = try #require(transport.interruptedTurn)
+        #expect(interrupted.partialText == "Hello")
+        #expect(interrupted.failureMessage == ChatTurnFailure.cutShort)
+        #expect(transport.errorMessage == ChatTurnFailure.cutShort)
+        // The started-reply path, not the unanswered one.
+        #expect(transport.unansweredTurn == nil)
+        #expect(activity.isAwaitingFirstReply == false)
+    }
+
+    /// The same stream with its `done` is a finished turn: nothing to recover.
+    @Test func aStreamThatEndsWithDoneIsFinishedNotInterrupted() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(payloads: [
+            ChatStreamFixtures.meta,
+            ChatStreamFixtures.tokenA,
+            ChatStreamFixtures.done,
+        ])
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        #expect(transport.interruptedTurn == nil)
+        #expect(transport.unansweredTurn == nil)
+        #expect(transport.errorMessage == nil)
+    }
 }
 
 /// One turn as ``SequencedChatStream`` serves it.

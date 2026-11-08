@@ -118,6 +118,28 @@ struct HTTPChatTransportUnansweredTests {
         #expect(transport.errorMessage == "The agent run was interrupted.")
     }
 
+    /// A request that never reached the gateway cannot have started a run, so
+    /// the turn settles with its banner and no wait on the record.
+    @Test func aRequestThatNeverReachedTheGatewayDoesNotWait() async throws {
+        let transcript = ChatSessionTranscriptStore()
+        let activity = ChatActivityStore()
+        let transport = makeTransport(payloads: [], error: URLError(.cannotConnectToHost))
+
+        let task = try #require(transport.send(
+            "hello",
+            conversationID: "c1",
+            agentName: "",
+            transcript: transcript,
+            activity: activity
+        ))
+        await task.value
+
+        #expect(activity.isAwaitingFirstReply == false)
+        #expect(activity.isGeneratingReply == false)
+        #expect(transport.unansweredTurn == nil)
+        #expect(transport.errorMessage != nil)
+    }
+
     /// Settling an unanswered turn removes the live half the record now covers,
     /// and clears only this turn's banner.
     @Test func settlingAnUnansweredTurnDropsItsLiveCopyAndBanner() async throws {
@@ -143,5 +165,37 @@ struct HTTPChatTransportUnansweredTests {
         // The record supplies the user turn now, and the empty live turn is gone.
         #expect(transcript.liveMessages.isEmpty)
         #expect(activity.liveTurn == nil)
+    }
+}
+
+// MARK: - Whether to wait on the record
+
+/// Which turn endings can leave a reply in Memory (`emergent.memory#445`).
+/// Waiting on the ones that cannot is a bounded poll spent on nothing.
+struct ChatTurnFailureWaitingTests {
+    @Test func aTurnThatStreamedAFrameIsWaitable() {
+        #expect(ChatTurnFailure.isWorthWaiting(for: nil, sawFrame: true))
+        // The connection existed and broke: the detached run may still be going.
+        #expect(ChatTurnFailure.isWorthWaiting(for: URLError(.networkConnectionLost), sawFrame: true))
+        #expect(ChatTurnFailure.isWorthWaiting(for: GatewayError.transport("dropped"), sawFrame: true))
+    }
+
+    /// An accepted turn whose events were all empty: the reported case, and the
+    /// stream ended, so there is a record to wait for.
+    @Test func aCleanEndWithoutAFrameIsWaitable() {
+        #expect(ChatTurnFailure.isWorthWaiting(for: nil, sawFrame: false))
+    }
+
+    /// Nothing reached the gateway, so no run exists and no reply is recorded.
+    @Test func aConnectionThatNeverOpenedIsNotWaitable() {
+        #expect(ChatTurnFailure.isWorthWaiting(for: URLError(.cannotConnectToHost), sawFrame: false) == false)
+        #expect(ChatTurnFailure.isWorthWaiting(for: URLError(.notConnectedToInternet), sawFrame: false) == false)
+        #expect(ChatTurnFailure.isWorthWaiting(for: GatewayError.transport("unreachable"), sawFrame: false) == false)
+    }
+
+    @Test func aRefusedOrUnreadableResponseIsNotWaitable() {
+        #expect(ChatTurnFailure.isWorthWaiting(for: GatewayError.httpStatus(401, nil), sawFrame: false) == false)
+        #expect(ChatTurnFailure.isWorthWaiting(for: GatewayError.invalidConfiguration("no URL"), sawFrame: false) == false)
+        #expect(ChatTurnFailure.isWorthWaiting(for: GatewayError.decode("bad body"), sawFrame: false) == false)
     }
 }

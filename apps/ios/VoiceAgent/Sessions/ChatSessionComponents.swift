@@ -48,6 +48,10 @@ struct ChatTranscriptView: View {
                 .padding(.vertical, 2 * .grid)
             }
             .scrollDismissesKeyboard(.interactively)
+            // A chat opens on its newest message. `initialOffset` only: content
+            // that grows later is followed by the pin rule below, and only while
+            // the reader is still at the bottom.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             // Follow the newest row while the reader is at the bottom: a
             // streamed token, a history load, a keyboard change or a composer
             // that resized re-anchors there; a reader who scrolled back to read

@@ -251,27 +251,39 @@ final class HTTPChatTransport {
 
     /// Ends a turn whatever the stream did.
     ///
-    /// A reply that started is simply finished. A turn that never produced a
-    /// token is closed too — otherwise the working line and the composer's busy
-    /// gate stay live on a turn that will never move again — and, when the reply
-    /// may still be recorded, handed to the view as ``unansweredTurn`` so it can
-    /// load the finished answer instead of waiting for a stream that is gone
-    /// (`emergent.memory#445`).
+    /// A reply that started is finished, unless the stream stopped without
+    /// saying the turn was over: the server always closes a turn with `done`, so
+    /// a missing one means this client stopped receiving before the run ended,
+    /// and the reply on screen is a prefix of the recorded one.
+    ///
+    /// A turn that never produced a token is closed too — otherwise the working
+    /// line and the composer's busy gate stay live on a turn that will never move
+    /// again — and, when the reply may still be recorded, handed to the view as
+    /// ``unansweredTurn`` so it can load the finished answer instead of waiting
+    /// for a stream that is gone (`emergent.memory#445`).
     private func finishTurn(
         state: TurnState,
         failure: Error?,
         activity: ChatActivityStore
     ) {
         guard !state.started else {
+            if !state.completed, interruptedTurn == nil {
+                errorMessage = ChatTurnFailure.cutShort
+                interruptedTurn = .cutShort(
+                    liveMessageID: state.assistantMessageID,
+                    partialText: state.text
+                )
+            }
             activity.markReplyFinished()
             return
         }
         activity.settleWithoutReply()
 
         // A run that failed is not coming back, and one whose request was
-        // refused never started: in both cases there is nothing to wait for.
+        // refused (or never left this device) never started: in both cases there
+        // is nothing to wait for.
         guard !state.serverFailed,
-              state.sawFrame || ChatTurnFailure.isWorthWaiting(for: failure),
+              ChatTurnFailure.isWorthWaiting(for: failure, sawFrame: state.sawFrame),
               let anchorMessageID = state.anchorMessageID
         else { return }
         // A turn that showed its answer in another form (a card, a tool run) is
@@ -338,9 +350,11 @@ final class HTTPChatTransport {
         }
         transcript.syncLive(liveMessages)
     }
+}
 
-    // MARK: - Agent definition
+// MARK: - Agent definition
 
+extension HTTPChatTransport {
     /// Resolves the selected agent's definition id, which the chat request
     /// needs to talk to the agent the user picked. Best-effort: when the lookup
     /// fails the request omits it and the server uses the project default.

@@ -56,9 +56,13 @@ extension ChatSessionView {
     /// (`emergent.memory#445`).
     ///
     /// Nothing of the turn is on screen — not even a partial — so there is no
-    /// copy to keep and no text to recognise the reply by: the record grew past
-    /// the pre-turn count is the whole signal, and both halves of the turn (the
-    /// user message and the reply) come from it.
+    /// copy to keep and no text to recognise the reply by. Growth past the
+    /// pre-turn count is not a signal on its own: the gateway records the user's
+    /// own message before the run starts, so the first read can hold nothing but
+    /// that message. The wait accepts a detail only once it carries an assistant
+    /// turn after the last user turn
+    /// (``ChatSessionTranscriptStore/recordedUnseenReply(in:since:)``), and then
+    /// both halves of the turn come from the record.
     ///
     /// A run can outlive the window; then the banner stays as the honest signal
     /// and reopening the chat loads the record (`emergent.memory#437` is the
@@ -70,12 +74,13 @@ extension ChatSessionView {
         else { return }
         let baseline = transcript.lastRecordCount
         let scope = TranscriptWaitScope(conversationID: conversationID, baseline: baseline)
-        let poll = ResumedHistoryPoll(client: SessionLogClient(config: MemoryConfig()))
+        let poll = RecordedTurnPoll(client: SessionLogClient(config: MemoryConfig()), attempts: 30)
         await poll.run(
-            scope: scope,
+            conversationID: conversationID,
             isCurrent: {
                 transport.unansweredTurn?.id == unanswered.id && scopeIsCurrent(scope)
             },
+            accept: { ChatSessionTranscriptStore.recordedUnseenReply(in: $0, since: baseline) },
             apply: { detail in
                 transcript.loadHistory(from: detail)
                 // Also drops the live copy of this turn and clears this turn's
