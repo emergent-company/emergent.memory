@@ -24,10 +24,11 @@ struct TranscriptWaitScope: Equatable {
 /// Polls one conversation's recorded transcript for a bounded window and hands
 /// the first detail the caller accepts to `apply`.
 ///
-/// The one engine behind both waits that cannot be told the answer: a dropped
-/// stream (``InterruptedTurnRecovery``) and a card decision that resumed a run
-/// in the background (``ResumedHistoryPoll``). Neither gets the continuation
-/// streamed back, so both read until the record shows it.
+/// The one engine behind the waits that cannot be told the answer: a dropped
+/// stream (``InterruptedTurnRecovery``), a turn that streamed nothing at all
+/// (`ChatSessionView.recoverUnansweredTurn`), and a card decision that resumed a
+/// run in the background (``ResumedHistoryPoll``). None of them gets the
+/// continuation streamed back, so all read until the record shows it.
 ///
 /// `isCurrent` is checked *before and after* every read. Before, so a wait that
 /// outlived its transcript stops without spending a request; after, because the

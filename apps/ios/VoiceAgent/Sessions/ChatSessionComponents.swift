@@ -48,26 +48,20 @@ struct ChatTranscriptView: View {
                 .padding(.vertical, 2 * .grid)
             }
             .scrollDismissesKeyboard(.interactively)
-            // A chat always opens on its newest message: anchoring the scroll
-            // view to the bottom makes the first layout land there, instead of
-            // relying on `onAppear` racing the LazyVStack's layout (which could
-            // leave the view at a stale offset inherited from another chat).
-            .defaultScrollAnchor(.bottom)
+            // A chat opens on its newest message. `initialOffset` only: content
+            // that grows later is followed by the pin rule below, and only while
+            // the reader is still at the bottom.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // Follow the newest row while the reader is at the bottom: a
+            // streamed token, a history load, a keyboard change or a composer
+            // that resized re-anchors there; a reader who scrolled back to read
+            // is never moved (`emergent.memory#434`), and the last growth can no
+            // longer land short of the newest row (`emergent.memory#446`).
+            .modifier(ChatAutoScroll(proxy: proxy, bottomAnchorID: Self.bottomAnchorID))
             .environment(\.toolActivityDisclosure, toolDisclosure)
-            .onAppear { scrollToBottom(proxy, animated: false) }
-            // Recorded history replaces the empty view in one shot: snap rather
-            // than animate from a position that no longer exists.
-            .onChange(of: transcript.history.count) { _, _ in scrollToBottom(proxy, animated: false) }
-            .onChange(of: transcript.liveMessages) { _, _ in scrollToBottom(proxy, animated: true) }
-            .onChange(of: activity.turns) { _, _ in scrollToBottom(proxy, animated: true) }
             .onChange(of: activity.turns.isEmpty) { _, empty in
                 if empty {
                     toolDisclosure.clear()
-                }
-            }
-            .onChange(of: transcript.isLoadingHistory) { _, loading in
-                if !loading {
-                    scrollToBottom(proxy, animated: false)
                 }
             }
             .overlay {
@@ -110,16 +104,6 @@ struct ChatTranscriptView: View {
         ForEach(transcript.liveMessages) { message in
             ChatMessageBubble(message: message)
             anchoredActivity(for: message)
-        }
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
-        if animated {
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
-        } else {
-            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
         }
     }
 

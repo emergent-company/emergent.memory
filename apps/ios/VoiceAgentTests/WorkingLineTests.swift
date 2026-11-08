@@ -132,6 +132,68 @@ struct WorkingLineDurationTests {
     }
 }
 
+// MARK: - Settling
+
+/// A turn leaves the pre-reply state only through the first token, so a stream
+/// that never delivers one has to close it explicitly — otherwise the working
+/// line spins on a turn that will never move again (`emergent.memory#445`).
+@MainActor
+struct TurnSettlingTests {
+    @Test func aTurnWithoutAReplySettlesWithoutOne() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        #expect(store.isAwaitingFirstReply)
+
+        store.settleWithoutReply()
+
+        #expect(store.isAwaitingFirstReply == false)
+        #expect(store.isGeneratingReply == false)
+        #expect(TurnWorkingState.of(awaitingFirstReply: store.isAwaitingFirstReply, turn: store.liveTurn) == .hidden)
+    }
+
+    @Test func settlingKeepsTheTurnAndWhatItShowed() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.apply(.toolCall(ChatToolCallEvent(id: "t1", tool: "entity-search", arguments: "{}")))
+
+        store.settleWithoutReply()
+
+        #expect(store.liveTurn != nil)
+        // The steps are still the turn's record of what happened.
+        #expect(store.liveTurn?.tools.count == 1)
+    }
+
+    @Test func settlingIsIdempotent() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.settleWithoutReply()
+        store.settleWithoutReply()
+        #expect(store.isGeneratingReply == false)
+        #expect(store.turns.count == 1)
+    }
+
+    @Test func settlingNeverClosesAReplyThatStarted() {
+        // `markReplyFinished` owns a reply that streamed: settling it here would
+        // cut a live answer short.
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.agentReplyStarted()
+        store.settleWithoutReply()
+        #expect(store.isGeneratingReply)
+    }
+
+    @Test func discardingATurnRemovesOnlyThatAnchor() {
+        let store = ChatActivityStore()
+        store.userTurnStarted(anchorMessageID: "m1")
+        store.settleWithoutReply()
+        store.userTurnStarted(anchorMessageID: "m2")
+
+        store.discardTurn(anchoredTo: "m1")
+
+        #expect(store.turns.map(\.anchorMessageID) == ["m2"])
+    }
+}
+
 // MARK: - Layout
 
 /// The line is the replacement for a decorative animation, so it must be a

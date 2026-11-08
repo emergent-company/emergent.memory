@@ -9,7 +9,11 @@ enum MemoryFont {
     /// Screen / page title in pushed-detail chrome.
     static let screenTitle: Font = .system(.title3, weight: .semibold)
     /// Chat bubble and session-timeline turn body copy.
-    static let conversationBody: Font = .body
+    ///
+    /// One step below `.body`: a 17pt body reads as oversized for a bubble that
+    /// already carries its own padding, and long agent replies fit far more per
+    /// screen at 16pt without dropping below the accessibility floor.
+    static let conversationBody: Font = .callout
     /// Card and row headers (tool names, question prompts, settings rows).
     static let cardHeader: Font = .system(.subheadline, weight: .semibold)
     /// Secondary descriptive copy under a header.

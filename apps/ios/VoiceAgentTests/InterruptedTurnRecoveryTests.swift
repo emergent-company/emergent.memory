@@ -185,6 +185,55 @@ struct InterruptedTurnRecoveryTests {
 
         #expect(!ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
     }
+
+    // MARK: - A turn the client saw nothing of (#445)
+
+    /// The gateway records the user's own message when it accepts the turn,
+    /// before the run starts, so the first read after a dropped stream holds
+    /// growth that is not a reply. Accepting it would settle the wait with an
+    /// empty turn on screen.
+    @Test func growthHoldingOnlyTheUsersOwnMessageIsNotAReply() {
+        let detail = SessionDetail(room: "conv-1", records: [turn("user", "hello")])
+
+        #expect(!ChatSessionTranscriptStore.recordedUnseenReply(in: detail, since: 0))
+    }
+
+    /// Once the run is recorded, the same read holds the answer.
+    @Test func recognisesTheRecordedReplyOfATurnNothingStreamed() {
+        let detail = SessionDetail(room: "conv-1", records: finished())
+
+        #expect(ChatSessionTranscriptStore.recordedUnseenReply(in: detail, since: 1))
+    }
+
+    /// A tool step on its own is not an answer: the turn is still working, and
+    /// the text may follow.
+    @Test func aToolStepWithoutAnAnswerKeepsWaiting() {
+        let detail = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+        ])
+
+        #expect(!ChatSessionTranscriptStore.recordedUnseenReply(in: detail, since: 0))
+    }
+
+    /// A reply behind the gateway's function-call placeholder is still the reply.
+    @Test func recognisesAnAnswerBehindAToolCall() {
+        let detail = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            turn("assistant", "(calls: entity-create)"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+            turn("assistant", "here you go"),
+        ])
+
+        #expect(ChatSessionTranscriptStore.recordedUnseenReply(in: detail, since: 0))
+    }
+
+    /// Without growth past the baseline the record is the one already on screen.
+    @Test func anUnchangedRecordIsNotAReply() {
+        let detail = SessionDetail(room: "conv-1", records: finished())
+
+        #expect(!ChatSessionTranscriptStore.recordedUnseenReply(in: detail, since: 3))
+    }
 }
 
 /// Answers `true` for the first `limit` checks, then `false`.

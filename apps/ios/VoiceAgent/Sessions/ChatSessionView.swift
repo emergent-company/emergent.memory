@@ -66,6 +66,10 @@ struct ChatSessionView: View {
                 guard turn != nil else { return }
                 Task { await recoverInterruptedTurn() }
             }
+            .onChange(of: transport.unansweredTurn) { _, turn in
+                guard turn != nil else { return }
+                Task { await recoverUnansweredTurn() }
+            }
             .onReceive(session.objectWillChange) { _ in
                 // Only the voice room feeds the transcript from LiveKit; a text
                 // session has no room and must keep its HTTP live turns.
