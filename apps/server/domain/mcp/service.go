@@ -449,7 +449,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-query",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass include_properties=true (or a fields list) to return the properties blob; by default properties are omitted to bound large pages. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -468,7 +468,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"limit": {
 						Type:        "number",
-						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
+						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When properties are requested (field_strategy=\"full\", include_properties=true, or a fields list) the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
 						Minimum:     intPtr(1),
 						Maximum:     intPtr(200),
 						Default:     10,
@@ -498,13 +498,17 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"fields": {
 						Type:        "array",
-						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. Only applies when field_strategy=\"full\".",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). Supplying fields implies include_properties=true, so the requested properties are returned without also passing field_strategy=\"full\". id, key, name, type, created_at, updated_at are always returned for free — do not include them here.",
 						Items:       &PropertySchema{Type: "string"},
 					},
 					"field_strategy": {
 						Type:        "string",
-						Description: "Controls property depth. compact=name only, no properties (default), full=all properties (or the requested fields subset).",
+						Description: "Controls property depth. compact=no properties (default unless include_properties=true or fields is supplied), full=all properties (or the requested fields subset).",
 						Enum:        []string{"compact", "full"},
+					},
+					"include_properties": {
+						Type:        "boolean",
+						Description: "When true, return each entity's properties blob (projected to fields when supplied). Selects the full projection, whose effective limit is capped to bound the payload; paginate with offset for more rows. Default false for type/pagination queries (compact: no properties); the ids[] path returns properties by default, and include_properties=false opts it back into compact.",
 					},
 					"filters": {
 						Type:        "object",
@@ -545,7 +549,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-search",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
+			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Returns the current version of each matching object only: soft-deleted objects are excluded, one hit per object, with the canonical object id plus the current version number, properties and updated_at. Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -3826,15 +3830,31 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		orderExpr = fmt.Sprintf("left(go.properties->>'name', %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
 	}
 
-	// Resolve the field strategy the same way search-hybrid does. Defaulting to
-	// "compact" (name only, no properties) keeps a high-limit entity-query from
-	// returning the full properties JSONB — in statute projects that is ~14 KB of
-	// text per row, i.e. multiple MB at limit=200 (issue #1069). Callers that
-	// want properties must pass field_strategy="full".
+	// Resolve the field strategy the same way search-hybrid does. "compact" (no
+	// properties) stays the default because it keeps a high-limit entity-query
+	// from returning the full properties JSONB — in statute projects that is
+	// ~14 KB of text per row, i.e. multiple MB at limit=200 (issue #1069). A
+	// caller that asks for data gets it: include_properties=true or an explicit
+	// fields list selects the full projection, under the same limit cap as
+	// field_strategy="full" (issue #400). An explicit field_strategy always wins;
+	// when that leaves a caller's requested properties suppressed the conflict is
+	// reported as a warning below, and include_properties=false pins the compact
+	// default when no strategy was named.
 	opts := responseOptsFromArgs(args)
+	includeProps, includePropsSet := args["include_properties"].(bool)
 	strategy := opts.FieldStrategy
+	propertiesSuppressed := false
 	if strategy == "" {
-		strategy = "compact"
+		switch {
+		case includePropsSet && !includeProps:
+			strategy = "compact"
+		case includeProps || len(opts.Fields) > 0:
+			strategy = "full"
+		default:
+			strategy = "compact"
+		}
+	} else {
+		propertiesSuppressed = strategy == "compact" && (includeProps || len(opts.Fields) > 0)
 	}
 	fieldProjection := entityPropertiesProjection(strategy, args["fields"])
 
@@ -4024,7 +4044,11 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "branch": {}, "filters": {}, "key_prefix": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "include_properties": {}, "branch": {}, "filters": {}, "key_prefix": {},
+		// The consolidated `entity` tool leaves its own `action` in args after
+		// dispatch consumed it, so it must not be reported as an ignored
+		// parameter (the dispatcher already validated it).
+		"action": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -4043,9 +4067,12 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	}
 	if fullLimitClamped {
 		warnings = append(warnings, fmt.Sprintf(
-			"limit capped to %d for field_strategy=full to bound the payload; paginate with offset for more rows.",
+			"limit capped to %d to bound the properties payload; paginate with offset for more rows.",
 			limit,
 		))
+	}
+	if propertiesSuppressed {
+		warnings = append(warnings, "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties.")
 	}
 	queryEntitiesWarning := strings.Join(warnings, " ")
 
@@ -4218,12 +4245,21 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	// ids[] is the documented "fetch full properties of a specific version"
 	// path, so it defaults to "full" (unlike the type/pagination path above,
 	// which defaults to "compact" to avoid the multi-MB wide-row payload). An
-	// explicit field_strategy overrides it, and `fields` is honoured under
-	// "full" exactly like the type/pagination path.
+	// explicit field_strategy overrides it, `fields` is honoured under "full"
+	// exactly like the type/pagination path, and include_properties=false opts
+	// back into the compact projection (issue #400).
 	opts := responseOptsFromArgs(args)
+	includeProps, includePropsSet := args["include_properties"].(bool)
 	strategy := opts.FieldStrategy
+	propertiesSuppressed := false
 	if strategy == "" {
-		strategy = "full"
+		if includePropsSet && !includeProps {
+			strategy = "compact"
+		} else {
+			strategy = "full"
+		}
+	} else {
+		propertiesSuppressed = strategy == "compact" && (includeProps || len(opts.Fields) > 0)
 	}
 	propsProjection := entityPropertiesProjection(strategy, args["fields"])
 
@@ -4287,6 +4323,9 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Offset:  0,
 			HasMore: false,
 		},
+	}
+	if propertiesSuppressed {
+		result.Warning = "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
 	}
 	return envelopeResult(true, result, nil, "")
 }
@@ -4537,14 +4576,16 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 	}
 
 	type entityRow struct {
-		ID         uuid.UUID      `bun:"id"`
-		Key        string         `bun:"key"`
-		Name       string         `bun:"name"`
-		TypeName   string         `bun:"type_name"`
-		Properties map[string]any `bun:"properties,type:jsonb"`
-		CreatedAt  time.Time      `bun:"created_at"`
-		BranchID   *uuid.UUID     `bun:"branch_id"`
-		BranchName *string        `bun:"branch_name"`
+		CanonicalID uuid.UUID      `bun:"canonical_id"`
+		Key         string         `bun:"key"`
+		Name        string         `bun:"name"`
+		TypeName    string         `bun:"type_name"`
+		Version     int            `bun:"version"`
+		Properties  map[string]any `bun:"properties,type:jsonb"`
+		CreatedAt   time.Time      `bun:"created_at"`
+		UpdatedAt   time.Time      `bun:"updated_at"`
+		BranchID    *uuid.UUID     `bun:"branch_id"`
+		BranchName  *string        `bun:"branch_name"`
 	}
 
 	var entities []entityRow
@@ -4601,12 +4642,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		runSearch := func(queryText, tsqueryFn string) error {
 			baseQuery := `
 			SELECT 
-				go.id,
+				go.canonical_id,
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
+				go.version,
 				go.properties,
 				go.type as type_name,
 				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at,
 				go.branch_id,
 				b.name as branch_name
 			FROM kb.graph_objects go
@@ -4614,6 +4657,13 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			` + namespaceJoin + `
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
+				-- Only the current version of each object is a hit. The table keeps
+				-- one row per version, all sharing canonical_id, and scanning every
+				-- row returned the same object once per version with the old row's
+				-- physical id and properties (#399). supersedes_id IS NULL selects
+				-- the head of the version chain in the same way entity-query and
+				-- every other read path already do.
+				AND go.supersedes_id IS NULL
 				AND (
 					go.fts @@ ` + tsqueryFn + `('simple', ?)
 					OR go.fts @@ ` + tsqueryFn + `('norwegian', ?)
@@ -4692,12 +4742,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			branchIDStr = &s
 		}
 		resultEntities = append(resultEntities, Entity{
-			ID:         e.ID.String(),
+			ID:         e.CanonicalID.String(),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
+			Version:    e.Version,
 			Properties: truncateProperties(e.Properties),
 			CreatedAt:  e.CreatedAt,
+			UpdatedAt:  e.UpdatedAt,
 			BranchID:   branchIDStr,
 			BranchName: e.BranchName,
 		})

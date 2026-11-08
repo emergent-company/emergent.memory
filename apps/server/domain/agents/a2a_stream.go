@@ -435,6 +435,7 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		UserID:          userID,
 		UserMessage:     userMessage,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
+		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
 	return h.streamRun(c, projectID, run.ID, contextID, run, execReq, false)
@@ -514,6 +515,7 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		UserID:          userID,
 		UserMessage:     resumeMsg,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
+		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
 	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true)
