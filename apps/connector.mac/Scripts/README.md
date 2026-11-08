@@ -173,7 +173,7 @@ WindowServer that XCUITest requires:
 
 ```sh
 apps/connector.mac/Scripts/mac-uitest-agent.sh install          # one-time; idempotent
-apps/connector.mac/Scripts/mac-uitest-agent.sh run              # build + run + wait, exits with the suite's code
+apps/connector.mac/Scripts/mac-uitest-agent.sh run              # build + run + wait, exits with the suite's code (3 = stale mirror)
 apps/connector.mac/Scripts/mac-uitest-agent.sh run --no-build   # skip the build; run an already-built bundle
 apps/connector.mac/Scripts/mac-uitest-agent.sh status           # launchd state + status/log tail
 apps/connector.mac/Scripts/mac-uitest-agent.sh logs [-n 50]     # tail the run log
@@ -182,6 +182,13 @@ apps/connector.mac/Scripts/mac-uitest-agent.sh uninstall        # bootout + remo
 
 Caveats (same as the manual path, plus the launchd specifics):
 
+- `run` proves which tree it tested: `mac-build.sh` stamps the mirror with the
+  synced commit (`.memory-mirror-stamp`), and `run` exits **3** — before
+  kickstarting anything — if that stamp does not name the commit the script was
+  started from, or if the installed LaunchAgent's `MAC_UITEST_MIRROR` differs
+  from the mirror this checkout resolves (it re-renders the plist in that case).
+  A green `DONE rc=0` therefore always refers to the commit you asked about
+  (#261); re-run `mac-build.sh --uitest` to refresh the mirror.
 - The **first** `run` triggers an on-screen Automation / Accessibility (TCC)
   prompt for the UI-test runner — approve it once at the Mac.
 - In our test (one host, one rebuild), a full rebuild with a fresh ad-hoc

@@ -77,6 +77,28 @@ done
 mac_resolve_target client/macos
 
 # ---- rsync local -> Mac (guarded: scoped --delete + destination guards) --
+# write_mirror_stamp — record, IN the mirror, the commit (and dirty state) that
+# was just synced there. mac-uitest-agent.sh compares this with the commit it is
+# run from before it kickstarts the UI suite: a mirror that predates the change
+# under test used to pass and report DONE rc=0, which proved nothing (#261).
+# The stamp sits at the checkout root, outside every --delete scope, so a sync
+# of one subtree never removes it.
+write_mirror_stamp() {
+  local commit branch dirty stamp
+  commit="$(git -C "$ROOT" rev-parse HEAD)"
+  branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+  dirty=0
+  [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] || dirty=1
+  stamp="$(printf 'commit=%s\nbranch=%s\ndirty=%s\nsubtree=%s\nsynced_at=%s\n' \
+    "$commit" "$branch" "$dirty" "$MAC_SUBTREE" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
+  echo "==> recording mirror stamp $commit (branch=$branch dirty=$dirty)"
+  # $MAC_CHECKOUT_PATH is deliberately UNQUOTED and preceded by a `cd` so the
+  # remote shell expands a ~-rooted MEMORY_MAC_PATH (a quoted "~/.…" is literal)
+  # — the same convention GEN_CMD/REMOTE_CMD below use. The filename is relative
+  # once we are in the checkout root.
+  printf '%s\n' "$stamp" | mac_ssh "cd $MAC_CHECKOUT_PATH && cat > .memory-mirror-stamp"
+}
+
 if [[ "$SYNC" == 1 ]]; then
   mac_rsync_guarded "$MAC_SRC"
   # The engine is built from the checkout, not from the app subtree above, so
@@ -84,6 +106,8 @@ if [[ "$SYNC" == 1 ]]; then
   # app mirror; these two are the additional paths build-engine.sh reads.
   mac_rsync_guarded "$ROOT/apps/connector.linux" "apps/connector.linux"
   mac_rsync_guarded "$ROOT/apps/server/pkg/sdk" "apps/server/pkg/sdk"
+  # Only a real sync may claim a mirror state; a dry run must not.
+  [[ "$MAC_DRY_RUN" == 1 ]] || write_mirror_stamp
 fi
 
 if [[ "$MAC_DRY_RUN" == 1 ]]; then
