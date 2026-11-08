@@ -85,6 +85,17 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("feedback rate limit reached; retry in %s", e.RetryAfter.Round(time.Second))
 }
 
+// InProgressError reports that an identical submission is being filed right
+// now. This is the defined answer for the loser of a concurrent duplicate race:
+// retry after RetryAfter instead of filing a second issue.
+type InProgressError struct {
+	RetryAfter time.Duration
+}
+
+func (e *InProgressError) Error() string {
+	return fmt.Sprintf("an identical feedback submission is already being filed; retry in %s", e.RetryAfter.Round(time.Second))
+}
+
 // Source identifies the surface the feedback was submitted from.
 type Source string
 
@@ -158,7 +169,7 @@ func NewService(cfg *config.Config, db bun.IDB, log *slog.Logger) *Service {
 	if s.cfg.RateLimitPerHour <= 0 {
 		s.cfg.RateLimitPerHour = DefaultRateLimitPerHour
 	}
-	s.guard = newSubmissionGuard(s.cfg.RateLimitPerHour, dedupeWindow, s.now)
+	s.guard = newSubmissionGuard(s.cfg.RateLimitPerHour, s.now)
 
 	if !s.cfg.Enabled || strings.TrimSpace(s.cfg.GitHubToken) == "" || strings.TrimSpace(s.cfg.Repo) == "" {
 		return s
@@ -179,9 +190,21 @@ func (s *Service) Enabled() bool {
 }
 
 // Submit validates, rate-limits and files one submission.
+//
+// Duplicate suppression is atomic: the (identity, submission fingerprint) pair
+// is claimed in the database before the GitHub call. A concurrent identical
+// submission therefore cannot pass the check and file a second issue. The
+// losers receive one of two defined answers: the issue the winner filed
+// (*Result with Duplicate set) if it has already landed, or *InProgressError
+// asking them to retry shortly while the winner is still filing. A claim is
+// released when the GitHub call fails so a retry can file; it is not refunded a
+// rate-limit slot, so an outage is not an unlimited retry amplifier.
 func (s *Service) Submit(ctx context.Context, sub Submission) (*Result, error) {
 	if !s.Enabled() {
 		return nil, ErrNotConfigured
+	}
+	if s.db == nil {
+		return nil, errors.New("feedback: dedupe store is not configured")
 	}
 
 	if err := s.validate(&sub); err != nil {
@@ -200,10 +223,22 @@ func (s *Service) Submit(ctx context.Context, sub Submission) (*Result, error) {
 	}
 
 	dedupeKey := submissionFingerprint(sub)
-	if dup := s.guard.lookupDuplicate(identity, dedupeKey); dup != nil {
-		return &Result{IssueNumber: dup.IssueNumber, IssueURL: dup.IssueURL, Duplicate: true}, nil
+	decision, err := s.acquireClaim(ctx, identity, dedupeKey)
+	if err != nil {
+		return nil, err
 	}
+	switch decision.state {
+	case claimDuplicate:
+		return decision.duplicate, nil
+	case claimInProgress:
+		return nil, &InProgressError{RetryAfter: decision.retryAfter}
+	}
+	claimToken := decision.token
+
 	if retryAfter := s.guard.reserve(identity); retryAfter > 0 {
+		// Give the claim back: this call filed nothing, and a retry after the
+		// rate-limit window must not be blocked by a stale claim.
+		s.releaseClaim(ctx, identity, dedupeKey, claimToken)
 		return nil, &RateLimitError{RetryAfter: retryAfter}
 	}
 
@@ -226,12 +261,18 @@ func (s *Service) Submit(ctx context.Context, sub Submission) (*Result, error) {
 
 	issue, err := s.client.CreateIssue(ctx, payload.Title, payload.Body, payload.Labels)
 	if err != nil {
+		s.releaseClaim(ctx, identity, dedupeKey, claimToken)
 		s.log.Warn("failed to file feedback issue", logger.Error(err))
 		return nil, fmt.Errorf("file feedback issue: %w", err)
 	}
 
 	result := &Result{IssueNumber: issue.Number, IssueURL: issue.HTMLURL}
-	s.guard.rememberResult(identity, dedupeKey, result)
+	if err := s.markClaimFiled(ctx, identity, dedupeKey, claimToken, issue); err != nil {
+		// The issue exists and is returned; a later retry may file again once
+		// the pending claim expires. Losing the record is preferable to failing
+		// a submission that actually landed.
+		s.log.Warn("feedback: issue filed but dedupe claim was not recorded", logger.Error(err))
+	}
 	s.log.Info("feedback filed",
 		slog.Int("issue_number", issue.Number),
 		slog.String("source", string(sub.Source)),

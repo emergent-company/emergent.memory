@@ -40,7 +40,10 @@ type sessionInitState struct {
 	ProjectID   string
 	UserID      string
 	Initialized bool
-	CreatedAt   time.Time
+	// ClientName is the sanitized clientInfo.name from initialize, carried into
+	// tools/call so tools can name the real client (issue #472).
+	ClientName string
+	CreatedAt  time.Time
 }
 
 // SSESession represents an active SSE streaming connection
@@ -207,6 +210,10 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 	h.sessionStateMu.RUnlock()
 
 	initialized := stateExists && state.Initialized
+	clientName := ""
+	if stateExists {
+		clientName = state.ClientName
+	}
 
 	// Handle notifications (no id = no response expected per JSON-RPC 2.0)
 	if req.IsNotification() {
@@ -238,6 +245,7 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 				}
 			}
 			h.sessionState[sessionID].Initialized = true
+			h.sessionState[sessionID].ClientName = sanitizeClientName(initializeClientName(req))
 			h.sessionStateMu.Unlock()
 		}
 		return h.handleInitialize(req, projectID)
@@ -258,7 +266,7 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 				map[string]string{"hint": "Call initialize method first to establish session"},
 			)
 		}
-		return h.handleToolsCall(c, req, projectID, user)
+		return h.handleToolsCall(c, req, projectID, user, clientName)
 
 	default:
 		return h.handler.routeMethod(c, req, user)
@@ -325,7 +333,7 @@ func (h *SSEHandler) handleToolsList(c echo.Context, req *Request, projectID str
 }
 
 // handleToolsCall handles tools/call for SSE transport
-func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
+func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID string, user *auth.AuthUser, clientName string) *Response {
 	var params ToolsCallParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -371,6 +379,7 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 	}
 
 	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	execCtx = withClientName(execCtx, clientName)
 	// The transport already enforced per-tool AgentOnly / RequiredScope /
 	// SuperadminOnly above. Mark the call transport-enforced so ExecuteTool's
 	// in-process gate (which covers the agent-run path) does not re-fire for an
