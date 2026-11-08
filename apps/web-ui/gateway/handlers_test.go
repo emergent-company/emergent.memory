@@ -2660,6 +2660,7 @@ func newTestServer(f *fakeMemory) (*Server, *echo.Echo) {
 	api.GET("/health", s.health)
 	api.GET("/agents", s.listAgents)
 	api.POST("/agents", s.createAgent)
+	api.PUT("/agents/:id", s.updateAgent)
 	api.POST("/chat", s.chat)
 	api.POST("/chat/questions/:questionId/respond", s.respondQuestion)
 	api.POST("/chat/questions/:questionId/cancel", s.cancelQuestion)
@@ -2696,6 +2697,63 @@ func TestListAgents(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 agents, got %d", len(got))
 	}
+}
+
+// TestUpdateAgentAutoLoadSkills pins the partial-PUT fix: the agent dialog's
+// PUT body never mentions autoLoadSkills, so the bound definition must leave it
+// unset and the PATCH body must omit the key (an explicit false would clear a
+// stored true and silently stop capture). The Skills toggle, which always
+// submits the field, must still be able to send an explicit false.
+func TestUpdateAgentAutoLoadSkills(t *testing.T) {
+	put := func(t *testing.T, f *fakeMemory, e *echo.Echo, body string) {
+		t.Helper()
+		f.updatedAgent = nil
+		req := httptest.NewRequest(http.MethodPut, "/api/agents/a1", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		if f.updatedAgent == nil {
+			t.Fatal("update not forwarded")
+		}
+	}
+
+	t.Run("partial PUT without the key omits it", func(t *testing.T) {
+		f := &fakeMemory{}
+		_, e := newTestServer(f)
+		put(t, f, e, `{"name":"diane","systemPrompt":"hi","tools":["read_file"]}`)
+		if f.updatedAgent.AutoLoadSkills != nil {
+			t.Fatalf("autoLoadSkills = %v, want unset", *f.updatedAgent.AutoLoadSkills)
+		}
+		raw, err := json.Marshal(f.updatedAgent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "autoLoadSkills") {
+			t.Errorf("PATCH body = %s, want no autoLoadSkills key", raw)
+		}
+	})
+
+	t.Run("explicit false from the Skills toggle is sent", func(t *testing.T) {
+		f := &fakeMemory{}
+		_, e := newTestServer(f)
+		put(t, f, e, `{"name":"diane","systemPrompt":"hi","autoLoadSkills":false}`)
+		if f.updatedAgent.AutoLoadSkills == nil {
+			t.Fatal("autoLoadSkills = unset, want explicit false")
+		}
+		if *f.updatedAgent.AutoLoadSkills {
+			t.Fatalf("autoLoadSkills = true, want false")
+		}
+		raw, err := json.Marshal(f.updatedAgent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"autoLoadSkills":false`) {
+			t.Errorf("PATCH body = %s, want an explicit autoLoadSkills:false", raw)
+		}
+	})
 }
 
 func TestCreateAgent(t *testing.T) {

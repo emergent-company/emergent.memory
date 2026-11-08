@@ -312,9 +312,10 @@ func TestAgentSkillsFormWarnsWhenProjectCaptureOff(t *testing.T) {
 // with capture effectively on but auto-load off, AfterRun skips the agent, so
 // the form must say so instead of only showing the effective mode.
 func TestAgentSkillsFormWarnsWhenCaptureOnWithoutAutoLoad(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
 	html := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
 		Section:              sectionSkills,
-		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: false},
+		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: boolPtr(false)},
 		CaptureKnown:         true,
 		ProjectCaptureMode:   "auto",
 		EffectiveCaptureMode: "auto",
@@ -335,7 +336,7 @@ func TestAgentSkillsFormWarnsWhenCaptureOnWithoutAutoLoad(t *testing.T) {
 
 	loaded := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
 		Section:              sectionSkills,
-		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: true},
+		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: boolPtr(true)},
 		CaptureKnown:         true,
 		ProjectCaptureMode:   "auto",
 		EffectiveCaptureMode: "auto",
@@ -345,6 +346,19 @@ func TestAgentSkillsFormWarnsWhenCaptureOnWithoutAutoLoad(t *testing.T) {
 	}
 	if !inputIsChecked(loaded, "agent-settings-autoload-skills") {
 		t.Error("auto-load toggle must render checked when the agent auto-loads")
+	}
+
+	// memory's agentLoadsPrefixSkills treats "*" as loading prefix skills, so a
+	// wildcard agent captures fine even with the toggle off — no warning.
+	wildcard := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
+		Section:              sectionSkills,
+		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: boolPtr(false), Skills: []string{"*"}},
+		CaptureKnown:         true,
+		ProjectCaptureMode:   "auto",
+		EffectiveCaptureMode: "auto",
+	}))
+	if strings.Contains(wildcard, "does not load its own captured skills") {
+		t.Error("no warning when the agent declares the * wildcard")
 	}
 
 	off := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
@@ -503,15 +517,18 @@ func TestProjectSkillCaptureMode(t *testing.T) {
 // value wins; a form that omits the key entirely (an older caller) must leave a
 // fetched API-set value untouched rather than clearing it.
 func TestApplyAgentSkillsSectionAutoLoadSkills(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
 	tests := []struct {
 		name     string
 		form     url.Values
-		existing bool
-		want     bool
+		existing *bool
+		want     *bool
 	}{
-		{"checked turns it on", url.Values{"autoLoadSkills": {"false", "true"}}, false, true},
-		{"unchecked (hidden false) turns it off", url.Values{"autoLoadSkills": {"false"}}, true, false},
-		{"absent key leaves the fetched value", url.Values{}, true, true},
+		{"checked turns it on", url.Values{"autoLoadSkills": {"false", "true"}}, boolPtr(false), boolPtr(true)},
+		{"unchecked (hidden false) turns it off", url.Values{"autoLoadSkills": {"false"}}, boolPtr(true), boolPtr(false)},
+		{"checked on an unset value", url.Values{"autoLoadSkills": {"false", "true"}}, nil, boolPtr(true)},
+		{"absent key leaves the fetched value", url.Values{}, boolPtr(true), boolPtr(true)},
+		{"absent key leaves an unset value unset", url.Values{}, nil, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -519,52 +536,81 @@ func TestApplyAgentSkillsSectionAutoLoadSkills(t *testing.T) {
 			if err := applyAgentSkillsSection(def, skillCaptureSectionContext(t, tc.form)); err != nil {
 				t.Fatalf("apply: %v", err)
 			}
-			if def.AutoLoadSkills != tc.want {
-				t.Errorf("AutoLoadSkills = %v, want %v", def.AutoLoadSkills, tc.want)
+			switch {
+			case tc.want == nil && def.AutoLoadSkills != nil:
+				t.Errorf("AutoLoadSkills = %v, want unset", *def.AutoLoadSkills)
+			case tc.want == nil:
+			case def.AutoLoadSkills == nil:
+				t.Errorf("AutoLoadSkills = unset, want %v", *tc.want)
+			case *def.AutoLoadSkills != *tc.want:
+				t.Errorf("AutoLoadSkills = %v, want %v", *def.AutoLoadSkills, *tc.want)
 			}
 		})
 	}
 }
 
-// TestAgentDefinitionAutoLoadSkillsWireShape pins that the field is always sent,
-// including false: memory's PATCH treats an absent key as "leave unchanged", so
-// omitempty would make the toggle unable to turn auto-load off.
+// TestAgentDefinitionAutoLoadSkillsWireShape pins the pointer's two jobs: the
+// Skills toggle still sends an explicit false (memory's PATCH treats an absent
+// key as "leave unchanged"), while a partial agent PUT that never mentions the
+// field must not clear a stored true.
 func TestAgentDefinitionAutoLoadSkillsWireShape(t *testing.T) {
-	for _, v := range []bool{false, true} {
-		raw, err := json.Marshal(&AgentDefinition{ID: "a1", AutoLoadSkills: v})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := `"autoLoadSkills":false`
-		if v {
-			want = `"autoLoadSkills":true`
-		}
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("marshal(%v) = %s, want %s", v, raw, want)
-		}
+	boolPtr := func(v bool) *bool { return &v }
+	tests := []struct {
+		name string
+		v    *bool
+		want string
+	}{
+		{"nil omits the key", nil, ""},
+		{"explicit false is sent", boolPtr(false), `"autoLoadSkills":false`},
+		{"true is sent", boolPtr(true), `"autoLoadSkills":true`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(&AgentDefinition{ID: "a1", AutoLoadSkills: tc.v})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" {
+				if strings.Contains(string(raw), "autoLoadSkills") {
+					t.Errorf("marshal(nil) = %s, want no autoLoadSkills key", raw)
+				}
+				return
+			}
+			if !strings.Contains(string(raw), tc.want) {
+				t.Errorf("marshal = %s, want %s", raw, tc.want)
+			}
+		})
 	}
 }
 
 // TestCaptureSkippedWithoutAutoLoad pins the warning predicate: it must follow
-// the resolved mode, not the label, and only fire when the AfterRun gate will
-// actually skip the agent.
+// the resolved mode and memory's real gate, not the rendered label, and only
+// fire when AfterRun will actually skip the agent.
 func TestCaptureSkippedWithoutAutoLoad(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
 	tests := []struct {
-		mode     string
-		autoLoad bool
-		want     bool
+		mode  string
+		agent *AgentDefinition
+		want  bool
 	}{
-		{"suggest", false, true},
-		{"auto", false, true},
-		{"SUGGEST", false, true},
-		{"off", false, false},
-		{"", false, false},
-		{"suggest", true, false},
-		{"auto", true, false},
+		{"suggest", &AgentDefinition{AutoLoadSkills: boolPtr(false)}, true},
+		{"auto", &AgentDefinition{AutoLoadSkills: boolPtr(false)}, true},
+		{"SUGGEST", &AgentDefinition{AutoLoadSkills: boolPtr(false)}, true},
+		{"suggest", &AgentDefinition{}, true},
+		{"off", &AgentDefinition{}, false},
+		{"", &AgentDefinition{}, false},
+		{"suggest", &AgentDefinition{AutoLoadSkills: boolPtr(true)}, false},
+		{"auto", &AgentDefinition{AutoLoadSkills: boolPtr(true)}, false},
+		{"suggest", nil, true},
+		// memory's agentLoadsPrefixSkills treats a "*" declaration as loading
+		// prefix skills, so a wildcard agent is not skipped and must not warn.
+		{"suggest", &AgentDefinition{AutoLoadSkills: boolPtr(false), Skills: []string{"*"}}, false},
+		{"auto", &AgentDefinition{Skills: []string{"*"}}, false},
+		{"suggest", &AgentDefinition{AutoLoadSkills: boolPtr(false), Skills: []string{"other"}}, true},
 	}
 	for _, tc := range tests {
-		if got := captureSkippedWithoutAutoLoad(tc.mode, tc.autoLoad); got != tc.want {
-			t.Errorf("captureSkippedWithoutAutoLoad(%q, %v) = %v, want %v", tc.mode, tc.autoLoad, got, tc.want)
+		if got := captureSkippedWithoutAutoLoad(tc.mode, tc.agent); got != tc.want {
+			t.Errorf("captureSkippedWithoutAutoLoad(%q, %+v) = %v, want %v", tc.mode, tc.agent, got, tc.want)
 		}
 	}
 }

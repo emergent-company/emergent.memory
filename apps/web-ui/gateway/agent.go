@@ -655,7 +655,8 @@ func applyAgentSkillsSection(def *AgentDefinition, c echo.Context) error {
 				last = v
 			}
 		}
-		def.AutoLoadSkills = last == "true"
+		autoLoad := last == "true"
+		def.AutoLoadSkills = &autoLoad
 	}
 	mode := strings.ToLower(strings.TrimSpace(c.FormValue("skillCaptureMode")))
 	if def.SkillCapture == nil {
@@ -735,13 +736,34 @@ func captureModeShort(mode string) string {
 // capture_service.go: the agentLoadsPrefixSkills gate). It is derived from the
 // resolved values — never from the rendered mode label, which says "Suggest" or
 // "Auto" even when the gate will drop the run.
-func captureSkippedWithoutAutoLoad(effectiveMode string, autoLoadSkills bool) bool {
+func captureSkippedWithoutAutoLoad(effectiveMode string, agent *AgentDefinition) bool {
 	switch strings.ToLower(strings.TrimSpace(effectiveMode)) {
 	case "suggest", "auto":
-		return !autoLoadSkills
+		return !agentLoadsPrefixSkills(agent)
 	default:
 		return false
 	}
+}
+
+// agentLoadsPrefixSkills mirrors memory's agentLoadsPrefixSkills gate
+// (apps/server/domain/skills/capture_service.go): a run loads its own prefix
+// skills when auto-load is on or when the agent declares the "*" wildcard, so
+// a wildcard agent must not be warned about a capture skip that will not
+// happen.
+func agentLoadsPrefixSkills(agent *AgentDefinition) bool {
+	if agent == nil {
+		return false
+	}
+	if agent.AutoLoadSkills != nil && *agent.AutoLoadSkills {
+		return true
+	}
+	return containsString(agent.Skills, "*")
+}
+
+// autoLoadSkillsOn is the toggle's checked state. A nil pointer means the field
+// was absent (an older API response), which renders as off.
+func autoLoadSkillsOn(agent *AgentDefinition) bool {
+	return agent != nil && agent.AutoLoadSkills != nil && *agent.AutoLoadSkills
 }
 
 // applyAgentDelegationSection maps the Delegation form onto the definition:
