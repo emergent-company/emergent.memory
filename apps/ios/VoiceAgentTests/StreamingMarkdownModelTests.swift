@@ -87,6 +87,33 @@ struct StreamingMarkdownModelTests {
         #expect(model.tail == "After.\n\n")
     }
 
+    @Test func blankLineInsideARawHTMLBlockIsNotABoundary() {
+        let text = "Intro.\n\n<pre>\nlet a = 1;\n\nlet b = 2;\n</pre>\n\nAfter.\n\n"
+        var model = StreamingMarkdownModel()
+        // Feed the block half way first: the blank line inside `<pre>` must not
+        // commit anything, so the block cannot be frozen in two halves.
+        model.update("Intro.\n\n<pre>\nlet a = 1;\n\n")
+        #expect(model.committed == [.paragraph([.text("Intro.")])])
+        model.update(text)
+        // A `<pre>` block (like `<script>`, a comment or CDATA) ends at its
+        // closing marker, not at a blank line.
+        #expect(model.committed.count == 2)
+        #expect(model.tail == "After.\n\n")
+        #expect(model.blocks == parseMarkdown(text))
+    }
+
+    @Test func referenceDefinitionInTheTailStopsTheSplit() {
+        let text = "Read [the guide] now.\n\nThen more prose comes in.\n\n[the guide]: https://example.com\n\n"
+        var model = StreamingMarkdownModel()
+        model.update("Read [the guide] now.\n\nThen more prose comes in.\n\n")
+        #expect(!model.committed.isEmpty)
+        model.update(text)
+        // The definition at the bottom resolves the reference at the top, so
+        // nothing may stay frozen once it arrives.
+        #expect(model.committed.isEmpty)
+        #expect(model.blocks == parseMarkdown(text))
+    }
+
     @Test func blankLineBeforeAQuoteLineIsNotUsedAsABoundary() {
         let text = "> quote one\n\n> quote two\n\n"
         var model = StreamingMarkdownModel()
@@ -122,6 +149,25 @@ struct MarkdownTailDisplayTests {
         #expect(MarkdownTailDisplay.removingDanglingDelimiters("See [the docs") == "See the docs")
         #expect(MarkdownTailDisplay.removingDanglingDelimiters("Run `make") == "Run make")
         #expect(MarkdownTailDisplay.removingDanglingDelimiters("An _italic") == "An italic")
+    }
+
+    @Test func delimitersInsideACodeSpanAreUntouched() {
+        // A code span is literal markdown: the `*` in `*args` opens nothing, so
+        // hiding it would mangle a finished span (issue #441 review).
+        for text in [
+            "use `*args` in the call",
+            "the glob `*.py` matches",
+            "pass `**kwargs` and `_private` through",
+            "`args*`",
+        ] {
+            #expect(MarkdownTailDisplay.renderable(text) == text, "mangled: \(text)")
+        }
+    }
+
+    @Test func anOpenCodeSpanStillHidesItsDanglingDelimiter() {
+        // No closing backtick yet: the backtick and the emphasis marker it was
+        // quoting are both half-typed, so both are hidden until they close.
+        #expect(MarkdownTailDisplay.renderable("see `*args") == "see args")
     }
 
     @Test func completeSpansAndPlainTextAreUntouched() {
