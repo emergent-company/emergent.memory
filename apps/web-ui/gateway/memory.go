@@ -675,7 +675,10 @@ type ToolPolicy struct {
 // project value) is distinguishable from an explicit mode; memory only lets an
 // override narrow the project policy, never widen it. AutoApply is round-tripped
 // untouched — the UI does not render it, but dropping it would clear an
-// API-set opt-out on the next save (memory replaces the whole override).
+// API-set opt-out on the next save (memory replaces the whole override). A new
+// server-side field must be added here too, or the next Skills save drops it;
+// the project policy avoids that class of bug by staying a raw map, which is
+// affordable there because it carries many knobs.
 type AgentSkillCapture struct {
 	Mode      *string `json:"mode,omitempty"`
 	AutoApply *bool   `json:"autoApply,omitempty"`

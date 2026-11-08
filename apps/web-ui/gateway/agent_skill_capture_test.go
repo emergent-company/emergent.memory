@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -162,19 +163,94 @@ func TestResolveSkillCaptureMode(t *testing.T) {
 	}
 }
 
-// inputIsChecked reports whether the <input> carrying id renders the checked
-// attribute. templ emits attributes in source order, so the tag is read from the
-// id to the next '>'.
-func inputIsChecked(html, id string) bool {
+// inputTagByID returns the <input> tag carrying id, or "" when absent. templ
+// emits attributes in source order, so the tag is read from the id to '>'.
+func inputTagByID(html, id string) string {
 	i := strings.Index(html, `id="`+id+`"`)
 	if i < 0 {
-		return false
+		return ""
 	}
+	start := strings.LastIndex(html[:i], "<")
 	end := strings.Index(html[i:], ">")
-	if end < 0 {
-		return false
+	if start < 0 || end < 0 {
+		return ""
 	}
-	return strings.Contains(html[i:i+end], "checked")
+	return html[start : i+end+1]
+}
+
+// inputIsChecked reports whether the <input> carrying id renders the checked
+// attribute.
+func inputIsChecked(html, id string) bool {
+	return strings.Contains(inputTagByID(html, id), "checked")
+}
+
+// TestApplyAgentSkillsSectionCaptureWireShape pins the serialized override:
+// inherit must be `{}` (an omitted key means "leave unchanged" on memory's
+// PATCH, which would make the control unable to clear a stored override), and a
+// narrowed override must carry only the mode.
+func TestApplyAgentSkillsSectionCaptureWireShape(t *testing.T) {
+	tests := []struct {
+		name string
+		form url.Values
+		want string
+	}{
+		{"inherit", url.Values{}, `"skillCapture":{}`},
+		{"suggest", url.Values{"skillCaptureMode": {"suggest"}}, `"skillCapture":{"mode":"suggest"}`},
+		{"off", url.Values{"skillCaptureMode": {"off"}}, `"skillCapture":{"mode":"off"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			def := &AgentDefinition{ID: "a1"}
+			if err := applyAgentSkillsSection(def, skillCaptureSectionContext(t, tc.form)); err != nil {
+				t.Fatalf("applyAgentSkillsSection: %v", err)
+			}
+			body, err := json.Marshal(def)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(body), tc.want) {
+				t.Errorf("body %s missing %s", body, tc.want)
+			}
+		})
+	}
+}
+
+// TestUIAgentUpdateSkillsWritesCaptureOverride exercises the real handler path
+// (POST /agents/:id/settings/skills): the PRG redirect, the skill picker, the
+// override, and that an API-set autoApply rides along.
+func TestUIAgentUpdateSkillsWritesCaptureOverride(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{
+		"a1": {
+			ID:           "a1",
+			Name:         "diane",
+			Skills:       []string{},
+			SkillCapture: &AgentSkillCapture{Mode: modePtr("suggest"), AutoApply: boolPtrValue(true)},
+		},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)
+
+	rec := voicePost(e, "/agents/a1/settings/skills", "skill=alpha&skillCaptureMode=off")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d, want 303 (PRG)", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "/agents/a1/settings/skills?updated=1") {
+		t.Errorf("Location = %q, want the updated redirect", loc)
+	}
+	got := f.updatedAgent
+	if got == nil {
+		t.Fatal("UpdateAgentDefinition was not called")
+	}
+	if got.SkillCapture == nil || got.SkillCapture.Mode == nil || *got.SkillCapture.Mode != "off" {
+		t.Errorf("skillCapture = %+v, want mode off", got.SkillCapture)
+	}
+	if got.SkillCapture.AutoApply == nil || !*got.SkillCapture.AutoApply {
+		t.Error("an API-set autoApply must be preserved by an unrelated save")
+	}
+	if strings.Join(got.Skills, ",") != "alpha" {
+		t.Errorf("skills = %v, want [alpha]", got.Skills)
+	}
 }
 
 // TestAgentSkillsFormRendersCaptureControl pins the user-visible control: the
@@ -298,28 +374,45 @@ func TestCapturePolicyWithPreservesUnrenderedKeys(t *testing.T) {
 }
 
 // TestSkillCapturePanelRendersModeAndAutoApply pins the project panel: the three
-// modes, the stored selection, and that the auto-apply toggle only appears for
-// "auto" (it is meaningless otherwise).
+// modes, the stored selection, and that the auto-apply toggle is always present
+// but only enabled in Auto mode. Always-right is deliberate — the mode select
+// saves without a re-render, and Auto without auto-apply behaves like Suggest.
 func TestSkillCapturePanelRendersModeAndAutoApply(t *testing.T) {
 	auto := renderHTML(t, skillCapturePanel(&Project{SkillCapture: map[string]any{"mode": "auto", "autoApply": true}}))
 	for _, want := range []string{
 		`<option value="auto" selected`,
 		`<option value="suggest"`,
 		`<option value="off"`,
-		`id="autoApply"`,
 		`hx-post="/settings/project/skill_capture_auto_apply"`,
 	} {
 		if !strings.Contains(auto, want) {
 			t.Errorf("auto panel missing %q", want)
 		}
 	}
+	autoTag := inputTagByID(auto, "autoApply")
+	if autoTag == "" {
+		t.Fatal("auto panel must render the auto-apply toggle")
+	}
+	if strings.Contains(autoTag, "disabled") {
+		t.Error("auto-apply toggle must be enabled in Auto mode")
+	}
+	if !strings.Contains(autoTag, "checked") {
+		t.Error("auto-apply toggle must reflect the stored autoApply value")
+	}
 
 	off := renderHTML(t, skillCapturePanel(&Project{SkillCapture: map[string]any{"mode": "off"}}))
 	if !strings.Contains(off, `<option value="off" selected`) {
 		t.Error("off panel must select the off option")
 	}
-	if strings.Contains(off, `id="autoApply"`) {
-		t.Error("auto-apply toggle must not render unless the mode is auto")
+	offTag := inputTagByID(off, "autoApply")
+	if offTag == "" {
+		t.Fatal("off panel must still render the auto-apply toggle (disabled)")
+	}
+	if !strings.Contains(offTag, "disabled") {
+		t.Error("auto-apply toggle must be disabled outside Auto mode")
+	}
+	if !strings.Contains(off, "Only applies in Auto mode.") {
+		t.Error("disabled toggle must say why it does not apply")
 	}
 	if !strings.Contains(off, "Each agent can narrow this policy") {
 		t.Error("expected the per-agent pointer note")

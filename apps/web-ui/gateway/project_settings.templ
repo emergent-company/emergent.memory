@@ -275,7 +275,24 @@ templ projectInfoPanel(p *Project) {
 // capture. memory replaces the whole policy on PATCH, so each control writes
 // the current policy back with only its own key changed (capturePolicyWith);
 // guardrail knobs set through the API survive a toggle here.
+//
+// The auto-apply toggle is always rendered but disabled outside Auto mode: the
+// mode select saves with hx-swap="none" (a toast, no re-render), so rendering
+// it conditionally would leave the operator unable to reach auto-apply in the
+// same visit — and Auto without auto-apply behaves exactly like Suggest.
 templ skillCapturePanel(p *Project) {
+	{{ auto := p.SkillCaptureMode() == "auto"
+	tip := "When on, a candidate that is clean, confident, not a duplicate and within the daily caps is applied without review — but only after a human has approved at least one of this agent's proposals. Deletes are always human-reviewed."
+	autoAttrs := templ.Attributes{
+		"hx-post":    "/settings/project/skill_capture_auto_apply",
+		"hx-trigger": "change",
+		"hx-include": "this",
+		"hx-swap":    "none",
+	}
+	if !auto {
+		tip = "Only applies in Auto mode. " + tip
+		autoAttrs["disabled"] = "disabled"
+	} }}
 	@ui.Section("Skill capture", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
@@ -288,9 +305,7 @@ templ skillCapturePanel(p *Project) {
 					<option value="auto" selected?={ p.SkillCaptureMode() == "auto" }>Auto — approve clean, confident skills once the agent earns trust</option>
 				</select>
 			}
-			if p.SkillCaptureMode() == "auto" {
-				@components.ToggleField("autoApply", "Auto-apply captured skills", "When on, a candidate that is clean, confident, not a duplicate and within the daily caps is applied without review — but only after a human has approved at least one of this agent's proposals. Deletes are always human-reviewed.", p.SkillCaptureAutoApply(), templ.Attributes{"hx-post": "/settings/project/skill_capture_auto_apply", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
-			}
+			@components.ToggleField("autoApply", "Auto-apply captured skills", tip, p.SkillCaptureAutoApply(), autoAttrs)
 			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 				Each agent can narrow this policy on its own Settings → Skills page. Rate caps, confidence and ageing guardrails stay API-only.
 			}

@@ -873,7 +873,9 @@ func workListValue(vals []string) string {
 //   - graph:       + the project's compiled graph types (the scope allowlists)
 //   - model:       + project model config, providers, and the model catalog
 //   - tools:       + MCP servers + relay node tools (the picker)
-//   - skills:      + the skill list
+//   - skills:      + the skill list and the project's capture mode (the
+//     per-agent override only narrows it, so the form needs it to
+//     show the effective outcome)
 //   - delegation:  + every other agent (the delegation-target picker)
 //   - mcp:         agent only (endpoint/keys/sessions load via loadAgentMCP)
 //

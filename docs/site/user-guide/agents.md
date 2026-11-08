@@ -297,8 +297,9 @@ skill. The feature is off everywhere until a project opts in.
 
 **Enable it on a project**
 
-Open **Settings → Skill capture** and pick a mode (`off`, `suggest`, or `auto`),
-or PATCH the project:
+Open **Settings → General → Skill capture** and pick a mode (`off`, `suggest`,
+or `auto`). The **Auto-apply captured skills** toggle sits below it and is only
+enabled in `auto`. Or PATCH the project:
 
 ```bash
 curl -X PATCH "$MEMORY_API/api/projects/$PROJECT_ID" \
@@ -309,9 +310,10 @@ curl -X PATCH "$MEMORY_API/api/projects/$PROJECT_ID" \
 
 `mode` is `off` (default), `suggest`, or `auto`. `suggest` is the recommended
 starting point: every candidate waits for approval. `auto` additionally requires
-`"autoApply": true` and passes only when the candidate is clean, confident, not a
-duplicate, not a delete, within the daily caps, and the agent has at least one
-previously approved proposal. Deletes are always human-reviewed.
+auto-apply to be on (the toggle above, or `"autoApply": true` in the API), and
+passes only when the candidate is clean, confident, not a duplicate, not a
+delete, within the daily caps, and the agent has at least one previously
+approved proposal. Deletes are always human-reviewed.
 
 **Narrow it per agent**
 
