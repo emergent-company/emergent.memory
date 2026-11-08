@@ -362,6 +362,12 @@ func TestParseBatchCountsInlineRelationshipFailures(t *testing.T) {
 	if want := (BatchTally{Created: 1, Failed: 2, Similar: 0}); *fromItems != want {
 		t.Errorf("batch from items = %+v, want %+v", *fromItems, want)
 	}
+
+	// A wrapper that surfaces both shapes must not double-count the same failure.
+	both := parseBatch(t, `{"ok": false, "data": {"results": [{"ok": true, "index": 0, "relationships_failed": 1, "entity": {"id": "e1", "type": "Note", "relationships_failed": 1}}]}}`)
+	if want := (BatchTally{Created: 1, Failed: 1, Similar: 0}); *both != want {
+		t.Errorf("batch with both shapes = %+v, want %+v", *both, want)
+	}
 }
 
 // TestParseSearchResultsAreNotABatch: a plain results array is a search, not a

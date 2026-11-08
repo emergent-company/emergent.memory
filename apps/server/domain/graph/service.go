@@ -2901,7 +2901,10 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	}
 
 	// Return the restored version
-	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	restored, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding.
 	if restored != nil {

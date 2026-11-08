@@ -44,14 +44,15 @@ func batchTally(value any) *BatchTally {
 		}
 		// An entity can be created while an inline relationship it asked for
 		// failed (issue #401). The item's ok stays true, and the producer nests
-		// the count on the entity, so read both shapes.
+		// the count on the entity. Take the max of the two shapes rather than
+		// summing: a wrapper that surfaces both would otherwise double-count.
 		relFailed := 0
 		if n, ok := integer(item["relationships_failed"]); ok {
-			relFailed += n
+			relFailed = n
 		}
 		if entity, ok := item["entity"].(map[string]any); ok {
-			if n, ok := integer(entity["relationships_failed"]); ok {
-				relFailed += n
+			if n, ok := integer(entity["relationships_failed"]); ok && n > relFailed {
+				relFailed = n
 			}
 		}
 		failedInlineRelationships += relFailed

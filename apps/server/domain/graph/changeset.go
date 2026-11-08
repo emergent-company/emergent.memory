@@ -553,8 +553,12 @@ func (s *Service) applyChangesetRelationship(
 		// known, so the type-specific relationship schema applies. The helper
 		// copies first: when the push omits properties, version.Properties
 		// aliases head.Properties and must not be mutated in place.
+		//
+		// Look the schema up by head.Type, not version.Type: the repository
+		// inherits the head's type (it is part of the edge's identity), so a
+		// pushed type that differs is not the type the row is stored with.
 		version.Properties = normaliseChangesetRelationshipDateProperties(
-			version.Properties, schemas, version.Type, srcObj.Type, dstObj.Type)
+			version.Properties, schemas, head.Type, srcObj.Type, dstObj.Type)
 		if item.Weight != nil {
 			version.Weight = item.Weight
 		}
