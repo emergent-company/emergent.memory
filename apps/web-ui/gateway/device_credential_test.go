@@ -51,6 +51,16 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"GET", "/api/session", true},
 		{"GET", "/api/project/config", true},
 
+		// Object card (iOS chat): read-only, one ref segment, card or history.
+		{"GET", "/api/objects/o1/card", true},
+		{"GET", "/api/objects/o1/history", true},
+		{"GET", "/api/objects//card", false},
+		{"GET", "/api/objects/o1", false},
+		{"GET", "/api/objects/o1/card/x", false},
+		{"GET", "/api/objects/o1/edges", false},
+		{"POST", "/api/objects/o1/card", false},
+		{"GET", "/api/blueprints/compiled-types", false},
+
 		// Share capture: exactly two shapes, one non-empty project id.
 		{"POST", "/api/projects/p1/remember", true},
 		{"POST", "/api/projects/p1/remember/file", true},

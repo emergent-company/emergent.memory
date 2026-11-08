@@ -3,313 +3,134 @@ import SwiftUI
 /// Renders agent markdown (parsed via ``parseMarkdown``) as a SwiftUI view
 /// tree. Replaces the previous inline-only `AttributedString(markdown:)`.
 ///
+/// The renderer keeps an incremental parse (``StreamingMarkdownModel``) in
+/// `@State`, so a streamed reply only re-parses the block it is still typing
+/// and finished blocks are diffed instead of rebuilt (issue #441). The call
+/// sites are unchanged: whether the text is still growing is derived here from
+/// the text itself, so history and live replies share one entry point.
+///
 /// This file must not `import Markdown`/`import Splash`: swift-markdown and
 /// Splash declare top-level types (`Text`, `Image`, `Font`, ...) that shadow
-/// SwiftUI's. Parsing/highlighting live in `MarkdownModel.swift` and
-/// `MarkdownSyntaxHighlighter.swift`.
+/// SwiftUI's. Parsing/highlighting live in `MarkdownModel.swift`,
+/// `StreamingMarkdownModel.swift` and `MarkdownSyntaxHighlighter.swift`; the
+/// block and inline views live in `MarkdownBlockView.swift`.
 struct MarkdownRenderer: View {
     let text: String
 
-    @Environment(\.colorScheme) private var colorScheme
-
-    /// Base prose font for the agent bubble; scales with Dynamic Type.
-    private static let baseFont: Font = MemoryFont.conversationBody
-    /// Inline-code / preformatted font.
-    private static let baseMonoFont: Font = .system(.callout, design: .monospaced)
+    /// Incremental parse state, kept across `body` evaluations.
+    @State private var cache = MarkdownRenderCache()
+    /// The authoritative one-shot parse written once streaming goes quiet.
+    @State private var settled: SettledMarkdown?
 
     var body: some View {
-        let blocks = parseMarkdown(text)
-        if blocks.isEmpty {
-            // Malformed/empty markdown degrades to plain text.
-            Text(text)
-                .font(Self.baseFont)
-        } else {
-            renderBlocks(blocks, spacing: 2 * .grid)
-        }
-    }
-
-    // MARK: Blocks
-
-    private func renderBlocks(_ blocks: [MarkdownBlock], spacing: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                renderBlock(block, spacing: spacing)
-            }
-        }
-    }
-
-    /// Renders one block. Returns `AnyView` to break the opaque-type recursion
-    /// cycle between this view tree and ``renderBlocks`` (a `.blockQuote`/list
-    /// contains more blocks).
-    private func renderBlock(_ block: MarkdownBlock, spacing _: CGFloat) -> AnyView {
-        switch block {
-        case let .heading(level, inlines):
-            AnyView(
-                Text(attributedInlines(inlines))
-                    .font(headingFont(level))
-                    .foregroundStyle(.fg0)
-                    .fixedSize(horizontal: false, vertical: true)
-            )
-        case let .paragraph(inlines):
-            AnyView(
-                Text(attributedInlines(inlines))
-                    .font(Self.baseFont)
-                    .foregroundStyle(.fg1)
-                    .fixedSize(horizontal: false, vertical: true)
-            )
-        case let .codeBlock(language, code):
-            AnyView(codeBlockView(language: language, code: code))
-        case let .blockQuote(blocks):
-            AnyView(
-                HStack(alignment: .top, spacing: 2 * .grid) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(.fg3.opacity(0.5))
-                        .frame(width: 3)
-                    renderBlocks(blocks, spacing: 1 * .grid)
-                        .padding(.vertical, 1)
-                }
-            )
-        case let .list(isOrdered, startIndex, items):
-            AnyView(
-                VStack(alignment: .leading, spacing: 1 * .grid) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                        listItemView(item, isOrdered: isOrdered, startIndex: startIndex, offset: index)
-                    }
-                }
-            )
-        case let .table(table):
-            AnyView(tableView(table))
-        case let .image(source, alt):
-            AnyView(imageView(source: source, alt: alt))
-        case .thematicBreak:
-            AnyView(
-                Divider()
-                    .overlay(.fg3.opacity(0.4))
-            )
-        }
-    }
-
-    private func listItemView(_ item: MarkdownListItem, isOrdered: Bool, startIndex: Int, offset: Int) -> AnyView {
-        switch item {
-        case let .task(isChecked, blocks):
-            AnyView(
-                HStack(alignment: .top, spacing: 2 * .grid) {
-                    Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                        .font(.callout)
-                        .foregroundStyle(isChecked ? .fgSuccess : .fg3)
-                        .padding(.top, 1)
-                    renderBlocks(blocks, spacing: 1 * .grid)
-                }
-            )
-        case let .plain(blocks):
-            AnyView(
-                HStack(alignment: .top, spacing: 2 * .grid) {
-                    Text(isOrdered ? "\(startIndex + offset)." : "•")
-                        .font(Self.baseFont.weight(.medium))
-                        .foregroundStyle(.fg2)
-                    renderBlocks(blocks, spacing: 1 * .grid)
-                }
-            )
-        }
-    }
-
-    private func headingFont(_ level: Int) -> Font {
-        switch min(max(level, 1), 6) {
-        case 1: .title2.weight(.bold)
-        case 2: .title3.weight(.bold)
-        case 3: .headline
-        case 4: .callout.weight(.semibold)
-        default: .body.weight(.semibold)
-        }
+        content
+            .task(id: text) { await settleWhenQuiet() }
     }
 
     @ViewBuilder
-    private func imageView(source: String?, alt: String?) -> some View {
-        let fallback = Text(alt?.isEmpty == false ? alt! : "")
-            .font(MemoryFont.meta)
-            .foregroundStyle(.fg3)
-        if let source,
-           let url = URL(string: source),
-           url.scheme == "http" || url.scheme == "https"
-        {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case let .success(image):
-                    image
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-                case .failure:
-                    fallback
-                case .empty:
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                @unknown default:
-                    fallback
-                }
-            }
-            .frame(maxWidth: .infinity)
+    private var content: some View {
+        let snapshot = snapshot()
+        if snapshot.isEmpty {
+            // Malformed/empty markdown degrades to plain text.
+            Text(text)
+                .font(MarkdownTypography.baseFont)
         } else {
-            fallback
+            VStack(alignment: .leading, spacing: 2 * .grid) {
+                // A committed block's id is its index, which never changes
+                // once committed, so SwiftUI diffs the finished part of the
+                // answer instead of rebuilding it on every token.
+                ForEach(Array(snapshot.committed.indices), id: \.self) { index in
+                    MarkdownBlockView(block: snapshot.committed[index])
+                }
+                if !snapshot.tailBlocks.isEmpty {
+                    // The moving part of the message is one element with a
+                    // fixed id, re-parsed per delta (O(tail), not O(reply)).
+                    MarkdownBlocksView(blocks: snapshot.tailBlocks, highlightsCode: false)
+                        .id("tail")
+                }
+            }
         }
     }
 
-    // MARK: Code blocks
-
-    private func codeBlockView(language: String?, code: String) -> some View {
-        VStack(alignment: .leading, spacing: 1 * .grid) {
-            if let language, !language.isEmpty {
-                Text(language)
-                    .font(.system(.caption2, design: .monospaced, weight: .semibold))
-                    .foregroundStyle(.fg3)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                if let highlighted = MarkdownSyntaxHighlighter.highlight(
-                    code,
-                    language: language,
-                    isDark: colorScheme == .dark
-                ) {
-                    Text(AttributedString(highlighted))
-                        .textSelection(.enabled)
-                } else {
-                    // Highlight failure fallback: plain monospaced on token text.
-                    Text(code)
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(.fg1)
-                        .textSelection(.enabled)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(2 * .grid)
-            .background(.codeBackground, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+    private func snapshot() -> MarkdownRenderSnapshot {
+        if let settled, settled.text == text {
+            return MarkdownRenderSnapshot(committed: settled.blocks, tailBlocks: [])
         }
-        .padding(.top, 1 * .grid)
+        return cache.snapshot(for: text)
     }
 
-    // MARK: Tables
-
-    private func tableView(_ table: MarkdownTable) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(alignment: .leading, horizontalSpacing: 2 * .grid, verticalSpacing: 1 * .grid) {
-                GridRow {
-                    ForEach(Array(table.headers.enumerated()), id: \.offset) { _, header in
-                        Text(attributedInlines(header))
-                            .font(MemoryFont.labelEmphasis)
-                            .foregroundStyle(.fg0)
-                            .padding(1 * .grid)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.bg2, in: RoundedRectangle(cornerRadius: 2))
-                    }
-                }
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-                    GridRow {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                            Text(attributedInlines(cell))
-                                .font(MemoryFont.label)
-                                .foregroundStyle(.fg1)
-                                .padding(1 * .grid)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: .cornerRadiusSmall)
-                .stroke(.separator1.opacity(0.4), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+    /// Streaming only optimises the intermediate frames: after a short quiet
+    /// period the message is parsed once as a whole, so the last block ends up
+    /// styled exactly like a history message (highlighting included) instead of
+    /// staying in its unfinished tail form.
+    private func settleWhenQuiet() async {
+        guard cache.isStreaming else { return }
+        try? await Task.sleep(for: .milliseconds(350))
+        guard !Task.isCancelled, cache.isStreaming else { return }
+        settled = SettledMarkdown(text: text, blocks: cache.finish())
     }
 }
 
-// MARK: - Inline text
+/// The result of settling: the whole message parsed once as a document.
+struct SettledMarkdown {
+    let text: String
+    let blocks: [MarkdownBlock]
+}
 
-extension MarkdownRenderer {
-    /// Builds the styled attributed text for a sequence of inline elements.
-    /// Emphasis/strong/code/strikethrough/links become rich-text runs inside
-    /// one `AttributedString` so prose still wraps naturally.
-    private func attributedInlines(_ inlines: [MarkdownInline]) -> AttributedString {
-        makeAttributed(inlines, style: InlineStyle())
+/// What a renderer draws for one text: the frozen blocks and the tail.
+struct MarkdownRenderSnapshot {
+    var committed: [MarkdownBlock] = []
+    var tailBlocks: [MarkdownBlock] = []
+
+    var isEmpty: Bool {
+        committed.isEmpty && tailBlocks.isEmpty
+    }
+}
+
+/// Keeps the incremental parse alive across `body` evaluations.
+///
+/// A reference type so `@State` can hold it: mutating it never invalidates the
+/// view (a delta arrives with a new `text`, which re-renders anyway), and the
+/// snapshot for a given text is stable, so `body` stays free of side effects
+/// from SwiftUI's point of view.
+final class MarkdownRenderCache {
+    private var model = StreamingMarkdownModel()
+    private var lastText = ""
+    private var staticText: String?
+    private var staticBlocks: [MarkdownBlock] = []
+    private var isStreamingMessage = false
+
+    /// `true` once this message has been observed growing (i.e. it streams).
+    var isStreaming: Bool {
+        isStreamingMessage
     }
 
-    private struct InlineStyle {
-        var isBold = false
-        var isItalic = false
-        var isStrikethrough = false
-        var isCode = false
+    func snapshot(for text: String) -> MarkdownRenderSnapshot {
+        if !isStreamingMessage, grew(from: lastText, to: text) {
+            isStreamingMessage = true
+        }
+        lastText = text
+        guard isStreamingMessage else {
+            // History / ended turns: parse once, memoized by text identity.
+            if staticText != text {
+                staticText = text
+                staticBlocks = parseMarkdown(text)
+            }
+            return MarkdownRenderSnapshot(committed: staticBlocks, tailBlocks: [])
+        }
+        model.update(text)
+        return MarkdownRenderSnapshot(committed: model.committed, tailBlocks: model.tailBlocks)
     }
 
-    private func makeAttributed(_ inlines: [MarkdownInline], style: InlineStyle) -> AttributedString {
-        var result = AttributedString()
-        for inline in inlines {
-            result.append(attributedInline(inline, style: style))
-        }
-        return result
+    /// Parses the whole message once and returns its blocks.
+    func finish() -> [MarkdownBlock] {
+        model.finish()
+        return model.committed
     }
 
-    private func attributedInline(_ inline: MarkdownInline, style: InlineStyle) -> AttributedString {
-        switch inline {
-        case let .text(text), let .rawHTML(text):
-            return styledText(text, style: style)
-        case .softBreak:
-            return AttributedString(" ")
-        case .lineBreak:
-            return AttributedString("\n")
-        case let .emphasis(inlines):
-            var nested = style
-            nested.isItalic = true
-            return makeAttributed(inlines, style: nested)
-        case let .strong(inlines):
-            var nested = style
-            nested.isBold = true
-            return makeAttributed(inlines, style: nested)
-        case let .strikethrough(inlines):
-            var nested = style
-            nested.isStrikethrough = true
-            return makeAttributed(inlines, style: nested)
-        case let .code(code):
-            var nested = style
-            nested.isCode = true
-            return styledText(code, style: nested)
-        case let .link(destination, inlines):
-            var link = makeAttributed(inlines, style: style)
-            if let destination, let url = URL(string: destination) {
-                link[link.startIndex ..< link.endIndex].link = url
-            }
-            return link
-        case let .image(source, alt):
-            // Inline images inside prose render as their alt text (a
-            // block-level image renders as a real AsyncImage).
-            if let alt, !alt.isEmpty {
-                return styledText(alt, style: style)
-            }
-            if let source {
-                return styledText(source, style: style)
-            }
-            return AttributedString()
-        }
-    }
-
-    private func styledText(_ text: String, style: InlineStyle) -> AttributedString {
-        guard !text.isEmpty else { return AttributedString() }
-        var run = AttributedString(text)
-        if style.isCode {
-            run.font = Self.baseMonoFont
-            run.backgroundColor = .codeBackground
-        } else {
-            var font = Self.baseFont
-            if style.isBold {
-                font = font.weight(.semibold)
-            }
-            if style.isItalic {
-                font = font.italic()
-            }
-            run.font = font
-        }
-        if style.isStrikethrough {
-            run.strikethroughStyle = .single
-        }
-        return run
+    /// Growth is only meaningful after a first observation: a view that appears
+    /// with its whole text (history, an ended turn) is not a stream.
+    private func grew(from previous: String, to text: String) -> Bool {
+        !previous.isEmpty && text.utf8.count > previous.utf8.count && text.hasPrefix(previous)
     }
 }

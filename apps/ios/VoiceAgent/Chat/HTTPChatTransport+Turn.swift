@@ -35,6 +35,9 @@ extension HTTPChatTransport {
         var completed = false
         /// The stream reported the run failed; no reply is coming.
         var serverFailed = false
+        /// The turn's grounded references (the `citations` frame, sent once
+        /// after the answer), drawn as the reply's Sources footer.
+        var citations: [ChatCitation] = []
     }
 
     /// A reply the client saw cut off mid-stream, and the live copy holding it.
@@ -59,6 +62,22 @@ extension HTTPChatTransport {
                 failureMessage: ChatTurnFailure.cutShort
             )
         }
+    }
+
+    /// What a stop asked for and what came of it.
+    ///
+    /// ``cancelled`` is only ever returned for the gateway's explicit
+    /// `{"ok": true}`: a local abort on its own is not a cancellation and must
+    /// never be reported as one, because the run keeps going server-side.
+    enum StopOutcome: Equatable, Sendable {
+        /// The run was cancelled: `POST /api/chat/runs/{id}/cancel` answered
+        /// `{"ok": true}`.
+        case cancelled
+        /// No run id arrived in a `meta` frame, so no request was made and
+        /// nothing is claimed about the server-side run.
+        case noRunID
+        /// The gateway refused or the request failed, with the message to show.
+        case failed(String)
     }
 
     /// A turn that ended without any reply this client could show, and the

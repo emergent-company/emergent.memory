@@ -437,12 +437,7 @@ func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainTe
 // deriveSurfaceID returns the first createSurface surfaceId if present, else a
 // stable default identifier.
 func deriveSurfaceID(msgs []a2ui.Message) string {
-	for _, m := range msgs {
-		if m.CreateSurface != nil && m.CreateSurface.SurfaceID != "" {
-			return m.CreateSurface.SurfaceID
-		}
-	}
-	return "surface-1"
+	return a2ui.SurfaceIDOf(msgs)
 }
 
 // answerTextEvents filters one streamed answer chunk through the A2UI surface
@@ -2962,6 +2957,17 @@ func (ae *AgentExecutor) runPipeline(
 	textFilter := a2ui.NewTextFilter()
 	filterStep := -1
 
+	// a2uiStream parses a streaming ```a2ui block progressively so a card can
+	// appear as its messages stream in, not only once the run finishes. It is
+	// reset alongside textFilter each step; the finished response re-sends the
+	// complete surface as the authoritative frame, and a block that does not
+	// validate after progressive frames were shown is torn down.
+	a2uiStream := a2ui.NewSurfaceStream()
+	// a2uiThrottle bounds how often progressive frames are emitted per surface.
+	// It is per run (not per step) so a surface updated across steps stays
+	// rate-limited.
+	a2uiThrottle := newA2UIFrameThrottle(a2uiFrameInterval)
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -3922,6 +3928,7 @@ func (ae *AgentExecutor) runPipeline(
 			if event.Partial && event.Content != nil && req.StreamCallback != nil {
 				if step := tracker.current(); step != filterStep {
 					textFilter = a2ui.NewTextFilter()
+					a2uiStream = a2ui.NewSurfaceStream()
 					filterStep = step
 				}
 				for _, part := range event.Content.Parts {
@@ -3934,6 +3941,12 @@ func (ae *AgentExecutor) runPipeline(
 						thinkTrack.emit(step, "reasoning", part.Text)
 					} else {
 						for _, ev := range answerTextEvents(textFilter, part.Text) {
+							req.StreamCallback(ev)
+						}
+						// Progressive surface frames: a card appears as its
+						// messages stream in, throttled to at most one frame per
+						// interval per surface.
+						for _, ev := range a2uiProgressiveEvents(a2uiStream, a2uiThrottle, part.Text) {
 							req.StreamCallback(ev)
 						}
 					}
@@ -3984,19 +3997,27 @@ func (ae *AgentExecutor) runPipeline(
 				// as text deltas so callers receive a non-empty final response.
 				if event.Content != nil && req.StreamCallback != nil {
 					step := tracker.current()
-					for _, streamEvent := range finalResponseStreamEvents(event.Content.Parts) {
+					finalEvents := finalResponseStreamEvents(event.Content.Parts)
+					for _, streamEvent := range finalEvents {
 						if streamEvent.Type == StreamEventThinking {
 							thinkTrack.emit(step, streamEvent.Role, streamEvent.Text)
 						} else {
 							req.StreamCallback(streamEvent)
 						}
 					}
+					// A surface shown progressively but absent from (or invalid in)
+					// the finished response must be torn down, or a half-rendered
+					// card outlives the run.
+					for _, ev := range a2uiTeardownEvents(a2uiStream, finalEvents) {
+						req.StreamCallback(ev)
+					}
 				}
 				// The answer step is complete. Drop anything the surface filter
 				// still holds (a tail from THIS step's fence) so a step that
 				// began a surface without closing it cannot swallow the next
-				// step's answer.
+				// step's answer, and reset the progressive stream with it.
 				textFilter = a2ui.NewTextFilter()
+				a2uiStream = a2ui.NewSurfaceStream()
 			}
 
 			// Track the last non-partial event that carries text — used as fallback

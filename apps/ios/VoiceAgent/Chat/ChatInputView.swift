@@ -7,11 +7,11 @@ import SwiftUI
 ///
 /// Sending is injectable so the same composer serves the LiveKit voice room
 /// (`session.send`) and the HTTP text transport, which has no room at all.
-/// `allowsInterrupt` says whether this surface can stop a reply: voice can
-/// (`lk.chat.interrupt`), text cannot yet — a device credential has no run
-/// cancellation route, and closing the HTTP stream leaves the server-side run
-/// going. In that case the composer keeps the send button (disabled while a
-/// turn streams) instead of offering a stop that does not stop anything.
+/// `allowsInterrupt` says whether this surface can stop a reply: voice does it
+/// over the room (`lk.chat.interrupt`), text through its transport's run cancel
+/// (`onStop`). `isRunning` keeps the stop button up while a text turn is still
+/// in flight even after the activity store's reply window has closed — the
+/// store's `isGeneratingReply` goes false 3s after the last token.
 struct ChatInputView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var controller: MemorySessionController
@@ -25,6 +25,12 @@ struct ChatInputView: View {
     private let onSend: ((String) async -> Void)?
     /// Whether this surface can interrupt the reply in flight.
     private let allowsInterrupt: Bool
+    /// What a stop does. Voice leaves it nil and the room is interrupted; text
+    /// passes the transport's run cancel.
+    private let onStop: (() async -> Void)?
+    /// The surface's own in-flight signal, which outlives the activity store's
+    /// reply window (a long tool run, or the 3s quiet timer after a token).
+    private let isRunning: Bool
 
     /// Bumped on each send to drive the send haptic.
     @State private var sendFeedback = 0
@@ -33,12 +39,16 @@ struct ChatInputView: View {
         keyboardFocus: FocusState<Bool>.Binding,
         text: Binding<String>,
         onSend: ((String) async -> Void)? = nil,
-        allowsInterrupt: Bool = true
+        allowsInterrupt: Bool = true,
+        isRunning: Bool = false,
+        onStop: (() async -> Void)? = nil
     ) {
         _keyboardFocus = keyboardFocus
         _text = text
         self.onSend = onSend
         self.allowsInterrupt = allowsInterrupt
+        self.isRunning = isRunning
+        self.onStop = onStop
     }
 
     var body: some View {
@@ -47,7 +57,7 @@ struct ChatInputView: View {
         // the circle ride visibly high against a one-line text field.
         HStack(alignment: .center, spacing: 3 * .grid) {
             textField()
-            if store.isGeneratingReply, allowsInterrupt {
+            if allowsInterrupt, isRunning || store.isGeneratingReply {
                 stopButton()
             } else {
                 sendButton()
@@ -132,13 +142,19 @@ struct ChatInputView: View {
             .accessibilityHint("chat.send.hint")
     }
 
-    /// Stop/interrupt while a reply is generating: sends `lk.chat.interrupt`
-    /// (NOT `session.end()`) and returns the composer to the ready state.
+    /// Stop/interrupt while a reply is in flight. The activity store is settled
+    /// first so the working line and spinners stop immediately; then `onStop`
+    /// cancels the run (text) or `lk.chat.interrupt` is sent (voice, NOT
+    /// `session.end()`).
     @ViewBuilder
     private func stopButton() -> some View {
         AsyncButton {
             store.stopGenerating()
-            await controller.interrupt()
+            if let onStop {
+                await onStop()
+            } else {
+                await controller.interrupt()
+            }
         } label: {
             Image(systemName: "stop.fill")
                 .frame(width: 8 * .grid, height: 8 * .grid)
