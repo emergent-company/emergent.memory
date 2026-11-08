@@ -133,14 +133,53 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ComponentSpec describes one catalog component: the prop names the prompt
-// documents as required plus a one-line purpose used when the catalog is
-// rendered into the system-prompt instruction. Keeping both in one place is what
-// makes the prompt and the catalog membership check share a single source of
-// truth.
+// PropType is the Go-native type of a catalog prop value. The catalog stays
+// JSON-Schema-free by design (agent-structured-ui design doc): these constants
+// are the minimum needed to reject a value a renderer would otherwise have to
+// coerce or degrade.
+type PropType string
+
+const (
+	PropString     PropType = "string"
+	PropBool       PropType = "bool"
+	PropNumber     PropType = "number"
+	PropObject     PropType = "object"
+	PropEnum       PropType = "enum"
+	PropStringList PropType = "[]string"
+	PropObjectList PropType = "[]object"
+	PropAnyList    PropType = "[]any"
+)
+
+// Host limits. A catalog prop may override MaxLen/MaxItems; these are the
+// defaults (and the structural caps that keep one card from becoming a payload).
+const (
+	// MaxComponentsPerMessage caps one updateComponents envelope.
+	MaxComponentsPerMessage = 50
+	// MaxListItems caps rows/items/fields/options when a prop sets no own limit.
+	MaxListItems = 200
+	// MaxStringLength is the default string cap for a declared prop.
+	MaxStringLength = 4000
+	// MaxCodeLength is the cap for the `code` component's code prop.
+	MaxCodeLength = 20000
+)
+
+// PropSpec declares one catalog prop: its type, an optional enum domain, and
+// optional per-prop limits (0 means the package default).
+type PropSpec struct {
+	Type     PropType
+	Enum     []string // when Type == PropEnum
+	MaxItems int      // when the type is a list
+	MaxLen   int      // when Type == PropString
+}
+
+// ComponentSpec describes one catalog component: the props the validator
+// enforces (type + requiredness) plus a one-line purpose used when the catalog
+// is rendered into the system-prompt instruction. Keeping both in one place is
+// what makes the prompt and the validator share a single source of truth.
 type ComponentSpec struct {
-	Required []string // prop names documented for the model (not enforced by Validate)
-	Purpose  string   // one-line purpose, for prompt emission
+	Props    map[string]PropSpec // declared props and their types; undeclared props stay open
+	Required []string            // prop names a valid component must carry
+	Purpose  string              // one-line purpose, for prompt emission
 }
 
 // Catalog maps a known component id to its spec. It is the single source of
@@ -148,18 +187,82 @@ type ComponentSpec struct {
 // and the prompt instruction is rendered from the same map.
 type Catalog map[string]ComponentSpec
 
-// BasicCatalog is the built-in catalog of first-class card components. Required
-// props are kept minimal; a component may carry additional props beyond these.
+// BasicCatalog is the built-in catalog of first-class card components. A
+// component may carry additional props beyond these; only declared props are
+// type-checked, and only Required props are mandatory.
 var BasicCatalog = Catalog{
-	"proposal":    {Required: []string{"kind", "summary"}, Purpose: "review/accept/reject a proposed change, where the host enables it"},
-	"approval":    {Required: []string{"tool"}, Purpose: "gate a tool call on the user's approval, where the host enables it"},
-	"question":    {Required: []string{"prompt"}, Purpose: "collect a structured answer from the user, where the host enables it"},
-	"code":        {Required: []string{"code"}, Purpose: "show a code block or diff"},
-	"entity":      {Required: []string{"type"}, Purpose: "preview a graph object"},
-	"object-form": {Required: []string{"fields"}, Purpose: "schema-driven data entry"},
-	"todo":        {Required: []string{"items"}, Purpose: "a checkable task list"},
-	"result":      {Required: []string{"rows"}, Purpose: "key/value rows or a table"},
-	"sources":     {Required: []string{"items"}, Purpose: "list the sources behind an answer"},
+	"proposal": {
+		Required: []string{"kind", "summary"},
+		Props: map[string]PropSpec{
+			"kind":    {Type: PropString, MaxLen: 64},
+			"summary": {Type: PropString, MaxLen: 2000},
+			"body":    {Type: PropObject},
+		},
+		Purpose: "review/accept/reject a proposed change, where the host enables it",
+	},
+	"approval": {
+		Required: []string{"tool"},
+		Props: map[string]PropSpec{
+			"tool":  {Type: PropString, MaxLen: 128},
+			"input": {Type: PropObject},
+		},
+		Purpose: "gate a tool call on the user's approval, where the host enables it",
+	},
+	"question": {
+		Required: []string{"prompt"},
+		Props: map[string]PropSpec{
+			"prompt":          {Type: PropString, MaxLen: 4000},
+			"interactionType": {Type: PropEnum, Enum: []string{"text", "choice", "multi", "bool"}},
+			"options":         {Type: PropAnyList, MaxItems: 50},
+		},
+		Purpose: "collect a structured answer from the user, where the host enables it",
+	},
+	"code": {
+		Required: []string{"code"},
+		Props: map[string]PropSpec{
+			"code": {Type: PropString, MaxLen: MaxCodeLength},
+			"lang": {Type: PropString, MaxLen: 64},
+		},
+		Purpose: "show a code block or diff",
+	},
+	"entity": {
+		Required: []string{"type"},
+		Props: map[string]PropSpec{
+			"type":          {Type: PropString, MaxLen: 128},
+			"label":         {Type: PropString, MaxLen: 256},
+			"properties":    {Type: PropObject},
+			"relationships": {Type: PropAnyList, MaxItems: MaxListItems},
+		},
+		Purpose: "preview a graph object",
+	},
+	"object-form": {
+		Required: []string{"fields"},
+		Props: map[string]PropSpec{
+			"fields": {Type: PropObjectList, MaxItems: 100},
+		},
+		Purpose: "schema-driven data entry",
+	},
+	"todo": {
+		Required: []string{"items"},
+		Props: map[string]PropSpec{
+			"items": {Type: PropAnyList, MaxItems: MaxListItems},
+		},
+		Purpose: "a checkable task list",
+	},
+	"result": {
+		Required: []string{"rows"},
+		Props: map[string]PropSpec{
+			"rows": {Type: PropObjectList, MaxItems: MaxListItems},
+		},
+		Purpose: "key/value rows or a table",
+	},
+	"sources": {
+		Required: []string{"items"},
+		Props: map[string]PropSpec{
+			"items": {Type: PropObjectList, MaxItems: MaxListItems},
+		},
+		Purpose: "list the sources behind an answer",
+	},
 }
 
 // Contains reports whether id is a known component in the catalog.
@@ -222,26 +325,117 @@ func (c Catalog) renderCatalog() string {
 		spec := c[id]
 		line := "- " + id + ": " + spec.Purpose
 		if len(spec.Required) > 0 {
-			line += " (required: " + strings.Join(spec.Required, ", ") + ")"
+			required := make([]string, 0, len(spec.Required))
+			requiredSet := make(map[string]bool, len(spec.Required))
+			for _, name := range spec.Required {
+				requiredSet[name] = true
+				prop := spec.Props[name]
+				entry := name + " " + string(prop.Type)
+				if prop.Type == PropEnum && len(prop.Enum) > 0 {
+					entry = name + " (" + strings.Join(prop.Enum, "|") + ")"
+				}
+				required = append(required, entry)
+			}
+			line += " (required: " + strings.Join(required, ", ") + ")"
+			// Optional declared props teach their type too, so the model does not
+			// guess a shape the validator will reject.
+			var optional []string
+			for name, prop := range spec.Props {
+				if requiredSet[name] {
+					continue
+				}
+				entry := name + " " + string(prop.Type)
+				if prop.Type == PropEnum && len(prop.Enum) > 0 {
+					entry = name + " (" + strings.Join(prop.Enum, "|") + ")"
+				}
+				optional = append(optional, entry)
+			}
+			sort.Strings(optional)
+			if len(optional) > 0 {
+				line += ", optional: " + strings.Join(optional, ", ")
+			}
 		}
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
 }
 
-// Validate performs structural validation only. It checks envelope shape,
-// non-empty surface identifiers, and component-catalog membership, returning a
-// wrapped error naming the offending message index.
-func Validate(msgs []Message) error {
-	for i, m := range msgs {
-		if err := validateMessage(m); err != nil {
-			return fmt.Errorf("message %d: %w", i, err)
-		}
-	}
-	return nil
+// Issue is one validation problem, addressed to the component and prop the
+// model must repair. Its Error form is exactly the text a repair turn can carry
+// back to the model (issue #416/#417).
+type Issue struct {
+	Message   int    // index of the offending message in the validated slice
+	Component string // component id, for a component-scoped issue
+	Kind      string // catalog component id (e.g. "proposal")
+	Prop      string // offending prop, when the issue is about one
+	Detail    string // human/model-readable problem
 }
 
-func validateMessage(m Message) error {
+func (i Issue) Error() string {
+	if i.Component != "" {
+		s := fmt.Sprintf("message %d: component %q", i.Message, i.Component)
+		if i.Kind != "" {
+			s += " (" + i.Kind + ")"
+		}
+		return s + ": " + i.Detail
+	}
+	return fmt.Sprintf("message %d: %s", i.Message, i.Detail)
+}
+
+// Issues is an ordered list of validation problems. It implements error so a
+// caller that only needs validity can use Validate; the repair pass consumes the
+// individual issues.
+type Issues []Issue
+
+func (is Issues) Error() string {
+	parts := make([]string, len(is))
+	for i, issue := range is {
+		parts[i] = issue.Error()
+	}
+	return strings.Join(parts, "; ")
+}
+
+// Err returns nil for an empty list, otherwise the list as an error.
+func (is Issues) Err() error {
+	if len(is) == 0 {
+		return nil
+	}
+	return is
+}
+
+// Validate reports whether msgs form a valid A2UI message set, returning the
+// first-block error text when they do not. It validates shape, catalog
+// membership, required props and prop types (see ValidateAll for every issue).
+func Validate(msgs []Message) error {
+	return ValidateAll(msgs).Err()
+}
+
+// ValidateAll validates every message and returns every issue found, not just
+// the first: the issues are what a single repair turn sends back to the model.
+// Validation is structural: it never fails a run.
+func ValidateAll(msgs []Message) Issues {
+	var out Issues
+	surfaceSeen := ""
+	for i, m := range msgs {
+		issues, surfaceID := validateMessage(i, m)
+		out = append(out, issues...)
+		if surfaceID != "" {
+			if surfaceSeen == "" {
+				surfaceSeen = surfaceID
+			} else if surfaceSeen != surfaceID {
+				out = append(out, Issue{
+					Message: i,
+					Detail:  fmt.Sprintf("a message set may describe one surface only (saw %q and %q)", surfaceSeen, surfaceID),
+				})
+			}
+		}
+	}
+	return out
+}
+
+// validateMessage validates one envelope and returns its issues plus the
+// surface id it operates on ("" when the message carries no surface).
+func validateMessage(idx int, m Message) (Issues, string) {
 	set := 0
 	for _, present := range []bool{
 		m.CreateSurface != nil,
@@ -254,39 +448,254 @@ func validateMessage(m Message) error {
 		}
 	}
 	if set != 1 {
-		return fmt.Errorf("message must set exactly one of createSurface/updateComponents/updateDataModel/deleteSurface (got %d)", set)
+		return Issues{{Message: idx, Detail: fmt.Sprintf(
+			"message must set exactly one of createSurface/updateComponents/updateDataModel/deleteSurface (got %d)", set)}}, ""
 	}
 
 	switch {
 	case m.CreateSurface != nil:
 		if m.CreateSurface.SurfaceID == "" {
-			return fmt.Errorf("createSurface: surfaceId must be non-empty")
+			return Issues{{Message: idx, Detail: "createSurface: surfaceId must be non-empty"}}, ""
 		}
 		if m.CreateSurface.CatalogID == "" {
-			return fmt.Errorf("createSurface: catalogId must be non-empty")
+			return Issues{{Message: idx, Detail: "createSurface: catalogId must be non-empty"}}, m.CreateSurface.SurfaceID
 		}
+		return nil, m.CreateSurface.SurfaceID
 	case m.UpdateComponents != nil:
 		if m.UpdateComponents.SurfaceID == "" {
-			return fmt.Errorf("updateComponents: surfaceId must be non-empty")
+			return Issues{{Message: idx, Detail: "updateComponents: surfaceId must be non-empty"}}, ""
 		}
+		var issues Issues
+		if n := len(m.UpdateComponents.Components); n > MaxComponentsPerMessage {
+			issues = append(issues, Issue{
+				Message: idx,
+				Detail:  fmt.Sprintf("updateComponents: %d components exceeds the host limit of %d", n, MaxComponentsPerMessage),
+			})
+		}
+		seen := make(map[string]bool, len(m.UpdateComponents.Components))
 		for j, comp := range m.UpdateComponents.Components {
 			if comp.ID == "" {
-				return fmt.Errorf("updateComponents: component %d: id must be non-empty", j)
+				issues = append(issues, Issue{
+					Message: idx,
+					Detail:  fmt.Sprintf("updateComponents: component %d: id must be non-empty", j),
+				})
+				continue
 			}
+			if seen[comp.ID] {
+				issues = append(issues, Issue{
+					Message:   idx,
+					Component: comp.ID,
+					Kind:      comp.Component,
+					Detail:    "duplicate component id in one updateComponents message",
+				})
+				continue
+			}
+			seen[comp.ID] = true
 			if !BasicCatalog.Contains(comp.Component) {
-				return fmt.Errorf("updateComponents: component %d: unknown component %q", j, comp.Component)
+				issues = append(issues, Issue{
+					Message:   idx,
+					Component: comp.ID,
+					Detail:    fmt.Sprintf("unknown component %q", comp.Component),
+				})
+				continue
 			}
+			issues = append(issues, validateComponentProps(idx, comp, BasicCatalog[comp.Component])...)
 		}
+		return issues, m.UpdateComponents.SurfaceID
 	case m.UpdateDataModel != nil:
 		if m.UpdateDataModel.SurfaceID == "" {
-			return fmt.Errorf("updateDataModel: surfaceId must be non-empty")
+			return Issues{{Message: idx, Detail: "updateDataModel: surfaceId must be non-empty"}}, ""
 		}
+		return nil, m.UpdateDataModel.SurfaceID
 	case m.DeleteSurface != nil:
 		if m.DeleteSurface.SurfaceID == "" {
-			return fmt.Errorf("deleteSurface: surfaceId must be non-empty")
+			return Issues{{Message: idx, Detail: "deleteSurface: surfaceId must be non-empty"}}, ""
+		}
+		return nil, m.DeleteSurface.SurfaceID
+	}
+	return nil, ""
+}
+
+// validateComponentProps enforces a component's required props, declared prop
+// types and host limits. Undeclared props stay open (the catalog is forward-
+// compatible); declared ones must be the shape the renderers actually consume.
+func validateComponentProps(idx int, comp Component, spec ComponentSpec) Issues {
+	var issues Issues
+	for _, name := range spec.Required {
+		if _, ok := comp.Props[name]; !ok {
+			issues = append(issues, Issue{
+				Message:   idx,
+				Component: comp.ID,
+				Kind:      comp.Component,
+				Prop:      name,
+				Detail:    fmt.Sprintf("missing required prop %q", name),
+			})
 		}
 	}
-	return nil
+	// Deterministic order: validate declared props in catalog order by name.
+	declared := make([]string, 0, len(spec.Props))
+	for name := range spec.Props {
+		declared = append(declared, name)
+	}
+	sort.Strings(declared)
+	for _, name := range declared {
+		value, ok := comp.Props[name]
+		if !ok {
+			continue
+		}
+		if detail := checkPropValue(value, spec.Props[name]); detail != "" {
+			issues = append(issues, Issue{
+				Message:   idx,
+				Component: comp.ID,
+				Kind:      comp.Component,
+				Prop:      name,
+				Detail:    detail,
+			})
+		}
+	}
+	return issues
+}
+
+// checkPropValue returns "" when value satisfies spec, or a model-readable
+// problem naming the expected shape and what arrived.
+func checkPropValue(value any, spec PropSpec) string {
+	switch spec.Type {
+	case PropString:
+		s, ok := value.(string)
+		if !ok {
+			return fmt.Sprintf("expected string, got %s", jsonTypeName(value))
+		}
+		if s == "" {
+			return "must be a non-empty string"
+		}
+		limit := spec.MaxLen
+		if limit <= 0 {
+			limit = MaxStringLength
+		}
+		if len(s) > limit {
+			return fmt.Sprintf("string is %d bytes, exceeds the host limit of %d", len(s), limit)
+		}
+	case PropBool:
+		if _, ok := value.(bool); !ok {
+			return fmt.Sprintf("expected bool, got %s", jsonTypeName(value))
+		}
+	case PropNumber:
+		if !isJSONNumber(value) {
+			return fmt.Sprintf("expected number, got %s", jsonTypeName(value))
+		}
+	case PropObject:
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Sprintf("expected object, got %s", jsonTypeName(value))
+		}
+	case PropEnum:
+		s, ok := value.(string)
+		if !ok {
+			return fmt.Sprintf("expected string, got %s", jsonTypeName(value))
+		}
+		for _, allowed := range spec.Enum {
+			if s == allowed {
+				return ""
+			}
+		}
+		return fmt.Sprintf("expected one of %s, got %q", strings.Join(spec.Enum, ", "), s)
+	case PropStringList:
+		items, ok := asList(value)
+		if !ok {
+			return fmt.Sprintf("expected array of strings, got %s", jsonTypeName(value))
+		}
+		if detail := checkListLimit(len(items), spec); detail != "" {
+			return detail
+		}
+		for i, item := range items {
+			if _, ok := item.(string); !ok {
+				return fmt.Sprintf("item %d: expected string, got %s", i, jsonTypeName(item))
+			}
+		}
+	case PropObjectList:
+		items, ok := asList(value)
+		if !ok {
+			return fmt.Sprintf("expected array of objects, got %s", jsonTypeName(value))
+		}
+		if detail := checkListLimit(len(items), spec); detail != "" {
+			return detail
+		}
+		for i, item := range items {
+			if _, ok := item.(map[string]any); !ok {
+				return fmt.Sprintf("item %d: expected object, got %s", i, jsonTypeName(item))
+			}
+		}
+	case PropAnyList:
+		items, ok := asList(value)
+		if !ok {
+			return fmt.Sprintf("expected array, got %s", jsonTypeName(value))
+		}
+		return checkListLimit(len(items), spec)
+	default:
+		return ""
+	}
+	return ""
+}
+
+func checkListLimit(n int, spec PropSpec) string {
+	limit := spec.MaxItems
+	if limit <= 0 {
+		limit = MaxListItems
+	}
+	if n > limit {
+		return fmt.Sprintf("has %d items, exceeds the host limit of %d", n, limit)
+	}
+	return ""
+}
+
+func asList(value any) ([]any, bool) {
+	if items, ok := value.([]any); ok {
+		return items, true
+	}
+	// Tests and in-process callers may build typed slices; normalise them to the
+	// []any shape UnmarshalJSON produces.
+	switch typed := value.(type) {
+	case []string:
+		out := make([]any, len(typed))
+		for i, v := range typed {
+			out[i] = v
+		}
+		return out, true
+	case []map[string]any:
+		out := make([]any, len(typed))
+		for i, v := range typed {
+			out[i] = v
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func isJSONNumber(value any) bool {
+	switch value.(type) {
+	case float64, float32, int, int32, int64, json.Number:
+		return true
+	}
+	return false
+}
+
+// jsonTypeName names the JSON type of a decoded value for an error message.
+func jsonTypeName(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case float64, float32, int, int32, int64, json.Number:
+		return "number"
+	case []any, []string, []map[string]any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return fmt.Sprintf("%T", value)
+	}
 }
 
 const (

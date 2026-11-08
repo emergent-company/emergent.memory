@@ -276,6 +276,162 @@ func TestComponentRoundTrip(t *testing.T) {
 	}
 }
 
+func TestValidateCatalogProps(t *testing.T) {
+	// Every catalog id, carrying only the props the catalog declares required.
+	valid := map[string]map[string]any{
+		"proposal":    {"kind": "change", "summary": "rename the field"},
+		"approval":    {"tool": "graph_delete_object"},
+		"question":    {"prompt": "Which branch?"},
+		"code":        {"code": "func main() {}"},
+		"entity":      {"type": "Company"},
+		"object-form": {"fields": []any{map[string]any{"name": "title", "type": "string"}}},
+		"todo":        {"items": []any{"write the test", map[string]any{"label": "ship it", "done": false}}},
+		"result":      {"rows": []any{map[string]any{"label": "count", "value": 3}}},
+		"sources":     {"items": []any{map[string]any{"id": "11111111-1111-1111-1111-111111111111", "type": "Company", "label": "Acme"}}},
+	}
+
+	for id, props := range valid {
+		if !BasicCatalog.Contains(id) {
+			t.Fatalf("test data names unknown catalog id %q", id)
+		}
+		t.Run("valid/"+id, func(t *testing.T) {
+			msgs := []Message{
+				{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: CatalogID}},
+				{UpdateComponents: &UpdateComponents{
+					SurfaceID:  "s1",
+					Components: []Component{{ID: "c1", Component: id, Props: props}},
+				}},
+			}
+			if err := Validate(msgs); err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+
+	tests := []struct {
+		name     string
+		kind     string
+		props    map[string]any
+		wantText string
+	}{
+		{
+			name:     "proposal missing summary",
+			kind:     "proposal",
+			props:    map[string]any{"kind": "change"},
+			wantText: `component "c1" (proposal): missing required prop "summary"`,
+		},
+		{
+			name:     "proposal wrong-typed summary",
+			kind:     "proposal",
+			props:    map[string]any{"kind": "change", "summary": 42},
+			wantText: `component "c1" (proposal): expected string, got number`,
+		},
+		{
+			name:     "question enum rejected",
+			kind:     "question",
+			props:    map[string]any{"prompt": "q", "interactionType": "slider"},
+			wantText: `component "c1" (question): expected one of text, choice, multi, bool, got "slider"`,
+		},
+		{
+			name:     "code empty string",
+			kind:     "code",
+			props:    map[string]any{"code": ""},
+			wantText: `component "c1" (code): must be a non-empty string`,
+		},
+		{
+			name:     "result rows wrong element",
+			kind:     "result",
+			props:    map[string]any{"rows": []any{"not an object"}},
+			wantText: `component "c1" (result): item 0: expected object, got string`,
+		},
+		{
+			name:     "todo items not a list",
+			kind:     "todo",
+			props:    map[string]any{"items": "one"},
+			wantText: `component "c1" (todo): expected array, got string`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msgs := []Message{
+				{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: CatalogID}},
+				{UpdateComponents: &UpdateComponents{
+					SurfaceID:  "s1",
+					Components: []Component{{ID: "c1", Component: tt.kind, Props: tt.props}},
+				}},
+			}
+			err := Validate(msgs)
+			if err == nil {
+				t.Fatalf("Validate() = nil, want error")
+			}
+			if !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("error = %q, want it to contain %q", err.Error(), tt.wantText)
+			}
+		})
+	}
+}
+
+func TestValidateHostLimits(t *testing.T) {
+	// Too many rows is a host-limit rejection, not a renderer degradation.
+	rows := make([]any, MaxListItems+1)
+	for i := range rows {
+		rows[i] = map[string]any{"label": "row", "value": i}
+	}
+	msgs := []Message{{UpdateComponents: &UpdateComponents{
+		SurfaceID:  "s1",
+		Components: []Component{{ID: "r1", Component: "result", Props: map[string]any{"rows": rows}}},
+	}}}
+	err := Validate(msgs)
+	if err == nil || !strings.Contains(err.Error(), "exceeds the host limit") {
+		t.Fatalf("Validate() = %v, want a host-limit error", err)
+	}
+
+	// More than one surface in a single message set is rejected so
+	// SurfaceIDOf's "first createSurface wins" rule never silently drops one.
+	msgs = []Message{
+		{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: CatalogID}},
+		{CreateSurface: &CreateSurface{SurfaceID: "s2", CatalogID: CatalogID}},
+	}
+	err = Validate(msgs)
+	if err == nil || !strings.Contains(err.Error(), "one surface only") {
+		t.Fatalf("Validate() = %v, want a one-surface error", err)
+	}
+}
+
+func TestValidateAllReportsEveryIssue(t *testing.T) {
+	msgs := []Message{{UpdateComponents: &UpdateComponents{
+		SurfaceID: "s1",
+		Components: []Component{
+			{ID: "p1", Component: "proposal", Props: map[string]any{"kind": "change"}},
+			{ID: "p2", Component: "proposal", Props: map[string]any{"kind": "change", "summary": 7}},
+		},
+	}}}
+	issues := ValidateAll(msgs)
+	if len(issues) != 2 {
+		t.Fatalf("len(issues) = %d, want 2 (%v)", len(issues), issues)
+	}
+	if issues[0].Component != "p1" || issues[0].Prop != "summary" {
+		t.Errorf("issue[0] = %+v, want p1/summary", issues[0])
+	}
+}
+
+func TestInstructionRendersPropTypes(t *testing.T) {
+	inst := BasicCatalog.Instruction()
+	for _, want := range []string{
+		"proposal",
+		"required: kind string, summary string",
+		"interactionType (text|choice|multi|bool)",
+	} {
+		if !strings.Contains(inst, want) {
+			t.Errorf("Instruction() missing %q:\n%s", want, inst)
+		}
+	}
+	// The catalog id is advertised even though the instruction is prose.
+	if !strings.Contains(inst, CatalogID) {
+		t.Errorf("Instruction() missing catalog id %q", CatalogID)
+	}
+}
+
 func TestMessageVersionDefaults(t *testing.T) {
 	var m Message
 	if err := json.Unmarshal([]byte(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}`), &m); err != nil {
