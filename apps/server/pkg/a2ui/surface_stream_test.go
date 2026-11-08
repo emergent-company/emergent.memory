@@ -131,3 +131,22 @@ func TestSurfaceStream_MessagesReturnsCopy(t *testing.T) {
 		t.Fatalf("earlier Messages() snapshot grew to %d, want 1", len(first))
 	}
 }
+
+func TestSurfaceStream_InvalidResetsAtNextFence(t *testing.T) {
+	s := NewSurfaceStream()
+
+	// Block 1: valid createSurface, then a malformed line → invalid.
+	s.Feed("```a2ui\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed("not json\n```\n")
+	if !s.Invalid() {
+		t.Fatal("Invalid() = false after a malformed line, want true")
+	}
+
+	// Block 2 opens fresh: a valid line parses again, mirroring ExtractFromText's
+	// per-block validity.
+	got := s.Feed("```a2ui\n" + `{"updateComponents":{"surfaceId":"s2","components":[]}}` + "\n```\n")
+	if len(got) != 1 || got[0].UpdateComponents == nil {
+		t.Fatalf("valid block after an invalid one yielded %+v, want one updateComponents", got)
+	}
+}

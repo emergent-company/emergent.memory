@@ -60,6 +60,9 @@ func (s *SurfaceStream) consumeLine(line string) {
 	if !s.inFence {
 		if trimmed == fenceOpen {
 			s.inFence = true
+			// A new block starts fresh: an invalid line in a previous block must
+			// not poison the next one (mirrors ExtractFromText's per-block curValid).
+			s.invalid = false
 		}
 		return
 	}
