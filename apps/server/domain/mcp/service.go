@@ -3584,11 +3584,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// ~14 KB of text per row, i.e. multiple MB at limit=200 (issue #1069). A
 	// caller that asks for data gets it: include_properties=true or an explicit
 	// fields list selects the full projection, under the same limit cap as
-	// field_strategy="full" (issue #400). An explicit field_strategy always wins,
-	// and include_properties=false pins the compact default.
+	// field_strategy="full" (issue #400). An explicit field_strategy always wins;
+	// when that leaves a caller's requested properties suppressed the conflict is
+	// reported as a warning below, and include_properties=false pins the compact
+	// default when no strategy was named.
 	opts := responseOptsFromArgs(args)
 	includeProps, includePropsSet := args["include_properties"].(bool)
 	strategy := opts.FieldStrategy
+	propertiesSuppressed := false
 	if strategy == "" {
 		switch {
 		case includePropsSet && !includeProps:
@@ -3598,6 +3601,8 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		default:
 			strategy = "compact"
 		}
+	} else {
+		propertiesSuppressed = strategy == "compact" && (includeProps || len(opts.Fields) > 0)
 	}
 	fieldProjection := entityPropertiesProjection(strategy, args["fields"])
 
@@ -3788,6 +3793,10 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
 		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "include_properties": {}, "branch": {}, "filters": {}, "key_prefix": {},
+		// The consolidated `entity` tool leaves its own `action` in args after
+		// dispatch consumed it, so it must not be reported as an ignored
+		// parameter (the dispatcher already validated it).
+		"action": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -3809,6 +3818,9 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			"limit capped to %d to bound the properties payload; paginate with offset for more rows.",
 			limit,
 		))
+	}
+	if propertiesSuppressed {
+		warnings = append(warnings, "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties.")
 	}
 	queryEntitiesWarning := strings.Join(warnings, " ")
 
@@ -3985,13 +3997,17 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	// exactly like the type/pagination path, and include_properties=false opts
 	// back into the compact projection (issue #400).
 	opts := responseOptsFromArgs(args)
+	includeProps, includePropsSet := args["include_properties"].(bool)
 	strategy := opts.FieldStrategy
+	propertiesSuppressed := false
 	if strategy == "" {
-		if includeProps, ok := args["include_properties"].(bool); ok && !includeProps {
+		if includePropsSet && !includeProps {
 			strategy = "compact"
 		} else {
 			strategy = "full"
 		}
+	} else {
+		propertiesSuppressed = strategy == "compact" && (includeProps || len(opts.Fields) > 0)
 	}
 	propsProjection := entityPropertiesProjection(strategy, args["fields"])
 
@@ -4055,6 +4071,9 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Offset:  0,
 			HasMore: false,
 		},
+	}
+	if propertiesSuppressed {
+		result.Warning = "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
 	}
 	return envelopeResult(true, result, nil, "")
 }

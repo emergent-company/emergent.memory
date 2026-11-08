@@ -95,3 +95,79 @@ func TestExecuteQueryEntities_IncludePropertiesPaginationBound(t *testing.T) {
 	assert.NotContains(t, out.Warning, "field_strategy",
 		"the cap warning must describe the properties payload, not name a parameter the caller did not pass")
 }
+
+// TestExecuteQueryEntities_PropertiesConflictIsReported pins the explicit-wins
+// rule and its warning: a caller that asks for properties but also passes
+// field_strategy="compact" keeps the compact projection (an explicit strategy
+// wins) and is told why, instead of silently reproducing the #400 symptom.
+func TestExecuteQueryEntities_PropertiesConflictIsReported(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	insertQueryEntity(t, db, projectID, "lov/conflict#p-1",
+		map[string]any{"status": "confirmed", "content": "text"})
+
+	out := runEntityQuery(t, svc, projectID, map[string]any{
+		"type_name":          "LegalParagraph",
+		"include_properties": true,
+		"field_strategy":     "compact",
+	})
+	require.Len(t, out.Entities, 1)
+	assert.Empty(t, out.Entities[0].Properties, "an explicit field_strategy=compact still wins")
+	assert.Contains(t, out.Warning, "field_strategy=compact",
+		"the suppressed request must be reported")
+}
+
+// TestExecuteQueryEntities_IDsPropertiesPath pins both halves of the ids[] path
+// after #400: it keeps returning properties by default (it is the documented
+// "fetch full properties" path), and include_properties=false opts it into the
+// compact projection instead of being ignored.
+func TestExecuteQueryEntities_IDsPropertiesPath(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	id := insertQueryEntity(t, db, projectID, "lov/ids#p-1",
+		map[string]any{"status": "confirmed", "content": "text"})
+
+	t.Run("ids defaults to properties", func(t *testing.T) {
+		out := runEntityQuery(t, svc, projectID, map[string]any{"ids": []any{id}})
+		require.Len(t, out.Entities, 1)
+		assert.Equal(t, "confirmed", out.Entities[0].Properties["status"])
+	})
+
+	t.Run("include_properties=false compacts the ids path", func(t *testing.T) {
+		out := runEntityQuery(t, svc, projectID, map[string]any{
+			"ids":                []any{id},
+			"include_properties": false,
+		})
+		require.Len(t, out.Entities, 1)
+		assert.Empty(t, out.Entities[0].Properties)
+	})
+}
+
+// TestExecuteQueryEntities_ConsolidatedActionNotIgnored pins that the
+// consolidated `entity` tool's own action argument is not reported as an
+// unrecognized parameter: the dispatcher consumed and validated it, and the
+// warning would otherwise sit next to a call that did exactly what was asked.
+func TestExecuteQueryEntities_ConsolidatedActionNotIgnored(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	insertQueryEntity(t, db, projectID, "lov/action#p-1", map[string]any{"status": "confirmed"})
+
+	handler, resolved, err := resolveConsolidatedHandler("entity", map[string]any{"action": "query"})
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Equal(t, "entity-query", handler)
+
+	out := runEntityQuery(t, svc, projectID, map[string]any{
+		"action":    "query",
+		"type_name": "LegalParagraph",
+	})
+	require.Len(t, out.Entities, 1)
+	assert.NotContains(t, out.Warning, "action", "the consumed action must not be reported as ignored")
+	assert.NotContains(t, out.Warning, "unrecognized")
+}
