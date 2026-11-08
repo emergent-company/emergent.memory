@@ -3,12 +3,12 @@ import Foundation
 /// The live copy a text turn keeps in the view: keeping it in step with a
 /// reload, and trading it for the recorded reply once the record supersedes it.
 ///
-/// Split out of ``HTTPChatTransport`` so its turn machinery stays readable; these
-/// are the only methods that rewrite ``HTTPChatTransport/liveMessages``.
+/// Split out of ``HTTPChatTransport`` so its turn machinery stays readable; they
+/// go through the transport's live-copy seams rather than its private storage.
 extension HTTPChatTransport {
     /// Reloads the live transcript into the view (used after the view resets).
     func refreshLiveTranscript(_ transcript: ChatSessionTranscriptStore) {
-        transcript.syncLive(liveMessages)
+        transcript.syncLive(liveCopy)
     }
 
     /// Trades the truncated live copy for the finished reply the record now
@@ -19,9 +19,9 @@ extension HTTPChatTransport {
     /// meantime (`emergent.memory#213`).
     func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
         guard let interrupted = interruptedTurn else { return }
-        liveMessages.removeAll { $0.id == interrupted.liveMessageID }
-        transcript.syncLive(liveMessages)
-        interruptedTurn = nil
+        removeLiveMessage(interrupted.liveMessageID)
+        transcript.syncLive(liveCopy)
+        clearInterruptedTurn()
         if errorMessage == interrupted.failureMessage {
             errorMessage = nil
         }
@@ -39,9 +39,9 @@ extension HTTPChatTransport {
         activity: ChatActivityStore
     ) {
         guard let unanswered = unansweredTurn else { return }
-        unansweredTurn = nil
-        liveMessages.removeAll { $0.id == unanswered.anchorMessageID }
-        transcript.syncLive(liveMessages)
+        clearUnansweredTurn()
+        removeLiveMessage(unanswered.anchorMessageID)
+        transcript.syncLive(liveCopy)
         activity.discardTurn(anchoredTo: unanswered.anchorMessageID)
         if errorMessage == unanswered.failureMessage {
             errorMessage = nil

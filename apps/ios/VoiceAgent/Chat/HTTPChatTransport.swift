@@ -59,9 +59,8 @@ final class HTTPChatTransport {
     /// The turn in flight; ``stop()`` in its own file cancels it. Written only
     /// here (a finished task is replaced by the next ``send``).
     private(set) var turnTask: Task<Void, Never>?
-    /// Live transcript fed to the view (user turn + streamed reply). Mutated only
-    /// by this file and `HTTPChatTransport+LiveCopy.swift`.
-    var liveMessages: [LiveTranscriptMessage] = []
+    /// Live transcript fed to the view (user turn + streamed reply).
+    private var liveMessages: [LiveTranscriptMessage] = []
     private var fallbackToolCounter = 0
     /// Resolved agent definition id for the selected agent name (cached).
     private var agentDefinitionID: String?
@@ -159,6 +158,34 @@ final class HTTPChatTransport {
     }
 
     // MARK: - Streaming
+
+    // MARK: Live-copy seams
+
+    /// The live messages the view is rendering. The live-copy helpers in
+    /// `HTTPChatTransport+LiveCopy.swift` run in another file and cannot read
+    /// the `private` storage directly.
+    var liveCopy: [LiveTranscriptMessage] {
+        liveMessages
+    }
+
+    /// Drops one live message. The live-copy helpers in
+    /// `HTTPChatTransport+LiveCopy.swift` run in another file, so they cannot
+    /// write the `private` storage directly.
+    func removeLiveMessage(_ id: String) {
+        liveMessages.removeAll { $0.id == id }
+    }
+
+    /// Clears the turn whose reply was cut off, once its record has been
+    /// swapped in.
+    func clearInterruptedTurn() {
+        interruptedTurn = nil
+    }
+
+    /// Clears the turn that never streamed a reply, once its record has been
+    /// swapped in.
+    func clearUnansweredTurn() {
+        unansweredTurn = nil
+    }
 
     private func runTurn(
         _ plan: TurnPlan,
