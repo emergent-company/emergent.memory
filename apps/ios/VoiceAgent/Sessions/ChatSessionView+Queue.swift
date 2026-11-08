@@ -46,19 +46,18 @@ extension ChatSessionView {
         queue.pump(whileRunning: sender.isBlocked, dispatch: sender.dispatch)
     }
 
-    /// The transport's turn-end hook.
+    /// Installs the transport's turn-end hook and keeps its target alive for as
+    /// long as the view is on screen.
     ///
-    /// The transport holds this for the life of the view, so it captures the
-    /// sender (which holds stores, never the view struct) rather than the view:
-    /// the struct's state storage owns the transport, and capturing it would be
-    /// a retain cycle. The conversation id is resolved when the turn ends, not
-    /// here, so a `meta` frame that taught us a new id is already reflected.
-    func makeQueuePump(_ sender: ChatQueueSender) -> () -> Void {
-        let queue = queue
-        return { [weak queue, weak sender] in
-            guard let queue, let sender else { return }
-            queue.pump(whileRunning: sender.isBlocked, dispatch: sender.dispatch)
-        }
+    /// The transport holds the hook for the view's whole life, so the hook's
+    /// target must outlive `start()`: `@State` owns the pump, and the hook only
+    /// holds it weakly.
+    func attachQueuePump() {
+        queuePump = ChatQueuePump.install(
+            on: transport,
+            queue: queue,
+            sender: makeQueueSender()
+        )
     }
 
     /// The sender both the pump and the hook use: one place for "which
@@ -98,6 +97,46 @@ extension ChatSessionView {
     }
 }
 
+/// The transport's turn-end hook target, owned for the session's lifetime.
+///
+/// `HTTPChatTransport.onTurnFinished` lives as long as the view does, so the
+/// object it calls must outlive `ChatSessionView.start()` — hence a class the
+/// view keeps in `@State`, with the hook holding it weakly. It holds stores and
+/// the transport, never the view struct, so the transport → hook → pump chain
+/// adds no cycle through the view's state storage.
+@MainActor
+final class ChatQueuePump {
+    private let queue: ChatQueueStore
+    /// The pump owns the sender: the hook only points here weakly, so a sender
+    /// held by a caller's local would die with the call that built it.
+    private let sender: ChatQueueSender
+
+    private init(queue: ChatQueueStore, sender: ChatQueueSender) {
+        self.queue = queue
+        self.sender = sender
+    }
+
+    /// Builds the session's pump and hooks it to the transport.
+    ///
+    /// The returned object owns both the sender and the queue and must outlive
+    /// the call; the hook holds it weakly, so it stays alive only while the view
+    /// keeps it.
+    static func install(
+        on transport: HTTPChatTransport,
+        queue: ChatQueueStore,
+        sender: ChatQueueSender
+    ) -> ChatQueuePump {
+        let pump = ChatQueuePump(queue: queue, sender: sender)
+        transport.onTurnFinished = { [weak pump] in pump?.releaseOneRow() }
+        return pump
+    }
+
+    /// One finished turn releases one armed row.
+    func releaseOneRow() {
+        queue.pump(whileRunning: sender.isBlocked, dispatch: sender.dispatch)
+    }
+}
+
 /// Starts a queued turn for one open chat.
 ///
 /// A class rather than a method so the transport's turn-end hook can hold it
@@ -126,11 +165,12 @@ final class ChatQueueSender {
         self.route = route
     }
 
-    /// Whether a turn (or a run parked on a decision) owns the composer. A run
-    /// parked on a decision is not streaming — the composer is free — but its
-    /// queue waits until the user answers and the run ends.
+    /// Whether a turn — or any run parked on a decision, including one older
+    /// than the newest turn — owns the composer. A parked run is not streaming
+    /// (the composer is free), but its queue waits until the user answers and
+    /// the run ends.
     var isBlocked: Bool {
-        transport.isStreaming || activity.liveTurn?.isWaitingOnUser == true
+        transport.isStreaming || activity.turns.contains(where: \.isWaitingOnUser)
     }
 
     /// Starts one turn; false when the transport refused (one is streaming).

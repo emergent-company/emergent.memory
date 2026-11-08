@@ -38,6 +38,10 @@ struct ChatSessionView: View {
     @State var transport = HTTPChatTransport()
     /// Messages staged while a turn is running, released when it ends.
     @State var queue = ChatQueueStore()
+    /// The turn-end hook's target. The transport holds the hook, and the hook
+    /// only holds this pump weakly, so the view's state is what keeps it alive
+    /// after `start()` returns — a local there would be released immediately.
+    @State var queuePump: ChatQueuePump?
     /// Recorded-history fetches for this chat. It owns "already loaded" so a
     /// cancelled request cannot mark a conversation as loaded and leave its
     /// failure banner with no retry.
@@ -311,8 +315,7 @@ extension ChatSessionView {
         }
         // A turn ending on its own releases the queue parked behind it. A stop
         // does not: the user ended that turn on purpose.
-        let sender = makeQueueSender()
-        transport.onTurnFinished = makeQueuePump(sender)
+        attachQueuePump()
         switch adoptRoute() {
         case .unchanged:
             scopeQueue()

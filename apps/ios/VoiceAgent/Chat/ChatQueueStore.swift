@@ -35,11 +35,15 @@ struct ChatQueueKey: Equatable {
 
     let storageKey: String
 
-    init(projectID: String, conversationID: String) {
+    /// No key without a project. An empty scope would make every project share
+    /// one slot, so the queue stays in memory until the project is known.
+    init?(projectID: String, conversationID: String) {
+        guard !projectID.isEmpty else { return nil }
         storageKey = Self.prefix + "\(projectID).\(conversationID)"
     }
 
-    init(projectID: String, agentName: String) {
+    init?(projectID: String, agentName: String) {
+        guard !projectID.isEmpty else { return nil }
         storageKey = Self.prefix + "\(projectID).\(Self.newChatMarker).\(agentName)"
     }
 }
@@ -90,12 +94,20 @@ final class ChatQueueStore {
         armed = loaded.armed
     }
 
-    /// The key this conversation's queue is stored under.
-    var key: ChatQueueKey {
+    /// The key this conversation's queue is stored under; nil while the view has
+    /// no project id, so two projects can never share one slot.
+    var key: ChatQueueKey? {
         if let conversationID, !conversationID.isEmpty {
             return ChatQueueKey(projectID: projectID, conversationID: conversationID)
         }
         return ChatQueueKey(projectID: projectID, agentName: agentName)
+    }
+
+    /// Whether the queue has somewhere to live. An unscoped queue still holds
+    /// its rows in memory, but it writes nothing and releases nothing: a send
+    /// from it could not be attributed to a project's conversation.
+    var isScoped: Bool {
+        key != nil
     }
 
     /// The `meta` frame taught us the conversation id a new chat was given: the
@@ -110,7 +122,9 @@ final class ChatQueueStore {
         }
         // Drop the old slot even when it was empty: a stale `__new__` queue must
         // not surface in a later new chat for the same agent.
-        defaults.removeObject(forKey: previous.storageKey)
+        if let previous {
+            defaults.removeObject(forKey: previous.storageKey)
+        }
     }
 
     // MARK: Sending a new row
@@ -132,11 +146,13 @@ final class ChatQueueStore {
     ///
     /// Refuses while a turn is streaming (or a run is parked on a decision) and
     /// refuses an unarmed queue, so a ⌘↩ parked while idle is not silently
-    /// released when a later unrelated turn ends. The last row clearing disarms
-    /// the queue; a send that fails to start puts the row back at the head.
+    /// released when a later unrelated turn ends. It also refuses an unscoped
+    /// queue: without a project there is no conversation to send into. The last
+    /// row clearing disarms the queue; a send that fails to start puts the row
+    /// back at the head.
     @discardableResult
     func pump(whileRunning running: Bool, dispatch: (String) -> Bool) -> QueuedMessage? {
-        guard !running, armed, let first = items.first else { return nil }
+        guard isScoped, !running, armed, let first = items.first else { return nil }
         items.removeFirst()
         if items.isEmpty {
             armed = false
@@ -204,6 +220,7 @@ final class ChatQueueStore {
 
     private func load() -> ChatQueue {
         guard
+            let key,
             let data = defaults.data(forKey: key.storageKey),
             let queue = try? JSONDecoder().decode(ChatQueue.self, from: data)
         else { return ChatQueue() }
@@ -216,7 +233,10 @@ final class ChatQueueStore {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(ChatQueue(items: items, armed: armed)) else { return }
+        guard
+            let key,
+            let data = try? JSONEncoder().encode(ChatQueue(items: items, armed: armed))
+        else { return }
         defaults.set(data, forKey: key.storageKey)
     }
 
