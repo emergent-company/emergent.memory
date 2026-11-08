@@ -4082,13 +4082,15 @@ func (ae *AgentExecutor) runPipeline(
 			// One bounded A2UI repair pass (#417): an answer that was only an
 			// invalid card would otherwise degrade silently, so send the
 			// validator issues back exactly once before accepting the fallback.
-			if prompt, ok := a2uiRepair.Next(eventParts(lastEvent)); ok {
-				ae.log.Info("a2ui validation failed, issuing one repair turn",
-					slog.String("run_id", run.ID),
-					slog.Int("max_repairs", maxA2UIRepairs),
-				)
-				currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
-				continue
+			if req.RenderA2UI {
+				if prompt, ok := a2uiRepair.Next(eventParts(lastEvent)); ok {
+					ae.log.Info("a2ui validation failed, issuing one repair turn",
+						slog.String("run_id", run.ID),
+						slog.Int("max_repairs", maxA2UIRepairs),
+					)
+					currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
+					continue
+				}
 			}
 			break // normal completion — exit outer retry loop
 		}
