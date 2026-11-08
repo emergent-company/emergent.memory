@@ -468,6 +468,13 @@ type fakeMemory struct {
 	updatedSkillID string  // last id passed to UpdateSkill
 	deletedSkillID string  // last id passed to DeleteSkill
 
+	skillProposals     []SkillCaptureProposal // returned by ListSkillCaptureProposals
+	skillProposalErr   error                  // failure for any proposal read/action
+	approvedProposalID string                 // last id passed to ApproveSkillCaptureProposal
+	rejectedProposalID string                 // last id passed to RejectSkillCaptureProposal
+	approveProposalErr error                  // overrides skillProposalErr for approve
+	rejectProposalErr  error                  // overrides skillProposalErr for reject
+
 	backups           []Backup            // returned by ListBackups
 	backupErr         error               // failure for any backup read/list method
 	createdBackupReq  CreateBackupRequest // last create request forwarded
@@ -2272,6 +2279,47 @@ func (f *fakeMemory) DeleteSkill(ctx context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeMemory) ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error) {
+	if f.skillProposalErr != nil {
+		return nil, f.skillProposalErr
+	}
+	return f.skillProposals, nil
+}
+
+func (f *fakeMemory) GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
+	if f.skillProposalErr != nil {
+		return nil, f.skillProposalErr
+	}
+	for i := range f.skillProposals {
+		if f.skillProposals[i].ID == id {
+			return &f.skillProposals[i], nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (f *fakeMemory) ApproveSkillCaptureProposal(ctx context.Context, id string) error {
+	if f.approveProposalErr != nil {
+		return f.approveProposalErr
+	}
+	if f.skillProposalErr != nil {
+		return f.skillProposalErr
+	}
+	f.approvedProposalID = id
+	return nil
+}
+
+func (f *fakeMemory) RejectSkillCaptureProposal(ctx context.Context, id string) error {
+	if f.rejectProposalErr != nil {
+		return f.rejectProposalErr
+	}
+	if f.skillProposalErr != nil {
+		return f.skillProposalErr
+	}
+	f.rejectedProposalID = id
+	return nil
+}
+
 func (f *fakeMemory) ListBackups(ctx context.Context, orgID string) ([]Backup, int, error) {
 	if f.backupErr != nil {
 		return nil, 0, f.backupErr
@@ -2612,6 +2660,7 @@ func newTestServer(f *fakeMemory) (*Server, *echo.Echo) {
 	api.GET("/health", s.health)
 	api.GET("/agents", s.listAgents)
 	api.POST("/agents", s.createAgent)
+	api.PUT("/agents/:id", s.updateAgent)
 	api.POST("/chat", s.chat)
 	api.POST("/chat/questions/:questionId/respond", s.respondQuestion)
 	api.POST("/chat/questions/:questionId/cancel", s.cancelQuestion)
@@ -2648,6 +2697,63 @@ func TestListAgents(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 agents, got %d", len(got))
 	}
+}
+
+// TestUpdateAgentAutoLoadSkills pins the partial-PUT fix: the agent dialog's
+// PUT body never mentions autoLoadSkills, so the bound definition must leave it
+// unset and the PATCH body must omit the key (an explicit false would clear a
+// stored true and silently stop capture). The Skills toggle, which always
+// submits the field, must still be able to send an explicit false.
+func TestUpdateAgentAutoLoadSkills(t *testing.T) {
+	put := func(t *testing.T, f *fakeMemory, e *echo.Echo, body string) {
+		t.Helper()
+		f.updatedAgent = nil
+		req := httptest.NewRequest(http.MethodPut, "/api/agents/a1", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		if f.updatedAgent == nil {
+			t.Fatal("update not forwarded")
+		}
+	}
+
+	t.Run("partial PUT without the key omits it", func(t *testing.T) {
+		f := &fakeMemory{}
+		_, e := newTestServer(f)
+		put(t, f, e, `{"name":"diane","systemPrompt":"hi","tools":["read_file"]}`)
+		if f.updatedAgent.AutoLoadSkills != nil {
+			t.Fatalf("autoLoadSkills = %v, want unset", *f.updatedAgent.AutoLoadSkills)
+		}
+		raw, err := json.Marshal(f.updatedAgent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "autoLoadSkills") {
+			t.Errorf("PATCH body = %s, want no autoLoadSkills key", raw)
+		}
+	})
+
+	t.Run("explicit false from the Skills toggle is sent", func(t *testing.T) {
+		f := &fakeMemory{}
+		_, e := newTestServer(f)
+		put(t, f, e, `{"name":"diane","systemPrompt":"hi","autoLoadSkills":false}`)
+		if f.updatedAgent.AutoLoadSkills == nil {
+			t.Fatal("autoLoadSkills = unset, want explicit false")
+		}
+		if *f.updatedAgent.AutoLoadSkills {
+			t.Fatalf("autoLoadSkills = true, want false")
+		}
+		raw, err := json.Marshal(f.updatedAgent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"autoLoadSkills":false`) {
+			t.Errorf("PATCH body = %s, want an explicit autoLoadSkills:false", raw)
+		}
+	})
 }
 
 func TestCreateAgent(t *testing.T) {

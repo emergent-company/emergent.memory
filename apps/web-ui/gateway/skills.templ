@@ -15,14 +15,17 @@ import (
 
 // --- Skills ---
 
-// SkillsPage renders the skill browser: a list of skills. A failed list fetch
-// renders the whole-page error state; flashMsg/flashErr surface PRG feedback
-// from the create/delete flows. assistantAgent gates the "Add with assistant"
-// button ("" hides it); usedBy maps each skill name to its agent-usage count.
-templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
+// SkillsPage renders the skill browser: the pending-proposal review panel and
+// the list of skills. A failed list fetch renders the whole-page error state;
+// a failed proposals fetch degrades only the panel. flashMsg/flashErr surface
+// PRG feedback from the create/delete/review flows. assistantAgent gates the
+// "Add with assistant" button ("" hides it); usedBy maps each skill name to its
+// agent-usage count.
+templ SkillsPage(skills []Skill, loadErr error, proposals []SkillCaptureProposal, proposalsErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@skillsHeader(assistantAgent)
 		@flashToasts(flashMsg, flashErr)
+		@skillProposalsPanel(proposals, proposalsErr)
 		if loadErr != nil {
 			@pageErrorNotice("Failed to load skills", loadErr)
 		} else {
@@ -61,6 +64,103 @@ templ skillsHeader(assistantAgent string) {
 				Add skill
 			}
 		</div>
+	}
+}
+
+// skillProposalsPanel is the review inbox for agent-captured skill proposals.
+// Automatic capture stages every candidate as a proposal; a human must approve
+// or reject it. The list and its findings come from memory (which recomputes
+// the linter + security verdict for pending rows), so this panel only calls the
+// existing endpoints. An empty inbox and a failed fetch are distinct states; the
+// page never implies a proposal was approved when the call failed.
+templ skillProposalsPanel(proposals []SkillCaptureProposal, loadErr error) {
+	@ui.Section("Proposed skills", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		if loadErr != nil {
+			<p class="text-error text-xs">Pending proposals could not be loaded: { loadErr.Error() } Reload to try again.</p>
+		} else if len(proposals) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Icon: "lucide--inbox"}) {
+				No skill proposals are waiting for review. When automatic capture is on, a successful agent run can stage one here.
+			}
+		} else {
+			<div class="flex flex-col gap-3">
+				for _, p := range proposals {
+					@skillProposalRow(p)
+				}
+			</div>
+		}
+	}
+}
+
+// skillProposalRow is one pending proposal: what it changes, which agent it
+// came from, how confident the capture was, the current linter + security
+// findings, and the two review actions.
+templ skillProposalRow(p SkillCaptureProposal) {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col gap-2"}) {
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="font-mono text-sm font-medium">{ p.Name }</span>
+			@ui.Badge(ui.BadgeProps{Label: proposalKindLabel(p.Kind), Variant: proposalKindIntent(p.Kind), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+			@ui.Badge(ui.BadgeProps{Label: "Pending", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Dot: true})
+			<span class="text-muted text-xs">from { proposalAgentLabel(p) }</span>
+			<span class="text-muted text-xs">{ proposalConfidenceLabel(p.Confidence) }</span>
+		</div>
+		if p.Description != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				{ p.Description }
+			}
+		}
+		if p.Evidence != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet}) {
+				{ p.Evidence }
+			}
+		}
+		@skillProposalFindings(p.Findings)
+		<div class="flex flex-wrap items-center gap-2">
+			<form method="post" action={ templ.URL("/skills/proposals/" + url.PathEscape(p.ID) + "/approve") }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--check",
+				}) {
+					Approve
+				}
+			</form>
+			<form method="post" action={ templ.URL("/skills/proposals/" + url.PathEscape(p.ID) + "/reject") }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+				}) {
+					Reject
+				}
+			</form>
+		</div>
+	}
+}
+
+// skillProposalFindings renders the live linter + security findings. An empty
+// slice means both passed; memory only emits error/warning severities.
+templ skillProposalFindings(findings []SkillCaptureFinding) {
+	if len(findings) == 0 {
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Icon: "lucide--check"}) {
+			No findings — the linter and security scan are clean.
+		}
+	} else {
+		<ul class="flex flex-col gap-1">
+			for _, f := range findings {
+				<li class="flex items-start gap-2">
+					@ui.Badge(ui.BadgeProps{Label: f.Severity, Variant: proposalFindingIntent(f.Severity), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+					<span class="text-xs">
+						<span class="text-muted-faint font-mono">{ f.Code }</span>
+						{ f.Message }
+					</span>
+				</li>
+			}
+		</ul>
 	}
 }
 

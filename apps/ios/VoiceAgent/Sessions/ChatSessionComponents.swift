@@ -74,6 +74,9 @@ struct ChatTranscriptView: View {
                 }
             }
         }
+        // An object the agent links to (`[Name](/objects/<id>)`) or a reply
+        // cites opens as an object card over the chat.
+        .presentsObjectReferences()
     }
 
     @ViewBuilder
@@ -211,9 +214,14 @@ struct ChatMessageBubble: View {
                             .accessibilityLabel(Text(ConversationRole.user.labelKey) + Text(": ") + Text(trimmed))
                     }
                 } else {
-                    MarkdownRenderer(text: trimmed)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2 * .grid) {
+                        MarkdownRenderer(text: trimmed)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        // The reply's grounded references, collapsed under its
+                        // text as on the web; a row opens the object's card.
+                        SourcesFooter(citations: message.citations, messageID: message.id)
+                    }
                 }
             }
             .id(message.id)

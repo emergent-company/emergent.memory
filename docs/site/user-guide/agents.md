@@ -332,6 +332,17 @@ agent writes.
 
 **Review the inbox**
 
+Open **Agents → Skills**. A **Proposed skills** panel sits above the skill list
+and shows every pending proposal: the skill name, the agent it came from, the
+change kind (*create*, *patch* or *delete*), the capture confidence, and the
+current linter and security findings. **Approve** applies the proposal;
+**Reject** discards it. Both actions return to the same panel, and a failed
+approve — the security scan runs again and can still block the write — leaves
+the proposal pending and shows the error. Approved and rejected proposals drop
+out of the panel; it lists pending decisions only.
+
+The same inbox is available over the API:
+
 ```bash
 GET  /api/projects/:projectId/skills/proposals              # pending by default
 GET  /api/projects/:projectId/skills/proposals/:proposalId

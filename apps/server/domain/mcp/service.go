@@ -28,6 +28,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/domain/feedback"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -116,6 +117,10 @@ type Service struct {
 
 	// Email jobs service (for MCP invite emails)
 	emailSvc *email.JobsService
+
+	// Feedback service (for the feedback-submit tool). Nil when the deployment
+	// does not configure a feedback destination; the tool fails closed.
+	feedbackSvc *feedback.Service
 
 	// Journal service (for journal-list and journal-add-note tools)
 	journalSvc *journal.Service
@@ -228,6 +233,7 @@ type ServiceParams struct {
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
 	EmailSvc           *email.JobsService
+	FeedbackSvc        *feedback.Service `optional:"true"`
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
 	SessionTodoSvc     *sessiontodos.Service
@@ -283,6 +289,7 @@ func NewService(p ServiceParams) *Service {
 		providerCatalogSvc:        p.ProviderCatalogSvc,
 		apitokenSvc:               p.ApitokenSvc,
 		emailSvc:                  p.EmailSvc,
+		feedbackSvc:               p.FeedbackSvc,
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
 		internalBaseURL:           cfg.InternalBaseURL,
@@ -1819,6 +1826,40 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		},
 	})
 
+	// Feedback intake. The description is the user-facing writing guide: it is
+	// what an agent sees when it decides whether and how to call the tool.
+	tools = append(tools, ToolDefinition{
+		Name:         "feedback-submit",
+		OutputSchema: objectOutputSchema(),
+		Description: "Send feedback about Memory to the Memory team. It is filed as a GitHub issue with your account, project and basic environment attached, so you do not need to repeat those. " +
+			"Write what you were trying to do, what happened, and what you expected. If you can, add the steps that reproduce it and paste the exact error text. One or two sentences is fine if that is all you have. " +
+			"Use this for product feedback, bugs, confusing behavior, missing features or documentation problems — not for storing knowledge in the graph.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"message": {
+					Type:        "string",
+					Description: "What you want to tell the Memory team: what you were doing, what happened, and what you expected. Add reproduction steps or the exact error text if you have them.",
+				},
+				"category": {
+					Type:        "string",
+					Enum:        []string{"bug", "feature", "usability", "docs", "other"},
+					Description: "Optional category. Defaults to other.",
+				},
+				"severity": {
+					Type:        "string",
+					Enum:        []string{"low", "medium", "high"},
+					Description: "Optional impact: low (cosmetic), medium (annoying but workable), high (blocked).",
+				},
+				"include_context": {
+					Type:        "boolean",
+					Description: "Attach project, environment and client details. Defaults to true; set false to send only your message and account identity.",
+				},
+			},
+			Required: []string{"message"},
+		},
+	})
+
 	// Session todo tools — session-scoped, ownership enforced at the data-access
 	// layer via the shared sessiontodos.SessionAccessible predicate (see
 	// session_todo_tools.go). Registered here so they dispatch through the same
@@ -2909,6 +2950,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	case "journal-add-note":
 		return s.executeJournalAddNote(ctx, projectID, args)
 
+	// Feedback intake (filed as a GitHub issue by the feedback domain)
+	case "feedback-submit":
+		return s.executeSubmitFeedback(ctx, projectID, args)
+
 	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
 		"blueprint-apply", "blueprint-apply-preview", "blueprint-unapply", "blueprint-versions",
@@ -3113,8 +3158,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		Count    int    `bun:"count"`
 	}
 
+	// declaredRelTypeRow is one relationship type declared by an installed schema
+	// pack. FromType/ToType are populated from the schema when a single
+	// source/target pair is known, so the scope check can apply the same row
+	// semantics as the in-use path; they are empty when the endpoints are
+	// unknown.
+	type declaredRelTypeRow struct {
+		Name     string `bun:"rel_name"`
+		FromType string `bun:"from_type"`
+		ToType   string `bun:"to_type"`
+	}
+
 	var types []typeRow
 	var relTypes []relTypeRow
+	// declaredRelTypes holds relationship types declared by installed schema
+	// packs. They are surfaced with count 0 even when no relationship instances
+	// exist yet (issue #403).
+	var declaredRelTypes []declaredRelTypeRow
 	// Untyped objects (type = '') have no registry row, so the registry-driven
 	// query below can never surface them. Count them separately and fold the
 	// result into a synthetic bucket after the transaction (issue #323).
@@ -3149,7 +3209,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		err = tx.NewRaw(`
 			SELECT 
 				tr.type_name as name,
-				COALESCE(tr.description, '') as description,
+				COALESCE(tr.json_schema->>'description', tr.description, '') as description,
 				COUNT(go.id)::int as instance_count
 			FROM kb.project_object_schema_registry tr
 			LEFT JOIN kb.graph_objects go 
@@ -3158,10 +3218,16 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
 				`+branchClause+`
+			LEFT JOIN kb.project_schemas ps
+				ON ps.schema_id = tr.schema_id
+				AND ps.project_id = tr.project_id
+				AND ps.active = true
+				AND ps.removed_at IS NULL
 			WHERE tr.enabled = true 
 				AND tr.project_id = ?
+				AND (tr.schema_id IS NULL OR ps.id IS NOT NULL)
 				`+namespaceClause+`
-			GROUP BY tr.type_name, tr.description
+			GROUP BY tr.type_name, tr.json_schema->>'description', tr.description
 			ORDER BY tr.type_name
 		`, queryArgs...).Scan(ctx, &types)
 		if err != nil {
@@ -3258,6 +3324,58 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			if err != nil {
 				return err
 			}
+
+			// Relationship types declared by installed schema packs must appear
+			// even when no instances exist yet (issue #403). The instance query
+			// above only surfaces types with live graph_relationships rows, so a
+			// freshly installed pack's relationship types were invisible. Read
+			// their names from graph_schemas.relationship_type_schemas, handling
+			// both storage shapes (a map keyed by type name, or an array of
+			// {"name","sourceType","targetType"} objects), and carry each type's
+			// source/target endpoint types when a single pair is known so the
+			// result can scope-check the same way the in-use path does.
+			err = tx.NewRaw(`
+				SELECT DISTINCT rel_name, from_type, to_type
+				FROM (
+					-- Array shape: [{"name","sourceType","targetType"}].
+					SELECT
+						elem->>'name' AS rel_name,
+						elem->>'sourceType' AS from_type,
+						elem->>'targetType' AS to_type
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					CROSS JOIN LATERAL jsonb_array_elements(gs.relationship_type_schemas) AS elem
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'array'
+					UNION
+					-- Map shape: {"name": {"sourceTypes": [...], "targetTypes": [...]}}
+					-- (older seeds/blueprints), with a singular-string fallback.
+					SELECT
+						keys.rel_name,
+						COALESCE(
+							NULLIF(gs.relationship_type_schemas->keys.rel_name->>'sourceType', ''),
+							gs.relationship_type_schemas->keys.rel_name->'sourceTypes'->>0
+						) AS from_type,
+						COALESCE(
+							NULLIF(gs.relationship_type_schemas->keys.rel_name->>'targetType', ''),
+							gs.relationship_type_schemas->keys.rel_name->'targetTypes'->>0
+						) AS to_type
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					CROSS JOIN LATERAL jsonb_object_keys(gs.relationship_type_schemas) AS keys(rel_name)
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
+				) declared
+				WHERE declared.rel_name IS NOT NULL AND declared.rel_name <> ''
+				ORDER BY declared.rel_name, declared.from_type, declared.to_type
+			`, projectUUID, projectUUID).Scan(ctx, &declaredRelTypes)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -3301,12 +3419,42 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		})
 	}
 
-	relationshipTypes := make([]RelationshipType, 0, len(relTypes))
+	relationshipTypes := make([]RelationshipType, 0, len(relTypes)+len(declaredRelTypes))
+	inUseTypes := make(map[string]bool, len(relTypes))
 	for _, r := range relTypes {
 		if !scope.AllowsRelationshipRow(r.Type, r.FromType, r.ToType) {
 			continue
 		}
 		relationshipTypes = append(relationshipTypes, RelationshipType(r))
+		inUseTypes[r.Type] = true
+	}
+	// Add relationship types declared by installed packs that have no in-use
+	// instances yet, so a freshly installed pack's relationship types are
+	// discoverable (issue #403). A declared type that already appears above
+	// keeps its real from/to/count; the zero-count row is only a fallback.
+	for _, d := range declaredRelTypes {
+		if d.Name == "" || inUseTypes[d.Name] {
+			continue
+		}
+		// When the schema names both endpoint object types, scope-check the
+		// relationship exactly like the in-use path (the from/to object names
+		// must also be permitted on the object axis). When the endpoints are
+		// unknown (the declaration carries no source/target types), fall back to
+		// the lenient relationship-type-only check rather than silently hiding a
+		// relationship whose endpoints we simply cannot see.
+		fromType, toType := d.FromType, d.ToType
+		if fromType != "" && toType != "" {
+			if !scope.AllowsRelationshipRow(d.Name, fromType, toType) {
+				continue
+			}
+		} else {
+			if !scope.AllowsRelationship(d.Name) {
+				continue
+			}
+			fromType, toType = "", ""
+		}
+		relationshipTypes = append(relationshipTypes, RelationshipType{Type: d.Name, FromType: fromType, ToType: toType, Count: 0})
+		inUseTypes[d.Name] = true
 	}
 
 	result := EntityTypesResult{

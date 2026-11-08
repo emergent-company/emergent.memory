@@ -205,6 +205,21 @@ final class ToolActivityDisclosure {
     /// Drops every choice, for a new conversation.
     func clear() {
         states.removeAll()
+        sourcesStates.removeAll()
+    }
+
+    // MARK: Sources footers
+
+    /// Opened Sources footers by message id, kept here like the runs so a
+    /// recycled row cannot fold shut under the reader. Closed by default.
+    private var sourcesStates: [String: Bool] = [:]
+
+    func isSourcesExpanded(_ messageID: String) -> Bool {
+        sourcesStates[messageID] ?? false
+    }
+
+    func setSourcesExpanded(_ expanded: Bool, for messageID: String) {
+        sourcesStates[messageID] = expanded
     }
 }
 

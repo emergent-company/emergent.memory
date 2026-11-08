@@ -93,6 +93,9 @@ var internalToolNames = map[string]struct{}{
 	"journal-list":     {},
 	"journal-add-note": {},
 
+	// ── Feedback ────────────────────────────────────────────────────────────
+	"feedback-submit": {},
+
 	// ── Documents ───────────────────────────────────────────────────────────
 	"document-list":   {},
 	"document-get":    {},

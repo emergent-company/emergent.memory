@@ -1775,21 +1775,80 @@ func usageIntent(n int) ui.BadgeIntent {
 	return ui.BadgeInfo
 }
 
-// uiSkills renders the skills management page: the create form plus the list
-// of skills. A failed list fetch renders the whole-page error state;
-// ?created=1 / ?deleted=1 / ?err=1 surface PRG feedback from the
-// create/delete flows.
+// proposalKindLabel is the human label for a proposal's change kind.
+func proposalKindLabel(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "create":
+		return "Create"
+	case "patch":
+		return "Patch"
+	case "delete":
+		return "Delete"
+	default:
+		return kind
+	}
+}
+
+// proposalKindIntent maps a proposal kind to a badge colour: destructive last,
+// additive first.
+func proposalKindIntent(kind string) ui.BadgeIntent {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "create":
+		return ui.BadgeSuccess
+	case "patch":
+		return ui.BadgeInfo
+	case "delete":
+		return ui.BadgeError
+	default:
+		return ui.BadgeGhost
+	}
+}
+
+// proposalAgentLabel names the agent a proposal targets, falling back to the id
+// when memory stored no name.
+func proposalAgentLabel(p SkillCaptureProposal) string {
+	if p.AgentName != "" {
+		return p.AgentName
+	}
+	if p.AgentID != "" {
+		return p.AgentID
+	}
+	return "an unknown agent"
+}
+
+// proposalConfidenceLabel renders the capture confidence as a percentage.
+func proposalConfidenceLabel(c float64) string {
+	return fmt.Sprintf("%.0f%% confidence", c*100)
+}
+
+// proposalFindingIntent maps a linter/security finding severity to a badge
+// colour. Anything not "error" is a warning (memory only emits those two).
+func proposalFindingIntent(severity string) ui.BadgeIntent {
+	if strings.EqualFold(severity, "error") {
+		return ui.BadgeError
+	}
+	return ui.BadgeWarning
+}
+
+// uiSkills renders the skills management page: the pending-proposal review
+// panel plus the list of skills. A failed skills list fetch renders the
+// whole-page error state; a failed proposals fetch degrades only that panel.
+// ?created=1 / ?deleted=1 / ?proposalApproved=1 / ?proposalRejected=1 / ?err=
+// surface PRG feedback from the create/delete/review flows.
 func (s *Server) uiSkills(c echo.Context) error {
 	ctx := c.Request().Context()
 	var (
-		skills    []Skill
-		skillsErr error
-		agents    []AgentDefinitionSummary
-		agentErr  error
+		skills       []Skill
+		skillsErr    error
+		agents       []AgentDefinitionSummary
+		agentErr     error
+		proposals    []SkillCaptureProposal
+		proposalsErr error
 	)
 	var g errgroup.Group
 	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
 	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
+	g.Go(func() error { proposals, proposalsErr = s.memory.ListSkillCaptureProposals(ctx); return nil })
 	_ = g.Wait()
 
 	var flashMsg string
@@ -1799,15 +1858,24 @@ func (s *Server) uiSkills(c echo.Context) error {
 		flashMsg = "Skill created."
 	case c.QueryParam("deleted") != "":
 		flashMsg = "Skill deleted."
+	case c.QueryParam("proposalApproved") != "":
+		flashMsg = "Proposal approved and applied."
+	case c.QueryParam("proposalRejected") != "":
+		flashMsg = "Proposal rejected."
 	}
 	captureError(agentErr)
+	captureError(proposalsErr)
 	assistant := s.assistantAgentID(ctx, agents)
 	usedBy := s.skillUsage(agents)
 	var loadErr error
 	if skillsErr != nil {
 		loadErr = userFacingError(skillsErr)
 	}
-	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, flashMsg, flashErr, assistant, usedBy))
+	var proposalsLoadErr error
+	if proposalsErr != nil {
+		proposalsLoadErr = userFacingError(proposalsErr)
+	}
+	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, proposals, proposalsLoadErr, flashMsg, flashErr, assistant, usedBy))
 }
 
 // uiSkill renders one skill: scope + provenance badges, the full content, the
@@ -1869,4 +1937,27 @@ func (s *Server) uiDeleteSkill(c echo.Context) error {
 		return redirectWithError(c, "/skills", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/skills?deleted=1")
+}
+
+// uiApproveSkillCaptureProposal applies a staged proposal and returns to the review
+// panel (PRG). The approve route re-runs the security scan in memory and can
+// still block the write, so a failure redirects with ?err= and the panel
+// re-reads the pending list — the proposal never renders as approved after a
+// failed call.
+func (s *Server) uiApproveSkillCaptureProposal(c echo.Context) error {
+	id := c.Param("id")
+	if err := s.memory.ApproveSkillCaptureProposal(c.Request().Context(), id); err != nil {
+		return redirectWithError(c, "/skills", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/skills?proposalApproved=1")
+}
+
+// uiRejectSkillCaptureProposal rejects a staged proposal without writing to the skill
+// library and returns to the review panel (PRG).
+func (s *Server) uiRejectSkillCaptureProposal(c echo.Context) error {
+	id := c.Param("id")
+	if err := s.memory.RejectSkillCaptureProposal(c.Request().Context(), id); err != nil {
+		return redirectWithError(c, "/skills", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/skills?proposalRejected=1")
 }

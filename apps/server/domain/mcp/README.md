@@ -497,7 +497,7 @@ endpoint also serves its relay tools, which are appended per project.
 
 Tools that had no sibling keep their name: `relationship-list`,
 `entity-bulk-update`, `session-get-messages`, `remember`, `forget`, `remember-status`,
-`search-knowledge`, `journal-list`, `journal-add-note`, `agent-hook-list`,
+`search-knowledge`, `journal-list`, `journal-add-note`, `feedback-submit`, `agent-hook-list`,
 `agent-question-respond`, `web-search-brave`, `web-fetch`, `web-search-reddit`,
 the `embedding-*`, `provider-*` and `trace-*` operator tools (their surface is
 the admin endpoint, which stays per-verb) and the `mcp-*` registry tools.

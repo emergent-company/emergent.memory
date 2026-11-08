@@ -169,6 +169,147 @@ func TestDeleteSkill(t *testing.T) {
 	}
 }
 
+// --- skill proposals (gateway client) ---
+
+func TestListSkillCaptureProposals(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"proposals":[{"id":"p1","projectId":"proj-1","agentId":"a1","agentName":"diane","kind":"create","name":"diane.triage","description":"Sorts mail","content":"You triage…","confidence":0.82,"source":"capture","status":"pending","createdAt":"2026-08-26T10:00:00Z","findings":[{"severity":"warning","code":"missing_heading","message":"start the skill with a Markdown heading"}]}],"count":1}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewMemoryClient(srv.URL, "proj-1").ListSkillCaptureProposals(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/projects/proj-1/skills/proposals" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery != "status=pending" {
+		t.Errorf("query = %q, want status=pending", gotQuery)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d proposals, want 1", len(got))
+	}
+	p := got[0]
+	if p.ID != "p1" || p.Kind != "create" || p.Name != "diane.triage" || p.AgentName != "diane" || p.Status != "pending" {
+		t.Errorf("proposal = %+v", p)
+	}
+	if p.Confidence != 0.82 {
+		t.Errorf("confidence = %v, want 0.82", p.Confidence)
+	}
+	if len(p.Findings) != 1 || p.Findings[0].Code != "missing_heading" || p.Findings[0].Severity != "warning" {
+		t.Errorf("findings = %+v", p.Findings)
+	}
+}
+
+func TestGetSkillCaptureProposal(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"p9","kind":"patch","name":"diane.triage","status":"pending"}`)
+	}))
+	defer srv.Close()
+
+	p, err := NewMemoryClient(srv.URL, "proj-1").GetSkillCaptureProposal(context.Background(), "p9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/projects/proj-1/skills/proposals/p9" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if p.ID != "p9" || p.Kind != "patch" {
+		t.Errorf("proposal = %+v", p)
+	}
+}
+
+func TestApproveRejectSkillCaptureProposal(t *testing.T) {
+	type call struct{ method, path, contentType string }
+	var calls []call
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, call{r.Method, r.URL.Path, r.Header.Get("Content-Type")})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	if err := m.ApproveSkillCaptureProposal(context.Background(), "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RejectSkillCaptureProposal(context.Background(), "p1"); err != nil {
+		t.Fatal(err)
+	}
+	want := []call{
+		{http.MethodPost, "/api/projects/proj-1/skills/proposals/p1/approve", "application/json"},
+		{http.MethodPost, "/api/projects/proj-1/skills/proposals/p1/reject", "application/json"},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %+v", calls)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Errorf("call %d = %+v, want %+v", i, calls[i], want[i])
+		}
+	}
+}
+
+// TestSkillCaptureProposalPathEscaping pins that the proposal id is escaped on
+// every route, so a malformed id cannot smuggle an extra path segment.
+func TestSkillCaptureProposalPathEscaping(t *testing.T) {
+	var uris []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uris = append(uris, r.RequestURI)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	_, _ = m.GetSkillCaptureProposal(context.Background(), "p/1")
+	_ = m.ApproveSkillCaptureProposal(context.Background(), "p/1")
+	_ = m.RejectSkillCaptureProposal(context.Background(), "p/1")
+
+	want := []string{
+		"/api/projects/proj-1/skills/proposals/p%2F1",
+		"/api/projects/proj-1/skills/proposals/p%2F1/approve",
+		"/api/projects/proj-1/skills/proposals/p%2F1/reject",
+	}
+	if len(uris) != len(want) {
+		t.Fatalf("uris = %v", uris)
+	}
+	for i := range want {
+		if uris[i] != want[i] {
+			t.Errorf("uri %d = %q, want %q", i, uris[i], want[i])
+		}
+	}
+}
+
+func TestSkillCaptureProposalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":{"code":"upstream","message":"down"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj-1")
+	if _, err := m.ListSkillCaptureProposals(context.Background()); err == nil {
+		t.Error("list: want error, got nil")
+	}
+	if _, err := m.GetSkillCaptureProposal(context.Background(), "p1"); err == nil {
+		t.Error("get: want error, got nil")
+	}
+	if err := m.ApproveSkillCaptureProposal(context.Background(), "p1"); err == nil {
+		t.Error("approve: want error, got nil")
+	}
+	if err := m.RejectSkillCaptureProposal(context.Background(), "p1"); err == nil {
+		t.Error("reject: want error, got nil")
+	}
+}
+
 // --- UI render ---
 
 func TestRenderSkillsPage(t *testing.T) {
@@ -179,7 +320,7 @@ func TestRenderSkillsPage(t *testing.T) {
 		{ID: "s2", Name: "recall-memory", Description: "Remembers things", Scope: "global",
 			UpdatedAt: "2026-08-26T09:00:00Z"},
 	}
-	html := renderHTML(t, SkillsPage(skills, nil, "", nil, "", map[string]int{"summarize-email": 2, "recall-memory": 0}))
+	html := renderHTML(t, SkillsPage(skills, nil, nil, nil, "", nil, "", map[string]int{"summarize-email": 2, "recall-memory": 0}))
 	for _, want := range []string{
 		"Skills", "summarize-email", "Condenses threads", "recall-memory", "Remembers things",
 		"Used by", "2 agents", "Unused",
@@ -200,22 +341,22 @@ func TestRenderSkillsPage(t *testing.T) {
 	}
 
 	// With an assistant agent configured the "Add with assistant" button shows.
-	htmlWithAssistant := renderHTML(t, SkillsPage(skills, nil, "", nil, "agent-1", nil))
+	htmlWithAssistant := renderHTML(t, SkillsPage(skills, nil, nil, nil, "", nil, "agent-1", nil))
 	if !strings.Contains(htmlWithAssistant, "Add with assistant") {
 		t.Error("assistant button missing when assistant configured")
 	}
 
-	htmlEmpty := renderHTML(t, SkillsPage(nil, nil, "", nil, "", nil))
+	htmlEmpty := renderHTML(t, SkillsPage(nil, nil, nil, nil, "", nil, "", nil))
 	if !strings.Contains(htmlEmpty, "No skills yet") {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, SkillsPage(nil, errTest, "", nil, "", nil))
+	htmlErr := renderHTML(t, SkillsPage(nil, errTest, nil, nil, "", nil, "", nil))
 	if !strings.Contains(htmlErr, "Failed to load skills") {
 		t.Error("error state missing")
 	}
 
-	htmlFlash := renderHTML(t, SkillsPage(nil, nil, "Skill created.", nil, "", nil))
+	htmlFlash := renderHTML(t, SkillsPage(nil, nil, nil, nil, "Skill created.", nil, "", nil))
 	if !strings.Contains(htmlFlash, "Skill created.") {
 		t.Error("flash message missing")
 	}
@@ -237,6 +378,44 @@ func TestRenderSkillNewPage(t *testing.T) {
 	htmlErr := renderHTML(t, SkillNewPage(errTest))
 	if !strings.Contains(htmlErr, "backend unreachable") {
 		t.Error("flash error missing on new-skill page")
+	}
+}
+
+// TestRenderSkillProposalsPanel pins the review inbox: the pending row's
+// identifying data, its live findings, both actions, and the distinct empty and
+// failed-load states.
+func TestRenderSkillProposalsPanel(t *testing.T) {
+	html := renderHTML(t, skillProposalsPanel([]SkillCaptureProposal{
+		{
+			ID: "p1", Kind: "create", Name: "diane.triage", AgentName: "diane",
+			Description: "Sorts mail", Confidence: 0.82, Status: "pending",
+			Findings: []SkillCaptureFinding{{Severity: "error", Code: "github_token", Message: "content looks like it contains a GitHub token"}},
+		},
+		{ID: "p2", Kind: "delete", Name: "old-skill", AgentID: "a2", Confidence: 0.5, Status: "pending"},
+	}, nil))
+	for _, want := range []string{
+		"Proposed skills", "diane.triage", "Create", "diane", "82% confidence",
+		"Pending", "github_token", "content looks like it contains a GitHub token",
+		"Approve", "Reject",
+		`action="/skills/proposals/p1/approve"`, `action="/skills/proposals/p1/reject"`,
+		"old-skill", "Delete", "a2", "No findings",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("proposals panel missing %q", want)
+		}
+	}
+
+	empty := renderHTML(t, skillProposalsPanel(nil, nil))
+	if !strings.Contains(empty, "No skill proposals are waiting for review") {
+		t.Error("empty inbox state missing")
+	}
+
+	failed := renderHTML(t, skillProposalsPanel(nil, errTest))
+	if !strings.Contains(failed, "Pending proposals could not be loaded") {
+		t.Error("failed-load state missing")
+	}
+	if strings.Contains(failed, "No skill proposals are waiting") {
+		t.Error("a failed load must not render as an empty inbox")
 	}
 }
 
@@ -450,5 +629,103 @@ func TestUIRouteSkills(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?deleted=1", nil))
 	if !strings.Contains(rec.Body.String(), "Skill deleted.") {
 		t.Error("deleted flash missing on list page")
+	}
+}
+
+// TestUIRouteSkillProposalReview exercises the review actions end to end against
+// the fake backend: the panel renders, each action posts the proposal id, and
+// the PRG flash confirms the outcome.
+func TestUIRouteSkillProposalReview(t *testing.T) {
+	f := &fakeMemory{
+		skills:         []Skill{{ID: "s1", Name: "meeting-notes", Scope: "project"}},
+		skillProposals: []SkillCaptureProposal{{ID: "p1", Kind: "create", Name: "diane.triage", AgentName: "diane", Status: "pending"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/skills", s.uiSkills)
+	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+	e.POST("/skills/proposals/:id/reject", s.uiRejectSkillCaptureProposal)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "diane.triage") {
+		t.Fatalf("list page: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `action="/skills/proposals/p1/approve"`) {
+		t.Error("approve action missing on the list page")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/approve", nil))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/skills?proposalApproved=1" {
+		t.Fatalf("approve: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.approvedProposalID != "p1" {
+		t.Errorf("approved id = %q, want p1", f.approvedProposalID)
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?proposalApproved=1", nil))
+	if !strings.Contains(rec.Body.String(), "Proposal approved and applied.") {
+		t.Error("approved flash missing on the list page")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/reject", nil))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/skills?proposalRejected=1" {
+		t.Fatalf("reject: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.rejectedProposalID != "p1" {
+		t.Errorf("rejected id = %q, want p1", f.rejectedProposalID)
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?proposalRejected=1", nil))
+	if !strings.Contains(rec.Body.String(), "Proposal rejected.") {
+		t.Error("rejected flash missing on the list page")
+	}
+}
+
+// TestSkillProposalApproveFailureStaysPending pins the failure contract: a
+// failed approve (the security scan can still block it server-side) redirects
+// with an error and the re-rendered panel still shows the proposal as pending —
+// never as approved.
+func TestSkillProposalApproveFailureStaysPending(t *testing.T) {
+	f := &fakeMemory{
+		skillProposals:     []SkillCaptureProposal{{ID: "p1", Kind: "create", Name: "diane.triage", Status: "pending"}},
+		approveProposalErr: errTest,
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/skills", s.uiSkills)
+	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/approve", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "/skills?err=backend+unreachable" {
+		t.Fatalf("location = %q, want the error redirect", loc)
+	}
+	if strings.Contains(loc, "proposalApproved") {
+		t.Error("a failed approve must not redirect to the approved flash")
+	}
+	if f.approvedProposalID != "" {
+		t.Errorf("approved id = %q, want none", f.approvedProposalID)
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, loc, nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "diane.triage") || !strings.Contains(body, "Pending") {
+		t.Error("failed approve: proposal must still render as pending")
+	}
+	if !strings.Contains(body, "backend unreachable") {
+		t.Error("failed approve: the error must be surfaced")
+	}
+	if strings.Contains(body, "Proposal approved") {
+		t.Error("failed approve: the page must not claim the proposal was approved")
 	}
 }

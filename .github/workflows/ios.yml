@@ -54,10 +54,15 @@ jobs:
 
       - name: Install Swift linters
         run: |
-          curl -sSL -o "$RUNNER_TEMP/swiftformat.zip" \
+          # `-f` plus retries: without them an upstream 5xx writes its error
+          # page into the zip and `unzip` fails on a "corrupt" archive, hiding
+          # the HTTP failure and forcing a manual re-run.
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$RUNNER_TEMP/swiftformat.zip" \
             "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat_linux.zip"
           unzip -q "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
-          curl -sSL -o "$RUNNER_TEMP/swiftlint.zip" \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$RUNNER_TEMP/swiftlint.zip" \
             "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/swiftlint_linux_amd64.zip"
           unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
           mkdir -p "$RUNNER_TEMP/bin"
