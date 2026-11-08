@@ -57,6 +57,34 @@ templ SaveChangesButton() {
 	}
 }
 
+// InlineFormActionsProps configures InlineFormActions.
+type InlineFormActionsProps struct {
+	// Align is the horizontal alignment of the action buttons: "" (zero value)
+	// right-aligns the main actions, "start" left-aligns, "between" pins the
+	// first action to the left and the rest to the right (secondary or
+	// destructive action left, primary right).
+	Align string
+	// Class is appended to the row root (caller-owned spacing overrides).
+	Class string
+	// Attrs is spread last on the row root element.
+	Attrs templ.Attributes
+}
+
+// InlineFormActions renders the action row that ends an in-form (non
+// page-terminal) form: the main actions sit on the right, matching the
+// system-wide pattern and the right-aligned footer go-daisy's form package
+// already emits.
+//
+// Use StickyFormActions instead when the form is page-terminal and its actions
+// should stay pinned to the bottom of the pane; use this component when the form
+// lives inside a card or a section and its row simply follows the last field
+// (#486).
+templ InlineFormActions(props InlineFormActionsProps) {
+	<div class={ "flex flex-wrap items-center gap-2", formActionsAlign(props.Align), templ.KV(props.Class, props.Class != "") } { props.Attrs... }>
+		{ children... }
+	</div>
+}
+
 // StickyFormActionsProps configures StickyFormActions.
 type StickyFormActionsProps struct {
 	// Align is the horizontal alignment of the action buttons: "" (zero value)
@@ -92,13 +120,7 @@ type StickyFormActionsProps struct {
 // would pin to the viewport bottom rather than the dialog. Keep the go-daisy
 // form.FormActions footer there.
 templ StickyFormActions(props StickyFormActionsProps) {
-	{{ align := "justify-end"
-	switch props.Align {
-	case "start":
-		align = "justify-start"
-	case "between":
-		align = "justify-between"
-	} }}
+	{{ align := formActionsAlign(props.Align) }}
 	<div class={ "sticky-form-actions", props.Class } { props.Attrs... }>
 		<div class="sfa__surface">
 			if props.Rail {

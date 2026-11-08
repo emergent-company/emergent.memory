@@ -201,6 +201,19 @@ func gallerySeed() []GalleryEntry {
 			Render:      func() templ.Component { return components.SaveChangesButton() },
 		},
 		{
+			ID: "InlineFormActions", Slug: "inline-form-actions", Name: "InlineFormActions", Layer: LayerComposite,
+			Category: "Forms", Subcategory: "footer", SourceFile: "components/form.templ",
+			PropsType:   "InlineFormActionsProps",
+			Description: "The action row that ends an in-form form: main actions on the right, inline under the last field (StickyFormActions is the pinned variant).",
+			Render: func() templ.Component {
+				return withChildren(components.InlineFormActions(components.InlineFormActionsProps{}),
+					join(
+						withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM}), templ.Raw("Cancel")),
+						components.SaveChangesButton(),
+					))
+			},
+		},
+		{
 			ID: "StickyFormActions", Slug: "sticky-form-actions", Name: "StickyFormActions", Layer: LayerComposite,
 			Category: "Forms", Subcategory: "footer", SourceFile: "components/form.templ",
 			PropsType:   "StickyFormActionsProps",
