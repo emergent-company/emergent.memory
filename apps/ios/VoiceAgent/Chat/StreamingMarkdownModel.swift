@@ -207,29 +207,33 @@ struct MarkdownFenceTracker {
         return (tracker.marker, tracker.length)
     }
 
-    /// Feeds one line, opening or closing the fence when the line is a fence.
-    mutating func consume(_ line: Substring) {
+    /// Feeds one line, opening or closing the fence when the line is one.
+    /// Returns `true` when the line was a fence, so callers can tell code
+    /// syntax apart from prose.
+    @discardableResult
+    mutating func consume(_ line: Substring) -> Bool {
         var text = line
         var indent = 0
         while indent < 3, text.first == " " {
             text = text.dropFirst()
             indent += 1
         }
-        guard let first = text.first, first == "`" || first == "~" else { return }
+        guard let first = text.first, first == "`" || first == "~" else { return false }
         let run = text.prefix { $0 == first }
         if isInside {
-            guard first == marker, run.count >= length else { return }
+            guard first == marker, run.count >= length else { return false }
             let trailer = text.dropFirst(run.count)
-            guard trailer.allSatisfy({ $0 == " " || $0 == "\t" }) else { return }
+            guard trailer.allSatisfy({ $0 == " " || $0 == "\t" }) else { return false }
             isInside = false
         } else {
-            guard run.count >= 3 else { return }
+            guard run.count >= 3 else { return false }
             // A backtick fence's info string may not contain a backtick.
-            if first == "`", text.dropFirst(run.count).contains("`") { return }
+            if first == "`", text.dropFirst(run.count).contains("`") { return false }
             isInside = true
             marker = first
             length = run.count
         }
+        return true
     }
 }
 
@@ -291,17 +295,23 @@ enum MarkdownTailDisplay {
         return result
     }
 
-    /// Where the final block of the tail begins: just past the last blank line.
+    /// Where the part of the tail that can carry a half-typed delimiter begins:
+    /// after the last blank line and after the last fence line. Delimiters on a
+    /// fence line are code-block syntax, not an open span (`closedFenceIsLeftAlone`).
     private static func lastBlockStart(in text: String) -> String.Index {
         var start = text.startIndex
         var cursor = text.startIndex
+        var fences = MarkdownFenceTracker()
         while cursor < text.endIndex {
             let lineEnd = text[cursor...].firstIndex(of: "\n") ?? text.endIndex
             let line = text[cursor..<lineEnd]
-            if line.allSatisfy({ $0 == " " || $0 == "\t" }), lineEnd < text.endIndex {
-                start = text.index(after: lineEnd)
+            let next = lineEnd == text.endIndex ? text.endIndex : text.index(after: lineEnd)
+            if fences.consume(line) {
+                start = next
+            } else if line.allSatisfy({ $0 == " " || $0 == "\t" }), lineEnd < text.endIndex {
+                start = next
             }
-            cursor = lineEnd == text.endIndex ? text.endIndex : text.index(after: lineEnd)
+            cursor = next
         }
         return start
     }

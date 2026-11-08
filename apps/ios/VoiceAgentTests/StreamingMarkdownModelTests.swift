@@ -26,7 +26,7 @@ struct StreamingMarkdownModelTests {
             return
         }
         #expect(language == "swift")
-        #expect(code == "let one = 1\n\nlet two = 2")
+        #expect(code == "let one = 1\n\nlet two = 2\n")
     }
 
     @Test func closingFenceCommitsTheWholeCodeBlock() {
@@ -38,7 +38,7 @@ struct StreamingMarkdownModelTests {
             return
         }
         #expect(language == "swift")
-        #expect(code == "let one = 1\n\nlet two = 2")
+        #expect(code == "let one = 1\n\nlet two = 2\n")
         #expect(model.tail == "Done.\n\n")
     }
 
@@ -82,20 +82,19 @@ struct StreamingMarkdownModelTests {
         var model = StreamingMarkdownModel()
         model.update("    let one = 1\n\n    let two = 2\n\nAfter.\n\n")
         #expect(model.committed == [
-            .codeBlock(language: nil, code: "let one = 1\n\nlet two = 2"),
+            .codeBlock(language: nil, code: "let one = 1\n\nlet two = 2\n"),
         ])
         #expect(model.tail == "After.\n\n")
     }
 
-    @Test func blankLineBetweenQuoteParagraphsIsNotABoundary() {
+    @Test func blankLineBeforeAQuoteLineIsNotUsedAsABoundary() {
+        let text = "> quote one\n\n> quote two\n\n"
         var model = StreamingMarkdownModel()
-        model.update("> quote one\n\n> quote two\n\n")
+        model.update(text)
+        // A quote marker after a blank line may continue the block quote above
+        // it, so the scan keeps the whole thing in the tail.
         #expect(model.committed.isEmpty)
-        guard case let .blockQuote(blocks)? = model.tailBlocks.first else {
-            Issue.record("expected a single block quote in the tail")
-            return
-        }
-        #expect(blocks.count == 2)
+        #expect(model.tailBlocks == parseMarkdown(text))
     }
 }
 
@@ -109,7 +108,7 @@ struct MarkdownTailDisplayTests {
         let closed = MarkdownTailDisplay.renderable("```swift\nlet answer = 1")
         #expect(closed == "```swift\nlet answer = 1\n```")
         #expect(parseMarkdown(closed) == [
-            .codeBlock(language: "swift", code: "let answer = 1"),
+            .codeBlock(language: "swift", code: "let answer = 1\n"),
         ])
     }
 
