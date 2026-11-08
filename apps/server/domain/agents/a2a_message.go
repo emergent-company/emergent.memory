@@ -793,7 +793,6 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		UserID:          userID,
 		UserMessage:     resumeMsg,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
-		RenderA2UI: true, // A2A resume renders A2UI surfaces (artifactUpdate)
 	}
 
 	if a2aReturnImmediately(cfg) {
