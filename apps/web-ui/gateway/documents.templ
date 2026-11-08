@@ -566,7 +566,7 @@ func documentVersionLabel(versions int) string {
 // a small danger ghost submit that hx-confirms before the POST to
 // /documents/:id/delete.
 templ documentDeleteForm(id, name string) {
-	<form method="post" action={ templ.URL("/documents/" + url.PathEscape(id) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
+	<form method="post" action={ templ.URL("/documents/" + url.PathEscape(id) + "/delete") } hx-confirm={ "Delete \"" + name + "\"? This cannot be undone." }>
 		@ui.Button(ui.ButtonProps{
 			Type:       ui.ButtonTypeSubmit,
 			Variant:    ui.ButtonGhost,
@@ -752,7 +752,7 @@ templ documentDetailHeader(doc *Document, section string) {
 	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6", Meta: documentHeaderMeta(doc)}) {
 		<div class="flex flex-wrap items-center gap-2">
 
-			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
+			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/delete") } hx-confirm={ "Delete \"" + documentName(*doc) + "\"? This cannot be undone." }>
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeSubmit,
 					Variant:   ui.ButtonError,
