@@ -410,6 +410,11 @@ func TestUIProjectSettingsProjectFieldSkillCaptureMode(t *testing.T) {
 	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
 		t.Errorf("mode save should trigger a success toast, got %q", hdr)
 	}
+	// Switching to Auto must reload the panel so the auto-apply toggle becomes
+	// reachable in the same visit, not after a manual refresh.
+	if hdr := rec.Header().Get("HX-Refresh"); hdr != "true" {
+		t.Errorf("mode save must answer HX-Refresh: true, got %q", hdr)
+	}
 	got := f.updatedProject
 	if got == nil || got.SkillCapture == nil {
 		t.Fatal("UpdateProject must receive the skill_capture policy")
