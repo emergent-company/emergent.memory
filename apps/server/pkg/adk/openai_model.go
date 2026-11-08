@@ -180,9 +180,12 @@ type openaiResponse struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int32 `json:"prompt_tokens"`
-		CompletionTokens int32 `json:"completion_tokens"`
-		TotalTokens      int32 `json:"total_tokens"`
+		PromptTokens        int32 `json:"prompt_tokens"`
+		CompletionTokens    int32 `json:"completion_tokens"`
+		TotalTokens         int32 `json:"total_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens int32 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 }
 
@@ -751,11 +754,15 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			FinishReason: openAIFinishReason(choice.FinishReason),
 		}
 		if result.Usage != nil {
-			llmResp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+			meta := &genai.GenerateContentResponseUsageMetadata{
 				PromptTokenCount:     result.Usage.PromptTokens,
 				CandidatesTokenCount: result.Usage.CompletionTokens,
 				TotalTokenCount:      result.Usage.TotalTokens,
 			}
+			if d := result.Usage.PromptTokensDetails; d != nil {
+				meta.CachedContentTokenCount = d.CachedTokens
+			}
+			llmResp.UsageMetadata = meta
 		}
 		yield(llmResp, nil)
 	}

@@ -265,9 +265,12 @@ type responsesOutputItem struct {
 }
 
 type responsesUsage struct {
-	InputTokens  int32 `json:"input_tokens"`
-	OutputTokens int32 `json:"output_tokens"`
-	TotalTokens  int32 `json:"total_tokens"`
+	InputTokens        int32 `json:"input_tokens"`
+	OutputTokens       int32 `json:"output_tokens"`
+	TotalTokens        int32 `json:"total_tokens"`
+	InputTokensDetails *struct {
+		CachedTokens int32 `json:"cached_tokens"`
+	} `json:"input_tokens_details,omitempty"`
 }
 
 type responsesAPIError struct {
@@ -682,11 +685,15 @@ func (m *openaiResponsesModel) GenerateContent(ctx context.Context, req *model.L
 			FinishReason: responsesFinishReason(result),
 		}
 		if result.Usage != nil {
-			llmResp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+			meta := &genai.GenerateContentResponseUsageMetadata{
 				PromptTokenCount:     result.Usage.InputTokens,
 				CandidatesTokenCount: result.Usage.OutputTokens,
 				TotalTokenCount:      result.Usage.TotalTokens,
 			}
+			if d := result.Usage.InputTokensDetails; d != nil {
+				meta.CachedContentTokenCount = d.CachedTokens
+			}
+			llmResp.UsageMetadata = meta
 		}
 		yield(llmResp, nil)
 	}
