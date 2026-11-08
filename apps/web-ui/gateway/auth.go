@@ -608,6 +608,12 @@ func deviceSurfacePath(method, path string) bool {
 		case deviceObjectReadPath(path):
 			// The object card a chat reference opens (object_card.go).
 			return true
+		case deviceConversationReadPath(path, "history"), deviceConversationReadPath(path, "events"):
+			// The recorded timeline and the live conversation stream the iOS
+			// chat reattaches to (issues #431/#437). Both are read-only; the
+			// device token's own memory scope decides which conversations it
+			// may read (see streamEvents / getConversationHistory).
+			return true
 		}
 		return false
 	case http.MethodPost:
@@ -701,6 +707,14 @@ func deviceConversationLifecyclePath(path, action string) bool {
 	}
 	parts := strings.Split(rest, "/")
 	return len(parts) == 2 && parts[0] != "" && parts[1] == action
+}
+
+// deviceConversationReadPath reports whether path is exactly
+// `/api/conversations/{id}/{action}` for a read-only conversation action
+// (history/events). It reuses the lifecycle matcher's shape check: one
+// non-empty id segment and nothing deeper.
+func deviceConversationReadPath(path, action string) bool {
+	return deviceConversationLifecyclePath(path, action)
 }
 
 // deviceConversationDeletePath reports whether path is exactly
