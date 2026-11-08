@@ -264,6 +264,7 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 			)
 		} else {
 			mapped := s.mapUnifiedToSearchResponse(res, types, labels, allowedTypes, blockedTypes)
+			mapped = s.normaliseSearchItemDates(ctx, projectUUID, mapped)
 			mapped.Data = filterSearchItemsByScope(scope, mapped.Data)
 			mapped.Total = len(mapped.Data)
 			return envelopeSearchResponse(mapped, opts)
@@ -450,6 +451,23 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 	return resp
 }
 
+// normaliseSearchItemDates applies the schema-aware date normalisation to graph
+// search items, so a date property read through any search tool converges to
+// YYYY-MM-DD even when the row was written before the write path was fixed
+// (issue #402). Text-chunk items carry no schema type and pass through.
+func (s *Service) normaliseSearchItemDates(ctx context.Context, projectID uuid.UUID, resp *graph.SearchResponse) *graph.SearchResponse {
+	if resp == nil || s.graphService == nil {
+		return resp
+	}
+	for _, item := range resp.Data {
+		if item == nil || item.Object == nil {
+			continue
+		}
+		item.Object.Properties = s.graphService.NormaliseDatePropertyValues(ctx, projectID, item.Object.Type, item.Object.Properties)
+	}
+	return resp
+}
+
 func containsStr(slice []string, s string) bool {
 	for _, v := range slice {
 		if strings.EqualFold(v, s) {
@@ -580,6 +598,7 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 				"error", err, "project_id", projectID)
 		} else {
 			mapped := s.mapUnifiedToSearchResponse(res, types, nil, allowedTypes, blockedTypes)
+			mapped = s.normaliseSearchItemDates(ctx, projectUUID, mapped)
 			mapped.Data = filterSearchItemsByScope(scope, mapped.Data)
 			mapped.Total = len(mapped.Data)
 			return envelopeSearchResponse(mapped, opts)

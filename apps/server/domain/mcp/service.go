@@ -818,14 +818,14 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-create",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
+			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create relationships in the same call, avoiding a separate create_relationship call. Each inline relationship reports its own result in 'relationship_results' ({ok, relationship|reason, error, index}); the batch returns ok=false if any entity or inline relationship failed, even though entities that were created remain created. meta.relationships_total counts the inline specs actually attempted: specs belonging to an entity skipped as a near-duplicate are reported on that item as relationships_skipped and are not attempted.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entities": {
 						Type:        "array",
 						Items:       &PropertySchema{Type: "object"},
-						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, source_id|target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id).",
+						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
 					},
 					"branch": {
 						Type:        "string",
@@ -4026,7 +4026,8 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		return nil, fmt.Errorf("query entities: %w", err)
 	}
 
-	// Transform to response format
+	// Transform to response format. Date properties are normalised on read so
+	// rows written before the write path was fixed converge (issue #402).
 	resultEntities := make([]Entity, len(entities))
 	for i, e := range entities {
 		resultEntities[i] = Entity{
@@ -4035,7 +4036,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: truncateProperties(e.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(queryCtx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 		}
@@ -4308,7 +4309,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: truncateProperties(e.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 		})
@@ -4747,7 +4748,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: truncateProperties(e.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 			BranchID:   branchIDStr,
@@ -4798,6 +4799,15 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 
 	scope := TypeScopeFromContext(ctx)
 
+	// The queried entity is an endpoint of every edge below. Its type sharpens
+	// the relationship-schema lookup so a type-specific date property normalises
+	// rather than falling back to the endpoint-agnostic schema. A failed lookup
+	// leaves it empty, which only widens the fallback — the edges are still read.
+	selfType := ""
+	if info, infoErr := s.getEntityBasicInfo(ctx, projectUUID, entityID); infoErr == nil && info != nil {
+		selfType = info.Type
+	}
+
 	incoming := make([]EdgeInfo, 0, len(edges.Incoming))
 	for _, rel := range edges.Incoming {
 		// Relationship-level check first so an excluded relationship type never
@@ -4816,7 +4826,8 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipID:   rel.ID.String(),
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *srcEntity,
-			Properties:       truncateProperties(rel.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseRelationshipDatePropertyValues(
+				ctx, projectUUID, rel.Type, srcEntity.Type, selfType, rel.Properties)),
 		})
 	}
 
@@ -4838,7 +4849,8 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipID:   rel.ID.String(),
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *dstEntity,
-			Properties:       truncateProperties(rel.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseRelationshipDatePropertyValues(
+				ctx, projectUUID, rel.Type, selfType, dstEntity.Type, rel.Properties)),
 		})
 	}
 
@@ -4880,7 +4892,7 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 		Type:       entity.Type,
 		Key:        entity.Key,
 		Name:       name,
-		Properties: truncateProperties(entity.Properties),
+		Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectID, entity.Type, entity.Properties)),
 	}, nil
 }
 
@@ -5032,6 +5044,7 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 // lookupObjectType returns the current type of a graph object by physical or
 // canonical id. It is routed through the graph service so the mcp package issues
 // no raw SQL (the mcp-authz guard forbids unclassified raw access).
+// lookupObjectType resolves an entity's object type.
 func (s *Service) lookupObjectType(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -5045,6 +5058,26 @@ func (s *Service) lookupObjectType(ctx context.Context, projectID string, entity
 		return "", fmt.Errorf("object not found")
 	}
 	return obj.Type, nil
+}
+
+// outOfScopeRelationshipEndpoint returns the first endpoint object type that
+// falls outside the agent's object-type scope. A lookup failure leaves that
+// endpoint unknown and does not block the write, mirroring
+// processInlineRelationships; an unrestricted scope never pays for a lookup.
+func (s *Service) outOfScopeRelationshipEndpoint(ctx context.Context, projectID string, scope *TypeScope, srcID, dstID uuid.UUID) (string, bool) {
+	if scope == nil || !scope.HasObjectRestriction() {
+		return "", false
+	}
+	for _, id := range []uuid.UUID{srcID, dstID} {
+		objType, err := s.lookupObjectType(ctx, projectID, id)
+		if err != nil {
+			continue
+		}
+		if !scope.AllowsObject(objType) {
+			return objType, true
+		}
+	}
+	return "", false
 }
 
 // lookupObjectTypeIncludingDeleted is lookupObjectType for a possibly
@@ -6213,8 +6246,11 @@ func buildEntityEmbedText(typeName string, key *string, properties map[string]an
 // executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
 // Backward-compat: if flat fields (type, properties, etc.) are passed instead, wraps them as a single-element array.
 //
-// Each entity spec may include an optional "relationships" array to atomically create relationships
-// from the new entity to existing entities in the same call:
+// Each entity spec may include an optional "relationships" array to create relationships
+// from the new entity to existing entities in the same call. Entities are created first and
+// the relationships in a second pass, so a spec may reference a key created later in the
+// same call; a failed relationship leaves its entity created but makes the batch report
+// ok=false with a per-spec reason.
 //
 //	{
 //	  "type": "TaskResult",
@@ -6264,17 +6300,17 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		threshold = s.readSimilarityThreshold(ctx, projectID)
 	}
 
-	// slimEntity is the minimal response for a created entity.
-	type slimRelationship struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		TargetID string `json:"target_id"`
-	}
+	// slimEntity is the minimal response for a created entity. Inline
+	// relationships report both the edges that were created and a per-spec
+	// result list, so a spec that could not be resolved is visible instead of
+	// silently dropped (issue #401).
 	type slimEntity struct {
-		ID            string             `json:"id"`
-		Type          string             `json:"type"`
-		Key           string             `json:"key,omitempty"`
-		Relationships []slimRelationship `json:"relationships,omitempty"`
+		ID                  string                     `json:"id"`
+		Type                string                     `json:"type"`
+		Key                 string                     `json:"key,omitempty"`
+		Relationships       []inlineRelationship       `json:"relationships,omitempty"`
+		RelationshipResults []inlineRelationshipResult `json:"relationship_results,omitempty"`
+		RelationshipsFailed int                        `json:"relationships_failed,omitempty"`
 	}
 	type batchResult struct {
 		Ok     bool        `json:"ok"`
@@ -6289,6 +6325,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		Content    string  `json:"content,omitempty"`
 		Similarity float64 `json:"similarity"`
 		Suggested  string  `json:"suggested"`
+		// RelationshipsSkipped counts inline relationship specs that were not
+		// applied because the entity itself was not created.
+		RelationshipsSkipped int `json:"relationships_skipped,omitempty"`
 	}
 
 	results := make([]batchResult, 0, len(entitiesRaw))
@@ -6296,9 +6335,29 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	failedCount := 0
 	similarResults := make([]similarEntity, 0)
 	similarCount := 0
+	// Inline relationship totals across the batch. A failed inline relationship
+	// does not undo the entity (it already exists), but it does make the batch
+	// report ok=false so the caller cannot mistake it for a fully applied write.
+	// Specs skipped with a near-duplicate entity are reported on that
+	// similarEntity (relationships_skipped) and are not counted here: they were
+	// never attempted, and the entity they belonged to was not created.
+	inlineRelsCreated := 0
+	inlineRelsFailed := 0
+	inlineRelsTotal := 0
 	// keyToID maps entity key → canonical UUID for entities created in this batch.
 	// Used to resolve inline relationship source/target by key within the same call.
 	keyToID := make(map[string]uuid.UUID)
+	// Inline relationship specs are applied in a second pass, after every entity
+	// in the batch exists, so a spec may reference a key created later in the
+	// same call.
+	type pendingInlineRels struct {
+		entityType string
+		entityID   uuid.UUID
+		slim       *slimEntity
+		specs      []any
+		malformed  bool
+	}
+	pendingInline := make([]pendingInlineRels, 0)
 
 	// resolveIDOrKey resolves a string that is either a UUID or an entity key.
 	// Checks the in-batch keyToID map first, then falls back to a DB lookup.
@@ -6394,13 +6453,23 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 					bestKey = *best.Key
 				}
 				content, _ := best.Properties["content"].(string)
+				// The entity is not created, so its inline relationships cannot
+				// be either. Report how many were skipped alongside the entity
+				// skip instead of leaving the caller to assume they applied.
+				skippedRels := 0
+				if specs, malformed := inlineRelationshipSpecs(entityMap["relationships"]); malformed {
+					skippedRels = 1
+				} else {
+					skippedRels = len(specs)
+				}
 				similarResults = append(similarResults, similarEntity{
-					EntityID:   best.CanonicalID.String(),
-					Key:        bestKey,
-					Type:       best.Type,
-					Content:    content,
-					Similarity: float64(sr.Data[0].Score),
-					Suggested:  "edit_existing",
+					EntityID:             best.CanonicalID.String(),
+					Key:                  bestKey,
+					Type:                 best.Type,
+					Content:              content,
+					Similarity:           float64(sr.Data[0].Score),
+					Suggested:            "edit_existing",
+					RelationshipsSkipped: skippedRels,
 				})
 				similarCount++
 				continue
@@ -6472,68 +6541,17 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			keyToID[*result.Key] = result.CanonicalID
 		}
 
-		// Create any inline relationships declared on this entity spec.
-		if relsRaw, ok := entityMap["relationships"].([]any); ok && len(relsRaw) > 0 {
-			for _, relRaw := range relsRaw {
-				relMap, ok := relRaw.(map[string]any)
-				if !ok {
-					continue
-				}
-				relType, _ := relMap["type"].(string)
-				if relType == "" {
-					continue
-				}
-				if !scope.AllowsRelationship(relType) {
-					s.log.Warn("skipping inline relationship: type not allowed for this agent's scope", "rel_type", relType)
-					continue
-				}
-				relProps, _ := relMap["properties"].(map[string]any)
-
-				// Support both source_id and target_id in inline relationship specs.
-				// source_id: the pre-existing entity is the src (source_id → new_entity as dst).
-				// target_id: the new entity is the src (new_entity → target_id as dst).
-				// Both accept a UUID string OR an entity key (resolved via keyToID or DB lookup).
-				var relSrcID, relDstID uuid.UUID
-				if sourceIDStr, ok := relMap["source_id"].(string); ok && sourceIDStr != "" {
-					sourceID, err := resolveIDOrKey(sourceIDStr)
-					if err != nil {
-						s.log.Warn("skipping inline relationship: cannot resolve source_id",
-							"rel_type", relType, "source_id", sourceIDStr, logger.Error(err))
-						continue
-					}
-					relSrcID = sourceID
-					relDstID = result.CanonicalID
-				} else {
-					targetIDStr, _ := relMap["target_id"].(string)
-					targetID, err := resolveIDOrKey(targetIDStr)
-					if err != nil {
-						s.log.Warn("skipping inline relationship: cannot resolve target_id",
-							"rel_type", relType, "target_id", targetIDStr, logger.Error(err))
-						continue
-					}
-					relSrcID = result.CanonicalID
-					relDstID = targetID
-				}
-
-				relReq := &graph.CreateGraphRelationshipRequest{
-					Type:       relType,
-					SrcID:      relSrcID,
-					DstID:      relDstID,
-					Properties: relProps,
-					BranchID:   branchID,
-				}
-				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq, nil)
-				if err != nil {
-					s.log.Warn("failed to create inline relationship",
-						"rel_type", relType, "src", relSrcID, "dst", relDstID, logger.Error(err))
-					continue
-				}
-				slim.Relationships = append(slim.Relationships, slimRelationship{
-					ID:       relResult.CanonicalID.String(),
-					Type:     relResult.Type,
-					TargetID: relResult.DstID.String(),
-				})
-			}
+		// Defer inline relationships to the second pass (see below). Parsing the
+		// spec here still surfaces a malformed `relationships` value instead of
+		// silently ignoring it (#401).
+		if specs, malformed := inlineRelationshipSpecs(entityMap["relationships"]); malformed || len(specs) > 0 {
+			pendingInline = append(pendingInline, pendingInlineRels{
+				entityType: typeName,
+				entityID:   result.CanonicalID,
+				slim:       slim,
+				specs:      specs,
+				malformed:  malformed,
+			})
 		}
 
 		results = append(results, batchResult{
@@ -6544,6 +6562,55 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		successCount++
 	}
 
+	// Second pass: every entity in the batch now exists, so inline relationship
+	// keys resolve regardless of the order the specs appear in.
+	inlineDeps := func() inlineRelationshipDeps {
+		deps := inlineRelationshipDeps{
+			ResolveID: resolveIDOrKey,
+			Create: func(callCtx context.Context, req *graph.CreateGraphRelationshipRequest) (*graph.GraphRelationshipResponse, error) {
+				return s.graphService.CreateRelationship(callCtx, projectUUID, req, nil)
+			},
+			AllowsRel: scope.AllowsRelationship,
+		}
+		// The endpoint-type check costs one read per resolved edge, so only wire
+		// it when the agent actually restricts object types.
+		if scope.HasObjectRestriction() {
+			deps.AllowsObject = scope.AllowsObject
+			deps.ObjectType = func(id uuid.UUID) (string, bool) {
+				objType, err := s.lookupObjectType(ctx, projectID, id)
+				if err != nil {
+					return "", false
+				}
+				return objType, true
+			}
+		}
+		return deps
+	}()
+	for _, pending := range pendingInline {
+		if pending.malformed {
+			result := inlineRelationshipResult{
+				Ok:     false,
+				Reason: inlineRelReasonInvalidSpec,
+				Error:  "relationships must be an array of relationship specifications",
+			}
+			pending.slim.RelationshipResults = []inlineRelationshipResult{result}
+			pending.slim.RelationshipsFailed = 1
+			inlineRelsTotal++
+			inlineRelsFailed++
+			continue
+		}
+		created, relResults := processInlineRelationships(
+			ctx, pending.entityType, pending.entityID, pending.specs, branchID, inlineDeps,
+		)
+		pending.slim.Relationships = created
+		pending.slim.RelationshipResults = relResults
+		itemCreated, itemFailed := countInlineRelationshipResults(relResults)
+		inlineRelsTotal += len(relResults)
+		inlineRelsCreated += itemCreated
+		inlineRelsFailed += itemFailed
+		pending.slim.RelationshipsFailed = itemFailed
+	}
+
 	plural := "ies"
 	if similarCount == 1 {
 		plural = "y"
@@ -6552,20 +6619,35 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	if similarCount > 0 {
 		message = fmt.Sprintf("%d near-duplicate entit%s found. Prefer entity-update(entity_id=…) to enrich the existing object instead of creating a duplicate. Re-call with check_similar=false to force-create.", similarCount, plural)
 	}
-	ok := failedCount == 0
+	if inlineRelsTotal > 0 {
+		message += fmt.Sprintf("; inline relationships: %d created, %d failed", inlineRelsCreated, inlineRelsFailed)
+	}
+
+	// ok is false when anything the caller asked for did not happen. A failed
+	// inline relationship leaves the entity created (so partial progress is
+	// reported per item), but the batch must not claim success (#401).
+	ok := batchCreateSucceeded(failedCount, inlineRelsFailed)
 	errMsg := ""
-	if !ok {
+	switch {
+	case failedCount > 0 && inlineRelsFailed > 0:
+		errMsg = fmt.Sprintf("%d of %d entities failed to create; %d inline relationships failed", failedCount, len(entitiesRaw), inlineRelsFailed)
+	case failedCount > 0:
 		errMsg = fmt.Sprintf("%d of %d entities failed to create", failedCount, len(entitiesRaw))
+	case inlineRelsFailed > 0:
+		errMsg = fmt.Sprintf("%d inline relationships could not be created; see relationship_results on each result", inlineRelsFailed)
 	}
 	return envelopeResult(ok, map[string]any{
 		"results": results,
 		"message": message,
 	}, map[string]any{
-		"created":       successCount,
-		"failed":        failedCount,
-		"total":         len(entitiesRaw),
-		"similar":       similarResults,
-		"similar_count": similarCount,
+		"created":               successCount,
+		"failed":                failedCount,
+		"total":                 len(entitiesRaw),
+		"similar":               similarResults,
+		"similar_count":         similarCount,
+		"relationships_created": inlineRelsCreated,
+		"relationships_failed":  inlineRelsFailed,
+		"relationships_total":   inlineRelsTotal,
 	}, errMsg)
 }
 
@@ -6616,8 +6698,12 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 	type batchResult struct {
 		Ok           bool              `json:"ok"`
 		Relationship *slimRelationship `json:"relationship,omitempty"`
-		Error        string            `json:"error,omitempty"`
-		Index        int               `json:"index"`
+		// Reason is the same machine-readable vocabulary entity-create's inline
+		// relationship results use, so a consumer can branch identically on
+		// either tool (issue #401).
+		Reason string `json:"reason,omitempty"`
+		Error  string `json:"error,omitempty"`
+		Index  int    `json:"index"`
 	}
 
 	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key (DB lookup).
@@ -6640,9 +6726,10 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		relMap, ok := relRaw.(map[string]any)
 		if !ok {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: "invalid relationship specification",
-				Index: i,
+				Ok:     false,
+				Reason: inlineRelReasonInvalidSpec,
+				Error:  "invalid relationship specification",
+				Index:  i,
 			})
 			failedCount++
 			continue
@@ -6654,9 +6741,10 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		}
 		if relType == "" {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: "missing relationship type",
-				Index: i,
+				Ok:     false,
+				Reason: inlineRelReasonMissingType,
+				Error:  "missing relationship type",
+				Index:  i,
 			})
 			failedCount++
 			continue
@@ -6664,9 +6752,10 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 
 		if !scope.AllowsRelationship(relType) {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: "relationship type is not allowed for this agent's scope",
-				Index: i,
+				Ok:     false,
+				Reason: inlineRelReasonTypeNotAllowed,
+				Error:  "relationship type is not allowed for this agent's scope",
+				Index:  i,
 			})
 			failedCount++
 			continue
@@ -6679,9 +6768,10 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		srcID, err := resolveRelIDOrKey(srcIDStr)
 		if err != nil {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: fmt.Sprintf("cannot resolve source_id %q: %v", srcIDStr, err),
-				Index: i,
+				Ok:     false,
+				Reason: inlineRelReasonUnknownSourceID,
+				Error:  fmt.Sprintf("cannot resolve source_id %q: %v", srcIDStr, err),
+				Index:  i,
 			})
 			failedCount++
 			continue
@@ -6694,9 +6784,10 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		dstID, err := resolveRelIDOrKey(dstIDStr)
 		if err != nil {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: fmt.Sprintf("cannot resolve target_id %q: %v", dstIDStr, err),
-				Index: i,
+				Ok:     false,
+				Reason: inlineRelReasonUnknownTargetID,
+				Error:  fmt.Sprintf("cannot resolve target_id %q: %v", dstIDStr, err),
+				Index:  i,
 			})
 			failedCount++
 			continue
@@ -6710,9 +6801,25 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		// Guard: self-referential relationships are not meaningful.
 		if srcID == dstID {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: fmt.Sprintf("source_id and target_id resolve to the same entity (%s) — a relationship must connect two different entities. Use entity key strings (e.g. 'caroline-person') in source_id/target_id, not raw UUIDs.", srcID),
-				Index: i,
+				Ok:     false,
+				Reason: inlineRelReasonSelfReference,
+				Error:  fmt.Sprintf("source_id and target_id resolve to the same entity (%s) — a relationship must connect two different entities. Use entity key strings (e.g. 'caroline-person') in source_id/target_id, not raw UUIDs.", srcID),
+				Index:  i,
+			})
+			failedCount++
+			continue
+		}
+
+		// Mirror entity-create's inline relationship path: when the agent
+		// restricts object types, neither endpoint may be outside that scope.
+		// The two write paths must agree, or the same edge would be accepted by
+		// one tool and refused by the other depending on how it was expressed.
+		if outType, blocked := s.outOfScopeRelationshipEndpoint(ctx, projectID, scope, srcID, dstID); blocked {
+			results = append(results, batchResult{
+				Ok:     false,
+				Reason: inlineRelReasonTypeNotAllowed,
+				Error:  fmt.Sprintf("relationship endpoint type %q is not allowed for this agent's scope", outType),
+				Index:  i,
 			})
 			failedCount++
 			continue
@@ -6736,9 +6843,10 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req, nil)
 		if err != nil {
 			results = append(results, batchResult{
-				Ok:    false,
-				Error: err.Error(),
-				Index: i,
+				Ok:     false,
+				Reason: classifyInlineRelationshipError(err),
+				Error:  err.Error(),
+				Index:  i,
 			})
 			failedCount++
 			continue

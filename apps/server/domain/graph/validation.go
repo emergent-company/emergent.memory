@@ -124,6 +124,11 @@ func coerceToHash(value any, kind string) (string, error) {
 	return strings.ToLower(trimmed), nil
 }
 
+// coerceToDate validates a date-typed property and stores it in the canonical
+// calendar shape YYYY-MM-DD (issue #402). A time component is discarded: a
+// `date` is a day, not an instant, so "2026-12-01T00:00:00Z" and "2026-12-01"
+// must not coexist for the same property. `datetime` properties are untouched
+// and stay RFC 3339.
 func coerceToDate(value any) (string, error) {
 	switch v := value.(type) {
 	case string:
@@ -131,31 +136,46 @@ func coerceToDate(value any) (string, error) {
 		if trimmed == "" {
 			return "", fmt.Errorf("empty string cannot be converted to date")
 		}
-
-		formats := []string{
-			time.RFC3339,
-			time.RFC3339Nano,
-			"2006-01-02",
-			"2006-01-02 15:04:05",
-			"2006-01-02T15:04:05",
-			"01/02/2006",
-			"02-01-2006",
+		if normalised, ok := normaliseDateValue(trimmed); ok {
+			return normalised, nil
 		}
-
-		for _, format := range formats {
-			t, err := time.Parse(format, trimmed)
-			if err == nil {
-				return t.Format(time.RFC3339), nil
-			}
-		}
-
 		return "", fmt.Errorf("invalid date format: %s (expected ISO 8601 or common formats)", v)
 
 	case time.Time:
-		return v.Format(time.RFC3339), nil
+		return v.Format(dateLayout), nil
 
 	default:
 		return "", fmt.Errorf("cannot convert %T to date", value)
+	}
+}
+
+// coerceDateArrayDefault renders an array-of-date schema default as a []any of
+// YYYY-MM-DD strings. The bool is false when any element is not a date, in
+// which case the caller keeps the raw default rather than half-converting it.
+func coerceDateArrayDefault(value any) ([]any, bool) {
+	switch elements := value.(type) {
+	case []any:
+		out := make([]any, len(elements))
+		for i, element := range elements {
+			date, err := coerceToDate(element)
+			if err != nil {
+				return nil, false
+			}
+			out[i] = date
+		}
+		return out, true
+	case []string:
+		out := make([]any, len(elements))
+		for i, element := range elements {
+			date, err := coerceToDate(element)
+			if err != nil {
+				return nil, false
+			}
+			out[i] = date
+		}
+		return out, true
+	default:
+		return nil, false
 	}
 }
 
@@ -389,6 +409,8 @@ func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
 			return coerceToCurrency(value)
 		case "time":
 			return coerceToTime(value)
+		case "date":
+			return coerceToDate(value)
 		}
 		return value, nil
 	case "boolean":
@@ -564,6 +586,23 @@ func applySchemaDefaults(props map[string]any, schema agents.ObjectSchema) {
 			continue
 		}
 		if def.Default != nil {
+			// A schema default is a write just like any other value. Narrow to
+			// dates so a date default cannot escape coercion as RFC 3339
+			// (#402) while every other default keeps its existing behaviour.
+			if isDateProperty(def) {
+				if coerced, err := coerceToDate(def.Default); err == nil {
+					props[name] = coerced
+					continue
+				}
+			}
+			// An array-of-date default would otherwise store its elements in
+			// whatever shape the pack author wrote.
+			if strings.EqualFold(strings.TrimSpace(def.Type), "array") && def.Items != nil && isDateProperty(*def.Items) {
+				if coerced, ok := coerceDateArrayDefault(def.Default); ok {
+					props[name] = coerced
+					continue
+				}
+			}
 			props[name] = def.Default
 		}
 	}

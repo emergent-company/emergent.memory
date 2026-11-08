@@ -33,6 +33,7 @@ func batchTally(value any) *BatchTally {
 		meta, _ = payload["meta"].(map[string]any)
 	}
 	failedItems := 0
+	failedInlineRelationships := 0
 	for _, element := range results {
 		item, ok := element.(map[string]any)
 		if !ok {
@@ -41,6 +42,20 @@ func batchTally(value any) *BatchTally {
 		if succeeded, ok := item["ok"].(bool); ok && !succeeded {
 			failedItems++
 		}
+		// An entity can be created while an inline relationship it asked for
+		// failed (issue #401). The item's ok stays true, and the producer nests
+		// the count on the entity. Take the max of the two shapes rather than
+		// summing: a wrapper that surfaces both would otherwise double-count.
+		relFailed := 0
+		if n, ok := integer(item["relationships_failed"]); ok {
+			relFailed = n
+		}
+		if entity, ok := item["entity"].(map[string]any); ok {
+			if n, ok := integer(entity["relationships_failed"]); ok && n > relFailed {
+				relFailed = n
+			}
+		}
+		failedInlineRelationships += relFailed
 	}
 	similar := 0
 	if n, ok := integer(meta["similar_count"]); ok {
@@ -49,6 +64,11 @@ func batchTally(value any) *BatchTally {
 
 	if created, ok := integer(meta["created"]); ok {
 		if failed, ok := integer(meta["failed"]); ok {
+			// meta.failed counts entity failures only; inline relationship
+			// failures would otherwise make a partial write look clean.
+			if n, ok := integer(meta["relationships_failed"]); ok {
+				failed += n
+			}
 			return &BatchTally{Created: created, Failed: failed, Similar: similar}
 		}
 	}
@@ -62,7 +82,7 @@ func batchTally(value any) *BatchTally {
 	if created < 0 {
 		created = 0
 	}
-	return &BatchTally{Created: created, Failed: failedItems, Similar: similar}
+	return &BatchTally{Created: created, Failed: failedItems + failedInlineRelationships, Similar: similar}
 }
 
 // looksLikeBatch reports whether the items are records a batch would produce: an
