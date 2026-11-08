@@ -749,9 +749,14 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 		version.SchemaVersion = &schemaVersion
 		// Normalise dates in place of full validation: a source push replaces
 		// the property map and may legitimately be partial, so required-field
-		// enforcement must not start failing here. Date values still converge to
-		// YYYY-MM-DD (issue #402).
-		version.Properties = normaliseDateProperties(version.Properties, schema)
+		// enforcement must not start failing here. (A brand-new object through
+		// buildChangesetObject still runs full validation.) Date values still
+		// converge to YYYY-MM-DD (issue #402).
+		//
+		// Copy first: when the push omits properties, version.Properties still
+		// aliases head.Properties, and normalising in place would mutate the
+		// previous head the caller is holding.
+		version.Properties = normaliseDateProperties(copyProperties(version.Properties), schema)
 	}
 
 	// A source push is authoritative for its own record: the row stays

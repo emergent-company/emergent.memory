@@ -119,6 +119,20 @@ func TestApplySchemaDefaultsCoercesDates(t *testing.T) {
 	assert.Equal(t, "2026-12-01", props["next_due"])
 }
 
+// TestApplySchemaDefaultsCoercesDateArrays proves an array-of-date default is
+// normalised element-by-element, and that a non-date element leaves the raw
+// default untouched rather than half-converting it.
+func TestApplySchemaDefaultsCoercesDateArrays(t *testing.T) {
+	schema := agents.ObjectSchema{Properties: map[string]agents.PropertyDef{
+		"milestones": {Type: "array", Items: &agents.PropertyDef{Type: "date"}, Default: []any{"2026-12-01T00:00:00Z", "2026-12-02"}},
+		"bad_dates":  {Type: "array", Items: &agents.PropertyDef{Type: "date"}, Default: []any{"2026-12-01", "not-a-date"}},
+	}}
+	props := map[string]any{}
+	applySchemaDefaults(props, schema)
+	assert.Equal(t, []any{"2026-12-01", "2026-12-02"}, props["milestones"])
+	assert.Equal(t, []any{"2026-12-01", "not-a-date"}, props["bad_dates"], "a partially invalid default is left as written")
+}
+
 // fakeDateSchemaProvider serves one object schema without a database.
 type fakeDateSchemaProvider struct {
 	schemas *ExtractionSchemas
@@ -218,4 +232,43 @@ func TestNormaliseRelationshipDatePropertyValues(t *testing.T) {
 	unknown := svc.NormaliseRelationshipDatePropertyValues(context.Background(), projectID, "unknown_rel", "", "",
 		map[string]any{"since": "2026-12-02T00:00:00Z"})
 	assert.Equal(t, map[string]any{"since": "2026-12-02T00:00:00Z"}, unknown)
+}
+
+// TestNormaliseRelationshipResponseDates proves a page of edge responses is
+// normalised in one pass, uses the endpoint-specific schema when the endpoint
+// types are supplied, and does not mutate the stored map it is handed.
+func TestNormaliseRelationshipResponseDates(t *testing.T) {
+	svc := &Service{schemaProvider: &fakeDateSchemaProvider{
+		schemas: &ExtractionSchemas{RelationshipSchemas: map[string]agents.RelationshipSchema{
+			"has_subject": {Properties: map[string]agents.PropertyDef{
+				"since": {Type: "date"},
+			}},
+			relationshipSchemaKey("owns", "Person", "Vehicle"): {Properties: map[string]agents.PropertyDef{
+				"purchased_on": {Type: "date"},
+			}},
+		}},
+	}}
+	projectID := uuid.New()
+	personID, vehicleID, otherID := uuid.New(), uuid.New(), uuid.New()
+
+	genericProps := map[string]any{"since": "2026-12-02T00:00:00Z"}
+	typedProps := map[string]any{"purchased_on": "2026-12-02T00:00:00Z"}
+	rels := []*GraphRelationshipResponse{
+		{ID: uuid.New(), Type: "has_subject", SrcID: otherID, DstID: personID, Properties: genericProps},
+		{ID: uuid.New(), Type: "owns", SrcID: personID, DstID: vehicleID, Properties: typedProps},
+	}
+
+	svc.normaliseRelationshipResponseDates(context.Background(), projectID, rels, map[uuid.UUID]string{
+		personID: "Person", vehicleID: "Vehicle",
+	})
+
+	assert.Equal(t, "2026-12-02", rels[0].Properties["since"])
+	assert.Equal(t, "2026-12-02", rels[1].Properties["purchased_on"])
+	assert.Equal(t, "2026-12-02T00:00:00Z", genericProps["since"], "stored map must not be mutated")
+
+	// Without the endpoint types the type-specific schema cannot be resolved,
+	// so the edge is left alone (documented narrower guarantee).
+	bare := []*GraphRelationshipResponse{{Type: "owns", SrcID: personID, DstID: vehicleID, Properties: typedProps}}
+	svc.normaliseRelationshipResponseDates(context.Background(), projectID, bare, nil)
+	assert.Equal(t, "2026-12-02T00:00:00Z", bare[0].Properties["purchased_on"])
 }

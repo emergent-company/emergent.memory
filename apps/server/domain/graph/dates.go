@@ -169,11 +169,43 @@ func (s *Service) NormaliseDatePropertyValues(ctx context.Context, projectID uui
 	return normaliseDateProperties(copyProperties(props), schema)
 }
 
+// normaliseRelationshipResponseDates normalises the properties of a page of
+// relationship responses in a single schema load. endpointTypes optionally maps
+// an endpoint's canonical id to its object type; when an endpoint is known the
+// type-specific relationship schema is used. Without it only the
+// endpoint-agnostic schema for the relationship type can match, which is a
+// narrower guarantee — callers that already hold an endpoint (GetEdges,
+// get-entity-edges) should pass its type.
+func (s *Service) normaliseRelationshipResponseDates(ctx context.Context, projectID uuid.UUID, rels []*GraphRelationshipResponse, endpointTypes map[uuid.UUID]string) {
+	if s == nil || len(rels) == 0 || s.schemaProvider == nil {
+		return
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil || schemas.RelationshipSchemas == nil {
+		return
+	}
+	for _, rel := range rels {
+		if rel == nil || len(rel.Properties) == 0 || rel.Type == "" {
+			continue
+		}
+		srcType, dstType := endpointTypes[rel.SrcID], endpointTypes[rel.DstID]
+		relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, rel.Type, srcType, dstType)
+		if !ok || len(relSchema.Properties) == 0 {
+			continue
+		}
+		objSchema := agents.ObjectSchema{Properties: relSchema.Properties}
+		if !schemaHasDateProperties(objSchema) {
+			continue
+		}
+		rel.Properties = normaliseDateProperties(copyProperties(rel.Properties), objSchema)
+	}
+}
+
 // schemaHasDateProperties is a cheap fast path so date-free types do not pay
 // for a copy on every read.
 func schemaHasDateProperties(schema agents.ObjectSchema) bool {
 	for _, def := range schema.Properties {
-		if isDateProperty(def) || (strings.EqualFold(def.Type, "array") && def.Items != nil && isDateProperty(*def.Items)) {
+		if isDateProperty(def) || (strings.EqualFold(strings.TrimSpace(def.Type), "array") && def.Items != nil && isDateProperty(*def.Items)) {
 			return true
 		}
 	}

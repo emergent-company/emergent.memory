@@ -767,7 +767,7 @@ func (s *Service) GetMostAccessed(ctx context.Context, projectID uuid.UUID, limi
 			CanonicalID:    obj.CanonicalID,
 			Type:           obj.Type,
 			Key:            obj.Key,
-			Properties:     obj.Properties,
+			Properties:     s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
 			Labels:         obj.Labels,
 			LastAccessedAt: obj.LastAccessedAt,
 			CreatedAt:      obj.CreatedAt,
@@ -804,7 +804,7 @@ func (s *Service) GetUnused(ctx context.Context, projectID uuid.UUID, limit int,
 			CanonicalID:     obj.CanonicalID,
 			Type:            obj.Type,
 			Key:             obj.Key,
-			Properties:      obj.Properties,
+			Properties:      s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
 			Labels:          obj.Labels,
 			LastAccessedAt:  obj.LastAccessedAt,
 			DaysSinceAccess: daysSinceAccess,
@@ -1802,7 +1802,9 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding_v2.
 	s.enqueueEmbeddingForType(ctx, projectID, restored.Type, restored.ID.String())
 
-	return restored.ToResponse(), nil
+	resp := restored.ToResponse()
+	resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+	return resp, nil
 }
 
 // GetHistory returns version history for a graph object.
@@ -1821,6 +1823,7 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 	data := make([]*GraphObjectResponse, len(versions))
 	for i, v := range versions {
 		data[i] = v.ToResponse()
+		data[i].Properties = s.NormaliseDatePropertyValues(ctx, projectID, data[i].Type, data[i].Properties)
 	}
 
 	// Each version reports its own contributors, in one query for the whole
@@ -1861,6 +1864,9 @@ func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID, p
 	edges := make([]*GraphRelationshipResponse, 0, len(incomingResp)+len(outgoingResp))
 	edges = append(edges, incomingResp...)
 	edges = append(edges, outgoingResp...)
+	// Edge date properties converge on read as well. The queried object is an
+	// endpoint of every returned edge, so its type sharpens the schema lookup.
+	s.normaliseRelationshipResponseDates(ctx, projectID, edges, map[uuid.UUID]string{obj.CanonicalID: obj.Type})
 	if err := s.fillRelationshipContributions(ctx, projectID, edges); err != nil {
 		return nil, err
 	}
@@ -2183,6 +2189,9 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 	for i, rel := range rels {
 		items[i] = rel.ToResponse()
 	}
+	// Endpoint types are not loaded for a generic relationship list, so only an
+	// endpoint-agnostic relationship schema can normalise here.
+	s.normaliseRelationshipResponseDates(ctx, params.ProjectID, items, nil)
 
 	// One query for the whole page, so a list response is not N+1.
 	if err := s.fillRelationshipContributions(ctx, params.ProjectID, items); err != nil {
@@ -2216,6 +2225,9 @@ func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) 
 	}
 
 	resp := rel.ToResponse()
+	// The endpoint types are not fetched for a single-edge read; normalise with
+	// the endpoint-agnostic schema only.
+	s.normaliseRelationshipResponseDates(ctx, projectID, []*GraphRelationshipResponse{resp}, nil)
 	if err := s.fillRelationshipContributions(ctx, projectID, []*GraphRelationshipResponse{resp}); err != nil {
 		return nil, err
 	}
@@ -4125,7 +4137,7 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 			Type:        r.Type,
 			Key:         r.Key,
 			Status:      r.Status,
-			Properties:  r.Properties,
+			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, r.Type, r.Properties),
 			Labels:      r.Labels,
 			CreatedAt:   &createdAt,
 		}
@@ -4223,8 +4235,17 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 		} else {
 			node.Properties = obj.Properties
 		}
+		// Date properties converge on read like every other read path (issue #402).
+		node.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, node.Properties)
 
 		nodes = append(nodes, node)
+	}
+
+	// Endpoint types are needed to pick the type-specific relationship schema
+	// for edge date properties.
+	nodeTypes := make(map[uuid.UUID]string, len(result.Nodes))
+	for id, obj := range result.Nodes {
+		nodeTypes[id] = obj.Type
 	}
 
 	edges := make([]*ExpandEdge, 0, len(result.Edges))
@@ -4236,7 +4257,8 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 			DstID: rel.DstID,
 		}
 		if req.IncludeRelationshipProperties {
-			edge.Properties = rel.Properties
+			edge.Properties = s.NormaliseRelationshipDatePropertyValues(
+				ctx, projectID, rel.Type, nodeTypes[rel.SrcID], nodeTypes[rel.DstID], rel.Properties)
 		}
 		edges = append(edges, edge)
 	}
@@ -4414,7 +4436,7 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 			Type:        obj.Type,
 			Key:         obj.Key,
 			Labels:      obj.Labels,
-			Properties:  obj.Properties,
+			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
 		}
 		nodes = append(nodes, node)
 	}

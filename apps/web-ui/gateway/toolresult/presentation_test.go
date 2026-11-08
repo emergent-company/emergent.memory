@@ -343,6 +343,26 @@ func TestParseBatchAcceptsResultWrapper(t *testing.T) {
 	}
 }
 
+// TestParseBatchCountsInlineRelationshipFailures: an entity-create batch can
+// report ok=false solely because an inline relationship failed (#401) while
+// meta.failed stays 0. The tally must still read as a failure, and an entity
+// whose relationship failed is still one created entity.
+func TestParseBatchCountsInlineRelationshipFailures(t *testing.T) {
+	tally := parseBatch(t, `{"ok": false, "data": {"results": [{"ok": true, "index": 0, "entity": {"id": "e1", "type": "Note"}, "relationships_failed": 1}]}, "meta": {"created": 1, "failed": 0, "relationships_failed": 1, "similar_count": 0}}`)
+	if want := (BatchTally{Created: 1, Failed: 1, Similar: 0}); *tally != want {
+		t.Errorf("batch = %+v, want %+v", *tally, want)
+	}
+	if !tally.IsFailure() {
+		t.Error("IsFailure() = false, want true when an inline relationship failed")
+	}
+
+	// Without a meta tally the per-item count is the fallback.
+	fromItems := parseBatch(t, `{"ok": false, "data": {"results": [{"ok": true, "index": 0, "entity": {"id": "e1", "type": "Note"}, "relationships_failed": 2}]}}`)
+	if want := (BatchTally{Created: 1, Failed: 2, Similar: 0}); *fromItems != want {
+		t.Errorf("batch from items = %+v, want %+v", *fromItems, want)
+	}
+}
+
 // TestParseSearchResultsAreNotABatch: a plain results array is a search, not a
 // batch, and must never be reported as "0 created" (#2277).
 func TestParseSearchResultsAreNotABatch(t *testing.T) {

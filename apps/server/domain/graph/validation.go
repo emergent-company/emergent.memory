@@ -149,6 +149,36 @@ func coerceToDate(value any) (string, error) {
 	}
 }
 
+// coerceDateArrayDefault renders an array-of-date schema default as a []any of
+// YYYY-MM-DD strings. The bool is false when any element is not a date, in
+// which case the caller keeps the raw default rather than half-converting it.
+func coerceDateArrayDefault(value any) ([]any, bool) {
+	switch elements := value.(type) {
+	case []any:
+		out := make([]any, len(elements))
+		for i, element := range elements {
+			date, err := coerceToDate(element)
+			if err != nil {
+				return nil, false
+			}
+			out[i] = date
+		}
+		return out, true
+	case []string:
+		out := make([]any, len(elements))
+		for i, element := range elements {
+			date, err := coerceToDate(element)
+			if err != nil {
+				return nil, false
+			}
+			out[i] = date
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
 // coerceToEmail validates an email-typed property: one bare RFC 5322 address
 // with no display name. The address is trimmed and stored lower-case, which is
 // how mail providers treat it and what makes duplicate detection useful; the
@@ -561,6 +591,14 @@ func applySchemaDefaults(props map[string]any, schema agents.ObjectSchema) {
 			// (#402) while every other default keeps its existing behaviour.
 			if isDateProperty(def) {
 				if coerced, err := coerceToDate(def.Default); err == nil {
+					props[name] = coerced
+					continue
+				}
+			}
+			// An array-of-date default would otherwise store its elements in
+			// whatever shape the pack author wrote.
+			if strings.EqualFold(strings.TrimSpace(def.Type), "array") && def.Items != nil && isDateProperty(*def.Items) {
+				if coerced, ok := coerceDateArrayDefault(def.Default); ok {
 					props[name] = coerced
 					continue
 				}

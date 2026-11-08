@@ -4495,6 +4495,15 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 
 	scope := TypeScopeFromContext(ctx)
 
+	// The queried entity is an endpoint of every edge below. Its type sharpens
+	// the relationship-schema lookup so a type-specific date property normalises
+	// rather than falling back to the endpoint-agnostic schema. A failed lookup
+	// leaves it empty, which only widens the fallback — the edges are still read.
+	selfType := ""
+	if info, infoErr := s.getEntityBasicInfo(ctx, projectUUID, entityID); infoErr == nil && info != nil {
+		selfType = info.Type
+	}
+
 	incoming := make([]EdgeInfo, 0, len(edges.Incoming))
 	for _, rel := range edges.Incoming {
 		// Relationship-level check first so an excluded relationship type never
@@ -4514,7 +4523,7 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *srcEntity,
 			Properties: truncateProperties(s.graphService.NormaliseRelationshipDatePropertyValues(
-				ctx, projectUUID, rel.Type, srcEntity.Type, "", rel.Properties)),
+				ctx, projectUUID, rel.Type, srcEntity.Type, selfType, rel.Properties)),
 		})
 	}
 
@@ -4537,7 +4546,7 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *dstEntity,
 			Properties: truncateProperties(s.graphService.NormaliseRelationshipDatePropertyValues(
-				ctx, projectUUID, rel.Type, "", dstEntity.Type, rel.Properties)),
+				ctx, projectUUID, rel.Type, selfType, dstEntity.Type, rel.Properties)),
 		})
 	}
 
@@ -4731,6 +4740,7 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 // lookupObjectType returns the current type of a graph object by physical or
 // canonical id. It is routed through the graph service so the mcp package issues
 // no raw SQL (the mcp-authz guard forbids unclassified raw access).
+// lookupObjectType resolves an entity's object type.
 func (s *Service) lookupObjectType(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -4744,6 +4754,26 @@ func (s *Service) lookupObjectType(ctx context.Context, projectID string, entity
 		return "", fmt.Errorf("object not found")
 	}
 	return obj.Type, nil
+}
+
+// outOfScopeRelationshipEndpoint returns the first endpoint object type that
+// falls outside the agent's object-type scope. A lookup failure leaves that
+// endpoint unknown and does not block the write, mirroring
+// processInlineRelationships; an unrestricted scope never pays for a lookup.
+func (s *Service) outOfScopeRelationshipEndpoint(ctx context.Context, projectID string, scope *TypeScope, srcID, dstID uuid.UUID) (string, bool) {
+	if scope == nil || !scope.HasObjectRestriction() {
+		return "", false
+	}
+	for _, id := range []uuid.UUID{srcID, dstID} {
+		objType, err := s.lookupObjectType(ctx, projectID, id)
+		if err != nil {
+			continue
+		}
+		if !scope.AllowsObject(objType) {
+			return objType, true
+		}
+	}
+	return "", false
 }
 
 // lookupObjectTypeIncludingDeleted is lookupObjectType for a possibly
@@ -5415,8 +5445,11 @@ func buildEntityEmbedText(typeName string, key *string, properties map[string]an
 // executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
 // Backward-compat: if flat fields (type, properties, etc.) are passed instead, wraps them as a single-element array.
 //
-// Each entity spec may include an optional "relationships" array to atomically create relationships
-// from the new entity to existing entities in the same call:
+// Each entity spec may include an optional "relationships" array to create relationships
+// from the new entity to existing entities in the same call. Entities are created first and
+// the relationships in a second pass, so a spec may reference a key created later in the
+// same call; a failed relationship leaves its entity created but makes the batch report
+// ok=false with a per-spec reason.
 //
 //	{
 //	  "type": "TaskResult",
@@ -5504,6 +5537,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	// Inline relationship totals across the batch. A failed inline relationship
 	// does not undo the entity (it already exists), but it does make the batch
 	// report ok=false so the caller cannot mistake it for a fully applied write.
+	// Specs skipped with a near-duplicate entity are reported on that
+	// similarEntity (relationships_skipped) and are not counted here: they were
+	// never attempted, and the entity they belonged to was not created.
 	inlineRelsCreated := 0
 	inlineRelsFailed := 0
 	inlineRelsTotal := 0
@@ -5967,6 +6003,21 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 				Ok:     false,
 				Reason: inlineRelReasonSelfReference,
 				Error:  fmt.Sprintf("source_id and target_id resolve to the same entity (%s) — a relationship must connect two different entities. Use entity key strings (e.g. 'caroline-person') in source_id/target_id, not raw UUIDs.", srcID),
+				Index:  i,
+			})
+			failedCount++
+			continue
+		}
+
+		// Mirror entity-create's inline relationship path: when the agent
+		// restricts object types, neither endpoint may be outside that scope.
+		// The two write paths must agree, or the same edge would be accepted by
+		// one tool and refused by the other depending on how it was expressed.
+		if outType, blocked := s.outOfScopeRelationshipEndpoint(ctx, projectID, scope, srcID, dstID); blocked {
+			results = append(results, batchResult{
+				Ok:     false,
+				Reason: inlineRelReasonTypeNotAllowed,
+				Error:  fmt.Sprintf("relationship endpoint type %q is not allowed for this agent's scope", outType),
 				Index:  i,
 			})
 			failedCount++

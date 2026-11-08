@@ -226,8 +226,11 @@ func TestTypeScopeFollowup_TraverseUnknownEndpointEdgeKept(t *testing.T) {
 }
 
 // Inline relationships declared on an entity-create spec whose relationship type
-// is excluded must be skipped (not created, not echoed). Removing the inline
-// guard creates and returns the OWNS relationship, failing the NotContains.
+// is excluded must be reported as a failed per-item result (issue #401), not
+// silently dropped. The entity is still created, but the batch must report
+// ok=false with a machine-readable reason so the caller knows the write was
+// partial. Removing the inline guard creates the OWNS relationship and reports
+// success, failing both assertions.
 func TestTypeScopeFollowup_EntityCreateSkipsExcludedInlineRelationship(t *testing.T) {
 	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
@@ -247,17 +250,88 @@ func TestTypeScopeFollowup_EntityCreateSkipsExcludedInlineRelationship(t *testin
 	})
 	require.NoError(t, err)
 	text := toolResultText(t, res, nil)
-	assert.NotContains(t, text, "OWNS", "an excluded inline relationship must not be created or echoed")
 
 	var out struct {
 		OK   bool `json:"ok"`
+		Data struct {
+			Results []struct {
+				OK     bool `json:"ok"`
+				Entity struct {
+					Relationships       []any `json:"relationships"`
+					RelationshipsFailed int   `json:"relationships_failed"`
+					RelationshipResults []struct {
+						OK     bool   `json:"ok"`
+						Index  int    `json:"index"`
+						Reason string `json:"reason"`
+					} `json:"relationship_results"`
+				} `json:"entity"`
+			} `json:"results"`
+		} `json:"data"`
 		Meta struct {
-			Created int `json:"created"`
+			Created             int `json:"created"`
+			Failed              int `json:"failed"`
+			RelationshipsFailed int `json:"relationships_failed"`
+			RelationshipsTotal  int `json:"relationships_total"`
 		} `json:"meta"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(text), &out))
-	assert.True(t, out.OK)
+
+	assert.False(t, out.OK, "a batch with a failed inline relationship must not report ok=true")
 	assert.Equal(t, 1, out.Meta.Created, "the allowed object is still created")
+	assert.Equal(t, 1, out.Meta.RelationshipsFailed)
+	assert.Equal(t, 1, out.Meta.RelationshipsTotal)
+
+	require.Len(t, out.Data.Results, 1)
+	item := out.Data.Results[0]
+	assert.True(t, item.OK, "the entity itself was created")
+	assert.Empty(t, item.Entity.Relationships, "an excluded inline relationship must not be created")
+	assert.Equal(t, 1, item.Entity.RelationshipsFailed)
+	require.Len(t, item.Entity.RelationshipResults, 1)
+	assert.False(t, item.Entity.RelationshipResults[0].OK)
+	assert.Equal(t, inlineRelReasonTypeNotAllowed, item.Entity.RelationshipResults[0].Reason)
+}
+
+// An edge whose endpoint object type is outside the agent's object scope must
+// be refused by relationship-create, exactly as entity-create's inline path
+// refuses it. The two write paths must agree (#401 review).
+func TestTypeScopeFollowup_RelationshipCreateRejectsOutOfScopeEndpoint(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	inScope := insertGraphObject(t, db, projectID, "Law", "law-in-scope")
+	outOfScope := insertGraphObject(t, db, projectID, "Person", "person-out-of-scope")
+	svc := newEntityCreateDedupService(t, db)
+	ctx := scopedCtx([]string{"Law"}, []string{"CITES"})
+
+	res, err := svc.executeBatchCreateRelationships(ctx, projectID, map[string]any{
+		"relationships": []any{map[string]any{
+			"type":      "CITES",
+			"source_id": inScope,
+			"target_id": outOfScope,
+		}},
+	})
+	require.NoError(t, err)
+	text := toolResultText(t, res, nil)
+
+	var out struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Results []struct {
+				OK     bool   `json:"ok"`
+				Reason string `json:"reason"`
+			} `json:"results"`
+		} `json:"data"`
+		Meta struct {
+			Created int `json:"created"`
+			Failed  int `json:"failed"`
+		} `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &out))
+	assert.False(t, out.OK)
+	assert.Equal(t, 0, out.Meta.Created)
+	assert.Equal(t, 1, out.Meta.Failed)
+	require.Len(t, out.Data.Results, 1)
+	assert.False(t, out.Data.Results[0].OK)
+	assert.Equal(t, inlineRelReasonTypeNotAllowed, out.Data.Results[0].Reason)
 }
 
 // =============================================================================
