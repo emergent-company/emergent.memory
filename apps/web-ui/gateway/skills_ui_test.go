@@ -62,6 +62,28 @@ func TestListSkillsError(t *testing.T) {
 	}
 }
 
+func TestListSkillsIncludingArchived(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"skills":[{"id":"s-arch","name":"diane.old","scope":"project","metadata":{"lifecycle_state":"archived"},"updatedAt":"2026-08-26T11:00:00Z"}]}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	skills, err := m.ListSkillsIncludingArchived(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "includeArchived=true" {
+		t.Errorf("query = %q, want includeArchived=true", gotQuery)
+	}
+	if len(skills) != 1 || !skills[0].Archived() {
+		t.Fatalf("skills = %+v, want one archived skill", skills)
+	}
+}
+
 func TestGetSkill(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +445,31 @@ func TestRenderSkillsPage(t *testing.T) {
 	}
 }
 
+// TestRenderSkillsPageArchived pins #301 item 4: an archived skill renders in
+// the skills list itself — lifecycle badge plus inline restore actions — not only
+// on a detail page reached by typing the id.
+func TestRenderSkillsPageArchived(t *testing.T) {
+	skills := []Skill{
+		{ID: "s-arch", Name: "diane.old", Description: "Aged out by the curator", Scope: "project",
+			Metadata: &SkillMetadata{Source: "agent", LifecycleState: "archived"}, UpdatedAt: "2026-08-26T11:00:00Z"},
+		{ID: "s-active", Name: "still-useful", Description: "Active skill", Scope: "project",
+			UpdatedAt: "2026-08-26T11:00:00Z"},
+	}
+	html := renderHTML(t, SkillsPage(skills, nil, nil, nil, "", nil, "", nil))
+	for _, want := range []string{
+		"diane.old", "Archived", "still-useful",
+		`action="/skills/s-arch/restore"`, `name="pin" value="1"`, "Restore &amp; pin",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("skills page missing %q", want)
+		}
+	}
+	// The active row has no restore affordance.
+	if strings.Contains(html, `action="/skills/s-active/restore"`) {
+		t.Error("an active skill must not offer restore in the list")
+	}
+}
+
 // TestRenderSkillNewPage covers the standalone create form page.
 func TestRenderSkillNewPage(t *testing.T) {
 	html := renderHTML(t, SkillNewPage(nil))
@@ -705,9 +752,24 @@ func TestUIRouteSkillRestore(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/skills/:id", s.uiSkill)
+	e.GET("/skills", s.uiSkills)
 	e.POST("/skills/:id/restore", s.uiRestoreSkill)
 
+	// The archived skill is reachable from the list page itself: it renders with
+	// its lifecycle badge and inline restore actions, so no id has to be typed.
 	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("skills list status = %d", rec.Code)
+	}
+	listBody := rec.Body.String()
+	for _, want := range []string{"agent.triage", "Archived", `action="/skills/s1/restore"`, "Restore &amp; pin"} {
+		if !strings.Contains(listBody, want) {
+			t.Errorf("skills list missing %q", want)
+		}
+	}
+
+	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills/s1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("detail status = %d", rec.Code)

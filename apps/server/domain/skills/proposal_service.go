@@ -167,6 +167,15 @@ func (s *ProposalService) apply(ctx context.Context, p *SkillProposal, actorID *
 		return nil, err
 	}
 	if err := s.repo.MarkProposalApplied(ctx, p.ID, actorID, auto, note); err != nil {
+		// The mutation landed but the row could not be marked applied: only a
+		// human decision that raced a slow apply (rejected/applied meanwhile)
+		// reaches here. Surface it loudly — the library changed even though the
+		// proposal's recorded status does not say so.
+		s.log.Error("skill proposal write landed but the proposal could not be marked applied",
+			slog.String("proposal_id", p.ID.String()),
+			slog.String("kind", p.Kind),
+			logger.Error(err),
+		)
 		return nil, err
 	}
 	if note != "" {
@@ -285,20 +294,16 @@ func agentActor(ctx context.Context) bool {
 	return ok && strings.EqualFold(actorType, "agent")
 }
 
-// staleProposalClaim is how long a proposal may sit in `applying` before another
-// reviewer may reclaim it. It must match the SQL predicate in capture_store.go
-// (proposalReclaimablePredicate / ReleaseStaleProposals).
-const staleProposalClaim = 10 * time.Minute
-
 // staleApplying reports whether a proposal is stuck in `applying` with a claim
 // old enough to be reclaimed. The pre-checks use it only to give a clear error;
 // the atomic conditional update is the final authority, so a FRESH `applying`
-// row is still refused there (the double-review guard).
+// row is still refused there (the double-review guard). The age threshold is
+// proposalClaimStaleAfter, shared with the SQL predicate and the inbox sweep.
 func staleApplying(p *SkillProposal) bool {
 	if p == nil || p.Status != ProposalStatusApplying {
 		return false
 	}
-	return p.ClaimedAt == nil || p.ClaimedAt.Before(time.Now().Add(-staleProposalClaim))
+	return p.ClaimedAt == nil || p.ClaimedAt.Before(time.Now().Add(-proposalClaimStaleAfter))
 }
 
 // effectiveContent returns the bytes the proposal will write. Patch fields win

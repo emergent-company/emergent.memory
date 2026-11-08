@@ -250,6 +250,19 @@ func TestProposal_StaleApplyingIsRecoverable(t *testing.T) {
 	require.Error(t, err, "a fresh claim must not be approved")
 	require.Error(t, proposals.Reject(ctx, pid, fresh.ID, uuid.New(), ""), "a fresh claim must not be rejected")
 
+	// The guarantee is about a live claimed_at, not merely the `applying`
+	// status: at the repo level a fresh claim is neither reclaimable nor
+	// rejectable, and the inbox sweep leaves it alone.
+	reclaimed, err := repo.ClaimProposal(ctx, fresh.ID)
+	require.NoError(t, err)
+	assert.False(t, reclaimed, "a fresh claim must not be reclaimable")
+	rejectedFresh, err := repo.MarkProposalRejected(ctx, fresh.ID, uuid.New(), "")
+	require.NoError(t, err)
+	assert.False(t, rejectedFresh, "a fresh claim must not be rejectable")
+	releasedLive, err := repo.ReleaseStaleProposals(ctx, pid)
+	require.NoError(t, err)
+	assert.Zero(t, releasedLive, "the sweep must not steal a claim the claim path considers live")
+
 	// Once the claim is stale, the normal paths reclaim it.
 	backdateClaim(fresh.ID)
 	sk, err := proposals.Approve(ctx, pid, fresh.ID, uuid.New(), "recovered")
@@ -283,6 +296,54 @@ func TestProposal_StaleApplyingIsRecoverable(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "a swept proposal is back in the pending inbox")
+}
+
+// TestProposal_SweepReclaimStillRecordsLandedWrite covers the slow-apply race:
+// the inbox sweep reclaims a claim older than proposalClaimStaleAfter back to
+// `pending`, and the slow writer's mutation lands afterwards. MarkProposalApplied
+// must still record the apply (pending → applied), so a row whose write landed is
+// not left rejectable with a skill that exists in the library.
+func TestProposal_SweepReclaimStillRecordsLandedWrite(t *testing.T) {
+	repo, db := newTestRepo(t)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	pid := uuid.MustParse(projectID)
+
+	p := &SkillProposal{
+		ProjectID: pid, Kind: ProposalKindCreate, Name: "agent.slow-apply",
+		Description: "d", Content: "# T\n\nbody", Source: ProposalSourceBackground,
+		Status: ProposalStatusPending, Confidence: 0.9,
+	}
+	require.NoError(t, repo.CreateProposal(ctx, p))
+	ok, err := repo.ClaimProposal(ctx, p.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// Just past the shared staleness window, derived from the same constant the
+	// claim path and the sweep use.
+	_, err = db.ExecContext(ctx,
+		`UPDATE kb.skill_proposals SET claimed_at = now() - make_interval(secs => ?) WHERE id = ?`,
+		proposalClaimStaleAfter.Seconds()+60, p.ID)
+	require.NoError(t, err)
+
+	released, err := repo.ReleaseStaleProposals(ctx, pid)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, released)
+
+	reclaimedRow, err := repo.FindProposalByID(ctx, p.ID)
+	require.NoError(t, err)
+	require.Equal(t, ProposalStatusPending, reclaimedRow.Status)
+	require.Nil(t, reclaimedRow.ClaimedAt)
+
+	// The slow apply's write lands after the reclaim; recording it must win over
+	// leaving the row reviewable.
+	reviewer := uuid.New()
+	require.NoError(t, repo.MarkProposalApplied(ctx, p.ID, &reviewer, false, "slow"))
+
+	reloaded, err := repo.FindProposalByID(ctx, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ProposalStatusApplied, reloaded.Status)
+	assert.Equal(t, "slow", reloaded.ReviewNote)
 }
 
 func TestProposal_ApproveRejectsAgentActor(t *testing.T) {
@@ -418,6 +479,23 @@ func TestRestoreSkill_ReactivatesArchivedSkillWithoutLosingMetadata(t *testing.T
 	require.NoError(t, err)
 	for _, v := range visible {
 		assert.NotEqual(t, sk.Name, v.Name)
+	}
+
+	// The management listing can include them, which is what makes the skill
+	// visible and restorable in the UI.
+	listed, err := repo.FindForProjectListing(ctx, projectID, "", true)
+	require.NoError(t, err)
+	listedIDs := make(map[uuid.UUID]bool, len(listed))
+	for _, v := range listed {
+		listedIDs[v.ID] = true
+	}
+	assert.True(t, listedIDs[sk.ID], "includeArchived listing must contain the archived skill")
+
+	// The default listing is unchanged: no archived rows.
+	listedDefault, err := repo.FindForProjectListing(ctx, projectID, "", false)
+	require.NoError(t, err)
+	for _, v := range listedDefault {
+		assert.NotEqual(t, sk.ID, v.ID, "the default listing must exclude archived skills")
 	}
 
 	restored, err := repo.RestoreSkill(ctx, sk.ID, false)

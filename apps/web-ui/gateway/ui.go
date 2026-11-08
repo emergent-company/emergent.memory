@@ -1875,7 +1875,7 @@ func (s *Server) uiSkills(c echo.Context) error {
 		proposalsErr error
 	)
 	var g errgroup.Group
-	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
+	g.Go(func() error { skills, skillsErr = s.memory.ListSkillsIncludingArchived(ctx); return nil })
 	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
 	g.Go(func() error { proposals, proposalsErr = s.memory.ListSkillCaptureProposals(ctx); return nil })
 	_ = g.Wait()

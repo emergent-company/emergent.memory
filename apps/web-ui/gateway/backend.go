@@ -273,6 +273,7 @@ type MemoryBackend interface {
 	GetMigrationJobStatus(ctx context.Context, jobID string) (*MigrationJob, error)
 	ValidateSchemas(ctx context.Context) (*SchemaValidationResult, error)
 	ListSkills(ctx context.Context) ([]Skill, error)
+	ListSkillsIncludingArchived(ctx context.Context) ([]Skill, error)
 	GetSkill(ctx context.Context, id string) (*Skill, error)
 	CreateSkill(ctx context.Context, name, description, content string) (*Skill, error)
 	UpdateSkill(ctx context.Context, id, description, content string) (*Skill, error)

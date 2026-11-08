@@ -127,6 +127,21 @@ func (m *MemoryClient) ListSkills(ctx context.Context) ([]Skill, error) {
 	return out.Skills, nil
 }
 
+// ListSkillsIncludingArchived lists the project's skills merged with org- and
+// global-scope skills, including archived ones (GET
+// /api/projects/{projectID}/skills?includeArchived=true). Only the skills
+// management page uses this: archived skills must stay visible and restorable
+// there, while agent retrieval keeps excluding them on the server.
+func (m *MemoryClient) ListSkillsIncludingArchived(ctx context.Context) ([]Skill, error) {
+	var out struct {
+		Skills []Skill `json:"skills"`
+	}
+	if err := m.do(ctx, http.MethodGet, "/api/projects/"+m.projectIDFor(ctx)+"/skills?includeArchived=true", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Skills, nil
+}
+
 // GetSkill fetches a single skill by id (GET /api/skills/{id}). Unlike the
 // other skill routes this one is global, not project-scoped.
 func (m *MemoryClient) GetSkill(ctx context.Context, id string) (*Skill, error) {

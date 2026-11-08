@@ -2244,6 +2244,16 @@ func (f *fakeMemory) ListSkills(ctx context.Context) ([]Skill, error) {
 	return f.skills, nil
 }
 
+// ListSkillsIncludingArchived mirrors the real client for the skills page: the
+// page lists archived rows inline, so the fake serves the same skill set.
+func (f *fakeMemory) ListSkillsIncludingArchived(ctx context.Context) ([]Skill, error) {
+	f.recordCatalog("ListSkillsIncludingArchived")
+	if f.skillErr != nil {
+		return nil, f.skillErr
+	}
+	return f.skills, nil
+}
+
 func (f *fakeMemory) GetSkill(ctx context.Context, id string) (*Skill, error) {
 	if f.skillErr != nil {
 		return nil, f.skillErr

@@ -283,9 +283,36 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 			<span class="text-muted text-xs whitespace-nowrap">{ relTime(s.UpdatedAt) }</span>
 		}
 		@table.TableCell("text-right", nil) {
-			<a class="flex justify-end" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) } aria-label={ "Open " + s.Name }>
-				@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-			</a>
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				if s.Archived() {
+					<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/restore") }>
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonPrimary,
+							Size:      ui.ButtonSM,
+							Icon:      "lucide--archive-restore",
+							AriaLabel: "Restore " + s.Name,
+						}) {
+							Restore
+						}
+					</form>
+					<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/restore") }>
+						<input type="hidden" name="pin" value="1"/>
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonSM,
+							Icon:      "lucide--pin",
+							AriaLabel: "Restore and pin " + s.Name,
+						}) {
+							Restore &amp; pin
+						}
+					</form>
+				}
+				<a class="flex justify-end" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) } aria-label={ "Open " + s.Name }>
+					@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+				</a>
+			</div>
 		}
 	}
 }
