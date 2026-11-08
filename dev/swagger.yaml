@@ -12209,7 +12209,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.93.0
+  version: 0.93.1
 paths:
   /.well-known/oauth-authorization-server:
     get:
