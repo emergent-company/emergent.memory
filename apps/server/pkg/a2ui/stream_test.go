@@ -35,9 +35,10 @@ func TestTextFilterRemovesSurface(t *testing.T) {
 	}
 
 	// Split on arbitrary boundaries, including inside the fence marker.
-	var chunks []string
-	for _, piece := range []string{"before\n", "``", "`a2", "ui", "\n", `{"createSurface":{"surface`, `Id":"s1","catalogId":"basic"}}`, "\n```", "\nafter"} {
-		chunks = append(chunks, piece)
+	chunks := []string{
+		"before\n", "``", "`a2", "ui", "\n",
+		`{"createSurface":{"surface`, `Id":"s1","catalogId":"basic"}}`,
+		"\n```", "\nafter",
 	}
 	if got, want := streamAll(NewTextFilter(), chunks...), "before\nafter"; got != want {
 		t.Fatalf("split: got %q, want %q", got, want)
