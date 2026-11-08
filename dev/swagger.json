@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.92.1"
+        "version": "0.93.0"
     },
     "basePath": "/",
     "paths": {
@@ -5281,6 +5281,75 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/feedback": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Files feedback from the authenticated user (or their agent) as a GitHub issue, with the submitter's account identity, project and basic environment details attached automatically. Write what you were trying to do, what happened, and what you expected; one or two sentences is enough.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "feedback"
+                ],
+                "summary": "Submit feedback about Memory",
+                "parameters": [
+                    {
+                        "description": "Feedback (message is required)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_feedback.SubmitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Feedback filed",
+                        "schema": {
+                            "$ref": "#/definitions/domain_feedback.SubmitResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid feedback",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "429": {
+                        "description": "Per-user submission limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "GitHub issue creation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "503": {
+                        "description": "Feedback is not enabled on this deployment",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -15491,7 +15560,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "List all skills available to agents in the project (global + org + project-scoped, merged)",
+                "description": "List all skills available to agents in the project (global + org + project-scoped, merged). Archived skills are excluded by default; pass includeArchived=true for a management listing that includes them. Agents never retrieve or auto-load archived skills either way.",
                 "produces": [
                     "application/json"
                 ],
@@ -15506,6 +15575,12 @@
                         "name": "projectId",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include archived skills (default false)",
+                        "name": "includeArchived",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -15896,6 +15971,82 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills/{id}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns an archived (or stale) skill to the active lifecycle state without replacing its metadata. Optionally pins it, which stops the curator from archiving it again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Restore an archived skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional pin flag",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.RestoreSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -33579,6 +33730,48 @@
                 }
             }
         },
+        "domain_feedback.SubmitRequest": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "description": "Category is bug, feature, usability, docs, or other. Defaults to other.",
+                    "type": "string",
+                    "example": "bug"
+                },
+                "include_context": {
+                    "description": "IncludeContext attaches project, environment and client details. Defaults\nto true; the submitter's account identity is always attached.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "message": {
+                    "description": "Message is the user's feedback. Required.",
+                    "type": "string",
+                    "example": "The MCP search tool returns stale results after I update an entity."
+                },
+                "severity": {
+                    "description": "Severity is low, medium, or high. Optional.",
+                    "type": "string",
+                    "example": "medium"
+                }
+            }
+        },
+        "domain_feedback.SubmitResponse": {
+            "type": "object",
+            "properties": {
+                "duplicate": {
+                    "type": "boolean"
+                },
+                "issue_number": {
+                    "type": "integer"
+                },
+                "issue_url": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_graph.AnalyticsObjectItem": {
             "type": "object",
             "properties": {
@@ -43051,6 +43244,14 @@
                 }
             }
         },
+        "domain_skills.RestoreSkillDTO": {
+            "type": "object",
+            "properties": {
+                "pin": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_skills.SkillDTO": {
             "type": "object",
             "properties": {
@@ -45174,7 +45375,7 @@
                     "type": "integer"
                 },
                 "minApprovedBeforeAuto": {
-                    "description": "MinApprovedBeforeAuto is the earned-trust floor: the agent must have had\nat least this many proposals approved by a human before auto-apply starts.",
+                    "description": "MinApprovedBeforeAuto is the earned-trust floor: the agent must have had\nat least this many proposals approved by a human before auto-apply starts.\nThis is a non-pointer field, so an omitted value and an explicit 0 are\nindistinguishable; both mean \"use the default floor\" (1). The floor can\nnever be configured down to \"the first proposal is automatic\":\nNormalized() raises any value \u003c 1 to 1.",
                     "type": "integer"
                 },
                 "mode": {
