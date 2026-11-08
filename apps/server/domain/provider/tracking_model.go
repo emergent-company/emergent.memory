@@ -102,21 +102,24 @@ func (m *TrackingModel) GenerateContent(
 ) iter.Seq2[*adkmodel.LLMResponse, error] {
 	return func(yield func(*adkmodel.LLMResponse, error) bool) {
 		for resp, err := range m.inner.GenerateContent(ctx, req, stream) {
+			// Record before yielding: the consumer may stop the iteration while
+			// handling this response (a run-finalizing tool such as submit makes
+			// ADK return false), and an early return here must not drop the
+			// usage event for the response that ended the run.
+			if err == nil && resp != nil && !resp.Partial && resp.UsageMetadata != nil {
+				m.recordUsage(ctx, req, resp)
+			}
 			if !yield(resp, err) {
 				return
 			}
 			if err != nil {
 				continue
 			}
-			// Only record usage on the final, complete response.
-			if resp != nil && !resp.Partial {
-				if resp.UsageMetadata == nil {
-					m.log.Debug("trackingModel: final response has nil UsageMetadata — skipping",
-						"model", m.inner.Name(),
-					)
-				} else {
-					m.recordUsage(ctx, req, resp)
-				}
+			// Only log missing usage on the final, complete response.
+			if resp != nil && !resp.Partial && resp.UsageMetadata == nil {
+				m.log.Debug("trackingModel: final response has nil UsageMetadata — skipping",
+					"model", m.inner.Name(),
+				)
 			}
 		}
 	}
