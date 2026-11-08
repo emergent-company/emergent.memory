@@ -468,6 +468,16 @@ type fakeMemory struct {
 	updatedSkillID string  // last id passed to UpdateSkill
 	deletedSkillID string  // last id passed to DeleteSkill
 
+	proposals          []SkillCaptureProposal           // returned by ListSkillProposals
+	proposalByID       map[string]*SkillCaptureProposal // returned by GetSkillProposal
+	proposalErr        error                            // failure for any proposal read
+	proposalApproveErr error                            // failure for ApproveSkillProposal
+	proposalRejectErr  error                            // failure for RejectSkillProposal
+	proposalStatus     string                           // last status filter passed
+	approvedProposalID string                           // last id passed to ApproveSkillProposal
+	rejectedProposalID string                           // last id passed to RejectSkillProposal
+	proposalNote       string                           // last note passed to approve/reject
+
 	backups           []Backup            // returned by ListBackups
 	backupErr         error               // failure for any backup read/list method
 	createdBackupReq  CreateBackupRequest // last create request forwarded
@@ -2269,6 +2279,42 @@ func (f *fakeMemory) DeleteSkill(ctx context.Context, id string) error {
 		return f.skillErr
 	}
 	f.deletedSkillID = id
+	return nil
+}
+
+func (f *fakeMemory) ListSkillProposals(ctx context.Context, status string, limit int) ([]SkillCaptureProposal, error) {
+	f.proposalStatus = status
+	if f.proposalErr != nil {
+		return nil, f.proposalErr
+	}
+	return f.proposals, nil
+}
+
+func (f *fakeMemory) GetSkillProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
+	if f.proposalErr != nil {
+		return nil, f.proposalErr
+	}
+	if p, ok := f.proposalByID[id]; ok {
+		return p, nil
+	}
+	return nil, errTest
+}
+
+func (f *fakeMemory) ApproveSkillProposal(ctx context.Context, id, note string) error {
+	if f.proposalApproveErr != nil {
+		return f.proposalApproveErr
+	}
+	f.approvedProposalID = id
+	f.proposalNote = note
+	return nil
+}
+
+func (f *fakeMemory) RejectSkillProposal(ctx context.Context, id, note string) error {
+	if f.proposalRejectErr != nil {
+		return f.proposalRejectErr
+	}
+	f.rejectedProposalID = id
+	f.proposalNote = note
 	return nil
 }
 

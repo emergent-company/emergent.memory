@@ -1,0 +1,395 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Skill proposals (automatic skill capture inbox) ---
+
+// SkillCaptureProposalsPage renders the capture-review inbox: the proposals a
+// background review staged from agent runs, filtered by status. Nothing listed
+// here is a skill yet — approving one writes it through the same store as a
+// manual create. captureMode is the project's master switch, used only to
+// explain an empty inbox ("capture is off") rather than to gate the page.
+templ SkillCaptureProposalsPage(proposals []SkillCaptureProposal, status, captureMode string, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "Proposals")), "", "Skill proposals", "Skills your agents proposed from their own runs. Nothing here is a skill until you approve it.")
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageErrorNotice("Failed to load proposals", loadErr)
+		} else {
+			@captureProposalFilterStrip(status)
+			if captureMode == "off" && status == captureProposalPending {
+				@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex flex-wrap items-center gap-2"}) {
+					@ui.IconSpan("lucide--info", "size-4 shrink-0 text-muted-faint")
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+						Skill capture is off for this project, so no proposal can arrive.
+						<a class="link" href="/settings">Turn it on in Settings → General → Skill capture</a>.
+					}
+				}
+			}
+			if len(proposals) == 0 {
+				@captureProposalsEmpty(status)
+			} else {
+				@sectionCount(countLabel(len(proposals), "proposal", "proposals"))
+				<div class="flex flex-col gap-2">
+					for _, p := range proposals {
+						@captureProposalCard(p)
+					}
+				</div>
+			}
+		}
+	}
+}
+
+// captureProposalFilterStrip is the status filter (pending / applied / rejected /
+// failed / all) as a segmented control of link buttons.
+templ captureProposalFilterStrip(active string) {
+	<div class="mb-4 flex flex-wrap items-center gap-2">
+		<div class="join">
+			for _, s := range captureProposalFilterStatuses {
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       captureProposalFilterHref(s),
+					Variant:    captureProposalFilterVariant(s, active),
+					Size:       ui.ButtonSM,
+					ExtraClass: "join-item",
+				}) {
+					{ captureProposalFilterLabel(s) }
+				}
+			}
+		</div>
+	</div>
+}
+
+templ captureProposalsEmpty(status string) {
+	if status == captureProposalPending {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--inbox",
+			Title:       "No proposals waiting",
+			Description: "Nothing needs a decision. An agent proposes a skill after enough successful runs — open another filter to see what was already approved or rejected.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--inbox",
+			Title:       "No proposals here",
+			Description: "Nothing matches this filter yet.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}
+
+// captureProposalCard is one row of the inbox: what would be written, by which agent,
+// and how confident the review was. The whole row links to the detail page,
+// which holds the content and the decision form.
+templ captureProposalCard(p SkillCaptureProposal) {
+	<a class="hover:bg-base-200/40 flex items-start gap-3 rounded-box border border-base-content/10 p-3 transition-colors" href={ templ.URL("/skills/proposals/" + url.PathEscape(p.ID)) }>
+		@ui.IconTile(captureProposalKindIcon(p.Kind), ui.IconTileProps{Tone: captureProposalKindTone(p.Kind)})
+		<div class="min-w-0 flex-1">
+			<div class="flex flex-wrap items-center gap-2">
+				<span class="truncate text-sm font-medium">{ p.Name }</span>
+				@ui.Badge(ui.BadgeProps{
+					Label:   captureProposalKindLabel(p.Kind),
+					Variant: captureProposalKindIntent(p.Kind),
+					Size:    ui.BadgeSizeXS,
+				})
+				if p.Status != captureProposalPending {
+					@ui.Badge(ui.BadgeProps{
+						Label:   captureProposalStatusLabel(p.Status),
+						Variant: captureProposalStatusIntent(p.Status),
+						Size:    ui.BadgeSizeXS,
+						Dot:     true,
+					})
+				}
+				@ui.Badge(ui.BadgeProps{
+					Label:   captureProposalConfidenceLabel(p.Confidence),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+				})
+			</div>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "line-clamp-2"}) {
+				{ p.Description }
+			}
+			<div class="text-muted-faint mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+				if p.AgentName != "" {
+					<span>{ p.AgentName }</span>
+					<span aria-hidden="true">·</span>
+				}
+				<span>{ captureProposalSourceLabel(p.Source) }</span>
+				<span aria-hidden="true">·</span>
+				<span>{ relTime(p.CreatedAt) }</span>
+				if len(p.Findings) > 0 {
+					<span aria-hidden="true">·</span>
+					@ui.Badge(ui.BadgeProps{
+						Label:   strconv.Itoa(len(p.Findings)) + " lint",
+						Variant: ui.BadgeWarning,
+						Style:   ui.BadgeStyleSoft,
+						Size:    ui.BadgeSizeXS,
+					})
+				}
+			</div>
+		</div>
+		@ui.IconSpan("lucide--chevron-right", "mt-1 size-4 shrink-0 text-muted-subtle")
+	</a>
+}
+
+// --- Skill proposal detail ---
+
+// SkillCaptureProposalDetailPage renders one proposal: the resulting content (or the
+// delete it proposes), the evidence behind it, lint findings, and the decision
+// form while the row is awaiting review. captureMode only feeds the "capture is
+// off" note; a settled proposal shows its outcome instead of the form.
+templ SkillCaptureProposalDetailPage(p *SkillCaptureProposal, captureMode string, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Proposal unavailable", loadErr)
+		} else {
+			@captureProposalDetailHeader(p)
+			@captureProposalMetaRow(p)
+			@flashToasts(flashMsg, flashErr)
+			if p.Kind == "patch" {
+				@captureProposalPatchBlock(p)
+			}
+			if p.Kind == "delete" {
+				@captureProposalDeleteBlock(p)
+			} else {
+				@captureProposalContentBlock(p)
+			}
+			if p.Evidence != "" {
+				@captureProposalEvidenceBlock(p)
+			}
+			if len(p.Findings) > 0 {
+				@captureProposalFindingsBlock(p)
+			}
+			if p.AwaitingReview() {
+				@captureProposalDecisionForm(p, captureMode)
+			} else {
+				@captureProposalOutcomeBlock(p)
+			}
+		}
+	}
+}
+
+templ captureProposalDetailHeader(p *SkillCaptureProposal) {
+	@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "Proposals", "/skills/proposals", p.Name)), "", p.Name, p.Description)
+}
+
+templ captureProposalMetaRow(p *SkillCaptureProposal) {
+	<div class="mb-6 flex flex-wrap items-center gap-2">
+		@ui.Badge(ui.BadgeProps{
+			Label:   captureProposalKindLabel(p.Kind),
+			Variant: captureProposalKindIntent(p.Kind),
+			Size:    ui.BadgeSizeXS,
+		})
+		@ui.Badge(ui.BadgeProps{
+			Label:   captureProposalStatusLabel(p.Status),
+			Variant: captureProposalStatusIntent(p.Status),
+			Size:    ui.BadgeSizeXS,
+			Dot:     true,
+		})
+		if p.AutoApplied {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "auto-applied",
+				Variant: ui.BadgeSuccess,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--zap",
+			})
+		}
+		@ui.Badge(ui.BadgeProps{
+			Label:   captureProposalConfidenceLabel(p.Confidence),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeXS,
+		})
+		if p.AgentName != "" {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "from " + p.AgentName,
+				Variant: ui.BadgeNeutral,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--bot",
+			})
+		}
+		@ui.Badge(ui.BadgeProps{
+			Label:   captureProposalSourceLabel(p.Source),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--history",
+		})
+		@ui.Badge(ui.BadgeProps{
+			Label:   "proposed " + relTime(p.CreatedAt),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--clock",
+		})
+		@monoMeta(p.ID, "text-muted-faint")
+	</div>
+}
+
+// captureProposalContentBlock renders the skill body the proposal would write. For a
+// patch the server already merged old + new, so this is the full resulting
+// skill, not a fragment.
+templ captureProposalContentBlock(p *SkillCaptureProposal) {
+	@ui.Section("Skill content", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		if p.Kind == "patch" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mb-3"}) {
+				The full skill after this update. Approving writes this version over the current one.
+			}
+		}
+		<div class="memory-md">
+			@templ.Raw(renderMarkdown(p.Content))
+		</div>
+	}
+}
+
+templ captureProposalPatchBlock(p *SkillCaptureProposal) {
+	@ui.Section("Proposed change", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="grid gap-3 md:grid-cols-2">
+			<div>
+				<p class="text-muted mb-1 text-xs font-medium tracking-wide uppercase">Before</p>
+				@ui.SoftBox(ui.SoftBoxProps{Class: "overflow-x-auto"}) {
+					<pre class="font-mono text-xs whitespace-pre-wrap">{ p.PatchOld }</pre>
+				}
+			</div>
+			<div>
+				<p class="text-muted mb-1 text-xs font-medium tracking-wide uppercase">After</p>
+				@ui.SoftBox(ui.SoftBoxProps{Class: "overflow-x-auto"}) {
+					<pre class="font-mono text-xs whitespace-pre-wrap">{ p.PatchNew }</pre>
+				}
+			</div>
+		</div>
+	}
+}
+
+templ captureProposalDeleteBlock(p *SkillCaptureProposal) {
+	@ui.Section("Proposed deletion", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+			The review judged <span class="font-mono">{ p.Name }</span> no longer accurate or useful. Approving deletes it from the library; rejecting keeps it.
+		}
+	}
+}
+
+templ captureProposalEvidenceBlock(p *SkillCaptureProposal) {
+	@ui.Section("Why it was proposed", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<p class="text-sm whitespace-pre-wrap">{ p.Evidence }</p>
+	}
+}
+
+templ captureProposalFindingsBlock(p *SkillCaptureProposal) {
+	@ui.Section("Lint findings", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<ul class="flex flex-col gap-2">
+			for _, f := range p.Findings {
+				<li class="flex flex-wrap items-center gap-2 rounded-box border border-base-content/10 p-2">
+					@ui.Badge(ui.BadgeProps{
+						Label:   f.Severity,
+						Variant: lintFindingIntent(f.Severity),
+						Size:    ui.BadgeSizeXS,
+					})
+					<span class="font-mono text-xs">{ f.Code }</span>
+					<span class="text-sm">{ f.Message }</span>
+				</li>
+			}
+		</ul>
+	}
+}
+
+// captureProposalDecisionForm is the approve/reject form. One note field feeds both
+// actions: the buttons submit to different routes via formaction, which keeps a
+// single input (and a single label) instead of two duplicate forms.
+templ captureProposalDecisionForm(p *SkillCaptureProposal, captureMode string) {
+	@ui.Section("Decision", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<form method="post" action={ templ.URL("/skills/proposals/" + url.PathEscape(p.ID) + "/approve") } class="flex flex-col gap-4">
+			if captureMode == "off" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+					Skill capture is off for this project, but this proposal is already staged — approving it still works.
+				}
+			}
+			@form.FormControl("proposal-note", "Review note", form.LabelAbove, "Optional. Stored on the proposal, so the decision is understandable later.", "", nil) {
+				<input id="proposal-note" name="note" type="text" class="input w-full" placeholder="e.g. this is how we handled the empty-results case" maxlength="500"/>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--check",
+				}) {
+					{ captureProposalApproveLabel(p.Kind) }
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+					Attrs:   templ.Attributes{"formaction": "/skills/proposals/" + url.PathEscape(p.ID) + "/reject"},
+				}) {
+					Reject
+				}
+			}
+		</form>
+	}
+}
+
+// captureProposalOutcomeBlock shows how a settled proposal ended, plus a route back to
+// the library when it was applied.
+templ captureProposalOutcomeBlock(p *SkillCaptureProposal) {
+	@ui.Section("Outcome", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{
+				Label:   captureProposalStatusLabel(p.Status),
+				Variant: captureProposalStatusIntent(p.Status),
+				Size:    ui.BadgeSizeSM,
+				Dot:     true,
+			})
+			if p.AppliedAt != "" {
+				<span class="text-muted text-xs">applied { relTime(p.AppliedAt) }</span>
+			}
+			if p.Status == captureProposalApplied {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/skills",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--sparkles",
+				}) {
+					View in skills
+				}
+			}
+		</div>
+		if p.ReviewNote != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+				<span class="font-medium">Review note:</span>
+				{ p.ReviewNote }
+			}
+		}
+	}
+}

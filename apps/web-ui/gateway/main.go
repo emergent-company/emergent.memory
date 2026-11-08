@@ -503,6 +503,12 @@ func main() {
 	e.POST("/blueprints/migrate/rollback", s.uiRollbackMigration)
 	e.GET("/skills", s.uiSkills)
 	e.GET("/skills/new", s.uiNewSkill)
+	// Proposal routes are static and must be registered before the ":id"
+	// skill routes so /skills/proposals is not read as a skill id.
+	e.GET("/skills/proposals", s.uiSkillCaptureProposals)
+	e.GET("/skills/proposals/:id", s.uiSkillCaptureProposal)
+	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+	e.POST("/skills/proposals/:id/reject", s.uiRejectSkillCaptureProposal)
 	e.GET("/skills/:id", s.uiSkill)
 	e.POST("/skills", s.uiCreateSkill)
 	e.POST("/skills/:id/update", s.uiUpdateSkill)

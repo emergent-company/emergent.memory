@@ -18,10 +18,11 @@ import (
 // SkillsPage renders the skill browser: a list of skills. A failed list fetch
 // renders the whole-page error state; flashMsg/flashErr surface PRG feedback
 // from the create/delete flows. assistantAgent gates the "Add with assistant"
-// button ("" hides it); usedBy maps each skill name to its agent-usage count.
-templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
+// button ("" hides it); usedBy maps each skill name to its agent-usage count;
+// pendingProposals badges the inbox link (0 shows no count).
+templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int, pendingProposals int) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@skillsHeader(assistantAgent)
+		@skillsHeader(assistantAgent, pendingProposals)
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageErrorNotice("Failed to load skills", loadErr)
@@ -36,9 +37,26 @@ templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error,
 	}
 }
 
-templ skillsHeader(assistantAgent string) {
+templ skillsHeader(assistantAgent string, pendingProposals int) {
 	@pageHeader("Agents", "Skills", "Reusable capabilities agents can call — write one, attach it to any agent.") {
 		<div class="flex items-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeLink,
+				Href:      "/skills/proposals",
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Icon:      "lucide--inbox",
+				AriaLabel: captureProposalInboxAriaLabel(pendingProposals),
+			}) {
+				Proposals
+				if pendingProposals > 0 {
+					@ui.Badge(ui.BadgeProps{
+						Label:   strconv.Itoa(pendingProposals),
+						Variant: ui.BadgeWarning,
+						Size:    ui.BadgeSizeXS,
+					})
+				}
+			}
 			if assistantAgent != "" {
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeButton,

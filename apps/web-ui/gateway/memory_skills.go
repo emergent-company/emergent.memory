@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
 // Branch is one graph branch (GET /api/graph/branches). The "main" branch is
@@ -141,4 +143,118 @@ func (m *MemoryClient) UpdateSkill(ctx context.Context, id, description, content
 // /api/projects/{projectID}/skills/{id}, 204 no body).
 func (m *MemoryClient) DeleteSkill(ctx context.Context, id string) error {
 	return m.do(ctx, http.MethodDelete, "/api/projects/"+m.projectIDFor(ctx)+"/skills/"+id, nil, nil)
+}
+
+// --- skill capture proposals (kb.skill_proposals) ---
+
+// Proposal statuses as memory reports them. "applying" is transient: a row is
+// claimed by one reviewer while the write runs.
+const (
+	captureProposalPending  = "pending"
+	captureProposalApplying = "applying"
+	captureProposalApplied  = "applied"
+	captureProposalRejected = "rejected"
+	captureProposalFailed   = "failed"
+)
+
+// SkillCaptureFinding is one linter finding recorded on a staged proposal.
+// Errors never stage, so these are warnings the reviewer should weigh — they
+// render beside the candidate content, not as a blocker.
+type SkillCaptureFinding struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+// SkillCaptureProposal mirrors memory's ProposalDTO: a skill the background capture
+// review derived from an agent run and staged for a human decision. Content is
+// the resulting skill body for both "create" and "patch" (the server merges a
+// patch before staging it); PatchOld/PatchNew carry the diff fragments and are
+// empty for the other kinds. "delete" proposals carry no content at all.
+type SkillCaptureProposal struct {
+	ID          string                `json:"id"`
+	ProjectID   string                `json:"projectId"`
+	AgentID     string                `json:"agentId,omitempty"`
+	AgentRunID  string                `json:"agentRunId,omitempty"`
+	AgentName   string                `json:"agentName,omitempty"`
+	ReviewID    string                `json:"reviewId,omitempty"`
+	Kind        string                `json:"kind"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Content     string                `json:"content"`
+	BaseSkillID string                `json:"baseSkillId,omitempty"`
+	PatchOld    string                `json:"patchOld,omitempty"`
+	PatchNew    string                `json:"patchNew,omitempty"`
+	Evidence    string                `json:"evidence,omitempty"`
+	Confidence  float64               `json:"confidence"`
+	Source      string                `json:"source"`
+	Status      string                `json:"status"`
+	AutoApplied bool                  `json:"autoApplied"`
+	ReviewNote  string                `json:"reviewNote,omitempty"`
+	Findings    []SkillCaptureFinding `json:"findings,omitempty"`
+	CreatedAt   string                `json:"createdAt"`
+	AppliedAt   string                `json:"appliedAt,omitempty"`
+}
+
+// AwaitingReview reports whether the proposal is still a decision for a human.
+// An "applying" row is mid-write — another reviewer already claimed it — so it
+// is deliberately not actionable: offering the buttons would race that write and
+// come back as a 409.
+func (p *SkillCaptureProposal) AwaitingReview() bool {
+	return p != nil && p.Status == captureProposalPending
+}
+
+// ListSkillProposals lists the project's staged proposals (GET
+// /api/projects/{projectID}/skills/proposals). status is pending, applied,
+// rejected, failed, or all ("" also means all); limit 0 uses the server default
+// (50, max 200).
+func (m *MemoryClient) ListSkillProposals(ctx context.Context, status string, limit int) ([]SkillCaptureProposal, error) {
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var out struct {
+		Proposals []SkillCaptureProposal `json:"proposals"`
+	}
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Proposals, nil
+}
+
+// GetSkillProposal fetches one staged proposal (GET
+// /api/projects/{projectID}/skills/proposals/{id}). The server returns the DTO
+// bare — no {success,data} envelope on this route.
+func (m *MemoryClient) GetSkillProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
+	var out SkillCaptureProposal
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id)
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApproveSkillProposal applies a proposal through the normal skills store (POST
+// …/proposals/{id}/approve). The security scan always re-runs server-side and can
+// still block the write, so the error is surfaced to the operator rather than
+// swallowed. note is optional review context stored on the row.
+func (m *MemoryClient) ApproveSkillProposal(ctx context.Context, id, note string) error {
+	body := map[string]any{"note": note}
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id) + "/approve"
+	return m.do(ctx, http.MethodPost, path, body, nil)
+}
+
+// RejectSkillProposal discards a proposal without touching the skill library
+// (POST …/proposals/{id}/reject).
+func (m *MemoryClient) RejectSkillProposal(ctx context.Context, id, note string) error {
+	body := map[string]any{"note": note}
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id) + "/reject"
+	return m.do(ctx, http.MethodPost, path, body, nil)
 }

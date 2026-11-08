@@ -179,7 +179,7 @@ func TestRenderSkillsPage(t *testing.T) {
 		{ID: "s2", Name: "recall-memory", Description: "Remembers things", Scope: "global",
 			UpdatedAt: "2026-08-26T09:00:00Z"},
 	}
-	html := renderHTML(t, SkillsPage(skills, nil, "", nil, "", map[string]int{"summarize-email": 2, "recall-memory": 0}))
+	html := renderHTML(t, SkillsPage(skills, nil, "", nil, "", map[string]int{"summarize-email": 2, "recall-memory": 0}, 3))
 	for _, want := range []string{
 		"Skills", "summarize-email", "Condenses threads", "recall-memory", "Remembers things",
 		"Used by", "2 agents", "Unused",
@@ -200,22 +200,22 @@ func TestRenderSkillsPage(t *testing.T) {
 	}
 
 	// With an assistant agent configured the "Add with assistant" button shows.
-	htmlWithAssistant := renderHTML(t, SkillsPage(skills, nil, "", nil, "agent-1", nil))
+	htmlWithAssistant := renderHTML(t, SkillsPage(skills, nil, "", nil, "agent-1", nil, 0))
 	if !strings.Contains(htmlWithAssistant, "Add with assistant") {
 		t.Error("assistant button missing when assistant configured")
 	}
 
-	htmlEmpty := renderHTML(t, SkillsPage(nil, nil, "", nil, "", nil))
+	htmlEmpty := renderHTML(t, SkillsPage(nil, nil, "", nil, "", nil, 0))
 	if !strings.Contains(htmlEmpty, "No skills yet") {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, SkillsPage(nil, errTest, "", nil, "", nil))
+	htmlErr := renderHTML(t, SkillsPage(nil, errTest, "", nil, "", nil, 0))
 	if !strings.Contains(htmlErr, "Failed to load skills") {
 		t.Error("error state missing")
 	}
 
-	htmlFlash := renderHTML(t, SkillsPage(nil, nil, "Skill created.", nil, "", nil))
+	htmlFlash := renderHTML(t, SkillsPage(nil, nil, "Skill created.", nil, "", nil, 0))
 	if !strings.Contains(htmlFlash, "Skill created.") {
 		t.Error("flash message missing")
 	}

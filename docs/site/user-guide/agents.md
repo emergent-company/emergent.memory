@@ -332,6 +332,16 @@ agent writes.
 
 **Review the inbox**
 
+Open **Skills → Proposals** (the button next to *Add skill*; its badge counts
+what is waiting). The inbox lists what agents proposed, filtered by
+*pending / applied / rejected / failed / all*. Each row opens a detail page with
+the skill body the proposal would write, the evidence behind it, and any lint
+findings. **Approve** applies it; **Reject** discards it. Both accept an
+optional review note, which is stored on the proposal so a later reader can see
+why it was decided that way.
+
+The same inbox is available over the API:
+
 ```bash
 GET  /api/projects/:projectId/skills/proposals              # pending by default
 GET  /api/projects/:projectId/skills/proposals/:proposalId

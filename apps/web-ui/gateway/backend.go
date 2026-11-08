@@ -277,6 +277,11 @@ type MemoryBackend interface {
 	CreateSkill(ctx context.Context, name, description, content string) (*Skill, error)
 	UpdateSkill(ctx context.Context, id, description, content string) (*Skill, error)
 	DeleteSkill(ctx context.Context, id string) error
+	// Skill-capture proposal inbox (kb.skill_proposals).
+	ListSkillProposals(ctx context.Context, status string, limit int) ([]SkillCaptureProposal, error)
+	GetSkillProposal(ctx context.Context, id string) (*SkillCaptureProposal, error)
+	ApproveSkillProposal(ctx context.Context, id, note string) error
+	RejectSkillProposal(ctx context.Context, id, note string) error
 	ListBackups(ctx context.Context, orgID string) ([]Backup, int, error)
 	GetBackup(ctx context.Context, orgID, backupID string) (*Backup, error)
 	CreateBackup(ctx context.Context, includeDeleted, includeChat bool, retentionDays int) (*Backup, error)

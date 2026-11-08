@@ -1786,10 +1786,15 @@ func (s *Server) uiSkills(c echo.Context) error {
 		skillsErr error
 		agents    []AgentDefinitionSummary
 		agentErr  error
+		pending   int
 	)
 	var g errgroup.Group
 	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
 	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
+	// Best-effort: the badge is decoration, so an older memory without the
+	// proposals route (or a transient failure) shows no count rather than
+	// failing the page.
+	g.Go(func() error { pending = s.pendingCaptureProposalCount(ctx); return nil })
 	_ = g.Wait()
 
 	var flashMsg string
@@ -1807,7 +1812,7 @@ func (s *Server) uiSkills(c echo.Context) error {
 	if skillsErr != nil {
 		loadErr = userFacingError(skillsErr)
 	}
-	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, flashMsg, flashErr, assistant, usedBy))
+	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, flashMsg, flashErr, assistant, usedBy, pending))
 }
 
 // uiSkill renders one skill: scope + provenance badges, the full content, the
