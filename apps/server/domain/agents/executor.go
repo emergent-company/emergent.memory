@@ -467,13 +467,14 @@ func flushAnswerText(filter *a2ui.TextFilter) []StreamEvent {
 	return []StreamEvent{{Type: StreamEventTextDelta, Text: text}}
 }
 
-// stripSurfaceText removes A2UI fenced blocks from text that is about to be
-// stored or shown again (persisted reply, run summary). The stored text is
-// replayed verbatim by history and by the chat handler's empty-response
-// fallback, so a surface left in it would reach the user as raw JSONL.
-func stripSurfaceText(text string) (string, []a2ui.Message) {
-	msgs, rest, _ := a2ui.ExtractFromText(text)
-	return rest, msgs
+// replyForStorage prepares a reply for persistence: the text with every A2UI
+// block removed, the surfaces the blocks carried, and whether a block was
+// present at all. hasBlock is what lets a fence-only answer persist an empty
+// text instead of the raw block — a valid block yields no text, a malformed one
+// must not be kept either.
+func replyForStorage(text string) (stored string, surfaces []a2ui.Message, hasBlock bool) {
+	msgs, rest, found := a2ui.ExtractFromText(text)
+	return rest, msgs, found || rest != text
 }
 
 // ModelLimitsLookup is a narrow interface for querying model token limits
@@ -5228,8 +5229,8 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	// is only a surface). Strip any A2UI block here so neither path can show raw
 	// JSONL; the extracted surfaces ride along so citation derivation on reload
 	// still sees them.
-	if stripped, surfaces := stripSurfaceText(text); stripped != "" || len(surfaces) > 0 {
-		text = stripped
+	if stored, surfaces, hasBlock := replyForStorage(text); hasBlock {
+		text = stored
 		if len(surfaces) > 0 {
 			contentMap["a2ui"] = surfaces
 		}
@@ -5309,7 +5310,7 @@ func (ae *AgentExecutor) buildSummary(lastEvent *session.Event, lastTextEvent *s
 	// The summary feeds the chat handler's empty-response fallback, which streams
 	// it as an answer: it must never carry an A2UI block.
 	if text != "" {
-		text, _ = stripSurfaceText(text)
+		text, _, _ = replyForStorage(text)
 	}
 	if text != "" {
 		summary["final_response"] = text

@@ -63,32 +63,53 @@ func TestFlushAnswerText(t *testing.T) {
 	}
 }
 
-func TestStripSurfaceText(t *testing.T) {
+func TestReplyForStorage(t *testing.T) {
 	valid := "```a2ui\n" +
 		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n```"
 
-	text, surfaces := stripSurfaceText("Prose before.\n" + valid + "\nProse after.")
+	// Prose plus a valid surface: prose kept, surface extracted.
+	stored, surfaces, hasBlock := replyForStorage("Prose before.\n" + valid + "\nProse after.")
+	if !hasBlock {
+		t.Fatal("hasBlock = false, want true")
+	}
 	if len(surfaces) != 1 || surfaces[0].CreateSurface == nil || surfaces[0].CreateSurface.SurfaceID != "s1" {
 		t.Fatalf("surfaces = %+v, want the s1 createSurface", surfaces)
 	}
-	if strings.Contains(text, "```a2ui") || strings.Contains(text, "createSurface") {
-		t.Fatalf("text still carries the block: %q", text)
+	if strings.Contains(stored, "```a2ui") || strings.Contains(stored, "createSurface") {
+		t.Fatalf("stored text still carries the block: %q", stored)
 	}
-	if !strings.Contains(text, "Prose before.") || !strings.Contains(text, "Prose after.") {
-		t.Fatalf("text lost the prose: %q", text)
-	}
-
-	// An invalid block is stripped even though it yields no surface.
-	text, surfaces = stripSurfaceText("Answer.\n```a2ui\nnot json\n```")
-	if len(surfaces) != 0 {
-		t.Fatalf("invalid block produced surfaces: %+v", surfaces)
-	}
-	if strings.Contains(text, "not json") || strings.Contains(text, "```a2ui") {
-		t.Fatalf("invalid block leaked into stored text: %q", text)
+	if !strings.Contains(stored, "Prose before.") || !strings.Contains(stored, "Prose after.") {
+		t.Fatalf("stored text lost the prose: %q", stored)
 	}
 
-	// No block: text is untouched.
-	if text, surfaces := stripSurfaceText("plain answer"); text != "plain answer" || surfaces != nil {
-		t.Fatalf("plain text changed: %q / %+v", text, surfaces)
+	// A valid surface alone: nothing to store, but the surface is reported.
+	if stored, surfaces, hasBlock := replyForStorage(valid); !hasBlock || stored != "" || len(surfaces) != 1 {
+		t.Fatalf("valid-only: stored=%q surfaces=%d hasBlock=%v", stored, len(surfaces), hasBlock)
+	}
+
+	// An INVALID surface alone is the case that used to keep the raw block: it
+	// must store empty text, still reporting that a block was present.
+	for name, block := range map[string]string{
+		"malformed":   "```a2ui\nnot json\n```",
+		"truncated":   "```a2ui\n" + `{"createSurface":{"surfaceId":"s1"`,
+		"unknown tag": "```a2ui\n" + `{"updateComponents":{"surfaceId":"s1","components":[{"id":"x","component":"bogus"}]}}` + "\n```",
+	} {
+		stored, surfaces, hasBlock := replyForStorage(block)
+		if !hasBlock {
+			t.Fatalf("%s: hasBlock = false, want true", name)
+		}
+		if stored != "" || len(surfaces) != 0 {
+			t.Fatalf("%s: stored=%q surfaces=%+v, want empty", name, stored, surfaces)
+		}
+	}
+
+	// A malformed block next to prose keeps the prose.
+	if stored, _, hasBlock := replyForStorage("Answer.\n```a2ui\nnot json\n```"); !hasBlock || stored != "Answer." {
+		t.Fatalf("prose+invalid: stored=%q hasBlock=%v", stored, hasBlock)
+	}
+
+	// No block: text untouched, nothing reported.
+	if stored, surfaces, hasBlock := replyForStorage("plain answer"); hasBlock || stored != "plain answer" || surfaces != nil {
+		t.Fatalf("plain text changed: %q / %+v / %v", stored, surfaces, hasBlock)
 	}
 }
