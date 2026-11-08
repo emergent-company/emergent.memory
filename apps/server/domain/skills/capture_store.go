@@ -123,6 +123,13 @@ func (r *Repository) FinishReview(ctx context.Context, id uuid.UUID, status, mod
 
 // --- Proposals ---
 
+// proposalReclaimablePredicate is the single definition of "a reviewer may take
+// this proposal": it is pending, or it was left `applying` by a reviewer whose
+// claim went stale (crashed between claim and write). A fresh `applying` row is
+// deliberately excluded — that is the double-review guard. The interval must
+// stay in sync with ReleaseStaleProposals.
+const proposalReclaimablePredicate = "(status = ? OR (status = ? AND (claimed_at IS NULL OR claimed_at < now() - interval '10 minutes')))"
+
 // CreateProposal inserts a staged proposal.
 func (r *Repository) CreateProposal(ctx context.Context, p *SkillProposal) error {
 	if p.ID == uuid.Nil {
@@ -183,8 +190,7 @@ func (r *Repository) ClaimProposal(ctx context.Context, id uuid.UUID) (bool, err
 		Set("status = ?", ProposalStatusApplying).
 		Set("claimed_at = now()").
 		Where("id = ?", id).
-		Where("(status = ? OR (status = ? AND (claimed_at IS NULL OR claimed_at < now() - interval '10 minutes')))",
-			ProposalStatusPending, ProposalStatusApplying).
+		Where(proposalReclaimablePredicate, ProposalStatusPending, ProposalStatusApplying).
 		Exec(ctx)
 	if err != nil {
 		return false, apperror.NewInternal("failed to claim skill proposal", err)
@@ -217,16 +223,19 @@ func (r *Repository) MarkProposalApplied(ctx context.Context, id uuid.UUID, revi
 	return nil
 }
 
-// MarkProposalRejected records a human rejection. Returns false when the row
-// was no longer pending (another reviewer won).
+// MarkProposalRejected records a human rejection. It accepts a pending row or
+// one whose `applying` claim went stale (a crashed reviewer), so a stranded
+// proposal can always be dismissed. Returns false when the row was no longer
+// reviewable (another reviewer won, or the proposal is mid-apply).
 func (r *Repository) MarkProposalRejected(ctx context.Context, id uuid.UUID, reviewedBy uuid.UUID, note string) (bool, error) {
 	res, err := r.db.NewUpdate().
 		TableExpr("kb.skill_proposals").
 		Set("status = ?", ProposalStatusRejected).
+		Set("claimed_at = NULL").
 		Set("reviewed_by = ?", reviewedBy).
 		Set("review_note = ?", note).
 		Where("id = ?", id).
-		Where("status = ?", ProposalStatusPending).
+		Where(proposalReclaimablePredicate, ProposalStatusPending, ProposalStatusApplying).
 		Exec(ctx)
 	if err != nil {
 		return false, apperror.NewInternal("failed to reject skill proposal", err)
@@ -253,6 +262,30 @@ func (r *Repository) MarkProposalPending(ctx context.Context, id uuid.UUID, note
 		return apperror.NewInternal("failed to release skill proposal", err)
 	}
 	return nil
+}
+
+// ReleaseStaleProposals sweeps proposals stranded in `applying` for more than
+// ten minutes back to `pending`, so they reappear in the review inbox. It is
+// called when the inbox is read; the claim predicate also reclaims such a row
+// directly, so this is not the only recovery path. Returns the number of rows
+// released. A fresh claim is never touched.
+func (r *Repository) ReleaseStaleProposals(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	res, err := r.db.NewUpdate().
+		TableExpr("kb.skill_proposals").
+		Set("status = ?", ProposalStatusPending).
+		Set("claimed_at = NULL").
+		Where("project_id = ?", projectID).
+		Where("status = ?", ProposalStatusApplying).
+		Where("(claimed_at IS NULL OR claimed_at < now() - interval '10 minutes')").
+		Exec(ctx)
+	if err != nil {
+		return 0, apperror.NewInternal("failed to release stale skill proposals", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, apperror.NewInternal("failed to read released skill proposals", err)
+	}
+	return n, nil
 }
 
 // MarkProposalFailed records an apply failure (the row stays visible for audit
