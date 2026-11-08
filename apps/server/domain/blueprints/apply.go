@@ -128,7 +128,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	// Object-type collision gate: computed read-only BEFORE any materialization.
 	// A same-pack re-apply/update is ignored by schemas.PreviewMerge; anything
 	// else needs an explicit merge confirmation.
-	typeConflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest)
+	typeConflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest, bp.Origin)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (s *Service) PreviewApply(ctx context.Context, blueprintID, projectID strin
 		return nil, err
 	}
 
-	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest)
+	conflicts, err := s.PreviewManifestConflicts(ctx, projectID, bp.Manifest, bp.Origin)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func (s *Service) PreviewApply(ctx context.Context, blueprintID, projectID strin
 // blueprint manifest's packs and the project's registered types. Shared by
 // apply, import preview, update preview, and the MCP preview tool. Same-pack
 // names are already ignored by schemas.PreviewMerge.
-func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string, manifest json.RawMessage) ([]schemas.MergePreviewConflict, error) {
+func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string, manifest json.RawMessage, origin string) ([]schemas.MergePreviewConflict, error) {
 	var m BlueprintManifest
 	if err := json.Unmarshal(manifest, &m); err != nil {
 		return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
@@ -222,13 +222,22 @@ func (s *Service) PreviewManifestConflicts(ctx context.Context, projectID string
 		return nil, nil
 	}
 
+	// A builtin blueprint's packs are global (project_id NULL); every other
+	// origin produces project-scoped packs. This scope is what lets PreviewMerge
+	// distinguish a same-name version bump from a cross-scope fork (#338).
+	var packSource *string
+	if origin == OriginBuiltin {
+		src := "builtin"
+		packSource = &src
+	}
+
 	packs := make([]schemas.MergePreviewPack, 0, len(m.Packs))
 	for _, p := range m.Packs {
 		objectTypes, err := json.Marshal(p.ObjectTypes)
 		if err != nil {
 			return nil, apperror.NewBadRequest("invalid objectTypes in pack " + p.Name)
 		}
-		packs = append(packs, schemas.MergePreviewPack{Name: p.Name, ObjectTypes: objectTypes})
+		packs = append(packs, schemas.MergePreviewPack{Name: p.Name, ObjectTypes: objectTypes, Source: packSource})
 	}
 
 	if s.schemasSvc == nil {

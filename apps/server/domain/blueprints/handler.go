@@ -155,7 +155,7 @@ func (h *Handler) PreviewImport(c echo.Context) error {
 	// Project-scoped previews also report object-type collisions an apply would
 	// hit. Global previews (no project) have no registry to compare against.
 	if projectID != "" {
-		conflicts, cerr := h.svc.PreviewManifestConflicts(c.Request().Context(), projectID, preview.Manifest)
+		conflicts, cerr := h.svc.PreviewManifestConflicts(c.Request().Context(), projectID, preview.Manifest, OriginImport)
 		if cerr != nil {
 			return cerr
 		}

@@ -60,6 +60,7 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 		Where("ptp.active = true").
 		Where("ptp.removed_at IS NULL").
 		Order("ptp.installed_at ASC").
+		Order("ptp.created_at ASC").
 		Order("ptp.id ASC").
 		Scan(ctx)
 	if err != nil {
@@ -450,16 +451,18 @@ func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs [
 			claimed[typeName] = incomingClaim{pack: pack.Name, schema: incomingSchema}
 
 			var row struct {
-				JSONSchema    json.RawMessage `bun:"json_schema"`
-				SchemaID      *string         `bun:"schema_id"`
-				SchemaName    *string         `bun:"schema_name"`
-				SchemaVersion *string         `bun:"schema_version"`
+				JSONSchema     json.RawMessage `bun:"json_schema"`
+				SchemaID       *string         `bun:"schema_id"`
+				SchemaName     *string         `bun:"schema_name"`
+				SchemaVersion  *string         `bun:"schema_version"`
+				OwnerProjectID *string         `bun:"owner_project_id"`
 			}
 			err := r.db.NewRaw(`
 				SELECT por.json_schema,
 				       por.schema_id,
 				       gs.name AS schema_name,
-				       gs.version AS schema_version
+				       gs.version AS schema_version,
+				       gs.project_id AS owner_project_id
 				FROM kb.project_object_schema_registry por
 				LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
 				WHERE por.project_id = ? AND por.type_name = ?
@@ -473,8 +476,12 @@ func (r *Repository) PreviewMerge(ctx context.Context, projectID string, packs [
 				return nil, apperror.NewDatabase("preview merge: read schema registry", err)
 			}
 
-			// Same pack re-applied (possibly a new version): not a collision.
-			if row.SchemaName != nil && *row.SchemaName == pack.Name {
+			// Same pack re-applied (possibly a new version) in the same scope: not
+			// a collision. A cross-scope same-name pack (a project-scoped copy of a
+			// builtin, or vice versa) is a fork and must be reported (#338).
+			sameName := row.SchemaName != nil && *row.SchemaName == pack.Name
+			sameScope := samePackScope(row.OwnerProjectID, pack.Source)
+			if sameName && sameScope {
 				continue
 			}
 
@@ -1211,6 +1218,17 @@ func nullableUUID(id string) any {
 	return id
 }
 
+// samePackScope reports whether the owning pack (identified by its project_id)
+// and an incoming pack (identified by its source) are in the same registry
+// scope: both builtin (project_id NULL) or both project-scoped. A same-name
+// version bump stays in the same scope, so it replaces; a project-scoped copy
+// of a builtin (or vice versa) is a cross-scope fork and needs Merge=true. This
+// is the only fork case that is distinguishable without a lineage column (#338).
+func samePackScope(ownerProjectID *string, incomingSource *string) bool {
+	incomingBuiltin := incomingSource != nil && *incomingSource == "builtin"
+	return (ownerProjectID == nil) == incomingBuiltin
+}
+
 // AssignPackWithTypes assigns a schema to a project AND populates the type registry.
 // When req.DryRun is true, no database changes are made — only the preview is returned.
 //
@@ -1345,20 +1363,21 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	var actions []typeAction
 
 	for typeName, incomingSchema := range objectTypeSchemas {
-		// Read the existing registry entry and the pack that owns it. A pack
-		// owns a type when the registry row's schema_id points at a pack with
-		// the same name (versions of one pack share the name), so an upgrade of
-		// the owning pack replaces the definition instead of being treated as a
-		// cross-pack collision. There is no unique index on
+		// Read the existing registry entry and the pack that owns it (schema_id
+		// -> graph_schemas). Ownership — and therefore the replace/skip decision
+		// below — is by name + registry scope (builtin vs project), the same
+		// signal PreviewMerge uses. There is no unique index on
 		// (project_id, type_name), so the read is ordered newest-row-first to
 		// stay deterministic if duplicates ever exist.
 		var existingRow struct {
-			JSONSchema json.RawMessage `bun:"json_schema"`
-			SchemaID   *string         `bun:"schema_id"`
-			SchemaName *string         `bun:"schema_name"`
+			JSONSchema     json.RawMessage `bun:"json_schema"`
+			SchemaID       *string         `bun:"schema_id"`
+			SchemaName     *string         `bun:"schema_name"`
+			OwnerProjectID *string         `bun:"owner_project_id"`
 		}
 		scanErr := r.db.NewRaw(`
-			SELECT por.json_schema, por.schema_id, gs.name AS schema_name
+			SELECT por.json_schema, por.schema_id, gs.name AS schema_name,
+			       gs.project_id AS owner_project_id
 			FROM kb.project_object_schema_registry por
 			LEFT JOIN kb.graph_schemas gs ON gs.id = por.schema_id
 			WHERE por.project_id = ? AND por.type_name = ?
@@ -1377,12 +1396,17 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			continue
 		}
 
-		// Same pack family (same pack name, possibly a new version): the pack
-		// owns the type, so an upgrade replaces the registered definition. This
-		// is what makes `memory blueprints install --upgrade` and a builtin pack
-		// refresh actually reach the registry, and it needs no merge
-		// confirmation because no other pack's definition is involved.
-		if existingRow.SchemaName != nil && *existingRow.SchemaName == pack.Name {
+		// The pack owns the type — and a same-name version bump replaces the
+		// definition with no merge confirmation — when it shares the owner's name
+		// AND registry scope (#294). Scope distinguishes the one fork case that
+		// is observable without a lineage column: a project-scoped pack reusing a
+		// builtin's name (or vice versa). A cross-scope same-name pack falls
+		// through to merge/skip and needs Merge=true (#338). Migration hints are
+		// an optional upgrade signal, not a lineage gate, so they do not affect
+		// this decision.
+		sameName := existingRow.SchemaName != nil && *existingRow.SchemaName == pack.Name
+		sameScope := samePackScope(existingRow.OwnerProjectID, pack.Source)
+		if sameName && sameScope {
 			actions = append(actions, typeAction{
 				name:           typeName,
 				incomingSchema: incomingSchema,
