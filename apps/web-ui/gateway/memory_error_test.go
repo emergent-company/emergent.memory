@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/labstack/echo/v4"
 )
 
 func TestParseMemoryErrorShapes(t *testing.T) {
@@ -32,11 +36,13 @@ func TestParseMemoryErrorShapes(t *testing.T) {
 			wantText:   "memory 404: not_found",
 		},
 		{
-			name:       "raw body shape",
+			// A body that is neither recognised shape is never echoed: a proxy
+			// page or an unenveloped JSON slab is not user-facing copy.
+			name:       "unrecognised body gets status-derived copy",
 			status:     http.StatusInternalServerError,
 			raw:        "internal boom",
 			wantStatus: http.StatusInternalServerError,
-			wantText:   "memory 500: internal boom",
+			wantText:   "memory 500: The service failed (HTTP 500).",
 		},
 	}
 
@@ -50,6 +56,86 @@ func TestParseMemoryErrorShapes(t *testing.T) {
 				t.Fatalf("Error() = %q, want %q", got, tt.wantText)
 			}
 		})
+	}
+}
+
+// TestParseMemoryErrorNeverEchoesUnknownBodies pins the flash-copy hardening: a
+// body that is not one of memory's two error shapes (a proxy page, an Echo-style
+// {"message":...}, a bare slab) becomes status-derived copy, never the raw body.
+func TestParseMemoryErrorNeverEchoesUnknownBodies(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		raw      string
+		wantText string
+	}{
+		{
+			name:     "proxy HTML page",
+			status:   http.StatusBadGateway,
+			raw:      "<html>502 Bad Gateway</html>",
+			wantText: "memory 502: The service failed (HTTP 502).",
+		},
+		{
+			name:     "echo not-found JSON",
+			status:   http.StatusNotFound,
+			raw:      `{"message":"Not Found"}`,
+			wantText: "memory 404: The request was rejected (HTTP 404).",
+		},
+		{
+			name:     "bare slab",
+			status:   http.StatusBadRequest,
+			raw:      `not json at all`,
+			wantText: "memory 400: The request was rejected (HTTP 400).",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseMemoryError(tt.status, []byte(tt.raw))
+			if got := memoryStatus(err); got != tt.status {
+				t.Fatalf("memoryStatus = %d, want %d", got, tt.status)
+			}
+			if got := err.Error(); got != tt.wantText {
+				t.Fatalf("Error() = %q, want %q", got, tt.wantText)
+			}
+			for _, leak := range []string{"<html>", "Bad Gateway", `{"message"`, "not json"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("Error() = %q leaks %q", err.Error(), leak)
+				}
+			}
+		})
+	}
+}
+
+// TestParseMemoryErrorKeepsCodeAndMessage pins that hardening did not stop the
+// recognised shape from reaching the operator with its code intact.
+func TestParseMemoryErrorKeepsCodeAndMessage(t *testing.T) {
+	err := parseMemoryError(http.StatusBadRequest, []byte(`{"error":{"code":"skill_scan_blocked","message":"blocked by scan"}}`))
+	var he *memoryHTTPError
+	if !errors.As(err, &he) {
+		t.Fatalf("error type = %T, want *memoryHTTPError", err)
+	}
+	if he.Status != http.StatusBadRequest || he.Code != "skill_scan_blocked" || he.Message != "blocked by scan" {
+		t.Errorf("error = %+v", he)
+	}
+}
+
+// TestParseMemoryErrorTruncatesLongMessage pins the length cap: a multi-kilobyte
+// backend message is a payload, not copy, and must not be rendered whole.
+func TestParseMemoryErrorTruncatesLongMessage(t *testing.T) {
+	long := strings.Repeat("x", 3000)
+	err := parseMemoryError(http.StatusBadRequest, []byte(`{"error":{"code":"huge","message":"`+long+`"}}`))
+	var he *memoryHTTPError
+	if !errors.As(err, &he) {
+		t.Fatalf("error type = %T, want *memoryHTTPError", err)
+	}
+	if got := len([]rune(he.Message)); got != maxMemoryErrorMessageRunes {
+		t.Errorf("message is %d runes, want %d", got, maxMemoryErrorMessageRunes)
+	}
+	if !strings.HasSuffix(he.Message, "…") {
+		t.Errorf("truncated message must end in an ellipsis: %q", he.Message[len(he.Message)-5:])
+	}
+	if he.Code != "huge" || he.Status != http.StatusBadRequest {
+		t.Errorf("code/status lost: %+v", he)
 	}
 }
 
@@ -161,5 +247,70 @@ func TestIsMemoryNotFound(t *testing.T) {
 				t.Fatalf("isMemoryNotFound(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSkillProposalApproveFlashSanitisesProxyBody pins the flash-copy fix end to
+// end: memory's proxy answers with an HTML 502 page and the resulting toast must
+// carry status-derived copy, never the upstream body.
+func TestSkillProposalApproveFlashSanitisesProxyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, "<html><body>502 Bad Gateway</body></html>")
+	}))
+	defer srv.Close()
+
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: NewMemoryClient(srv.URL, "proj-1")}
+	e := echo.New()
+	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/approve", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("location %q: %v", rec.Header().Get("Location"), err)
+	}
+	flash := loc.Query().Get("err")
+	for _, leak := range []string{"<html>", "</html>", "<body>", "Bad Gateway"} {
+		if strings.Contains(flash, leak) {
+			t.Errorf("flash leaks the upstream body (%q): %q", leak, flash)
+		}
+	}
+	if !strings.Contains(flash, "The service failed (HTTP 502).") {
+		t.Errorf("flash = %q, want the generic 502 copy", flash)
+	}
+}
+
+// TestSkillProposalApproveFlashKeepsMemoryValidationCopy pins the other half of
+// the contract: a recognised {error:{code,message}} body is still shown to the
+// operator — the hardening must not swallow actionable backend copy.
+func TestSkillProposalApproveFlashKeepsMemoryValidationCopy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"skill_scan_blocked","message":"blocked by scan"}}`)
+	}))
+	defer srv.Close()
+
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: NewMemoryClient(srv.URL, "proj-1")}
+	e := echo.New()
+	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/approve", nil))
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("location %q: %v", rec.Header().Get("Location"), err)
+	}
+	flash := loc.Query().Get("err")
+	if !strings.Contains(flash, "blocked by scan") {
+		t.Errorf("flash = %q, want memory's validation copy", flash)
+	}
+	if strings.Contains(flash, `{"error"`) {
+		t.Errorf("flash leaks raw JSON: %q", flash)
 	}
 }
