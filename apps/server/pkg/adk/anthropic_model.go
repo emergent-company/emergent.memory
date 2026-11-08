@@ -81,8 +81,10 @@ type anthropicResponse struct {
 	Content    []anthropicContentBlock `json:"content"`
 	StopReason string                  `json:"stop_reason,omitempty"`
 	Usage      *struct {
-		InputTokens  int32 `json:"input_tokens"`
-		OutputTokens int32 `json:"output_tokens"`
+		InputTokens              int32 `json:"input_tokens"`
+		OutputTokens             int32 `json:"output_tokens"`
+		CacheReadInputTokens     int32 `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int32 `json:"cache_creation_input_tokens"`
 	} `json:"usage,omitempty"`
 }
 
@@ -353,10 +355,14 @@ func (m *anthropicModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 			FinishReason: anthropicFinishReason(result.StopReason),
 		}
 		if result.Usage != nil {
+			// Anthropic's input_tokens excludes prompt-cache reads and writes;
+			// prompt caching is billed as input, so add both back for the total.
+			promptTokens := result.Usage.InputTokens + result.Usage.CacheReadInputTokens + result.Usage.CacheCreationInputTokens
 			llmResp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
-				PromptTokenCount:     result.Usage.InputTokens,
-				CandidatesTokenCount: result.Usage.OutputTokens,
-				TotalTokenCount:      result.Usage.InputTokens + result.Usage.OutputTokens,
+				PromptTokenCount:        promptTokens,
+				CandidatesTokenCount:    result.Usage.OutputTokens,
+				TotalTokenCount:         promptTokens + result.Usage.OutputTokens,
+				CachedContentTokenCount: result.Usage.CacheReadInputTokens,
 			}
 		}
 		yield(llmResp, nil)
