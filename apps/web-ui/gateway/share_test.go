@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ func newShareTestServer(f *fakeMemory) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{ShareCookieSecret: "test-cookie-secret", ShareRefSecret: "test-ref-secret"}, memory: f}
 	e := echo.New()
 	share := e.Group("/share")
+	share.POST("/api/chat", s.shareChat)
 	share.GET("/api/sessions/:id", s.shareGetSession)
 	share.POST("/api/sessions/:id/archive", s.shareArchiveSession)
 	share.POST("/api/sessions/:id/unarchive", s.shareUnarchiveSession)
@@ -347,5 +349,74 @@ func TestSharePartialSessionsMarkupAndArchivedFilter(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if f.sharePublicListFilter != "all" {
 		t.Errorf("includeArchived=true must map to filter=all, got %q", f.sharePublicListFilter)
+	}
+}
+
+// --- public share chat: surface actions (#222) -------------------------------
+
+// TestShareChatForwardsSurfaceAction pins the decided public share contract: an
+// A2UI surface action is a field of the share turn, forwarded to the memory
+// server which frames it with the same wording /api/chat uses. Message may be
+// empty when the action is present.
+func TestShareChatForwardsSurfaceAction(t *testing.T) {
+	f := &fakeMemory{shareChatBody: io.NopCloser(strings.NewReader("data: {\"type\":\"done\"}\n\n"))}
+	_, e := newShareTestServer(f)
+
+	body := `{"sessionId":"sess-1","message":"","surfaceAction":{"surfaceId":"surf-1","action":{"componentId":"c1","response":"approve"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/share/api/chat", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.AddCookie(shareTestCookie(t))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if f.shareChatInput == nil {
+		t.Fatal("ShareChatStream was not called")
+	}
+	if f.shareChatInput.SessionID != "sess-1" {
+		t.Errorf("sessionId = %q, want sess-1", f.shareChatInput.SessionID)
+	}
+	if f.shareChatInput.Message != "" {
+		t.Errorf("message = %q, want empty (the action is the turn)", f.shareChatInput.Message)
+	}
+	if f.shareChatInput.SurfaceAction == nil {
+		t.Fatal("surfaceAction was dropped on the way to memory")
+	}
+	if f.shareChatInput.SurfaceAction.SurfaceID != "surf-1" {
+		t.Errorf("surfaceId = %q, want surf-1", f.shareChatInput.SurfaceAction.SurfaceID)
+	}
+	action, _ := f.shareChatInput.SurfaceAction.Action.(map[string]any)
+	if action["componentId"] != "c1" || action["response"] != "approve" {
+		t.Errorf("action = %#v, want {componentId:c1, response:approve}", f.shareChatInput.SurfaceAction.Action)
+	}
+}
+
+// TestShareChatRejectsAMalformedSurfaceAction keeps the framing input valid
+// before a session is created upstream or a stream is opened.
+func TestShareChatRejectsAMalformedSurfaceAction(t *testing.T) {
+	for _, body := range []string{
+		`{"sessionId":"sess-1","message":"","surfaceAction":{"surfaceId":"","action":{"response":"approve"}}}`,
+		`{"sessionId":"sess-1","message":"","surfaceAction":{"surfaceId":"surf-1","action":{}}}`,
+		`{"sessionId":"sess-1","message":""}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			f := &fakeMemory{}
+			_, e := newShareTestServer(f)
+
+			req := httptest.NewRequest(http.MethodPost, "/share/api/chat", strings.NewReader(body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			req.AddCookie(shareTestCookie(t))
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+			if f.shareChatInput != nil {
+				t.Error("a malformed turn must not reach memory")
+			}
+		})
 	}
 }

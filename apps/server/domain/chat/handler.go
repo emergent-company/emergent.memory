@@ -717,6 +717,65 @@ func streamMessage(req *StreamRequest) string {
 	}, message)
 }
 
+// pendingQuestionAnswer is what a chat turn records on the conversation's
+// pending question when it answers it.
+//
+// A decision-bearing A2UI card sends the option the user clicked
+// (`action.componentId` + `action.response`), so the question records that
+// option rather than the framed prose the agent reads (#223). Every other turn
+// — typed text, or a card whose action carries no option payload — records the
+// message itself, exactly as before.
+func pendingQuestionAnswer(req *StreamRequest, message string) string {
+	if req != nil && req.SurfaceAction != nil {
+		if answer, ok := surfaceAnswerFromAction(req.SurfaceAction.Action); ok {
+			return answer
+		}
+	}
+	return message
+}
+
+// surfaceAnswerFromAction extracts the answer value a surface action carries: a
+// non-empty `componentId` names the card the user acted on, and a scalar
+// `response` is the value they picked (approval and proposal cards both emit
+// `{componentId, response}`). A click without that shape — e.g. a code card's
+// copy button — is not a decision and stays a chat turn.
+func surfaceAnswerFromAction(action any) (string, bool) {
+	m, ok := action.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	if componentID, _ := m["componentId"].(string); strings.TrimSpace(componentID) == "" {
+		return "", false
+	}
+	switch v := m["response"].(type) {
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return "", false
+		}
+		return v, true
+	case bool:
+		return strconv.FormatBool(v), true
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), true
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32), true
+	case int:
+		return strconv.Itoa(v), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	}
+	return "", false
+}
+
+// pauseAnswerableByChat reports whether a paused run may be resumed by a chat
+// message or a surface action. A tool-confirmation pause is decided by the
+// approval card that carries its question id, never by free text or an A2UI
+// surface action — the surface-action contract keeps that guarantee.
+func pauseAnswerableByChat(sc *agents.SuspendSignal) bool {
+	return sc == nil || sc.Reason != agents.SuspendReasonAwaitingToolConfirm
+}
+
 func validateStreamRequest(req *StreamRequest) error {
 	hasSurfaceAction := req.SurfaceAction != nil
 	if strings.TrimSpace(req.Message) == "" && !hasSurfaceAction {
@@ -1001,8 +1060,12 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 		// If this conversation's run is parked on an ask_user question, this
 		// message is the answer: resume that run instead of starting a fresh one.
+		// A decision-bearing A2UI card answers with the option that was clicked,
+		// which the question records as its answer (#223). A tool-confirmation
+		// pause is refused inside resumeForAnswer, so a surface action there
+		// stays an ordinary turn — its own approval card owns that decision.
 		if q, qErr := h.agentRepo.FindPendingQuestionByConversation(ctx, user.ProjectID, conv.ID.String()); qErr == nil && q != nil {
-			if handled := h.resumeForAnswer(runCtx, sseWriter, conv, q, message, user); handled {
+			if handled := h.resumeForAnswer(runCtx, sseWriter, conv, q, pendingQuestionAnswer(&req, message), message, user); handled {
 				_ = sseWriter.WriteData(sse.NewDoneEvent())
 				sseWriter.Close()
 				return nil
@@ -1794,15 +1857,20 @@ func formatQuestionForChat(q *agents.AgentQuestion) string {
 	return b.String()
 }
 
-// resumeForAnswer answers a pending ask_user question with the user's chat
-// message and streams the resumed run into the caller's SSE stream.
+// resumeForAnswer answers a pending ask_user question and streams the resumed
+// run into the caller's SSE stream.
 //
 // Before this, a message typed while a question was pending started a brand-new
 // run: the paused run and its question were left orphaned (the question stayed
 // pending forever) and the fresh agent had no idea what the user was replying
-// to. Returns false when the question cannot be answered as free text, in which
+// to. Returns false when the question cannot be answered by this turn, in which
 // case the caller falls through to a normal turn.
-func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, conv *Conversation, q *agents.AgentQuestion, message string, user *auth.AuthUser) bool {
+//
+// answer is the value recorded on the question; message is what the resumed
+// agent reads. Typed text uses the message for both; an A2UI card click records
+// the option the user picked while the agent still reads the framed surface
+// action (#223).
+func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, conv *Conversation, q *agents.AgentQuestion, answer, message string, user *auth.AuthUser) bool {
 	if h.agentExecutor == nil || h.agentRepo == nil {
 		return false
 	}
@@ -1813,8 +1881,9 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 	}
 
 	// Tool-confirmation pauses are answered by the approval card, which records
-	// the approve/reject decision. Free text there is not an answer.
-	if sc := agents.SuspendSignalFromMap(run.SuspendContext); sc != nil && sc.Reason == agents.SuspendReasonAwaitingToolConfirm {
+	// the approve/reject decision. Free text there is not an answer — and neither
+	// is an A2UI surface action.
+	if !pauseAnswerableByChat(agents.SuspendSignalFromMap(run.SuspendContext)) {
 		return false
 	}
 
@@ -1831,7 +1900,10 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		return true
 	}
 
-	claimed, err := h.agentRepo.AnswerQuestion(ctx, q.ID, message, user.ID)
+	if answer == "" {
+		answer = message
+	}
+	claimed, err := h.agentRepo.AnswerQuestion(ctx, q.ID, answer, user.ID)
 	if err != nil {
 		_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to record answer"))
 		return true
