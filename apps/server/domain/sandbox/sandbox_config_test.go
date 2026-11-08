@@ -1048,3 +1048,18 @@ func TestExtractToolFromPath(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_RunMode(t *testing.T) {
+	valid := &AgentSandboxConfig{Enabled: true, RunMode: RunModeMini}
+	assert.Empty(t, valid.Validate())
+	assert.True(t, valid.IsMini())
+
+	validStructured := &AgentSandboxConfig{Enabled: true, RunMode: RunModeStructured}
+	assert.Empty(t, validStructured.Validate())
+	assert.False(t, validStructured.IsMini())
+
+	invalid := &AgentSandboxConfig{Enabled: true, RunMode: "turbo"}
+	errs := invalid.Validate()
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0], "invalid run_mode")
+}
