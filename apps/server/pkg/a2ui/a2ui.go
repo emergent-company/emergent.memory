@@ -232,18 +232,23 @@ const (
 
 // ExtractFromText scans text for ```a2ui fenced blocks. Each non-empty line
 // inside a block is one JSON message; a block is valid only if every message
-// decodes and validates. If at least one block validates, it returns the
-// concatenated messages from all valid blocks, the text with the fences (and
-// valid-block contents) removed, and found=true. Otherwise it returns
-// nil, text, false (never an error).
+// decodes and validates.
+//
+// Every recognised block is removed from the returned text — valid or not.
+// The protocol is machine-facing: a block that fails to validate is still a
+// fenced a2ui block, and leaving it in place would show the user raw JSONL.
+// An unterminated block (the model was cut off mid-surface) counts as a block
+// and is removed too.
+//
+// It returns the messages from all valid blocks (in order), the text with every
+// a2ui block removed, and found=true only when at least one block validated.
+// It never returns an error: a bad surface degrades to plain text.
 func ExtractFromText(text string) ([]Message, string, bool) {
 	lines := strings.Split(text, "\n")
 
 	type block struct {
-		start int   // index of the opening fence line
-		end   int   // index of the closing fence line
-		lines []int // indices of non-empty content lines
-		valid bool
+		start int // index of the opening fence line
+		end   int // index of the closing fence line (or the last line, if unterminated)
 	}
 
 	var (
@@ -251,6 +256,8 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 		messages []Message
 		inFence  bool
 		cur      block
+		curMsgs  []Message
+		curValid bool
 	)
 
 	for i, line := range lines {
@@ -258,48 +265,43 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 			if strings.TrimSpace(line) == fenceOpen {
 				inFence = true
 				cur = block{start: i}
+				curMsgs = nil
+				curValid = true
 			}
 			continue
 		}
 		if strings.TrimSpace(line) == fenceClose {
-			cur.end = i
 			inFence = false
-
-			cur.valid = len(cur.lines) > 0
-			var curMsgs []Message
-			for _, ci := range cur.lines {
-				var m Message
-				if err := json.Unmarshal([]byte(lines[ci]), &m); err != nil {
-					cur.valid = false
-					break
-				}
-				curMsgs = append(curMsgs, m)
-			}
-			if cur.valid {
-				if err := Validate(curMsgs); err != nil {
-					cur.valid = false
-				}
-			}
-			if cur.valid {
-				blocks = append(blocks, cur)
+			cur.end = i
+			if curValid && len(curMsgs) > 0 && Validate(curMsgs) == nil {
 				messages = append(messages, curMsgs...)
 			}
+			blocks = append(blocks, cur)
 			continue
 		}
-		if strings.TrimSpace(line) != "" {
-			cur.lines = append(cur.lines, i)
+		if strings.TrimSpace(line) == "" || !curValid {
+			continue
 		}
+		var m Message
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			curValid = false
+			continue
+		}
+		curMsgs = append(curMsgs, m)
+	}
+	// An unterminated fence is still a fence: the model was cut off mid-block.
+	if inFence {
+		cur.end = len(lines) - 1
+		blocks = append(blocks, cur)
 	}
 
-	if len(messages) == 0 {
+	if len(blocks) == 0 {
 		return nil, text, false
 	}
 
 	drop := make([]bool, len(lines))
 	for _, b := range blocks {
-		drop[b.start] = true
-		drop[b.end] = true
-		for i := b.start + 1; i < b.end; i++ {
+		for i := b.start; i <= b.end && i < len(lines); i++ {
 			drop[i] = true
 		}
 	}
@@ -311,5 +313,5 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 		}
 		out = append(out, line)
 	}
-	return messages, strings.Join(out, "\n"), true
+	return messages, strings.Join(out, "\n"), len(messages) > 0
 }

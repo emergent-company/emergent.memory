@@ -176,47 +176,60 @@ func TestExtractFromText(t *testing.T) {
 		"```"
 
 	tests := []struct {
-		name        string
-		text        string
-		wantFound   bool
-		wantMsgN    int
-		wantRestSub string // substring expected in rest, or "" for exact-unchanged
-		wantUnchg   bool   // rest must equal text
+		name      string
+		text      string
+		wantFound bool
+		wantMsgN  int
+		wantRest  string // exact expected text after stripping
 	}{
 		{
-			name:        "valid fence extracts messages and strips block",
-			text:        "before\n" + validBlock + "\nafter",
-			wantFound:   true,
-			wantMsgN:    2,
-			wantRestSub: "before",
+			name:      "valid fence extracts messages and strips block",
+			text:      "before\n" + validBlock + "\nafter",
+			wantFound: true,
+			wantMsgN:  2,
+			wantRest:  "before\nafter",
 		},
 		{
-			name:      "invalid fence returns unchanged",
+			name:      "invalid fence is stripped and yields no messages",
 			text:      "before\n```a2ui\nnot json\n```\nafter",
 			wantFound: false,
 			wantMsgN:  0,
-			wantUnchg: true,
+			wantRest:  "before\nafter",
 		},
 		{
 			name:      "no fence returns unchanged",
 			text:      "plain text\nno fences",
 			wantFound: false,
 			wantMsgN:  0,
-			wantUnchg: true,
+			wantRest:  "plain text\nno fences",
 		},
 		{
-			name:      "unknown component fence is invalid",
+			name:      "unknown component fence is stripped",
 			text:      "```a2ui\n{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"x\",\"component\":\"bogus\"}]}}\n```",
 			wantFound: false,
 			wantMsgN:  0,
-			wantUnchg: true,
+			wantRest:  "",
 		},
 		{
-			name:      "empty fence block is invalid",
+			name:      "empty fence block is stripped",
 			text:      "```a2ui\n```",
 			wantFound: false,
 			wantMsgN:  0,
-			wantUnchg: true,
+			wantRest:  "",
+		},
+		{
+			name:      "unterminated fence is stripped to end of text",
+			text:      "before\n```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}",
+			wantFound: false,
+			wantMsgN:  0,
+			wantRest:  "before",
+		},
+		{
+			name:      "one bad block does not hide a valid one",
+			text:      "```a2ui\n{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"x\",\"component\":\"bogus\"}]}}\n```\n" + validBlock,
+			wantFound: true,
+			wantMsgN:  2,
+			wantRest:  "",
 		},
 	}
 
@@ -229,14 +242,8 @@ func TestExtractFromText(t *testing.T) {
 			if len(msgs) != tt.wantMsgN {
 				t.Fatalf("len(msgs) = %d, want %d", len(msgs), tt.wantMsgN)
 			}
-			if tt.wantUnchg {
-				if rest != tt.text {
-					t.Errorf("rest = %q, want unchanged %q", rest, tt.text)
-				}
-				return
-			}
-			if !strings.Contains(rest, tt.wantRestSub) {
-				t.Errorf("rest = %q, want to contain %q", rest, tt.wantRestSub)
+			if rest != tt.wantRest {
+				t.Errorf("rest = %q, want %q", rest, tt.wantRest)
 			}
 			if strings.Contains(rest, "```a2ui") {
 				t.Errorf("rest = %q, should not contain the fence", rest)

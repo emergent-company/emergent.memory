@@ -76,4 +76,16 @@ func TestFinalResponseStreamEvents_InvalidFenceFallsBack(t *testing.T) {
 			t.Fatalf("did not expect A2UI event for invalid fence: %+v", e)
 		}
 	}
+
+	// The block is still a fence: it must be stripped from the answer text, or
+	// the user reads raw protocol JSONL (#415).
+	var text strings.Builder
+	for _, e := range events {
+		if e.Type == StreamEventTextDelta {
+			text.WriteString(e.Text)
+		}
+	}
+	if strings.Contains(text.String(), "```a2ui") || strings.Contains(text.String(), "not json") {
+		t.Fatalf("invalid block leaked into the answer text: %q", text.String())
+	}
 }

@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -4057,8 +4058,35 @@ func deriveMessageCitations(content map[string]any, candidates map[string]citati
 		return nil
 	}
 	text, _ := content["text"].(string)
-	surfaces, stripped, _ := a2ui.ExtractFromText(text)
-	return citations.Derive(stripped, surfaces, candidates)
+	// New rows store the surfaces beside the (already stripped) text. Rows
+	// written before that still carry the block inside the text, so keep
+	// extracting for them.
+	surfaces := storedSurfaces(content["a2ui"])
+	if len(surfaces) == 0 {
+		extracted, stripped, _ := a2ui.ExtractFromText(text)
+		if len(extracted) > 0 {
+			surfaces, text = extracted, stripped
+		}
+	}
+	return citations.Derive(text, surfaces, candidates)
+}
+
+// storedSurfaces decodes the A2UI surfaces persisted alongside a reply's text.
+// Content is stored as JSON and read back as a generic map, so the value is a
+// []any of map[string]any and needs one re-decode into the wire model.
+func storedSurfaces(v any) []a2ui.Message {
+	if v == nil {
+		return nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var msgs []a2ui.Message
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		return nil
+	}
+	return msgs
 }
 
 // GetConversationFullHistoryRaw implements mcp.SessionHistoryProvider.

@@ -345,9 +345,11 @@ func (t *thinkingTracker) reasoningWasPartial(step int) bool {
 // the answer and is emitted as a text delta so callers still receive a non-empty
 // final response. Nil and empty parts are skipped.
 //
-// When the plain answer text contains a valid ```a2ui fenced block, the surface
-// messages are emitted as a single StreamEventA2UI and the remaining text
-// (fences stripped) is emitted as a text delta, preserving reasoning alongside.
+// When the plain answer text contains a ```a2ui fenced block, the block is
+// removed from the answer text and — when it validates — its surface messages
+// are emitted as a single StreamEventA2UI. A block that does not validate still
+// gets stripped (the user must never read raw protocol JSONL); the run then
+// simply continues as plain text.
 func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 	hasAnswerText := false
 	for _, part := range parts {
@@ -359,13 +361,16 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 
 	// If there is plain answer text, check it for an embedded A2UI surface.
 	if hasAnswerText {
-		if msgs, plainText, surfaceID := extractA2UIFromParts(parts); len(msgs) > 0 {
+		msgs, plainText, surfaceID, hasBlock := extractA2UIFromParts(parts)
+		if hasBlock {
 			var events []StreamEvent
-			events = append(events, StreamEvent{
-				Type:      StreamEventA2UI,
-				SurfaceID: surfaceID,
-				A2UI:      msgs,
-			})
+			if len(msgs) > 0 {
+				events = append(events, StreamEvent{
+					Type:      StreamEventA2UI,
+					SurfaceID: surfaceID,
+					A2UI:      msgs,
+				})
+			}
 			if plainText != "" {
 				events = append(events, StreamEvent{
 					Type: StreamEventTextDelta,
@@ -408,9 +413,11 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 
 // extractA2UIFromParts concatenates the non-Thought text of a final response and
 // attempts to extract an A2UI surface from any ```a2ui fenced block. It returns
-// the decoded messages, the remaining plain text (fences stripped when found,
-// otherwise the full concatenated text), and the derived stable surface id.
-func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainText string, surfaceID string) {
+// the decoded messages (nil when no block validated), the plain text with every
+// fence stripped, the derived stable surface id, and whether the response
+// carried a fence at all — the last so a caller can tell "no surface" from "a
+// surface that failed validation".
+func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainText string, surfaceID string, hasBlock bool) {
 	var b strings.Builder
 	for _, part := range parts {
 		if part == nil || part.Text == "" || part.Thought {
@@ -421,10 +428,10 @@ func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainTe
 	text := b.String()
 
 	msgs, rest, found := a2ui.ExtractFromText(text)
-	if !found {
-		return nil, text, ""
+	if !found && rest == text {
+		return nil, text, "", false
 	}
-	return msgs, rest, deriveSurfaceID(msgs)
+	return msgs, rest, deriveSurfaceID(msgs), true
 }
 
 // deriveSurfaceID returns the first createSurface surfaceId if present, else a
@@ -436,6 +443,38 @@ func deriveSurfaceID(msgs []a2ui.Message) string {
 		}
 	}
 	return "surface-1"
+}
+
+// answerTextEvents filters one streamed answer chunk through the A2UI surface
+// filter. It is the only place partial answer text becomes a StreamEvent, so a
+// call site cannot bypass the filter and paint raw protocol JSONL mid-stream.
+func answerTextEvents(filter *a2ui.TextFilter, chunk string) []StreamEvent {
+	text := filter.Feed(chunk)
+	if text == "" {
+		return nil
+	}
+	return []StreamEvent{{Type: StreamEventTextDelta, Text: text}}
+}
+
+// flushAnswerText releases the tail the surface filter still holds once the run
+// has finished. Text inside an unterminated fence is dropped by the filter —
+// that is a surface, not an answer.
+func flushAnswerText(filter *a2ui.TextFilter) []StreamEvent {
+	text := filter.Flush()
+	if text == "" {
+		return nil
+	}
+	return []StreamEvent{{Type: StreamEventTextDelta, Text: text}}
+}
+
+// replyForStorage prepares a reply for persistence: the text with every A2UI
+// block removed, the surfaces the blocks carried, and whether a block was
+// present at all. hasBlock is what lets a fence-only answer persist an empty
+// text instead of the raw block — a valid block yields no text, a malformed one
+// must not be kept either.
+func replyForStorage(text string) (stored string, surfaces []a2ui.Message, hasBlock bool) {
+	msgs, rest, found := a2ui.ExtractFromText(text)
+	return rest, msgs, found || rest != text
 }
 
 // ModelLimitsLookup is a narrow interface for querying model token limits
@@ -2904,6 +2943,14 @@ func (ae *AgentExecutor) runPipeline(
 	thinkTrack := newThinkingTracker(req.StreamCallback)
 	defer thinkTrack.close()
 
+	// textFilter keeps a streaming ```a2ui surface out of the answer text. A
+	// surface is only extracted from the finished response, so without it the
+	// raw JSONL of a card (valid or not) is painted into the bubble mid-stream.
+	// It is per step: a step that opens a surface and never closes it must not
+	// swallow the next step's answer.
+	textFilter := a2ui.NewTextFilter()
+	filterStep := -1
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -3862,6 +3909,10 @@ func (ae *AgentExecutor) runPipeline(
 			// provider that streams chain-of-thought incrementally never leaks
 			// reasoning into the final answer stream.
 			if event.Partial && event.Content != nil && req.StreamCallback != nil {
+				if step := tracker.current(); step != filterStep {
+					textFilter = a2ui.NewTextFilter()
+					filterStep = step
+				}
 				for _, part := range event.Content.Parts {
 					if part == nil || part.Text == "" {
 						continue
@@ -3871,10 +3922,9 @@ func (ae *AgentExecutor) runPipeline(
 						thinkTrack.markReasoningPartial(step)
 						thinkTrack.emit(step, "reasoning", part.Text)
 					} else {
-						req.StreamCallback(StreamEvent{
-							Type: StreamEventTextDelta,
-							Text: part.Text,
-						})
+						for _, ev := range answerTextEvents(textFilter, part.Text) {
+							req.StreamCallback(ev)
+						}
 					}
 				}
 			}
@@ -3931,6 +3981,11 @@ func (ae *AgentExecutor) runPipeline(
 						}
 					}
 				}
+				// The answer step is complete. Drop anything the surface filter
+				// still holds (a tail from THIS step's fence) so a step that
+				// began a surface without closing it cannot swallow the next
+				// step's answer.
+				textFilter = a2ui.NewTextFilter()
 			}
 
 			// Track the last non-partial event that carries text — used as fallback
@@ -3964,6 +4019,17 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 		} // end inner for-range r.Run(...)
+
+		// Release whatever the surface filter still holds. An answer that ended
+		// inside an unterminated ```a2ui block holds only that block and is
+		// dropped; an ordinary tail (e.g. a markdown fence's closing ``` with no
+		// trailing newline) is emitted. Safe to repeat across a retry: a flush
+		// leaves the filter empty.
+		if req.StreamCallback != nil {
+			for _, ev := range flushAnswerText(textFilter) {
+				req.StreamCallback(ev)
+			}
+		}
 
 		// A cancelled context is terminal: exit the outer retry loop so the
 		// post-loop cancellation block records the terminal status/reason.
@@ -5158,6 +5224,17 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	}
 
 	text, reasoning := persistedEventText(event.Content.Parts, event.IsFinalResponse())
+	// Stored text is replayed verbatim: by conversation history, and by the chat
+	// handler's fallback when the streamed answer was empty (e.g. a reply that
+	// is only a surface). Strip any A2UI block here so neither path can show raw
+	// JSONL; the extracted surfaces ride along so citation derivation on reload
+	// still sees them.
+	if stored, surfaces, hasBlock := replyForStorage(text); hasBlock {
+		text = stored
+		if len(surfaces) > 0 {
+			contentMap["a2ui"] = surfaces
+		}
+	}
 	if text != "" {
 		contentMap["text"] = text
 	}
@@ -5229,6 +5306,11 @@ func (ae *AgentExecutor) buildSummary(lastEvent *session.Event, lastTextEvent *s
 	text := extractText(lastEvent)
 	if text == "" {
 		text = extractText(lastTextEvent)
+	}
+	// The summary feeds the chat handler's empty-response fallback, which streams
+	// it as an answer: it must never carry an A2UI block.
+	if text != "" {
+		text, _, _ = replyForStorage(text)
 	}
 	if text != "" {
 		summary["final_response"] = text
