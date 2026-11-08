@@ -1658,7 +1658,7 @@ func resolveAstGrepBinary(ctx context.Context, provider sandbox.Provider, provid
 	if len(rejected) > 0 {
 		msg += "; rejected candidates that are not ast-grep: " + strings.Join(rejected, ", ")
 	}
-	return "", fmt.Errorf("%s. Install ast-grep in your sandbox image or use workspace_bash directly.", msg)
+	return "", fmt.Errorf("%s; install ast-grep in your sandbox image or use workspace_bash directly", msg)
 }
 
 // isAstGrepVersion reports whether out looks like ast-grep's --version output
