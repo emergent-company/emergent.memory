@@ -15,11 +15,19 @@
 # that the runner writes until it sees a `DONE rc=<n>` line, and exits with that
 # code — so `run` is the drop-in "run the UI suite from CI/ssh" entry point.
 #
+# `run` will not report a result it cannot attribute to the tree under test
+# (#261): it re-renders the LaunchAgent when the plist's baked MAC_UITEST_MIRROR
+# differs from the mirror this checkout resolves, and it refuses to kickstart
+# (exit 3) unless the mirror's `.memory-mirror-stamp` — written by
+# `mac-build.sh --uitest` on every sync — names the commit this script is run
+# from. A stale mirror used to pass with DONE rc=0, which proved nothing.
+#
 # Usage:
 #   apps/connector.mac/Scripts/mac-uitest-agent.sh install
 #       bootstrap the LaunchAgent into gui/<uid> (idempotent)
 #   apps/connector.mac/Scripts/mac-uitest-agent.sh run [--no-build] [--timeout <secs>]
-#       build (unless --no-build), kickstart, wait for the result (default 900s)
+#       build (unless --no-build), kickstart, wait for the result (default 900s);
+#       exits with the suite's rc, or 3 if the mirror is not the commit under test
 #   apps/connector.mac/Scripts/mac-uitest-agent.sh status
 #       launchd state + tail of the status and log files
 #   apps/connector.mac/Scripts/mac-uitest-agent.sh logs [-n <N>]
@@ -38,6 +46,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# apps/connector.mac/Scripts -> apps/connector.mac -> apps -> repo root. The
+# commit this script is run from is the commit the mirror must match (#261).
+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
 
 # shellcheck source=lib/mac-remote.sh
 # shellcheck disable=SC1091
@@ -120,6 +131,82 @@ render_plist() {
 EOF
 }
 
+# installed_plist_mirror — the MAC_UITEST_MIRROR the INSTALLED LaunchAgent will
+# actually hand the runner. launchd does not read the environment this script
+# resolved; the plist is the only thing that decides which tree gets tested, so
+# that is what has to be checked. Empty output means no plist / no such key.
+installed_plist_mirror() {
+  mac_ssh "test -f '$ABS_PLIST' \
+      && plutil -extract MAC_UITEST_MIRROR raw -o - '$ABS_PLIST'" 2>/dev/null || true
+}
+
+# reconcile_agent_plist — make the LaunchAgent point at the mirror THIS checkout
+# resolves, re-rendering it deterministically when it does not. `install` bakes
+# the mirror of the moment into the plist and `run` used to only kickstart that
+# existing plist, so a checkout that moved (or a host whose MEMORY_MAC_PATH
+# changed) kept the old tree wired in with no warning — and the suite then
+# passed against files that were not under test (#261).
+reconcile_agent_plist() {
+  local installed
+  installed="$(installed_plist_mirror)"
+  if [[ -z "$installed" ]]; then
+    echo "==> no MAC_UITEST_MIRROR in $ABS_PLIST; installing the LaunchAgent for $ABS_MIRROR"
+    install
+  elif [[ "$installed" != "$ABS_MIRROR" ]]; then
+    echo "==> WARNING: the installed LaunchAgent would test a STALE mirror (#261):" >&2
+    echo "      plist MAC_UITEST_MIRROR = $installed" >&2
+    echo "      this checkout resolves  = $ABS_MIRROR" >&2
+    echo "    re-rendering the LaunchAgent so the suite runs the tree under test"
+    install
+  else
+    echo "==> LaunchAgent mirror confirmed: $ABS_MIRROR"
+    return 0
+  fi
+
+  installed="$(installed_plist_mirror)"
+  [[ "$installed" == "$ABS_MIRROR" ]] \
+    || mac_die "LaunchAgent still reports MAC_UITEST_MIRROR='$installed' after re-install (expected '$ABS_MIRROR'); run: $0 install"
+}
+
+# verify_mirror_commit — refuse to run the suite unless the mirror's recorded
+# source commit is the commit this checkout is at. mac-build.sh --uitest writes
+# .memory-mirror-stamp on every sync; no stamp means the mirror predates the
+# guard (or was written by an older mac-build.sh), which is exactly the
+# unprovable state this check exists to reject. Exit 3 = "would not test what
+# you claim", distinct from a suite failure (1) and a timeout (124).
+verify_mirror_commit() {
+  local stamp_path stamp remote_commit local_commit dirty branch
+  stamp_path="$ABS_MIRROR/.memory-mirror-stamp"
+  stamp="$(mac_ssh "cat '$stamp_path' 2>/dev/null || true")"
+  local_commit="$(git -C "$REPO_ROOT" rev-parse HEAD)" \
+    || mac_die "cannot read the local HEAD of $REPO_ROOT; run this from the repo checkout that should be tested"
+
+  if [[ -z "$stamp" ]]; then
+    echo "error: no mirror stamp at $stamp_path on $MAC_HOST (#261)." >&2
+    echo "       Nothing proves which commit that mirror holds, so a green suite" >&2
+    echo "       would say nothing about $local_commit." >&2
+    echo "       Fix: apps/connector.mac/Scripts/mac-build.sh --uitest" >&2
+    exit 3
+  fi
+
+  remote_commit="$(printf '%s\n' "$stamp" | sed -n 's/^commit=//p' | head -n 1)"
+  dirty="$(printf '%s\n' "$stamp" | sed -n 's/^dirty=//p' | head -n 1)"
+  branch="$(printf '%s\n' "$stamp" | sed -n 's/^branch=//p' | head -n 1)"
+
+  if [[ "$remote_commit" != "$local_commit" ]]; then
+    echo "error: the Mac mirror is a STALE TREE — refusing to run the UI suite (#261)." >&2
+    echo "      mirror $stamp_path: commit '$remote_commit' (branch '$branch')" >&2
+    echo "      local  $REPO_ROOT: commit '$local_commit'" >&2
+    echo "      A pass against the mirror would prove nothing about the current commit." >&2
+    echo "      Fix: apps/connector.mac/Scripts/mac-build.sh --uitest" >&2
+    exit 3
+  fi
+
+  echo "==> mirror stamp matches the checkout: $local_commit (branch $branch)"
+  [[ "$dirty" == 0 ]] \
+    || echo "note: the mirror was synced from a DIRTY working tree; uncommitted changes are what the suite will test" >&2
+}
+
 # install — idempotently bootstrap the agent into gui/<uid>.
 install() {
   resolve_abs_paths
@@ -172,15 +259,23 @@ run() {
 
   resolve_abs_paths
 
+  # The LaunchAgent, not this shell, decides which tree the suite runs in.
+  reconcile_agent_plist
+
   if [[ "$no_build" == 0 ]]; then
     echo "==> building app + UI-test bundle (mac-build.sh --uitest)"
     "$HERE/mac-build.sh" --uitest
   fi
 
+  # mac-build.sh just stamped the mirror with the synced commit; after
+  # --no-build the stamp is whatever an earlier sync left. Either way, failing
+  # here is better than a green run against a tree nobody chose.
+  verify_mirror_commit
+
   echo "==> clearing status file $ABS_STATUS"
   mac_ssh "rm -f '$ABS_STATUS'"
 
-  echo "==> kickstart $DOMAIN/$LABEL (launchctl kickstart -k)"
+  echo "==> kickstart $DOMAIN/$LABEL (launchctl kickstart -k, mirror $ABS_MIRROR)"
   mac_ssh "launchctl kickstart -k '$DOMAIN/$LABEL'"
 
   # Poll the status file until the runner appends its DONE line. The runner

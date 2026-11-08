@@ -10,8 +10,10 @@
 #
 # Protocol (mac-uitest-agent.sh polls the status file; the line prefixes are a
 # contract — do not change them without updating the agent):
-#   1. write "RUNNING pid=<pid> managername=<...> started=<date>" to status
-#      (managername= is the evidence launchd put us in the Aqua session)
+#   1. write "RUNNING pid=<pid> managername=<...> started=<date>
+#      mirror=<path> commit=<sha>" to status (managername= is the evidence
+#      launchd put us in the Aqua session; mirror=/commit= are the tree this
+#      result belongs to — see #261)
 #   2. run xcodebuild test against the pre-built UI-test bundle
 #   3. append "DONE rc=<rc> finished=<date>" and exit <rc>
 #
@@ -26,11 +28,21 @@ set -uo pipefail
 MIRROR="${MAC_UITEST_MIRROR:-$HOME/code/mac-connector-mirror}"
 LOG_DIR="${MAC_UITEST_LOG_DIR:-$HOME/Library/Logs/memory-connector/uitest}"
 
+# The commit the mirror was synced from, recorded by `mac-build.sh --uitest`.
+# mac-uitest-agent.sh compares it with the caller's HEAD before kickstarting;
+# recording it here too means a stored status/run log carries the tree the
+# result came from (#261).
+STAMP="$MIRROR/.memory-mirror-stamp"
+SOURCE_COMMIT="$(sed -n 's/^commit=//p' "$STAMP" 2>/dev/null | head -n 1)"
+SOURCE_COMMIT="${SOURCE_COMMIT:-unknown}"
+
 mkdir -p "$LOG_DIR"
 STATUS_FILE="$LOG_DIR/status"
 
-printf 'RUNNING pid=%s managername=%s started=%s\n' \
-  "$$" "$(launchctl managername)" "$(date '+%Y-%m-%d %H:%M:%S %z')" > "$STATUS_FILE"
+printf '==> mirror=%s commit=%s\n' "$MIRROR" "$SOURCE_COMMIT"
+printf 'RUNNING pid=%s managername=%s started=%s mirror=%s commit=%s\n' \
+  "$$" "$(launchctl managername)" "$(date '+%Y-%m-%d %H:%M:%S %z')" \
+  "$MIRROR" "$SOURCE_COMMIT" > "$STATUS_FILE"
 
 # No `cd`: absolute paths only, so the working directory and the derived-data
 # path the build used are unambiguous. mac-build.sh cd's to the mirror root and
