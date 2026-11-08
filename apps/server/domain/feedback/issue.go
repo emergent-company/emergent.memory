@@ -138,7 +138,10 @@ func codeCell(value string) string {
 	}
 	value = strings.Join(strings.Fields(value), " ")
 	value = strings.ReplaceAll(value, "`", "'")
-	// A pipe ends the table cell even inside a code span, so it is escaped too.
+	// Escape the escape first, so a value that already contains a backslash does
+	// not turn into an accidental pipe escape. A pipe ends the table cell even
+	// inside a code span, so it is escaped too.
+	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, "|", `\|`)
 	return "`" + value + "`"
 }

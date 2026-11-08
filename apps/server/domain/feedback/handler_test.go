@@ -56,7 +56,10 @@ func postFeedback(t *testing.T, h *Handler, body string, user *auth.AuthUser) *h
 func TestHandlerSubmitReturnsCreated(t *testing.T) {
 	h, fake := newTestHandler(t, nil)
 	rec := postFeedback(t, h, `{"message":"the search tool returned 500","category":"bug","severity":"high"}`, &auth.AuthUser{
-		ID: "user-1", Email: "ada@example.com", ProjectID: "project-1", OrgID: "org-1",
+		ID:        "3f1c1a9e-1b6e-4f2a-9f0e-2b7c4d5e6f70",
+		Email:     "ada@example.com",
+		ProjectID: "2b7c4d5e-6f70-4a1b-8c2d-3e4f5a6b7c8d",
+		OrgID:     "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
 	})
 
 	require.Equal(t, http.StatusCreated, rec.Code)
@@ -66,6 +69,21 @@ func TestHandlerSubmitReturnsCreated(t *testing.T) {
 	require.False(t, out.Duplicate)
 	require.Len(t, fake.calls, 1)
 	require.Contains(t, fake.calls[0].body, "ada@example.com")
+	require.Contains(t, fake.calls[0].body, "2b7c4d5e-6f70-4a1b-8c2d-3e4f5a6b7c8d")
+}
+
+func TestHandlerDropsNonUUIDProjectContext(t *testing.T) {
+	// RequireAuth copies the raw X-Project-ID header into user.ProjectID, so a
+	// nonsense value must not reach the issue or the project lookup.
+	h, fake := newTestHandler(t, nil)
+	rec := postFeedback(t, h, `{"message":"the upload button does nothing"}`, &auth.AuthUser{
+		ID: "3f1c1a9e-1b6e-4f2a-9f0e-2b7c4d5e6f70", Email: "ada@example.com", ProjectID: "project-1",
+	})
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Len(t, fake.calls, 1)
+	require.Contains(t, fake.calls[0].body, "none (account-level submission)")
+	require.NotContains(t, fake.calls[0].body, "project-1")
 }
 
 func TestHandlerSubmitValidationError(t *testing.T) {

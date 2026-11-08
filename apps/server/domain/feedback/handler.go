@@ -80,19 +80,20 @@ func (h *Handler) Submit(c echo.Context) error {
 		includeContext = *req.IncludeContext
 	}
 
-	// Project and organization fall back to the authenticated principal, which is
-	// trusted. A value from the request context may originate in the
-	// X-Project-ID header, so it is kept only when it is a well-formed UUID: a
-	// stray value must not be rendered into the issue or drive a lookup that
-	// logs a warning on every submission.
+	// Neither source is trusted on its own: RequireAuth copies the raw
+	// X-Project-ID header straight into user.ProjectID (pkg/auth/middleware.go),
+	// and the request context can carry the same caller-supplied value. Keep an
+	// identifier only when it is a well-formed UUID, so a stray value is neither
+	// rendered into the issue nor used for a lookup that logs a warning on every
+	// submission.
 	ctx := c.Request().Context()
 	projectID := normaliseID(auth.ProjectIDFromContext(ctx))
 	if projectID == "" {
-		projectID = user.ProjectID
+		projectID = normaliseID(user.ProjectID)
 	}
 	orgID := normaliseID(auth.OrgIDFromContext(ctx))
 	if orgID == "" {
-		orgID = user.OrgID
+		orgID = normaliseID(user.OrgID)
 	}
 
 	result, err := h.svc.Submit(ctx, Submission{
