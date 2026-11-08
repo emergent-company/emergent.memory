@@ -31,6 +31,28 @@ const (
 // ValidRunModes lists the accepted run_mode values ("" means structured).
 var ValidRunModes = []string{RunModeStructured, RunModeMini}
 
+// Output proxy modes.
+const (
+	OutputProxyOff  = "off"
+	OutputProxyRTK  = "rtk"
+	OutputProxySQZ  = "sqz"
+	OutputProxyAuto = "auto"
+)
+
+// ValidOutputProxies lists the accepted output_proxy values ("" means off).
+var ValidOutputProxies = []string{OutputProxyOff, OutputProxyRTK, OutputProxySQZ, OutputProxyAuto}
+
+// RTKProxyEnabled reports whether simple read-only shell commands are rewritten
+// to rtk equivalents.
+func (c *AgentSandboxConfig) RTKProxyEnabled() bool {
+	return c != nil && (c.OutputProxy == OutputProxyRTK || c.OutputProxy == OutputProxyAuto)
+}
+
+// SQZProxyEnabled reports whether oversized bash output is compressed with sqz.
+func (c *AgentSandboxConfig) SQZProxyEnabled() bool {
+	return c != nil && (c.OutputProxy == OutputProxySQZ || c.OutputProxy == OutputProxyAuto)
+}
+
 // IsMini reports whether the agent uses the minimal bash-only run mode.
 func (c *AgentSandboxConfig) IsMini() bool {
 	return c != nil && c.RunMode == RunModeMini
@@ -47,7 +69,11 @@ type AgentSandboxConfig struct {
 	// RunMode selects the agent loop's tool surface. "" and "structured" keep
 	// the fine-grained workspace_* tools; "mini" exposes only workspace_bash
 	// plus a submit tool (one action per turn, minimal scaffold).
-	RunMode        string            `json:"run_mode,omitempty"`
+	RunMode string `json:"run_mode,omitempty"`
+	// OutputProxy enables server-side tool-output proxying: "rtk" rewrites
+	// simple read-only shell commands to their rtk equivalents, "sqz"
+	// compresses oversized workspace_bash output with sqz, "auto" does both.
+	OutputProxy    string            `json:"output_proxy,omitempty"`
 	RepoSource     *RepoSourceConfig `json:"repo_source,omitempty"`
 	Tools          []string          `json:"tools,omitempty"`
 	ResourceLimits *ResourceLimits   `json:"resource_limits,omitempty"`
@@ -370,6 +396,20 @@ func (c *AgentSandboxConfig) Validate() []string {
 		}
 		if !valid {
 			errs = append(errs, fmt.Sprintf("invalid run_mode: %q (valid: structured, mini)", c.RunMode))
+		}
+	}
+
+	// Validate output proxy
+	if c.OutputProxy != "" {
+		valid := false
+		for _, m := range ValidOutputProxies {
+			if c.OutputProxy == m {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			errs = append(errs, fmt.Sprintf("invalid output_proxy: %q (valid: off, rtk, sqz, auto)", c.OutputProxy))
 		}
 	}
 

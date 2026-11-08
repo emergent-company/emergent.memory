@@ -55,6 +55,18 @@ RUN curl -fsSL -o /tmp/rtk.tgz \
     && rm -f /tmp/rtk.tgz \
     && rtk --version
 
+# sqz — context compression for AI coding agents (https://github.com/ojuschugh1/sqz).
+# Used by the server-side output proxy to compress oversized bash output.
+# Pinned + checksum-verified; amd64 only, matching the publish workflow.
+ARG SQZ_VERSION=2.1.1
+RUN curl -fsSL -o /tmp/sqz.tgz \
+      "https://github.com/ojuschugh1/sqz/releases/download/v${SQZ_VERSION}/sqz-v${SQZ_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+    && echo "29abeba6a29b83e2a0b0f642681800e62b3dd0df8991e372c3927b8556d55c65  /tmp/sqz.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/sqz.tgz -C /usr/local/bin sqz \
+    && chmod 0755 /usr/local/bin/sqz \
+    && rm -f /tmp/sqz.tgz \
+    && sqz --version
+
 # Install ast-grep for the workspace_ast_grep tool (#393). Pinned release: the
 # tool validates `ast-grep --version`, and Debian bookworm's /usr/bin/sg is the
 # shadow-utils group tool, not ast-grep. Install ONLY the `ast-grep` binary so

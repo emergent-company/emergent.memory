@@ -157,6 +157,10 @@ Usage notes:
 				timeoutMs = int(t)
 			}
 
+			if deps.Config.RTKProxyEnabled() {
+				command = rewriteRTKCommand(command)
+			}
+
 			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   command,
 				Workdir:   workdir,
@@ -177,13 +181,26 @@ Usage notes:
 				return map[string]any{"error": fmt.Sprintf("command execution failed: %s", err.Error())}, nil
 			}
 
-			return map[string]any{
-				"stdout":      result.Stdout,
+			stdout := result.Stdout
+			proxyNote := ""
+			if deps.Config.SQZProxyEnabled() && len(stdout) > sqzCompressThreshold {
+				if compressed, ok := compressWithSQZ(ctx, provider, providerID, stdout); ok {
+					stdout = compressed
+					proxyNote = "output compressed by sqz"
+				}
+			}
+
+			out := map[string]any{
+				"stdout":      stdout,
 				"stderr":      result.Stderr,
 				"exit_code":   result.ExitCode,
 				"duration_ms": result.DurationMs,
 				"truncated":   result.Truncated,
-			}, nil
+			}
+			if proxyNote != "" {
+				out["proxy"] = proxyNote
+			}
+			return out, nil
 		},
 	)
 }
