@@ -23,6 +23,15 @@ func TestCatalogInstruction(t *testing.T) {
 		t.Fatalf("Instruction() does not name the catalog id %q: %q", CatalogID, got)
 	}
 
+	// The JSON examples must be copy-paste-valid (issue #414 review nit): no
+	// literal "..." and no angle-bracket placeholders that a verbatim copy would
+	// fail to validate and then be silently stripped to an empty reply.
+	for _, bad := range []string{"...", "<id>", "<name>"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("Instruction() JSON example contains %q (not copy-paste-valid): %q", bad, got)
+		}
+	}
+
 	for id, spec := range BasicCatalog {
 		if !strings.Contains(got, "- "+id+": ") {
 			t.Fatalf("Instruction() does not list component %q as a catalog line: %q", id, got)

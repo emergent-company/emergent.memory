@@ -127,12 +127,13 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ComponentSpec describes one catalog component: the prop names the validator
-// requires plus a one-line purpose used when the catalog is rendered into the
-// system-prompt instruction. Keeping both in one place is what makes the prompt
-// and the validator share a single source of truth.
+// ComponentSpec describes one catalog component: the prop names the prompt
+// documents as required plus a one-line purpose used when the catalog is
+// rendered into the system-prompt instruction. Keeping both in one place is what
+// makes the prompt and the catalog membership check share a single source of
+// truth.
 type ComponentSpec struct {
-	Required []string // prop names the validator requires
+	Required []string // prop names documented for the model (not enforced by Validate)
 	Purpose  string   // one-line purpose, for prompt emission
 }
 
@@ -144,9 +145,9 @@ type Catalog map[string]ComponentSpec
 // BasicCatalog is the built-in catalog of first-class card components. Required
 // props are kept minimal; a component may carry additional props beyond these.
 var BasicCatalog = Catalog{
-	"proposal":    {Required: []string{"kind", "summary"}, Purpose: "review/accept/reject a proposed change"},
-	"approval":    {Required: []string{"tool"}, Purpose: "gate a tool call on the user's approval"},
-	"question":    {Required: []string{"prompt"}, Purpose: "collect a structured answer from the user"},
+	"proposal":    {Required: []string{"kind", "summary"}, Purpose: "review/accept/reject a proposed change, where the host enables it"},
+	"approval":    {Required: []string{"tool"}, Purpose: "gate a tool call on the user's approval, where the host enables it"},
+	"question":    {Required: []string{"prompt"}, Purpose: "collect a structured answer from the user, where the host enables it"},
 	"code":        {Required: []string{"code"}, Purpose: "show a code block or diff"},
 	"entity":      {Required: []string{"type"}, Purpose: "preview a graph object"},
 	"object-form": {Required: []string{"fields"}, Purpose: "schema-driven data entry"},
@@ -192,12 +193,16 @@ func (c Catalog) Instruction() string {
 	b.WriteString("To emit one, write a fenced ")
 	b.WriteString(fenceOpen)
 	b.WriteString(" code block (closed by a line of three backticks) containing one JSON message per line (JSONL). ")
-	b.WriteString("Open a surface first with {\"createSurface\":{\"surfaceId\":\"<id>\",\"catalogId\":\"")
+	b.WriteString("Open a surface first with {\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"")
 	b.WriteString(CatalogID)
-	b.WriteString("\"}}, then add components with {\"updateComponents\":{\"surfaceId\":\"<id>\",\"components\":[{\"id\":\"root\",\"component\":\"<name>\",...}]}}. ")
+	b.WriteString("\"}}, then add components with {\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"root\",\"component\":\"result\",\"rows\":[]}]}}. ")
+	b.WriteString("You may also patch a surface's data model with {\"updateDataModel\":{\"surfaceId\":\"s1\",\"path\":\"/x\",\"value\":0}} or tear a surface down with {\"deleteSurface\":{\"surfaceId\":\"s1\"}}. ")
 	b.WriteString("Use a card only when the content is genuinely structured — a decision the user must make, a code block or diff, a task list, a table of results, a form, a graph-object preview, or a list of sources. ")
-	b.WriteString("Otherwise answer in prose; do not wrap ordinary prose in a card.\n\nComponents:\n")
-	b.WriteString(c.renderCatalog())
+	b.WriteString("Otherwise answer in prose; do not wrap ordinary prose in a card.")
+	if catalog := c.renderCatalog(); catalog != "" {
+		b.WriteString("\n\nComponents:\n")
+		b.WriteString(catalog)
+	}
 	return b.String()
 }
 

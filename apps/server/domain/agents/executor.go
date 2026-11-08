@@ -2217,6 +2217,9 @@ func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string,
 			ProjectID:       parentProjectID,
 			OrgID:           parentOrgID,
 			UserMessage:     outputMsg,
+			// Preserve the parent's card-rendering surface across the wake, so a
+			// resumed turn keeps the A2UI catalog instruction (issue #414).
+			RenderA2UI: true,
 		})
 		if err != nil {
 			ae.log.Error("maybeWakeParent: parent resume failed",
