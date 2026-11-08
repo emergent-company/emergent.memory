@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1129,6 +1130,7 @@ func TestRenderSkillProposalsPanelHistory(t *testing.T) {
 	for _, want := range []string{
 		"diane.triage", "Patch", "Applied", "Auto-applied",
 		"diane", "source capture", `proposal <span class="font-mono">p7`, `base skill <span class="font-mono">s9`,
+		"2026-08-26", // created time
 		"three runs converged", "missing_heading", "add a heading",
 	} {
 		if !strings.Contains(html, want) {
@@ -1151,6 +1153,105 @@ func TestRenderSkillProposalsPanelHistory(t *testing.T) {
 	full := renderHTML(t, skillProposalsPanel(rows, nil, q))
 	if !strings.Contains(full, "the most recent 50 proposals") || !strings.Contains(full, "narrow the status filter") {
 		t.Error("a full history page must not claim to show everything")
+	}
+}
+
+// chipHrefRE matches a rendered filter/limit chip link, e.g.
+// href="/skills?limit=25&amp;status=applied".
+var chipHrefRE = regexp.MustCompile(`href="(/skills\?limit=\d+&amp;status=[a-z]+)"`)
+
+// TestSkillProposalFilterChipsDriveTheList is the affordance test for the
+// control strip: every chip rendered on the page is pulled back out of the HTML
+// and driven through the real handler, and the client must receive exactly that
+// status and limit. Deleting a chip shrinks the rendered set (the expected set
+// below is hardcoded, not derived from the production slice, so a missing chip
+// fails), and a chip whose href the handler ignores fails the navigation
+// assertion — which is the failure mode a markup-only test cannot see.
+func TestSkillProposalFilterChipsDriveTheList(t *testing.T) {
+	f := &fakeMemory{
+		skills: []Skill{{ID: "s1", Name: "meeting-notes", Scope: "project"}},
+		skillProposals: []SkillCaptureProposal{
+			{ID: "p1", Name: "pending-one", Status: proposalStatusPending},
+			{ID: "p2", Name: "applied-one", Status: proposalStatusApplied},
+			{ID: "p3", Name: "rejected-one", Status: proposalStatusRejected},
+			{ID: "p4", Name: "failed-one", Status: proposalStatusFailed},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/skills", s.uiSkills)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?status=applied&limit=25", nil))
+	page := rec.Body.String()
+
+	// key is "<limit>/<status>"; value is the href the page rendered.
+	chips := map[string]string{}
+	for _, m := range chipHrefRE.FindAllStringSubmatch(page, -1) {
+		href := strings.ReplaceAll(m[1], "&amp;", "&")
+		q, err := url.Parse(href)
+		if err != nil {
+			t.Fatalf("rendered href %q: %v", href, err)
+		}
+		chips[q.Query().Get("limit")+"/"+q.Query().Get("status")] = href
+	}
+
+	// Hardcoded on purpose: 5 status chips carrying limit=25, plus the four
+	// page sizes carrying status=applied (25/applied is the overlap).
+	want := []string{
+		"25/pending", "25/applied", "25/rejected", "25/failed", "25/all",
+		"50/applied", "100/applied", "200/applied",
+	}
+	for _, key := range want {
+		if _, ok := chips[key]; !ok {
+			t.Errorf("no chip drives %s (rendered: %v)", key, chips)
+		}
+	}
+	if len(chips) != len(want) {
+		t.Errorf("rendered %d distinct chips, want %d: %v", len(chips), len(want), chips)
+	}
+
+	// Navigation seam: follow each rendered href through the handler and assert
+	// it reaches memory as exactly that filter state.
+	for _, key := range want {
+		href, ok := chips[key]
+		if !ok {
+			continue
+		}
+		parts := strings.SplitN(key, "/", 2)
+		wantLimit, err := strconv.Atoi(parts[0])
+		if err != nil {
+			t.Fatalf("bad key %q: %v", key, err)
+		}
+		wantStatus := parts[1]
+
+		f.proposalListStatus, f.proposalListLimit = "", 0
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, href, nil))
+		if f.proposalListStatus != wantStatus || f.proposalListLimit != wantLimit {
+			t.Errorf("%s (href %s): client saw status=%q limit=%d, want %q/%d",
+				key, href, f.proposalListStatus, f.proposalListLimit, wantStatus, wantLimit)
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200", key, rec.Code)
+		}
+	}
+}
+
+// TestSkillProposalHistoryRowRendersReadOnly is the inverse affordance check at
+// the page level: rendering a settled row through the shipped panel must not
+// surface a review form. Deleting the read-only branch (rendering every row as
+// reviewable) fails here.
+func TestSkillProposalHistoryRowRendersReadOnly(t *testing.T) {
+	q := newSkillProposalQuery("rejected", "50")
+	html := renderHTML(t, skillProposalsPanel([]SkillCaptureProposal{{
+		ID: "p3", Kind: "create", Name: "diane.old", Status: proposalStatusRejected, Source: "capture",
+	}}, nil, q))
+	if !strings.Contains(html, "Rejected") {
+		t.Error("rejected row missing its outcome badge")
+	}
+	if strings.Contains(html, `action="/skills/proposals/`) {
+		t.Error("a settled row must not render a review form")
 	}
 }
 

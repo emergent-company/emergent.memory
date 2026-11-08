@@ -254,16 +254,24 @@ func TestIsMemoryNotFound(t *testing.T) {
 // end: memory's proxy answers with an HTML 502 page and the resulting toast must
 // carry status-derived copy, never the upstream body.
 func TestSkillProposalApproveFlashSanitisesProxyBody(t *testing.T) {
+	// The approve POST fails upstream with a proxy page; the PRG re-read
+	// succeeds, which is the realistic shape of this failure.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = io.WriteString(w, "<html><body>502 Bad Gateway</body></html>")
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, "<html><body>502 Bad Gateway</body></html>")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
 
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: NewMemoryClient(srv.URL, "proj-1")}
 	e := echo.New()
 	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+	e.GET("/skills", s.uiSkills)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/approve", nil))
@@ -283,6 +291,20 @@ func TestSkillProposalApproveFlashSanitisesProxyBody(t *testing.T) {
 	if !strings.Contains(flash, "The service failed (HTTP 502).") {
 		t.Errorf("flash = %q, want the generic 502 copy", flash)
 	}
+
+	// The flash affordance is the rendered toast, not just the redirect: follow
+	// the PRG target and assert the operator actually sees the sanitised copy.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, loc.String(), nil))
+	page := rec.Body.String()
+	if !strings.Contains(page, "The service failed (HTTP 502).") {
+		t.Error("the redirected page does not render the sanitised flash copy")
+	}
+	for _, leak := range []string{"<html>", "Bad Gateway"} {
+		if strings.Contains(page, leak) {
+			t.Errorf("the redirected page still shows %q", leak)
+		}
+	}
 }
 
 // TestSkillProposalApproveFlashKeepsMemoryValidationCopy pins the other half of
@@ -299,6 +321,7 @@ func TestSkillProposalApproveFlashKeepsMemoryValidationCopy(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: NewMemoryClient(srv.URL, "proj-1")}
 	e := echo.New()
 	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+	e.GET("/skills", s.uiSkills)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/proposals/p1/approve", nil))
@@ -312,5 +335,12 @@ func TestSkillProposalApproveFlashKeepsMemoryValidationCopy(t *testing.T) {
 	}
 	if strings.Contains(flash, `{"error"`) {
 		t.Errorf("flash leaks raw JSON: %q", flash)
+	}
+
+	// Follow the PRG target: the operator must actually see that copy.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, loc.String(), nil))
+	if !strings.Contains(rec.Body.String(), "blocked by scan") {
+		t.Error("the redirected page does not render memory's validation copy")
 	}
 }
