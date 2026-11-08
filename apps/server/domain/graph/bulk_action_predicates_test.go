@@ -133,7 +133,7 @@ func TestBulkActionFilterInnerOuterPredicatesAgree(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			q := repo.applyBulkFilterToUpdate(
 				repo.db.NewUpdate().TableExpr("kb.graph_objects").Set("status = ?", "x"),
-				pid, tc.filter, tc.resolvedFilters, 5)
+				pid, tc.filter, tc.resolvedFilters, nil, 5)
 			outer, inner := extractInnerOuterWhere(t, q.String())
 			require.NotEmpty(t, outer, "outer predicate set must not be empty")
 			require.NotEmpty(t, inner, "inner predicate set must not be empty")
@@ -160,12 +160,12 @@ func TestBulkActionFilterPredicatesSharedByAllExpansions(t *testing.T) {
 	// Update: render outer + inner via the production helper.
 	upd := repo.applyBulkFilterToUpdate(
 		repo.db.NewUpdate().TableExpr("kb.graph_objects").Set("status = ?", "x"),
-		pid, filter, resolved, 5)
+		pid, filter, resolved, nil, 5)
 	outer, inner := extractInnerOuterWhere(t, upd.String())
 
 	// Count query: build exactly as BulkActionByFilter does.
 	countQ := repo.db.NewSelect().TableExpr("kb.graph_objects").ColumnExpr("COUNT(*) AS cnt")
-	countQ = applyPredicates(countQ, bulkFilterPredicates(pid, filter, resolved))
+	countQ = applyPredicates(countQ, bulkFilterPredicates(pid, filter, resolved, nil))
 	countSQL := countQ.String()
 	countRegion := countSQL[strings.Index(countSQL, " WHERE ")+len(" WHERE "):]
 	count := splitTopLevelAND(countRegion)
@@ -173,7 +173,7 @@ func TestBulkActionFilterPredicatesSharedByAllExpansions(t *testing.T) {
 	// Hard-delete subselect: build exactly as BulkActionByFilter does.
 	subQ := repo.db.NewSelect().TableExpr("kb.graph_objects").ColumnExpr("id").
 		OrderExpr("created_at ASC, id ASC").Limit(5)
-	subQ = applyPredicates(subQ, bulkFilterPredicates(pid, filter, resolved))
+	subQ = applyPredicates(subQ, bulkFilterPredicates(pid, filter, resolved, nil))
 	subSQL := subQ.String()
 	subRegion := subSQL[strings.Index(subSQL, " WHERE ")+len(" WHERE "):]
 	subRegion = subRegion[:strings.Index(subRegion, " ORDER BY ")]

@@ -4207,12 +4207,21 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		resolvedFilters = append(resolvedFilters, pf)
 	}
 
+	// Bound the action to the run's branch boundary (#265): an agent run with a
+	// scope installed may only change rows on main plus its in-scope branches.
+	// A caller with no boundary (a human MCP client) keeps the pre-existing
+	// all-branches behaviour.
+	scopePreds, err := r.bulkBranchScopePredicates(ctx, params.ProjectID)
+	if err != nil {
+		return 0, 0, err
+	}
+
 	// Build a base select to count matched objects, reusing the single bulk
 	// filter predicate set so the count query agrees with every action path.
 	countQ := r.db.NewSelect().
 		TableExpr("kb.graph_objects").
 		ColumnExpr("COUNT(*) AS cnt")
-	countQ = applyPredicates(countQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters))
+	countQ = applyPredicates(countQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters, scopePreds))
 
 	var cntResult struct{ Cnt int }
 	if err := countQ.Scan(ctx, &cntResult); err != nil {
@@ -4230,6 +4239,10 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		limit = 1000
 	}
 
+	applyUpdate := func(q *bun.UpdateQuery) *bun.UpdateQuery {
+		return r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, scopePreds, limit)
+	}
+
 	// Execute the action.
 	now := time.Now().UTC()
 
@@ -4241,7 +4254,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4256,7 +4269,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4275,7 +4288,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			// is applied inside the subselect the LIMIT truncates.
 			OrderExpr("created_at ASC, id ASC").
 			Limit(limit)
-		subQ = applyPredicates(subQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters))
+		subQ = applyPredicates(subQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters, scopePreds))
 		result, qErr := r.db.NewDelete().
 			TableExpr("kb.graph_objects").
 			Where("id IN (?)", subQ).
@@ -4297,7 +4310,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4316,7 +4329,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4331,7 +4344,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4346,7 +4359,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4361,7 +4374,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Set("updated_at = ?", now).
 			Set("actor_type = ?", params.ActorType).
 			Set("actor_id = ?", params.ActorID)
-		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
+		q = applyUpdate(q)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -4381,8 +4394,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 // four expansions — the count query, the hard-delete subselect, the outer UPDATE,
 // and the limit-enforcing inner subselect — so the inner/outer equality (the
 // LIMIT must count exactly the rows the update would accept) is structural rather
-// than coincidental.
-func bulkFilterPredicates(projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter) []bulkFilterPredicate {
+// than coincidental. scopePreds carries the run's branch boundary (if any) from
+// the same source, so a scoped run cannot reach rows it cannot read.
+func bulkFilterPredicates(projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter, scopePreds []bulkFilterPredicate) []bulkFilterPredicate {
 	preds := []bulkFilterPredicate{
 		{cond: "project_id = ?", args: []any{projectID}},
 		{cond: "supersedes_id IS NULL"},
@@ -4400,16 +4414,37 @@ func bulkFilterPredicates(projectID uuid.UUID, filter BulkActionFilter, resolved
 	if filter.Namespace != nil {
 		preds = append(preds, bulkFilterPredicate{cond: "namespace = ?", args: []any{*filter.Namespace}})
 	}
-	return append(preds, propertyFilterPredicates(resolvedFilters)...)
+	preds = append(preds, propertyFilterPredicates(resolvedFilters)...)
+	return append(preds, scopePreds...)
+}
+
+// bulkBranchScopePredicates returns the branch-boundary predicate for a bulk
+// action, or none when the caller had no boundary installed. A main-only agent
+// run is bounded to main; a scoped run to main plus its in-scope branches —
+// exactly like the read paths (#265/#308). A caller with no boundary (a human
+// MCP client whose branch arguments predate branch scopes) keeps the previous
+// behaviour, because narrowing it is a separate product decision.
+func (r *Repository) bulkBranchScopePredicates(ctx context.Context, projectID uuid.UUID) ([]bulkFilterPredicate, error) {
+	if !branchscope.Installed(ctx) {
+		return nil, nil
+	}
+	cond, args, err := r.branchScopePredicate(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if cond == "" {
+		return nil, nil
+	}
+	return []bulkFilterPredicate{{cond: cond, args: args}}, nil
 }
 
 // applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property
-// filters) to a Bun update query and enforces the deterministic cap via
-// `id IN (SELECT id ... ORDER BY created_at ASC, id ASC LIMIT n)`. Callers pass
-// limit already defaulted to 1000 when params.Limit <= 0, so the value here is
-// always a positive cap (Postgres has no UPDATE ... LIMIT).
-func (r *Repository) applyBulkFilterToUpdate(q *bun.UpdateQuery, projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
-	preds := bulkFilterPredicates(projectID, filter, resolvedFilters)
+// filters, branch boundary) to a Bun update query and enforces the deterministic
+// cap via `id IN (SELECT id ... ORDER BY created_at ASC, id ASC LIMIT n)`.
+// Callers pass limit already defaulted to 1000 when params.Limit <= 0, so the
+// value here is always a positive cap (Postgres has no UPDATE ... LIMIT).
+func (r *Repository) applyBulkFilterToUpdate(q *bun.UpdateQuery, projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter, scopePreds []bulkFilterPredicate, limit int) *bun.UpdateQuery {
+	preds := bulkFilterPredicates(projectID, filter, resolvedFilters, scopePreds)
 	q = applyPredicates(q, preds)
 
 	// Postgres has no UPDATE ... LIMIT, so restrict the target set with a

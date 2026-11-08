@@ -32,6 +32,7 @@ var internalToolNames = map[string]struct{}{
 	"entity-create":        {},
 	"entity-update":        {},
 	"entity-delete":        {},
+	"entity-bulk-update":   {},
 	"entity-restore":       {},
 	"session-get-messages": {},
 	"relationship-create":  {},

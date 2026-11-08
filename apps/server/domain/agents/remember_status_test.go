@@ -961,3 +961,99 @@ func TestRememberStatus_EmbeddingsReadiness(t *testing.T) {
 		}
 	})
 }
+
+// TestAggregateRememberStatus_BatchUpdatesAndDeletes pins that the batch forms
+// of the widened tools aggregate every successful item, including a partial
+// failure where the top-level envelope is ok=false but rows really changed.
+func TestAggregateRememberStatus_BatchUpdatesAndDeletes(t *testing.T) {
+	calls := []*AgentRunToolCall{
+		tc("entity-update", nil, map[string]any{
+			"ok": false, // partial failure
+			"data": map[string]any{
+				"results": []any{
+					map[string]any{"ok": true, "entity": map[string]any{"id": "u-1", "type": "Person"}},
+					map[string]any{"ok": false, "error": "missing"},
+					map[string]any{"ok": true, "entity": map[string]any{"id": "u-2", "type": "Company"}},
+				},
+			},
+		}),
+		tc("entity-delete", nil, map[string]any{
+			"ok": false, // partial failure
+			"data": map[string]any{
+				"results": []any{
+					map[string]any{"ok": true, "entity_id": "d-1"},
+					map[string]any{"ok": false, "entity_id": "d-2", "error": "missing"},
+					map[string]any{"ok": true, "entity_id": "d-3"},
+				},
+			},
+		}),
+		tc("relationship-delete", nil, map[string]any{
+			"ok": false, // partial failure
+			"data": map[string]any{
+				"results": []any{
+					map[string]any{"ok": true, "relationship_id": "r-1"},
+					map[string]any{"ok": false, "relationship_id": "r-2", "error": "already deleted"},
+				},
+			},
+		}),
+	}
+
+	agg := aggregateRememberStatus(calls)
+
+	if agg.ObjectsUpdated != 2 {
+		t.Errorf("ObjectsUpdated = %d, want 2", agg.ObjectsUpdated)
+	}
+	if agg.ObjectsDeleted != 2 {
+		t.Errorf("ObjectsDeleted = %d, want 2", agg.ObjectsDeleted)
+	}
+	if agg.RelationshipsDeleted != 1 {
+		t.Errorf("RelationshipsDeleted = %d, want 1", agg.RelationshipsDeleted)
+	}
+	if got, want := agg.DeletedObjectIDs, []string{"d-1", "d-3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("DeletedObjectIDs = %v, want %v", got, want)
+	}
+	if got, want := agg.DeletedRelationshipIDs, []string{"r-1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("DeletedRelationshipIDs = %v, want %v", got, want)
+	}
+	if got, want := agg.DiscoveredTypes, []string{"Person", "Company"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("DiscoveredTypes = %v, want %v", got, want)
+	}
+	if agg.FailedToolCalls != 0 {
+		t.Errorf("FailedToolCalls = %d, want 0 (a partial batch output is a completed call)", agg.FailedToolCalls)
+	}
+}
+
+// TestAggregateRememberStatus_EntityBulkUpdate pins the filter-based tool: it is
+// graph-mutating, counts only rows the server actually changed, and never counts
+// a dry run.
+func TestAggregateRememberStatus_EntityBulkUpdate(t *testing.T) {
+	calls := []*AgentRunToolCall{
+		tc("entity-bulk-update", nil, map[string]any{
+			"ok": true,
+			"data": map[string]any{
+				"matched": float64(5), "affected": float64(5), "dry_run": false, "action": "soft_delete",
+			},
+		}),
+		tc("entity-bulk-update", nil, map[string]any{
+			"ok": true,
+			"data": map[string]any{
+				"matched": float64(4), "affected": float64(4), "dry_run": false, "action": "update_status",
+			},
+		}),
+		tc("entity-bulk-update", nil, map[string]any{
+			"ok": true,
+			"data": map[string]any{
+				"matched": float64(9), "affected": float64(0), "dry_run": true, "action": "hard_delete",
+			},
+		}),
+	}
+
+	agg := aggregateRememberStatus(calls)
+
+	if agg.ObjectsDeleted != 5 {
+		t.Errorf("ObjectsDeleted = %d, want 5 (soft_delete affected rows only)", agg.ObjectsDeleted)
+	}
+	if agg.ObjectsUpdated != 4 {
+		t.Errorf("ObjectsUpdated = %d, want 4 (status update affected rows only)", agg.ObjectsUpdated)
+	}
+}
