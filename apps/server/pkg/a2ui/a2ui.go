@@ -416,6 +416,7 @@ func Validate(msgs []Message) error {
 func ValidateAll(msgs []Message) Issues {
 	var out Issues
 	surfaceSeen := ""
+	reportedMix := make(map[string]bool)
 	for i, m := range msgs {
 		issues, surfaceID := validateMessage(i, m)
 		out = append(out, issues...)
@@ -423,10 +424,17 @@ func ValidateAll(msgs []Message) Issues {
 			if surfaceSeen == "" {
 				surfaceSeen = surfaceID
 			} else if surfaceSeen != surfaceID {
-				out = append(out, Issue{
-					Message: i,
-					Detail:  fmt.Sprintf("a message set may describe one surface only (saw %q and %q)", surfaceSeen, surfaceID),
-				})
+				// Report the mixed-surface problem once per pair of ids, not once
+				// per offending message — a long block would otherwise repeat the
+				// same repair instruction.
+				key := surfaceSeen + "\x00" + surfaceID
+				if !reportedMix[key] {
+					reportedMix[key] = true
+					out = append(out, Issue{
+						Message: i,
+						Detail:  fmt.Sprintf("a message set may describe one surface only (saw %q and %q)", surfaceSeen, surfaceID),
+					})
+				}
 			}
 		}
 	}

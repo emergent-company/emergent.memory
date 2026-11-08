@@ -3962,8 +3962,14 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 
-			// Persist assistant messages from events
+			// Persist assistant messages from events. A repaired answer that
+			// omitted its createSurface line is normalized first so both the
+			// persisted row and the streamed frame keep the failed surface's id
+			// and ordering (#417).
 			if event.Content != nil && !event.Partial {
+				if event.IsFinalResponse() && a2uiRepair.Attempted() {
+					event.Content.Parts = ensureRepairedCreateSurface(event.Content.Parts, a2uiRepair.SurfaceID())
+				}
 				ae.persistEventContent(dbCtx, run.ID, event, tracker.current())
 			}
 
@@ -4082,15 +4088,13 @@ func (ae *AgentExecutor) runPipeline(
 			// One bounded A2UI repair pass (#417): an answer that was only an
 			// invalid card would otherwise degrade silently, so send the
 			// validator issues back exactly once before accepting the fallback.
-			if req.RenderA2UI {
-				if prompt, ok := a2uiRepair.Next(eventParts(lastEvent)); ok {
-					ae.log.Info("a2ui validation failed, issuing one repair turn",
-						slog.String("run_id", run.ID),
-						slog.Int("max_repairs", maxA2UIRepairs),
-					)
-					currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
-					continue
-				}
+			if prompt, ok := a2uiRepairFor(req, tracker, a2uiRepair, eventParts(lastEvent)); ok {
+				ae.log.Info("a2ui validation failed, issuing one repair turn",
+					slog.String("run_id", run.ID),
+					slog.Int("max_repairs", maxA2UIRepairs),
+				)
+				currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
+				continue
 			}
 			break // normal completion — exit outer retry loop
 		}
@@ -5446,6 +5450,16 @@ func (st *stepTracker) exceeded() bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.steps >= st.maxSteps
+}
+
+// nextStepExceedsBudget reports whether incrementing for one more model call
+// would trip the step limit. beforeModelCb increments first and then checks
+// exceeded(), so a follow-up turn (a repair) is only safe while the NEXT step
+// still fits — not merely while the current count is under the limit.
+func (st *stepTracker) nextStepExceedsBudget() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.steps+1 >= st.maxSteps
 }
 
 // --- Doom Loop Detector ---

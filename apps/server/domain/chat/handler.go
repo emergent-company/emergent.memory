@@ -501,6 +501,13 @@ func conversationMessageItem(m Message) *agents.ConversationHistoryItem {
 		}
 		if err := json.Unmarshal(m.RetrievalContext, &rc); err == nil && len(rc.A2UI) > 0 {
 			content["a2ui"] = rc.A2UI
+			// The stored text of a card-only turn is the SummaryText placeholder
+			// kept for text-only consumers (ACP/MCP). A surface-aware replay must
+			// not also paint that placeholder as a second, empty-looking bubble
+			// next to the card (#427 follow-up).
+			if m.Content == a2ui.SummaryText(rc.A2UI) {
+				delete(content, "text")
+			}
 		}
 	}
 	return &agents.ConversationHistoryItem{
@@ -1490,9 +1497,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			// Persist/replay only the authoritative frame: progressive frames are
 			// partial and a teardown deletes the surface, so appending them would
 			// store a duplicated or already-deleted card (#427).
-			if event.Final {
-				surfaces = event.A2UI
-			}
+			surfaces = finalA2UISurfaces(surfaces, event)
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		case agents.StreamEventSubagent:
 			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
@@ -1717,11 +1722,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	} else if responseText != "" || len(surfaces) > 0 {
 		// A card-only answer has no text: persist the surface's summary so the
 		// turn is replayable instead of vanishing from history (#427).
-		text := responseText
-		if text == "" {
-			text = a2ui.SummaryText(surfaces)
-		}
-		h.persistAssistantMessage(ctx, projectID, userID, conv, result, text, surfaces)
+		h.persistAssistantMessage(ctx, projectID, userID, conv, result, assistantPersistText(responseText, surfaces), surfaces)
 	}
 
 	// Derive and emit grounded citations after the run completes and before the
@@ -1786,6 +1787,27 @@ func agentRunMessageText(content map[string]any) string {
 	}
 	text, _ := content["text"].(string)
 	return text
+}
+
+// finalA2UISurfaces keeps only the authoritative finished-response frame. A
+// progressive frame is partial and a teardown deletes the surface, so replacing
+// the tracked set with either would persist a duplicate or an already-deleted
+// card (#427).
+func finalA2UISurfaces(current []a2ui.Message, event agents.StreamEvent) []a2ui.Message {
+	if event.Type == agents.StreamEventA2UI && event.Final {
+		return event.A2UI
+	}
+	return current
+}
+
+// assistantPersistText keeps the stored row replayable for text-only consumers:
+// a card-only turn has no text, so it stores the surface summary. Surface-aware
+// history items omit that placeholder again (see conversationMessageItem).
+func assistantPersistText(text string, surfaces []a2ui.Message) string {
+	if text != "" {
+		return text
+	}
+	return a2ui.SummaryText(surfaces)
 }
 
 // persistAssistantMessage stores an assistant turn in kb.chat_messages, tagged
@@ -2015,9 +2037,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 			// Persist/replay only the authoritative frame: progressive frames are
 			// partial and a teardown deletes the surface, so appending them would
 			// store a duplicated or already-deleted card (#427).
-			if event.Final {
-				surfaces = event.A2UI
-			}
+			surfaces = finalA2UISurfaces(surfaces, event)
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		case agents.StreamEventSubagent:
 			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
@@ -2087,11 +2107,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 			}
 		default:
 			if text != "" || len(surfaces) > 0 {
-				persistText := text
-				if persistText == "" {
-					persistText = a2ui.SummaryText(surfaces)
-				}
-				h.persistAssistantMessage(ctx, user.ProjectID, user.ID, conv, result, persistText, surfaces)
+				h.persistAssistantMessage(ctx, user.ProjectID, user.ID, conv, result, assistantPersistText(text, surfaces), surfaces)
 			}
 		}
 	}
