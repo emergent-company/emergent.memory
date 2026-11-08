@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -264,15 +265,15 @@ func TestListSkillCaptureProposals(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := NewMemoryClient(srv.URL, "proj-1").ListSkillCaptureProposals(context.Background())
+	got, err := NewMemoryClient(srv.URL, "proj-1").ListSkillCaptureProposals(context.Background(), proposalStatusPending, defaultSkillProposalLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != "/api/projects/proj-1/skills/proposals" {
 		t.Errorf("path = %q", gotPath)
 	}
-	if gotQuery != "status=pending" {
-		t.Errorf("query = %q, want status=pending", gotQuery)
+	if gotQuery != "limit=50&status=pending" {
+		t.Errorf("query = %q, want limit=50&status=pending", gotQuery)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d proposals, want 1", len(got))
@@ -285,6 +286,69 @@ func TestListSkillCaptureProposals(t *testing.T) {
 		t.Errorf("confidence = %v, want 0.82", p.Confidence)
 	}
 	if len(p.Findings) != 1 || p.Findings[0].Code != "missing_heading" || p.Findings[0].Severity != "warning" {
+		t.Errorf("findings = %+v", p.Findings)
+	}
+}
+
+// TestListSkillCaptureProposalsStatusAndLimit pins the widened client contract:
+// the status filter and the limit reach memory as the caller asked, nothing
+// silently rewritten, and an empty status is simply omitted.
+func TestListSkillCaptureProposalsStatusAndLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		limit     int
+		wantQuery string
+	}{
+		{name: "applied with limit", status: proposalStatusApplied, limit: 25, wantQuery: "limit=25&status=applied"},
+		{name: "all with max limit", status: proposalStatusAll, limit: maxSkillProposalLimit, wantQuery: "limit=200&status=all"},
+		{name: "no status", status: "", limit: 50, wantQuery: "limit=50"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotQuery string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.RawQuery
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"proposals":[]}`)
+			}))
+			defer srv.Close()
+
+			if _, err := NewMemoryClient(srv.URL, "proj-1").ListSkillCaptureProposals(context.Background(), tt.status, tt.limit); err != nil {
+				t.Fatal(err)
+			}
+			if gotQuery != tt.wantQuery {
+				t.Errorf("query = %q, want %q", gotQuery, tt.wantQuery)
+			}
+		})
+	}
+}
+
+// TestListSkillCaptureProposalsHistoryFields pins the fields the read-only
+// history rows render: the outcome status, autoApplied, the base skill, source,
+// evidence, findings and created time all survive the wire.
+func TestListSkillCaptureProposalsHistoryFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"proposals":[{"id":"p2","kind":"patch","name":"diane.triage","baseSkillId":"s9","evidence":"three runs converged","confidence":0.91,"source":"capture","status":"applied","autoApplied":true,"createdAt":"2026-08-26T10:00:00Z","findings":[{"severity":"warning","code":"missing_heading","message":"add a heading"}]}]}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewMemoryClient(srv.URL, "proj-1").ListSkillCaptureProposals(context.Background(), proposalStatusApplied, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d proposals, want 1", len(got))
+	}
+	p := got[0]
+	if p.Status != proposalStatusApplied || !p.AutoApplied || p.BaseSkillID != "s9" {
+		t.Errorf("outcome fields = %+v", p)
+	}
+	if p.Source != "capture" || p.Evidence != "three runs converged" || p.CreatedAt == "" {
+		t.Errorf("provenance fields = %+v", p)
+	}
+	if len(p.Findings) != 1 || p.Findings[0].Code != "missing_heading" {
 		t.Errorf("findings = %+v", p.Findings)
 	}
 }
@@ -379,7 +443,7 @@ func TestSkillCaptureProposalError(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj-1")
-	if _, err := m.ListSkillCaptureProposals(context.Background()); err == nil {
+	if _, err := m.ListSkillCaptureProposals(context.Background(), proposalStatusPending, defaultSkillProposalLimit); err == nil {
 		t.Error("list: want error, got nil")
 	}
 	if _, err := m.GetSkillCaptureProposal(context.Background(), "p1"); err == nil {
@@ -403,7 +467,7 @@ func TestRenderSkillsPage(t *testing.T) {
 		{ID: "s2", Name: "recall-memory", Description: "Remembers things", Scope: "global",
 			UpdatedAt: "2026-08-26T09:00:00Z"},
 	}
-	html := renderHTML(t, SkillsPage(skills, nil, nil, nil, "", nil, "", map[string]int{"summarize-email": 2, "recall-memory": 0}))
+	html := renderHTML(t, SkillsPage(skills, nil, nil, nil, newSkillProposalQuery("", ""), "", nil, "", map[string]int{"summarize-email": 2, "recall-memory": 0}))
 	for _, want := range []string{
 		"Skills", "summarize-email", "Condenses threads", "recall-memory", "Remembers things",
 		"Used by", "2 agents", "Unused",
@@ -424,22 +488,22 @@ func TestRenderSkillsPage(t *testing.T) {
 	}
 
 	// With an assistant agent configured the "Add with assistant" button shows.
-	htmlWithAssistant := renderHTML(t, SkillsPage(skills, nil, nil, nil, "", nil, "agent-1", nil))
+	htmlWithAssistant := renderHTML(t, SkillsPage(skills, nil, nil, nil, newSkillProposalQuery("", ""), "", nil, "agent-1", nil))
 	if !strings.Contains(htmlWithAssistant, "Add with assistant") {
 		t.Error("assistant button missing when assistant configured")
 	}
 
-	htmlEmpty := renderHTML(t, SkillsPage(nil, nil, nil, nil, "", nil, "", nil))
+	htmlEmpty := renderHTML(t, SkillsPage(nil, nil, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil))
 	if !strings.Contains(htmlEmpty, "No skills yet") {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, SkillsPage(nil, errTest, nil, nil, "", nil, "", nil))
+	htmlErr := renderHTML(t, SkillsPage(nil, errTest, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil))
 	if !strings.Contains(htmlErr, "Failed to load skills") {
 		t.Error("error state missing")
 	}
 
-	htmlFlash := renderHTML(t, SkillsPage(nil, nil, nil, nil, "Skill created.", nil, "", nil))
+	htmlFlash := renderHTML(t, SkillsPage(nil, nil, nil, nil, newSkillProposalQuery("", ""), "Skill created.", nil, "", nil))
 	if !strings.Contains(htmlFlash, "Skill created.") {
 		t.Error("flash message missing")
 	}
@@ -455,7 +519,7 @@ func TestRenderSkillsPageArchived(t *testing.T) {
 		{ID: "s-active", Name: "still-useful", Description: "Active skill", Scope: "project",
 			UpdatedAt: "2026-08-26T11:00:00Z"},
 	}
-	html := renderHTML(t, SkillsPage(skills, nil, nil, nil, "", nil, "", nil))
+	html := renderHTML(t, SkillsPage(skills, nil, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil))
 	for _, want := range []string{
 		"diane.old", "Archived", "still-useful",
 		`action="/skills/s-arch/restore"`, `name="pin" value="1"`, "Restore &amp; pin",
@@ -500,7 +564,7 @@ func TestRenderSkillProposalsPanel(t *testing.T) {
 			Findings: []SkillCaptureFinding{{Severity: "error", Code: "github_token", Message: "content looks like it contains a GitHub token"}},
 		},
 		{ID: "p2", Kind: "delete", Name: "old-skill", AgentID: "a2", Confidence: 0.5, Status: "pending"},
-	}, nil))
+	}, nil, newSkillProposalQuery("", "")))
 	for _, want := range []string{
 		"Proposed skills", "diane.triage", "Create", "diane", "82% confidence",
 		"Pending", "github_token", "content looks like it contains a GitHub token",
@@ -513,12 +577,12 @@ func TestRenderSkillProposalsPanel(t *testing.T) {
 		}
 	}
 
-	empty := renderHTML(t, skillProposalsPanel(nil, nil))
+	empty := renderHTML(t, skillProposalsPanel(nil, nil, newSkillProposalQuery("", "")))
 	if !strings.Contains(empty, "No skill proposals are waiting for review") {
 		t.Error("empty inbox state missing")
 	}
 
-	failed := renderHTML(t, skillProposalsPanel(nil, errTest))
+	failed := renderHTML(t, skillProposalsPanel(nil, errTest, newSkillProposalQuery("", "")))
 	if !strings.Contains(failed, "Pending proposals could not be loaded") {
 		t.Error("failed-load state missing")
 	}
@@ -933,5 +997,235 @@ func TestSkillProposalApproveFailureStaysPending(t *testing.T) {
 	}
 	if strings.Contains(body, "Proposal approved") {
 		t.Error("failed approve: the page must not claim the proposal was approved")
+	}
+}
+
+// --- status filter + limit (history view, honest counts) ---
+
+// TestNewSkillProposalQuery pins the filter validation: an absent or unknown
+// status is the pending inbox, and every unusable limit is replaced before the
+// request and explained rather than silently swapped.
+func TestNewSkillProposalQuery(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		limit     string
+		wantStat  string
+		wantLimit int
+		wantNote  string // substring of the note; "" means no note
+	}{
+		{name: "defaults", wantStat: proposalStatusPending, wantLimit: 50},
+		{name: "applied 25", status: "applied", limit: "25", wantStat: proposalStatusApplied, wantLimit: 25},
+		{name: "all 100", status: "all", limit: "100", wantStat: proposalStatusAll, wantLimit: 100},
+		{name: "status upper and padded", status: " FAILED ", wantStat: proposalStatusFailed, wantLimit: 50},
+		{name: "unknown status is pending", status: "bogus", wantStat: proposalStatusPending, wantLimit: 50},
+		{name: "limit not a number", limit: "abc", wantStat: proposalStatusPending, wantLimit: 50, wantNote: "not a number"},
+		{name: "limit zero", limit: "0", wantStat: proposalStatusPending, wantLimit: 50, wantNote: "showing up to 50"},
+		{name: "limit negative", limit: "-5", wantStat: proposalStatusPending, wantLimit: 50, wantNote: "showing up to 50"},
+		{name: "limit above the server ceiling", limit: "500", wantStat: proposalStatusPending, wantLimit: 200, wantNote: "at most 200"},
+		{name: "limit at the server ceiling", limit: "200", wantStat: proposalStatusPending, wantLimit: 200},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := newSkillProposalQuery(tt.status, tt.limit)
+			if q.Status != tt.wantStat || q.Limit != tt.wantLimit {
+				t.Fatalf("query = %+v, want status=%s limit=%d", q, tt.wantStat, tt.wantLimit)
+			}
+			if tt.wantNote == "" && q.LimitNote != "" {
+				t.Errorf("unexpected limit note %q", q.LimitNote)
+			}
+			if tt.wantNote != "" && !strings.Contains(q.LimitNote, tt.wantNote) {
+				t.Errorf("limit note = %q, want it to contain %q", q.LimitNote, tt.wantNote)
+			}
+		})
+	}
+}
+
+// TestSkillProposalsHrefKeepsFilterState pins that both filter dimensions ride
+// in the query string, so switching status cannot drop the limit and vice
+// versa.
+func TestSkillProposalsHrefKeepsFilterState(t *testing.T) {
+	if got, want := skillProposalsHref(proposalStatusApplied, 25), "/skills?limit=25&status=applied"; got != want {
+		t.Errorf("href = %q, want %q", got, want)
+	}
+}
+
+// TestSkillProposalCountLabel pins the honest count line. memory returns no
+// total, so a full page must say "the most recent N" and point at the filter —
+// "showing all 50" would be a lie whenever more proposals exist.
+func TestSkillProposalCountLabel(t *testing.T) {
+	full := skillProposalCountLabel(50, 50)
+	if !strings.Contains(full, "the most recent 50") {
+		t.Errorf("full page label = %q, want the most-recent wording", full)
+	}
+	if !strings.Contains(full, "narrow the status filter") {
+		t.Errorf("full page label = %q, want the narrowing hint", full)
+	}
+	if strings.Contains(full, "Showing all") {
+		t.Errorf("a full page must not claim it shows everything: %q", full)
+	}
+
+	short := skillProposalCountLabel(3, 50)
+	if want := "Showing all 3 proposals."; short != want {
+		t.Errorf("short page label = %q, want %q", short, want)
+	}
+	if strings.Contains(short, "narrow") {
+		t.Errorf("a short page needs no narrowing hint: %q", short)
+	}
+	if got := skillProposalCountLabel(1, 50); got != "Showing all 1 proposal." {
+		t.Errorf("singular label = %q", got)
+	}
+}
+
+// TestRenderSkillProposalsPanelFilters pins the control strip: every status
+// filter and every page size is a link, each link carries the other filter's
+// current value, and the active choices are marked.
+func TestRenderSkillProposalsPanelFilters(t *testing.T) {
+	q := newSkillProposalQuery("applied", "25")
+	html := renderHTML(t, skillProposalsPanel(nil, nil, q))
+
+	for _, want := range []string{
+		// Every status filter, each keeping limit=25.
+		`href="/skills?limit=25&amp;status=pending"`,
+		`href="/skills?limit=25&amp;status=applied"`,
+		`href="/skills?limit=25&amp;status=rejected"`,
+		`href="/skills?limit=25&amp;status=failed"`,
+		`href="/skills?limit=25&amp;status=all"`,
+		// Every page size, each keeping status=applied.
+		`href="/skills?limit=25&amp;status=applied"`,
+		`href="/skills?limit=50&amp;status=applied"`,
+		`href="/skills?limit=100&amp;status=applied"`,
+		`href="/skills?limit=200&amp;status=applied"`,
+		"Per page",
+		`aria-current="page"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("filter strip missing %q", want)
+		}
+	}
+
+	// The empty applied history names its own filter instead of borrowing the
+	// pending inbox copy.
+	if !strings.Contains(html, "No proposals have been applied yet") {
+		t.Error("applied empty state missing")
+	}
+	if strings.Contains(html, "No skill proposals are waiting for review") {
+		t.Error("the applied filter must not render the pending empty copy")
+	}
+}
+
+// TestRenderSkillProposalsPanelHistory pins the read-only history rows: the
+// outcome and its provenance render, and no review control does.
+func TestRenderSkillProposalsPanelHistory(t *testing.T) {
+	q := newSkillProposalQuery("applied", "50")
+	html := renderHTML(t, skillProposalsPanel([]SkillCaptureProposal{{
+		ID: "p7", Kind: "patch", Name: "diane.triage", AgentName: "diane",
+		Description: "Adds a triage step", BaseSkillID: "s9", Source: "capture",
+		Status: proposalStatusApplied, AutoApplied: true, Confidence: 0.91,
+		Evidence: "three runs converged", CreatedAt: "2026-08-26T10:00:00Z",
+		Findings: []SkillCaptureFinding{{Severity: "warning", Code: "missing_heading", Message: "add a heading"}},
+	}}, nil, q))
+
+	for _, want := range []string{
+		"diane.triage", "Patch", "Applied", "Auto-applied",
+		"diane", "source capture", `proposal <span class="font-mono">p7`, `base skill <span class="font-mono">s9`,
+		"three runs converged", "missing_heading", "add a heading",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("history row missing %q", want)
+		}
+	}
+	// History is read-only: no approve/reject affordance anywhere in the panel.
+	for _, notWant := range []string{`action="/skills/proposals/`, ">Approve</button>", ">Reject</button>"} {
+		if strings.Contains(html, notWant) {
+			t.Errorf("history rows must not offer %q", notWant)
+		}
+	}
+
+	// A full page of history reports "the most recent N", and the status filter
+	// is the documented way to go deeper.
+	rows := make([]SkillCaptureProposal, 0, 50)
+	for i := 0; i < 50; i++ {
+		rows = append(rows, SkillCaptureProposal{ID: "p" + strconv.Itoa(i), Status: proposalStatusApplied, Name: "s"})
+	}
+	full := renderHTML(t, skillProposalsPanel(rows, nil, q))
+	if !strings.Contains(full, "the most recent 50 proposals") || !strings.Contains(full, "narrow the status filter") {
+		t.Error("a full history page must not claim to show everything")
+	}
+}
+
+// TestUIRouteSkillsProposalFilterAndLimit drives the page end to end: the
+// validated filter reaches the client exactly as asked (asserted on the fake's
+// recorded arguments, i.e. the outgoing request), the history view is
+// read-only, and every limit fallback is both applied before the call and said
+// out loud on the page.
+func TestUIRouteSkillsProposalFilterAndLimit(t *testing.T) {
+	f := &fakeMemory{
+		skills: []Skill{{ID: "s1", Name: "meeting-notes", Scope: "project"}},
+		skillProposals: []SkillCaptureProposal{
+			{ID: "p1", Kind: "create", Name: "diane.triage", Status: proposalStatusPending},
+			{ID: "p2", Kind: "patch", Name: "diane.summary", BaseSkillID: "s1", Status: proposalStatusApplied},
+			{ID: "p3", Kind: "create", Name: "diane.old", Status: proposalStatusRejected},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/skills", s.uiSkills)
+
+	// Default: the pending inbox at memory's own default limit.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills", nil))
+	if f.proposalListStatus != proposalStatusPending || f.proposalListLimit != defaultSkillProposalLimit {
+		t.Fatalf("default request = status %q limit %d, want pending/%d", f.proposalListStatus, f.proposalListLimit, defaultSkillProposalLimit)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="/skills/proposals/p1/approve"`) {
+		t.Error("pending inbox lost its review controls")
+	}
+	if strings.Contains(body, "diane.summary") {
+		t.Error("the pending filter must not render applied history")
+	}
+
+	// status=applied&limit=25 reaches the client verbatim.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?status=applied&limit=25", nil))
+	if f.proposalListStatus != proposalStatusApplied || f.proposalListLimit != 25 {
+		t.Fatalf("filtered request = status %q limit %d, want applied/25", f.proposalListStatus, f.proposalListLimit)
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, "diane.summary") || !strings.Contains(body, `base skill <span class="font-mono">s1`) {
+		t.Error("applied history row missing")
+	}
+	if strings.Contains(body, `action="/skills/proposals/`) {
+		t.Error("history rows must not carry review controls")
+	}
+	if strings.Contains(body, "diane.triage") {
+		t.Error("the applied filter must not render pending rows")
+	}
+	// Switching status keeps the chosen limit.
+	if !strings.Contains(body, `href="/skills?limit=25&amp;status=pending"`) {
+		t.Error("status links must keep the limit")
+	}
+
+	// Limits: an unusable value is replaced before the request and announced.
+	tests := []struct {
+		raw  string
+		want int
+		note string
+	}{
+		{"abc", 50, "not a number"},
+		{"0", 50, "showing up to 50"},
+		{"-5", 50, "showing up to 50"},
+		{"500", 200, "at most 200"},
+	}
+	for _, tt := range tests {
+		rec = httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?status=all&limit="+url.QueryEscape(tt.raw), nil))
+		if f.proposalListLimit != tt.want {
+			t.Errorf("limit %q: client saw %d, want %d", tt.raw, f.proposalListLimit, tt.want)
+		}
+		if !strings.Contains(rec.Body.String(), tt.note) {
+			t.Errorf("limit %q: page does not say %q", tt.raw, tt.note)
+		}
 	}
 }

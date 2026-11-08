@@ -20,12 +20,14 @@ import (
 // a failed proposals fetch degrades only the panel. flashMsg/flashErr surface
 // PRG feedback from the create/delete/review flows. assistantAgent gates the
 // "Add with assistant" button ("" hides it); usedBy maps each skill name to its
-// agent-usage count.
-templ SkillsPage(skills []Skill, loadErr error, proposals []SkillCaptureProposal, proposalsErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
+// agent-usage count. proposalsQuery is the validated ?status=/?limit= state of
+// the proposals panel, shared with the handler so the request, the controls and
+// the count line cannot disagree.
+templ SkillsPage(skills []Skill, loadErr error, proposals []SkillCaptureProposal, proposalsErr error, proposalsQuery skillProposalQuery, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@skillsHeader(assistantAgent)
 		@flashToasts(flashMsg, flashErr)
-		@skillProposalsPanel(proposals, proposalsErr)
+		@skillProposalsPanel(proposals, proposalsErr, proposalsQuery)
 		if loadErr != nil {
 			@pageErrorNotice("Failed to load skills", loadErr)
 		} else {
@@ -67,31 +69,91 @@ templ skillsHeader(assistantAgent string) {
 	}
 }
 
-// skillProposalsPanel is the review inbox for agent-captured skill proposals.
-// Automatic capture stages every candidate as a proposal; a human must approve
-// or reject it. The list and its findings come from memory (which recomputes
-// the linter + security verdict for pending rows), so this panel only calls the
-// existing endpoints. An empty inbox and a failed fetch are distinct states; the
-// page never implies a proposal was approved when the call failed.
-templ skillProposalsPanel(proposals []SkillCaptureProposal, loadErr error) {
+// skillProposalsPanel is the proposal inbox and history for agent-captured
+// skill proposals. Automatic capture stages every candidate as a proposal; a
+// human approves or rejects it. The list and its findings come from memory
+// (which recomputes the linter + security verdict for pending rows), so this
+// panel only calls the existing endpoints. The status filter selects the same
+// list route: pending keeps the reviewable rows, every other status is
+// read-only history. An empty list and a failed fetch are distinct states, and
+// the count line never invents a total memory did not send.
+templ skillProposalsPanel(proposals []SkillCaptureProposal, loadErr error, q skillProposalQuery) {
 	@ui.Section("Proposed skills", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
 		if loadErr != nil {
 			<p class="text-error text-xs">Pending proposals could not be loaded: { loadErr.Error() } Reload to try again.</p>
-		} else if len(proposals) == 0 {
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Icon: "lucide--inbox"}) {
-				No skill proposals are waiting for review. When automatic capture is on, a successful agent run can stage one here.
-			}
 		} else {
-			<div class="flex flex-col gap-3">
-				for _, p := range proposals {
-					@skillProposalRow(p)
+			@skillProposalFilters(q)
+			if q.LimitNote != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet}) {
+					{ q.LimitNote }
 				}
-			</div>
+			}
+			if len(proposals) == 0 {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Icon: "lucide--inbox"}) {
+					{ skillProposalsEmptyLabel(q.Status) }
+				}
+			} else {
+				<div class="mb-3">
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+						{ skillProposalCountLabel(len(proposals), q.Limit) }
+					}
+				</div>
+				<div class="flex flex-col gap-3">
+					for _, p := range proposals {
+						if p.Status == proposalStatusPending {
+							@skillProposalRow(p)
+						} else {
+							@skillProposalHistoryRow(p)
+						}
+					}
+				</div>
+			}
 		}
 	}
+}
+
+// skillProposalFilters is the one control strip for the panel: the status
+// filter (pending / applied / rejected / failed / all) and the page-size limit.
+// Both are plain links carrying the whole state in the query string — no JS, no
+// router, and switching one never drops the other.
+templ skillProposalFilters(q skillProposalQuery) {
+	<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+		<div class="join" role="group" aria-label="Filter proposals by status">
+			for _, s := range skillProposalStatusFilters {
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       skillProposalsHref(s, q.Limit),
+					Variant:    activeChipVariant(s == q.Status),
+					Size:       ui.ButtonSM,
+					ExtraClass: "join-item",
+					Attrs:      templ.Attributes{"data-proposal-filter": s, "aria-current": templ.KV("page", s == q.Status)},
+				}) {
+					{ proposalFilterLabel(s) }
+				}
+			}
+		</div>
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="text-muted-faint text-xs">Per page</span>
+			<div class="join" role="group" aria-label="Proposals per page">
+				for _, n := range skillProposalLimitChoices {
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeLink,
+						Href:       skillProposalsHref(q.Status, n),
+						Variant:    activeChipVariant(n == q.Limit),
+						Size:       ui.ButtonSM,
+						ExtraClass: "join-item",
+						AriaLabel:  "Show up to " + strconv.Itoa(n) + " proposals",
+						Attrs:      templ.Attributes{"data-proposal-limit": strconv.Itoa(n), "aria-current": templ.KV("true", n == q.Limit)},
+					}) {
+						{ strconv.Itoa(n) }
+					}
+				}
+			</div>
+		</div>
+	</div>
 }
 
 // skillProposalRow is one pending proposal: what it changes, which agent it
@@ -139,6 +201,48 @@ templ skillProposalRow(p SkillCaptureProposal) {
 				}
 			</form>
 		</div>
+	}
+}
+
+// skillProposalHistoryRow is one settled proposal (applied, rejected or
+// failed): read-only history, so no review controls. It shows the outcome
+// badge, whether capture auto-applied it, which proposal and base skill it is,
+// its source, when it was staged, the evidence and the findings recorded with
+// it.
+templ skillProposalHistoryRow(p SkillCaptureProposal) {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col gap-2"}) {
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="font-mono text-sm font-medium">{ p.Name }</span>
+			@ui.Badge(ui.BadgeProps{Label: proposalKindLabel(p.Kind), Variant: proposalKindIntent(p.Kind), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+			@ui.Badge(ui.BadgeProps{Label: proposalStatusLabel(p.Status), Variant: proposalStatusIntent(p.Status), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Dot: true})
+			if p.AutoApplied {
+				@ui.Badge(ui.BadgeProps{Label: "Auto-applied", Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--zap"})
+			}
+			<span class="text-muted text-xs">from { proposalAgentLabel(p) }</span>
+			<span class="text-muted text-xs">{ relTime(p.CreatedAt) }</span>
+		</div>
+		if p.Description != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				{ p.Description }
+			}
+		}
+		<div class="text-muted-faint flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+			if p.Source != "" {
+				<span>source { p.Source }</span>
+				<span aria-hidden="true">·</span>
+			}
+			<span>proposal <span class="font-mono">{ shortID(p.ID) }</span></span>
+			if p.BaseSkillID != "" {
+				<span aria-hidden="true">·</span>
+				<span>base skill <span class="font-mono">{ shortID(p.BaseSkillID) }</span></span>
+			}
+		</div>
+		if p.Evidence != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet}) {
+				{ p.Evidence }
+			}
+		}
+		@skillProposalFindings(p.Findings)
 	}
 }
 
