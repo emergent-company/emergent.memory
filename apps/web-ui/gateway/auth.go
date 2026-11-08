@@ -605,6 +605,9 @@ func deviceSurfacePath(method, path string) bool {
 			// Read-only project configuration the device needs before it can
 			// offer voice (voice enablement only — never secrets).
 			return true
+		case deviceObjectReadPath(path):
+			// The object card a chat reference opens (object_card.go).
+			return true
 		}
 		return false
 	case http.MethodPost:
@@ -651,6 +654,18 @@ func deviceProjectRememberPath(path string) bool {
 	}
 	return len(parts) == 3 &&
 		parts[0] != "" && parts[1] == "remember" && parts[2] == "file"
+}
+
+// deviceObjectReadPath reports whether path is exactly
+// `/api/objects/{ref}/card` or `/api/objects/{ref}/history` — the two read-only
+// object-card routes. The ref is one non-empty segment; nothing deeper matches.
+func deviceObjectReadPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/objects/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	return len(parts) == 2 && parts[0] != "" && (parts[1] == "card" || parts[1] == "history")
 }
 
 // deviceQuestionActionPath reports whether path is exactly

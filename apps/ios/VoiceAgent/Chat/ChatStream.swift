@@ -17,8 +17,8 @@ enum ChatStreamEvent: Equatable {
     /// Tool/thinking/approval/question/A2UI activity, mapped onto the same
     /// events the LiveKit worker path feeds the activity store.
     case activity(ChatEvent)
-    /// Grounded citations for the turn (parsed, not yet rendered).
-    case citations(count: Int)
+    /// The turn's grounded citations, drawn as the reply's Sources footer.
+    case citations([ChatCitation])
     /// A terminal failure for the turn.
     case failure(String)
     /// The turn finished.
@@ -234,7 +234,7 @@ enum ChatStreamFrameDecoder {
                 messages: messages
             )))
         case "citations":
-            return .citations(count: envelope.citations?.count ?? 0)
+            return .citations(envelope.citations?.items ?? [])
         case "error":
             return .failure(envelope.error?.nonEmpty ?? "The agent hit an error.")
         default:
@@ -309,7 +309,9 @@ private struct ChatStreamEnvelope: Decodable {
     let maxLength: Int?
     let surfaceId: String?
     let messages: [ChatUIMessage]?
-    let citations: [ChatUIPropValue]?
+    /// Decoded leniently: the `meta` frame carries the key too, and an odd
+    /// element must never fail the whole frame.
+    let citations: LenientCitations?
     /// The gateway's presentation of a tool call: its category (verb per tense,
     /// family, glyph), the one-line subject of what it was asked to do, and the
     /// readable view of its result. Sent on `mcp_tool` frames so the app renders

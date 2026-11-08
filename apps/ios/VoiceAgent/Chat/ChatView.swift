@@ -40,6 +40,8 @@ struct ChatView: View {
             }
         }
         .environment(\.toolActivityDisclosure, disclosure)
+        // Object links in a reply open the object card, as in the text chat.
+        .presentsObjectReferences()
         .onChange(of: store.turns.isEmpty) { _, empty in
             if empty {
                 disclosure.clear()

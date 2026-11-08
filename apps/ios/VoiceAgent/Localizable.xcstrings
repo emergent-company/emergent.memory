@@ -1142,29 +1142,51 @@
         }
       }
     },
-    "objects.detail.type": {
+    "objects.card.unavailable": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Type"
+            "value": "Object unavailable"
           }
         }
       }
     },
-    "objects.detail.key": {
+    "objects.card.unavailable.description": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Key"
+            "value": "This reference could not be loaded. It may have been removed or renamed."
           }
         }
       }
     },
-    "objects.detail.status": {
+    "objects.card.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        }
+      }
+    },
+    "objects.card.workflow": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workflow"
+          }
+        }
+      }
+    },
+    "objects.card.status": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1175,7 +1197,18 @@
         }
       }
     },
-    "objects.detail.labels": {
+    "objects.card.assignee": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Assignee"
+          }
+        }
+      }
+    },
+    "objects.card.labels": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1186,46 +1219,112 @@
         }
       }
     },
-    "objects.detail.id": {
+    "objects.card.history": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ID"
+            "value": "History"
           }
         }
       }
     },
-    "objects.detail.created": {
+    "objects.card.empty": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Created"
+            "value": "No value"
           }
         }
       }
     },
-    "objects.detail.properties": {
+    "objects.card.referencedVia %@": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Properties"
+            "value": "Referenced via %@"
           }
         }
       }
     },
-    "objects.detail.noProperties": {
+    "objects.card.copyID": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No properties"
+            "value": "Copy object ID"
+          }
+        }
+      }
+    },
+    "objects.card.copied": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied"
+          }
+        }
+      }
+    },
+    "objects.card.fieldInfo %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About %@"
+          }
+        }
+      }
+    },
+    "objects.card.history.loading": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading history…"
+          }
+        }
+      }
+    },
+    "objects.card.history.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "History unavailable"
+          }
+        }
+      }
+    },
+    "objects.card.history.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No change history recorded."
+          }
+        }
+      }
+    },
+    "objects.card.history.changed %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: changed"
           }
         }
       }
@@ -3088,6 +3187,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unknown"
+          }
+        }
+      }
+    },
+    "chat.sources.count %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld source"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld sources"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "chat.sources.open.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens the object card"
           }
         }
       }
