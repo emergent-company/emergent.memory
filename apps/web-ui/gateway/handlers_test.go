@@ -115,12 +115,14 @@ type fakeMemory struct {
 	// public agent-share surface (share.go handlers).
 	shareDetail           *ShareSessionDetail // ShareGetSession result
 	shareDetailErr        error
-	sharePublicSessions   []ShareSession // ShareListSessions result
-	sharePublicListFilter string         // last filter received by ShareListSessions
-	shareUnarchivedIDs    []string       // ids received by ShareUnarchiveSession
-	shareDeletedIDs       []string       // ids received by ShareDeleteSession
-	shareCancelledIDs     []string       // question ids received by ShareCancelApproval
-	shareCancelledSess    []string       // session ids received by ShareCancelApproval
+	sharePublicSessions   []ShareSession    // ShareListSessions result
+	sharePublicListFilter string            // last filter received by ShareListSessions
+	shareUnarchivedIDs    []string          // ids received by ShareUnarchiveSession
+	shareDeletedIDs       []string          // ids received by ShareDeleteSession
+	shareCancelledIDs     []string          // question ids received by ShareCancelApproval
+	shareCancelledSess    []string          // session ids received by ShareCancelApproval
+	shareChatInput        *ShareStreamInput // last body received by ShareChatStream
+	shareChatBody         io.ReadCloser     // non-nil: SSE body returned by ShareChatStream
 
 	// catalogCalls counts backend catalog fetches (keyed by method name) so
 	// tests can assert the settings loader only fetches a section's catalogs.
@@ -4536,6 +4538,11 @@ func (f *fakeMemory) ShareApprove(ctx context.Context, token, endUserRef, sessio
 }
 
 func (f *fakeMemory) ShareChatStream(ctx context.Context, token, endUserRef string, in ShareStreamInput) (io.ReadCloser, error) {
+	inCopy := in
+	f.shareChatInput = &inCopy
+	if f.shareChatBody != nil {
+		return f.shareChatBody, nil
+	}
 	return nil, errors.New("share: not implemented")
 }
 

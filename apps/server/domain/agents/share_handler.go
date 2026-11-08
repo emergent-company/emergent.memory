@@ -249,9 +249,41 @@ func (h *ShareHandler) DeleteSession(c echo.Context) error {
 
 // streamShareRequest is the body for POST /api/share/agent/stream. The end-user
 // ref comes from the signed header, not the body.
+//
+// SurfaceAction carries an A2UI surface action from the public share page, so a
+// decision/proposal card on the page can answer as a turn on the share stream
+// (the same contract /api/chat has). Message may then be empty.
 type streamShareRequest struct {
-	SessionID string `json:"sessionId"`
-	Message   string `json:"message"`
+	SessionID     string      `json:"sessionId"`
+	Message       string      `json:"message"`
+	SurfaceAction *A2UIAction `json:"surfaceAction,omitempty"`
+}
+
+// frameShareTurn validates a share chat request and returns the user turn the
+// agent receives: the typed message, or the surface action framed with the same
+// wording /api/chat uses (A2UIActionMessage), so no client invents the prose.
+func frameShareTurn(req *streamShareRequest) (string, error) {
+	if req == nil || strings.TrimSpace(req.SessionID) == "" {
+		return "", apperror.NewBadRequest("sessionId is required")
+	}
+	message := strings.TrimSpace(req.Message)
+	if req.SurfaceAction == nil {
+		if message == "" {
+			return "", apperror.NewBadRequest("message is required")
+		}
+		return message, nil
+	}
+	surfaceID := strings.TrimSpace(req.SurfaceAction.SurfaceID)
+	if surfaceID == "" {
+		return "", apperror.NewBadRequest("surfaceAction.surfaceId is required")
+	}
+	// The agent reads the action as JSON; an absent or empty payload would be
+	// framed as `null` and leave it nothing to act on.
+	action, ok := req.SurfaceAction.Action.(map[string]any)
+	if !ok || len(action) == 0 {
+		return "", apperror.NewBadRequest("surfaceAction.action must be a non-empty object")
+	}
+	return A2UIActionMessage(A2UIAction{SurfaceID: surfaceID, Action: action}, message), nil
 }
 
 // Stream handles POST /api/share/agent/stream (SSE).
@@ -262,11 +294,9 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return apperror.NewBadRequest("invalid request body")
 	}
-	if req.SessionID == "" {
-		return apperror.NewBadRequest("sessionId is required")
-	}
-	if req.Message == "" {
-		return apperror.NewBadRequest("message is required")
+	message, err := frameShareTurn(&req)
+	if err != nil {
+		return err
 	}
 	endUserRef := verifiedEndUserRef(c)
 
@@ -319,7 +349,7 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 
 	h.svc.LogAccess(c.Request().Context(), binding.Link.ID, endUserRef, HashIP(clientIP(c)), "stream")
 
-	result, err := h.svc.StreamMessage(c.Request().Context(), binding, session, req.Message, streamCallback)
+	result, err := h.svc.StreamMessage(c.Request().Context(), binding, session, message, streamCallback)
 	if err != nil {
 		_ = writer.WriteData(sse.NewErrorEvent(err.Error()))
 		return nil

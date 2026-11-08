@@ -87,6 +87,10 @@ type ShareCreateSessionInput struct {
 type ShareStreamInput struct {
 	SessionID string `json:"sessionId"`
 	Message   string `json:"message"`
+	// SurfaceAction forwards an A2UI surface action from the public share page;
+	// the memory server frames it with the /api/chat wording, so Message may be
+	// empty when it is present.
+	SurfaceAction *ChatSurfaceAction `json:"surfaceAction,omitempty"`
 }
 
 // ShareApproveInput is the body for POST .../approvals/:questionId. The

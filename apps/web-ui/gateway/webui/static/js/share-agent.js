@@ -551,12 +551,15 @@
     return API + "/chat";
   }
 
-  function shareStreamPayload(agent, text) {
+  function shareStreamPayload(agent, text, surfaceAction) {
     var payload = { message: text };
     if (state.sessionId) payload.sessionId = state.sessionId;
     // Defensive: carry the email on the chat request too, so a session created
     // implicitly by the server still satisfies a requireEmail link.
     if (state.email) payload.email = state.email;
+    // An A2UI surface action is a turn whose message the server frames; text is
+    // then empty and the action carries the click.
+    if (surfaceAction) payload.surfaceAction = surfaceAction;
     return payload;
   }
 
@@ -922,6 +925,37 @@
 
   function stop() {
     if (state.aborter) state.aborter.abort();
+  }
+
+  // dispatchSurfaceAction reports an A2UI card click as the share chat's next
+  // turn on /share/api/chat. The share stream is session-scoped (the public page
+  // has no /api/chat of its own), so the action rides that route; the server
+  // frames it with the same wording as /api/chat, and no user bubble is added
+  // because the card is the visible turn.
+  function dispatchSurfaceAction(surfaceId, action) {
+    if (!surfaceId || state.streaming || state.terminalShown) return false;
+    if (emailRequired() && !hasEmail()) {
+      revealEmailGate();
+      return false;
+    }
+    // A surface belongs to the session that rendered it; without one there is
+    // nothing to answer.
+    if (!state.sessionId) return false;
+    setStreaming(true);
+    openAssistantBubble();
+    streamChat(null, "", { surfaceId: surfaceId, action: action });
+    return true;
+  }
+
+  // An A2UI card inside the share transcript reports its click; the page turns
+  // it into a turn on the session it is showing. Bound to the transcript so a
+  // card rendered anywhere else on the page stays inert.
+  if (els.messages) {
+    els.messages.addEventListener("a2ui:action", function (evt) {
+      var detail = evt && evt.detail;
+      if (!detail) return;
+      dispatchSurfaceAction(detail.surfaceId, detail.action);
+    });
   }
 
   if (els.form && els.input) {

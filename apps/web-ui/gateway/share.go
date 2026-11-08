@@ -562,15 +562,26 @@ func (s *Server) shareChat(c echo.Context) error {
 		return nil
 	}
 	var in struct {
-		Message   string `json:"message"`
-		SessionID string `json:"sessionId"`
-		Email     string `json:"email"`
+		Message       string             `json:"message"`
+		SessionID     string             `json:"sessionId"`
+		Email         string             `json:"email"`
+		SurfaceAction *ChatSurfaceAction `json:"surfaceAction,omitempty"`
 	}
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 	}
-	if strings.TrimSpace(in.Message) == "" {
+	if strings.TrimSpace(in.Message) == "" && in.SurfaceAction == nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "message required"})
+	}
+	if in.SurfaceAction != nil {
+		// Validate the framing input before creating a session, so a malformed
+		// click cannot leave an empty session behind.
+		if strings.TrimSpace(in.SurfaceAction.SurfaceID) == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "surfaceAction.surfaceId is required"})
+		}
+		if action, ok := in.SurfaceAction.Action.(map[string]any); !ok || len(action) == 0 {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "surfaceAction.action must be a non-empty object"})
+		}
 	}
 	ctx := c.Request().Context()
 	sessionID := in.SessionID
@@ -586,8 +597,9 @@ func (s *Server) shareChat(c echo.Context) error {
 		sessionID = sess.ID
 	}
 	body, err := s.memory.ShareChatStream(ctx, claims.Token, claims.EndUserRef, ShareStreamInput{
-		SessionID: sessionID,
-		Message:   in.Message,
+		SessionID:     sessionID,
+		Message:       in.Message,
+		SurfaceAction: in.SurfaceAction,
 	})
 	if err != nil {
 		return s.shareProxyErrorResponse(c, err)
