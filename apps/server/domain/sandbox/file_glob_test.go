@@ -80,11 +80,8 @@ func TestBuildFindPathPattern(t *testing.T) {
 // semantics, which is the bug in #394: a relative pattern matched against the
 // full path never matches anything when the search root is /workspace.
 func TestBuildFindPathPattern_MatchesWithFind(t *testing.T) {
-	findBin, err := exec.LookPath("find")
-	if err != nil {
-		t.Skip("find not available")
-	}
-
+	// find is a base dependency of the repo (docker/workspace-base.Dockerfile
+	// installs findutils); if it is missing this test must fail, not skip.
 	root := t.TempDir()
 	for _, rel := range []string{
 		"apps/server/pkg/httputil/a.go",
@@ -98,7 +95,7 @@ func TestBuildFindPathPattern_MatchesWithFind(t *testing.T) {
 	}
 
 	find := func(pattern string) []string {
-		out, ferr := exec.Command(findBin, root, "-type", "f", "-path", buildFindPathPattern(root, pattern)).Output()
+		out, ferr := exec.Command("find", root, "-type", "f", "-path", buildFindPathPattern(root, pattern)).Output()
 		require.NoError(t, ferr)
 		var rels []string
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
