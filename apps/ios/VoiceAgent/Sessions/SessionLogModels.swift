@@ -167,9 +167,12 @@ struct SessionRecord: Codable, Equatable, Sendable {
     /// True when any `tools_executed` output carried `is_error: true`
     /// (derived at decode time; the server never sets a record-level flag).
     let isError: Bool?
+    /// Assistant `turn` only: the reply's grounded references, when it cited
+    /// any. Decoded leniently, so an odd element never fails the record.
+    let citations: [ChatCitation]?
 
     enum CodingKeys: String, CodingKey {
-        case kind, role, text, calls, outputs
+        case kind, role, text, calls, outputs, citations
         case isError = "is_error"
     }
 
@@ -181,7 +184,8 @@ struct SessionRecord: Codable, Equatable, Sendable {
         text: String? = nil,
         calls: [ToolCall]? = nil,
         outputs: [String]? = nil,
-        isError: Bool? = nil
+        isError: Bool? = nil,
+        citations: [ChatCitation]? = nil
     ) {
         self.kind = kind
         self.role = role
@@ -189,6 +193,7 @@ struct SessionRecord: Codable, Equatable, Sendable {
         self.calls = calls
         self.outputs = outputs
         self.isError = isError
+        self.citations = citations
     }
 
     init(from decoder: Decoder) throws {
@@ -215,6 +220,8 @@ struct SessionRecord: Codable, Equatable, Sendable {
         }
         outputs = texts.isEmpty ? nil : texts
         isError = sawError ? true : nil
+        let cited = (try? container.decodeIfPresent(LenientCitations.self, forKey: .citations))?.items ?? []
+        citations = cited.isEmpty ? nil : cited
     }
 
     func encode(to encoder: Encoder) throws {
@@ -225,6 +232,7 @@ struct SessionRecord: Codable, Equatable, Sendable {
         try container.encodeIfPresent(calls, forKey: .calls)
         try container.encodeIfPresent(outputs, forKey: .outputs)
         try container.encodeIfPresent(isError, forKey: .isError)
+        try container.encodeIfPresent(citations, forKey: .citations)
     }
 }
 
@@ -303,6 +311,7 @@ struct ToolCall: Codable, Equatable, Sendable {
         try container.encodeIfPresent(arguments, forKey: .args)
         try container.encodeIfPresent(result, forKey: .result)
         try container.encodeIfPresent(isError, forKey: .isError)
+        try container.encodeIfPresent(citations, forKey: .citations)
     }
 
     /// Decodes `key` as a plain string, or as an object/array serialized back

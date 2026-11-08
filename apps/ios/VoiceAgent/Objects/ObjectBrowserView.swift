@@ -89,7 +89,9 @@ struct ObjectBrowserView: View {
         List {
             ForEach(filteredObjects) { object in
                 NavigationLink {
-                    ObjectDetailView(object: object)
+                    // The same card a chat reference opens, so an object reads
+                    // the same wherever it is reached from.
+                    ObjectCardScreen(reference: ObjectReference(ref: object.id))
                 } label: {
                     ObjectRow(object: object)
                 }

@@ -267,6 +267,7 @@ final class HTTPChatTransport {
         let assistantMessageID: String
         var text = ""
         var started = false
+        var citations: [ChatCitation] = []
     }
 
     private func runTurn(
@@ -342,11 +343,11 @@ final class HTTPChatTransport {
                 activity.agentReplyStarted()
             }
             state.text += delta
-            upsertAssistant(state.assistantMessageID, text: state.text, transcript: transcript)
+            upsertAssistant(state, transcript: transcript)
         case let .activity(chatEvent):
             activity.apply(chatEvent)
-        case .citations:
-            break
+        case let .citations(citations):
+            attach(citations, state: &state, transcript: transcript)
         case let .failure(message):
             errorMessage = message
             activity.markReplyFinished()
@@ -359,15 +360,20 @@ final class HTTPChatTransport {
         }
     }
 
-    private func upsertAssistant(
-        _ id: String,
-        text: String,
-        transcript: ChatSessionTranscriptStore
-    ) {
-        if let index = liveMessages.firstIndex(where: { $0.id == id }) {
-            liveMessages[index] = LiveTranscriptMessage(id: id, role: .assistant, text: text)
+    /// A turn's citations (sent once, after the answer) join its reply's Sources footer.
+    private func attach(_ citations: [ChatCitation], state: inout TurnState, transcript: ChatSessionTranscriptStore) {
+        state.citations = citations
+        if state.started {
+            upsertAssistant(state, transcript: transcript)
+        }
+    }
+
+    private func upsertAssistant(_ state: TurnState, transcript: ChatSessionTranscriptStore) {
+        let message = LiveTranscriptMessage(id: state.assistantMessageID, role: .assistant, text: state.text, citations: state.citations)
+        if let index = liveMessages.firstIndex(where: { $0.id == message.id }) {
+            liveMessages[index] = message
         } else {
-            liveMessages.append(LiveTranscriptMessage(id: id, role: .assistant, text: text))
+            liveMessages.append(message)
         }
         transcript.syncLive(liveMessages)
     }

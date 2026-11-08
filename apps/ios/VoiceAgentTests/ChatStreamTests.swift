@@ -21,7 +21,7 @@ enum ChatStreamFixtures {
     static let question = #"{"type":"question","questionId":"q-ask","question":"Which project?","interactionType":"text","options":[],"placeholder":"Type a name","maxLength":60}"#
     static let questionButtons = #"{"type":"question","questionId":"q-pick","question":"Pick one","interactionType":"buttons","options":[{"label":"A","value":"a"},{"label":"B","value":"b","description":"second"}]}"#
     static let surface = #"{"type":"ui","surfaceId":"s1","messages":[{"createSurface":{"surfaceId":"s1","catalogId":"catalog"}}]}"#
-    static let citations = #"{"type":"citations","citations":[{"title":"Doc"}]}"#
+    static let citations = #"{"type":"citations","citations":[{"kind":"object","id":"11111111-1111-1111-1111-111111111111","type":"person","label":"Sam","url":"/objects/11111111-1111-1111-1111-111111111111"}]}"#
     static let failure = #"{"type":"error","error":"The agent run was interrupted."}"#
     static let done = #"{"type":"done"}"#
     static let unknown = #"{"type":"future_frame","whatever":1}"#
@@ -170,7 +170,13 @@ struct ChatStreamFrameDecoderTests {
     }
 
     @Test func citationsAndFailureAndDone() {
-        #expect(decode(ChatStreamFixtures.citations) == .citations(count: 1))
+        #expect(decode(ChatStreamFixtures.citations) == .citations([ChatCitation(
+            kind: "object",
+            id: "11111111-1111-1111-1111-111111111111",
+            type: "person",
+            label: "Sam",
+            url: "/objects/11111111-1111-1111-1111-111111111111"
+        )]))
         #expect(decode(ChatStreamFixtures.failure) == .failure("The agent run was interrupted."))
         #expect(decode(ChatStreamFixtures.done) == .done)
     }
