@@ -97,6 +97,11 @@ func TestOAuthConsentPageRendersRequest(t *testing.T) {
 		`name="code_challenge" value="challenge-1"`,
 		`name="state" value="state-1"`,
 		"Authorize emergent.feedback",
+		// The consent form must be a real browser navigation. The app shell
+		// boosts forms inside <main> (hx-boost="true"), and a boosted submit
+		// follows the cross-origin 302 to the client's redirect_uri with
+		// fetch(), which the browser blocks — the user sees a dead button.
+		`hx-boost="false"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("consent page missing %q", want)
