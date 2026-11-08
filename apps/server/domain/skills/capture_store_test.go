@@ -167,6 +167,124 @@ func TestProposal_ApprovePatchRefusesChangedBase(t *testing.T) {
 	assert.Equal(t, ProposalStatusPending, applied.Status, "a refused apply leaves the proposal reviewable")
 }
 
+func TestProposal_ApprovePatchPrefersPatchFieldsOverContent(t *testing.T) {
+	repo, db := newTestRepo(t)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	pid := uuid.MustParse(projectID)
+	proposals := NewProposalService(repo, slog.Default())
+
+	base := &Skill{
+		Name:        "agent.patch-precedence",
+		Description: "base",
+		Content:     "alpha beta gamma",
+		Metadata:    &SkillMetadata{Source: SourceAgent, CreatedBy: "agent", LifecycleState: SkillLifecycleActive},
+		ProjectID:   &projectID,
+	}
+	require.NoError(t, repo.Create(ctx, base))
+
+	// The model emitted BOTH a full-content rewrite and a targeted patch. The
+	// patch is the change that will be written, so `content` must be ignored —
+	// linters, the security scan and the write all judge the patched bytes.
+	p := &SkillProposal{
+		ProjectID:       pid,
+		AgentName:       "agent",
+		Kind:            ProposalKindPatch,
+		Name:            base.Name,
+		Description:     base.Description,
+		Content:         "alpha OMEGA gamma", // the unrelated rewrite that must lose
+		BaseSkillID:     &base.ID,
+		BaseContentHash: base.ContentHashOf(),
+		PatchOld:        "beta",
+		PatchNew:        "BETA",
+		Source:          ProposalSourceBackground,
+		Status:          ProposalStatusPending,
+		Confidence:      0.9,
+	}
+	require.NoError(t, repo.CreateProposal(ctx, p))
+
+	applied, err := proposals.Approve(ctx, pid, p.ID, uuid.New(), "")
+	require.NoError(t, err)
+	require.NotNil(t, applied)
+
+	stored, err := repo.FindByID(ctx, base.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha BETA gamma", stored.Content, "patch_old/patch_new win over content")
+	assert.NotEqual(t, p.Content, stored.Content, "the model's content field must not be written")
+	assert.Equal(t, computeContentHash("alpha BETA gamma"), stored.ContentHashOf())
+}
+
+func TestProposal_StaleApplyingIsRecoverable(t *testing.T) {
+	repo, db := newTestRepo(t)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	pid := uuid.MustParse(projectID)
+	proposals := NewProposalService(repo, slog.Default())
+
+	// stage creates a create-proposal and claims it, leaving a fresh `applying`
+	// row exactly as a reviewer would between claim and write.
+	stage := func(name string) *SkillProposal {
+		t.Helper()
+		p := &SkillProposal{
+			ProjectID: pid, Kind: ProposalKindCreate, Name: name,
+			Description: "d", Content: "# T\n\nbody", Source: ProposalSourceBackground,
+			Status: ProposalStatusPending, Confidence: 0.9,
+		}
+		require.NoError(t, repo.CreateProposal(ctx, p))
+		ok, err := repo.ClaimProposal(ctx, p.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		return p
+	}
+	backdateClaim := func(id uuid.UUID) {
+		t.Helper()
+		_, err := db.ExecContext(ctx,
+			`UPDATE kb.skill_proposals SET claimed_at = now() - interval '20 minutes' WHERE id = ?`, id)
+		require.NoError(t, err)
+	}
+
+	// A FRESH applying row is still refused by both review paths: that is the
+	// double-review guard, not the bug.
+	fresh := stage("agent.fresh-claim")
+	_, err := proposals.Approve(ctx, pid, fresh.ID, uuid.New(), "")
+	require.Error(t, err, "a fresh claim must not be approved")
+	require.Error(t, proposals.Reject(ctx, pid, fresh.ID, uuid.New(), ""), "a fresh claim must not be rejected")
+
+	// Once the claim is stale, the normal paths reclaim it.
+	backdateClaim(fresh.ID)
+	sk, err := proposals.Approve(ctx, pid, fresh.ID, uuid.New(), "recovered")
+	require.NoError(t, err)
+	require.NotNil(t, sk)
+
+	reloaded, err := repo.FindProposalByID(ctx, fresh.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ProposalStatusApplied, reloaded.Status)
+	assert.Equal(t, "recovered", reloaded.ReviewNote)
+
+	// Reject recovers a stale claim too, without touching the library.
+	rejected := stage("agent.stale-reject")
+	backdateClaim(rejected.ID)
+	require.NoError(t, proposals.Reject(ctx, pid, rejected.ID, uuid.New(), "stale"))
+	reloadedRejected, err := repo.FindProposalByID(ctx, rejected.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ProposalStatusRejected, reloadedRejected.Status)
+
+	// Reading the inbox sweeps a stranded claim back to pending so it is
+	// visible again.
+	swept := stage("agent.stale-sweep")
+	backdateClaim(swept.ID)
+	rows, err := proposals.List(ctx, pid, ProposalStatusPending, 50)
+	require.NoError(t, err)
+	found := false
+	for _, row := range rows {
+		if row.ID == swept.ID {
+			found = true
+			assert.Equal(t, ProposalStatusPending, row.Status)
+		}
+	}
+	assert.True(t, found, "a swept proposal is back in the pending inbox")
+}
+
 func TestProposal_ApproveRejectsAgentActor(t *testing.T) {
 	repo, db := newTestRepo(t)
 	ctx := context.Background()
@@ -272,6 +390,62 @@ func (s *stubCaptureReader) SkillCaptureConfigForProject(context.Context, string
 
 func (s *stubCaptureReader) ListSkillCaptureProjects(context.Context) ([]string, error) {
 	return []string{s.projectID}, nil
+}
+
+func TestRestoreSkill_ReactivatesArchivedSkillWithoutLosingMetadata(t *testing.T) {
+	repo, db := newTestRepo(t)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+
+	sk := &Skill{
+		Name:        "agent.restorable",
+		Description: "aged out",
+		Content:     "# Lesson\n\nbody",
+		Metadata: &SkillMetadata{
+			Source:         SourceAgent,
+			CreatedBy:      "agent",
+			Author:         "diane",
+			RunID:          "run-1",
+			Version:        "1.2.3",
+			LifecycleState: SkillLifecycleArchived,
+		},
+		ProjectID: &projectID,
+	}
+	require.NoError(t, repo.Create(ctx, sk))
+
+	// Archived skills are out of the agent's view.
+	visible, err := repo.FindForAgent(ctx, projectID, "")
+	require.NoError(t, err)
+	for _, v := range visible {
+		assert.NotEqual(t, sk.Name, v.Name)
+	}
+
+	restored, err := repo.RestoreSkill(ctx, sk.ID, false)
+	require.NoError(t, err)
+	assert.Equal(t, SkillLifecycleActive, restored.LifecycleStateOrDefault())
+	assert.False(t, restored.IsPinned())
+	require.NotNil(t, restored.Metadata)
+	assert.Equal(t, "diane", restored.Metadata.Author, "unrelated metadata survives the restore")
+	assert.Equal(t, "run-1", restored.Metadata.RunID)
+	assert.Equal(t, "1.2.3", restored.Metadata.Version)
+	assert.Equal(t, computeContentHash(sk.Content), restored.ContentHashOf())
+
+	// It is back in the agent's view.
+	visible, err = repo.FindForAgent(ctx, projectID, "")
+	require.NoError(t, err)
+	found := false
+	for _, v := range visible {
+		if v.ID == sk.ID {
+			found = true
+		}
+	}
+	assert.True(t, found, "a restored skill is visible to the agent again")
+
+	// Pinning is the durable form: the curator skips pinned skills.
+	pinned, err := repo.RestoreSkill(ctx, sk.ID, true)
+	require.NoError(t, err)
+	assert.True(t, pinned.IsPinned())
+	assert.Equal(t, SkillLifecycleActive, pinned.LifecycleStateOrDefault())
 }
 
 func TestProposal_ClaimIsExclusive(t *testing.T) {
