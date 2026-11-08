@@ -102,19 +102,14 @@ enum MarkdownBlockBoundary {
         let starts = lineStarts(of: text, lines: lines)
         var fences = MarkdownFenceTracker()
         var boundary: String.Index?
-        var previousWasIndented = false
         for (index, line) in lines.enumerated() {
             let next = index + 1
             if !fences.isInside, isBlank(line), next < lines.count,
-               !isBlank(lines[next]), isFreshBlockStart(lines[next]),
-               !(previousWasIndented && isIndented(lines[next]))
+               !isBlank(lines[next]), isFreshBlockStart(lines[next])
             {
                 boundary = starts[next]
             }
             fences.consume(line)
-            if !isBlank(line) {
-                previousWasIndented = isIndented(line)
-            }
         }
         return boundary
     }
@@ -158,9 +153,11 @@ enum MarkdownBlockBoundary {
         line.allSatisfy { $0 == " " || $0 == "\t" }
     }
 
+    /// Any leading space: a line that starts indented can continue the list
+    /// item or indented code block above the blank line, so it is never treated
+    /// as the start of a fresh block here.
     private static func isIndented(_ line: Substring) -> Bool {
-        line.prefix(4).allSatisfy { $0 == " " || $0 == "\t" }
-            && !isBlank(line)
+        line.first == " " || line.first == "\t"
     }
 
     /// Whether `line` can only begin a new block, i.e. it cannot be swallowed

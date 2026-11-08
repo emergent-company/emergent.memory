@@ -65,6 +65,28 @@ struct StreamingMarkdownModelTests {
         #expect(model.tail == "Paragraph after.\n\n")
     }
 
+    @Test func indentedContinuationStaysInTheTail() {
+        var model = StreamingMarkdownModel()
+        // A list item's second paragraph is indented, so the blank line above it
+        // must not end the item.
+        model.update("- item first line\n\n  still the same item\n")
+        #expect(model.committed.isEmpty)
+        guard case let .list(_, _, items)? = model.tailBlocks.first else {
+            Issue.record("expected one list item holding both paragraphs")
+            return
+        }
+        #expect(items.count == 1)
+    }
+
+    @Test func indentedCodeBlockIsNotSplitAtItsBlankLine() {
+        var model = StreamingMarkdownModel()
+        model.update("    let one = 1\n\n    let two = 2\n\nAfter.\n\n")
+        #expect(model.committed == [
+            .codeBlock(language: nil, code: "let one = 1\n\nlet two = 2"),
+        ])
+        #expect(model.tail == "After.\n\n")
+    }
+
     @Test func blankLineBetweenQuoteParagraphsIsNotABoundary() {
         var model = StreamingMarkdownModel()
         model.update("> quote one\n\n> quote two\n\n")
@@ -143,6 +165,10 @@ struct StreamingMarkdownEquivalenceTests {
 
     1. first
     2. second
+
+        let indented = 1
+
+        let code = 2
 
     Final paragraph that ends the reply.
     """

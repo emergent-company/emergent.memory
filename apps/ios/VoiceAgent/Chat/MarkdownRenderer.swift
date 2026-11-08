@@ -39,7 +39,7 @@ struct MarkdownRenderer: View {
                 // A committed block's id is its index, which never changes
                 // once committed, so SwiftUI diffs the finished part of the
                 // answer instead of rebuilding it on every token.
-                ForEach(snapshot.committed.indices, id: \.self) { index in
+                ForEach(Array(snapshot.committed.indices), id: \.self) { index in
                     MarkdownBlockView(block: snapshot.committed[index])
                 }
                 if !snapshot.tailBlocks.isEmpty {
@@ -124,7 +124,9 @@ final class MarkdownRenderCache {
         return model.committed
     }
 
+    /// Growth is only meaningful after a first observation: a view that appears
+    /// with its whole text (history, an ended turn) is not a stream.
     private func grew(from previous: String, to text: String) -> Bool {
-        text.utf8.count > previous.utf8.count && text.hasPrefix(previous)
+        !previous.isEmpty && text.utf8.count > previous.utf8.count && text.hasPrefix(previous)
     }
 }

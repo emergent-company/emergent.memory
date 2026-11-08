@@ -213,7 +213,7 @@ struct MarkdownBlocksView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(blocks.indices, id: \.self) { index in
+            ForEach(Array(blocks.indices), id: \.self) { index in
                 MarkdownBlockView(block: blocks[index], highlightsCode: highlightsCode)
             }
         }
