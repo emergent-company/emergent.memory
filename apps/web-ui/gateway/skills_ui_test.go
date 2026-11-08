@@ -258,6 +258,37 @@ func TestApproveRejectSkillCaptureProposal(t *testing.T) {
 	}
 }
 
+// TestSkillCaptureProposalPathEscaping pins that the proposal id is escaped on
+// every route, so a malformed id cannot smuggle an extra path segment.
+func TestSkillCaptureProposalPathEscaping(t *testing.T) {
+	var uris []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uris = append(uris, r.RequestURI)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	_, _ = m.GetSkillCaptureProposal(context.Background(), "p/1")
+	_ = m.ApproveSkillCaptureProposal(context.Background(), "p/1")
+	_ = m.RejectSkillCaptureProposal(context.Background(), "p/1")
+
+	want := []string{
+		"/api/projects/proj-1/skills/proposals/p%2F1",
+		"/api/projects/proj-1/skills/proposals/p%2F1/approve",
+		"/api/projects/proj-1/skills/proposals/p%2F1/reject",
+	}
+	if len(uris) != len(want) {
+		t.Fatalf("uris = %v", uris)
+	}
+	for i := range want {
+		if uris[i] != want[i] {
+			t.Errorf("uri %d = %q, want %q", i, uris[i], want[i])
+		}
+	}
+}
+
 func TestSkillCaptureProposalError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

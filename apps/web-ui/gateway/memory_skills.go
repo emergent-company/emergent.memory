@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // Branch is one graph branch (GET /api/graph/branches). The "main" branch is
@@ -196,7 +197,7 @@ func (m *MemoryClient) ListSkillCaptureProposals(ctx context.Context) ([]SkillCa
 // /api/projects/{projectID}/skills/proposals/{id}).
 func (m *MemoryClient) GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
 	var out SkillCaptureProposal
-	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + id
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id)
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
@@ -209,7 +210,7 @@ func (m *MemoryClient) GetSkillCaptureProposal(ctx context.Context, id string) (
 // means the proposal stayed pending — the panel's redirect re-reads the list
 // rather than assuming success.
 func (m *MemoryClient) ApproveSkillCaptureProposal(ctx context.Context, id string) error {
-	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + id + "/approve"
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id) + "/approve"
 	return m.do(ctx, http.MethodPost, path, map[string]any{}, nil)
 }
 
@@ -217,6 +218,6 @@ func (m *MemoryClient) ApproveSkillCaptureProposal(ctx context.Context, id strin
 // skill library (POST
 // /api/projects/{projectID}/skills/proposals/{id}/reject).
 func (m *MemoryClient) RejectSkillCaptureProposal(ctx context.Context, id string) error {
-	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + id + "/reject"
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id) + "/reject"
 	return m.do(ctx, http.MethodPost, path, map[string]any{}, nil)
 }
