@@ -776,3 +776,42 @@ func TestAstGrepSearch_ParsesMatchesOnZeroExit(t *testing.T) {
 	assert.Contains(t, provider.lastExecReq.Command, `--glob "*.go"`)
 	assert.Contains(t, provider.lastExecReq.Command, `"/workspace"`)
 }
+
+// TestAstGrepSearch_ExitOneNoMatchesIsZeroMatches: ast-grep 0.51.1 exits 1
+// when a valid search finds nothing (empty stdout and stderr). That is a
+// legitimate zero-match answer, not a tool failure.
+func TestAstGrepSearch_ExitOneNoMatchesIsZeroMatches(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 0, Stdout: "/usr/local/bin/ast-grep\n"},
+		{ExitCode: 0, Stdout: "ast-grep 0.51.1\n"},
+		{ExitCode: 1},
+	}
+
+	matches, err := astGrepSearch(context.Background(), provider, "ws-1", astGrepQuery{
+		Pattern:    "func nope() {}",
+		Lang:       "go",
+		SearchPath: "/workspace",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, matches)
+}
+
+// Exit 1 with diagnostics is still a failure and must surface stderr.
+func TestAstGrepSearch_ExitOneWithStderrIsError(t *testing.T) {
+	provider := newTestProvider()
+	provider.execResults = []*sandbox.ExecResult{
+		{ExitCode: 0, Stdout: "/usr/local/bin/ast-grep\n"},
+		{ExitCode: 0, Stdout: "ast-grep 0.51.1\n"},
+		{ExitCode: 1, Stderr: "error: cannot read config\n"},
+	}
+
+	matches, err := astGrepSearch(context.Background(), provider, "ws-1", astGrepQuery{
+		Pattern:    "func nope() {}",
+		Lang:       "go",
+		SearchPath: "/workspace",
+	})
+	require.Error(t, err)
+	assert.Nil(t, matches)
+	assert.Contains(t, err.Error(), "cannot read config")
+}

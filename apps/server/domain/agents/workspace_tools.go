@@ -1602,6 +1602,12 @@ func astGrepSearch(ctx context.Context, provider sandbox.Provider, providerID st
 		if detail == "" {
 			detail = strings.TrimSpace(result.Stdout)
 		}
+		// ast-grep exits 1 when a valid search simply found nothing (verified
+		// with 0.51.1: exit 1, empty stdout and stderr). That is zero matches,
+		// not a tool failure; anything else is surfaced to the model.
+		if result.ExitCode == 1 && detail == "" {
+			return nil, nil
+		}
 		if detail == "" {
 			detail = "(no output)"
 		}
