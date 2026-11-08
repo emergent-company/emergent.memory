@@ -228,6 +228,24 @@ struct ChatEventDecodingTests {
         #expect(event == .thinking(id: "r1", delta: "step one"))
     }
 
+    /// The worker's segment-closing frame (`done: true`, no text) must decode
+    /// to an event instead of being dropped: it is what stops the shimmer.
+    @Test func decodesThinkingDoneFrame() {
+        #expect(decodeChatEvent(#"{"type":"thinking","id":"r1","done":true}"#) == .thinkingDone(id: "r1"))
+        #expect(decodeChatEvent(#"{"type":"thinking","done":true}"#) == .thinkingDone(id: nil))
+        // A done frame that still carries a delta is a close, not a delta:
+        // the shimmer stops on it.
+        #expect(
+            decodeChatEvent(#"{"type":"thinking","delta":"","done":true}"#) == .thinkingDone(id: nil)
+        )
+    }
+
+    /// Some producers send the raw memory field (`text`) instead of the
+    /// bridge's `delta`; both are one delta of the same block.
+    @Test func decodesThinkingTextWithoutDeltaKey() {
+        #expect(decodeChatEvent(#"{"type":"thinking","text":"x"}"#) == .thinking(id: nil, delta: "x"))
+    }
+
     @Test func decodesSubagent() {
         let json = #"{"type":"subagent","id":"s1","parentRunId":"p1","runId":"r1","agentName":"Researcher","task":"Find sources","status":"running","error":null}"#
         guard let event = decodeChatEvent(json) else {

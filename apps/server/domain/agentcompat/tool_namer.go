@@ -32,6 +32,7 @@ var internalToolNames = map[string]struct{}{
 	"entity-create":        {},
 	"entity-update":        {},
 	"entity-delete":        {},
+	"entity-bulk-update":   {},
 	"entity-restore":       {},
 	"session-get-messages": {},
 	"relationship-create":  {},
@@ -91,6 +92,9 @@ var internalToolNames = map[string]struct{}{
 	// ── Journal ─────────────────────────────────────────────────────────────
 	"journal-list":     {},
 	"journal-add-note": {},
+
+	// ── Feedback ────────────────────────────────────────────────────────────
+	"feedback-submit": {},
 
 	// ── Documents ───────────────────────────────────────────────────────────
 	"document-list":   {},

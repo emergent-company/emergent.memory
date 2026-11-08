@@ -54,10 +54,15 @@ jobs:
 
       - name: Install Swift linters
         run: |
-          curl -sSL -o "$RUNNER_TEMP/swiftformat.zip" \
+          # `-f` plus retries: without them an upstream 5xx writes its error
+          # page into the zip and `unzip` fails on a "corrupt" archive, hiding
+          # the HTTP failure and forcing a manual re-run.
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$RUNNER_TEMP/swiftformat.zip" \
             "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat_linux.zip"
           unzip -q "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
-          curl -sSL -o "$RUNNER_TEMP/swiftlint.zip" \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$RUNNER_TEMP/swiftlint.zip" \
             "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/swiftlint_linux_amd64.zip"
           unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
           mkdir -p "$RUNNER_TEMP/bin"
@@ -73,3 +78,34 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: apps/ios/Scripts/lint-swift.sh
+
+      # App Store Connect rejects a build whose app extension has no
+      # NSExtensionActivationRule (error 90360) — and it only says so at the
+      # upload, after the archive and the export have both succeeded and every
+      # other check was green. The share extension shipped without it that way
+      # on v0.93.0 (#480), so the structure is checked here, where a violation
+      # costs a lint re-run instead of a release.
+      - name: validate extension Info.plists
+        run: |
+          python3 - <<'PY'
+          import glob, plistlib, sys
+
+          bad = []
+          for path in sorted(glob.glob("apps/ios/**/Info.plist", recursive=True)):
+              with open(path, "rb") as handle:
+                  info = plistlib.load(handle)
+              extension = info.get("NSExtension")
+              if not extension:
+                  continue  # the app's own Info.plist, not an extension
+              rule = (extension.get("NSExtensionAttributes") or {}).get("NSExtensionActivationRule")
+              if not rule:
+                  bad.append(path)
+
+          if bad:
+              print("NSExtensionActivationRule missing or empty — App Store Connect rejects these builds with 90360:")
+              for path in bad:
+                  print(f"  {path}")
+              print("The declaration keys go inside NSExtensionAttributes > NSExtensionActivationRule, not directly under NSExtensionAttributes.")
+              sys.exit(1)
+          print("extension Info.plists ok")
+          PY

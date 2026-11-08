@@ -101,6 +101,12 @@ extension ChatSessionView {
             isCurrent: { scopeIsCurrent(scope) },
             apply: { transcript.loadHistory(from: $0) }
         )
+        // The parked run the user just answered has been recorded: a queue held
+        // behind that decision can go now (the wait above ends when the resumed
+        // run's records land).
+        if scopeIsCurrent(scope) {
+            pumpQueue()
+        }
     }
 
     /// Whether a bounded wait that started on `scope` still owns the transcript:
@@ -167,13 +173,26 @@ extension ChatSessionView {
 
     /// Sends a text turn over the HTTP chat stream. Never mints a token and
     /// never joins a room.
+    ///
+    /// A send while a turn is streaming parks the message in the queue, armed
+    /// for release when that turn ends (`emergent.memory#438`); the transport
+    /// would otherwise drop it.
     func sendText(_ text: String) {
-        transport.send(
-            text,
-            conversationID: openConversationID,
-            agentName: route.agentName,
-            transcript: transcript,
-            activity: activity
-        )
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        guard !transport.isStreaming else {
+            enqueueText(message)
+            return
+        }
+        _ = dispatchQueuedText(message)
+    }
+
+    /// Stops the text turn in flight: the working line and spinners stop now,
+    /// and the transport aborts the stream and cancels the run on the gateway.
+    /// The transport owns the outcome banner, including the honest "no run id"
+    /// case where nothing was cancelled.
+    func stopTextTurn() async {
+        activity.stopGenerating()
+        await transport.stop()
     }
 }

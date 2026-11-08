@@ -330,6 +330,16 @@ marked as agent-created; the scheduled curator ages them `active → stale →
 archived` when unused. Pin a skill to stop ageing, or lock it to refuse further
 agent writes.
 
+Archived skills stay in the **Agents → Skills** list, marked with an *Archived*
+badge, but are no longer loaded or retrieved by agents. Use **Restore** or
+**Restore & pin** on that row (or open the skill first) to return it to `active`;
+**Restore & pin** also pins it so the curator never ages it out again. Restoring
+preserves every other metadata field. The same action is available over the API:
+
+```bash
+POST /api/projects/:projectId/skills/:id/restore   # optional body: {"pin": true}
+```
+
 **Review the inbox**
 
 Open **Agents → Skills**. A **Proposed skills** panel sits above the skill list

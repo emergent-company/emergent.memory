@@ -9,25 +9,32 @@ import Observation
 /// Nothing here mints a token, joins a room or needs a worker: text works on a
 /// project with voice disabled and on a deployment with no LiveKit stack.
 ///
-/// A turn cannot be interrupted server-side yet: memory runs the agent on a
-/// detached context (`agents.DetachedRunContext`, `chat/handler.go`), so closing
-/// the stream leaves the run going. The composer therefore offers no stop
-/// control in text mode; cancellation from a device credential needs a
-/// device-scoped cancel route on the server and is tracked separately.
+/// A reply can be stopped: closing the stream alone would leave memory running
+/// the agent detached (`agents.DetachedRunContext`), so ``stop()`` cancels the
+/// `meta` frame's run through `POST /api/chat/runs/{runId}/cancel`.
 @MainActor
 @Observable
 final class HTTPChatTransport {
     /// True while a turn is streaming: gates a second send and the composer.
     private(set) var isStreaming = false
-    /// The last turn-level failure, surfaced at the composer.
-    private(set) var errorMessage: String?
+    /// The last turn-level failure, surfaced at the composer. The stream and
+    /// ``stop()`` (in its own file) write it; the view only reads it.
+    var errorMessage: String?
     /// The open conversation: the launched one, or the id the `meta` frame
     /// reported for a new chat.
     private(set) var conversationID: String?
 
+    /// The server-side run from the `meta` frame; ``stop()`` cancels it. Cleared
+    /// at the end of the turn and in ``reset()`` so it cannot cancel a later run.
+    private(set) var liveRunID: String?
+
     /// Called once when a new conversation's id is first learned, so the UI can
     /// persist it in ``ActiveSessionStore``.
     var onConversationLearned: ((String) -> Void)?
+
+    /// Called when a turn ends on its own, so the composer releases the queue
+    /// parked behind it. Not called for an aborted turn (`stop()`, `reset()`).
+    var onTurnFinished: (() -> Void)?
 
     /// The turn whose reply was cut off mid-stream, set only once text is on
     /// screen. The run continues server-side and is recorded when it ends, so
@@ -44,10 +51,13 @@ final class HTTPChatTransport {
     /// this so one wait cannot write into the next chat (`emergent.memory#445`).
     private(set) var unansweredTurn: UnansweredTurn?
 
-    private let config: MemoryConfig
+    let config: MemoryConfig
     private let stream: any ChatStreaming
-    private let urlSession: URLSession
-    private var turnTask: Task<Void, Never>?
+    /// Read by ``stop()`` in its own file, so no second session is built.
+    let urlSession: URLSession
+    /// The turn in flight; ``stop()`` in its own file cancels it. Written only
+    /// here (a finished task is replaced by the next ``send``).
+    private(set) var turnTask: Task<Void, Never>?
     /// Live transcript fed to the view (user turn + streamed reply).
     private var liveMessages: [LiveTranscriptMessage] = []
     private var fallbackToolCounter = 0
@@ -143,51 +153,34 @@ final class HTTPChatTransport {
         unansweredTurn = nil
         liveMessages.removeAll()
         conversationID = nil
-    }
-
-    /// Reloads the live transcript into the view (used after the view resets).
-    func refreshLiveTranscript(_ transcript: ChatSessionTranscriptStore) {
-        transcript.syncLive(liveMessages)
-    }
-
-    /// Trades the truncated live copy for the finished reply the record now
-    /// holds: the record renders on its own, so keeping the partial would stack
-    /// a shorter duplicate underneath it. The banner goes with it — the drop is
-    /// no longer the last word on the turn — but only if that banner is still
-    /// this drop's: the slot is shared, and a later turn may have failed in the
-    /// meantime (`emergent.memory#213`).
-    func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
-        guard let interrupted = interruptedTurn else { return }
-        liveMessages.removeAll { $0.id == interrupted.liveMessageID }
-        transcript.syncLive(liveMessages)
-        interruptedTurn = nil
-        if errorMessage == interrupted.failureMessage {
-            errorMessage = nil
-        }
-    }
-
-    /// Clears the unanswered turn once its recorded reply is on screen, and the
-    /// banner with it if that banner is still this turn's.
-    ///
-    /// Nothing of the turn ever streamed, so the record now supplies both
-    /// halves: the live user copy would duplicate the recorded one, and the
-    /// empty live turn has nothing left to draw beneath the reply
-    /// (`emergent.memory#445`).
-    func settleUnansweredTurn(
-        in transcript: ChatSessionTranscriptStore,
-        activity: ChatActivityStore
-    ) {
-        guard let unanswered = unansweredTurn else { return }
-        unansweredTurn = nil
-        liveMessages.removeAll { $0.id == unanswered.anchorMessageID }
-        transcript.syncLive(liveMessages)
-        activity.discardTurn(anchoredTo: unanswered.anchorMessageID)
-        if errorMessage == unanswered.failureMessage {
-            errorMessage = nil
-        }
+        liveRunID = nil
     }
 
     // MARK: - Streaming
+
+    // MARK: Live-copy seams
+
+    /// The live messages the view is rendering. The live-copy helpers in
+    /// `HTTPChatTransport+LiveCopy.swift` run in another file and cannot read
+    /// the `private` storage directly.
+    var liveCopy: [LiveTranscriptMessage] {
+        liveMessages
+    }
+
+    /// Drops one live message (see `HTTPChatTransport+LiveCopy.swift`).
+    func removeLiveMessage(_ id: String) {
+        liveMessages.removeAll { $0.id == id }
+    }
+
+    /// Clears the turn whose reply was cut off, once its record is swapped in.
+    func clearInterruptedTurn() {
+        interruptedTurn = nil
+    }
+
+    /// Clears the turn that never streamed a reply, once its record is in.
+    func clearUnansweredTurn() {
+        unansweredTurn = nil
+    }
 
     private func runTurn(
         _ plan: TurnPlan,
@@ -199,7 +192,12 @@ final class HTTPChatTransport {
             anchorMessageID: plan.anchorMessageID
         )
         var failure: Error?
-        defer { isStreaming = false }
+        // The turn owns the run id only while it streams: once it ends (by
+        // `done`, failure, or a stop) a later turn must not inherit it.
+        // `ended` is set only where a turn really ends, so an aborted turn never
+        // releases the queue parked behind it.
+        var ended = false
+        defer { settleTurn(ended: ended) }
 
         do {
             let agentID = await resolveAgentDefinitionID(name: plan.agentName)
@@ -224,8 +222,10 @@ final class HTTPChatTransport {
                 apply(event, state: &state, transcript: transcript, activity: activity)
             }
         } catch is CancellationError {
-            // Cancelled by ``reset()``: the view has left this chat, so its
-            // state is no longer ours to settle.
+            // Cancelled by ``reset()`` or ``stop()``: the view has left this
+            // chat or the user ended the turn on purpose, so there is nothing
+            // to settle and nothing to recover. A stopped turn is not an
+            // interrupted one, so no `interruptedTurn` is raised here.
             return
         } catch {
             guard !Task.isCancelled else { return }
@@ -247,6 +247,19 @@ final class HTTPChatTransport {
         }
         guard !Task.isCancelled else { return }
         finishTurn(state: state, failure: failure, activity: activity)
+        ended = true
+    }
+
+    /// Clears the turn's streaming state, then tells the queue a turn ended.
+    ///
+    /// The flags clear first: a pump that starts the next turn must see an idle
+    /// transport, and an aborted turn (`ended == false`) must not release the
+    /// rows parked behind it.
+    private func settleTurn(ended: Bool) {
+        isStreaming = false
+        liveRunID = nil
+        guard ended else { return }
+        onTurnFinished?()
     }
 
     /// Ends a turn whatever the stream did.
@@ -307,7 +320,11 @@ final class HTTPChatTransport {
     ) {
         state.sawFrame = true
         switch event {
-        case let .meta(learnedConversationID, _):
+        case let .meta(learnedConversationID, runID):
+            // Keep the run id: it is the only handle on the server-side run,
+            // and a stop needs it to cancel rather than just drop the stream. A
+            // frame without one leaves the id this turn already has.
+            liveRunID = runID ?? liveRunID
             guard let learnedConversationID, learnedConversationID != conversationID else { return }
             conversationID = learnedConversationID
             onConversationLearned?(learnedConversationID)
@@ -317,12 +334,12 @@ final class HTTPChatTransport {
                 activity.agentReplyStarted()
             }
             state.text += delta
-            upsertAssistant(state.assistantMessageID, text: state.text, transcript: transcript)
+            upsertAssistant(state, transcript: transcript)
         case let .activity(chatEvent):
             state.sawActivity = true
             activity.apply(chatEvent)
-        case .citations:
-            break
+        case let .citations(citations):
+            attach(citations, state: &state, transcript: transcript)
         case let .failure(message):
             state.completed = true
             state.serverFailed = true
@@ -338,15 +355,20 @@ final class HTTPChatTransport {
         }
     }
 
-    private func upsertAssistant(
-        _ id: String,
-        text: String,
-        transcript: ChatSessionTranscriptStore
-    ) {
-        if let index = liveMessages.firstIndex(where: { $0.id == id }) {
-            liveMessages[index] = LiveTranscriptMessage(id: id, role: .assistant, text: text)
+    /// A turn's citations (sent once, after the answer) join its reply's Sources footer.
+    private func attach(_ citations: [ChatCitation], state: inout TurnState, transcript: ChatSessionTranscriptStore) {
+        state.citations = citations
+        if state.started {
+            upsertAssistant(state, transcript: transcript)
+        }
+    }
+
+    private func upsertAssistant(_ state: TurnState, transcript: ChatSessionTranscriptStore) {
+        let message = LiveTranscriptMessage(id: state.assistantMessageID, role: .assistant, text: state.text, citations: state.citations)
+        if let index = liveMessages.firstIndex(where: { $0.id == message.id }) {
+            liveMessages[index] = message
         } else {
-            liveMessages.append(LiveTranscriptMessage(id: id, role: .assistant, text: text))
+            liveMessages.append(message)
         }
         transcript.syncLive(liveMessages)
     }

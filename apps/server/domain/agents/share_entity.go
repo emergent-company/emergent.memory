@@ -291,7 +291,7 @@ func (in *ShareLinkConfigInput) Apply(base *ShareLinkConfig) *ShareLinkConfig {
 // mint credentials, or otherwise grant destructive/admin capability. An owner
 // may re-enable any of these via ToolAllowlist.
 var defaultDangerousShareTools = []string{
-	"entity-create", "entity-update", "entity-delete", "entity-restore",
+	"entity-create", "entity-update", "entity-delete", "entity-bulk-update", "entity-restore",
 	"relationship-create", "relationship-update", "relationship-delete",
 	"schema-create", "schema-delete",
 	"schema-migrate-preview", "schema-migrate-execute", "schema-migrate-rollback",

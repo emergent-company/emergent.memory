@@ -258,6 +258,16 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "line-clamp-1"}) {
 						{ s.Description }
 					}
+					if s.LifecycleState() != "active" {
+						<div class="mt-1">
+							@ui.Badge(ui.BadgeProps{
+								Label:   skillLifecycleLabel(s.LifecycleState()),
+								Variant: skillLifecycleIntent(s.LifecycleState()),
+								Size:    ui.BadgeSizeXS,
+								Dot:     true,
+							})
+						</div>
+					}
 				</div>
 			</a>
 		}
@@ -273,9 +283,36 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 			<span class="text-muted text-xs whitespace-nowrap">{ relTime(s.UpdatedAt) }</span>
 		}
 		@table.TableCell("text-right", nil) {
-			<a class="flex justify-end" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) } aria-label={ "Open " + s.Name }>
-				@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-			</a>
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				if s.Archived() {
+					<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/restore") }>
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonPrimary,
+							Size:      ui.ButtonSM,
+							Icon:      "lucide--archive-restore",
+							AriaLabel: "Restore " + s.Name,
+						}) {
+							Restore
+						}
+					</form>
+					<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/restore") }>
+						<input type="hidden" name="pin" value="1"/>
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonSM,
+							Icon:      "lucide--pin",
+							AriaLabel: "Restore and pin " + s.Name,
+						}) {
+							Restore &amp; pin
+						}
+					</form>
+				}
+				<a class="flex justify-end" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) } aria-label={ "Open " + s.Name }>
+					@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+				</a>
+			</div>
 		}
 	}
 }
@@ -293,6 +330,7 @@ templ SkillDetailPage(skill *Skill, loadErr error, flashMsg string, flashErr err
 		} else {
 			@skillDetailHeader(skill)
 			@skillDetailMeta(skill)
+			@skillLifecycleSection(skill)
 			@flashToasts(flashMsg, flashErr)
 			@skillContentBlock(skill)
 			@skillEditForm(skill)
@@ -343,8 +381,70 @@ templ skillDetailMeta(s *Skill) {
 				Icon:    "lucide--check",
 			})
 		}
+		if s.LifecycleState() != "active" {
+			@ui.Badge(ui.BadgeProps{
+				Label:   skillLifecycleLabel(s.LifecycleState()),
+				Variant: skillLifecycleIntent(s.LifecycleState()),
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--archive",
+			})
+		}
+		if s.IsPinned() {
+			@ui.Badge(ui.BadgeProps{Label: "pinned", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pin"})
+		}
 		@monoMeta(s.ID, "text-muted-faint")
 	</div>
+}
+
+// skillLifecycleSection is the explicit un-archive affordance for a skill the
+// curator aged out. Archived skills are hidden from agents until restored;
+// restoring changes only the lifecycle state (memory preserves every other
+// metadata field), and pinning is the durable form that stops the curator from
+// archiving it again.
+templ skillLifecycleSection(s *Skill) {
+	if s.Archived() {
+		@ui.Section("Archived by the curator", ui.SectionProps{
+			Margin:    "mb-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="flex items-center gap-3">
+					<div class="bg-warning/10 text-warning grid size-9 shrink-0 place-items-center rounded-box border border-warning/15">
+						@ui.IconSpan("lucide--archive", "size-4.5")
+					</div>
+					<div>
+						<p class="text-sm font-medium">This skill is archived</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+							Agents no longer load or retrieve it. Restore it to bring it back; pin it to keep the curator from archiving it again.
+						}
+					</div>
+				</div>
+				<div class="flex flex-wrap items-center gap-2">
+					<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/restore") }>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--archive-restore",
+						}) {
+							Restore
+						}
+					</form>
+					<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/restore") }>
+						<input type="hidden" name="pin" value="1"/>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--pin",
+						}) {
+							Restore &amp; pin
+						}
+					</form>
+				</div>
+			</div>
+		}
+	}
 }
 
 // skillContentBlock renders the full skill content as markdown (CommonMark +

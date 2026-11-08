@@ -17,8 +17,8 @@ enum ChatStreamEvent: Equatable {
     /// Tool/thinking/approval/question/A2UI activity, mapped onto the same
     /// events the LiveKit worker path feeds the activity store.
     case activity(ChatEvent)
-    /// Grounded citations for the turn (parsed, not yet rendered).
-    case citations(count: Int)
+    /// The turn's grounded citations, drawn as the reply's Sources footer.
+    case citations([ChatCitation])
     /// A terminal failure for the turn.
     case failure(String)
     /// The turn finished.
@@ -127,8 +127,15 @@ enum ChatStreamFrameDecoder {
             // server-side HTML.
             return nil
         default:
-            guard let text = envelope.text, !text.isEmpty, envelope.done != true else {
-                // A segment-closing `done: true` carries no new text.
+            // A segment-closing frame (`done: true`) carries no new text, but it
+            // still has to reach the store: it is what stops the live shimmer.
+            // It is not a boundary — a later delta before an activity boundary
+            // appends to the same row and turns the shimmer back on.
+            if envelope.done == true {
+                return .activity(.thinkingDone(id: envelope.id?.nonEmpty))
+            }
+            guard let text = envelope.text, !text.isEmpty else {
+                // An empty frame that is not a close says nothing.
                 return nil
             }
             return .activity(.thinking(id: envelope.id?.nonEmpty, delta: text))
@@ -234,7 +241,7 @@ enum ChatStreamFrameDecoder {
                 messages: messages
             )))
         case "citations":
-            return .citations(count: envelope.citations?.count ?? 0)
+            return .citations(envelope.citations?.items ?? [])
         case "error":
             return .failure(envelope.error?.nonEmpty ?? "The agent hit an error.")
         default:
@@ -309,7 +316,9 @@ private struct ChatStreamEnvelope: Decodable {
     let maxLength: Int?
     let surfaceId: String?
     let messages: [ChatUIMessage]?
-    let citations: [ChatUIPropValue]?
+    /// Decoded leniently: the `meta` frame carries the key too, and an odd
+    /// element must never fail the whole frame.
+    let citations: LenientCitations?
     /// The gateway's presentation of a tool call: its category (verb per tense,
     /// family, glyph), the one-line subject of what it was asked to do, and the
     /// readable view of its result. Sent on `mcp_tool` frames so the app renders

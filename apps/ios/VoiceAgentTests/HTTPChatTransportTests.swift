@@ -76,7 +76,7 @@ final class StreamCallRecorder: @unchecked Sendable {
 
 /// Records gateway requests the transport makes outside the stream (the
 /// best-effort agent-definition read and a decision answer).
-private final class RequestRecorder: @unchecked Sendable {
+final class RequestRecorder: @unchecked Sendable {
     nonisolated(unsafe) var paths: [String] = []
     nonisolated(unsafe) var methods: [String] = []
     nonisolated(unsafe) var bodies: [Data?] = []
@@ -84,7 +84,7 @@ private final class RequestRecorder: @unchecked Sendable {
 
 /// URLProtocol hands a request body over as a stream, not as `httpBody`; read it
 /// so request-shape tests can assert the JSON payload.
-private nonisolated func chatRequestBody(_ request: URLRequest) -> Data? {
+nonisolated func chatRequestBody(_ request: URLRequest) -> Data? {
     if let body = request.httpBody {
         return body
     }
@@ -109,7 +109,8 @@ private nonisolated func chatRequestBody(_ request: URLRequest) -> Data? {
 @Suite(.serialized) @MainActor struct HTTPChatTransportTests {
     private let learnedConversationID = "6f1c2a44-0000-4000-8000-000000000001"
 
-    private func makeSession() -> URLSession {
+    /// Shared with `HTTPChatTransportStopTests`, which extends this suite.
+    func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [HTTPChatStubProtocol.self]
         return URLSession(configuration: configuration)

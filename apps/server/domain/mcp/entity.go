@@ -426,18 +426,28 @@ type InputSchema struct {
 	Type                 string                    `json:"type"`
 	Properties           map[string]PropertySchema `json:"properties,omitempty"`
 	Required             []string                  `json:"required,omitempty"`
+	AnyOf                []SchemaBranch            `json:"anyOf,omitempty"`
 	AdditionalProperties *bool                     `json:"additionalProperties,omitempty"`
+}
+
+// SchemaBranch is one branch of an input-schema anyOf. It advertises the fields
+// that branch requires, so a schema-level "one of these forms" constraint is
+// machine-readable instead of being documented only in prose.
+type SchemaBranch struct {
+	Required []string `json:"required"`
 }
 
 // PropertySchema describes a single property in a JSON schema
 type PropertySchema struct {
-	Type        string          `json:"type"`
-	Description string          `json:"description,omitempty"`
-	Enum        []string        `json:"enum,omitempty"`
-	Minimum     *int            `json:"minimum,omitempty"`
-	Maximum     *int            `json:"maximum,omitempty"`
-	Default     any             `json:"default,omitempty"`
-	Items       *PropertySchema `json:"items,omitempty"` // for type: "array"
+	Type        string                    `json:"type"`
+	Description string                    `json:"description,omitempty"`
+	Enum        []string                  `json:"enum,omitempty"`
+	Minimum     *int                      `json:"minimum,omitempty"`
+	Maximum     *int                      `json:"maximum,omitempty"`
+	Default     any                       `json:"default,omitempty"`
+	Items       *PropertySchema           `json:"items,omitempty"`      // for type: "array"
+	Properties  map[string]PropertySchema `json:"properties,omitempty"` // for type: "object"
+	Required    []string                  `json:"required,omitempty"`   // for type: "object"
 }
 
 // ToolsCallParams represents the params for tools/call method

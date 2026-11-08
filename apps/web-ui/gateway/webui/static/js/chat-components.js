@@ -1512,10 +1512,13 @@
   // the gateway's `ui` SSE event; this walks the message list, accumulates
   // components from updateComponents, and renders one card per component into
   // the chat message list (ctx.messages — the same container question/approval
-  // cards append to). createSurface / updateDataModel / deleteSurface are
-  // tolerated (ignored for now — this is a Phase-1 read-only render). Unknown
-  // component ids fall back to a summary card and never throw. All user/model
-  // text is escaped (textContent / escapeHTML), never injected via innerHTML.
+  // cards append to). createSurface / updateDataModel are tolerated (ignored
+  // for now — this is a Phase-1 read-only render); deleteSurface tears a card
+  // down. Progressive frames for the same surface update its cards in place
+  // (one card instance per component), so a streamed surface is never drawn
+  // twice. Unknown component ids fall back to a summary card and never throw.
+  // All user/model text is escaped (textContent / escapeHTML), never injected
+  // via innerHTML.
 
   function renderA2UISurface(surfaceId, messages, ctx) {
     ctx = ctx || {};
@@ -1532,9 +1535,22 @@
     // authenticated chat and sidepanel) keep the full controls.
     var canDecide = !ctx.approvalsEnabled || ctx.approvalsEnabled();
 
+    var list = Array.isArray(messages) ? messages : [];
+
+    // deleteSurface tears the card down — the server sends it when a surface it
+    // showed progressively later fails validation, so a half-rendered card must
+    // not outlive the run.
+    for (var d = 0; d < list.length; d++) {
+      if (list[d] && list[d].deleteSurface) {
+        removeA2UISurface(container, surfaceId);
+        if (hideEmpty) hideEmpty();
+        scrollToBottom();
+        return;
+      }
+    }
+
     // Accumulate components from updateComponents; ignore other envelope kinds.
     var components = [];
-    var list = Array.isArray(messages) ? messages : [];
     for (var i = 0; i < list.length; i++) {
       var msg = list[i];
       if (!msg || typeof msg !== "object") continue;
@@ -1546,12 +1562,52 @@
       }
     }
 
-    for (var k = 0; k < components.length; k++) {
-      var node = buildA2UICard(components[k], surfaceId, canDecide);
-      if (node) container.appendChild(node);
-    }
+    // Update in place: a progressive frame for a surface we already rendered
+    // replaces its cards rather than appending a second instance.
+    replaceA2UISurface(container, surfaceId, components, canDecide);
     if (hideEmpty) hideEmpty();
     scrollToBottom();
+  }
+
+  // a2uiSurfaceRegistry stores each surface's rendered card nodes, keyed by
+  // surfaceId, on its message container. Each page owns its own container, so
+  // the registry is never shared across pages or the live stream and history.
+  function a2uiSurfaceRegistry(container) {
+    if (!container._a2uiSurfaces) container._a2uiSurfaces = {};
+    return container._a2uiSurfaces;
+  }
+
+  // replaceA2UISurface swaps a surface's cards for the newly accumulated
+  // components, preserving the surface's position in the transcript.
+  function replaceA2UISurface(container, surfaceId, components, canDecide) {
+    var registry = a2uiSurfaceRegistry(container);
+    var old = registry[surfaceId] || [];
+    var anchor = old.length ? old[0] : null;
+
+    var nodes = [];
+    for (var k = 0; k < components.length; k++) {
+      var node = buildA2UICard(components[k], surfaceId, canDecide);
+      if (!node) continue;
+      if (anchor && anchor.parentNode) container.insertBefore(node, anchor);
+      else container.appendChild(node);
+      nodes.push(node);
+    }
+    for (var r = 0; r < old.length; r++) {
+      if (old[r] && old[r].parentNode) old[r].parentNode.removeChild(old[r]);
+    }
+    registry[surfaceId] = nodes;
+  }
+
+  // removeA2UISurface tears a surface's cards down (deleteSurface).
+  function removeA2UISurface(container, surfaceId) {
+    var registry = a2uiSurfaceRegistry(container);
+    var old = registry[surfaceId];
+    if (old) {
+      for (var r = 0; r < old.length; r++) {
+        if (old[r] && old[r].parentNode) old[r].parentNode.removeChild(old[r]);
+      }
+    }
+    delete registry[surfaceId];
   }
 
   function buildA2UICard(comp, surfaceId, canDecide) {

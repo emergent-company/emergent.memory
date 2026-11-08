@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/domain/feedback"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -37,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
@@ -114,6 +117,10 @@ type Service struct {
 
 	// Email jobs service (for MCP invite emails)
 	emailSvc *email.JobsService
+
+	// Feedback service (for the feedback-submit tool). Nil when the deployment
+	// does not configure a feedback destination; the tool fails closed.
+	feedbackSvc *feedback.Service
 
 	// Journal service (for journal-list and journal-add-note tools)
 	journalSvc *journal.Service
@@ -226,6 +233,7 @@ type ServiceParams struct {
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
 	EmailSvc           *email.JobsService
+	FeedbackSvc        *feedback.Service `optional:"true"`
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
 	SessionTodoSvc     *sessiontodos.Service
@@ -281,6 +289,7 @@ func NewService(p ServiceParams) *Service {
 		providerCatalogSvc:        p.ProviderCatalogSvc,
 		apitokenSvc:               p.ApitokenSvc,
 		emailSvc:                  p.EmailSvc,
+		feedbackSvc:               p.FeedbackSvc,
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
 		internalBaseURL:           cfg.InternalBaseURL,
@@ -440,7 +449,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-query",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass include_properties=true (or a fields list) to return the properties blob; by default properties are omitted to bound large pages. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -459,7 +468,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"limit": {
 						Type:        "number",
-						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
+						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When properties are requested (field_strategy=\"full\", include_properties=true, or a fields list) the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
 						Minimum:     intPtr(1),
 						Maximum:     intPtr(200),
 						Default:     10,
@@ -489,13 +498,17 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"fields": {
 						Type:        "array",
-						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. Only applies when field_strategy=\"full\".",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). Supplying fields implies include_properties=true, so the requested properties are returned without also passing field_strategy=\"full\". id, key, name, type, created_at, updated_at are always returned for free — do not include them here.",
 						Items:       &PropertySchema{Type: "string"},
 					},
 					"field_strategy": {
 						Type:        "string",
-						Description: "Controls property depth. compact=name only, no properties (default), full=all properties (or the requested fields subset).",
+						Description: "Controls property depth. compact=no properties (default unless include_properties=true or fields is supplied), full=all properties (or the requested fields subset).",
 						Enum:        []string{"compact", "full"},
+					},
+					"include_properties": {
+						Type:        "boolean",
+						Description: "When true, return each entity's properties blob (projected to fields when supplied). Selects the full projection, whose effective limit is capped to bound the payload; paginate with offset for more rows. Default false for type/pagination queries (compact: no properties); the ids[] path returns properties by default, and include_properties=false opts it back into compact.",
 					},
 					"filters": {
 						Type:        "object",
@@ -536,7 +549,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-search",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
+			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Returns the current version of each matching object only: soft-deleted objects are excluded, one hit per object, with the canonical object id plus the current version number, properties and updated_at. Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -853,13 +866,48 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-update",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Update one or more existing entities by creating new versions. Properties are merged with existing values (null removes a property). Two forms: single (entity_id) or batch ('updates' array, up to 100 items, each {entity_id, properties, labels, status, branch_id?}) with per-item results — one bad item never fails the batch; retry exactly the failed indexes. Returns a slim object (id/type/key/name/labels) per entity; pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID or key of the entity to update",
+						Description: "Single form: UUID or key of the entity to update. Omit when using 'updates'.",
+					},
+					"updates": {
+						Type: "array",
+						Items: &PropertySchema{
+							Type: "object",
+							Properties: map[string]PropertySchema{
+								"entity_id": {
+									Type:        "string",
+									Description: "UUID or key of the entity to update (required per item).",
+								},
+								"properties": {
+									Type:        "object",
+									Description: "Properties to merge into the entity (null removes a property).",
+								},
+								"labels": {
+									Type:        "array",
+									Items:       &PropertySchema{Type: "string"},
+									Description: "Labels to add for this item.",
+								},
+								"replace_labels": {
+									Type:        "boolean",
+									Description: "If true, replace all labels instead of merging (default: false).",
+								},
+								"status": {
+									Type:        "string",
+									Description: "Optional new status for this item.",
+								},
+								"branch_id": {
+									Type:        "string",
+									Description: "Optional branch UUID for this item.",
+								},
+							},
+							Required: []string{"entity_id"},
+						},
+						Description: "Batch form (max 100 items): each item {entity_id (required), properties, labels, replace_labels, status, branch_id?}. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes. No item is atomic with any other; a failure does not roll back the successes.",
 					},
 					"properties": {
 						Type:        "object",
@@ -887,30 +935,86 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
 					},
 				},
-				Required: []string{"entity_id"},
+				AnyOf: []SchemaBranch{
+					{Required: []string{"entity_id"}},
+					{Required: []string{"updates"}},
+				},
 			},
 		},
 		{
 			Name:         "entity-delete",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Soft-delete an entity. The entity can be restored later.",
+			Description:  "Soft-delete one or more entities. Two forms: single (entity_id) or batch ('entity_ids' array of UUIDs or keys, up to 100, sharing one reason) with per-item results — one bad item never fails the batch; retry exactly the failed indexes. Soft delete only: the entities can be restored later. For a filter-based bulk delete use entity-bulk-update (its default action is soft_delete; hard_delete must be named explicitly).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID or key of the entity to delete",
+						Description: "Single form: UUID or key of the entity to delete. Omit when using 'entity_ids'.",
+					},
+					"entity_ids": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Batch form (max 100 items): entity UUIDs or keys to soft-delete. One shared 'reason' applies to all. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes.",
 					},
 					"reason": {
 						Type:        "string",
-						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version. In batch form it applies to every item.",
 					},
 					"branch": {
 						Type:        "string",
 						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
 				},
-				Required: []string{"entity_id"},
+				AnyOf: []SchemaBranch{
+					{Required: []string{"entity_id"}},
+					{Required: []string{"entity_ids"}},
+				},
+			},
+		},
+		{
+			Name:         "entity-bulk-update",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Bulk-update every entity matching a filter in one call, returning {matched, affected} (up to the 'limit' cap, server maximum 100000 rows per call). DEFAULT action is soft_delete (recoverable); hard_delete PERMANENTLY removes rows and requires an explicit 'action' plus a non-empty filter.types and confirm=true — this tool never infers it. dry_run=true reports how many rows match (matched) and changes nothing; affected is 0 on a dry run. When matched > affected, re-run to continue. NOT atomic: the action is applied as one project-scoped statement, not per item. Use entity-update/entity-delete for per-id batches (max 100 items) where you need per-item results and retry.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"filter": {
+						Type:        "object",
+						Description: "Selects the entities to change. Must constrain at least one of: types ([]string), property_filters (array of {path, op, value} where op is one of eq, neq, gt, gte, lt, lte, contains, exists, in), labels ([]string), created_after (RFC3339), namespace (string). Unknown keys, an empty path, an unknown op, or op=in without an array value are rejected. An empty filter is rejected because it would match every entity in the project. A namespaced caller is always scoped to its own namespace: a conflicting explicit namespace is refused. An agent run's branch scope bounds the rows it can change.",
+					},
+					"action": {
+						Type:        "string",
+						Enum:        []string{"soft_delete", "update_status", "merge_properties", "replace_properties", "add_labels", "remove_labels", "set_labels", "hard_delete"},
+						Description: "What to do with matched entities. Defaults to soft_delete. soft_delete sets deleted_at (restorable); hard_delete permanently deletes and requires filter.types and confirm=true; update_status requires 'value'; merge_properties/replace_properties require 'properties'; add_labels/remove_labels/set_labels require 'labels'.",
+					},
+					"value": {
+						Type:        "string",
+						Description: "New status value, for action=update_status.",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Properties payload for action=merge_properties (deep merge) or action=replace_properties (replace).",
+					},
+					"labels": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Labels payload for action=add_labels, remove_labels or set_labels.",
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum rows to affect in this call (default 1000, server maximum 100000). A capped run leaves the remainder matched but unaffected; re-run to continue.",
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "When true, report how many rows match (matched) but change nothing; affected is 0.",
+					},
+					"confirm": {
+						Type:        "boolean",
+						Description: "Explicit confirmation guard for action=hard_delete. hard_delete is refused unless confirm=true.",
+					},
+				},
+				Required: []string{"filter"},
 			},
 		},
 		{
@@ -1408,24 +1512,32 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "relationship-delete",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Soft-delete a relationship between two entities.",
+			Description:  "Soft-delete one or more relationships between entities. Two forms: single (relationship_id) or batch ('relationship_ids' array of up to 100 UUIDs, sharing one reason) with per-item results — one bad item never fails the batch; retry exactly the failed indexes.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"relationship_id": {
 						Type:        "string",
-						Description: "UUID of the relationship to delete",
+						Description: "Single form: UUID of the relationship to delete. Omit when using 'relationship_ids'.",
+					},
+					"relationship_ids": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Batch form (max 100 items): relationship UUIDs to soft-delete. One shared 'reason' applies to all. Returns one result per item with index/relationship_id/ok/error so a retry can target only the failed indexes.",
 					},
 					"reason": {
 						Type:        "string",
-						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version. In batch form it applies to every item.",
 					},
 					"branch": {
 						Type:        "string",
 						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
 				},
-				Required: []string{"relationship_id"},
+				AnyOf: []SchemaBranch{
+					{Required: []string{"relationship_id"}},
+					{Required: []string{"relationship_ids"}},
+				},
 			},
 		},
 		{
@@ -1760,6 +1872,40 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		},
 	})
 
+	// Feedback intake. The description is the user-facing writing guide: it is
+	// what an agent sees when it decides whether and how to call the tool.
+	tools = append(tools, ToolDefinition{
+		Name:         "feedback-submit",
+		OutputSchema: objectOutputSchema(),
+		Description: "Send feedback about Memory to the Memory team. It is filed as a GitHub issue with your account, project and basic environment attached, so you do not need to repeat those. " +
+			"Write what you were trying to do, what happened, and what you expected. If you can, add the steps that reproduce it and paste the exact error text. One or two sentences is fine if that is all you have. " +
+			"Use this for product feedback, bugs, confusing behavior, missing features or documentation problems — not for storing knowledge in the graph.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"message": {
+					Type:        "string",
+					Description: "What you want to tell the Memory team: what you were doing, what happened, and what you expected. Add reproduction steps or the exact error text if you have them.",
+				},
+				"category": {
+					Type:        "string",
+					Enum:        []string{"bug", "feature", "usability", "docs", "other"},
+					Description: "Optional category. Defaults to other.",
+				},
+				"severity": {
+					Type:        "string",
+					Enum:        []string{"low", "medium", "high"},
+					Description: "Optional impact: low (cosmetic), medium (annoying but workable), high (blocked).",
+				},
+				"include_context": {
+					Type:        "boolean",
+					Description: "Attach project, environment and client details. Defaults to true; set false to send only your message and account identity.",
+				},
+			},
+			Required: []string{"message"},
+		},
+	})
+
 	// Session todo tools — session-scoped, ownership enforced at the data-access
 	// layer via the shared sessiontodos.SessionAccessible predicate (see
 	// session_todo_tools.go). Registered here so they dispatch through the same
@@ -1920,6 +2066,7 @@ var toolRequiredScope = map[string]string{
 	"entity-create":       "graph:write",
 	"entity-update":       "graph:write",
 	"entity-delete":       "graph:write",
+	"entity-bulk-update":  "graph:write",
 	"entity-restore":      "graph:write",
 	"relationship-create": "graph:write",
 	"relationship-update": "graph:write",
@@ -2598,6 +2745,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeUpdateEntity(ctx, projectID, args)
 	case "entity-delete":
 		return s.executeDeleteEntity(ctx, projectID, args)
+	case "entity-bulk-update":
+		return s.executeBulkUpdateEntities(ctx, projectID, args)
 	case "entity-restore":
 		return s.executeRestoreEntity(ctx, projectID, args)
 	case "session-get-messages":
@@ -2847,6 +2996,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	case "journal-add-note":
 		return s.executeJournalAddNote(ctx, projectID, args)
 
+	// Feedback intake (filed as a GitHub issue by the feedback domain)
+	case "feedback-submit":
+		return s.executeSubmitFeedback(ctx, projectID, args)
+
 	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
 		"blueprint-apply", "blueprint-apply-preview", "blueprint-unapply", "blueprint-versions",
@@ -3051,8 +3204,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		Count    int    `bun:"count"`
 	}
 
+	// declaredRelTypeRow is one relationship type declared by an installed schema
+	// pack. FromType/ToType are populated from the schema when a single
+	// source/target pair is known, so the scope check can apply the same row
+	// semantics as the in-use path; they are empty when the endpoints are
+	// unknown.
+	type declaredRelTypeRow struct {
+		Name     string `bun:"rel_name"`
+		FromType string `bun:"from_type"`
+		ToType   string `bun:"to_type"`
+	}
+
 	var types []typeRow
 	var relTypes []relTypeRow
+	// declaredRelTypes holds relationship types declared by installed schema
+	// packs. They are surfaced with count 0 even when no relationship instances
+	// exist yet (issue #403).
+	var declaredRelTypes []declaredRelTypeRow
 	// Untyped objects (type = '') have no registry row, so the registry-driven
 	// query below can never surface them. Count them separately and fold the
 	// result into a synthetic bucket after the transaction (issue #323).
@@ -3087,7 +3255,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		err = tx.NewRaw(`
 			SELECT 
 				tr.type_name as name,
-				COALESCE(tr.description, '') as description,
+				COALESCE(tr.json_schema->>'description', tr.description, '') as description,
 				COUNT(go.id)::int as instance_count
 			FROM kb.project_object_schema_registry tr
 			LEFT JOIN kb.graph_objects go 
@@ -3096,10 +3264,16 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
 				`+branchClause+`
+			LEFT JOIN kb.project_schemas ps
+				ON ps.schema_id = tr.schema_id
+				AND ps.project_id = tr.project_id
+				AND ps.active = true
+				AND ps.removed_at IS NULL
 			WHERE tr.enabled = true 
 				AND tr.project_id = ?
+				AND (tr.schema_id IS NULL OR ps.id IS NOT NULL)
 				`+namespaceClause+`
-			GROUP BY tr.type_name, tr.description
+			GROUP BY tr.type_name, tr.json_schema->>'description', tr.description
 			ORDER BY tr.type_name
 		`, queryArgs...).Scan(ctx, &types)
 		if err != nil {
@@ -3196,6 +3370,58 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			if err != nil {
 				return err
 			}
+
+			// Relationship types declared by installed schema packs must appear
+			// even when no instances exist yet (issue #403). The instance query
+			// above only surfaces types with live graph_relationships rows, so a
+			// freshly installed pack's relationship types were invisible. Read
+			// their names from graph_schemas.relationship_type_schemas, handling
+			// both storage shapes (a map keyed by type name, or an array of
+			// {"name","sourceType","targetType"} objects), and carry each type's
+			// source/target endpoint types when a single pair is known so the
+			// result can scope-check the same way the in-use path does.
+			err = tx.NewRaw(`
+				SELECT DISTINCT rel_name, from_type, to_type
+				FROM (
+					-- Array shape: [{"name","sourceType","targetType"}].
+					SELECT
+						elem->>'name' AS rel_name,
+						elem->>'sourceType' AS from_type,
+						elem->>'targetType' AS to_type
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					CROSS JOIN LATERAL jsonb_array_elements(gs.relationship_type_schemas) AS elem
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'array'
+					UNION
+					-- Map shape: {"name": {"sourceTypes": [...], "targetTypes": [...]}}
+					-- (older seeds/blueprints), with a singular-string fallback.
+					SELECT
+						keys.rel_name,
+						COALESCE(
+							NULLIF(gs.relationship_type_schemas->keys.rel_name->>'sourceType', ''),
+							gs.relationship_type_schemas->keys.rel_name->'sourceTypes'->>0
+						) AS from_type,
+						COALESCE(
+							NULLIF(gs.relationship_type_schemas->keys.rel_name->>'targetType', ''),
+							gs.relationship_type_schemas->keys.rel_name->'targetTypes'->>0
+						) AS to_type
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					CROSS JOIN LATERAL jsonb_object_keys(gs.relationship_type_schemas) AS keys(rel_name)
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
+				) declared
+				WHERE declared.rel_name IS NOT NULL AND declared.rel_name <> ''
+				ORDER BY declared.rel_name, declared.from_type, declared.to_type
+			`, projectUUID, projectUUID).Scan(ctx, &declaredRelTypes)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -3239,12 +3465,42 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		})
 	}
 
-	relationshipTypes := make([]RelationshipType, 0, len(relTypes))
+	relationshipTypes := make([]RelationshipType, 0, len(relTypes)+len(declaredRelTypes))
+	inUseTypes := make(map[string]bool, len(relTypes))
 	for _, r := range relTypes {
 		if !scope.AllowsRelationshipRow(r.Type, r.FromType, r.ToType) {
 			continue
 		}
 		relationshipTypes = append(relationshipTypes, RelationshipType(r))
+		inUseTypes[r.Type] = true
+	}
+	// Add relationship types declared by installed packs that have no in-use
+	// instances yet, so a freshly installed pack's relationship types are
+	// discoverable (issue #403). A declared type that already appears above
+	// keeps its real from/to/count; the zero-count row is only a fallback.
+	for _, d := range declaredRelTypes {
+		if d.Name == "" || inUseTypes[d.Name] {
+			continue
+		}
+		// When the schema names both endpoint object types, scope-check the
+		// relationship exactly like the in-use path (the from/to object names
+		// must also be permitted on the object axis). When the endpoints are
+		// unknown (the declaration carries no source/target types), fall back to
+		// the lenient relationship-type-only check rather than silently hiding a
+		// relationship whose endpoints we simply cannot see.
+		fromType, toType := d.FromType, d.ToType
+		if fromType != "" && toType != "" {
+			if !scope.AllowsRelationshipRow(d.Name, fromType, toType) {
+				continue
+			}
+		} else {
+			if !scope.AllowsRelationship(d.Name) {
+				continue
+			}
+			fromType, toType = "", ""
+		}
+		relationshipTypes = append(relationshipTypes, RelationshipType{Type: d.Name, FromType: fromType, ToType: toType, Count: 0})
+		inUseTypes[d.Name] = true
 	}
 
 	result := EntityTypesResult{
@@ -3574,15 +3830,31 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		orderExpr = fmt.Sprintf("left(go.properties->>'name', %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
 	}
 
-	// Resolve the field strategy the same way search-hybrid does. Defaulting to
-	// "compact" (name only, no properties) keeps a high-limit entity-query from
-	// returning the full properties JSONB — in statute projects that is ~14 KB of
-	// text per row, i.e. multiple MB at limit=200 (issue #1069). Callers that
-	// want properties must pass field_strategy="full".
+	// Resolve the field strategy the same way search-hybrid does. "compact" (no
+	// properties) stays the default because it keeps a high-limit entity-query
+	// from returning the full properties JSONB — in statute projects that is
+	// ~14 KB of text per row, i.e. multiple MB at limit=200 (issue #1069). A
+	// caller that asks for data gets it: include_properties=true or an explicit
+	// fields list selects the full projection, under the same limit cap as
+	// field_strategy="full" (issue #400). An explicit field_strategy always wins;
+	// when that leaves a caller's requested properties suppressed the conflict is
+	// reported as a warning below, and include_properties=false pins the compact
+	// default when no strategy was named.
 	opts := responseOptsFromArgs(args)
+	includeProps, includePropsSet := args["include_properties"].(bool)
 	strategy := opts.FieldStrategy
+	propertiesSuppressed := false
 	if strategy == "" {
-		strategy = "compact"
+		switch {
+		case includePropsSet && !includeProps:
+			strategy = "compact"
+		case includeProps || len(opts.Fields) > 0:
+			strategy = "full"
+		default:
+			strategy = "compact"
+		}
+	} else {
+		propertiesSuppressed = strategy == "compact" && (includeProps || len(opts.Fields) > 0)
 	}
 	fieldProjection := entityPropertiesProjection(strategy, args["fields"])
 
@@ -3773,7 +4045,11 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "branch": {}, "filters": {}, "key_prefix": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "include_properties": {}, "branch": {}, "filters": {}, "key_prefix": {},
+		// The consolidated `entity` tool leaves its own `action` in args after
+		// dispatch consumed it, so it must not be reported as an ignored
+		// parameter (the dispatcher already validated it).
+		"action": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -3792,9 +4068,12 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	}
 	if fullLimitClamped {
 		warnings = append(warnings, fmt.Sprintf(
-			"limit capped to %d for field_strategy=full to bound the payload; paginate with offset for more rows.",
+			"limit capped to %d to bound the properties payload; paginate with offset for more rows.",
 			limit,
 		))
+	}
+	if propertiesSuppressed {
+		warnings = append(warnings, "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties.")
 	}
 	queryEntitiesWarning := strings.Join(warnings, " ")
 
@@ -3967,12 +4246,21 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	// ids[] is the documented "fetch full properties of a specific version"
 	// path, so it defaults to "full" (unlike the type/pagination path above,
 	// which defaults to "compact" to avoid the multi-MB wide-row payload). An
-	// explicit field_strategy overrides it, and `fields` is honoured under
-	// "full" exactly like the type/pagination path.
+	// explicit field_strategy overrides it, `fields` is honoured under "full"
+	// exactly like the type/pagination path, and include_properties=false opts
+	// back into the compact projection (issue #400).
 	opts := responseOptsFromArgs(args)
+	includeProps, includePropsSet := args["include_properties"].(bool)
 	strategy := opts.FieldStrategy
+	propertiesSuppressed := false
 	if strategy == "" {
-		strategy = "full"
+		if includePropsSet && !includeProps {
+			strategy = "compact"
+		} else {
+			strategy = "full"
+		}
+	} else {
+		propertiesSuppressed = strategy == "compact" && (includeProps || len(opts.Fields) > 0)
 	}
 	propsProjection := entityPropertiesProjection(strategy, args["fields"])
 
@@ -4036,6 +4324,9 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Offset:  0,
 			HasMore: false,
 		},
+	}
+	if propertiesSuppressed {
+		result.Warning = "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
 	}
 	return envelopeResult(true, result, nil, "")
 }
@@ -4286,14 +4577,16 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 	}
 
 	type entityRow struct {
-		ID         uuid.UUID      `bun:"id"`
-		Key        string         `bun:"key"`
-		Name       string         `bun:"name"`
-		TypeName   string         `bun:"type_name"`
-		Properties map[string]any `bun:"properties,type:jsonb"`
-		CreatedAt  time.Time      `bun:"created_at"`
-		BranchID   *uuid.UUID     `bun:"branch_id"`
-		BranchName *string        `bun:"branch_name"`
+		CanonicalID uuid.UUID      `bun:"canonical_id"`
+		Key         string         `bun:"key"`
+		Name        string         `bun:"name"`
+		TypeName    string         `bun:"type_name"`
+		Version     int            `bun:"version"`
+		Properties  map[string]any `bun:"properties,type:jsonb"`
+		CreatedAt   time.Time      `bun:"created_at"`
+		UpdatedAt   time.Time      `bun:"updated_at"`
+		BranchID    *uuid.UUID     `bun:"branch_id"`
+		BranchName  *string        `bun:"branch_name"`
 	}
 
 	var entities []entityRow
@@ -4350,12 +4643,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		runSearch := func(queryText, tsqueryFn string) error {
 			baseQuery := `
 			SELECT 
-				go.id,
+				go.canonical_id,
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
+				go.version,
 				go.properties,
 				go.type as type_name,
 				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at,
 				go.branch_id,
 				b.name as branch_name
 			FROM kb.graph_objects go
@@ -4363,6 +4658,13 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			` + namespaceJoin + `
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
+				-- Only the current version of each object is a hit. The table keeps
+				-- one row per version, all sharing canonical_id, and scanning every
+				-- row returned the same object once per version with the old row's
+				-- physical id and properties (#399). supersedes_id IS NULL selects
+				-- the head of the version chain in the same way entity-query and
+				-- every other read path already do.
+				AND go.supersedes_id IS NULL
 				AND (
 					go.fts @@ ` + tsqueryFn + `('simple', ?)
 					OR go.fts @@ ` + tsqueryFn + `('norwegian', ?)
@@ -4441,12 +4743,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			branchIDStr = &s
 		}
 		resultEntities = append(resultEntities, Entity{
-			ID:         e.ID.String(),
+			ID:         e.CanonicalID.String(),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
+			Version:    e.Version,
 			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
+			UpdatedAt:  e.UpdatedAt,
 			BranchID:   branchIDStr,
 			BranchName: e.BranchName,
 		})
@@ -4802,13 +5106,59 @@ func reactionSubjectMatches(ctx context.Context, canonicalID uuid.UUID) bool {
 	return subjectID != "" && canonicalID.String() == subjectID
 }
 
-// executeUpdateEntity updates an existing entity's properties, labels, or status.
+// batchMutationMaxItems caps how many items one MCP batch-mutation call accepts.
+// It mirrors the server-side bulk endpoints' 100-item cap (graph.bulkUpsertMaxItems)
+// so an MCP batch never produces a request the graph layer would reject.
+const batchMutationMaxItems = 100
+
+// batchOverLimitError names the limit and how to proceed, so an agent can split
+// the call instead of guessing.
+func batchOverLimitError(tool string, got int) error {
+	return fmt.Errorf("%s batch size exceeded: %d items, maximum %d per call — split into batches of %d or fewer and retry", tool, got, batchMutationMaxItems, batchMutationMaxItems)
+}
+
+// executeUpdateEntity updates one or more existing entities.
+//
+// Single form: entity_id + properties/labels/status/branch.
+// Batch form: updates[] — each item is updated independently and the result
+// carries {index, entity_id, ok, error?} per item, so a caller retries exactly
+// the failed indexes. One bad item never fails the batch.
 func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	if raw, present := args["updates"]; present {
+		items, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid updates: must be an array of {entity_id, properties, labels, status, branch_id?} objects")
+		}
+		if len(items) == 0 {
+			return nil, fmt.Errorf("missing or empty updates array")
+		}
+		if len(items) > batchMutationMaxItems {
+			return nil, batchOverLimitError("entity-update", len(items))
+		}
+		return s.executeBatchUpdateEntities(ctx, projectUUID, projectID, items, args)
+	}
+
+	result, err := s.updateEntityOne(ctx, projectUUID, projectID, args)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := responseOptsFromArgs(args)
+	return envelopeResult(true, map[string]any{
+		"entity": slimEntity(result, opts),
+	}, nil, "")
+}
+
+// updateEntityOne applies a single entity update and returns the new version.
+// It carries every guard the single-item form has always enforced: key
+// resolution inside the caller's project, the reaction-agent work-status
+// exemption, branch resolution, and per-type scope/write rules.
+func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, projectID string, args map[string]any) (*graph.GraphObjectResponse, error) {
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: entity_id")
@@ -4890,32 +5240,186 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 	if err != nil {
 		return nil, fmt.Errorf("update entity: %w", err)
 	}
-
-	opts := responseOptsFromArgs(args)
-	return envelopeResult(true, map[string]any{
-		"entity": slimEntity(result, opts),
-	}, nil, "")
+	return result, nil
 }
 
-// executeDeleteEntity deletes an existing entity.
+// executeBatchUpdateEntities applies a batch of entity updates. Each item is
+// independent: per-item success/failure is reported with its index, and the
+// successes are not rolled back when another item fails.
+func (s *Service) executeBatchUpdateEntities(ctx context.Context, projectUUID uuid.UUID, projectID string, items []any, args map[string]any) (*ToolResult, error) {
+	type batchUpdateResult struct {
+		Index    int            `json:"index"`
+		EntityID string         `json:"entity_id,omitempty"`
+		OK       bool           `json:"ok"`
+		Entity   map[string]any `json:"entity,omitempty"`
+		Error    string         `json:"error,omitempty"`
+	}
+
+	results := make([]batchUpdateResult, 0, len(items))
+	succeeded, failed := 0, 0
+
+	for i, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			results = append(results, batchUpdateResult{Index: i, OK: false, Error: "invalid update specification: expected an object with entity_id"})
+			failed++
+			continue
+		}
+
+		// Copy the item so per-item branch/verbose defaults never mutate the caller's map.
+		itemArgs := make(map[string]any, len(item)+2)
+		for k, v := range item {
+			itemArgs[k] = v
+		}
+		if _, ok := itemArgs["branch"]; !ok {
+			if branchRef, ok := args["branch"].(string); ok && branchRef != "" {
+				itemArgs["branch"] = branchRef
+			}
+		}
+		if _, ok := itemArgs["verbose"]; !ok {
+			if v, ok := args["verbose"]; ok {
+				itemArgs["verbose"] = v
+			}
+		}
+		// Explicit per-item branch_id (a UUID) is accepted as well as branch.
+		if branchIDStr, ok := itemArgs["branch_id"].(string); ok && branchIDStr != "" {
+			if _, err := uuid.Parse(branchIDStr); err != nil {
+				results = append(results, batchUpdateResult{Index: i, EntityID: refString(itemArgs["entity_id"]), OK: false, Error: fmt.Sprintf("invalid branch_id: %q is not a UUID", branchIDStr)})
+				failed++
+				continue
+			}
+			if _, ok := itemArgs["branch"]; !ok {
+				itemArgs["branch"] = branchIDStr
+			}
+		}
+
+		entityRef := refString(itemArgs["entity_id"])
+		result, err := s.updateEntityOne(ctx, projectUUID, projectID, itemArgs)
+		if err != nil {
+			results = append(results, batchUpdateResult{Index: i, EntityID: entityRef, OK: false, Error: err.Error()})
+			failed++
+			continue
+		}
+		opts := responseOptsFromArgs(itemArgs)
+		results = append(results, batchUpdateResult{
+			Index:    i,
+			EntityID: entityRef,
+			OK:       true,
+			Entity:   slimEntity(result, opts),
+		})
+		succeeded++
+	}
+
+	ok := failed == 0
+	errMsg := ""
+	if !ok {
+		errMsg = fmt.Sprintf("%d of %d entities failed to update; retry the failed indexes only", failed, len(items))
+	}
+	return envelopeResult(ok, map[string]any{
+		"results": results,
+		"message": fmt.Sprintf("Batch update completed: %d succeeded, %d failed", succeeded, failed),
+	}, map[string]any{
+		"succeeded": succeeded,
+		"failed":    failed,
+		"total":     len(items),
+	}, errMsg)
+}
+
+// refString renders an argument reference (id or key) for a per-item result.
+func refString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// executeDeleteEntity soft-deletes one or more entities.
+//
+// Single form: entity_id. Batch form: entity_ids[] with one shared reason;
+// each item is deleted independently and reported as {index, entity_id, ok,
+// error?} so a caller retries exactly the failed indexes.
 func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	if raw, present := args["entity_ids"]; present {
+		ids, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid entity_ids: must be an array of UUIDs or keys")
+		}
+		if len(ids) == 0 {
+			return nil, fmt.Errorf("missing or empty entity_ids array")
+		}
+		if len(ids) > batchMutationMaxItems {
+			return nil, batchOverLimitError("entity-delete", len(ids))
+		}
+
+		// One branch and one reason apply to the whole batch, matching the
+		// single-item form's semantics. The branch is resolved lazily on the
+		// first valid id so a wholly invalid batch never creates one.
+		var branchID *uuid.UUID
+		branchResolved := false
+		resolveBranch := func() error {
+			if branchResolved {
+				return nil
+			}
+			branchResolved = true
+			if branchRef, _ := args["branch"].(string); branchRef != "" {
+				id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+				if rerr != nil {
+					return fmt.Errorf("resolve branch: %w", rerr)
+				}
+				branchID = id
+			}
+			return nil
+		}
+		reason := reasonFromArgs(args)
+
+		type batchDeleteResult struct {
+			Index    int    `json:"index"`
+			EntityID string `json:"entity_id"`
+			OK       bool   `json:"ok"`
+			Error    string `json:"error,omitempty"`
+		}
+		results := make([]batchDeleteResult, 0, len(ids))
+		succeeded, failed := 0, 0
+		for i, rawID := range ids {
+			idStr, ok := rawID.(string)
+			if !ok || idStr == "" {
+				results = append(results, batchDeleteResult{Index: i, OK: false, Error: "invalid entity_id: expected a non-empty UUID or key string"})
+				failed++
+				continue
+			}
+			if err := resolveBranch(); err != nil {
+				return nil, err
+			}
+			if _, err := s.deleteEntityOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
+				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: err.Error()})
+				failed++
+				continue
+			}
+			results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: true})
+			succeeded++
+		}
+
+		allOK := failed == 0
+		errMsg := ""
+		if !allOK {
+			errMsg = fmt.Sprintf("%d of %d entities failed to delete; retry the failed indexes only", failed, len(ids))
+		}
+		return envelopeResult(allOK, map[string]any{
+			"results": results,
+			"message": fmt.Sprintf("Batch delete completed: %d succeeded, %d failed", succeeded, failed),
+		}, map[string]any{
+			"succeeded": succeeded,
+			"failed":    failed,
+			"total":     len(ids),
+		}, errMsg)
+	}
+
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: entity_id")
-	}
-
-	entityID, err := uuid.Parse(entityIDStr)
-	if err != nil {
-		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
-		if keyErr != nil {
-			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
-		}
-		entityID = resolved
 	}
 
 	// Resolve optional branch param — auto-creates the branch if it does not exist,
@@ -4928,30 +5432,327 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		}
 	}
 
-	// Optional reason
-	var reason *string
-	if r, ok := args["reason"].(string); ok && r != "" {
-		reason = &r
+	entityID, err := s.deleteEntityOne(ctx, projectUUID, projectID, entityIDStr, branchID, reasonFromArgs(args))
+	if err != nil {
+		return nil, err
+	}
+
+	return envelopeResult(true, map[string]any{
+		"entity_id": entityID.String(),
+	}, nil, "")
+}
+
+// deleteEntityOne soft-deletes one entity by UUID or key, scoped to the
+// caller's project. An id or key from another project fails exactly like a
+// missing one (no existence oracle) and never touches the foreign row.
+func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, projectID, entityIDStr string, branchID *uuid.UUID, reason *string) (uuid.UUID, error) {
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return uuid.Nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
 	}
 
 	writeRules := AgentWriteRulesFromContext(ctx)
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
+			return uuid.Nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
 		}
 		if !writeRules.DeleteAllowed(typ) {
-			return nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
+			return uuid.Nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
+		}
+	}
+
+	// A repeat delete of an entity already deleted on main is a no-op success.
+	// graph.Delete fetches the row by id and then re-fetches its HEAD, so a
+	// second call on a live-by-id row would append a second tombstone version.
+	if branchID == nil {
+		if obj, gerr := s.graphService.GetByIDIncludingDeleted(ctx, projectUUID, entityID); gerr == nil &&
+			obj != nil && obj.DeletedAt != nil && obj.BranchID == nil {
+			return entityID, nil
 		}
 	}
 
 	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, branchID, reason); err != nil {
-		return nil, fmt.Errorf("delete entity: %w", err)
+		if isAlreadyDeletedError(err) {
+			return entityID, nil
+		}
+		return uuid.Nil, fmt.Errorf("delete entity: %w", err)
+	}
+	return entityID, nil
+}
+
+// isAlreadyDeletedError reports the server's "already deleted" conflict, which
+// the MCP delete helpers turn into an idempotent no-op success so retrying a
+// whole batch after a timeout cannot append another tombstone or report a false
+// failure.
+func isAlreadyDeletedError(err error) bool {
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusBadRequest {
+		return false
+	}
+	msg := strings.ToLower(appErr.Message)
+	return strings.Contains(msg, "already deleted") || strings.Contains(msg, "already_deleted")
+}
+
+// reasonFromArgs reads the optional shared deletion reason.
+func reasonFromArgs(args map[string]any) *string {
+	if r, ok := args["reason"].(string); ok && r != "" {
+		return &r
+	}
+	return nil
+}
+
+// bulkActionNames is the set the filter-based tool accepts, in the order the
+// tool description lists them. soft_delete is the safe default; hard_delete is
+// deliberately never selected implicitly.
+var bulkActionNames = []string{
+	graph.BulkActionSoftDelete,
+	graph.BulkActionUpdateStatus,
+	graph.BulkActionMergeProperties,
+	graph.BulkActionReplaceProperties,
+	graph.BulkActionAddLabels,
+	graph.BulkActionRemoveLabels,
+	graph.BulkActionSetLabels,
+	graph.BulkActionHardDelete,
+}
+
+// executeBulkUpdateEntities mirrors the CLI's `graph objects bulk-update`: apply
+// one action to every entity matching a filter and report {matched, affected}.
+//
+// Unlike the per-id batch tools this is not per-item (the action is one
+// project-scoped statement), so the whole call is applied or rejected as a
+// unit. dry_run only counts. The default action is soft_delete; hard_delete
+// must be named explicitly so an agent cannot destroy rows by omission.
+func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	filterRaw, ok := args["filter"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("missing required parameter: filter (object; constrain at least one of types, property_filters, labels, created_after, namespace)")
+	}
+	filter, err := decodeBulkActionFilter(filterRaw)
+	if err != nil {
+		return nil, err
+	}
+	// A namespaced caller (e.g. a per-namespace memory surface) is ALWAYS
+	// scoped to its own namespace. Filling only when absent let a caller pass
+	// namespace:"team-b" from a team-a context and reach the sibling namespace.
+	if ns := auth.NamespaceFromContext(ctx); ns != "" {
+		if filter.Namespace != nil && *filter.Namespace != "" && *filter.Namespace != ns {
+			return nil, fmt.Errorf("filter.namespace %q conflicts with this caller's namespace; omit it to use the caller's own namespace", *filter.Namespace)
+		}
+		filter.Namespace = &ns
+	}
+	if filterIsEmpty(filter) {
+		return nil, fmt.Errorf("filter must constrain at least one of types, property_filters, labels, created_after or namespace; an empty filter would match every entity in the project")
+	}
+
+	action := graph.BulkActionSoftDelete
+	if a, ok := args["action"].(string); ok && a != "" {
+		action = a
+	}
+	if !slices.Contains(bulkActionNames, action) {
+		return nil, fmt.Errorf("unknown action %q (one of: %s)", action, strings.Join(bulkActionNames, ", "))
+	}
+	// hard_delete is irreversible, so require BOTH an explicitly typed target
+	// set and an explicit confirmation. Checked on the caller's own types,
+	// before the type allowlist below can widen an empty list into one.
+	if action == graph.BulkActionHardDelete {
+		if len(filter.Types) == 0 {
+			return nil, fmt.Errorf("action=hard_delete requires a non-empty filter.types: an untyped hard delete cannot be reviewed before it destroys rows")
+		}
+		if !boolArg(args, "confirm") {
+			return nil, fmt.Errorf("action=hard_delete permanently removes rows and requires confirm=true")
+		}
+	}
+	// Narrow an unrestricted request to the agent's object-type allowlist, and
+	// refuse when the allowlist leaves nothing to match. An empty types list
+	// means "every type", so it must never reach the repository in that state.
+	scope := TypeScopeFromContext(ctx)
+	filteredTypes, denied := scope.FilterRequestedObjectTypes(filter.Types)
+	if denied {
+		return envelopeResult(true, map[string]any{
+			"matched":  0,
+			"affected": 0,
+			"dry_run":  boolArg(args, "dry_run"),
+			"action":   action,
+		}, nil, "")
+	}
+	filter.Types = filteredTypes
+
+	// Apply the agent's per-type write rules before touching any row. A rules
+	// map only covers named types, so an untyped filter cannot be verified and
+	// is rejected rather than applied to types the rules never allowed.
+	writeRules := AgentWriteRulesFromContext(ctx)
+	if writeRules != nil {
+		if len(filter.Types) == 0 {
+			return nil, fmt.Errorf("filter.types is required when this agent has per-type write rules: an untyped bulk action cannot be checked against the agent's allowed types")
+		}
+		props, _ := args["properties"].(map[string]any)
+		for _, typ := range filter.Types {
+			switch action {
+			case graph.BulkActionSoftDelete, graph.BulkActionHardDelete:
+				if !writeRules.DeleteAllowed(typ) {
+					return nil, fmt.Errorf("bulk update entity: deleting objects of type %q is not allowed for this agent", typ)
+				}
+			default:
+				if !writeRules.UpdateAllowed(typ) {
+					return nil, fmt.Errorf("bulk update entity: updating objects of type %q is not allowed for this agent", typ)
+				}
+				if action == graph.BulkActionMergeProperties || action == graph.BulkActionReplaceProperties {
+					if err := writeRules.CheckFields(typ, props); err != nil {
+						return nil, fmt.Errorf("bulk update entity: %w", err)
+					}
+				}
+			}
+		}
+	}
+
+	req := &graph.BulkActionRequest{
+		Filter: filter,
+		Action: action,
+		DryRun: boolArg(args, "dry_run"),
+	}
+	if v, ok := args["value"].(string); ok {
+		req.Value = v
+	}
+	if props, ok := args["properties"].(map[string]any); ok {
+		req.Properties = props
+	}
+	req.Labels = stringSliceArg(args, "labels")
+	limit, hasLimit, err := intArg(args, "limit")
+	if err != nil {
+		return nil, err
+	}
+	if hasLimit {
+		if limit < 0 {
+			return nil, fmt.Errorf("limit must not be negative")
+		}
+		req.Limit = limit
+	}
+
+	// Payload requirements are checked here so the error names the MCP parameter
+	// instead of surfacing a database-side no-op.
+	switch action {
+	case graph.BulkActionUpdateStatus:
+		if req.Value == "" {
+			return nil, fmt.Errorf("action=update_status requires 'value' (the new status)")
+		}
+	case graph.BulkActionMergeProperties, graph.BulkActionReplaceProperties:
+		if req.Properties == nil {
+			return nil, fmt.Errorf("action=%s requires 'properties'", action)
+		}
+	case graph.BulkActionAddLabels, graph.BulkActionRemoveLabels, graph.BulkActionSetLabels:
+		if len(req.Labels) == 0 {
+			return nil, fmt.Errorf("action=%s requires a non-empty 'labels' array", action)
+		}
+	}
+
+	resp, err := s.graphService.BulkAction(ctx, projectUUID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("bulk update entity: %w", err)
 	}
 
 	return envelopeResult(true, map[string]any{
-		"entity_id": entityID.String(),
+		"matched":  resp.Matched,
+		"affected": resp.Affected,
+		"dry_run":  resp.DryRun,
+		"action":   action,
 	}, nil, "")
+}
+
+// filterIsEmpty reports whether a bulk-action filter constrains anything. An
+// unconstrained filter matches the whole project, which the MCP surface refuses.
+func filterIsEmpty(f graph.BulkActionFilter) bool {
+	return len(f.Types) == 0 && len(f.PropertyFilters) == 0 && len(f.Labels) == 0 &&
+		f.CreatedAfter == nil && (f.Namespace == nil || *f.Namespace == "")
+}
+
+// bulkPropertyFilterOps is the operator set graph.propertyFilterPredicates can
+// render. Anything outside it silently emitted no predicate, so the MCP layer
+// rejects it instead of widening the call.
+var bulkPropertyFilterOps = []string{"eq", "neq", "gt", "gte", "lt", "lte", "contains", "exists", "in"}
+
+// decodeBulkActionFilter decodes the `filter` argument strictly. Unknown keys
+// are rejected rather than silently dropped: dropping a mistyped
+// `property_filters` key used to leave zero predicates while the non-empty
+// array still passed the empty-filter guard, so the call matched (and deleted)
+// the whole type. It also validates every property filter against the only
+// shape that produces a predicate — {path, op, value}.
+func decodeBulkActionFilter(raw map[string]any) (graph.BulkActionFilter, error) {
+	var filter graph.BulkActionFilter
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return filter, fmt.Errorf("invalid filter: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(encoded))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&filter); err != nil {
+		return filter, fmt.Errorf("invalid filter: %w (property_filters items are {path, op, value})", err)
+	}
+	for i, pf := range filter.PropertyFilters {
+		if strings.TrimSpace(pf.Path) == "" {
+			return filter, fmt.Errorf("invalid filter: property_filters[%d] is missing 'path' (expected {path, op, value})", i)
+		}
+		if !slices.Contains(bulkPropertyFilterOps, pf.Op) {
+			return filter, fmt.Errorf("invalid filter: property_filters[%d] has unknown op %q (one of: %s)", i, pf.Op, strings.Join(bulkPropertyFilterOps, ", "))
+		}
+		if pf.Op == "in" {
+			if _, ok := pf.Value.([]any); !ok {
+				return filter, fmt.Errorf("invalid filter: property_filters[%d] op=in requires an array value", i)
+			}
+		}
+	}
+	return filter, nil
+}
+
+// boolArg reads a boolean argument tolerantly (JSON numbers decode as float64).
+func boolArg(args map[string]any, name string) bool {
+	v, ok := args[name].(bool)
+	return ok && v
+}
+
+// intArg reads an integer argument tolerantly (JSON numbers decode as float64).
+// A non-integral number is an error naming the argument instead of being
+// silently truncated (1.9 used to become 1).
+func intArg(args map[string]any, name string) (int, bool, error) {
+	switch v := args[name].(type) {
+	case int:
+		return v, true, nil
+	case int64:
+		return int(v), true, nil
+	case float64:
+		if v != float64(int(v)) {
+			return 0, false, fmt.Errorf("%s must be an integer, got %v", name, v)
+		}
+		return int(v), true, nil
+	}
+	return 0, false, nil
+}
+
+// stringSliceArg reads a []string argument tolerantly (JSON arrays decode as []any).
+func stringSliceArg(args map[string]any, name string) []string {
+	raw, ok := args[name].([]any)
+	if !ok {
+		if ss, ok := args[name].([]string); ok {
+			return ss
+		}
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // executeRestoreEntity restores a soft-deleted entity

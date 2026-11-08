@@ -1022,6 +1022,7 @@ func (s *ShareService) buildShareExecuteRequest(ctx context.Context, binding *Sh
 		EphemeralTokenID: "",
 		// TrustedInternal defaults false: anonymous public surface must not reach
 		// internal agents.
+		RenderA2UI: true, // share stream renders A2UI surfaces (StreamEventA2UI)
 	}, nil
 }
 

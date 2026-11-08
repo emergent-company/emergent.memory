@@ -563,27 +563,31 @@ templ dsCredentialPickerPanel(p DSProvider, picker dsSavedCredentialPicker) {
 // dsSyncModeSelect renders the sync-mode select plus an optional interval input.
 // current is the stored mode; interval prefill is handled by the caller when set.
 templ dsSyncModeSelect(current string, interval *int) {
-	<div class="flex flex-col gap-1">
-		<label class="text-sm font-medium" for="sync_mode">Sync mode</label>
-		<select id="sync_mode" name="sync_mode" class="select select-bordered w-full" data-testid="ds-field-sync-mode">
-			<option value="manual" selected?={ current == "" || current == "manual" }>Manual</option>
-			<option value="scheduled" selected?={ current == "scheduled" }>Scheduled</option>
-		</select>
-		<label class="text-sm font-medium" for="sync_interval_minutes">Sync interval (minutes)</label>
-		<input
-			id="sync_interval_minutes"
-			name="sync_interval_minutes"
-			type="number"
-			min="1"
-			step="1"
-			class="input input-bordered w-full"
-			data-testid="ds-field-sync-interval"
-			placeholder="60"
-			if interval != nil {
-				value={ strconv.Itoa(*interval) }
-			}
-		/>
-		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Used only in Scheduled mode. A manual source syncs when you trigger it. }
+	<div class="flex flex-col gap-4">
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium" for="sync_mode">Sync mode</label>
+			<select id="sync_mode" name="sync_mode" class="select select-bordered w-full" data-testid="ds-field-sync-mode">
+				<option value="manual" selected?={ current == "" || current == "manual" }>Manual</option>
+				<option value="scheduled" selected?={ current == "scheduled" }>Scheduled</option>
+			</select>
+		</div>
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium" for="sync_interval_minutes">Sync interval (minutes)</label>
+			<input
+				id="sync_interval_minutes"
+				name="sync_interval_minutes"
+				type="number"
+				min="1"
+				step="1"
+				class="input input-bordered w-full"
+				data-testid="ds-field-sync-interval"
+				placeholder="60"
+				if interval != nil {
+					value={ strconv.Itoa(*interval) }
+				}
+			/>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Used only in Scheduled mode. A manual source syncs when you trigger it. }
+		</div>
 	</div>
 }
 
@@ -1299,12 +1303,9 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 		<h2 class="text-base font-semibold">Settings</h2>
 		<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/update") } data-testid="ds-edit-form" class="mt-3 flex flex-col gap-4">
 			<input type="hidden" name="providerType" value={ src.ProviderType }/>
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-				<div class="flex flex-col gap-1">
-					<label class="text-sm font-medium" for="name">Name</label>
-					<input id="name" name="name" type="text" class="input input-bordered w-full" value={ src.Name } data-testid="ds-field-name"/>
-				</div>
-				@dsSyncModeSelect(src.SyncMode, src.SyncIntervalMinutes)
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="name">Name</label>
+				<input id="name" name="name" type="text" class="input input-bordered w-full" value={ src.Name } data-testid="ds-field-name"/>
 			</div>
 			<div>
 				<h3 class="text-sm font-semibold">Sync options</h3>
@@ -1313,7 +1314,8 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 						{ syncNote }
 					}
 				}
-				<div class="mt-3">
+				<div class="mt-3 flex flex-col gap-4">
+					@dsSyncModeSelect(src.SyncMode, src.SyncIntervalMinutes)
 					@dsConfigFieldInputs(configFields)
 				</div>
 			</div>

@@ -354,111 +354,122 @@ templ dsOrgOAuthAppRow(orgID string, p DSProvider, cfg DSOAuthClientConfig) {
 // id/secret. The values are provider-driven (rendered only when present), never
 // hard-coded.
 templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig) {
-	@components.PanelCard("", templ.Attributes{"id": p.Type, "data-testid": "ds-oauth-client-card"}) {
-		<div class="flex flex-wrap items-center justify-between gap-2">
-			<div class="flex items-center gap-3">
-				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
-				<div>
-					<h2 class="text-base font-semibold">{ dsCredentialAppLabel(p) }</h2>
-					@ui.EmptyNote() { OAuth app used when connecting { p.Name }. }
+	<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="flex flex-col gap-4" hx-disable="find button.memory-save-btn">
+		@components.PanelCard("", templ.Attributes{"id": p.Type, "data-testid": "ds-oauth-client-card"}) {
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<div class="flex items-center gap-3">
+					@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
+					<div>
+						<h2 class="text-base font-semibold">{ dsCredentialAppLabel(p) }</h2>
+						@ui.EmptyNote() { OAuth app used when connecting { p.Name }. }
+					</div>
 				</div>
-			</div>
-			if cfg.Configured {
-				@ui.Badge(ui.BadgeProps{Label: "Configured", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
-			} else {
-				@ui.Badge(ui.BadgeProps{Label: "Not configured", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
-			}
-		</div>
-		if cfg.RedirectURI != "" || cfg.JavascriptOrigin != "" {
-			@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "mt-4 flex flex-col gap-3", Attrs: templ.Attributes{"data-testid": "ds-oauth-console-guide"}}) {
-				<h3 class="text-sm font-semibold">Set up this app in the Google Cloud Console</h3>
-				<ol class="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
-					<li>Create or select a Google Cloud project.</li>
-					<li>Enable the Google Drive API for that project.</li>
-					<li>Configure the OAuth consent screen (audience and test users).</li>
-					<li>Create an <span class="font-medium">OAuth client ID</span> of type <span class="font-medium">Web application</span>.</li>
-					<li>Add the authorized redirect URI and JavaScript origin below to that client.</li>
-					<li>Copy the generated client ID and client secret into the form below.</li>
-				</ol>
-				<div class="flex flex-col gap-2">
-					if cfg.RedirectURI != "" {
-						<div class="flex flex-col gap-1">
-							<label class="text-sm font-medium" for={ "redirect_uri-" + p.Type }>Authorized redirect URI</label>
-							<input id={ "redirect_uri-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.RedirectURI } data-testid="ds-oauth-redirect-uri"/>
-						</div>
-					}
-					if cfg.JavascriptOrigin != "" {
-						<div class="flex flex-col gap-1">
-							<label class="text-sm font-medium" for={ "js_origin-" + p.Type }>Authorized JavaScript origin</label>
-							<input id={ "js_origin-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.JavascriptOrigin } data-testid="ds-oauth-js-origin"/>
-						</div>
-					}
-				</div>
-			}
-		}
-		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="mt-4 flex flex-col gap-4">
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for={ "client_id-" + p.Type }>Client ID <span class="text-error" aria-hidden="true">*</span></label>
-				<input id={ "client_id-" + p.Type } name="client_id" type="text" class="input input-bordered w-full" value={ cfg.ClientID } data-testid="ds-field-client_id"/>
-			</div>
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for={ "client_secret-" + p.Type }>Client secret</label>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Stored encrypted and never shown again. Leave blank to keep the stored secret. }
-				<input id={ "client_secret-" + p.Type } name="client_secret" type="password" autocomplete="new-password" class="input input-bordered w-full" data-testid="ds-field-client_secret"/>
-			</div>
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for={ "scopes-" + p.Type }>Scopes</label>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { One scope per line; commas are also accepted. Optional — the provider default is used when empty. }
-				<textarea id={ "scopes-" + p.Type } name="scopes" rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid="ds-field-scopes">{ dsScopesText(cfg.Scopes) }</textarea>
-			</div>
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for={ "strategy-" + p.Type }>Strategy</label>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional provider strategy override. }
-				if len(p.Strategies) > 0 {
-					<select id={ "strategy-" + p.Type } name="strategy" class="select select-bordered w-full" data-testid="ds-field-strategy">
-						<option value="" selected?={ cfg.Strategy == "" }>Provider default</option>
-						for _, s := range dsStrategyOptions(p, cfg.Strategy) {
-							<option value={ s } selected?={ cfg.Strategy == s }>{ s }</option>
-						}
-					</select>
+				if cfg.Configured {
+					@ui.Badge(ui.BadgeProps{Label: "Configured", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
 				} else {
-					<input id={ "strategy-" + p.Type } name="strategy" type="text" class="input input-bordered w-full" value={ cfg.Strategy } data-testid="ds-field-strategy"/>
+					@ui.Badge(ui.BadgeProps{Label: "Not configured", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
 				}
 			</div>
-			if p.DSProviderSupportsStrategy("drive.file") {
-				<div class="flex flex-col gap-1">
-					<label class="text-sm font-medium" for={ "picker_developer_key-" + p.Type }>Picker developer key</label>
-					<input id={ "picker_developer_key-" + p.Type } name="picker_developer_key" type="text" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerDeveloperKey") } data-testid="ds-field-picker_developer_key"/>
-				</div>
-				<div class="flex flex-col gap-1">
-					<label class="text-sm font-medium" for={ "picker_app_id-" + p.Type }>Picker app ID (Cloud project number)</label>
-					<input id={ "picker_app_id-" + p.Type } name="picker_app_id" type="text" inputmode="numeric" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerAppId") } data-testid="ds-field-picker_app_id"/>
-				</div>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional, non-secret; required for the folder picker. The developer key is a Google API key from a Cloud project with the <span class="font-medium">Google Picker API</span> enabled, allowed for this site's origin. The app ID is that project's numeric number (for example 123456789012), not its project id — a wrong value opens an empty picker. }
+			if cfg.RedirectURI != "" || cfg.JavascriptOrigin != "" {
+				@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "mt-4 flex flex-col gap-3", Attrs: templ.Attributes{"data-testid": "ds-oauth-console-guide"}}) {
+					<h3 class="text-sm font-semibold">Set up this app in the Google Cloud Console</h3>
+					<ol class="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
+						<li>Create or select a Google Cloud project.</li>
+						<li>Enable the Google Drive API for that project.</li>
+						<li>Configure the OAuth consent screen (audience and test users).</li>
+						<li>Create an <span class="font-medium">OAuth client ID</span> of type <span class="font-medium">Web application</span>.</li>
+						<li>Add the authorized redirect URI and JavaScript origin below to that client.</li>
+						<li>Copy the generated client ID and client secret into the form below.</li>
+					</ol>
+					<div class="flex flex-col gap-2">
+						if cfg.RedirectURI != "" {
+							<div class="flex flex-col gap-1">
+								<label class="text-sm font-medium" for={ "redirect_uri-" + p.Type }>Authorized redirect URI</label>
+								<input id={ "redirect_uri-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.RedirectURI } data-testid="ds-oauth-redirect-uri"/>
+							</div>
+						}
+						if cfg.JavascriptOrigin != "" {
+							<div class="flex flex-col gap-1">
+								<label class="text-sm font-medium" for={ "js_origin-" + p.Type }>Authorized JavaScript origin</label>
+								<input id={ "js_origin-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.JavascriptOrigin } data-testid="ds-oauth-js-origin"/>
+							</div>
+						}
+					</div>
+				}
 			}
-			<div class="flex flex-wrap items-center gap-2">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--check",
-				}) {
-					Save
+			<div class="mt-4 flex flex-col gap-4">
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "client_id-" + p.Type }>Client ID <span class="text-error" aria-hidden="true">*</span></label>
+					<input id={ "client_id-" + p.Type } name="client_id" type="text" class="input input-bordered w-full" value={ cfg.ClientID } data-testid="ds-field-client_id"/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<label class="text-sm font-medium" for={ "client_secret-" + p.Type }>Client secret</label>
+						if cfg.Configured {
+							@ui.Badge(ui.BadgeProps{Label: "Saved", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true, Attrs: templ.Attributes{"data-testid": "ds-oauth-client-secret-saved"}})
+						}
+					</div>
+					if cfg.Configured {
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { A client secret is saved and never shown again. Enter a new one to replace it, or leave the field blank to keep the stored secret. }
+					} else {
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Stored encrypted and never shown again. }
+					}
+					<input id={ "client_secret-" + p.Type } name="client_secret" type="password" autocomplete="new-password" class="input input-bordered w-full" placeholder={ secretInputPlaceholder(cfg.Configured) } data-testid="ds-field-client_secret"/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "scopes-" + p.Type }>Scopes</label>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { One scope per line; commas are also accepted. Optional — the provider default is used when empty. }
+					<textarea id={ "scopes-" + p.Type } name="scopes" rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid="ds-field-scopes">{ dsScopesText(cfg.Scopes) }</textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "strategy-" + p.Type }>Strategy</label>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional provider strategy override. }
+					if len(p.Strategies) > 0 {
+						<select id={ "strategy-" + p.Type } name="strategy" class="select select-bordered w-full" data-testid="ds-field-strategy">
+							<option value="" selected?={ cfg.Strategy == "" }>Provider default</option>
+							for _, s := range dsStrategyOptions(p, cfg.Strategy) {
+								<option value={ s } selected?={ cfg.Strategy == s }>{ s }</option>
+							}
+						</select>
+					} else {
+						<input id={ "strategy-" + p.Type } name="strategy" type="text" class="input input-bordered w-full" value={ cfg.Strategy } data-testid="ds-field-strategy"/>
+					}
+				</div>
+				if p.DSProviderSupportsStrategy("drive.file") {
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for={ "picker_developer_key-" + p.Type }>Picker developer key</label>
+						<input id={ "picker_developer_key-" + p.Type } name="picker_developer_key" type="text" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerDeveloperKey") } data-testid="ds-field-picker_developer_key"/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for={ "picker_app_id-" + p.Type }>Picker app ID (Cloud project number)</label>
+						<input id={ "picker_app_id-" + p.Type } name="picker_app_id" type="text" inputmode="numeric" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerAppId") } data-testid="ds-field-picker_app_id"/>
+					</div>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional, non-secret; required for the folder picker. The developer key is a Google API key from a Cloud project with the <span class="font-medium">Google Picker API</span> enabled, allowed for this site's origin. The app ID is that project's numeric number (for example 123456789012), not its project id — a wrong value opens an empty picker. }
 				}
 			</div>
-		</form>
-		if cfg.Configured {
-			<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type) + "/delete") } data-testid="ds-oauth-client-delete" class="mt-4 border-t border-base-content/10 pt-4">
+		}
+		// The card sits in layout.Rail's content column, so the strip spans the
+		// column (not the pane) and Rail stays false: Rail: true would add the
+		// rail's 11rem spacer *inside* the content column. The strip's own px-6
+		// then matches PanelCard's inset, so the buttons line up with the fields.
+		@components.StickyFormActions(components.StickyFormActionsProps{Align: "between"}) {
+			if cfg.Configured {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonError,
 					Style:   ui.ButtonStyleOutline,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--trash-2",
+					Attrs: templ.Attributes{
+						"data-testid":    "ds-oauth-client-delete",
+						"formaction":     actionBase + "/" + url.PathEscape(p.Type) + "/delete",
+						"formnovalidate": "",
+					},
 				}) {
 					Remove client
 				}
-			</form>
+			}
+			@components.SaveChangesButton()
 		}
-	}
+	</form>
 }

@@ -1,17 +1,25 @@
 import LiveKitComponents
 import SwiftUI
 
+/// What Return and the send button mean right now.
+///
+/// `idle`: a send starts a turn. `running`: a turn is in flight, so a send
+/// stages the text in the composer queue and the stop button is live.
+enum ChatComposerMode: Equatable {
+    case idle
+    case running
+}
+
 /// A multiplatform view that shows the chat input text field, the send button
 /// (which becomes a stop/interrupt button while the agent is replying), and
 /// the focused composer text (lifted so suggested-prompt chips can fill it).
 ///
 /// Sending is injectable so the same composer serves the LiveKit voice room
 /// (`session.send`) and the HTTP text transport, which has no room at all.
-/// `allowsInterrupt` says whether this surface can stop a reply: voice can
-/// (`lk.chat.interrupt`), text cannot yet — a device credential has no run
-/// cancellation route, and closing the HTTP stream leaves the server-side run
-/// going. In that case the composer keeps the send button (disabled while a
-/// turn streams) instead of offering a stop that does not stop anything.
+/// `onStop` says whether this surface can stop a reply: voice leaves it nil and
+/// the room is interrupted, text passes the transport's run cancel.
+/// `mode` says whether a turn is running, which decides what Return and Send do
+/// — while running they stage the message in the queue instead of dropping it.
 struct ChatInputView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var controller: MemorySessionController
@@ -23,22 +31,35 @@ struct ChatInputView: View {
 
     /// Overrides the default (LiveKit room) send behaviour.
     private let onSend: ((String) async -> Void)?
-    /// Whether this surface can interrupt the reply in flight.
-    private let allowsInterrupt: Bool
+    /// Stages the text in the queue instead of sending it. Text passes this; a
+    /// voice composer leaves it nil and ⌘↩ falls back to a normal send.
+    private let onEnqueue: ((String) -> Void)?
+    /// What a stop does. Voice leaves it nil and the room is interrupted; text
+    /// passes the transport's run cancel.
+    private let onStop: (() async -> Void)?
+    /// Whether a turn is in flight, which decides what Return/Send do.
+    private let mode: ChatComposerMode
 
     /// Bumped on each send to drive the send haptic.
     @State private var sendFeedback = 0
+    /// Set when ⇧↩ asks the text field for a newline, so the newline-detection
+    /// submit path below does not treat that newline as a send.
+    @State private var insertingNewline = false
 
     init(
         keyboardFocus: FocusState<Bool>.Binding,
         text: Binding<String>,
         onSend: ((String) async -> Void)? = nil,
-        allowsInterrupt: Bool = true
+        onEnqueue: ((String) -> Void)? = nil,
+        mode: ChatComposerMode = .idle,
+        onStop: (() async -> Void)? = nil
     ) {
         _keyboardFocus = keyboardFocus
         _text = text
         self.onSend = onSend
-        self.allowsInterrupt = allowsInterrupt
+        self.onEnqueue = onEnqueue
+        self.mode = mode
+        self.onStop = onStop
     }
 
     var body: some View {
@@ -47,11 +68,15 @@ struct ChatInputView: View {
         // the circle ride visibly high against a one-line text field.
         HStack(alignment: .center, spacing: 3 * .grid) {
             textField()
-            if store.isGeneratingReply, allowsInterrupt {
+            // While a turn runs both buttons are live: the stop interrupts,
+            // the send stages the follow-up instead of dropping it.
+            if showsStopButton {
                 stopButton()
-            } else {
+            }
+            if mode == .running || !showsStopButton {
                 sendButton()
             }
+            queueShortcut
         }
         .frame(minHeight: 12 * .grid)
         .frame(maxWidth: horizontalSizeClass == .regular ? 128 * .grid : 92 * .grid)
@@ -97,18 +122,50 @@ struct ChatInputView: View {
                 await sendMessage()
             }
         }
+        // A hardware keyboard's Return follows the turn state: send when idle,
+        // stage while running; ⇧↩ asks the field for a newline. A ⌘↩ is a key
+        // equivalent handled by `queueShortcut`, so it is left alone here.
+        .onKeyPress(.return, phases: .down) { press in
+            if press.modifiers.contains(.command) {
+                return .ignored
+            }
+            if press.modifiers.contains(.shift) {
+                insertingNewline = true
+                return .ignored
+            }
+            Task {
+                await sendMessage()
+            }
+            return .handled
+        }
         .onChange(of: text.last?.isNewline ?? false) { _, forceSubmit in
             // onSubmit won't be called by the submit key when using a software keyboard with a .vertical TextField
-            if forceSubmit {
-                Task {
-                    await sendMessage()
-                }
+            guard forceSubmit else { return }
+            if insertingNewline {
+                insertingNewline = false
+                return
+            }
+            Task {
+                await sendMessage()
             }
         }
         #if !os(visionOS)
         .foregroundStyle(.fg1)
         #endif
         .padding()
+    }
+
+    /// ⌘↩ always stages the message, even when the composer is idle: the
+    /// unambiguous way to park a follow-up without changing what Return means.
+    /// A hidden button carries the key equivalent, the way SwiftUI exposes one.
+    private var queueShortcut: some View {
+        Button("chat.queue.shortcut") {
+            enqueueMessage()
+        }
+        .keyboardShortcut(.return, modifiers: .command)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -132,13 +189,19 @@ struct ChatInputView: View {
             .accessibilityHint("chat.send.hint")
     }
 
-    /// Stop/interrupt while a reply is generating: sends `lk.chat.interrupt`
-    /// (NOT `session.end()`) and returns the composer to the ready state.
+    /// Stop/interrupt while a reply is in flight. The activity store is settled
+    /// first so the working line and spinners stop immediately; then `onStop`
+    /// cancels the run (text) or `lk.chat.interrupt` is sent (voice, NOT
+    /// `session.end()`).
     @ViewBuilder
     private func stopButton() -> some View {
         AsyncButton {
             store.stopGenerating()
-            await controller.interrupt()
+            if let onStop {
+                await onStop()
+            } else {
+                await controller.interrupt()
+            }
         } label: {
             Image(systemName: "stop.fill")
                 .frame(width: 8 * .grid, height: 8 * .grid)
@@ -157,22 +220,70 @@ struct ChatInputView: View {
         .accessibilityHint("chat.stop.hint")
     }
 
-    private var isSendDisabled: Bool {
-        // A surface that cannot interrupt must not queue a second turn: the
-        // transport runs one at a time and would drop it.
-        if !allowsInterrupt, store.isGeneratingReply {
+    /// Text mode takes the transport's flag; a voice surface has no transport,
+    /// so the activity store's reply window is its stop signal.
+    private var showsStopButton: Bool {
+        if mode == .running {
             return true
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return onStop == nil && store.isGeneratingReply
     }
 
+    private var isSendDisabled: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Send follows the turn state: a running turn stages the text, an idle one
+    /// starts a turn. Staging keeps the keyboard up for the next follow-up.
     private func sendMessage() async {
         guard !isSendDisabled else { return }
         let message = text
         text = ""
-        TraceLog.log("text_sent", ["text": message])
-        keyboardFocus = false
         sendFeedback += 1
+        if mode == .running {
+            TraceLog.log("text_queued", ["text": message])
+            await enqueue(message)
+            return
+        }
+        keyboardFocus = false
+        TraceLog.log("text_sent", ["text": message])
+        if let onSend {
+            await onSend(message)
+        } else {
+            await session.send(text: message)
+        }
+    }
+
+    /// ⌘↩: always stage, never send — a queued follow-up the user releases
+    /// explicitly (or that waits for the next running turn to arm it).
+    private func enqueueMessage() {
+        guard !isSendDisabled else { return }
+        let message = text
+        text = ""
+        sendFeedback += 1
+        guard let onEnqueue else {
+            // A surface with no queue (voice): ⌘↩ is still a send.
+            Task { await sendMessage(message) }
+            return
+        }
+        TraceLog.log("text_queued", ["text": message])
+        onEnqueue(message)
+    }
+
+    private func enqueue(_ message: String) async {
+        if let onEnqueue {
+            onEnqueue(message)
+            return
+        }
+        if let onSend {
+            await onSend(message)
+        } else {
+            await session.send(text: message)
+        }
+    }
+
+    /// Sends a message that was already taken out of the field.
+    private func sendMessage(_ message: String) async {
         if let onSend {
             await onSend(message)
         } else {

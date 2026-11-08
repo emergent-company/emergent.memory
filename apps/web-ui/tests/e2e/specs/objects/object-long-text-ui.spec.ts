@@ -18,9 +18,10 @@ import { goto } from '../../helpers/page';
 // gateway exposes no object-delete route; see the e2e README).
 
 const NOTES = 'textarea[name="prop_notes"]';
-// The counter is the textarea's next sibling inside its [data-char-counter]
-// wrapper; Person has several string fields, so scope by the field's name.
-const NOTES_COUNT = `${NOTES} + [data-testid="char-count"]`;
+// The counter lives in the field's label row, inside the [data-char-counter]
+// scope that also wraps the textarea; Person has several string fields, so
+// scope the scope by the field's name.
+const NOTES_COUNT = `[data-char-counter]:has(${NOTES}) [data-testid="char-count"]`;
 const DETAIL_URL = /\/objects\/[0-9a-f-]{36}$/;
 
 /** Comma-grouped count, matching the server-rendered format. */

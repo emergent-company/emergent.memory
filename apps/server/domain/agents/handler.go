@@ -3499,6 +3499,9 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 			ShareLinkID:     p.ShareLinkID,
 			ShareToolDeny:   p.ShareToolDeny,
 			DisableAuthMint: p.DisableAuthMint,
+			// The owner (sidepanel) and public-share question-answer flows both
+			// render A2UI surfaces; keep the catalog instruction on the resume.
+			RenderA2UI: true,
 		})
 		if result != nil && result.Cleanup != nil {
 			result.Cleanup()

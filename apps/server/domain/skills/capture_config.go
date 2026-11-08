@@ -52,6 +52,10 @@ type ProjectSkillCaptureConfig struct {
 	Linter *bool `json:"linter,omitempty"`
 	// MinApprovedBeforeAuto is the earned-trust floor: the agent must have had
 	// at least this many proposals approved by a human before auto-apply starts.
+	// This is a non-pointer field, so an omitted value and an explicit 0 are
+	// indistinguishable; both mean "use the default floor" (1). The floor can
+	// never be configured down to "the first proposal is automatic":
+	// Normalized() raises any value < 1 to 1.
 	MinApprovedBeforeAuto int `json:"minApprovedBeforeAuto,omitempty"`
 	// AutoApplyConfidence is the minimum model confidence for auto-apply (0..1).
 	AutoApplyConfidence float64 `json:"autoApplyConfidence,omitempty"`
@@ -210,6 +214,11 @@ func ResolveAutoApply(project *ProjectSkillCaptureConfig, agent *AgentSkillCaptu
 
 // ValidateProjectSkillCapture validates a project policy. An empty/absent
 // policy is valid and means "off".
+//
+// minApprovedBeforeAuto deliberately accepts 0: the request DTO uses a value
+// field, so "omitted" and "0" cannot be told apart, and rejecting 0 would break
+// clients that simply omit the field. 0 means "use the default floor" (see
+// ProjectSkillCaptureConfig.Normalized).
 func ValidateProjectSkillCapture(c *ProjectSkillCaptureConfig) error {
 	if c == nil {
 		return nil

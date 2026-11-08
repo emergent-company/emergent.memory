@@ -140,6 +140,10 @@ final class ChatActivityStore {
             if !delta.isEmpty {
                 appendThinking(id: id, delta: delta, in: &turn)
             }
+        case .thinkingDone:
+            // Stops the shimmer without ending the row or the tool run: the
+            // next delta before an activity boundary reopens the same block.
+            stopThinkingShimmer(in: &turn)
         case let .approval(approval):
             closeThinking(in: &turn)
             turn.isToolGroupOpen = false
@@ -221,31 +225,46 @@ final class ChatActivityStore {
 
     // MARK: - Thinking blocks
 
-    /// Appends a delta to the active block, or opens one. A delta carrying a
-    /// different worker id starts a new block; an id-less legacy delta always
-    /// joins the active block. Thinking is a non-tool activity, so it closes
-    /// the current tool group.
+    /// Appends a delta to the active block, or opens one. Blocks merge while
+    /// still open (contiguity, not the worker segment id, defines a block); a
+    /// delta after a `done` frame turns the shimmer back on. Thinking is a
+    /// non-tool activity, so it closes the current tool group.
     private func appendThinking(id: String?, delta: String, in turn: inout Turn) {
         turn.isToolGroupOpen = false
         let blockID = id?.isEmpty == false ? id : nil
 
-        if let last = turn.thinkingBlocks.indices.last, turn.thinkingBlocks[last].isLive {
-            // Contiguity, not the worker segment id, defines a block: adjacent
-            // reasoning segments merge even when they carry different ids.
-            let active = turn.thinkingBlocks[last]
-            turn.thinkingBlocks[last].text += (active.text.isEmpty ? "" : "\n") + delta
+        if let last = turn.thinkingBlocks.indices.last, turn.thinkingBlocks[last].isOpen {
+            // Deltas are appended unchanged: the worker streams token-sized
+            // fragments, so any inserted separator would break the sentence.
+            turn.thinkingBlocks[last].text += delta
+            turn.thinkingBlocks[last].isLive = true
             return
         }
         turn.thinkingBlocks.append(ThinkingBlock(
             id: blockID ?? UUID().uuidString,
             text: delta,
-            isLive: true
+            isLive: true,
+            isOpen: true
         ))
     }
 
-    /// Closes the active thinking block, if one is still streaming.
+    /// Stops the shimmer on the active thinking block. The worker closed the
+    /// segment, but this is not an activity boundary: a later delta before one
+    /// still belongs to the same row, so `isOpen` is left alone.
+    private func stopThinkingShimmer(in turn: inout Turn) {
+        guard let last = turn.thinkingBlocks.indices.last else { return }
+        turn.thinkingBlocks[last].isLive = false
+    }
+
+    /// Closes the active thinking block for good. Driven by `isOpen`, never by
+    /// `isLive` alone: a block whose `done` frame already stopped the shimmer
+    /// (`isLive == false`) is still open, and a boundary must end it or the next
+    /// reasoning phase would merge into the pre-boundary row.
     private func closeThinking(in turn: inout Turn) {
-        guard let last = turn.thinkingBlocks.indices.last, turn.thinkingBlocks[last].isLive else { return }
+        guard let last = turn.thinkingBlocks.indices.last,
+              turn.thinkingBlocks[last].isOpen || turn.thinkingBlocks[last].isLive
+        else { return }
+        turn.thinkingBlocks[last].isOpen = false
         turn.thinkingBlocks[last].isLive = false
     }
 

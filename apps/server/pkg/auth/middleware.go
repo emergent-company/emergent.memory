@@ -287,6 +287,15 @@ func deviceSurfaceAllowed(method, path string) bool {
 		if path == "/api/graph/objects/search" {
 			return true
 		}
+		// The object card the iOS chat opens on a cited object (gateway
+		// GET /api/objects/:id/card + /history): one object by id, its version
+		// history, its edges (the "Referenced via" line), and the project's
+		// compiled types (labels, icons, declared properties). All are reads
+		// under data:read; the search above already returns whole objects, so
+		// reading one by id widens nothing.
+		if deviceGraphObjectReadPath(path) || deviceCompiledTypesPath(path) {
+			return true
+		}
 		// Read-only session-support projections: the gateway's /api/sessions
 		// merge needs runtime agents + their runs, board runs/work items (for
 		// previews), and the tool-approval audit trail used by /api/session.
@@ -332,6 +341,47 @@ func deviceSurfaceAllowed(method, path string) bool {
 	default:
 		return false
 	}
+}
+
+// deviceGraphObjectReadPath reports whether path is exactly one of the
+// read-only single-object shapes the device object card reads:
+// `/api/graph/objects/{uuid}`, `/api/graph/objects/{uuid}/history` or
+// `/api/graph/objects/{uuid}/edges`. The id must parse as a UUID, so the
+// sibling collection routes (`count`, `fts`, `tags`) and the per-object
+// `contributions` / `similar` reads stay off the surface.
+func deviceGraphObjectReadPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/graph/objects/")
+	if !ok {
+		return false
+	}
+	// modelref:allow — URL path segmentation, not a routed model name.
+	parts := strings.Split(rest, "/")
+	if _, err := uuid.Parse(parts[0]); err != nil || len(parts[0]) != 36 {
+		return false
+	}
+	switch {
+	case len(parts) == 1:
+		return true
+	case len(parts) == 2:
+		return parts[1] == "history" || parts[1] == "edges"
+	default:
+		return false
+	}
+}
+
+// deviceCompiledTypesPath reports whether path is exactly
+// `/api/schemas/projects/{projectId}/compiled-types`: the project's compiled
+// object types, which the object card needs for type labels, icons and declared
+// property titles. RequireProjectTokenScope binds the path project to the
+// credential's project, so another project's schema is refused there.
+func deviceCompiledTypesPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/schemas/projects/")
+	if !ok {
+		return false
+	}
+	// modelref:allow — URL path segmentation, not a routed model name.
+	parts := strings.Split(rest, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] == "compiled-types"
 }
 
 // deviceSessionSupportPath reports whether path is one of the read-only

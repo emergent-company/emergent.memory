@@ -48,16 +48,19 @@ struct ChatActivityStoreTests {
     @Test func accumulatesThinkingDeltasIntoOneBlock() {
         let store = ChatActivityStore()
         store.userTurnStarted(anchorMessageID: "m1")
-        store.apply(.thinking(id: nil, delta: "first"))
-        store.apply(.thinking(id: nil, delta: "second"))
-        store.apply(.thinking(id: nil, delta: "third"))
+        // Token-sized deltas, the way the worker streams them: the app appends
+        // them unchanged, exactly like the web console, instead of inserting a
+        // separator that would put every fragment on its own line.
+        store.apply(.thinking(id: nil, delta: "Let me"))
+        store.apply(.thinking(id: nil, delta: " check"))
+        store.apply(.thinking(id: nil, delta: " again"))
 
         guard let turn = store.liveTurn else {
             Issue.record("expected a live turn")
             return
         }
         #expect(turn.thinkingBlocks.count == 1)
-        #expect(turn.thinkingBlocks[0].text == "first\nsecond\nthird")
+        #expect(turn.thinkingBlocks[0].text == "Let me check again")
         #expect(turn.thinkingBlocks[0].isLive)
     }
 
@@ -73,12 +76,14 @@ struct ChatActivityStoreTests {
             return
         }
         #expect(turn.thinkingBlocks[0].isLive == false)
+        #expect(turn.thinkingBlocks[0].isOpen == false)
 
         // The next reasoning segment is a new block, even without an id.
         store.apply(.thinking(id: nil, delta: "second"))
         #expect(store.liveTurn?.thinkingBlocks.count == 2)
         #expect(store.liveTurn?.thinkingBlocks[1].text == "second")
         #expect(store.liveTurn?.thinkingBlocks[1].isLive == true)
+        #expect(store.liveTurn?.thinkingBlocks[1].isOpen == true)
     }
 
     @MainActor
@@ -95,7 +100,7 @@ struct ChatActivityStoreTests {
         }
         // Contiguity, not the worker segment id, defines a thinking block.
         #expect(turn.thinkingBlocks.count == 1)
-        #expect(turn.thinkingBlocks[0].text == "one\ntwo\nthree")
+        #expect(turn.thinkingBlocks[0].text == "onetwothree")
         #expect(turn.thinkingBlocks[0].isLive)
     }
 

@@ -141,6 +141,12 @@ func main() {
 	// cursor-paginated (see agent_objects.go). The iOS device credential is
 	// allowed on this path via deviceSurfacePath (auth.go).
 	api.GET("/agents/:id/objects", s.listAgentObjects)
+	// Device-reachable object card: the JSON twin of the chat's object preview
+	// drawer (/objects/:id/preview + its history partial), so the iOS chat can
+	// open a cited object natively (see object_card.go). Device access via
+	// deviceObjectReadPath (auth.go).
+	api.GET("/objects/:id/card", s.getObjectCard)
+	api.GET("/objects/:id/history", s.getObjectCardHistory)
 	api.POST("/chat", s.chat)
 	// Share capture (iOS share extension): a link/note, or a photo/PDF/audio
 	// memo. Device-reachable — see deviceSurfacePath and remember.go.
@@ -508,6 +514,7 @@ func main() {
 	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
 	e.POST("/skills/proposals/:id/reject", s.uiRejectSkillCaptureProposal)
 	e.POST("/skills/:id/update", s.uiUpdateSkill)
+	e.POST("/skills/:id/restore", s.uiRestoreSkill)
 	e.POST("/skills/:id/delete", s.uiDeleteSkill)
 	e.GET("/backups", s.uiBackups)
 	e.GET("/backups/new", s.uiBackupNewPage)
