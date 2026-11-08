@@ -311,7 +311,6 @@ struct ToolCall: Codable, Equatable, Sendable {
         try container.encodeIfPresent(arguments, forKey: .args)
         try container.encodeIfPresent(result, forKey: .result)
         try container.encodeIfPresent(isError, forKey: .isError)
-        try container.encodeIfPresent(citations, forKey: .citations)
     }
 
     /// Decodes `key` as a plain string, or as an object/array serialized back
