@@ -19,8 +19,7 @@ const dateLayout = "2006-01-02"
 // ("2026-12-01T00:00:00Z") is otherwise indistinguishable from a datetime and
 // must keep round-tripping into the canonical date shape (issue #402).
 var acceptedDateLayouts = []string{
-	time.RFC3339Nano,
-	time.RFC3339,
+	time.RFC3339Nano, // accepts the no-fraction RFC 3339 form too
 	dateLayout,
 	"2006-01-02 15:04:05",
 	"2006-01-02T15:04:05",
@@ -76,14 +75,56 @@ func normaliseDateProperties(props map[string]any, schema agents.ObjectSchema) m
 	}
 	for key, value := range props {
 		def, ok := schema.Properties[key]
-		if !ok || !isDateProperty(def) {
+		if !ok {
 			continue
 		}
-		if normalised, ok := normaliseDateValue(value); ok {
-			props[key] = normalised
+		switch {
+		case isDateProperty(def):
+			if normalised, ok := normaliseDateValue(value); ok {
+				props[key] = normalised
+			}
+		case strings.EqualFold(strings.TrimSpace(def.Type), "array") && def.Items != nil && isDateProperty(*def.Items):
+			// Write-time coercion already reduces array elements to calendar
+			// dates; normalise pre-existing rows so one array cannot hold both
+			// shapes (issue #402).
+			if elements, ok := value.([]any); ok {
+				// Copy rather than mutate: the caller's value may alias a cached
+				// model or a request body.
+				normalised := make([]any, len(elements))
+				copy(normalised, elements)
+				changed := false
+				for i, element := range normalised {
+					if date, ok := normaliseDateValue(element); ok && date != element {
+						normalised[i] = date
+						changed = true
+					}
+				}
+				if changed {
+					props[key] = normalised
+				}
+			}
 		}
 	}
 	return props
+}
+
+// NormaliseRelationshipDatePropertyValues is the relationship analogue of
+// NormaliseDatePropertyValues: date-typed edge properties converge to
+// YYYY-MM-DD on read. An endpoint type may be empty when the caller does not
+// know it; relationshipSchemaFor then falls back to the less specific schema.
+func (s *Service) NormaliseRelationshipDatePropertyValues(ctx context.Context, projectID uuid.UUID, relType, srcType, dstType string, props map[string]any) map[string]any {
+	if len(props) == 0 || s.schemaProvider == nil || relType == "" {
+		return props
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil || schemas.RelationshipSchemas == nil {
+		return props
+	}
+	relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, relType, srcType, dstType)
+	if !ok || len(relSchema.Properties) == 0 {
+		return props
+	}
+	return normaliseDateProperties(copyProperties(props), agents.ObjectSchema{Properties: relSchema.Properties})
 }
 
 // NormaliseDatePropertyValues returns props with date-typed values normalised
@@ -105,5 +146,15 @@ func (s *Service) NormaliseDatePropertyValues(ctx context.Context, projectID uui
 	if !ok {
 		return props
 	}
-	return normaliseDateProperties(props, schema)
+	return normaliseDateProperties(copyProperties(props), schema)
+}
+
+// copyProperties shallow-copies a property map so read normalisation never
+// mutates a model that a response aliases.
+func copyProperties(props map[string]any) map[string]any {
+	out := make(map[string]any, len(props))
+	for k, v := range props {
+		out[k] = v
+	}
+	return out
 }

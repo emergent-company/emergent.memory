@@ -159,6 +159,43 @@ func TestProcessInlineRelationshipsReportsMalformedSpecs(t *testing.T) {
 	assert.Equal(t, inlineRelReasonMissingEndpoint, results[2].Reason)
 	assert.Equal(t, inlineRelReasonSelfReference, results[3].Reason)
 	assert.Empty(t, d.created)
+
+	// Supplying both endpoints would silently drop one; report it instead.
+	_, results = processInlineRelationships(context.Background(), "Obligation", entityID, []any{
+		map[string]any{"type": "has_subject", "source_id": "a", "target_id": "b"},
+	}, nil, d.deps())
+	require.Len(t, results, 1)
+	assert.Equal(t, inlineRelReasonInvalidSpec, results[0].Reason)
+	assert.Empty(t, d.created)
+}
+
+// TestProcessInlineRelationshipsPreservesWeight proves a weight on an inline
+// spec is forwarded rather than silently dropped.
+func TestProcessInlineRelationshipsPreservesWeight(t *testing.T) {
+	d := &inlineTestDeps{}
+	_, results := processInlineRelationships(context.Background(), "Obligation", uuid.New(), []any{
+		map[string]any{"type": "has_subject", "target_id": "person-key", "weight": 0.8},
+	}, nil, d.deps())
+
+	require.Len(t, results, 1)
+	require.True(t, results[0].Ok)
+	require.Len(t, d.created, 1)
+	require.NotNil(t, d.created[0].Weight)
+	assert.InDelta(t, 0.8, *d.created[0].Weight, 0.0001)
+}
+
+// TestInlineRelationshipCountsAndBatchOutcome pins the aggregation the batch
+// response uses: any inline failure makes the batch not-ok.
+func TestInlineRelationshipCountsAndBatchOutcome(t *testing.T) {
+	created, failed := countInlineRelationshipResults([]inlineRelationshipResult{
+		{Ok: true}, {Ok: false}, {Ok: true},
+	})
+	assert.Equal(t, 2, created)
+	assert.Equal(t, 1, failed)
+
+	assert.True(t, batchCreateSucceeded(0, 0))
+	assert.False(t, batchCreateSucceeded(0, 1), "a failed inline relationship must not report success")
+	assert.False(t, batchCreateSucceeded(1, 0))
 }
 
 func TestProcessInlineRelationshipsClassifiesCreateErrors(t *testing.T) {

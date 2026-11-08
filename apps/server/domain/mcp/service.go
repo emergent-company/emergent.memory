@@ -4513,7 +4513,8 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipID:   rel.ID.String(),
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *srcEntity,
-			Properties:       truncateProperties(rel.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseRelationshipDatePropertyValues(
+				ctx, projectUUID, rel.Type, srcEntity.Type, "", rel.Properties)),
 		})
 	}
 
@@ -4535,7 +4536,8 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipID:   rel.ID.String(),
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *dstEntity,
-			Properties:       truncateProperties(rel.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseRelationshipDatePropertyValues(
+				ctx, projectUUID, rel.Type, "", dstEntity.Type, rel.Properties)),
 		})
 	}
 
@@ -5713,19 +5715,11 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			)
 			slim.Relationships = created
 			slim.RelationshipResults = relResults
-			for _, rr := range relResults {
-				inlineRelsTotal++
-				if rr.Ok {
-					inlineRelsCreated++
-				} else {
-					inlineRelsFailed++
-				}
-			}
-			for _, rr := range relResults {
-				if !rr.Ok {
-					slim.RelationshipsFailed++
-				}
-			}
+			itemCreated, itemFailed := countInlineRelationshipResults(relResults)
+			inlineRelsTotal += len(relResults)
+			inlineRelsCreated += itemCreated
+			inlineRelsFailed += itemFailed
+			slim.RelationshipsFailed = itemFailed
 		}
 
 		results = append(results, batchResult{
@@ -5751,7 +5745,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	// ok is false when anything the caller asked for did not happen. A failed
 	// inline relationship leaves the entity created (so partial progress is
 	// reported per item), but the batch must not claim success (#401).
-	ok := failedCount == 0 && inlineRelsFailed == 0
+	ok := batchCreateSucceeded(failedCount, inlineRelsFailed)
 	errMsg := ""
 	switch {
 	case failedCount > 0 && inlineRelsFailed > 0:

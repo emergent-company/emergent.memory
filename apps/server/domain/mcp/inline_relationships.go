@@ -110,6 +110,22 @@ func processInlineRelationships(
 			continue
 		}
 
+		sourceIDStr, _ := relMap["source_id"].(string)
+		if sourceIDStr == "" {
+			sourceIDStr, _ = relMap["from_id"].(string)
+		}
+		targetIDStr, _ := relMap["target_id"].(string)
+		if targetIDStr == "" {
+			targetIDStr, _ = relMap["to_id"].(string)
+		}
+		// Exactly one pre-existing endpoint: accepting both would silently pick
+		// one and drop the other, which is the #401 bug class again.
+		if sourceIDStr != "" && targetIDStr != "" {
+			fail(i, inlineRelReasonInvalidSpec,
+				"specify exactly one of source_id or target_id on an inline relationship")
+			continue
+		}
+
 		// resolvedID is the pre-existing endpoint; the new entity is the other.
 		var (
 			resolvedID uuid.UUID
@@ -117,7 +133,7 @@ func processInlineRelationships(
 			field      string
 			err        error
 		)
-		if sourceIDStr, _ := relMap["source_id"].(string); sourceIDStr != "" {
+		if sourceIDStr != "" {
 			field, reason = "source_id", inlineRelReasonUnknownSourceID
 			resolvedID, err = deps.ResolveID(sourceIDStr)
 			if err != nil {
@@ -125,7 +141,6 @@ func processInlineRelationships(
 				continue
 			}
 		} else {
-			targetIDStr, _ := relMap["target_id"].(string)
 			if targetIDStr == "" {
 				fail(i, inlineRelReasonMissingEndpoint,
 					"inline relationship requires a source_id or target_id")
@@ -157,6 +172,10 @@ func processInlineRelationships(
 		if relProps, ok := relMap["properties"].(map[string]any); ok {
 			req.Properties = relProps
 		}
+		if w, ok := relMap["weight"].(float64); ok {
+			weight := float32(w)
+			req.Weight = &weight
+		}
 		if field == "source_id" {
 			req.SrcID = resolvedID
 			req.DstID = entityID
@@ -176,6 +195,10 @@ func processInlineRelationships(
 			fail(i, classifyInlineRelationshipError(err), err.Error())
 			continue
 		}
+		if relResult == nil {
+			fail(i, inlineRelReasonCreateFailed, "relationship create returned no result")
+			continue
+		}
 
 		edge := inlineRelationship{
 			ID:       relResult.CanonicalID.String(),
@@ -192,6 +215,27 @@ func processInlineRelationships(
 	}
 
 	return created, results
+}
+
+// countInlineRelationshipResults returns how many inline relationship specs
+// succeeded and how many failed. Used for the per-item and batch summaries.
+func countInlineRelationshipResults(results []inlineRelationshipResult) (created, failed int) {
+	for _, result := range results {
+		if result.Ok {
+			created++
+		} else {
+			failed++
+		}
+	}
+	return created, failed
+}
+
+// batchCreateSucceeded reports whether an entity-create batch delivered
+// everything the caller asked for: no entity failed and no inline relationship
+// failed. A failed inline relationship leaves its entity in place, but the
+// batch still must not report ok=true (issue #401).
+func batchCreateSucceeded(entitiesFailed, inlineRelationshipsFailed int) bool {
+	return entitiesFailed == 0 && inlineRelationshipsFailed == 0
 }
 
 // classifyInlineRelationshipError maps a graph-layer create error to a

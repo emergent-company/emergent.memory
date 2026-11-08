@@ -92,6 +92,33 @@ func TestNormaliseDatePropertiesLeavesUnparseableValues(t *testing.T) {
 	assert.Equal(t, "sometime next week", got["next_due"])
 }
 
+// TestNormaliseDatePropertiesArrayElements proves an array-of-date property left
+// in the old RFC 3339 shape converges on read and the caller's slice is not
+// mutated in place.
+func TestNormaliseDatePropertiesArrayElements(t *testing.T) {
+	schema := agents.ObjectSchema{Properties: map[string]agents.PropertyDef{
+		"milestones": {Type: "array", Items: &agents.PropertyDef{Type: "date"}},
+	}}
+	original := []any{"2026-12-02T00:00:00Z", "2026-12-03"}
+	props := map[string]any{"milestones": original}
+
+	got := normaliseDateProperties(props, schema)
+
+	assert.Equal(t, []any{"2026-12-02", "2026-12-03"}, got["milestones"])
+	assert.Equal(t, "2026-12-02T00:00:00Z", original[0], "input slice must not be mutated")
+}
+
+// TestApplySchemaDefaultsCoercesDates proves a date default is stored in the
+// canonical shape instead of escaping coercion as RFC 3339.
+func TestApplySchemaDefaultsCoercesDates(t *testing.T) {
+	schema := agents.ObjectSchema{Properties: map[string]agents.PropertyDef{
+		"next_due": {Type: "date", Default: "2026-12-01T00:00:00Z"},
+	}}
+	props := map[string]any{}
+	applySchemaDefaults(props, schema)
+	assert.Equal(t, "2026-12-01", props["next_due"])
+}
+
 // fakeDateSchemaProvider serves one object schema without a database.
 type fakeDateSchemaProvider struct {
 	schemas *ExtractionSchemas
@@ -130,4 +157,26 @@ func TestNormaliseDatePropertyValuesReadPath(t *testing.T) {
 		"next_due": "2026-12-02T00:00:00Z",
 	})
 	assert.Equal(t, map[string]any{"next_due": "2026-12-02T00:00:00Z"}, unchanged)
+}
+
+// TestNormaliseRelationshipDatePropertyValues proves edge properties converge
+// on read using the relationship schema.
+func TestNormaliseRelationshipDatePropertyValues(t *testing.T) {
+	svc := &Service{schemaProvider: &fakeDateSchemaProvider{
+		schemas: &ExtractionSchemas{RelationshipSchemas: map[string]agents.RelationshipSchema{
+			"has_subject": {Properties: map[string]agents.PropertyDef{
+				"since": {Type: "date"},
+			}},
+		}},
+	}}
+	projectID := uuid.New()
+
+	got := svc.NormaliseRelationshipDatePropertyValues(context.Background(), projectID, "has_subject", "Obligation", "Person",
+		map[string]any{"since": "2026-12-02T00:00:00Z"})
+	assert.Equal(t, map[string]any{"since": "2026-12-02"}, got)
+
+	// Unknown relationship type passes through untouched.
+	unknown := svc.NormaliseRelationshipDatePropertyValues(context.Background(), projectID, "unknown_rel", "", "",
+		map[string]any{"since": "2026-12-02T00:00:00Z"})
+	assert.Equal(t, map[string]any{"since": "2026-12-02T00:00:00Z"}, unknown)
 }
