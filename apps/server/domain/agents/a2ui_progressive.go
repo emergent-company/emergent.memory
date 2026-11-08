@@ -84,11 +84,11 @@ func finalResponseHasSurface(events []StreamEvent) bool {
 }
 
 // a2uiTeardownEvents returns a deleteSurface frame when a surface was shown
-// progressively (its createSurface parsed) but the finished response did not
-// validate a surface, so the stale card must be removed rather than left
-// half-rendered.
+// progressively (at least one message parsed, so a frame may have been emitted)
+// but the finished response did not validate a surface, so the stale card must
+// be removed rather than left half-rendered.
 func a2uiTeardownEvents(progressive *a2ui.SurfaceStream, finalEvents []StreamEvent) []StreamEvent {
-	if progressive == nil || !progressive.Opened() || finalResponseHasSurface(finalEvents) {
+	if progressive == nil || len(progressive.Messages()) == 0 || finalResponseHasSurface(finalEvents) {
 		return nil
 	}
 	sid := progressive.SurfaceID()

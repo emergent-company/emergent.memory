@@ -133,3 +133,26 @@ func TestFinalResponseHasSurface(t *testing.T) {
 		t.Fatal("A2UI event did not report a surface")
 	}
 }
+
+func TestA2UITeardownEvents_UpdateComponentsOnly(t *testing.T) {
+	// A block that streams only updateComponents (no createSurface) still renders
+	// a card — the web renderer draws components directly and iOS lazily opens
+	// the surface — so it must be torn down too when the finished response is
+	// invalid, even though Opened() is false.
+	s := a2ui.NewSurfaceStream()
+	if got := s.Feed("```a2ui\n{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\"}]}}\n"); len(got) != 1 {
+		t.Fatalf("Feed = %d messages, want 1", len(got))
+	}
+	if s.Opened() {
+		t.Fatal("Opened() = true for an updateComponents-only block, want false")
+	}
+
+	final := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\nnot json\n```"}})
+	evs := a2uiTeardownEvents(s, final)
+	if len(evs) != 1 || evs[0].Type != StreamEventA2UI || len(evs[0].A2UI) != 1 || evs[0].A2UI[0].DeleteSurface == nil {
+		t.Fatalf("teardown = %+v, want one deleteSurface A2UI event", evs)
+	}
+	if evs[0].SurfaceID != s.SurfaceID() || evs[0].A2UI[0].DeleteSurface.SurfaceID != s.SurfaceID() {
+		t.Fatalf("teardown surfaceId = %q / %q, want %q", evs[0].SurfaceID, evs[0].A2UI[0].DeleteSurface.SurfaceID, s.SurfaceID())
+	}
+}
