@@ -2314,13 +2314,31 @@ func (s *Server) invalidateObjectLabelSuggestions(ctx context.Context) {
 	s.labelSuggestionsGroup.Forget(pid)
 }
 
-// objectEndpointLabel resolves one relationship endpoint id to a display
-// label: the object itself, a related object, or a shortened id.
-func objectEndpointLabel(obj *GraphObject, related []GraphObject, id string) string {
+// relationshipEndpointObject resolves a relationship endpoint id to the related
+// object so the row can render it like an objects-table entry (type icon, type
+// name, short id). The current object resolves to itself. ok is false when the
+// id matches neither this object nor the fetched related slice: loadRelatedObjects
+// swallows a fetch error, so an endpoint can be missing from the slice, and the
+// caller then renders plain text instead of a link that would 404.
+func relationshipEndpointObject(obj *GraphObject, related []GraphObject, id string) (GraphObject, bool) {
 	if obj != nil && (id == obj.ID || id == obj.CanonicalID) {
-		return graphObjectLabel(*obj)
+		return *obj, true
 	}
-	return graphObjectLabelByID(related, id)
+	for _, o := range related {
+		if o.ID == id || o.CanonicalID == id {
+			return o, true
+		}
+	}
+	return GraphObject{ID: id}, false
+}
+
+// relationshipEndpointTarget is the id a relationship endpoint link opens: the
+// canonical object id when the endpoint is a version row, otherwise its own id.
+func relationshipEndpointTarget(o GraphObject) string {
+	if o.CanonicalID != "" {
+		return o.CanonicalID
+	}
+	return o.ID
 }
 
 // objectSource is one extraction provenance record attached to an object: which
@@ -2723,6 +2741,35 @@ func charCountLabel(s string) string {
 		noun = "character"
 	}
 	return groupDigits(int64(n)) + " " + noun
+}
+
+// propertyHasCharCounter reports whether propertyInput renders the free-form
+// multi-line control for def — the only widget with a live character counter.
+// It mirrors propertyInput's branch order so the counter can be rendered in the
+// field's label row instead of under the textarea (#420).
+func propertyHasCharCounter(def objectPropertyDef) bool {
+	switch def.Type {
+	case "boolean", "date", "number", "integer", "url", "email", "phone",
+		"country", "currency", "time", "object", "array":
+		return false
+	}
+	if isHashPropertyType(def.Type) || len(def.Enum) > 0 || def.Widget == "input" {
+		return false
+	}
+	return true
+}
+
+// propertyCharCount renders the initial character count for a property field,
+// or "" when its widget has no counter.
+func propertyCharCount(def objectPropertyDef, vals []string) string {
+	if !propertyHasCharCounter(def) {
+		return ""
+	}
+	v := ""
+	if len(vals) > 0 {
+		v = vals[0]
+	}
+	return charCountLabel(v)
 }
 
 // groupDigits inserts thousands separators into a non-negative integer

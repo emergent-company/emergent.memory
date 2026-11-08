@@ -2326,6 +2326,16 @@ func dsConfigStrings(cfg map[string]any, key string) []string {
 	return nil
 }
 
+// secretInputPlaceholder is the write-only secret field's hint: when a secret is
+// already stored the field is a replacement control, so the placeholder says a
+// blank value keeps the saved secret instead of implying nothing is set (#424).
+func secretInputPlaceholder(saved bool) string {
+	if saved {
+		return "Leave blank to keep the saved secret"
+	}
+	return "Paste the client secret"
+}
+
 // dsConfigString reads a string value from a non-secret config map, returning ""
 // when absent or not a string.
 func dsConfigString(cfg map[string]any, key string) string {

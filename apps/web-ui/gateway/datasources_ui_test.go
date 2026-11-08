@@ -490,10 +490,52 @@ func TestRenderOrgOAuthClientDetailPage(t *testing.T) {
 		t.Error("client_secret must not be prefilled")
 	}
 
-	// An unconfigured provider shows no delete form.
+	// #424: a saved secret is visible as state, and the field reads as a
+	// replacement control rather than an empty "not set" input.
+	for _, want := range []string{
+		`data-testid="ds-oauth-client-secret-saved"`,
+		"Enter a new one to replace it",
+		`placeholder="Leave blank to keep the saved secret"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("configured secret field missing %q", want)
+		}
+	}
+
+	// #425: one row at the bottom — Remove on the left, Save on the right —
+	// and the shared sticky footer pattern instead of an inline button.
+	if !strings.Contains(html, "sticky-form-actions") {
+		t.Errorf("save/remove row must use the sticky form footer:\n%s", html)
+	}
+	if !strings.Contains(html, `formaction="/orgs/org-1/settings/oauth-clients/google_drive/delete"`) {
+		t.Errorf("remove must post to the delete endpoint from the same row:\n%s", html)
+	}
+	removeAt := strings.Index(html, `data-testid="ds-oauth-client-delete"`)
+	saveAt := strings.Index(html, `class="memory-save-btn`)
+	if removeAt < 0 || saveAt < 0 || removeAt > saveAt {
+		t.Errorf("Remove must precede Save in the action row (remove=%d save=%d)", removeAt, saveAt)
+	}
+	// The Remove control lives inside the save form (no nested form): the
+	// delete URL must appear as a formaction, never as a second <form action>.
+	if strings.Contains(html, `<form method="post" action="/orgs/org-1/settings/oauth-clients/google_drive/delete"`) {
+		t.Errorf("delete must not render a second form:\n%s", html)
+	}
+	if n := strings.Count(html, "<form"); n != 1 {
+		t.Errorf("client card rendered %d forms, want 1:\n%s", n, html)
+	}
+
+	// An unconfigured provider shows no delete control and no saved-secret state.
 	bare := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme", provider, DSOAuthClientConfig{}, nil, "", nil))
-	if strings.Contains(bare, `data-testid="ds-oauth-client-delete"`) {
-		t.Error("unconfigured provider must not render a delete form")
+	for _, unwanted := range []string{
+		`data-testid="ds-oauth-client-delete"`,
+		`data-testid="ds-oauth-client-secret-saved"`,
+	} {
+		if strings.Contains(bare, unwanted) {
+			t.Errorf("unconfigured provider must not render %q", unwanted)
+		}
+	}
+	if !strings.Contains(bare, `placeholder="Paste the client secret"`) {
+		t.Errorf("unconfigured secret field should invite a value:\n%s", bare)
 	}
 }
 
@@ -3756,6 +3798,42 @@ func TestDSDetailPageRendersTheProviderSpecificSyncNote(t *testing.T) {
 		if strings.Contains(bareHTML, unwanted) {
 			t.Errorf("detail page of a folder-less provider contains Drive copy %q", unwanted)
 		}
+	}
+}
+
+// TestDSDetailPageSyncOptionsOwnsTheSyncControls pins the #426 reorder: the
+// sync mode and interval controls belong to the "Sync options" section, not to
+// the card header above it.
+func TestDSDetailPageSyncOptionsOwnsTheSyncControls(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}
+	config, creds := dsConfigFields(testDSSchema(), nil)
+	html := renderHTML(t, DataSourceDetailPage(src, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, nil, nil, "", nil))
+
+	const heading = `<h3 class="text-sm font-semibold">Sync options</h3>`
+	start := strings.Index(html, heading)
+	if start < 0 {
+		t.Fatalf("detail page has no Sync options section:\n%s", html)
+	}
+	// The section runs to the next sibling heading (or the end of the form, for
+	// a provider with no credential block).
+	end := len(html)
+	if next := strings.Index(html[start+len(heading):], `<h3 class="text-sm font-semibold">`); next >= 0 {
+		end = start + len(heading) + next
+	}
+	section := html[start:end]
+
+	for _, want := range []string{`data-testid="ds-field-sync-mode"`, `data-testid="ds-field-sync-interval"`, "Sync mode", "Sync interval (minutes)"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Sync options section missing %q:\n%s", want, section)
+		}
+	}
+	// The name field stays in the first block, above the section.
+	if nameAt := strings.Index(html, `data-testid="ds-field-name"`); nameAt < 0 || nameAt > start {
+		t.Errorf("name field should render above the Sync options section")
+	}
+	// ...and neither sync control may leak into that first block.
+	if header := html[:start]; strings.Contains(header, "ds-field-sync-mode") || strings.Contains(header, "ds-field-sync-interval") {
+		t.Errorf("sync controls still render above the Sync options section:\n%s", header)
 	}
 }
 
