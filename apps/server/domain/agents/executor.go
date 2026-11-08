@@ -688,6 +688,14 @@ type ExecuteRequest struct {
 	// inherited unchanged through delegation and resume (issue #954).
 	TrustedInternal bool
 
+	// RenderA2UI marks a run whose transport renders A2UI surfaces (chat SSE,
+	// A2A stream, share stream) — the surfaces that consume StreamEventA2UI.
+	// When true the executor teaches the model the A2UI catalog so it can emit
+	// cards. Text-only transports (agentcompat) leave it false, so a card-only
+	// reply cannot strand an empty text delta on a surface that forwards only
+	// StreamEventTextDelta (issue #414).
+	RenderA2UI bool
+
 	// ShareToolDeny lists tool names hard-blocked on this run (public agent-share
 	// allowlist). beforeToolCb enforces it BEFORE the confirm gate, so an
 	// approval can never override a deny-listed tool.
@@ -2204,6 +2212,9 @@ func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string,
 			ProjectID:       parentProjectID,
 			OrgID:           parentOrgID,
 			UserMessage:     outputMsg,
+			// Preserve the parent's card-rendering surface across the wake, so a
+			// resumed turn keeps the A2UI catalog instruction (issue #414).
+			RenderA2UI: true,
 		})
 		if err != nil {
 			ae.log.Error("maybeWakeParent: parent resume failed",
@@ -5045,6 +5056,17 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 		if block := capabilityDisclosureInstruction(req.AgentDefinition, ae.toolCatalog()); block != "" {
 			inst += "\n\n" + block
 		}
+	}
+
+	// A2UI cards are only rendered on surfaces that consume StreamEventA2UI
+	// (chat SSE, A2A stream, share stream). Only there is the model told the
+	// fence and catalog exist: a text-only surface (agentcompat) forwards only
+	// StreamEventTextDelta, so teaching it to emit cards could strand a card-only
+	// reply as an empty text delta (issue #414). RenderA2UI is set by the
+	// transport, exactly like TrustedInternal. Skip when the resolved instruction
+	// already carries the block so it is never injected twice.
+	if req.RenderA2UI && !strings.Contains(inst, a2ui.InstructionPrefix) {
+		inst += "\n\n" + a2ui.BasicCatalog.Instruction()
 	}
 
 	// If tool policies can reject or cancel a tool call, tell the model how to

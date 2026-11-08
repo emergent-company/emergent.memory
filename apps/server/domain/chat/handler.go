@@ -1612,6 +1612,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			SessionID:            sessionID,
 			SystemPromptAppendix: systemPromptAppendix,
 			TrustedInternal:      true, // session UI is a trusted surface (full internal coordination)
+			RenderA2UI:           true, // chat SSE renders A2UI surfaces (StreamEventA2UI)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -1995,6 +1996,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		UserMessage:     userMessage,
 		UserID:          user.ID,
 		StreamCallback:  streamCallback,
+		RenderA2UI:      true, // chat SSE resume renders A2UI surfaces (StreamEventA2UI)
 		PreCreatedRun:   preCreated,
 	})
 	if err != nil {
