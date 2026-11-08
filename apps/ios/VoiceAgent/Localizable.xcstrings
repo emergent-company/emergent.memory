@@ -1826,6 +1826,105 @@
         }
       }
     },
+    "chat.queue.title %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued · %lld"
+          }
+        }
+      }
+    },
+    "chat.queue.whenTurnFinishes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued — it will send when this turn finishes."
+          }
+        }
+      }
+    },
+    "chat.queue.idleHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send next sends only that message."
+          }
+        }
+      }
+    },
+    "chat.queue.edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued message — edit before sending"
+          }
+        }
+      }
+    },
+    "chat.queue.sendNext": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send next"
+          }
+        }
+      }
+    },
+    "chat.queue.sendNext.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends this message now, and leaves the rest queued"
+          }
+        }
+      }
+    },
+    "chat.queue.sendNext.runningHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends this message first, as soon as this turn finishes"
+          }
+        }
+      }
+    },
+    "chat.queue.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        }
+      }
+    },
+    "chat.queue.shortcut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queue Message"
+          }
+        }
+      }
+    },
     "chat.stop.hint": {
       "extractionState": "manual",
       "localizations": {
