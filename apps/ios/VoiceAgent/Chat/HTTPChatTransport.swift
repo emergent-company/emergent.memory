@@ -9,21 +9,24 @@ import Observation
 /// Nothing here mints a token, joins a room or needs a worker: text works on a
 /// project with voice disabled and on a deployment with no LiveKit stack.
 ///
-/// A turn cannot be interrupted server-side yet: memory runs the agent on a
-/// detached context (`agents.DetachedRunContext`, `chat/handler.go`), so closing
-/// the stream leaves the run going. The composer therefore offers no stop
-/// control in text mode; cancellation from a device credential needs a
-/// device-scoped cancel route on the server and is tracked separately.
+/// A reply can be stopped: closing the stream alone would leave memory running
+/// the agent detached (`agents.DetachedRunContext`), so ``stop()`` cancels the
+/// `meta` frame's run through `POST /api/chat/runs/{runId}/cancel`.
 @MainActor
 @Observable
 final class HTTPChatTransport {
     /// True while a turn is streaming: gates a second send and the composer.
     private(set) var isStreaming = false
-    /// The last turn-level failure, surfaced at the composer.
-    private(set) var errorMessage: String?
+    /// The last turn-level failure, surfaced at the composer. The stream and
+    /// ``stop()`` (in its own file) write it; the view only reads it.
+    var errorMessage: String?
     /// The open conversation: the launched one, or the id the `meta` frame
     /// reported for a new chat.
     private(set) var conversationID: String?
+
+    /// The server-side run from the `meta` frame; ``stop()`` cancels it. Cleared
+    /// at the end of the turn and in ``reset()`` so it cannot cancel a later run.
+    private(set) var liveRunID: String?
 
     /// Called once when a new conversation's id is first learned, so the UI can
     /// persist it in ``ActiveSessionStore``.
@@ -44,10 +47,13 @@ final class HTTPChatTransport {
     /// this so one wait cannot write into the next chat (`emergent.memory#445`).
     private(set) var unansweredTurn: UnansweredTurn?
 
-    private let config: MemoryConfig
+    let config: MemoryConfig
     private let stream: any ChatStreaming
-    private let urlSession: URLSession
-    private var turnTask: Task<Void, Never>?
+    /// Read by ``stop()`` in its own file, so no second session is built.
+    let urlSession: URLSession
+    /// The turn in flight; ``stop()`` in its own file cancels it. Written only
+    /// here (a finished task is replaced by the next ``send``).
+    private(set) var turnTask: Task<Void, Never>?
     /// Live transcript fed to the view (user turn + streamed reply).
     private var liveMessages: [LiveTranscriptMessage] = []
     private var fallbackToolCounter = 0
@@ -143,6 +149,7 @@ final class HTTPChatTransport {
         unansweredTurn = nil
         liveMessages.removeAll()
         conversationID = nil
+        liveRunID = nil
     }
 
     /// Reloads the live transcript into the view (used after the view resets).
@@ -199,7 +206,12 @@ final class HTTPChatTransport {
             anchorMessageID: plan.anchorMessageID
         )
         var failure: Error?
-        defer { isStreaming = false }
+        // The turn owns the run id only while it streams: once it ends (by
+        // `done`, failure, or a stop) a later turn must not inherit it.
+        defer {
+            isStreaming = false
+            liveRunID = nil
+        }
 
         do {
             let agentID = await resolveAgentDefinitionID(name: plan.agentName)
@@ -224,8 +236,10 @@ final class HTTPChatTransport {
                 apply(event, state: &state, transcript: transcript, activity: activity)
             }
         } catch is CancellationError {
-            // Cancelled by ``reset()``: the view has left this chat, so its
-            // state is no longer ours to settle.
+            // Cancelled by ``reset()`` or ``stop()``: the view has left this
+            // chat or the user ended the turn on purpose, so there is nothing
+            // to settle and nothing to recover. A stopped turn is not an
+            // interrupted one, so no `interruptedTurn` is raised here.
             return
         } catch {
             guard !Task.isCancelled else { return }
@@ -307,7 +321,11 @@ final class HTTPChatTransport {
     ) {
         state.sawFrame = true
         switch event {
-        case let .meta(learnedConversationID, _):
+        case let .meta(learnedConversationID, runID):
+            // Keep the run id: it is the only handle on the server-side run,
+            // and a stop needs it to cancel rather than just drop the stream. A
+            // frame without one leaves the id this turn already has.
+            liveRunID = runID ?? liveRunID
             guard let learnedConversationID, learnedConversationID != conversationID else { return }
             conversationID = learnedConversationID
             onConversationLearned?(learnedConversationID)
