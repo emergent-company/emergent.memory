@@ -161,6 +161,17 @@ struct MarkdownBlockView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(2 * .grid)
             .background(.codeBackground, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+            // The copy glyph rides the block, outside the horizontal scroller,
+            // so it stays put while a long line scrolls under it. It copies the
+            // block's source only — no fence, no language label.
+            .overlay(alignment: .topTrailing) {
+                CopyButton(text: { code }, label: "chat.code.copy")
+                    .padding(0.5 * .grid)
+                    .background(
+                        .codeBackground,
+                        in: RoundedRectangle(cornerRadius: .cornerRadiusSmall)
+                    )
+            }
         }
         .padding(.top, 1 * .grid)
     }

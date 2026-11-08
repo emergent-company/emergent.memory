@@ -148,8 +148,6 @@ struct ObjectCardView: View {
 private struct ObjectCardHeader: View {
     let card: ObjectCard
 
-    @State private var copied = false
-
     var body: some View {
         HStack(alignment: .top, spacing: 3 * .grid) {
             ObjectTypeIconTile(type: card.type)
@@ -171,7 +169,13 @@ private struct ObjectCardHeader: View {
                         .foregroundStyle(.fg0)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                    copyButton
+                    // The drawer's copy control: the canonical id, with the
+                    // same confirmation every other copy action gives.
+                    CopyButton(
+                        text: { card.copyID },
+                        label: "objects.card.copyID",
+                        copiedLabel: "objects.card.copied"
+                    )
                 }
 
                 if let via = card.referencedVia {
@@ -186,32 +190,6 @@ private struct ObjectCardHeader: View {
             }
             Spacer(minLength: 0)
         }
-    }
-
-    /// Copies the canonical id, like the drawer's copy control. The glyph turns
-    /// into a check for a moment, as the web copy buttons do.
-    private var copyButton: some View {
-        Button {
-            #if canImport(UIKit)
-                UIPasteboard.general.string = card.copyID
-            #endif
-            copied = true
-            Task {
-                try? await Task.sleep(for: .seconds(1.4))
-                copied = false
-            }
-        } label: {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.footnote)
-                .foregroundStyle(copied ? .fgSuccess : .fg3)
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        #if os(iOS)
-            .sensoryFeedback(.success, trigger: copied) { _, now in now }
-        #endif
-            .accessibilityLabel(Text(copied ? LocalizedStringKey("objects.card.copied") : LocalizedStringKey("objects.card.copyID")))
     }
 }
 

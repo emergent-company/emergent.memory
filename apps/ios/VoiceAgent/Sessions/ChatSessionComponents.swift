@@ -221,11 +221,37 @@ struct ChatMessageBubble: View {
                         // The reply's grounded references, collapsed under its
                         // text as on the web; a row opens the object's card.
                         SourcesFooter(citations: message.citations, messageID: message.id)
+                        // The reply's action row, as on the web: copy the reply
+                        // as plain reading text, never its markdown source.
+                        HStack(spacing: 2 * .grid) {
+                            CopyButton(
+                                text: { markdownPlainText(message.text) },
+                                label: "chat.message.copy",
+                                showsLabel: true
+                            )
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
             }
             .id(message.id)
+            // The standard iOS gesture, and the only one a user's own message
+            // can carry. It copies the same text the action row would.
+            .contextMenu {
+                Button {
+                    CopyButton.writeToPasteboard(copiedText)
+                } label: {
+                    Label("chat.message.copy", systemImage: "doc.on.doc")
+                }
+            }
         }
+    }
+
+    /// The context menu's text: the assistant's reading text, or the user's
+    /// message as typed (already plain).
+    private var copiedText: String {
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.role == .assistant ? markdownPlainText(text) : text
     }
 }
 
