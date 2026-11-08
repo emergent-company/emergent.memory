@@ -106,6 +106,10 @@ struct HTTPChatTransportFailureTests {
         await task.value
 
         #expect(transport.interruptedTurn == nil)
+        // A refused request never started a run, so there is no record to wait
+        // for (#445). The turn still settles.
+        #expect(transport.unansweredTurn == nil)
+        #expect(activity.isAwaitingFirstReply == false)
         #expect(transport.errorMessage != nil)
     }
 

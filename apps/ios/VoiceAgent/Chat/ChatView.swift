@@ -70,44 +70,15 @@ struct ChatView: View {
                 .padding(.vertical, 2 * .grid)
             }
             .scrollDismissesKeyboard(.interactively)
-            // Open on the newest message even before the first `onAppear`
-            // scroll runs (long histories lay out lazily).
-            .defaultScrollAnchor(.bottom)
-            .onAppear {
-                scrollToBottom(proxy, animated: false)
-            }
-            .onChange(of: session.messages.count) { _, _ in
-                scrollToBottom(proxy, animated: true)
-            }
-            .onChange(of: session.messages.last?.content.text) { _, _ in
-                // Streaming transcript grew.
-                scrollToBottom(proxy, animated: false)
-            }
-            .onChange(of: store.turns) { _, _ in
-                // Activity events (thinking delta, new chip, card) arrived.
-                scrollToBottom(proxy, animated: true)
-            }
-            .onChange(of: store.isAwaitingFirstReply) { _, awaiting in
-                if awaiting {
-                    scrollToBottom(proxy, animated: true)
-                }
-            }
+            // Follow the newest row while the reader is at the bottom, and never
+            // while they are reading back (`emergent.memory#434`).
+            .modifier(ChatAutoScroll(proxy: proxy, bottomAnchorID: Self.bottomAnchorID))
         }
         .padding(.horizontal)
         // A different controller means a different agent/session: give the
         // scroll view (and the offset it remembers) a fresh identity so a new
         // chat cannot open where the previous one was scrolled to.
         .id(ObjectIdentifier(controller))
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
-        if animated {
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
-        } else {
-            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-        }
     }
 
     // MARK: - Messages

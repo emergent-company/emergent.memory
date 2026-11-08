@@ -343,4 +343,32 @@ extension ChatActivityStore {
         turn.didReplyFinish = true
         turns[turns.count - 1] = turn
     }
+
+    /// The turn ended before any reply token arrived: close it so the working
+    /// line, the stop affordance and the composer's busy gate cannot stay live
+    /// forever.
+    ///
+    /// A turn normally leaves the pre-reply state through ``agentReplyStarted``
+    /// (the first token). A stream that ends, is refused, or yields nothing
+    /// decodable never calls it, and ``markReplyFinished`` deliberately does
+    /// nothing before a reply starts — so without this the app waits on a turn
+    /// that will never move again. Whether the turn showed anything (a tool
+    /// call, a card, a reasoning block) is the caller's call: this only ends the
+    /// window.
+    func settleWithoutReply() {
+        guard var turn = liveTurn, !turn.didReplyStart, !turn.didReplyFinish else { return }
+        quietTask?.cancel()
+        quietTask = nil
+        closeThinking(in: &turn)
+        turn.isToolGroupOpen = false
+        turn.didReplyStart = true
+        turn.didReplyFinish = true
+        turns[turns.count - 1] = turn
+    }
+
+    /// Drops the live turn anchored to `messageID`: its reply arrived from the
+    /// record instead of the stream, so the live turn has nothing left to show.
+    func discardTurn(anchoredTo messageID: String) {
+        turns.removeAll { $0.anchorMessageID == messageID }
+    }
 }
