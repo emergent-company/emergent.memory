@@ -89,11 +89,13 @@ func TestCoerceToDate(t *testing.T) {
 		expected  string
 		expectErr bool
 	}{
-		{"ISO date", "2024-02-10", "2024-02-10T00:00:00Z", false},
-		{"ISO datetime", "2024-02-10T15:30:00Z", "2024-02-10T15:30:00Z", false},
-		{"ISO datetime with offset", "2024-02-10T15:30:00+01:00", "2024-02-10T15:30:00+01:00", false},
-		{"US format", "02/10/2024", "2024-02-10T00:00:00Z", false},
-		{"datetime with space", "2024-02-10 15:30:00", "2024-02-10T15:30:00Z", false},
+		// A `date` is a calendar day: every accepted shape collapses to
+		// YYYY-MM-DD so the same property cannot hold two string shapes (#402).
+		{"ISO date", "2024-02-10", "2024-02-10", false},
+		{"ISO datetime", "2024-02-10T15:30:00Z", "2024-02-10", false},
+		{"ISO datetime with offset", "2024-02-10T15:30:00+01:00", "2024-02-10", false},
+		{"US format", "02/10/2024", "2024-02-10", false},
+		{"datetime with space", "2024-02-10 15:30:00", "2024-02-10", false},
 		{"invalid format", "not-a-date", "", true},
 		{"empty string", "", "", true},
 		{"null", nil, "", true},
@@ -245,7 +247,7 @@ func TestValidateProperties(t *testing.T) {
 		assert.Equal(t, "John Doe", result["name"])
 		assert.Equal(t, 25.0, result["age"])
 		assert.Equal(t, true, result["active"])
-		assert.Equal(t, "2024-02-10T00:00:00Z", result["birth_date"])
+		assert.Equal(t, "2024-02-10", result["birth_date"])
 	})
 
 	t.Run("missing required property", func(t *testing.T) {
@@ -830,7 +832,7 @@ func TestValidateArrayElements(t *testing.T) {
 			name:  "date array normalises elements",
 			items: scalar("date"),
 			input: []any{"2024-02-10"},
-			want:  []any{"2024-02-10T00:00:00Z"},
+			want:  []any{"2024-02-10"},
 		},
 		{
 			name:  "url array trims elements",

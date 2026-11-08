@@ -3754,7 +3754,8 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		return nil, fmt.Errorf("query entities: %w", err)
 	}
 
-	// Transform to response format
+	// Transform to response format. Date properties are normalised on read so
+	// rows written before the write path was fixed converge (issue #402).
 	resultEntities := make([]Entity, len(entities))
 	for i, e := range entities {
 		resultEntities[i] = Entity{
@@ -3763,7 +3764,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: truncateProperties(e.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(queryCtx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 		}
@@ -4020,7 +4021,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: truncateProperties(e.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 		})
@@ -4444,7 +4445,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
-			Properties: truncateProperties(e.Properties),
+			Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectUUID, e.TypeName, e.Properties)),
 			CreatedAt:  e.CreatedAt,
 			BranchID:   branchIDStr,
 			BranchName: e.BranchName,
@@ -4576,7 +4577,7 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 		Type:       entity.Type,
 		Key:        entity.Key,
 		Name:       name,
-		Properties: truncateProperties(entity.Properties),
+		Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectID, entity.Type, entity.Properties)),
 	}, nil
 }
 
@@ -5463,17 +5464,17 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		threshold = s.readSimilarityThreshold(ctx, projectID)
 	}
 
-	// slimEntity is the minimal response for a created entity.
-	type slimRelationship struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		TargetID string `json:"target_id"`
-	}
+	// slimEntity is the minimal response for a created entity. Inline
+	// relationships report both the edges that were created and a per-spec
+	// result list, so a spec that could not be resolved is visible instead of
+	// silently dropped (issue #401).
 	type slimEntity struct {
-		ID            string             `json:"id"`
-		Type          string             `json:"type"`
-		Key           string             `json:"key,omitempty"`
-		Relationships []slimRelationship `json:"relationships,omitempty"`
+		ID                  string                     `json:"id"`
+		Type                string                     `json:"type"`
+		Key                 string                     `json:"key,omitempty"`
+		Relationships       []inlineRelationship       `json:"relationships,omitempty"`
+		RelationshipResults []inlineRelationshipResult `json:"relationship_results,omitempty"`
+		RelationshipsFailed int                        `json:"relationships_failed,omitempty"`
 	}
 	type batchResult struct {
 		Ok     bool        `json:"ok"`
@@ -5495,6 +5496,12 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	failedCount := 0
 	similarResults := make([]similarEntity, 0)
 	similarCount := 0
+	// Inline relationship totals across the batch. A failed inline relationship
+	// does not undo the entity (it already exists), but it does make the batch
+	// report ok=false so the caller cannot mistake it for a fully applied write.
+	inlineRelsCreated := 0
+	inlineRelsFailed := 0
+	inlineRelsTotal := 0
 	// keyToID maps entity key → canonical UUID for entities created in this batch.
 	// Used to resolve inline relationship source/target by key within the same call.
 	keyToID := make(map[string]uuid.UUID)
@@ -5671,67 +5678,53 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			keyToID[*result.Key] = result.CanonicalID
 		}
 
-		// Create any inline relationships declared on this entity spec.
+		// Create any inline relationships declared on this entity spec. Every
+		// spec produces a per-item result, so an unresolvable source/target or a
+		// disallowed relationship type is reported instead of dropped (#401).
 		if relsRaw, ok := entityMap["relationships"].([]any); ok && len(relsRaw) > 0 {
-			for _, relRaw := range relsRaw {
-				relMap, ok := relRaw.(map[string]any)
-				if !ok {
-					continue
-				}
-				relType, _ := relMap["type"].(string)
-				if relType == "" {
-					continue
-				}
-				if !scope.AllowsRelationship(relType) {
-					s.log.Warn("skipping inline relationship: type not allowed for this agent's scope", "rel_type", relType)
-					continue
-				}
-				relProps, _ := relMap["properties"].(map[string]any)
-
-				// Support both source_id and target_id in inline relationship specs.
-				// source_id: the pre-existing entity is the src (source_id → new_entity as dst).
-				// target_id: the new entity is the src (new_entity → target_id as dst).
-				// Both accept a UUID string OR an entity key (resolved via keyToID or DB lookup).
-				var relSrcID, relDstID uuid.UUID
-				if sourceIDStr, ok := relMap["source_id"].(string); ok && sourceIDStr != "" {
-					sourceID, err := resolveIDOrKey(sourceIDStr)
-					if err != nil {
-						s.log.Warn("skipping inline relationship: cannot resolve source_id",
-							"rel_type", relType, "source_id", sourceIDStr, logger.Error(err))
-						continue
+			created, relResults := processInlineRelationships(
+				ctx,
+				typeName,
+				result.CanonicalID,
+				relsRaw,
+				branchID,
+				func() inlineRelationshipDeps {
+					deps := inlineRelationshipDeps{
+						ResolveID: resolveIDOrKey,
+						Create: func(callCtx context.Context, req *graph.CreateGraphRelationshipRequest) (*graph.GraphRelationshipResponse, error) {
+							return s.graphService.CreateRelationship(callCtx, projectUUID, req, nil)
+						},
+						AllowsRel: scope.AllowsRelationship,
 					}
-					relSrcID = sourceID
-					relDstID = result.CanonicalID
+					// The endpoint-type check costs one read per resolved edge, so
+					// only wire it when the agent actually restricts object types.
+					if scope.HasObjectRestriction() {
+						deps.AllowsObject = scope.AllowsObject
+						deps.ObjectType = func(id uuid.UUID) (string, bool) {
+							obj, err := s.graphService.GetByID(ctx, projectUUID, id, true)
+							if err != nil || obj == nil {
+								return "", false
+							}
+							return obj.Type, true
+						}
+					}
+					return deps
+				}(),
+			)
+			slim.Relationships = created
+			slim.RelationshipResults = relResults
+			for _, rr := range relResults {
+				inlineRelsTotal++
+				if rr.Ok {
+					inlineRelsCreated++
 				} else {
-					targetIDStr, _ := relMap["target_id"].(string)
-					targetID, err := resolveIDOrKey(targetIDStr)
-					if err != nil {
-						s.log.Warn("skipping inline relationship: cannot resolve target_id",
-							"rel_type", relType, "target_id", targetIDStr, logger.Error(err))
-						continue
-					}
-					relSrcID = result.CanonicalID
-					relDstID = targetID
+					inlineRelsFailed++
 				}
-
-				relReq := &graph.CreateGraphRelationshipRequest{
-					Type:       relType,
-					SrcID:      relSrcID,
-					DstID:      relDstID,
-					Properties: relProps,
-					BranchID:   branchID,
+			}
+			for _, rr := range relResults {
+				if !rr.Ok {
+					slim.RelationshipsFailed++
 				}
-				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq, nil)
-				if err != nil {
-					s.log.Warn("failed to create inline relationship",
-						"rel_type", relType, "src", relSrcID, "dst", relDstID, logger.Error(err))
-					continue
-				}
-				slim.Relationships = append(slim.Relationships, slimRelationship{
-					ID:       relResult.CanonicalID.String(),
-					Type:     relResult.Type,
-					TargetID: relResult.DstID.String(),
-				})
 			}
 		}
 
@@ -5751,20 +5744,35 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	if similarCount > 0 {
 		message = fmt.Sprintf("%d near-duplicate entit%s found. Prefer entity-update(entity_id=…) to enrich the existing object instead of creating a duplicate. Re-call with check_similar=false to force-create.", similarCount, plural)
 	}
-	ok := failedCount == 0
+	if inlineRelsTotal > 0 {
+		message += fmt.Sprintf("; inline relationships: %d created, %d failed", inlineRelsCreated, inlineRelsFailed)
+	}
+
+	// ok is false when anything the caller asked for did not happen. A failed
+	// inline relationship leaves the entity created (so partial progress is
+	// reported per item), but the batch must not claim success (#401).
+	ok := failedCount == 0 && inlineRelsFailed == 0
 	errMsg := ""
-	if !ok {
+	switch {
+	case failedCount > 0 && inlineRelsFailed > 0:
+		errMsg = fmt.Sprintf("%d of %d entities failed to create; %d inline relationships failed", failedCount, len(entitiesRaw), inlineRelsFailed)
+	case failedCount > 0:
 		errMsg = fmt.Sprintf("%d of %d entities failed to create", failedCount, len(entitiesRaw))
+	case inlineRelsFailed > 0:
+		errMsg = fmt.Sprintf("%d inline relationships could not be created; see relationship_results on each result", inlineRelsFailed)
 	}
 	return envelopeResult(ok, map[string]any{
 		"results": results,
 		"message": message,
 	}, map[string]any{
-		"created":       successCount,
-		"failed":        failedCount,
-		"total":         len(entitiesRaw),
-		"similar":       similarResults,
-		"similar_count": similarCount,
+		"created":               successCount,
+		"failed":                failedCount,
+		"total":                 len(entitiesRaw),
+		"similar":               similarResults,
+		"similar_count":         similarCount,
+		"relationships_created": inlineRelsCreated,
+		"relationships_failed":  inlineRelsFailed,
+		"relationships_total":   inlineRelsTotal,
 	}, errMsg)
 }
 

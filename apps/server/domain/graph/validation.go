@@ -124,6 +124,11 @@ func coerceToHash(value any, kind string) (string, error) {
 	return strings.ToLower(trimmed), nil
 }
 
+// coerceToDate validates a date-typed property and stores it in the canonical
+// calendar shape YYYY-MM-DD (issue #402). A time component is discarded: a
+// `date` is a day, not an instant, so "2026-12-01T00:00:00Z" and "2026-12-01"
+// must not coexist for the same property. `datetime` properties are untouched
+// and stay RFC 3339.
 func coerceToDate(value any) (string, error) {
 	switch v := value.(type) {
 	case string:
@@ -131,28 +136,13 @@ func coerceToDate(value any) (string, error) {
 		if trimmed == "" {
 			return "", fmt.Errorf("empty string cannot be converted to date")
 		}
-
-		formats := []string{
-			time.RFC3339,
-			time.RFC3339Nano,
-			"2006-01-02",
-			"2006-01-02 15:04:05",
-			"2006-01-02T15:04:05",
-			"01/02/2006",
-			"02-01-2006",
+		if normalised, ok := normaliseDateValue(trimmed); ok {
+			return normalised, nil
 		}
-
-		for _, format := range formats {
-			t, err := time.Parse(format, trimmed)
-			if err == nil {
-				return t.Format(time.RFC3339), nil
-			}
-		}
-
 		return "", fmt.Errorf("invalid date format: %s (expected ISO 8601 or common formats)", v)
 
 	case time.Time:
-		return v.Format(time.RFC3339), nil
+		return v.Format(dateLayout), nil
 
 	default:
 		return "", fmt.Errorf("cannot convert %T to date", value)
@@ -389,6 +379,8 @@ func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
 			return coerceToCurrency(value)
 		case "time":
 			return coerceToTime(value)
+		case "date":
+			return coerceToDate(value)
 		}
 		return value, nil
 	case "boolean":

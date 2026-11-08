@@ -876,10 +876,12 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		objects = objects[:params.Limit]
 	}
 
-	// Build paginated response
+	// Build paginated response. Date properties are normalised to YYYY-MM-DD on
+	// read so rows written before the write path was fixed converge (issue #402).
 	items := make([]*GraphObjectResponse, len(objects))
 	for i, obj := range objects {
 		items[i] = obj.ToResponse()
+		items[i].Properties = s.NormaliseDatePropertyValues(ctx, params.ProjectID, items[i].Type, items[i].Properties)
 	}
 
 	// Apply property projection if requested: `fields` includes only the named
@@ -942,6 +944,8 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 	}
 
 	resp := obj.ToResponse()
+	// Date properties converge to YYYY-MM-DD on read (issue #402).
+	resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
 	if err := s.fillObjectContributions(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
 		return nil, err
 	}
@@ -957,7 +961,9 @@ func (s *Service) GetByIDIncludingDeleted(ctx context.Context, projectID, id uui
 	if err != nil {
 		return nil, err
 	}
-	return obj.ToResponse(), nil
+	resp := obj.ToResponse()
+	resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+	return resp, nil
 }
 
 // Create creates a new graph object.
@@ -2967,8 +2973,10 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 	objectIDs := make([]uuid.UUID, 0, len(results))
 
 	for i, r := range results {
+		obj := r.Object.ToResponse()
+		obj.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties)
 		data[i] = &SearchResultItem{
-			Object:       r.Object.ToResponse(),
+			Object:       obj,
 			Score:        r.Rank,
 			LexicalScore: &r.Rank,
 		}
@@ -3047,8 +3055,10 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 
 	for i, r := range results {
 		similarity := 1.0 - r.Distance
+		obj := r.Object.ToResponse()
+		obj.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties)
 		data[i] = &SearchResultItem{
-			Object:      r.Object.ToResponse(),
+			Object:      obj,
 			Score:       similarity,
 			VectorScore: &similarity,
 			VectorDist:  &r.Distance,
@@ -3406,8 +3416,10 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	// Build response
 	data := make([]*SearchResultItem, len(fusedResults))
 	for i, fr := range fusedResults {
+		obj := fr.object.ToResponse()
+		obj.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties)
 		data[i] = &SearchResultItem{
-			Object:       fr.object.ToResponse(),
+			Object:       obj,
 			Score:        fr.fusedScore,
 			LexicalScore: fr.lexicalScore,
 			VectorScore:  fr.vectorScore,
