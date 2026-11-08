@@ -466,6 +466,61 @@ func TestDerive_RelationshipWithKeySource(t *testing.T) {
 	}
 }
 
+func TestApplyTypeLabels(t *testing.T) {
+	types := map[string]TypeMeta{
+		"Law":    {Label: "Legal Case", Color: "#4F46E5"},
+		"Person": {Label: "Person"},
+	}
+	cits := []Citation{
+		{Type: "Law"},
+		{Type: "Person"},
+		{Type: "Unknown"},
+	}
+	ApplyTypeLabels(cits, types)
+
+	if got := cits[0].TypeLabel; got != "Legal Case" {
+		t.Errorf("Law TypeLabel = %q, want %q", got, "Legal Case")
+	}
+	if got := cits[0].TypeColor; got != "#4F46E5" {
+		t.Errorf("Law TypeColor = %q, want %q", got, "#4F46E5")
+	}
+	if got := cits[1].TypeLabel; got != "Person" {
+		t.Errorf("Person TypeLabel = %q, want %q", got, "Person")
+	}
+	if got := cits[1].TypeColor; got != "" {
+		t.Errorf("Person TypeColor = %q, want empty (undeclared color)", got)
+	}
+	// Absent type keeps empty label/color (omitted on the wire via omitempty).
+	if got := cits[2].TypeLabel; got != "" {
+		t.Errorf("Unknown TypeLabel = %q, want empty", got)
+	}
+	if got := cits[2].TypeColor; got != "" {
+		t.Errorf("Unknown TypeColor = %q, want empty", got)
+	}
+}
+
+func TestDerive_TypeLabels(t *testing.T) {
+	cands := Candidates([]ToolCall{{Output: searchHybridOutput(
+		map[string]any{"id": obj1, "type": "Law", "name": "Lov"},
+	)}})
+	answer := "[Lov](/objects/" + obj1 + ")"
+
+	types := map[string]TypeMeta{"Law": {Label: "Legal Case", Color: "#4F46E5"}}
+	cits := Derive(answer, nil, cands, types)
+	if len(cits) != 1 {
+		t.Fatalf("Derive() = %+v, want 1 citation", cits)
+	}
+	if cits[0].TypeLabel != "Legal Case" || cits[0].TypeColor != "#4F46E5" {
+		t.Errorf("citation = %+v, want TypeLabel Legal Case TypeColor #4F46E5", cits[0])
+	}
+
+	// Without a type map, the citation keeps an empty label (omitted).
+	plain := Derive(answer, nil, cands)
+	if len(plain) != 1 || plain[0].TypeLabel != "" || plain[0].TypeColor != "" {
+		t.Errorf("Derive() without types = %+v, want empty TypeLabel/TypeColor", plain)
+	}
+}
+
 func citationIDs(cits []Citation) map[string]bool {
 	out := make(map[string]bool, len(cits))
 	for _, c := range cits {
