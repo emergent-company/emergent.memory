@@ -86,11 +86,13 @@ var consolidatedFamilies = []consolidatedFamily{
 		Name:  "entity-write",
 		Scope: "graph:write",
 		Description: "Create or change graph entities. action=create takes an entities[] array (idempotent on type+key); " +
-			"action=update merges properties (null removes); action=delete soft-deletes; action=restore undeletes.",
+			"action=update merges properties (null removes) for one entity_id or an updates[] batch of up to 100 with per-item results; " +
+			"action=delete soft-deletes one entity_id or an entity_ids[] batch of up to 100 with per-item results; " +
+			"action=restore undeletes. Filter-based bulk actions use entity-bulk-update (default soft_delete; hard_delete explicit).",
 		Actions: []consolidatedAction{
 			{Action: "create", Handler: "entity-create", Description: "create one or more entities"},
-			{Action: "update", Handler: "entity-update", Description: "merge properties on an entity"},
-			{Action: "delete", Handler: "entity-delete", Description: "soft-delete an entity"},
+			{Action: "update", Handler: "entity-update", Description: "merge properties on one entity, or update up to 100 entities via updates[] with per-item results"},
+			{Action: "delete", Handler: "entity-delete", Description: "soft-delete one entity, or up to 100 entities via entity_ids[] with per-item results"},
 			{Action: "restore", Handler: "entity-restore", Description: "restore a soft-deleted entity"},
 		},
 	},
@@ -98,11 +100,12 @@ var consolidatedFamilies = []consolidatedFamily{
 		Name:  "relationship-write",
 		Scope: "graph:write",
 		Description: "Create or change relationships between entities. action=create takes a relationships[] array; " +
-			"action=update changes properties or weight; action=delete soft-deletes.",
+			"action=update changes properties or weight; action=delete soft-deletes one relationship_id or a " +
+			"relationship_ids[] batch of up to 100 with per-item results.",
 		Actions: []consolidatedAction{
 			{Action: "create", Handler: "relationship-create", Description: "create relationships"},
 			{Action: "update", Handler: "relationship-update", Description: "update a relationship"},
-			{Action: "delete", Handler: "relationship-delete", Description: "soft-delete a relationship"},
+			{Action: "delete", Handler: "relationship-delete", Description: "soft-delete one relationship, or up to 100 via relationship_ids[] with per-item results"},
 		},
 	},
 	{

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -853,13 +854,18 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-update",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Update one or more existing entities by creating new versions. Properties are merged with existing values (null removes a property). Two forms: single (entity_id) or batch ('updates' array, up to 100 items, each {entity_id, properties, labels, status, branch_id?}) with per-item results — one bad item never fails the batch; retry exactly the failed indexes. Returns a slim object (id/type/key/name/labels) per entity; pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID or key of the entity to update",
+						Description: "Single form: UUID or key of the entity to update. Omit when using 'updates'.",
+					},
+					"updates": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "object"},
+						Description: "Batch form (max 100 items): each item {entity_id (required), properties, labels, replace_labels, status, branch_id?}. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes. No item is atomic with any other; a failure does not roll back the successes.",
 					},
 					"properties": {
 						Type:        "object",
@@ -887,30 +893,74 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
 					},
 				},
-				Required: []string{"entity_id"},
 			},
 		},
 		{
 			Name:         "entity-delete",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Soft-delete an entity. The entity can be restored later.",
+			Description:  "Soft-delete one or more entities. Two forms: single (entity_id) or batch ('entity_ids' array of UUIDs or keys, up to 100, sharing one reason) with per-item results — one bad item never fails the batch; retry exactly the failed indexes. Soft delete only: the entities can be restored later. For a filter-based bulk delete use entity-bulk-update (its default action is soft_delete; hard_delete must be named explicitly).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID or key of the entity to delete",
+						Description: "Single form: UUID or key of the entity to delete. Omit when using 'entity_ids'.",
+					},
+					"entity_ids": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Batch form (max 100 items): entity UUIDs or keys to soft-delete. One shared 'reason' applies to all. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes.",
 					},
 					"reason": {
 						Type:        "string",
-						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version. In batch form it applies to every item.",
 					},
 					"branch": {
 						Type:        "string",
 						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
 				},
-				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "entity-bulk-update",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Bulk-update every entity matching a filter in one call, returning {matched, affected}. DEFAULT action is soft_delete (recoverable); hard_delete PERMANENTLY removes rows and must be named explicitly in 'action' — this tool never infers it. dry_run=true reports matched/affected and changes nothing. 'limit' caps how many rows are affected (server maximum 100000); when matched > affected, re-run to continue. NOT atomic: the action is applied as one project-scoped statement, not per item. Use entity-update/entity-delete for per-id batches where you need per-item results and retry.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"filter": {
+						Type:        "object",
+						Description: "Selects the entities to change. Must constrain at least one of: types ([]string), property_filters ([{property, operator, value}]), labels ([]string), created_after (RFC3339), namespace (string). An empty filter is rejected because it would match every entity in the project.",
+					},
+					"action": {
+						Type:        "string",
+						Enum:        []string{"soft_delete", "update_status", "merge_properties", "replace_properties", "add_labels", "remove_labels", "set_labels", "hard_delete"},
+						Description: "What to do with matched entities. Defaults to soft_delete. soft_delete sets deleted_at (restorable); hard_delete permanently deletes and must be requested explicitly; update_status requires 'value'; merge_properties/replace_properties require 'properties'; add_labels/remove_labels/set_labels require 'labels'.",
+					},
+					"value": {
+						Type:        "string",
+						Description: "New status value, for action=update_status.",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Properties payload for action=merge_properties (deep merge) or action=replace_properties (replace).",
+					},
+					"labels": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Labels payload for action=add_labels, remove_labels or set_labels.",
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum rows to affect in this call (default 1000, server maximum 100000). A capped run leaves the remainder matched but unaffected; re-run to continue.",
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "When true, report matched/affected counts but change nothing.",
+					},
+				},
+				Required: []string{"filter"},
 			},
 		},
 		{
@@ -1408,24 +1458,28 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "relationship-delete",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Soft-delete a relationship between two entities.",
+			Description:  "Soft-delete one or more relationships between entities. Two forms: single (relationship_id) or batch ('relationship_ids' array of up to 100 UUIDs, sharing one reason) with per-item results — one bad item never fails the batch; retry exactly the failed indexes.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"relationship_id": {
 						Type:        "string",
-						Description: "UUID of the relationship to delete",
+						Description: "Single form: UUID of the relationship to delete. Omit when using 'relationship_ids'.",
+					},
+					"relationship_ids": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Batch form (max 100 items): relationship UUIDs to soft-delete. One shared 'reason' applies to all. Returns one result per item with index/relationship_id/ok/error so a retry can target only the failed indexes.",
 					},
 					"reason": {
 						Type:        "string",
-						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version. In batch form it applies to every item.",
 					},
 					"branch": {
 						Type:        "string",
 						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
 				},
-				Required: []string{"relationship_id"},
 			},
 		},
 		{
@@ -1920,6 +1974,7 @@ var toolRequiredScope = map[string]string{
 	"entity-create":       "graph:write",
 	"entity-update":       "graph:write",
 	"entity-delete":       "graph:write",
+	"entity-bulk-update":  "graph:write",
 	"entity-restore":      "graph:write",
 	"relationship-create": "graph:write",
 	"relationship-update": "graph:write",
@@ -2598,6 +2653,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeUpdateEntity(ctx, projectID, args)
 	case "entity-delete":
 		return s.executeDeleteEntity(ctx, projectID, args)
+	case "entity-bulk-update":
+		return s.executeBulkUpdateEntities(ctx, projectID, args)
 	case "entity-restore":
 		return s.executeRestoreEntity(ctx, projectID, args)
 	case "session-get-messages":
@@ -4769,13 +4826,59 @@ func reactionSubjectMatches(ctx context.Context, canonicalID uuid.UUID) bool {
 	return subjectID != "" && canonicalID.String() == subjectID
 }
 
-// executeUpdateEntity updates an existing entity's properties, labels, or status.
+// batchMutationMaxItems caps how many items one MCP batch-mutation call accepts.
+// It mirrors the server-side bulk endpoints' 100-item cap (graph.bulkUpsertMaxItems)
+// so an MCP batch never produces a request the graph layer would reject.
+const batchMutationMaxItems = 100
+
+// batchOverLimitError names the limit and how to proceed, so an agent can split
+// the call instead of guessing.
+func batchOverLimitError(tool string, got int) error {
+	return fmt.Errorf("%s batch size exceeded: %d items, maximum %d per call — split into batches of %d or fewer and retry", tool, got, batchMutationMaxItems, batchMutationMaxItems)
+}
+
+// executeUpdateEntity updates one or more existing entities.
+//
+// Single form: entity_id + properties/labels/status/branch.
+// Batch form: updates[] — each item is updated independently and the result
+// carries {index, entity_id, ok, error?} per item, so a caller retries exactly
+// the failed indexes. One bad item never fails the batch.
 func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	if raw, present := args["updates"]; present {
+		items, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid updates: must be an array of {entity_id, properties, labels, status, branch_id?} objects")
+		}
+		if len(items) == 0 {
+			return nil, fmt.Errorf("missing or empty updates array")
+		}
+		if len(items) > batchMutationMaxItems {
+			return nil, batchOverLimitError("entity-update", len(items))
+		}
+		return s.executeBatchUpdateEntities(ctx, projectUUID, projectID, items, args)
+	}
+
+	result, err := s.updateEntityOne(ctx, projectUUID, projectID, args)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := responseOptsFromArgs(args)
+	return envelopeResult(true, map[string]any{
+		"entity": slimEntity(result, opts),
+	}, nil, "")
+}
+
+// updateEntityOne applies a single entity update and returns the new version.
+// It carries every guard the single-item form has always enforced: key
+// resolution inside the caller's project, the reaction-agent work-status
+// exemption, branch resolution, and per-type scope/write rules.
+func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, projectID string, args map[string]any) (*graph.GraphObjectResponse, error) {
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: entity_id")
@@ -4857,32 +4960,173 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 	if err != nil {
 		return nil, fmt.Errorf("update entity: %w", err)
 	}
-
-	opts := responseOptsFromArgs(args)
-	return envelopeResult(true, map[string]any{
-		"entity": slimEntity(result, opts),
-	}, nil, "")
+	return result, nil
 }
 
-// executeDeleteEntity deletes an existing entity.
+// executeBatchUpdateEntities applies a batch of entity updates. Each item is
+// independent: per-item success/failure is reported with its index, and the
+// successes are not rolled back when another item fails.
+func (s *Service) executeBatchUpdateEntities(ctx context.Context, projectUUID uuid.UUID, projectID string, items []any, args map[string]any) (*ToolResult, error) {
+	type batchUpdateResult struct {
+		Index    int            `json:"index"`
+		EntityID string         `json:"entity_id,omitempty"`
+		OK       bool           `json:"ok"`
+		Entity   map[string]any `json:"entity,omitempty"`
+		Error    string         `json:"error,omitempty"`
+	}
+
+	results := make([]batchUpdateResult, 0, len(items))
+	succeeded, failed := 0, 0
+
+	for i, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			results = append(results, batchUpdateResult{Index: i, OK: false, Error: "invalid update specification: expected an object with entity_id"})
+			failed++
+			continue
+		}
+
+		// Copy the item so per-item branch/verbose defaults never mutate the caller's map.
+		itemArgs := make(map[string]any, len(item)+2)
+		for k, v := range item {
+			itemArgs[k] = v
+		}
+		if _, ok := itemArgs["branch"]; !ok {
+			if branchRef, ok := args["branch"].(string); ok && branchRef != "" {
+				itemArgs["branch"] = branchRef
+			}
+		}
+		if _, ok := itemArgs["verbose"]; !ok {
+			if v, ok := args["verbose"]; ok {
+				itemArgs["verbose"] = v
+			}
+		}
+		// Explicit per-item branch_id (a UUID) is accepted as well as branch.
+		if branchIDStr, ok := itemArgs["branch_id"].(string); ok && branchIDStr != "" {
+			if _, err := uuid.Parse(branchIDStr); err != nil {
+				results = append(results, batchUpdateResult{Index: i, EntityID: refString(itemArgs["entity_id"]), OK: false, Error: fmt.Sprintf("invalid branch_id: %q is not a UUID", branchIDStr)})
+				failed++
+				continue
+			}
+			if _, ok := itemArgs["branch"]; !ok {
+				itemArgs["branch"] = branchIDStr
+			}
+		}
+
+		entityRef := refString(itemArgs["entity_id"])
+		result, err := s.updateEntityOne(ctx, projectUUID, projectID, itemArgs)
+		if err != nil {
+			results = append(results, batchUpdateResult{Index: i, EntityID: entityRef, OK: false, Error: err.Error()})
+			failed++
+			continue
+		}
+		opts := responseOptsFromArgs(itemArgs)
+		results = append(results, batchUpdateResult{
+			Index:    i,
+			EntityID: entityRef,
+			OK:       true,
+			Entity:   slimEntity(result, opts),
+		})
+		succeeded++
+	}
+
+	ok := failed == 0
+	errMsg := ""
+	if !ok {
+		errMsg = fmt.Sprintf("%d of %d entities failed to update; retry the failed indexes only", failed, len(items))
+	}
+	return envelopeResult(ok, map[string]any{
+		"results": results,
+		"message": fmt.Sprintf("Batch update completed: %d succeeded, %d failed", succeeded, failed),
+	}, map[string]any{
+		"succeeded": succeeded,
+		"failed":    failed,
+		"total":     len(items),
+	}, errMsg)
+}
+
+// refString renders an argument reference (id or key) for a per-item result.
+func refString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// executeDeleteEntity soft-deletes one or more entities.
+//
+// Single form: entity_id. Batch form: entity_ids[] with one shared reason;
+// each item is deleted independently and reported as {index, entity_id, ok,
+// error?} so a caller retries exactly the failed indexes.
 func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	if raw, present := args["entity_ids"]; present {
+		ids, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid entity_ids: must be an array of UUIDs or keys")
+		}
+		if len(ids) == 0 {
+			return nil, fmt.Errorf("missing or empty entity_ids array")
+		}
+		if len(ids) > batchMutationMaxItems {
+			return nil, batchOverLimitError("entity-delete", len(ids))
+		}
+
+		// One branch and one reason apply to the whole batch, matching the
+		// single-item form's semantics.
+		var branchID *uuid.UUID
+		if branchRef, _ := args["branch"].(string); branchRef != "" {
+			branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+			if err != nil {
+				return nil, fmt.Errorf("resolve branch: %w", err)
+			}
+		}
+		reason := reasonFromArgs(args)
+
+		type batchDeleteResult struct {
+			Index    int    `json:"index"`
+			EntityID string `json:"entity_id"`
+			OK       bool   `json:"ok"`
+			Error    string `json:"error,omitempty"`
+		}
+		results := make([]batchDeleteResult, 0, len(ids))
+		succeeded, failed := 0, 0
+		for i, rawID := range ids {
+			idStr, ok := rawID.(string)
+			if !ok || idStr == "" {
+				results = append(results, batchDeleteResult{Index: i, OK: false, Error: "invalid entity_id: expected a non-empty UUID or key string"})
+				failed++
+				continue
+			}
+			if _, err := s.deleteEntityOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
+				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: err.Error()})
+				failed++
+				continue
+			}
+			results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: true})
+			succeeded++
+		}
+
+		allOK := failed == 0
+		errMsg := ""
+		if !allOK {
+			errMsg = fmt.Sprintf("%d of %d entities failed to delete; retry the failed indexes only", failed, len(ids))
+		}
+		return envelopeResult(allOK, map[string]any{
+			"results": results,
+			"message": fmt.Sprintf("Batch delete completed: %d succeeded, %d failed", succeeded, failed),
+		}, map[string]any{
+			"succeeded": succeeded,
+			"failed":    failed,
+			"total":     len(ids),
+		}, errMsg)
+	}
+
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: entity_id")
-	}
-
-	entityID, err := uuid.Parse(entityIDStr)
-	if err != nil {
-		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
-		if keyErr != nil {
-			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
-		}
-		entityID = resolved
 	}
 
 	// Resolve optional branch param — auto-creates the branch if it does not exist,
@@ -4895,30 +5139,237 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		}
 	}
 
-	// Optional reason
-	var reason *string
-	if r, ok := args["reason"].(string); ok && r != "" {
-		reason = &r
+	entityID, err := s.deleteEntityOne(ctx, projectUUID, projectID, entityIDStr, branchID, reasonFromArgs(args))
+	if err != nil {
+		return nil, err
+	}
+
+	return envelopeResult(true, map[string]any{
+		"entity_id": entityID.String(),
+	}, nil, "")
+}
+
+// deleteEntityOne soft-deletes one entity by UUID or key, scoped to the
+// caller's project. An id or key from another project fails exactly like a
+// missing one (no existence oracle) and never touches the foreign row.
+func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, projectID, entityIDStr string, branchID *uuid.UUID, reason *string) (uuid.UUID, error) {
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return uuid.Nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
 	}
 
 	writeRules := AgentWriteRulesFromContext(ctx)
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
+			return uuid.Nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
 		}
 		if !writeRules.DeleteAllowed(typ) {
-			return nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
+			return uuid.Nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
 		}
 	}
 
 	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, branchID, reason); err != nil {
-		return nil, fmt.Errorf("delete entity: %w", err)
+		return uuid.Nil, fmt.Errorf("delete entity: %w", err)
+	}
+	return entityID, nil
+}
+
+// reasonFromArgs reads the optional shared deletion reason.
+func reasonFromArgs(args map[string]any) *string {
+	if r, ok := args["reason"].(string); ok && r != "" {
+		return &r
+	}
+	return nil
+}
+
+// bulkActionNames is the set the filter-based tool accepts, in the order the
+// tool description lists them. soft_delete is the safe default; hard_delete is
+// deliberately never selected implicitly.
+var bulkActionNames = []string{
+	graph.BulkActionSoftDelete,
+	graph.BulkActionUpdateStatus,
+	graph.BulkActionMergeProperties,
+	graph.BulkActionReplaceProperties,
+	graph.BulkActionAddLabels,
+	graph.BulkActionRemoveLabels,
+	graph.BulkActionSetLabels,
+	graph.BulkActionHardDelete,
+}
+
+// executeBulkUpdateEntities mirrors the CLI's `graph objects bulk-update`: apply
+// one action to every entity matching a filter and report {matched, affected}.
+//
+// Unlike the per-id batch tools this is not per-item (the action is one
+// project-scoped statement), so the whole call is applied or rejected as a
+// unit. dry_run only counts. The default action is soft_delete; hard_delete
+// must be named explicitly so an agent cannot destroy rows by omission.
+func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	filterRaw, ok := args["filter"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("missing required parameter: filter (object; constrain at least one of types, property_filters, labels, created_after, namespace)")
+	}
+	var filter graph.BulkActionFilter
+	if raw, err := json.Marshal(filterRaw); err != nil {
+		return nil, fmt.Errorf("invalid filter: %w", err)
+	} else if err := json.Unmarshal(raw, &filter); err != nil {
+		return nil, fmt.Errorf("invalid filter: %w", err)
+	}
+	if filterIsEmpty(filter) {
+		return nil, fmt.Errorf("filter must constrain at least one of types, property_filters, labels, created_after or namespace; an empty filter would match every entity in the project")
+	}
+
+	action := graph.BulkActionSoftDelete
+	if a, ok := args["action"].(string); ok && a != "" {
+		action = a
+	}
+	if !slices.Contains(bulkActionNames, action) {
+		return nil, fmt.Errorf("unknown action %q (one of: %s)", action, strings.Join(bulkActionNames, ", "))
+	}
+
+	// Narrow an unrestricted request to the agent's object-type allowlist, and
+	// refuse when the allowlist leaves nothing to match. An empty types list
+	// means "every type", so it must never reach the repository in that state.
+	scope := TypeScopeFromContext(ctx)
+	filteredTypes, denied := scope.FilterRequestedObjectTypes(filter.Types)
+	if denied {
+		return envelopeResult(true, map[string]any{
+			"matched":  0,
+			"affected": 0,
+			"dry_run":  boolArg(args, "dry_run"),
+			"action":   action,
+		}, nil, "")
+	}
+	filter.Types = filteredTypes
+
+	// Apply the agent's per-type write rules before touching any row. A rules
+	// map only covers named types, so an untyped filter cannot be verified and
+	// is rejected rather than applied to types the rules never allowed.
+	writeRules := AgentWriteRulesFromContext(ctx)
+	if writeRules != nil {
+		if len(filter.Types) == 0 {
+			return nil, fmt.Errorf("filter.types is required when this agent has per-type write rules: an untyped bulk action cannot be checked against the agent's allowed types")
+		}
+		props, _ := args["properties"].(map[string]any)
+		for _, typ := range filter.Types {
+			switch action {
+			case graph.BulkActionSoftDelete, graph.BulkActionHardDelete:
+				if !writeRules.DeleteAllowed(typ) {
+					return nil, fmt.Errorf("bulk update entity: deleting objects of type %q is not allowed for this agent", typ)
+				}
+			default:
+				if !writeRules.UpdateAllowed(typ) {
+					return nil, fmt.Errorf("bulk update entity: updating objects of type %q is not allowed for this agent", typ)
+				}
+				if action == graph.BulkActionMergeProperties || action == graph.BulkActionReplaceProperties {
+					if err := writeRules.CheckFields(typ, props); err != nil {
+						return nil, fmt.Errorf("bulk update entity: %w", err)
+					}
+				}
+			}
+		}
+	}
+
+	req := &graph.BulkActionRequest{
+		Filter: filter,
+		Action: action,
+		DryRun: boolArg(args, "dry_run"),
+	}
+	if v, ok := args["value"].(string); ok {
+		req.Value = v
+	}
+	if props, ok := args["properties"].(map[string]any); ok {
+		req.Properties = props
+	}
+	req.Labels = stringSliceArg(args, "labels")
+	if limit, ok := intArg(args, "limit"); ok {
+		if limit < 0 {
+			return nil, fmt.Errorf("limit must not be negative")
+		}
+		req.Limit = limit
+	}
+
+	// Payload requirements are checked here so the error names the MCP parameter
+	// instead of surfacing a database-side no-op.
+	switch action {
+	case graph.BulkActionUpdateStatus:
+		if req.Value == "" {
+			return nil, fmt.Errorf("action=update_status requires 'value' (the new status)")
+		}
+	case graph.BulkActionMergeProperties, graph.BulkActionReplaceProperties:
+		if req.Properties == nil {
+			return nil, fmt.Errorf("action=%s requires 'properties'", action)
+		}
+	case graph.BulkActionAddLabels, graph.BulkActionRemoveLabels, graph.BulkActionSetLabels:
+		if len(req.Labels) == 0 {
+			return nil, fmt.Errorf("action=%s requires a non-empty 'labels' array", action)
+		}
+	}
+
+	resp, err := s.graphService.BulkAction(ctx, projectUUID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("bulk update entity: %w", err)
 	}
 
 	return envelopeResult(true, map[string]any{
-		"entity_id": entityID.String(),
+		"matched":  resp.Matched,
+		"affected": resp.Affected,
+		"dry_run":  resp.DryRun,
+		"action":   action,
 	}, nil, "")
+}
+
+// filterIsEmpty reports whether a bulk-action filter constrains anything. An
+// unconstrained filter matches the whole project, which the MCP surface refuses.
+func filterIsEmpty(f graph.BulkActionFilter) bool {
+	return len(f.Types) == 0 && len(f.PropertyFilters) == 0 && len(f.Labels) == 0 &&
+		f.CreatedAfter == nil && (f.Namespace == nil || *f.Namespace == "")
+}
+
+// boolArg reads a boolean argument tolerantly (JSON numbers decode as float64).
+func boolArg(args map[string]any, name string) bool {
+	v, ok := args[name].(bool)
+	return ok && v
+}
+
+// intArg reads an integer argument tolerantly (JSON numbers decode as float64).
+func intArg(args map[string]any, name string) (int, bool) {
+	switch v := args[name].(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	}
+	return 0, false
+}
+
+// stringSliceArg reads a []string argument tolerantly (JSON arrays decode as []any).
+func stringSliceArg(args map[string]any, name string) []string {
+	raw, ok := args[name].([]any)
+	if !ok {
+		if ss, ok := args[name].([]string); ok {
+			return ss
+		}
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // executeRestoreEntity restores a soft-deleted entity

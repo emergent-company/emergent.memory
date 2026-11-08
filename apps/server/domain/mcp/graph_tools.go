@@ -959,52 +959,127 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 	})
 }
 
-// executeDeleteRelationship soft-deletes a relationship
+// executeDeleteRelationship soft-deletes one or more relationships.
+//
+// Single form: relationship_id. Batch form: relationship_ids[] with one shared
+// reason; each item is deleted independently and reported as {index,
+// relationship_id, ok, error?} so a caller retries exactly the failed indexes.
 func (s *Service) executeDeleteRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	if raw, present := args["relationship_ids"]; present {
+		ids, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid relationship_ids: must be an array of relationship UUIDs")
+		}
+		if len(ids) == 0 {
+			return nil, fmt.Errorf("missing or empty relationship_ids array")
+		}
+		if len(ids) > batchMutationMaxItems {
+			return nil, batchOverLimitError("relationship-delete", len(ids))
+		}
+
+		// One branch and one reason apply to the whole batch, matching the
+		// single-item form's semantics. The per-item helper resolves the
+		// branch-local HEAD for each relationship.
+		var branchID *uuid.UUID
+		if branchRef, _ := args["branch"].(string); branchRef != "" {
+			branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+			if err != nil {
+				return nil, fmt.Errorf("resolve branch: %w", err)
+			}
+		}
+		reason := reasonFromArgs(args)
+
+		type batchDeleteResult struct {
+			Index          int    `json:"index"`
+			RelationshipID string `json:"relationship_id"`
+			OK             bool   `json:"ok"`
+			Error          string `json:"error,omitempty"`
+		}
+		results := make([]batchDeleteResult, 0, len(ids))
+		succeeded, failed := 0, 0
+		for i, rawID := range ids {
+			idStr, ok := rawID.(string)
+			if !ok || idStr == "" {
+				results = append(results, batchDeleteResult{Index: i, OK: false, Error: "invalid relationship_id: expected a non-empty UUID string"})
+				failed++
+				continue
+			}
+			if _, err := s.deleteRelationshipOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
+				results = append(results, batchDeleteResult{Index: i, RelationshipID: idStr, OK: false, Error: err.Error()})
+				failed++
+				continue
+			}
+			results = append(results, batchDeleteResult{Index: i, RelationshipID: idStr, OK: true})
+			succeeded++
+		}
+
+		allOK := failed == 0
+		errMsg := ""
+		if !allOK {
+			errMsg = fmt.Sprintf("%d of %d relationships failed to delete; retry the failed indexes only", failed, len(ids))
+		}
+		return envelopeResult(allOK, map[string]any{
+			"results": results,
+			"message": fmt.Sprintf("Batch relationship delete completed: %d succeeded, %d failed", succeeded, failed),
+		}, map[string]any{
+			"succeeded": succeeded,
+			"failed":    failed,
+			"total":     len(ids),
+		}, errMsg)
+	}
+
 	relIDStr, ok := args["relationship_id"].(string)
 	if !ok || relIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: relationship_id")
 	}
-
-	relID, err := uuid.Parse(relIDStr)
-	if err != nil {
+	if _, err := uuid.Parse(relIDStr); err != nil {
 		return nil, fmt.Errorf("invalid relationship_id: %w", err)
 	}
 
 	// Resolve optional branch param — auto-creates the branch if it does not exist.
-	// The tombstone must be written on the branch's own version chain, so resolve
-	// the branch-local HEAD and scope the delete to that branch.
 	var branchID *uuid.UUID
 	if branchRef, _ := args["branch"].(string); branchRef != "" {
 		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
 		if err != nil {
 			return nil, fmt.Errorf("resolve branch: %w", err)
 		}
-		relID, err = s.relationshipVersionOnBranch(ctx, projectUUID, relID, *branchID)
-		if err != nil {
-			return nil, fmt.Errorf("delete relationship: %w", err)
-		}
 	}
 
-	// Optional reason
-	var reason *string
-	if r, ok := args["reason"].(string); ok && r != "" {
-		reason = &r
-	}
-
-	_, err = s.graphService.DeleteRelationship(ctx, projectUUID, relID, branchID, reason, nil)
+	relID, err := s.deleteRelationshipOne(ctx, projectUUID, projectID, relIDStr, branchID, reasonFromArgs(args))
 	if err != nil {
-		return nil, fmt.Errorf("delete relationship: %w", err)
+		return nil, err
 	}
 
 	return envelopeResult(true, map[string]any{
 		"relationship_id": relID.String(),
 	}, nil, "")
+}
+
+// deleteRelationshipOne soft-deletes one relationship, scoped to the caller's
+// project. A relationship id from another project fails the same way as a
+// missing id and never touches the foreign row.
+func (s *Service) deleteRelationshipOne(ctx context.Context, projectUUID uuid.UUID, projectID, relIDStr string, branchID *uuid.UUID, reason *string) (uuid.UUID, error) {
+	relID, err := uuid.Parse(relIDStr)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid relationship_id: %w", err)
+	}
+
+	if branchID != nil {
+		relID, err = s.relationshipVersionOnBranch(ctx, projectUUID, relID, *branchID)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("delete relationship: %w", err)
+		}
+	}
+
+	if _, err := s.graphService.DeleteRelationship(ctx, projectUUID, relID, branchID, reason, nil); err != nil {
+		return uuid.Nil, fmt.Errorf("delete relationship: %w", err)
+	}
+	return relID, nil
 }
 
 // executeListTags gets all unique tags in the project
