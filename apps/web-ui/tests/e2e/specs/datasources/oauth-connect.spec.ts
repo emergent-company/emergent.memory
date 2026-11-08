@@ -16,48 +16,83 @@ import { test, expect } from '@playwright/test';
 
 // Stubs the Google Picker (gapi + google.picker) so a spec exercises the gateway
 // modal, session fetch, multi-select accumulation, and save without loading
-// Google's script or opening an iframe. The stub "picks" the given folders as
-// soon as the dialog is shown.
+// Google's script or opening an iframe. The stub "picks" the given folders (or
+// cancels) as soon as the dialog is shown, and records the views it was given
+// plus whether the host <dialog> was still in the top layer at that moment.
 async function stubGooglePicker(
   page: import('@playwright/test').Page,
   picked: Array<{ id: string; name: string }>,
+  options: { cancel?: boolean } = {},
 ): Promise<void> {
-  await page.addInitScript((docs) => {
-    const picker = {
-      Response: { ACTION: 'action', DOCUMENTS: 'docs' },
-      Action: { PICKED: 'picked', CANCEL: 'cancel' },
-      Document: { ID: 'id', NAME: 'name' },
-      Feature: { MULTISELECT_ENABLED: 'multiselect' },
-      ViewId: { FOLDERS: 'folders' },
-      DocsView: class {
-        setIncludeFolders() { return this; }
-        setSelectFolderEnabled() { return this; }
-        setEnableDrives() { return this; }
-      },
-      PickerBuilder: class {
-        cb: ((data: unknown) => void) | null = null;
-        setOAuthToken() { return this; }
-        setDeveloperKey() { return this; }
-        addView() { return this; }
-        setAppId() { return this; }
-        setOrigin() { return this; }
-        enableFeature() { return this; }
-        setCallback(cb: (data: unknown) => void) { this.cb = cb; return this; }
-        build() {
-          const cb = this.cb;
-          return {
-            setVisible: () => {
-              setTimeout(() => cb?.({ action: 'picked', docs }), 0);
-            },
-          };
-        }
-      },
-    };
-    (window as unknown as { google: unknown }).google = { picker };
-    (window as unknown as { gapi: unknown }).gapi = {
-      load: (_name: string, opts: { callback: () => void }) => opts.callback(),
-    };
-  }, picked);
+  await page.addInitScript(
+    ({ docs, cancel }) => {
+      interface StubView {
+        viewId: string;
+        enableDrives: boolean;
+        mode: string | null;
+      }
+      const views: StubView[] = [];
+      const picker = {
+        Response: { ACTION: 'action', DOCUMENTS: 'docs' },
+        Action: { PICKED: 'picked', CANCEL: 'cancel', ERROR: 'error' },
+        Document: { ID: 'id', NAME: 'name' },
+        Feature: { MULTISELECT_ENABLED: 'multiselect' },
+        ViewId: { FOLDERS: 'folders' },
+        DocsViewMode: { LIST: 'list' },
+        DocsView: class {
+          viewId: string;
+          enableDrives = false;
+          mode: string | null = null;
+          constructor(viewId: string) {
+            this.viewId = viewId;
+            views.push(this);
+          }
+          setIncludeFolders() { return this; }
+          setSelectFolderEnabled() { return this; }
+          setEnableDrives(value: boolean) {
+            this.enableDrives = value !== false;
+            return this;
+          }
+          setMode(mode: string) {
+            this.mode = mode;
+            return this;
+          }
+        },
+        PickerBuilder: class {
+          cb: ((data: unknown) => void) | null = null;
+          setOAuthToken() { return this; }
+          setDeveloperKey() { return this; }
+          addView() { return this; }
+          setAppId() { return this; }
+          setOrigin() { return this; }
+          enableFeature() { return this; }
+          setCallback(cb: (data: unknown) => void) { this.cb = cb; return this; }
+          build() {
+            const cb = this.cb;
+            return {
+              setVisible: () => {
+                const host = document.getElementById('ds-folder-picker') as HTMLDialogElement | null;
+                w.__dsPickerHostOpenAtShow = Boolean(host && host.open);
+                setTimeout(() => cb?.(cancel ? { action: 'cancel' } : { action: 'picked', docs }), 0);
+              },
+            };
+          }
+        },
+      };
+      const w = window as unknown as {
+        google: unknown;
+        gapi: unknown;
+        __dsPickerViews: StubView[];
+        __dsPickerHostOpenAtShow?: boolean;
+      };
+      w.google = { picker };
+      w.__dsPickerViews = views;
+      w.gapi = {
+        load: (_name: string, opts: { callback: () => void }) => opts.callback(),
+      };
+    },
+    { docs: picked, cancel: options.cancel === true },
+  );
 }
 
 // Google Drive advertises OAuth only (its card has no credentials action);
@@ -138,6 +173,33 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByText('Data source connected.')).toHaveCount(0);
   });
 
+  test('cancelling the Google Picker reopens the modal without changing the selection', async ({ page }) => {
+    await stubGooglePicker(page, [], { cancel: true });
+
+    await page.goto('/data-sources/s1');
+    await page.getByTestId('ds-choose-folders').click();
+    const dialog = page.getByTestId('ds-folder-picker');
+    await expect(dialog).toBeVisible();
+    const before = ((await dialog.getByTestId('ds-folder-picker-count').textContent()) ?? '').trim();
+
+    await dialog.getByTestId('ds-folder-picker-open').click();
+
+    // Wait for the picker itself to mount (the stub records that synchronously
+    // from setVisible) before asserting anything about the callback/restore;
+    // the session fetch and script load are async.
+    await expect
+      .poll(async () =>
+        page.evaluate(() => {
+          const w = window as unknown as { __dsPickerHostOpenAtShow?: boolean };
+          return w.__dsPickerHostOpenAtShow;
+        }),
+      )
+      .toBe(false);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('ds-folder-picker-count')).toHaveText(before);
+    await expect(dialog.getByTestId('ds-folder-picker-error')).toBeHidden();
+  });
+
   test('OAuth-connected source picks folders in the modal and saves them', async ({ page }) => {
     await stubGooglePicker(page, [
       { id: 'folder-picked', name: 'Picked Folder' },
@@ -157,6 +219,28 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Picked Folder');
     await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Second Folder');
     await expect(dialog.getByTestId('ds-folder-picker-count')).toHaveText('2 selected');
+
+    // Regression: My Drive must be its own view — setEnableDrives(true) alone
+    // restricts a view to shared drives, hiding My Drive entirely — and the
+    // host modal must leave the browser top layer while the picker is visible.
+    const pickerState = await page.evaluate(() => {
+      const w = window as unknown as {
+        __dsPickerViews: Array<{ viewId: string; enableDrives: boolean; mode: string | null }>;
+        __dsPickerHostOpenAtShow?: boolean;
+      };
+      return {
+        views: w.__dsPickerViews.map((view) => ({
+          viewId: view.viewId,
+          enableDrives: view.enableDrives,
+          mode: view.mode,
+        })),
+        hostOpenAtShow: w.__dsPickerHostOpenAtShow,
+      };
+    });
+    expect(pickerState.views.map((view) => view.enableDrives)).toEqual([false, true]);
+    expect(pickerState.views.every((view) => view.viewId === 'folders')).toBe(true);
+    expect(pickerState.views.every((view) => view.mode === 'list')).toBe(true);
+    expect(pickerState.hostOpenAtShow).toBe(false);
 
     await dialog.getByTestId('ds-folder-picker-save').click();
     await page.waitForURL(/updated=1/);
