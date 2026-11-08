@@ -552,9 +552,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
 							}
 							for _, p := range propDefs {
-								@fm.FormControl(p.Name, p.Label(), fm.LabelAbove, p.KeyHint(), "", nil) {
-									@propertyInput(p, form.Props[p.Name], nil, form.JSONProps[p.Name])
-								}
+								@objectPropertyField(p, p.Label(), p.KeyHint(), form.Props[p.Name], nil, form.JSONProps[p.Name])
 							}
 						</div>
 					}
@@ -701,15 +699,50 @@ templ propertyInput(def objectPropertyDef, vals []string, stored any, submittedJ
 // longTextarea renders the free-form, multi-line string field used wherever an
 // object property may hold long text (schema string properties and stored
 // properties with no schema definition). It is an auto-growing, vertically
-// resizable textarea with a muted live character counter. The counter's initial
-// value is rendered server-side so it is correct before JS runs; app.js keeps
-// it in sync on input and re-initialises on HTMX swaps (boosted client-side
-// navigation does not fire DOMContentLoaded).
+// resizable textarea. The live character counter is NOT part of this control:
+// objectPropertyField renders it in the field's label row (#420) and wraps both
+// in the [data-char-counter] scope app.js updates.
 templ longTextarea(name string, value string) {
-	<div class="w-full" data-char-counter>
-		<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
-		<div class="text-muted-faint mt-1 text-right text-xs" data-testid="char-count" data-char-count-value>{ charCountLabel(value) }</div>
+	<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
+}
+
+// objectField renders one labelled object form field. The label row owns the
+// optional character counter (right-aligned, long-text fields only), the control
+// follows, and the description wraps onto its own line below the control instead
+// of widening the field past its card (#419, #420). The root is the counter's
+// [data-char-counter] scope, so app.js keeps the label-row count in sync with
+// the textarea inside it.
+templ objectField(name, label, hint, counter string) {
+	<div
+		class="flex min-w-0 flex-col gap-1.5"
+		role="group"
+		aria-labelledby={ "object-field-label-" + name }
+		if counter != "" {
+			data-char-counter
+		}
+	>
+		<div class="flex items-baseline justify-between gap-3">
+			<span class="text-sm font-medium" id={ "object-field-label-" + name }>{ label }</span>
+			if counter != "" {
+				<div class="text-muted-faint text-right text-xs" data-testid="char-count" data-char-count-value>{ counter }</div>
+			}
+		</div>
+		{ children... }
+		if hint != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "break-words"}) {
+				{ hint }
+			}
+		}
 	</div>
+}
+
+// objectPropertyField renders one schema property: its label row (with the
+// long-text character counter), the type-appropriate control, and its
+// description.
+templ objectPropertyField(def objectPropertyDef, label, hint string, vals []string, stored any, submittedJSON bool) {
+	@objectField(def.Name, label, hint, propertyCharCount(def, vals)) {
+		@propertyInput(def, vals, stored, submittedJSON)
+	}
 }
 
 // jsonTextarea renders a JSON document property (an `object`, or an `array`
@@ -897,7 +930,7 @@ templ objectRelationshipsPage(data objectDetailShellData, relTypes []CompiledTyp
 				Attrs:   templ.Attributes{"data-testid": "object-relationships-error"},
 			})
 		} else {
-			@objectRelationships(data.Obj, relTypes, edges, related)
+			@objectRelationships(data.Obj, relTypes, edges, related, data.TypeUIByType)
 		}
 	}
 }
@@ -1131,10 +1164,10 @@ templ objectTypePropertyField(r objectTypePropertyRow) {
 	if len(r.Values) > 0 {
 		value = r.Values[0]
 	} }}
-	@fm.FormControl(r.Name, r.Label, fm.LabelAbove, r.Hint, "", nil) {
-		if r.Declared {
-			@propertyInput(r.Def, r.Values, r.Stored, false)
-		} else {
+	if r.Declared {
+		@objectPropertyField(r.Def, r.Label, r.Hint, r.Values, r.Stored, false)
+	} else {
+		@objectField(r.Name, r.Label, r.Hint, charCountLabel(value)) {
 			<input type="hidden" name={ "propm_present_" + r.Name } value="1"/>
 			@longTextarea("prop_"+r.Name, value)
 		}
@@ -1144,7 +1177,9 @@ templ objectTypePropertyField(r objectTypePropertyRow) {
 // objectRelationships lists the relationships touching an object, or — when
 // none exist — an empty state with a Connect CTA that opens the relationship
 // dialog. relTypes carries the schema's compiled relationship types.
-templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject) {
+// typeUIByType carries the compiled object types' declared accents so each
+// endpoint renders with its type's icon and color, like the objects table.
+templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) {
 	@ui.Section("Relationships", ui.SectionProps{
 		Margin:    "mt-6",
 		CardClass: "overflow-hidden",
@@ -1170,7 +1205,7 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 		} else {
 			<div class="divide-y divide-base-200">
 				for _, r := range edges {
-					@objectRelationshipRow(obj, r, related)
+					@objectRelationshipRow(obj, r, related, typeUIByType)
 				}
 			</div>
 		}
@@ -1259,7 +1294,7 @@ script openObjectConnect() {
 	window.MemoryApp.openDialog("object-connect-modal");
 }
 
-templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []GraphObject) {
+templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) {
 	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
 		@ui.Badge(ui.BadgeProps{
 			Label:   relationshipTypeLabel(r.Type),
@@ -1267,9 +1302,54 @@ templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []Gra
 			Size:    ui.BadgeSizeXS,
 			Icon:    "lucide--link",
 		})
-		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.SrcID) }</span>
+		@relationshipEndpointLink(obj, related, r.SrcID, typeUIByType)
 		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-muted-subtle")
-		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.DstID) }</span>
+		@relationshipEndpointLink(obj, related, r.DstID, typeUIByType)
+	</div>
+}
+
+// relationshipEndpointLink renders one relationship endpoint the way the
+// objects table renders an object: the type's icon tile, the type above the
+// short id, and the label as a link to the object. Resolving the endpoint to the
+// fetched related object (rather than printing its label text) is what makes
+// the row navigable (#421). An endpoint missing from the fetched slice renders
+// as the same block without a link: the related-object read is best-effort, so a
+// link there would point at an object page that may not exist.
+templ relationshipEndpointLink(obj *GraphObject, related []GraphObject, id string, typeUIByType map[string]typeUI) {
+	{{ ep, resolved := relationshipEndpointObject(obj, related, id)
+	hrefID := relationshipEndpointTarget(ep) }}
+	if resolved {
+		<a
+			href={ templ.URL("/objects/" + url.PathEscape(hrefID)) }
+			class="group hover:bg-base-200/40 flex min-w-0 items-center gap-2 rounded-field px-1.5 py-0.5"
+			data-testid="object-relationship-endpoint"
+			data-object-id={ hrefID }
+		>
+			@relationshipEndpointContent(ep, hrefID, typeUIByType)
+		</a>
+	} else {
+		<span class="flex min-w-0 items-center gap-2 px-1.5 py-0.5" data-testid="object-relationship-endpoint" data-object-id={ hrefID } data-unresolved="1">
+			@relationshipEndpointContent(ep, hrefID, typeUIByType)
+		</span>
+	}
+}
+
+// relationshipEndpointContent is the type tile, type name and short id block
+// shared by the linked and unresolved endpoint renderings.
+templ relationshipEndpointContent(ep GraphObject, hrefID string, typeUIByType map[string]typeUI) {
+	{{ tui := typeUIOf(typeUIByType, ep.Type)
+	typeLabel := ep.Type
+	if typeLabel == "" {
+		typeLabel = "object"
+	} }}
+	@typeIconTileSmall(tui.Icon, tui.Color)
+	<div class="min-w-0">
+		<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
+			<span class="truncate">{ typeLabel }</span>
+			<span class="bg-base-content/25 size-1.5 shrink-0 rounded-full" aria-hidden="true"></span>
+			<span class="shrink-0">#{ objectShortID(hrefID) }</span>
+		</div>
+		<span class="group-hover:text-primary block truncate text-sm font-medium group-hover:underline">{ graphObjectLabel(ep) }</span>
 	</div>
 }
 
