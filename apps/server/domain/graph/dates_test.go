@@ -212,6 +212,43 @@ func TestChangesetVersionNormalisesInheritedDates(t *testing.T) {
 	assert.Equal(t, "new", version.Properties["title"])
 }
 
+// TestChangesetVersionWithoutPropertiesDoesNotMutateHead proves why the version
+// path copies before normalising: a push that omits properties inherits the
+// head map, and normalising it in place would rewrite the caller's previous
+// head as a side effect of building the new version.
+func TestChangesetVersionWithoutPropertiesDoesNotMutateHead(t *testing.T) {
+	schemas := &ExtractionSchemas{ObjectSchemas: map[string]agents.ObjectSchema{
+		"Obligation": dateTestSchema(),
+	}}
+	head := &GraphObject{
+		Type:       "Obligation",
+		Properties: map[string]any{"next_due": "2026-12-01T00:00:00Z", "title": "old"},
+	}
+
+	version := buildChangesetObjectVersion(head, &ChangesetObjectItem{}, uuid.New(), schemas, "source", nil, false, nil)
+
+	assert.Equal(t, "2026-12-01", version.Properties["next_due"], "the new version converges")
+	assert.Equal(t, "2026-12-01T00:00:00Z", head.Properties["next_due"], "the previous head must not be mutated")
+}
+
+// TestNormaliseChangesetRelationshipDateProperties proves a source push of an
+// edge whose schema declares a date stores the calendar shape, using the
+// endpoint-specific relationship schema, without mutating the request map.
+func TestNormaliseChangesetRelationshipDateProperties(t *testing.T) {
+	schemas := &ExtractionSchemas{RelationshipSchemas: map[string]agents.RelationshipSchema{
+		relationshipSchemaKey("owns", "Person", "Vehicle"): {Properties: map[string]agents.PropertyDef{
+			"purchased_on": {Type: "date"},
+		}},
+	}}
+	props := map[string]any{"purchased_on": "2026-12-01T00:00:00Z", "note": "kept"}
+
+	got := normaliseChangesetRelationshipDateProperties(props, schemas, "owns", "Person", "Vehicle")
+
+	assert.Equal(t, "2026-12-01", got["purchased_on"])
+	assert.Equal(t, "kept", got["note"])
+	assert.Equal(t, "2026-12-01T00:00:00Z", props["purchased_on"], "the request map must not be mutated")
+}
+
 // TestNormaliseRelationshipDatePropertyValues proves edge properties converge
 // on read using the relationship schema.
 func TestNormaliseRelationshipDatePropertyValues(t *testing.T) {

@@ -1864,8 +1864,9 @@ func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID, p
 	edges := make([]*GraphRelationshipResponse, 0, len(incomingResp)+len(outgoingResp))
 	edges = append(edges, incomingResp...)
 	edges = append(edges, outgoingResp...)
-	// Edge date properties converge on read as well. The queried object is an
-	// endpoint of every returned edge, so its type sharpens the schema lookup.
+	// Edge date properties converge on read as well. Only the queried object's
+	// type is loaded here, so an endpoint-agnostic schema or one keyed on that
+	// side matches; the other endpoint's type is unknown.
 	s.normaliseRelationshipResponseDates(ctx, projectID, edges, map[uuid.UUID]string{obj.CanonicalID: obj.Type})
 	if err := s.fillRelationshipContributions(ctx, projectID, edges); err != nil {
 		return nil, err
@@ -1904,6 +1905,12 @@ func (s *Service) GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canoni
 			Outgoing: outgoing,
 		}
 	}
+
+	// Endpoint object types are not loaded for a batch read, so only the
+	// endpoint-agnostic relationship schema can normalise here — same as
+	// ListRelationships. Without this, batch consumers would still see the
+	// legacy date shape that GetEdges has already converged.
+	s.normaliseRelationshipResponseDates(ctx, projectID, all, nil)
 
 	// Every edge in the batch shares one contributions query.
 	if err := s.fillRelationshipContributions(ctx, projectID, all); err != nil {
@@ -2847,10 +2854,12 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 
 	// Return the tombstone
 	tombstone, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, branchID, head.Type, head.SrcID, head.DstID)
-	if tombstone == nil {
-		return head.ToResponse(), nil
+	resp := head.ToResponse()
+	if tombstone != nil {
+		resp = tombstone.ToResponse()
 	}
-	return tombstone.ToResponse(), nil
+	s.normaliseRelationshipResponseDates(ctx, projectID, []*GraphRelationshipResponse{resp}, nil)
+	return resp, nil
 }
 
 // RestoreRelationship restores a soft-deleted relationship.
@@ -2898,8 +2907,13 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	if restored != nil {
 		s.enqueueRelationshipEmbedding(ctx, restored.ID.String())
 	}
+	if restored == nil {
+		return nil, apperror.ErrNotFound
+	}
 
-	return restored.ToResponse(), nil
+	resp := restored.ToResponse()
+	s.normaliseRelationshipResponseDates(ctx, projectID, []*GraphRelationshipResponse{resp}, nil)
+	return resp, nil
 }
 
 // GetRelationshipHistory returns version history for a relationship.
@@ -2919,6 +2933,7 @@ func (s *Service) GetRelationshipHistory(ctx context.Context, projectID, id uuid
 	for i, v := range versions {
 		data[i] = v.ToResponse()
 	}
+	s.normaliseRelationshipResponseDates(ctx, projectID, data, nil)
 
 	// Each relationship version reports its own contributors, in one query.
 	if err := s.fillRelationshipContributions(ctx, projectID, data); err != nil {
@@ -3947,10 +3962,16 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 	}
 
 	// Build primary results
+	normaliseObject := func(resp *GraphObjectResponse) *GraphObjectResponse {
+		if resp != nil {
+			resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		}
+		return resp
+	}
 	primaryResults := make([]*SearchWithNeighborsResultItem, len(ftsResults))
 	for i, r := range ftsResults {
 		primaryResults[i] = &SearchWithNeighborsResultItem{
-			Object: r.Object.ToResponse(),
+			Object: normaliseObject(r.Object.ToResponse()),
 			Score:  r.Rank,
 		}
 	}
@@ -3991,7 +4012,7 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 						if len(objectNeighbors) >= maxNeighbors {
 							break
 						}
-						objectNeighbors = append(objectNeighbors, vr.Object.ToResponse())
+						objectNeighbors = append(objectNeighbors, normaliseObject(vr.Object.ToResponse()))
 					}
 				} else {
 					s.log.Warn("vector search failed for neighbor expansion",
@@ -4020,7 +4041,7 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 						}
 					}
 					if !duplicate {
-						objectNeighbors = append(objectNeighbors, n.ToResponse())
+						objectNeighbors = append(objectNeighbors, normaliseObject(n.ToResponse()))
 					}
 				}
 			} else {

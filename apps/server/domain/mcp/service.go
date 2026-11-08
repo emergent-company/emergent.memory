@@ -805,14 +805,14 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-create",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create relationships in the same call, avoiding a separate create_relationship call. Each inline relationship reports its own result in 'relationship_results' ({ok, relationship|reason, error, index}); the batch returns ok=false if any entity or inline relationship failed, even though entities that were created remain created.",
+			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create relationships in the same call, avoiding a separate create_relationship call. Each inline relationship reports its own result in 'relationship_results' ({ok, relationship|reason, error, index}); the batch returns ok=false if any entity or inline relationship failed, even though entities that were created remain created. meta.relationships_total counts the inline specs actually attempted: specs belonging to an entity that was skipped (near-duplicate or failed) are reported on that item as relationships_skipped and are not attempted.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entities": {
 						Type:        "array",
 						Items:       &PropertySchema{Type: "object"},
-						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, source_id|target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id).",
+						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both or neither is reported as invalid_spec.",
 					},
 					"branch": {
 						Type:        "string",

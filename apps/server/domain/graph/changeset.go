@@ -264,7 +264,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	for i, relItem := range req.Relationships {
-		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, actorType, actorUUID)
+		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, schemas, actorType, actorUUID)
 		if err != nil {
 			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
 		}
@@ -472,6 +472,7 @@ func (s *Service) applyChangesetRelationship(
 	sourceID uuid.UUID,
 	item *ChangesetRelationshipItem,
 	objByRef map[string]*GraphObject,
+	schemas *ExtractionSchemas,
 	actorType string,
 	actorID *uuid.UUID,
 ) (ChangesetItemResult, *uuid.UUID, error) {
@@ -548,6 +549,12 @@ func (s *Service) applyChangesetRelationship(
 		if item.Properties != nil {
 			version.Properties = item.Properties
 		}
+		// Date properties converge on this write path too. The endpoints are
+		// known, so the type-specific relationship schema applies. The helper
+		// copies first: when the push omits properties, version.Properties
+		// aliases head.Properties and must not be mutated in place.
+		version.Properties = normaliseChangesetRelationshipDateProperties(
+			version.Properties, schemas, version.Type, srcObj.Type, dstObj.Type)
 		if item.Weight != nil {
 			version.Weight = item.Weight
 		}
@@ -577,6 +584,7 @@ func (s *Service) applyChangesetRelationship(
 	if props == nil {
 		props = map[string]any{}
 	}
+	props = normaliseChangesetRelationshipDateProperties(props, schemas, relType, srcObj.Type, dstObj.Type)
 	rel := &GraphRelationship{
 		ProjectID:     projectID,
 		BranchID:      srcObj.BranchID,
@@ -779,6 +787,27 @@ func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectS
 	}
 	schema, ok := schemas.ObjectSchemas[objectType]
 	return schema, ok
+}
+
+// normaliseChangesetRelationshipDateProperties normalises an edge's date
+// properties on a source push, using the schemas already loaded for the
+// changeset. Both endpoint types are known here, so the type-specific
+// relationship schema applies (issue #402). The map is copied first: the
+// caller's request (or the previous head a version aliases) must not be
+// mutated.
+func normaliseChangesetRelationshipDateProperties(props map[string]any, schemas *ExtractionSchemas, relType, srcType, dstType string) map[string]any {
+	if len(props) == 0 || schemas == nil || schemas.RelationshipSchemas == nil || relType == "" {
+		return props
+	}
+	relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, relType, srcType, dstType)
+	if !ok || len(relSchema.Properties) == 0 {
+		return props
+	}
+	objSchema := agents.ObjectSchema{Properties: relSchema.Properties}
+	if !schemaHasDateProperties(objSchema) {
+		return props
+	}
+	return normaliseDateProperties(copyProperties(props), objSchema)
 }
 
 // checkSchemaProperties validates props and returns the coerced map. Callers

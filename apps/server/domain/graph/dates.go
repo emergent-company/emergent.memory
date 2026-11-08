@@ -174,8 +174,8 @@ func (s *Service) NormaliseDatePropertyValues(ctx context.Context, projectID uui
 // an endpoint's canonical id to its object type; when an endpoint is known the
 // type-specific relationship schema is used. Without it only the
 // endpoint-agnostic schema for the relationship type can match, which is a
-// narrower guarantee — callers that already hold an endpoint (GetEdges,
-// get-entity-edges) should pass its type.
+// narrower guarantee — callers holding an endpoint (GetEdges) or both endpoints
+// (get-entity-edges) should pass the types they know.
 func (s *Service) normaliseRelationshipResponseDates(ctx context.Context, projectID uuid.UUID, rels []*GraphRelationshipResponse, endpointTypes map[uuid.UUID]string) {
 	if s == nil || len(rels) == 0 || s.schemaProvider == nil {
 		return

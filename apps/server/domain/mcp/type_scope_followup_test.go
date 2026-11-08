@@ -257,8 +257,9 @@ func TestTypeScopeFollowup_EntityCreateSkipsExcludedInlineRelationship(t *testin
 			Results []struct {
 				OK     bool `json:"ok"`
 				Entity struct {
-					Relationships       []any `json:"relationships"`
-					RelationshipsFailed int   `json:"relationships_failed"`
+					ID                  string `json:"id"`
+					Relationships       []any  `json:"relationships"`
+					RelationshipsFailed int    `json:"relationships_failed"`
 					RelationshipResults []struct {
 						OK     bool   `json:"ok"`
 						Index  int    `json:"index"`
@@ -289,6 +290,17 @@ func TestTypeScopeFollowup_EntityCreateSkipsExcludedInlineRelationship(t *testin
 	require.Len(t, item.Entity.RelationshipResults, 1)
 	assert.False(t, item.Entity.RelationshipResults[0].OK)
 	assert.Equal(t, inlineRelReasonTypeNotAllowed, item.Entity.RelationshipResults[0].Reason)
+
+	// The response omitting the edge is not enough: no row may exist either.
+	rows, err := db.NewSelect().
+		TableExpr("kb.graph_relationships").
+		Where("project_id = ?", projectID).
+		Where("type = ?", "OWNS").
+		Where("src_id = ?", item.Entity.ID).
+		Where("deleted_at IS NULL").
+		Count(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, rows, "an excluded inline relationship must not be persisted")
 }
 
 // An edge whose endpoint object type is outside the agent's object scope must
