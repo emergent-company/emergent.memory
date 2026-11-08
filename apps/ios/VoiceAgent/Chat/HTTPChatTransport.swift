@@ -1,97 +1,6 @@
 import Foundation
 import Observation
 
-// MARK: - Streaming seam
-
-/// Opens the gateway's chat stream and yields its raw SSE `data:` payloads.
-///
-/// A seam rather than a concrete client so the transport (and its frame
-/// mapping) is testable without a network: tests feed recorded frames.
-protocol ChatStreaming: Sendable {
-    func frames(_ turn: ChatTurnRequest) -> AsyncThrowingStream<String, Error>
-}
-
-/// The live implementation: `POST {gateway}/api/chat` with the device
-/// credential, `Accept: text/event-stream`.
-///
-/// This is the same endpoint the web chat uses. The app used to reach text only
-/// through a LiveKit room, which needed a token endpoint, a LiveKit server and a
-/// bridge worker — none of which exist on a deployment without a voice stack.
-struct HTTPChatStreamClient: ChatStreaming {
-    let config: MemoryConfig
-    var session: URLSession = .shared
-
-    func frames(_ turn: ChatTurnRequest) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let request = try makeRequest(turn)
-                    let (bytes, response) = try await session.bytes(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        throw GatewayError.transport("The chat stream returned no HTTP response.")
-                    }
-                    guard (200 ..< 300).contains(http.statusCode) else {
-                        var body = Data()
-                        for try await line in bytes.lines {
-                            body.append(Data(line.utf8))
-                        }
-                        throw GatewayError.httpStatus(http.statusCode, Self.errorMessage(body, status: http.statusCode))
-                    }
-
-                    var parser = SSEFrameParser()
-                    for try await line in bytes.lines {
-                        if Task.isCancelled {
-                            break
-                        }
-                        if let payload = parser.consume(line) {
-                            continuation.yield(payload)
-                        }
-                    }
-                    if !Task.isCancelled, let payload = parser.finish() {
-                        continuation.yield(payload)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-
-    private func makeRequest(_ turn: ChatTurnRequest) throws -> URLRequest {
-        guard let base = config.gatewayBaseURL else {
-            throw GatewayError.invalidConfiguration(
-                "Could not derive the chat URL from the token endpoint: \(config.tokenEndpoint)"
-            )
-        }
-        let url = base.appending(path: "api").appending(path: "chat")
-        let body = try JSONEncoder().encode(ChatTurnBody(turn))
-        return GatewayHTTP.makeRequest(
-            method: "POST",
-            url: url,
-            apiKey: config.apiKey,
-            body: body,
-            contentType: "application/json",
-            extraHeaders: [
-                "Accept": "text/event-stream",
-                "Cache-Control": "no-cache",
-            ],
-            timeout: 600
-        )
-    }
-
-    /// Mirrors the gateway's `{"error": "..."}` body when present.
-    private static func errorMessage(_ body: Data, status: Int) -> String {
-        if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-           let message = object["error"] as? String ?? object["detail"] as? String
-        {
-            return "Chat returned HTTP \(status): \(message)"
-        }
-        return "Chat returned HTTP \(status): \(HTTPURLResponse.localizedString(forStatusCode: status))"
-    }
-}
-
 // MARK: - Transport
 
 /// Serves a text turn over the gateway's HTTP chat stream and feeds the same
@@ -120,32 +29,20 @@ final class HTTPChatTransport {
     /// persist it in ``ActiveSessionStore``.
     var onConversationLearned: ((String) -> Void)?
 
-    /// A reply the client saw cut off mid-stream, and the live copy holding it.
-    struct InterruptedTurn: Equatable, Sendable {
-        /// Live message carrying the truncated text, dropped once the record
-        /// holds the finished reply.
-        let liveMessageID: String
-        /// What the user already saw, used to recognise the finished reply.
-        let partialText: String
-        /// The banner this drop raised. The composer's banner slot is shared by
-        /// every turn, so settling this drop must not clear a later turn's
-        /// failure: `discardInterruptedLiveCopy` only clears the banner when it
-        /// is still this one (`emergent.memory#213`).
-        let failureMessage: String
-    }
-
     /// The turn whose reply was cut off mid-stream, set only once text is on
-    /// screen.
-    ///
-    /// A closed stream does not cancel the run — Memory executes the agent on a
-    /// detached context — but it records the assistant reply only when the run
-    /// ends, which is after the last frame this client saw. The view waits for
-    /// that record and swaps it in (``ChatSessionView/recoverInterruptedTurn()``);
-    /// reloading at the drop would return the same truncated record.
-    ///
-    /// Empty text leaves this `nil`: a refused request or a connection that
-    /// never opened has nothing to recover, so it must not trigger a reload.
+    /// screen. The run continues server-side and is recorded when it ends, so
+    /// the view waits for that record and swaps it in
+    /// (``ChatSessionView/recoverInterruptedTurn()``) instead of reloading the
+    /// same truncated one. Empty text leaves this `nil`: a refused request has
+    /// nothing to recover.
     private(set) var interruptedTurn: InterruptedTurn?
+
+    /// The last turn that ended without a reply this client could show, set once
+    /// the stream is over. Nothing was ever on screen, so the recorded reply is
+    /// the only copy; the view waits for it and loads it
+    /// (``ChatSessionView/recoverUnansweredTurn()``), and a newer turn clears
+    /// this so one wait cannot write into the next chat (`emergent.memory#445`).
+    private(set) var unansweredTurn: UnansweredTurn?
 
     private let config: MemoryConfig
     private let stream: any ChatStreaming
@@ -193,12 +90,17 @@ final class HTTPChatTransport {
             self.conversationID = conversationID
         }
         errorMessage = nil
+        // A newer turn owns the transcript now: a wait for the previous turn's
+        // record must not reload it under this one.
+        unansweredTurn = nil
         isStreaming = true
 
         // A surface action has no typed text: the card the user clicked is the
         // visible turn, and the record holds the framed message on reload.
+        var anchorMessageID: String?
         if !message.isEmpty {
             let userMessageID = "http-user-\(UUID().uuidString)"
+            anchorMessageID = userMessageID
             liveMessages.append(LiveTranscriptMessage(id: userMessageID, role: .user, text: message))
             transcript.syncLive(liveMessages)
             activity.userTurnStarted(anchorMessageID: userMessageID)
@@ -207,9 +109,12 @@ final class HTTPChatTransport {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await runTurn(
-                message: message,
-                surfaceAction: surfaceAction,
-                agentName: agentName,
+                TurnPlan(
+                    message: message,
+                    surfaceAction: surfaceAction,
+                    anchorMessageID: anchorMessageID,
+                    agentName: agentName
+                ),
                 transcript: transcript,
                 activity: activity
             )
@@ -235,6 +140,7 @@ final class HTTPChatTransport {
         isStreaming = false
         errorMessage = nil
         interruptedTurn = nil
+        unansweredTurn = nil
         liveMessages.removeAll()
         conversationID = nil
     }
@@ -260,31 +166,48 @@ final class HTTPChatTransport {
         }
     }
 
-    // MARK: - Streaming
-
-    /// What one turn accumulates while its frames stream in.
-    private struct TurnState {
-        let assistantMessageID: String
-        var text = ""
-        var started = false
+    /// Clears the unanswered turn once its recorded reply is on screen, and the
+    /// banner with it if that banner is still this turn's.
+    ///
+    /// Nothing of the turn ever streamed, so the record now supplies both
+    /// halves: the live user copy would duplicate the recorded one, and the
+    /// empty live turn has nothing left to draw beneath the reply
+    /// (`emergent.memory#445`).
+    func settleUnansweredTurn(
+        in transcript: ChatSessionTranscriptStore,
+        activity: ChatActivityStore
+    ) {
+        guard let unanswered = unansweredTurn else { return }
+        unansweredTurn = nil
+        liveMessages.removeAll { $0.id == unanswered.anchorMessageID }
+        transcript.syncLive(liveMessages)
+        activity.discardTurn(anchoredTo: unanswered.anchorMessageID)
+        if errorMessage == unanswered.failureMessage {
+            errorMessage = nil
+        }
     }
 
+    // MARK: - Streaming
+
     private func runTurn(
-        message: String,
-        surfaceAction: ChatSurfaceAction?,
-        agentName: String,
+        _ plan: TurnPlan,
         transcript: ChatSessionTranscriptStore,
         activity: ChatActivityStore
     ) async {
-        var state = TurnState(assistantMessageID: "http-assistant-\(UUID().uuidString)")
+        var state = TurnState(
+            assistantMessageID: "http-assistant-\(UUID().uuidString)",
+            anchorMessageID: plan.anchorMessageID
+        )
+        var failure: Error?
+        defer { isStreaming = false }
 
         do {
-            let agentID = await resolveAgentDefinitionID(name: agentName)
+            let agentID = await resolveAgentDefinitionID(name: plan.agentName)
             let frames = stream.frames(ChatTurnRequest(
                 conversationID: conversationID,
                 agentDefinitionID: agentID,
-                message: message,
-                surfaceAction: surfaceAction
+                message: plan.message,
+                surfaceAction: plan.surfaceAction
             ))
             for try await payload in frames {
                 if Task.isCancelled {
@@ -300,29 +223,80 @@ final class HTTPChatTransport {
                 ) else { continue }
                 apply(event, state: &state, transcript: transcript, activity: activity)
             }
-            if !Task.isCancelled {
-                activity.markReplyFinished()
-            }
         } catch is CancellationError {
-            // Stop pressed: keep whatever streamed in.
+            // Cancelled by ``reset()``: the view has left this chat, so its
+            // state is no longer ours to settle.
+            return
         } catch {
             guard !Task.isCancelled else { return }
-            let failure = ChatTurnFailure.message(for: error)
-            errorMessage = failure
+            failure = error
+            let message = ChatTurnFailure.message(for: error)
+            errorMessage = message
             // Text on screen means the run got going: it is still going
             // server-side and will be recorded when it ends, so the view can
-            // wait for the finished reply. Without text there is nothing to
-            // recover and nothing to reload.
-            interruptedTurn = state.text.isEmpty ? nil : InterruptedTurn(
-                liveMessageID: state.assistantMessageID,
-                partialText: state.text,
-                // Remembered so settling this drop does not clear a banner a
-                // later turn raised over the same slot.
-                failureMessage: failure
-            )
-            activity.markReplyFinished()
+            // wait for the finished reply keeping what it already shows.
+            if !state.text.isEmpty {
+                interruptedTurn = InterruptedTurn(
+                    liveMessageID: state.assistantMessageID,
+                    partialText: state.text,
+                    // Remembered so settling this drop does not clear a banner a
+                    // later turn raised over the same slot.
+                    failureMessage: message
+                )
+            }
         }
-        isStreaming = false
+        guard !Task.isCancelled else { return }
+        finishTurn(state: state, failure: failure, activity: activity)
+    }
+
+    /// Ends a turn whatever the stream did.
+    ///
+    /// A reply that started is finished, unless the stream stopped without
+    /// saying the turn was over: the server always closes a turn with `done`, so
+    /// a missing one means this client stopped receiving before the run ended,
+    /// and the reply on screen is a prefix of the recorded one.
+    ///
+    /// A turn that never produced a token is closed too — otherwise the working
+    /// line and the composer's busy gate stay live on a turn that will never move
+    /// again — and, when the reply may still be recorded, handed to the view as
+    /// ``unansweredTurn`` so it can load the finished answer instead of waiting
+    /// for a stream that is gone (`emergent.memory#445`).
+    private func finishTurn(
+        state: TurnState,
+        failure: Error?,
+        activity: ChatActivityStore
+    ) {
+        guard !state.started else {
+            if !state.completed, interruptedTurn == nil {
+                errorMessage = ChatTurnFailure.cutShort
+                interruptedTurn = .cutShort(
+                    liveMessageID: state.assistantMessageID,
+                    partialText: state.text
+                )
+            }
+            activity.markReplyFinished()
+            return
+        }
+        activity.settleWithoutReply()
+
+        // A run that failed is not coming back, and one whose request was
+        // refused (or never left this device) never started: in both cases there
+        // is nothing to wait for.
+        guard !state.serverFailed,
+              ChatTurnFailure.isWorthWaiting(for: failure, sawFrame: state.sawFrame),
+              let anchorMessageID = state.anchorMessageID
+        else { return }
+        // A turn that showed its answer in another form (a card, a tool run) is
+        // finished, so only an interrupted one is worth waiting on.
+        guard !state.completed || !state.sawActivity else { return }
+
+        let failureMessage = errorMessage ?? ChatTurnFailure.noReply
+        errorMessage = failureMessage
+        unansweredTurn = UnansweredTurn(
+            assistantMessageID: state.assistantMessageID,
+            anchorMessageID: anchorMessageID,
+            failureMessage: failureMessage
+        )
     }
 
     private func apply(
@@ -331,6 +305,7 @@ final class HTTPChatTransport {
         transcript: ChatSessionTranscriptStore,
         activity: ChatActivityStore
     ) {
+        state.sawFrame = true
         switch event {
         case let .meta(learnedConversationID, _):
             guard let learnedConversationID, learnedConversationID != conversationID else { return }
@@ -344,13 +319,17 @@ final class HTTPChatTransport {
             state.text += delta
             upsertAssistant(state.assistantMessageID, text: state.text, transcript: transcript)
         case let .activity(chatEvent):
+            state.sawActivity = true
             activity.apply(chatEvent)
         case .citations:
             break
         case let .failure(message):
+            state.completed = true
+            state.serverFailed = true
             errorMessage = message
             activity.markReplyFinished()
         case .done:
+            state.completed = true
             activity.markReplyFinished()
         case let .replay(events):
             for event in events {
@@ -371,9 +350,11 @@ final class HTTPChatTransport {
         }
         transcript.syncLive(liveMessages)
     }
+}
 
-    // MARK: - Agent definition
+// MARK: - Agent definition
 
+extension HTTPChatTransport {
     /// Resolves the selected agent's definition id, which the chat request
     /// needs to talk to the agent the user picked. Best-effort: when the lookup
     /// fails the request omits it and the server uses the project default.
