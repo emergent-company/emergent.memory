@@ -465,7 +465,7 @@ func TestRegisterClientGeminiConnectorPayload(t *testing.T) {
 	// refresh_token grant and a confidential auth method. It must register as a
 	// public client with all six URIs kept, or the connector fails with
 	// "The Google redirect URL was rejected by the server" and falls back to
-	// asking the user for a client id/secret (#390).
+	// asking the user for a client id/secret (#411).
 	svc, _, _, _, _ := newServiceFixture(t, config.OAuthASConfig{
 		RegistrationEnabled: true,
 	})
