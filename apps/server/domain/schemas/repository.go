@@ -684,6 +684,7 @@ func parseObjectTypeSchemas(data json.RawMessage, packID, packName, packVersion 
 			UI                json.RawMessage `json:"ui"`
 			BoardEnabled      bool            `json:"boardEnabled"`
 			AllowedStatuses   []string        `json:"allowedStatuses"`
+			InitialStatus     string          `json:"initialStatus"`
 			SkipEmbeddings    bool            `json:"skipEmbeddings"`
 			SkipExtraction    bool            `json:"skipExtraction"`
 			ExcludeFromSearch bool            `json:"excludeFromSearch"`
@@ -703,6 +704,7 @@ func parseObjectTypeSchemas(data json.RawMessage, packID, packName, packVersion 
 			SchemaVersion:     packVersion,
 			BoardEnabled:      def.BoardEnabled,
 			AllowedStatuses:   def.AllowedStatuses,
+			InitialStatus:     def.InitialStatus,
 			SkipEmbeddings:    def.SkipEmbeddings,
 			SkipExtraction:    def.SkipExtraction,
 			ExcludeFromSearch: def.ExcludeFromSearch,

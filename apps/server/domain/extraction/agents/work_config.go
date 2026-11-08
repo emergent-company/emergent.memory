@@ -1,5 +1,7 @@
 package agents
 
+import "fmt"
+
 // ObjectTypeWorkConfig is the per-object-type object-driven work configuration
 // (P4). It is carried on an ObjectSchema and declares whether the type is
 // board-enabled, its allowed work-status values, its operational pipeline
@@ -18,6 +20,12 @@ type ObjectTypeWorkConfig struct {
 	// on a board-enabled type, a write setting a status outside the set is
 	// rejected. Empty on a board-enabled type leaves status unconstrained.
 	AllowedStatuses []string `json:"allowedStatuses,omitempty"`
+	// InitialStatus is the entry status a board-enabled object gets when it is
+	// created without one (#422). It must be a member of AllowedStatuses when
+	// that set is non-empty; Validate enforces that on the authoring paths. When
+	// empty the first AllowedStatuses entry is used, so existing packs get an
+	// entry lane without changing their definitions.
+	InitialStatus string `json:"initialStatus,omitempty"`
 	// SkipEmbeddings, when true, suppresses embedding enqueue on every version
 	// write of this type (a board-enabled type transitions many times).
 	SkipEmbeddings bool `json:"skipEmbeddings,omitempty"`
@@ -45,6 +53,24 @@ type RetryPolicy struct {
 	MaxIntervalMS      int     `json:"maxIntervalMs,omitempty"`
 }
 
+// Validate reports a self-inconsistent work configuration: a declared
+// initialStatus that is not one of the type's allowed statuses. Authoring paths
+// (blueprint and pack load) call it so a definition cannot ship a status the
+// board does not offer. Runtime resolution additionally degrades defensively
+// (falls back to the first allowed status) because a pack stored before this
+// check existed can still be read.
+func (w *ObjectTypeWorkConfig) Validate() error {
+	if w == nil || !w.BoardEnabled || w.InitialStatus == "" || len(w.AllowedStatuses) == 0 {
+		return nil
+	}
+	for _, s := range w.AllowedStatuses {
+		if s == w.InitialStatus {
+			return nil
+		}
+	}
+	return fmt.Errorf("initialStatus %q is not one of allowedStatuses %v", w.InitialStatus, w.AllowedStatuses)
+}
+
 // ApplyConfig populates the work config from a raw schema definition map (the
 // decoded per-type JSON object from object_type_schemas). Unknown or
 // malformed keys are ignored so a schema pack without the new surface is
@@ -62,6 +88,9 @@ func (w *ObjectTypeWorkConfig) ApplyConfig(m map[string]any) {
 				w.AllowedStatuses = append(w.AllowedStatuses, s)
 			}
 		}
+	}
+	if v, ok := m["initialStatus"].(string); ok {
+		w.InitialStatus = v
 	}
 	if v, ok := m["skipEmbeddings"].(bool); ok {
 		w.SkipEmbeddings = v
