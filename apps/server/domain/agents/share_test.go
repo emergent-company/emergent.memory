@@ -528,6 +528,7 @@ func TestComputeShareToolDeny_DefaultDenyAndAllowlist(t *testing.T) {
 	deny := cfg.ComputeShareToolDeny()
 
 	assert.Contains(t, deny, "entity-delete", "dangerous tools are denied by default")
+	assert.Contains(t, deny, "entity-bulk-update", "filter-based hard_delete is dangerous and denied by default")
 	assert.Contains(t, deny, "schema-migrate-execute", "dangerous tools are denied by default")
 
 	// Allowlist re-enables a dangerous tool.

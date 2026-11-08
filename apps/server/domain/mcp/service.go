@@ -931,7 +931,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"filter": {
 						Type:        "object",
-						Description: "Selects the entities to change. Must constrain at least one of: types ([]string), property_filters ([{property, operator, value}]), labels ([]string), created_after (RFC3339), namespace (string). An empty filter is rejected because it would match every entity in the project.",
+						Description: "Selects the entities to change. Must constrain at least one of: types ([]string), property_filters ([{property, operator, value}]), labels ([]string), created_after (RFC3339), namespace (string). An empty filter is rejected because it would match every entity in the project; a namespaced caller is additionally scoped to its own namespace.",
 					},
 					"action": {
 						Type:        "string",
@@ -5223,6 +5223,11 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("invalid filter: %w", err)
 	} else if err := json.Unmarshal(raw, &filter); err != nil {
 		return nil, fmt.Errorf("invalid filter: %w", err)
+	}
+	// A namespaced caller (e.g. a per-namespace memory surface) must not reach
+	// rows outside its namespace just because the filter omitted it.
+	if ns := auth.NamespaceFromContext(ctx); ns != "" && (filter.Namespace == nil || *filter.Namespace == "") {
+		filter.Namespace = &ns
 	}
 	if filterIsEmpty(filter) {
 		return nil, fmt.Errorf("filter must constrain at least one of types, property_filters, labels, created_after or namespace; an empty filter would match every entity in the project")

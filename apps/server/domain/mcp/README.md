@@ -490,13 +490,13 @@ Consolidated tools (`action` selects the operation):
 | `token-write` | `projects:write` | `create`, `revoke` |
 
 That is 29 consolidated tools: the catalog goes from 147 per-verb definitions to
-68 advertised tools (29 consolidated + 39 that had no sibling). Of those 68, a
-project token sees 45; 12 are superadmin-only and 11 are agent-only, and both
+69 advertised tools (29 consolidated + 40 that had no sibling). Of those 69, a
+project token sees 46; 12 are superadmin-only and 11 are agent-only, and both
 sets keep their per-verb names on the surface that serves them. A project's
 endpoint also serves its relay tools, which are appended per project.
 
 Tools that had no sibling keep their name: `relationship-list`,
-`session-get-messages`, `remember`, `forget`, `remember-status`,
+`entity-bulk-update`, `session-get-messages`, `remember`, `forget`, `remember-status`,
 `search-knowledge`, `journal-list`, `journal-add-note`, `agent-hook-list`,
 `agent-question-respond`, `web-search-brave`, `web-fetch`, `web-search-reddit`,
 the `embedding-*`, `provider-*` and `trace-*` operator tools (their surface is
@@ -761,6 +761,64 @@ Supply an optional `key` per entity for idempotent operations — if an entity w
 An optional `branch` (name or UUID) creates the relationships on that branch;
 both endpoints must resolve on the same branch, as with inline relationships on
 `entity-create`.
+
+**`entity-update`** (batch) - Update up to 100 entities in one request
+
+Pass `updates` instead of `entity_id`. Each item is
+`{entity_id, properties, labels, status, branch_id?}`. Items are independent: a
+bad item does not fail the batch, and the result carries one entry per item
+(`{index, entity_id, ok, error?}`) plus `meta.succeeded/failed/total`, so a
+retry targets only the failed indexes. Properties are merged per item, so
+re-running a successful item is safe.
+
+```json
+{
+  "name": "entity-update",
+  "arguments": {
+    "updates": [
+      { "entity_id": "person-alice", "properties": { "team": "platform" } },
+      { "entity_id": "person-bob", "status": "archived", "labels": ["former"] }
+    ]
+  }
+}
+```
+
+**`entity-delete`** (batch) - Soft-delete up to 100 entities in one request
+
+Pass `entity_ids` (UUIDs or keys) instead of `entity_id`; one optional `reason`
+applies to every item. The per-item result is the same shape as
+`entity-update`, so a retry targets only the failed indexes. This stays a soft
+delete — deleted entities can be restored.
+
+**`relationship-delete`** (batch) - Soft-delete up to 100 relationships
+
+Pass `relationship_ids` (UUIDs) instead of `relationship_id`, with one optional
+`reason` for all of them. Same per-item result and retry semantics.
+
+**`entity-bulk-update`** - Apply one action to every entity matching a filter
+
+Mirrors the CLI's `graph objects bulk-update`. Takes `filter` (at least one of
+`types`, `property_filters`, `labels`, `created_after`, `namespace`), an
+optional `action`, `limit` and `dry_run`, and returns `{matched, affected}`.
+
+```json
+{
+  "name": "entity-bulk-update",
+  "arguments": {
+    "filter": { "types": ["Message"], "property_filters": [
+      { "property": "days_since_access", "operator": "gt", "value": 365 }
+    ]},
+    "action": "soft_delete",
+    "dry_run": true
+  }
+}
+```
+
+The default action is `soft_delete`; `hard_delete` permanently removes rows and
+must be named explicitly. `dry_run` reports the counts without changing
+anything. Unlike the per-id batches this is one project-scoped statement, not
+per item, and `limit` caps how many rows are affected (default 1000, max
+100000) — re-run while `matched > affected` to continue.
 
 ---
 

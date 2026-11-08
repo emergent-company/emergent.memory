@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +37,20 @@ func seedBatchObject(t *testing.T, db bun.IDB, projectID, typ, key, propsJSON st
 			 properties, labels, created_at, updated_at)
 		VALUES (?, ?, NULL, ?, NULL, 1, ?, ?, 'active', ?::jsonb, '{}'::text[], now(), now())
 	`, id, projectID, id, typ, key, propsJSON)
+	require.NoError(t, err)
+	return id
+}
+
+// seedBatchObjectInNamespace inserts a HEAD object carrying a namespace.
+func seedBatchObjectInNamespace(t *testing.T, db bun.IDB, projectID, typ, key, namespace, propsJSON string) string {
+	t.Helper()
+	id := uuid.NewString()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, status,
+			 properties, labels, namespace, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, NULL, 1, ?, ?, 'active', ?::jsonb, '{}'::text[], ?, now(), now())
+	`, id, projectID, id, typ, key, propsJSON, namespace)
 	require.NoError(t, err)
 	return id
 }
@@ -201,6 +217,29 @@ func TestBulkUpdateEntitiesNarrowsToTypeScope(t *testing.T) {
 	assert.True(t, env.OK)
 	assert.Equal(t, 0, env.Data.Matched, "a denied type must match nothing, not every type")
 	assert.Empty(t, env.Data.Results)
+}
+
+// TestBulkUpdateEntitiesNarrowsToContextNamespace pins namespace scoping: a
+// namespaced caller's filter is narrowed to its namespace, so it cannot match a
+// sibling namespace in the same project.
+func TestBulkUpdateEntitiesNarrowsToContextNamespace(t *testing.T) {
+	db := connectTestDB(t)
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	seedBatchObjectInNamespace(t, db, projectID, "Doc", "ns-a-doc", "team-a", `{}`)
+	seedBatchObjectInNamespace(t, db, projectID, "Doc", "ns-b-doc", "team-b", `{}`)
+
+	namespacedCtx := auth.ContextWithNamespace(context.Background(), "team-a")
+	env := decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(namespacedCtx, projectID, map[string]any{
+			"filter":  map[string]any{"types": []any{"Doc"}},
+			"dry_run": true,
+		})
+	})
+	assert.True(t, env.OK)
+	assert.Equal(t, 1, env.Data.Matched, "a namespaced caller must only match its own namespace")
 }
 
 // ── DB-backed behaviour ──────────────────────────────────────────────────────
