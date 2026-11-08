@@ -556,13 +556,16 @@ func applySchemaDefaults(props map[string]any, schema agents.ObjectSchema) {
 			continue
 		}
 		if def.Default != nil {
-			// A schema default is a write just like any other value: run it
-			// through coercion so a date default is not stored as RFC 3339.
-			if coerced, err := coercePropertyValue(def.Default, def); err == nil {
-				props[name] = coerced
-			} else {
-				props[name] = def.Default
+			// A schema default is a write just like any other value. Narrow to
+			// dates so a date default cannot escape coercion as RFC 3339
+			// (#402) while every other default keeps its existing behaviour.
+			if isDateProperty(def) {
+				if coerced, err := coerceToDate(def.Default); err == nil {
+					props[name] = coerced
+					continue
+				}
 			}
+			props[name] = def.Default
 		}
 	}
 

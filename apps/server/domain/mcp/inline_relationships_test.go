@@ -184,6 +184,38 @@ func TestProcessInlineRelationshipsPreservesWeight(t *testing.T) {
 	assert.InDelta(t, 0.8, *d.created[0].Weight, 0.0001)
 }
 
+// TestInlineRelationshipSpecs covers the shapes a `relationships` value can
+// arrive in: absent, an array, a single object (accepted as one spec), and a
+// malformed value (reported, not silently ignored).
+func TestInlineRelationshipSpecs(t *testing.T) {
+	specs, malformed := inlineRelationshipSpecs(nil)
+	assert.False(t, malformed)
+	assert.Empty(t, specs)
+
+	specs, malformed = inlineRelationshipSpecs([]any{map[string]any{"type": "a"}})
+	assert.False(t, malformed)
+	assert.Len(t, specs, 1)
+
+	specs, malformed = inlineRelationshipSpecs(map[string]any{"type": "a"})
+	assert.False(t, malformed)
+	require.Len(t, specs, 1)
+
+	_, malformed = inlineRelationshipSpecs(`{"type":"a"}`)
+	assert.True(t, malformed)
+}
+
+// TestClassifyInlineRelationshipErrorSelfAndProject pins the ordering of the
+// classifier: self-loop and project-mismatch errors must not fall into the
+// generic "not allowed" (type) bucket.
+func TestClassifyInlineRelationshipErrorSelfAndProject(t *testing.T) {
+	assert.Equal(t, inlineRelReasonSelfReference,
+		classifyInlineRelationshipError(errors.New("self_referencing_relationship_not_allowed")))
+	assert.Equal(t, inlineRelReasonSelfReference,
+		classifyInlineRelationshipError(errors.New("self_loop_not_allowed")))
+	assert.Equal(t, inlineRelReasonProjectMismatch,
+		classifyInlineRelationshipError(errors.New("relationship_project_mismatch")))
+}
+
 // TestInlineRelationshipCountsAndBatchOutcome pins the aggregation the batch
 // response uses: any inline failure makes the batch not-ok.
 func TestInlineRelationshipCountsAndBatchOutcome(t *testing.T) {

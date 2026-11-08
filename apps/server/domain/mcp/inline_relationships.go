@@ -23,6 +23,7 @@ const (
 	inlineRelReasonSelfReference   = "self_reference"
 	inlineRelReasonCreateFailed    = "relationship_create_failed"
 	inlineRelReasonBranchMismatch  = "branch_mismatch"
+	inlineRelReasonProjectMismatch = "project_mismatch"
 )
 
 // inlineRelationship is the created-edge shape returned for inline
@@ -217,6 +218,23 @@ func processInlineRelationships(
 	return created, results
 }
 
+// inlineRelationshipSpecs normalises the `relationships` value on an entity
+// spec. A single object is accepted as a one-element list (the flat
+// single-entity form makes that shape plausible); any other non-nil value is
+// reported as malformed instead of being silently ignored (#401).
+func inlineRelationshipSpecs(raw any) (specs []any, malformed bool) {
+	switch v := raw.(type) {
+	case nil:
+		return nil, false
+	case []any:
+		return v, false
+	case map[string]any:
+		return []any{v}, false
+	default:
+		return nil, true
+	}
+}
+
 // countInlineRelationshipResults returns how many inline relationship specs
 // succeeded and how many failed. Used for the per-item and batch summaries.
 func countInlineRelationshipResults(results []inlineRelationshipResult) (created, failed int) {
@@ -247,6 +265,13 @@ func classifyInlineRelationshipError(err error) string {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
+	// Self-loop and project-scope errors must be classified before the generic
+	// "not allowed" rule below, or a self-edge is misreported as a type problem.
+	case strings.Contains(msg, "self_referencing_relationship_not_allowed"),
+		strings.Contains(msg, "self_loop_not_allowed"):
+		return inlineRelReasonSelfReference
+	case strings.Contains(msg, "project_mismatch"):
+		return inlineRelReasonProjectMismatch
 	case strings.Contains(msg, "src_object_not_found"), strings.Contains(msg, "src_object_deleted"):
 		return inlineRelReasonUnknownSourceID
 	case strings.Contains(msg, "dst_object_not_found"), strings.Contains(msg, "dst_object_deleted"):

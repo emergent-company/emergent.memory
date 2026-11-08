@@ -1308,7 +1308,9 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		if existing.EmbeddingUpdatedAt == nil {
 			s.enqueueEmbeddingForType(ctx, projectID, existing.Type, existing.ID.String())
 		}
-		return existing.ToResponse(), false, nil
+		resp := existing.ToResponse()
+		resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		return resp, false, nil
 	}
 
 	// Properties, status, labels, or assignee differ - create new version
@@ -1429,7 +1431,9 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
-		return current.ToResponse(), nil
+		resp := current.ToResponse()
+		resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		return resp, nil
 	}
 
 	// Merge properties
@@ -1473,6 +1477,10 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 			for k, v := range validatedDelta {
 				newProps[k] = v
 			}
+			// Normalise the merged map, not just the delta: a patch that touches
+			// an unrelated field must still converge inherited legacy date
+			// values to YYYY-MM-DD (issue #402).
+			newProps = normaliseDateProperties(newProps, schema)
 		}
 	}
 
@@ -1566,7 +1574,9 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
-		return current.ToResponse(), nil
+		resp := current.ToResponse()
+		resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		return resp, nil
 	}
 
 	// Only the assignee changed (no props/status/labels/key) → the stored content
@@ -2729,6 +2739,8 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 			for k, v := range validatedDelta {
 				newProps[k] = v
 			}
+			// Converge inherited legacy date values as well as the delta (#402).
+			newProps = normaliseDateProperties(newProps, objSchema)
 		}
 	}
 

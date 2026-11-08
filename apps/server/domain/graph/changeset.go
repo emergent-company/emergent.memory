@@ -669,9 +669,14 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 	schemaVersion := ""
 	if schema, ok := objectSchema(schemas, item.Type); ok {
 		schemaVersion = schema.Version
-		if err := checkSchemaProperties(props, schema); err != nil {
+		coerced, err := checkSchemaProperties(props, schema)
+		if err != nil {
 			return nil, err
 		}
+		// Store the coerced map, not the raw one: the changeset/source-push path
+		// is a write path and must normalise date properties like every other
+		// one (issue #402).
+		props = coerced
 	}
 
 	obj := &GraphObject{
@@ -742,6 +747,11 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 	if schema, ok := objectSchema(schemas, version.Type); ok {
 		schemaVersion := schema.Version
 		version.SchemaVersion = &schemaVersion
+		// Normalise dates in place of full validation: a source push replaces
+		// the property map and may legitimately be partial, so required-field
+		// enforcement must not start failing here. Date values still converge to
+		// YYYY-MM-DD (issue #402).
+		version.Properties = normaliseDateProperties(version.Properties, schema)
 	}
 
 	// A source push is authoritative for its own record: the row stays
@@ -766,12 +776,15 @@ func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectS
 	return schema, ok
 }
 
-func checkSchemaProperties(props map[string]any, schema agents.ObjectSchema) error {
-	_, err := validateProperties(props, schema)
+// checkSchemaProperties validates props and returns the coerced map. Callers
+// must store the returned map: `date` coercion is a write-path behaviour, so
+// discarding it would let the source-push path store a non-canonical shape.
+func checkSchemaProperties(props map[string]any, schema agents.ObjectSchema) (map[string]any, error) {
+	coerced, err := validateProperties(props, schema)
 	if err != nil {
-		return apperror.NewBadRequest("property validation failed: " + err.Error())
+		return nil, apperror.NewBadRequest("property validation failed: " + err.Error())
 	}
-	return nil
+	return coerced, nil
 }
 
 func newContribution(projectID uuid.UUID, branchID *uuid.UUID, kind string, versionID, sourceID uuid.UUID, externalID string, revision *string, seq int64) *ProvenanceContribution {

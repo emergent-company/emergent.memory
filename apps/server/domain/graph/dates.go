@@ -87,13 +87,29 @@ func normaliseDateProperties(props map[string]any, schema agents.ObjectSchema) m
 			// Write-time coercion already reduces array elements to calendar
 			// dates; normalise pre-existing rows so one array cannot hold both
 			// shapes (issue #402).
-			if elements, ok := value.([]any); ok {
+			switch elements := value.(type) {
+			case []any:
 				// Copy rather than mutate: the caller's value may alias a cached
 				// model or a request body.
 				normalised := make([]any, len(elements))
 				copy(normalised, elements)
 				changed := false
 				for i, element := range normalised {
+					if date, ok := normaliseDateValue(element); ok && date != element {
+						normalised[i] = date
+						changed = true
+					}
+				}
+				if changed {
+					props[key] = normalised
+				}
+			case []string:
+				// In-memory props (e.g. a Go-built seed default) may hold a typed
+				// slice; convert only when a date actually changes.
+				normalised := make([]any, len(elements))
+				changed := false
+				for i, element := range elements {
+					normalised[i] = element
 					if date, ok := normaliseDateValue(element); ok && date != element {
 						normalised[i] = date
 						changed = true
@@ -113,7 +129,7 @@ func normaliseDateProperties(props map[string]any, schema agents.ObjectSchema) m
 // YYYY-MM-DD on read. An endpoint type may be empty when the caller does not
 // know it; relationshipSchemaFor then falls back to the less specific schema.
 func (s *Service) NormaliseRelationshipDatePropertyValues(ctx context.Context, projectID uuid.UUID, relType, srcType, dstType string, props map[string]any) map[string]any {
-	if len(props) == 0 || s.schemaProvider == nil || relType == "" {
+	if s == nil || len(props) == 0 || s.schemaProvider == nil || relType == "" {
 		return props
 	}
 	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
@@ -124,7 +140,11 @@ func (s *Service) NormaliseRelationshipDatePropertyValues(ctx context.Context, p
 	if !ok || len(relSchema.Properties) == 0 {
 		return props
 	}
-	return normaliseDateProperties(copyProperties(props), agents.ObjectSchema{Properties: relSchema.Properties})
+	objSchema := agents.ObjectSchema{Properties: relSchema.Properties}
+	if !schemaHasDateProperties(objSchema) {
+		return props
+	}
+	return normaliseDateProperties(copyProperties(props), objSchema)
 }
 
 // NormaliseDatePropertyValues returns props with date-typed values normalised
@@ -135,7 +155,7 @@ func (s *Service) NormaliseRelationshipDatePropertyValues(ctx context.Context, p
 // A nil schema provider, an unknown type, or a schema load failure leaves props
 // untouched — read normalisation is best-effort and must never make a read fail.
 func (s *Service) NormaliseDatePropertyValues(ctx context.Context, projectID uuid.UUID, objType string, props map[string]any) map[string]any {
-	if len(props) == 0 || s.schemaProvider == nil || objType == "" {
+	if s == nil || len(props) == 0 || s.schemaProvider == nil || objType == "" {
 		return props
 	}
 	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
@@ -143,10 +163,21 @@ func (s *Service) NormaliseDatePropertyValues(ctx context.Context, projectID uui
 		return props
 	}
 	schema, ok := schemas.ObjectSchemas[objType]
-	if !ok {
+	if !ok || !schemaHasDateProperties(schema) {
 		return props
 	}
 	return normaliseDateProperties(copyProperties(props), schema)
+}
+
+// schemaHasDateProperties is a cheap fast path so date-free types do not pay
+// for a copy on every read.
+func schemaHasDateProperties(schema agents.ObjectSchema) bool {
+	for _, def := range schema.Properties {
+		if isDateProperty(def) || (strings.EqualFold(def.Type, "array") && def.Items != nil && isDateProperty(*def.Items)) {
+			return true
+		}
+	}
+	return false
 }
 
 // copyProperties shallow-copies a property map so read normalisation never

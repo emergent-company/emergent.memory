@@ -159,6 +159,45 @@ func TestNormaliseDatePropertyValuesReadPath(t *testing.T) {
 	assert.Equal(t, map[string]any{"next_due": "2026-12-02T00:00:00Z"}, unchanged)
 }
 
+// TestChangesetWriteStoresCalendarDate covers the source-push path: it used to
+// validate properties and then store the raw map, so a date pushed as RFC 3339
+// stayed RFC 3339.
+func TestChangesetWriteStoresCalendarDate(t *testing.T) {
+	schemas := &ExtractionSchemas{ObjectSchemas: map[string]agents.ObjectSchema{
+		"Obligation": dateTestSchema(),
+	}}
+	key := "obl-1"
+	item := &ChangesetObjectItem{
+		Type:       "Obligation",
+		Key:        &key,
+		Properties: map[string]any{"next_due": "2026-12-01T00:00:00Z"},
+	}
+
+	obj, err := buildChangesetObject(uuid.New(), nil, uuid.New(), item, schemas, "source", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-12-01", obj.Properties["next_due"])
+}
+
+// TestChangesetVersionNormalisesInheritedDates proves a source push that only
+// touches an unrelated field still converges an inherited legacy date value.
+func TestChangesetVersionNormalisesInheritedDates(t *testing.T) {
+	schemas := &ExtractionSchemas{ObjectSchemas: map[string]agents.ObjectSchema{
+		"Obligation": dateTestSchema(),
+	}}
+	head := &GraphObject{
+		Type:       "Obligation",
+		Properties: map[string]any{"next_due": "2026-12-01T00:00:00Z", "title": "old"},
+	}
+	item := &ChangesetObjectItem{Properties: map[string]any{
+		"next_due": "2026-12-01T00:00:00Z", // legacy shape supplied by the source
+		"title":    "new",
+	}}
+
+	version := buildChangesetObjectVersion(head, item, uuid.New(), schemas, "source", nil, false, nil)
+	assert.Equal(t, "2026-12-01", version.Properties["next_due"])
+	assert.Equal(t, "new", version.Properties["title"])
+}
+
 // TestNormaliseRelationshipDatePropertyValues proves edge properties converge
 // on read using the relationship schema.
 func TestNormaliseRelationshipDatePropertyValues(t *testing.T) {
