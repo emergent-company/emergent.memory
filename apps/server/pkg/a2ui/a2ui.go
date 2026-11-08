@@ -22,6 +22,12 @@ const DefaultVersion = "v0.9.1"
 // referenced by createSurface.catalogId in emitted surfaces.
 const CatalogID = "memory-basic"
 
+// DefaultSurfaceID is the stable surface identifier used when a block's
+// messages carry no createSurface (e.g. updateComponents-only blocks). It keeps
+// the progressive surface parser and the finished-response extractor on the
+// same identifier.
+const DefaultSurfaceID = "surface-1"
+
 // Message is a single A2UI envelope. Exactly one of the four payload members
 // must be set; there is no `kind` discriminator on the wire. Version defaults
 // to DefaultVersion when absent.
@@ -314,4 +320,17 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 		out = append(out, line)
 	}
 	return messages, strings.Join(out, "\n"), len(messages) > 0
+}
+
+// SurfaceIDOf returns the first createSurface surfaceId in msgs, or
+// DefaultSurfaceID when none is present. It is the single derivation rule shared
+// by the finished-response extractor and the progressive surface stream so both
+// agree on a block's identifier.
+func SurfaceIDOf(msgs []Message) string {
+	for _, m := range msgs {
+		if m.CreateSurface != nil && m.CreateSurface.SurfaceID != "" {
+			return m.CreateSurface.SurfaceID
+		}
+	}
+	return DefaultSurfaceID
 }
