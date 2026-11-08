@@ -490,14 +490,14 @@ Consolidated tools (`action` selects the operation):
 | `token-write` | `projects:write` | `create`, `revoke` |
 
 That is 29 consolidated tools: the catalog goes from 147 per-verb definitions to
-68 advertised tools (29 consolidated + 39 that had no sibling). Of those 68, a
-project token sees 45; 12 are superadmin-only and 11 are agent-only, and both
+69 advertised tools (29 consolidated + 40 that had no sibling). Of those 69, a
+project token sees 46; 12 are superadmin-only and 11 are agent-only, and both
 sets keep their per-verb names on the surface that serves them. A project's
 endpoint also serves its relay tools, which are appended per project.
 
 Tools that had no sibling keep their name: `relationship-list`,
 `session-get-messages`, `remember`, `forget`, `remember-status`,
-`search-knowledge`, `journal-list`, `journal-add-note`, `agent-hook-list`,
+`search-knowledge`, `journal-list`, `journal-add-note`, `feedback-submit`, `agent-hook-list`,
 `agent-question-respond`, `web-search-brave`, `web-fetch`, `web-search-reddit`,
 the `embedding-*`, `provider-*` and `trace-*` operator tools (their surface is
 the admin endpoint, which stays per-verb) and the `mcp-*` registry tools.

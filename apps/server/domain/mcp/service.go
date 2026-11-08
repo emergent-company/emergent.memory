@@ -27,6 +27,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/domain/feedback"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -114,6 +115,10 @@ type Service struct {
 
 	// Email jobs service (for MCP invite emails)
 	emailSvc *email.JobsService
+
+	// Feedback service (for the feedback-submit tool). Nil when the deployment
+	// does not configure a feedback destination; the tool fails closed.
+	feedbackSvc *feedback.Service
 
 	// Journal service (for journal-list and journal-add-note tools)
 	journalSvc *journal.Service
@@ -226,6 +231,7 @@ type ServiceParams struct {
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
 	EmailSvc           *email.JobsService
+	FeedbackSvc        *feedback.Service `optional:"true"`
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
 	SessionTodoSvc     *sessiontodos.Service
@@ -281,6 +287,7 @@ func NewService(p ServiceParams) *Service {
 		providerCatalogSvc:        p.ProviderCatalogSvc,
 		apitokenSvc:               p.ApitokenSvc,
 		emailSvc:                  p.EmailSvc,
+		feedbackSvc:               p.FeedbackSvc,
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
 		internalBaseURL:           cfg.InternalBaseURL,
@@ -1760,6 +1767,40 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		},
 	})
 
+	// Feedback intake. The description is the user-facing writing guide: it is
+	// what an agent sees when it decides whether and how to call the tool.
+	tools = append(tools, ToolDefinition{
+		Name:         "feedback-submit",
+		OutputSchema: objectOutputSchema(),
+		Description: "Send feedback about Memory to the Memory team. It is filed as a GitHub issue with your account, project and basic environment attached, so you do not need to repeat those. " +
+			"Write what you were trying to do, what happened, and what you expected. If you can, add the steps that reproduce it and paste the exact error text. One or two sentences is fine if that is all you have. " +
+			"Use this for product feedback, bugs, confusing behavior, missing features or documentation problems — not for storing knowledge in the graph.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"message": {
+					Type:        "string",
+					Description: "What you want to tell the Memory team: what you were doing, what happened, and what you expected. Add reproduction steps or the exact error text if you have them.",
+				},
+				"category": {
+					Type:        "string",
+					Enum:        []string{"bug", "feature", "usability", "docs", "other"},
+					Description: "Optional category. Defaults to other.",
+				},
+				"severity": {
+					Type:        "string",
+					Enum:        []string{"low", "medium", "high"},
+					Description: "Optional impact: low (cosmetic), medium (annoying but workable), high (blocked).",
+				},
+				"include_context": {
+					Type:        "boolean",
+					Description: "Attach project, environment and client details. Defaults to true; set false to send only your message and account identity.",
+				},
+			},
+			Required: []string{"message"},
+		},
+	})
+
 	// Session todo tools — session-scoped, ownership enforced at the data-access
 	// layer via the shared sessiontodos.SessionAccessible predicate (see
 	// session_todo_tools.go). Registered here so they dispatch through the same
@@ -2846,6 +2887,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeJournalList(ctx, projectID, args)
 	case "journal-add-note":
 		return s.executeJournalAddNote(ctx, projectID, args)
+
+	// Feedback intake (filed as a GitHub issue by the feedback domain)
+	case "feedback-submit":
+		return s.executeSubmitFeedback(ctx, projectID, args)
 
 	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
 	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
