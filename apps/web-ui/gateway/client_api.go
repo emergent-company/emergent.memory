@@ -375,6 +375,11 @@ type sessionRecord struct {
 	Calls   []toolCallRecord `json:"calls"`
 	Outputs []string         `json:"outputs"`
 	IsError *bool            `json:"is_error"`
+	// Citations are an assistant turn's grounded references ({kind, id, type,
+	// label, url, key}), passed through from the timeline item so the iOS
+	// chat can draw the same Sources footer the web chat does. Omitted when
+	// the turn cited nothing.
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 // toolCallRecord is one element of a tools_executed record's calls array.
@@ -401,7 +406,13 @@ func messageRecord(it TimelineItem) sessionRecord {
 			text = "(calls: " + strings.Join(names, ", ") + ")"
 		}
 	}
-	return sessionRecord{Kind: "turn", Role: &role, Text: &text}
+	rec := sessionRecord{Kind: "turn", Role: &role, Text: &text}
+	// The assistant side is any role but "user" (history records the agent's
+	// name as the role), matching how the iOS SessionRecord reads it.
+	if role != "user" && len(decodeCitations(it.Citations)) > 0 {
+		rec.Citations = it.Citations
+	}
+	return rec
 }
 
 func toolRecord(it TimelineItem) sessionRecord {

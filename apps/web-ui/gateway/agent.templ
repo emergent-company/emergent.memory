@@ -951,6 +951,27 @@ templ agentSkillCaptureSection(data agentSettingsData) {
 					<span class="text-sm">Off — this agent never captures skills</span>
 				</label>
 			}
+			if data.CaptureKnown && captureSkippedWithoutAutoLoad(data.EffectiveCaptureMode, data.Agent) {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					Capture is effectively <strong>{ captureModeShort(data.EffectiveCaptureMode) }</strong>, but this agent does not load its own captured skills — a successful run is silently skipped. Turn on “Load this agent's own captured skills on each run” below.
+				}
+			}
+			@form.FormControl("agent-settings-autoload-skills", "", form.LabelAbove, "Captured skills are named with the agent's own prefix. This must be on for a run to see them — and for capture to run at all.", "", nil) {
+				<label class="label flex w-full justify-between gap-3">
+					<span class="text-sm">Load this agent's own captured skills on each run</span>
+					<input type="hidden" name="autoLoadSkills" value="false"/>
+					<input
+						id="agent-settings-autoload-skills"
+						name="autoLoadSkills"
+						type="checkbox"
+						value="true"
+						if autoLoadSkillsOn(data.Agent) {
+							checked
+						}
+						class="checkbox"
+					/>
+				</label>
+			}
 		</div>
 	}
 }

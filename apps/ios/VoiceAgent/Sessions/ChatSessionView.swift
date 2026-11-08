@@ -17,9 +17,10 @@ import SwiftUI
 /// live voice turns from the room (`session.messages` plus
 /// ``ChatActivityStore``). All share the same bubbles.
 ///
-/// Interrupting is a room feature: text has no stop control because a device
-/// credential cannot cancel a run yet (`emergent.memory#81`), and a closed
-/// stream leaves the server-side run going.
+/// Both modes can be interrupted. Voice interrupts the room
+/// (`lk.chat.interrupt`); text cancels the run through ``HTTPChatTransport``'s
+/// `POST /api/chat/runs/{runId}/cancel`, because the gateway runs the agent
+/// detached and closing the stream alone would leave it going.
 struct ChatSessionView: View {
     let route: ChatRoute
 
@@ -65,6 +66,10 @@ struct ChatSessionView: View {
             .onChange(of: transport.interruptedTurn) { _, turn in
                 guard turn != nil else { return }
                 Task { await recoverInterruptedTurn() }
+            }
+            .onChange(of: transport.unansweredTurn) { _, turn in
+                guard turn != nil else { return }
+                Task { await recoverUnansweredTurn() }
             }
             .onReceive(session.objectWillChange) { _ in
                 // Only the voice room feeds the transcript from LiveKit; a text
@@ -268,10 +273,13 @@ extension ChatSessionView {
                     keyboardFocus: $keyboardFocus,
                     text: $messageText,
                     onSend: sendText,
-                    // No run cancellation from a device credential yet, and
-                    // closing the stream leaves the server-side run going, so
-                    // text offers no stop control rather than a fake one.
-                    allowsInterrupt: false
+                    // A text turn can be cancelled: the stream's `meta` frame
+                    // gives the run id and the transport cancels it. The stop
+                    // stays up while the transport is streaming — the activity
+                    // store alone goes quiet 3s after the last token.
+                    allowsInterrupt: true,
+                    isRunning: transport.isStreaming,
+                    onStop: stopTextTurn
                 )
             }
         }

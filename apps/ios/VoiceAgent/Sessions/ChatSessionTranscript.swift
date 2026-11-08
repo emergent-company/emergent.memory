@@ -14,6 +14,8 @@ struct ChatMessage: Identifiable, Equatable, Sendable {
     let id: String
     let role: ChatRole
     let text: String
+    /// An assistant reply's grounded references (its Sources footer).
+    var citations: [ChatCitation] = []
 }
 
 /// One entry of the unified transcript: a chat message or the tool calls that
@@ -29,6 +31,8 @@ struct LiveTranscriptMessage: Equatable, Sendable {
     let id: String
     let role: ChatRole
     let text: String
+    /// The streamed reply's citations (HTTP turns; the room sends none).
+    var citations: [ChatCitation] = []
 }
 
 /// Backs the unified chat: recorded history from `GET /api/session`, live
@@ -98,17 +102,21 @@ final class ChatSessionTranscriptStore {
             case "turn":
                 guard let roleText = record.role, let text = record.text, !text.isEmpty else { continue }
                 let role: ChatRole = roleText == "user" ? .user : .assistant
+                let citations = role == .assistant ? record.citations ?? [] : []
                 if case let .message(previous)? = entries.last, previous.role == role {
                     entries[entries.count - 1] = .message(ChatMessage(
                         id: previous.id,
                         role: role,
-                        text: previous.text + "\n" + text
+                        text: previous.text + "\n" + text,
+                        // A merged reply cites what each of its turns cited.
+                        citations: ChatCitation.deduplicated(previous.citations + citations)
                     ))
                 } else {
                     entries.append(.message(ChatMessage(
                         id: "history-\(entries.count)",
                         role: role,
-                        text: text
+                        text: text,
+                        citations: ChatCitation.deduplicated(citations)
                     )))
                 }
             case "tools_executed":
@@ -152,7 +160,7 @@ final class ChatSessionTranscriptStore {
         var live: [ChatMessage] = []
         for message in messages {
             guard !message.text.isEmpty else { continue }
-            let chat = ChatMessage(id: message.id, role: message.role, text: message.text)
+            let chat = ChatMessage(id: message.id, role: message.role, text: message.text, citations: message.citations)
             if let index = live.firstIndex(where: { $0.id == chat.id }) {
                 live[index] = chat
             } else {
@@ -219,6 +227,22 @@ final class ChatSessionTranscriptStore {
         return replySuffixes(from: detail.records).contains {
             $0.count > opening.count && $0.hasPrefix(opening)
         }
+    }
+
+    /// Whether a detail holds the reply for a turn the client saw *nothing* of,
+    /// so the text cannot be recognised the way ``recordedReply(extending:in:since:)``
+    /// recognises a partial.
+    ///
+    /// Growth past the baseline is not enough on its own: the gateway writes the
+    /// user's own message when it accepts the turn, before the run starts, so the
+    /// first read after a dropped stream can hold nothing but that message.
+    /// Accepting it would settle the wait with an empty turn on screen — the
+    /// `emergent.memory#445` symptom with the spinner removed. A reply is
+    /// therefore an assistant turn after the last user turn, which is exactly
+    /// what ``replySuffixes(from:)`` leaves.
+    static func recordedUnseenReply(in detail: SessionDetail, since baseline: Int) -> Bool {
+        guard detail.records.count > baseline else { return false }
+        return replySuffixes(from: detail.records).contains { !$0.isEmpty }
     }
 
     /// The reply to the turn the client is waiting on — every assistant turn
