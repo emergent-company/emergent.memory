@@ -120,6 +120,88 @@ func TestHandler_ListProjectSkills_MergedAndShadowed(t *testing.T) {
 	assert.Equal(t, projectID, *deploy.ProjectID, "project-scoped skill must shadow the global version")
 }
 
+// TestHandler_ListProjectSkills_IncludeArchived covers #301 item 4: the skills
+// page needs a listing that can include archived rows (so they can be restored),
+// while agent retrieval must keep excluding them. The widened lifecycle filter
+// must not widen project or org scope.
+func TestHandler_ListProjectSkills_IncludeArchived(t *testing.T) {
+	h, db, orgID, projectID := newOrgSkillHandler(t)
+	ctx := context.Background()
+
+	archived := testSkill("archived-"+uuid.NewString(), &projectID)
+	archived.Metadata = &SkillMetadata{
+		Source:         SourceAgent,
+		CreatedBy:      "agent",
+		LifecycleState: SkillLifecycleArchived,
+	}
+	require.NoError(t, h.repo.Create(ctx, archived))
+	active := testSkill("active-"+uuid.NewString(), &projectID)
+	require.NoError(t, h.repo.Create(ctx, active))
+
+	// An archived skill in a sibling project of the same org must never appear:
+	// includeArchived only widens the lifecycle filter, not the project scope.
+	projectB := uuid.NewString()
+	_, err := db.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectB, orgID, "proj-b")
+	require.NoError(t, err)
+	archivedB := testSkill("archived-b-"+uuid.NewString(), &projectB)
+	archivedB.Metadata = &SkillMetadata{
+		Source:         SourceAgent,
+		CreatedBy:      "agent",
+		LifecycleState: SkillLifecycleArchived,
+	}
+	require.NoError(t, h.repo.Create(ctx, archivedB))
+
+	member := seedOrgMember(t, db, orgID)
+	user := &auth.AuthUser{ID: member, ProjectID: projectID}
+
+	list := func(query string) map[uuid.UUID]*SkillDTO {
+		t.Helper()
+		c, rec := newEchoCtx(t, http.MethodGet, "/api/projects/"+projectID+"/skills"+query, nil, user)
+		c.SetParamNames("projectId")
+		c.SetParamValues(projectID)
+		reqCtx := auth.ContextWithOrgID(c.Request().Context(), orgID)
+		c.SetRequest(c.Request().WithContext(auth.ContextWithUser(reqCtx, user)))
+		require.NoError(t, h.ListProjectSkills(c))
+		require.Equal(t, http.StatusOK, rec.Code)
+		resp := decodeResponse[ListSkillsResponse](t, rec)
+		out := make(map[uuid.UUID]*SkillDTO, len(resp.Data))
+		for _, dto := range resp.Data {
+			out[uuid.MustParse(dto.ID)] = dto
+		}
+		return out
+	}
+
+	defaultList := list("")
+	assert.NotContains(t, defaultList, archived.ID, "archived skills are excluded by default")
+	assert.Contains(t, defaultList, active.ID)
+
+	full := list("?includeArchived=true")
+	require.Contains(t, full, archived.ID, "includeArchived must surface archived skills for the management UI")
+	assert.Equal(t, SkillLifecycleArchived, full[archived.ID].Metadata.LifecycleState)
+	assert.Contains(t, full, active.ID)
+	assert.NotContains(t, full, archivedB.ID, "includeArchived must not widen the project scope")
+
+	// An invalid value is a client error, not a silently defaulted listing.
+	c, _ := newEchoCtx(t, http.MethodGet, "/api/projects/"+projectID+"/skills?includeArchived=maybe", nil, user)
+	c.SetParamNames("projectId")
+	c.SetParamValues(projectID)
+	c.SetRequest(c.Request().WithContext(auth.ContextWithUser(
+		auth.ContextWithOrgID(c.Request().Context(), orgID), user)))
+	assertStatus(t, h.ListProjectSkills(c), http.StatusBadRequest)
+
+	// A caller outside the owning org cannot read the listing at all.
+	orgB := uuid.NewString()
+	_, err = db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgB, "org-b")
+	require.NoError(t, err)
+	outsider := &auth.AuthUser{ID: seedOrgMember(t, db, orgB), ProjectID: projectID}
+	c, _ = newEchoCtx(t, http.MethodGet, "/api/projects/"+projectID+"/skills?includeArchived=true", nil, outsider)
+	c.SetParamNames("projectId")
+	c.SetParamValues(projectID)
+	withRequestUser(c, outsider)
+	assertStatus(t, h.ListProjectSkills(c), http.StatusForbidden)
+}
+
 func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 	db := connectTestDB(t)
 	repo := NewRepository(db, slog.Default())

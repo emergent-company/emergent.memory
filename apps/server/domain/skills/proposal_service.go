@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,6 +29,13 @@ func NewProposalService(repo *Repository, log *slog.Logger) *ProposalService {
 
 // List returns proposals for a project (status "" means all).
 func (s *ProposalService) List(ctx context.Context, projectID uuid.UUID, status string, limit int) ([]*SkillProposal, error) {
+	// Sweep rows stranded mid-apply back to pending before reading, so a crash
+	// between claim and write does not hide a proposal from the inbox forever.
+	if n, err := s.repo.ReleaseStaleProposals(ctx, projectID); err != nil {
+		s.log.Warn("failed to release stale proposals", logger.Error(err))
+	} else if n > 0 {
+		s.log.Info("released stale skill proposals", slog.Int64("count", n))
+	}
 	rows, err := s.repo.ListProposals(ctx, projectID, status, limit)
 	if err != nil {
 		return nil, err
@@ -69,7 +77,7 @@ func (s *ProposalService) Approve(ctx context.Context, projectID, proposalID, ac
 	if err != nil {
 		return nil, err
 	}
-	if p.Status != ProposalStatusPending {
+	if p.Status != ProposalStatusPending && !staleApplying(p) {
 		return nil, apperror.ErrConflict.WithMessage(fmt.Sprintf("proposal is %s, not pending", p.Status))
 	}
 	// Security scan is a hard gate even for a human approval: a credential leak
@@ -96,7 +104,7 @@ func (s *ProposalService) Reject(ctx context.Context, projectID, proposalID, act
 	if err != nil {
 		return err
 	}
-	if p.Status != ProposalStatusPending {
+	if p.Status != ProposalStatusPending && !staleApplying(p) {
 		return apperror.ErrConflict.WithMessage(fmt.Sprintf("proposal is %s, not pending", p.Status))
 	}
 	ok, err := s.repo.MarkProposalRejected(ctx, p.ID, actorID, note)
@@ -104,7 +112,7 @@ func (s *ProposalService) Reject(ctx context.Context, projectID, proposalID, act
 		return err
 	}
 	if !ok {
-		return apperror.ErrConflict.WithMessage("proposal is no longer pending")
+		return apperror.ErrConflict.WithMessage("proposal is no longer reviewable")
 	}
 	return nil
 }
@@ -121,7 +129,7 @@ func (s *ProposalService) Apply(ctx context.Context, p *SkillProposal, actorID *
 			p = fresh
 		}
 	}
-	if p.Status != ProposalStatusPending {
+	if p.Status != ProposalStatusPending && !staleApplying(p) {
 		return nil, apperror.ErrConflict.WithMessage(fmt.Sprintf("proposal is %s, not pending", p.Status))
 	}
 	return s.apply(ctx, p, actorID, auto, "")
@@ -134,7 +142,7 @@ func (s *ProposalService) apply(ctx context.Context, p *SkillProposal, actorID *
 		return nil, err
 	}
 	if !claimed {
-		return nil, apperror.ErrConflict.WithMessage("proposal is no longer pending")
+		return nil, apperror.ErrConflict.WithMessage("proposal is no longer reviewable (another reviewer may be applying it)")
 	}
 
 	var applied *Skill
@@ -159,6 +167,15 @@ func (s *ProposalService) apply(ctx context.Context, p *SkillProposal, actorID *
 		return nil, err
 	}
 	if err := s.repo.MarkProposalApplied(ctx, p.ID, actorID, auto, note); err != nil {
+		// The mutation landed but the row could not be marked applied: only a
+		// human decision that raced a slow apply (rejected/applied meanwhile)
+		// reaches here. Surface it loudly — the library changed even though the
+		// proposal's recorded status does not say so.
+		s.log.Error("skill proposal write landed but the proposal could not be marked applied",
+			slog.String("proposal_id", p.ID.String()),
+			slog.String("kind", p.Kind),
+			logger.Error(err),
+		)
 		return nil, err
 	}
 	if note != "" {
@@ -275,6 +292,18 @@ func (s *ProposalService) applyDelete(ctx context.Context, p *SkillProposal, aut
 func agentActor(ctx context.Context) bool {
 	actorType, _, ok := auth.ActorFromContext(ctx)
 	return ok && strings.EqualFold(actorType, "agent")
+}
+
+// staleApplying reports whether a proposal is stuck in `applying` with a claim
+// old enough to be reclaimed. The pre-checks use it only to give a clear error;
+// the atomic conditional update is the final authority, so a FRESH `applying`
+// row is still refused there (the double-review guard). The age threshold is
+// proposalClaimStaleAfter, shared with the SQL predicate and the inbox sweep.
+func staleApplying(p *SkillProposal) bool {
+	if p == nil || p.Status != ProposalStatusApplying {
+		return false
+	}
+	return p.ClaimedAt == nil || p.ClaimedAt.Before(time.Now().Add(-proposalClaimStaleAfter))
 }
 
 // effectiveContent returns the bytes the proposal will write. Patch fields win

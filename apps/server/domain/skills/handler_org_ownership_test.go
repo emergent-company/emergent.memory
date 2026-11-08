@@ -213,6 +213,50 @@ func TestHandler_ProjectSkill_NonMemberForbidden(t *testing.T) {
 	assertStatus(t, h.CreateProjectSkill(c), http.StatusForbidden)
 }
 
+// TestHandler_RestoreProjectSkill pins the un-archive endpoint: a project
+// member restores an archived skill without sending whole metadata, and pin is
+// honoured. A caller who is not an org member is refused.
+func TestHandler_RestoreProjectSkill(t *testing.T) {
+	h, db, orgA, projectA := newOrgSkillHandler(t)
+	ctx := context.Background()
+	member := seedOrgMember(t, db, orgA)
+
+	sk := testSkill("agent-restore-"+uuid.NewString(), &projectA)
+	sk.Metadata = &SkillMetadata{
+		Source:         SourceAgent,
+		CreatedBy:      "agent",
+		Author:         "diane",
+		LifecycleState: SkillLifecycleArchived,
+	}
+	require.NoError(t, h.repo.Create(ctx, sk))
+
+	c, rec := newEchoCtx(t, http.MethodPost, "/api/projects/"+projectA+"/skills/"+sk.ID.String()+"/restore",
+		[]byte(`{"pin":true}`), &auth.AuthUser{ID: member})
+	withRequestUser(c, &auth.AuthUser{ID: member})
+	c.SetParamNames("projectId", "id")
+	c.SetParamValues(projectA, sk.ID.String())
+	require.NoError(t, h.RestoreProjectSkill(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	dto := decodeResponse[SkillDTO](t, rec)
+	require.NotNil(t, dto.Metadata)
+	assert.Equal(t, SkillLifecycleActive, dto.Metadata.LifecycleState)
+	assert.True(t, dto.Metadata.Pinned)
+	assert.Equal(t, "diane", dto.Metadata.Author)
+
+	// A caller outside the owning org is refused.
+	orgB := uuid.NewString()
+	_, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgB, "org-b")
+	require.NoError(t, err)
+	outsider := seedOrgMember(t, db, orgB)
+	c, _ = newEchoCtx(t, http.MethodPost, "/api/projects/"+projectA+"/skills/"+sk.ID.String()+"/restore",
+		[]byte(`{}`), &auth.AuthUser{ID: outsider})
+	withRequestUser(c, &auth.AuthUser{ID: outsider})
+	c.SetParamNames("projectId", "id")
+	c.SetParamValues(projectA, sk.ID.String())
+	assertStatus(t, h.RestoreProjectSkill(c), http.StatusForbidden)
+}
+
 // TestHandler_ProjectSkill_CrossProjectSkillNotFound: a member of org A
 // addressing a skill in a foreign project through their own project route gets
 // 404 (no existence oracle).
