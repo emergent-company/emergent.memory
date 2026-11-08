@@ -100,6 +100,10 @@ struct ServerToolView: Equatable, Decodable {
     struct Batch: Equatable, Decodable {
         let created: Int
         let failed: Int
+        /// Inline relationship failures, when the gateway emits them as a
+        /// separate count. Today the gateway folds them into `failed`, so this
+        /// default is inert; it names them once the wire carries the field.
+        let relationshipsFailed: Int
         let similar: Int
         /// The gateway's wording of the counts; the app prints it verbatim.
         let text: String?
@@ -108,6 +112,9 @@ struct ServerToolView: Equatable, Decodable {
             let container = try? decoder.container(keyedBy: CodingKeys.self)
             created = (try? container?.decodeIfPresent(Int.self, forKey: .created)) ?? 0
             failed = (try? container?.decodeIfPresent(Int.self, forKey: .failed)) ?? 0
+            relationshipsFailed = (try? container?.decodeIfPresent(Int.self, forKey: .relationshipsFailed))
+                ?? (try? container?.decodeIfPresent(Int.self, forKey: .relationshipsFailedSnake))
+                ?? 0
             similar = (try? container?.decodeIfPresent(Int.self, forKey: .similar)) ?? 0
             text = try? container?.decodeIfPresent(String.self, forKey: .text)
         }
@@ -115,6 +122,8 @@ struct ServerToolView: Equatable, Decodable {
         // swiftlint:disable:next nesting
         private enum CodingKeys: String, CodingKey {
             case created, failed, similar, text
+            case relationshipsFailed
+            case relationshipsFailedSnake = "relationships_failed"
         }
     }
 
@@ -177,6 +186,7 @@ struct ServerToolView: Equatable, Decodable {
                     created: $0.created,
                     failed: $0.failed,
                     similar: $0.similar,
+                    relationshipsFailed: $0.relationshipsFailed,
                     serverText: $0.text
                 )
             },

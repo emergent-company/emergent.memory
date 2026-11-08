@@ -211,6 +211,31 @@ struct ToolServerPresentationTests {
         #expect(ToolResultSize.text(bytes: nil) == nil)
     }
 
+    @Test func decodesInlineRelationshipFailuresFromTheWire() throws {
+        // The gateway does not emit this field today, but the decode is tolerant
+        // so a future gateway can name the failures instead of folding them into
+        // `failed` (#401).
+        let payload = #"{"kind":"records","batch":{"created":2,"failed":0,"relationships_failed":1,"text":"2 created, 0 failed"},"raw":""}"#
+        let view = try JSONDecoder().decode(ServerToolView.self, from: Data(payload.utf8))
+        let batch = try #require(view.presentation.batch)
+        #expect(batch.relationshipsFailed == 1)
+        #expect(batch.isFailure)
+        #expect(
+            batch.text(locale: Locale(identifier: "en_US"))
+                == "2 created, 0 failed, 1 relationship failed"
+        )
+    }
+
+    @Test func serverTextThatAlreadyNamesRelationshipsIsLeftUntouched() throws {
+        let payload = #"{"kind":"records","batch":{"created":2,"failed":0,"relationships_failed":1,"text":"2 created, 0 failed, 1 relationship failed"},"raw":""}"#
+        let view = try JSONDecoder().decode(ServerToolView.self, from: Data(payload.utf8))
+        let batch = try #require(view.presentation.batch)
+        #expect(
+            batch.text(locale: Locale(identifier: "en_US"))
+                == "2 created, 0 failed, 1 relationship failed"
+        )
+    }
+
     // MARK: - Helpers
 
     private func startedEvent() throws -> ChatToolCallEvent {

@@ -45,37 +45,67 @@ struct ToolResultPresentation: Equatable {
     struct BatchTally: Equatable {
         let created: Int
         let failed: Int
+        /// Inline relationship failures: an entity can be created while a
+        /// relationship it asked for failed (#401).
+        let relationshipsFailed: Int
         let similar: Int
         /// The gateway's wording of the counts, when it sent one. The two web
         /// surfaces print this line, so the app prints it too; a locally parsed
         /// batch falls back to the localized copy below.
         let serverText: String?
 
-        init(created: Int, failed: Int, similar: Int, serverText: String? = nil) {
+        init(
+            created: Int,
+            failed: Int,
+            similar: Int,
+            relationshipsFailed: Int = 0,
+            serverText: String? = nil
+        ) {
             self.created = created
             self.failed = failed
             self.similar = similar
+            self.relationshipsFailed = relationshipsFailed
             self.serverText = serverText
         }
 
-        /// A failed item makes the batch read as a failure, however clean the
-        /// list of created records looks.
+        /// A failed item — or a failed inline relationship — makes the batch read
+        /// as a failure, however clean the list of created records looks.
         var isFailure: Bool {
-            failed > 0
+            failed > 0 || relationshipsFailed > 0
         }
 
         /// The server's line when it sent one, else the counts in the caller's
-        /// locale, as the body's one-line summary.
+        /// locale, as the body's one-line summary. A server line that does not
+        /// name relationship failures gets that clause appended, so a partial
+        /// write never reads as clean.
         func text(locale: Locale = .current) -> String {
+            let relationshipClause = relationshipFailureClause(locale: locale)
             if let serverText, !serverText.isEmpty {
-                return serverText
+                if relationshipsFailed == 0 || Self.mentionsRelationships(serverText) {
+                    return serverText
+                }
+                return serverText + ", " + relationshipClause
             }
             var line = String(localized: "sessions.detail.result.batch.created \(created)", locale: locale)
             line += ", " + String(localized: "sessions.detail.result.batch.failed \(failed)", locale: locale)
+            if relationshipsFailed > 0 {
+                line += ", " + relationshipClause
+            }
             if similar > 0 {
                 line += ", " + String(localized: "sessions.detail.result.batch.similar \(similar)", locale: locale)
             }
             return line
+        }
+
+        private func relationshipFailureClause(locale: Locale) -> String {
+            String(
+                localized: "sessions.detail.result.batch.relationshipsFailed \(relationshipsFailed)",
+                locale: locale
+            )
+        }
+
+        private static func mentionsRelationships(_ text: String) -> Bool {
+            text.range(of: "relationship", options: .caseInsensitive) != nil
         }
     }
 
