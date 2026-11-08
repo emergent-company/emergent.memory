@@ -727,6 +727,14 @@ type AgentDefinition struct {
 	// send it.
 	ToolGroups []ToolGroup `json:"toolGroups,omitempty"`
 	Skills     []string    `json:"skills"`
+	// AutoLoadSkills makes the agent load its own "{agentSlug}." prefix skills
+	// on every run — the prerequisite for skill capture to do anything, since
+	// CaptureService.AfterRun skips an agent that does not auto-load prefix
+	// skills. Deliberately NOT omitempty: memory's PATCH leaves an absent key
+	// unchanged, so a false value must be sent explicitly to turn the toggle
+	// off. The Skills form owns the field; the server force-sets it to true
+	// when a capture override is enabled.
+	AutoLoadSkills bool `json:"autoLoadSkills"`
 	// SkillCapture is the per-agent override of the project's automatic
 	// skill-capture policy. The override may only narrow the project value
 	// ("off"/"suggest"); memory resolves the effective mode, which this field

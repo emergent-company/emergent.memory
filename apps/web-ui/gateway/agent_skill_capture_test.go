@@ -308,6 +308,57 @@ func TestAgentSkillsFormWarnsWhenProjectCaptureOff(t *testing.T) {
 	}
 }
 
+// TestAgentSkillsFormWarnsWhenCaptureOnWithoutAutoLoad pins the honesty gap:
+// with capture effectively on but auto-load off, AfterRun skips the agent, so
+// the form must say so instead of only showing the effective mode.
+func TestAgentSkillsFormWarnsWhenCaptureOnWithoutAutoLoad(t *testing.T) {
+	html := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
+		Section:              sectionSkills,
+		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: false},
+		CaptureKnown:         true,
+		ProjectCaptureMode:   "auto",
+		EffectiveCaptureMode: "auto",
+	}))
+	if !strings.Contains(html, "does not load its own captured skills") {
+		t.Error("expected the capture-will-be-skipped warning")
+	}
+	if !strings.Contains(html, "Load this agent&#39;s own captured skills on each run") &&
+		!strings.Contains(html, "Load this agent's own captured skills on each run") {
+		t.Error("expected the auto-load toggle")
+	}
+	if !strings.Contains(html, `name="autoLoadSkills"`) {
+		t.Error("toggle must submit autoLoadSkills")
+	}
+	if inputIsChecked(html, "agent-settings-autoload-skills") {
+		t.Error("auto-load toggle must render unchecked when the agent does not auto-load")
+	}
+
+	loaded := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
+		Section:              sectionSkills,
+		Agent:                &AgentDefinition{ID: "a1", Name: "diane", AutoLoadSkills: true},
+		CaptureKnown:         true,
+		ProjectCaptureMode:   "auto",
+		EffectiveCaptureMode: "auto",
+	}))
+	if strings.Contains(loaded, "does not load its own captured skills") {
+		t.Error("no warning when the agent does auto-load prefix skills")
+	}
+	if !inputIsChecked(loaded, "agent-settings-autoload-skills") {
+		t.Error("auto-load toggle must render checked when the agent auto-loads")
+	}
+
+	off := renderHTML(t, agentSkillsSettingsForm(agentSettingsData{
+		Section:              sectionSkills,
+		Agent:                &AgentDefinition{ID: "a1", Name: "diane"},
+		CaptureKnown:         true,
+		ProjectCaptureMode:   "off",
+		EffectiveCaptureMode: "off",
+	}))
+	if strings.Contains(off, "does not load its own captured skills") {
+		t.Error("no skip warning when capture is off")
+	}
+}
+
 // TestAgentSkillsFormOmitsHintWhenProjectUnknown pins that a failed project
 // fetch does not render a misleading effective-mode label.
 func TestAgentSkillsFormOmitsHintWhenProjectUnknown(t *testing.T) {
@@ -444,5 +495,76 @@ func TestProjectSkillCaptureMode(t *testing.T) {
 	}
 	if got := (*Project)(nil).SkillCaptureMode(); got != "off" {
 		t.Errorf("nil project mode = %q, want off", got)
+	}
+}
+
+// TestApplyAgentSkillsSectionAutoLoadSkills pins the toggle mapping. The
+// rendered form posts a hidden "false" then the checkbox's "true", so the last
+// value wins; a form that omits the key entirely (an older caller) must leave a
+// fetched API-set value untouched rather than clearing it.
+func TestApplyAgentSkillsSectionAutoLoadSkills(t *testing.T) {
+	tests := []struct {
+		name     string
+		form     url.Values
+		existing bool
+		want     bool
+	}{
+		{"checked turns it on", url.Values{"autoLoadSkills": {"false", "true"}}, false, true},
+		{"unchecked (hidden false) turns it off", url.Values{"autoLoadSkills": {"false"}}, true, false},
+		{"absent key leaves the fetched value", url.Values{}, true, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			def := &AgentDefinition{ID: "a1", AutoLoadSkills: tc.existing}
+			if err := applyAgentSkillsSection(def, skillCaptureSectionContext(t, tc.form)); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			if def.AutoLoadSkills != tc.want {
+				t.Errorf("AutoLoadSkills = %v, want %v", def.AutoLoadSkills, tc.want)
+			}
+		})
+	}
+}
+
+// TestAgentDefinitionAutoLoadSkillsWireShape pins that the field is always sent,
+// including false: memory's PATCH treats an absent key as "leave unchanged", so
+// omitempty would make the toggle unable to turn auto-load off.
+func TestAgentDefinitionAutoLoadSkillsWireShape(t *testing.T) {
+	for _, v := range []bool{false, true} {
+		raw, err := json.Marshal(&AgentDefinition{ID: "a1", AutoLoadSkills: v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `"autoLoadSkills":false`
+		if v {
+			want = `"autoLoadSkills":true`
+		}
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("marshal(%v) = %s, want %s", v, raw, want)
+		}
+	}
+}
+
+// TestCaptureSkippedWithoutAutoLoad pins the warning predicate: it must follow
+// the resolved mode, not the label, and only fire when the AfterRun gate will
+// actually skip the agent.
+func TestCaptureSkippedWithoutAutoLoad(t *testing.T) {
+	tests := []struct {
+		mode     string
+		autoLoad bool
+		want     bool
+	}{
+		{"suggest", false, true},
+		{"auto", false, true},
+		{"SUGGEST", false, true},
+		{"off", false, false},
+		{"", false, false},
+		{"suggest", true, false},
+		{"auto", true, false},
+	}
+	for _, tc := range tests {
+		if got := captureSkippedWithoutAutoLoad(tc.mode, tc.autoLoad); got != tc.want {
+			t.Errorf("captureSkippedWithoutAutoLoad(%q, %v) = %v, want %v", tc.mode, tc.autoLoad, got, tc.want)
+		}
 	}
 }

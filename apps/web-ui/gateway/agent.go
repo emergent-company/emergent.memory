@@ -641,8 +641,22 @@ func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]
 // carries the per-agent skill-capture override: "" means inherit (send {}) and
 // "off"/"suggest" narrow the project policy. AutoApply is preserved so an
 // API-set opt-out is not cleared by an unrelated save.
+//
+// AutoLoadSkills is the agent's own prefix-skill loader. The form renders a
+// hidden "false" before the checkbox, so its last value is authoritative when
+// the control exists; a form that omits it entirely (an older caller) leaves
+// the fetched value untouched rather than silently clearing an API-set true.
 func applyAgentSkillsSection(def *AgentDefinition, c echo.Context) error {
 	def.Skills = c.Request().Form["skill"]
+	if vals, ok := c.Request().Form["autoLoadSkills"]; ok {
+		last := ""
+		for _, v := range vals {
+			if v != "" {
+				last = v
+			}
+		}
+		def.AutoLoadSkills = last == "true"
+	}
 	mode := strings.ToLower(strings.TrimSpace(c.FormValue("skillCaptureMode")))
 	if def.SkillCapture == nil {
 		def.SkillCapture = &AgentSkillCapture{}
@@ -712,6 +726,21 @@ func captureModeShort(mode string) string {
 		return "Auto"
 	default:
 		return "Off"
+	}
+}
+
+// captureSkippedWithoutAutoLoad reports whether skill capture is effectively on
+// for this agent but CaptureService.AfterRun will skip it because the agent does
+// not auto-load its own prefix skills (apps/server/domain/skills/
+// capture_service.go: the agentLoadsPrefixSkills gate). It is derived from the
+// resolved values — never from the rendered mode label, which says "Suggest" or
+// "Auto" even when the gate will drop the run.
+func captureSkippedWithoutAutoLoad(effectiveMode string, autoLoadSkills bool) bool {
+	switch strings.ToLower(strings.TrimSpace(effectiveMode)) {
+	case "suggest", "auto":
+		return !autoLoadSkills
+	default:
+		return false
 	}
 }
 
