@@ -629,6 +629,11 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 	}
 
 	upd := &ProjectUpdate{}
+	// refresh forces a full page reload for saves whose result changes another
+	// control's enabled state on the same panel. The skill-capture mode select
+	// is the case that matters: the auto-apply toggle is only enabled in Auto
+	// mode, so without a reload the operator cannot reach it in the same visit.
+	refresh := false
 	switch c.Param("field") {
 	case "name":
 		name := strings.TrimSpace(c.FormValue("name"))
@@ -656,6 +661,9 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 			return toastTrigger(c, "error", "skill capture mode must be off, suggest, or auto")
 		}
 		upd.SkillCapture = capturePolicyWith(project.SkillCapture, "mode", mode)
+		// The auto-apply toggle is disabled outside Auto mode; reload so it
+		// becomes usable in the same visit instead of after a manual refresh.
+		refresh = true
 	case "skill_capture_auto_apply":
 		upd.SkillCapture = capturePolicyWith(project.SkillCapture, "autoApply", c.FormValue("autoApply") == "on")
 	case "budget_usd":
@@ -685,6 +693,10 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 
 	if _, err := s.memory.UpdateProject(ctx, project.ID, upd); err != nil {
 		return toastTrigger(c, "error", err.Error())
+	}
+	if refresh {
+		// HTMX honours this on a 2xx response by doing a full page GET.
+		c.Response().Header().Set("HX-Refresh", "true")
 	}
 	return toastTrigger(c, "success", "Saved")
 }
