@@ -1193,6 +1193,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#bulk-creating-objects-and-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bulk creating objects and relationships
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#updating-objects" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3232,6 +3243,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#bulk-creating-objects-and-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bulk creating objects and relationships
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#updating-objects" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3572,16 +3594,42 @@
 </code></pre></div>
 <p>Relationships are <strong>directed</strong>: <code>src → dst</code>. Use <code>type</code> to describe the semantic of the edge.</p>
 <hr />
-<h2 id="updating-objects">Updating Objects<a class="headerlink" href="#updating-objects" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">PATCH /api/graph/objects/{id}</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="err">Content-Type: application/json</span>
+<h2 id="bulk-creating-objects-and-relationships">Bulk creating objects and relationships<a class="headerlink" href="#bulk-creating-objects-and-relationships" title="Permanent link">&para;</a></h2>
+<p>For more than a handful of objects, use the batch commands instead of one API
+call per node:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Objects only: a JSON array of {type, name, description, properties}</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>objects.json
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="err">{</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="err">  "properties": {</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="err">    "status": "superseded",</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="err">    "supersededBy": "Use CockroachDB"</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="err">  }</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="err">}</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Objects + relationships: a subgraph with _ref/src_ref/dst_ref placeholders</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>subgraph.json
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># Relationships only: a JSON array of {type, from, to}</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>memory<span class="w"> </span>graph<span class="w"> </span>relationships<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>relationships.json
+</code></pre></div>
+<p>Both commands accept <code>--branch &lt;name-or-uuid&gt;</code> to write into a graph branch
+instead of the main graph. Objects are chunked to the server's per-call limit
+(500 for a subgraph, 100 per bulk item), and each row reports its own error
+instead of failing the whole batch.</p>
+<p><code>create-batch</code> on objects also reads the JSONL seed layout written by
+<code>memory blueprints dump</code> — pass the dump root, a <code>seed/</code> directory, or a single
+<code>.jsonl</code> file. Records are upserted by <code>key</code> and relationship <code>srcKey</code>/<code>dstKey</code>
+endpoints are resolved after the objects are written, so dump → edit → import
+into a branch is a complete migration loop:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>dump<span class="w"> </span>./migration
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>./migration<span class="w"> </span>--branch<span class="w"> </span>migration-review
+</code></pre></div>
+<p>See <a href="../branches/#bulk-importing-a-dump-into-a-branch">Branches § Bulk importing a dump into a branch</a>.</p>
+<hr />
+<h2 id="updating-objects">Updating Objects<a class="headerlink" href="#updating-objects" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">PATCH /api/graph/objects/{id}</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="err">{</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="err">  "properties": {</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="err">    "status": "superseded",</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="err">    "supersededBy": "Use CockroachDB"</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="err">  }</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="err">}</span>
 </code></pre></div>
 <p>Every update creates a new version row. The previous version is preserved in history.</p>
 <hr />
@@ -3591,84 +3639,84 @@
 <div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">CLI</label><label for="__tabbed_2_2">API</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>memory<span class="w"> </span>query<span class="w"> </span><span class="s2">"decisions about database architecture"</span><span class="w"> </span>--project<span class="w"> </span>my-project
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>memory<span class="w"> </span>query<span class="w"> </span><span class="s2">"decisions about database architecture"</span><span class="w"> </span>--project<span class="w"> </span>my-project
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">POST /api/graph/search</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="err">{</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="err">  "query": "decisions about database architecture",</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="err">  "types": ["Decision"],</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="err">  "limit": 20</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/graph/search</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">{</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="err">  "query": "decisions about database architecture",</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="err">  "types": ["Decision"],</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="err">  "limit": 20</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="err">}</span>
 </code></pre></div>
 </div>
 </div>
 </div>
 <h3 id="full-text-search">Full-text search<a class="headerlink" href="#full-text-search" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">GET /api/graph/objects/fts?q=postgresql&amp;types=Decision</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">GET /api/graph/objects/fts?q=postgresql&amp;types=Decision</span>
 </code></pre></div>
 <h3 id="vector-semantic-search">Vector (semantic) search<a class="headerlink" href="#vector-semantic-search" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/graph/objects/vector-search</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">{</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="err">  "query": "scalability trade-offs",</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="err">  "topK": 10</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">POST /api/graph/objects/vector-search</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="err">{</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="err">  "query": "scalability trade-offs",</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="err">  "topK": 10</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="err">}</span>
 </code></pre></div>
 <h3 id="filter-by-type-label-or-status">Filter by type, label, or status<a class="headerlink" href="#filter-by-type-label-or-status" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">GET /api/graph/objects/search?type=Decision&amp;status=approved&amp;labels=architecture</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="err">GET /api/graph/objects/search?type=Decision&amp;status=approved&amp;labels=architecture</span>
 </code></pre></div>
 <hr />
 <h2 id="viewing-object-history">Viewing Object History<a class="headerlink" href="#viewing-object-history" title="Permanent link">&para;</a></h2>
 <p>Every change is versioned. Retrieve the full revision history:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">GET /api/graph/objects/{id}/history</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="err">GET /api/graph/objects/{id}/history</span>
 </code></pre></div>
 <p>Restore a previous version:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="err">POST /api/graph/objects/{id}/restore</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="err">{ "versionId": "&lt;old-version-id&gt;" }</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="err">POST /api/graph/objects/{id}/restore</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="err">{ "versionId": "&lt;old-version-id&gt;" }</span>
 </code></pre></div>
 <hr />
 <h2 id="traversal-and-expansion">Traversal and Expansion<a class="headerlink" href="#traversal-and-expansion" title="Permanent link">&para;</a></h2>
 <h3 id="get-all-edges-for-an-object">Get all edges for an object<a class="headerlink" href="#get-all-edges-for-an-object" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="err">GET /api/graph/objects/{id}/edges</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="err">GET /api/graph/objects/{id}/edges</span>
 </code></pre></div>
 <h3 id="expand-a-subgraph-from-a-starting-node">Expand a subgraph from a starting node<a class="headerlink" href="#expand-a-subgraph-from-a-starting-node" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="err">POST /api/graph/expand</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="err">{</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="err">  "objectId": "&lt;canonical_id&gt;",</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="err">  "depth": 2,</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="err">  "relationshipTypes": ["depends_on", "authored_by"]</span>
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="err">POST /api/graph/expand</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="err">{</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="err">  "objectId": "&lt;canonical_id&gt;",</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="err">  "depth": 2,</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="err">  "relationshipTypes": ["depends_on", "authored_by"]</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="err">}</span>
 </code></pre></div>
 <h3 id="traverse-by-relationship-path">Traverse by relationship path<a class="headerlink" href="#traverse-by-relationship-path" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="err">POST /api/graph/traverse</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="err">{</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="err">  "startId": "&lt;canonical_id&gt;",</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="err">  "direction": "outbound",</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="err">  "maxDepth": 3</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="err">POST /api/graph/traverse</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="err">{</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="err">  "startId": "&lt;canonical_id&gt;",</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="err">  "direction": "outbound",</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="err">  "maxDepth": 3</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="err">}</span>
 </code></pre></div>
 <h3 id="find-similar-objects">Find similar objects<a class="headerlink" href="#find-similar-objects" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="err">GET /api/graph/objects/{id}/similar?limit=5</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="err">GET /api/graph/objects/{id}/similar?limit=5</span>
 </code></pre></div>
 <hr />
 <h2 id="bulk-operations">Bulk Operations<a class="headerlink" href="#bulk-operations" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="err">POST /api/graph/objects/bulk          # create multiple objects</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="err">POST /api/graph/relationships/bulk    # create multiple relationships</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="err">POST /api/graph/objects/bulk-update-status  # update status on many objects at once</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="err">POST /api/graph/objects/bulk          # create multiple objects</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="err">POST /api/graph/relationships/bulk    # create multiple relationships</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="err">POST /api/graph/objects/bulk-update-status  # update status on many objects at once</span>
 </code></pre></div>
 <hr />
 <h2 id="deleting-objects">Deleting Objects<a class="headerlink" href="#deleting-objects" title="Permanent link">&para;</a></h2>
 <p>Deletion is <strong>soft</strong> — the object is marked <code>deleted_at</code> but preserved in history.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="err">DELETE /api/graph/objects/{id}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="err">DELETE /api/graph/objects/{id}</span>
 </code></pre></div>
 <p>To restore:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="err">POST /api/graph/objects/{id}/restore</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="err">POST /api/graph/objects/{id}/restore</span>
 </code></pre></div>
 <hr />
 <h2 id="analytics">Analytics<a class="headerlink" href="#analytics" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="err">GET /api/graph/analytics/most-accessed   # objects viewed most recently</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="err">GET /api/graph/analytics/unused          # objects with no recent access</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="err">GET /api/graph/analytics/most-accessed   # objects viewed most recently</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="err">GET /api/graph/analytics/unused          # objects with no recent access</span>
 </code></pre></div>
 
 

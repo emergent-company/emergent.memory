@@ -1444,6 +1444,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#importing-a-dump-into-a-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Importing a dump into a branch
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3400,6 +3411,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#importing-a-dump-into-a-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Importing a dump into a branch
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3921,6 +3943,20 @@ name.</p>
 <p><code>validate</code> exits <code>0</code> on clean or warnings-only, <code>1</code> on any error, and is fully
 offline — always run it before <code>install</code>. <code>dump</code> exports graph data only; it
 does not export packs or agent definitions.</p>
+<h3 id="importing-a-dump-into-a-branch">Importing a dump into a branch<a class="headerlink" href="#importing-a-dump-into-a-branch" title="Permanent link">&para;</a></h3>
+<p><code>dump</code> writes <code>seed/objects/&lt;Type&gt;.jsonl</code> and <code>seed/relationships/&lt;Type&gt;.jsonl</code>
+with object keys and <code>srcKey</code>/<code>dstKey</code> references. To review a migration on a
+branch before promoting it, feed the dump directory straight back to the graph
+importer:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>dump<span class="w"> </span>./migration
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="c1"># edit ./migration/seed/...</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>./migration<span class="w"> </span>--branch<span class="w"> </span>migration-review
+</code></pre></div>
+<p>The importer upserts objects by <code>key</code>, resolves relationship keys after the
+objects are written, reads <code>_untyped.jsonl</code> back as type <code>Untyped</code>, and reports
+unreadable rows individually without aborting the rest. It accepts the dump
+root, a <code>seed/</code> directory, or a single <code>.jsonl</code> file. See
+<a href="../branches/#bulk-importing-a-dump-into-a-branch">Branches § Bulk importing a dump into a branch</a>.</p>
 <hr />
 <h2 id="registry-commands-mcp-and-rest">Registry commands (MCP and REST)<a class="headerlink" href="#registry-commands-mcp-and-rest" title="Permanent link">&para;</a></h2>
 <p>The registry lifecycle — browse, draft, publish, version, apply, unapply, delete

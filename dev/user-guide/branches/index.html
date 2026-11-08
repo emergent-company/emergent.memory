@@ -1319,6 +1319,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Working on a Branch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bulk-importing-a-dump-into-a-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bulk importing a dump into a branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3107,6 +3124,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Working on a Branch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bulk-importing-a-dump-into-a-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bulk importing a dump into a branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3268,25 +3302,53 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/graph/objects?branch_id=branch_abc123</span>
 </code></pre></div>
 <p>Objects created on a branch are isolated — they are not visible in the main graph until you merge.</p>
+<h3 id="bulk-importing-a-dump-into-a-branch">Bulk importing a dump into a branch<a class="headerlink" href="#bulk-importing-a-dump-into-a-branch" title="Permanent link">&para;</a></h3>
+<p><code>memory blueprints dump &lt;dir&gt;</code> exports the graph as JSONL seed files
+(<code>seed/objects/&lt;Type&gt;.jsonl</code> and <code>seed/relationships/&lt;Type&gt;.jsonl</code>). To stage a
+migration on a branch, edit the dump and import it in one call:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>dump<span class="w"> </span>./migration
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># review/edit ./migration/seed/objects/*.jsonl and seed/relationships/*.jsonl</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>./migration<span class="w"> </span>--branch<span class="w"> </span>migration-review
+</code></pre></div>
+<p>The importer:</p>
+<ul>
+<li>accepts a dump root, a <code>seed/</code> directory, or a single <code>.jsonl</code> file;</li>
+<li>upserts objects by <code>key</code> (so re-running is safe) and reads
+  <code>_untyped.jsonl</code> back as type <code>Untyped</code>;</li>
+<li>resolves relationship <code>srcKey</code>/<code>dstKey</code> after the objects are written;</li>
+<li>reports each unreadable row (bad JSON, missing type, unresolved key, server
+  rejection) and continues, then exits non-zero if anything failed.</li>
+</ul>
+<p>Everything lands on the named branch; the main graph is untouched until you
+<a href="#merging-a-branch">merge</a>.</p>
+<p>Both batch commands take the same flag:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># objects (and optionally relationships) from a JSON/subgraph file</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>subgraph.json<span class="w"> </span>--branch<span class="w"> </span>migration-review
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># relationships only, by existing entity IDs</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>memory<span class="w"> </span>graph<span class="w"> </span>relationships<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>edges.json<span class="w"> </span>--branch<span class="w"> </span>migration-review
+</code></pre></div>
+<p>For <code>relationships create-batch</code>, both endpoint objects must already exist on
+the same branch — the server rejects a cross-branch edge.</p>
 <hr />
 <h2 id="listing-branches">Listing Branches<a class="headerlink" href="#listing-branches" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">GET /api/graph/branches</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">GET /api/graph/branches</span>
 </code></pre></div>
 <hr />
 <h2 id="getting-a-branch">Getting a Branch<a class="headerlink" href="#getting-a-branch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /api/graph/branches/{id}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">GET /api/graph/branches/{id}</span>
 </code></pre></div>
 <hr />
 <h2 id="merging-a-branch">Merging a Branch<a class="headerlink" href="#merging-a-branch" title="Permanent link">&para;</a></h2>
 <p>When you are ready to promote changes from a source branch into a target branch, merge it.</p>
 <p><strong>Direction: source → target.</strong> The source branch is read; the target branch receives the changes.</p>
 <p>By default the merge is a <strong>dry run</strong> — it shows what would change without mutating state. Pass <code>"execute": true</code> to apply.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /api/graph/branches/main/merge</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="err">{</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="err">  "source_branch_id": "branch_abc123"</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">POST /api/graph/branches/main/merge</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="err">{</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="err">  "source_branch_id": "branch_abc123"</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="err">}</span>
 </code></pre></div>
 <p>Use <code>main</code> as the path segment to merge into the main graph. Use a branch UUID to merge into another branch.</p>
 <p>Dry-run response shows each object classified as:</p>
@@ -3317,18 +3379,18 @@
 </tbody>
 </table>
 <p>To execute after reviewing:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/graph/branches/main/merge</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="err">{</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="err">  "source_branch_id": "branch_abc123",</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="err">  "execute": true</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">POST /api/graph/branches/main/merge</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="err">{</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="err">  "source_branch_id": "branch_abc123",</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="err">  "execute": true</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="err">}</span>
 </code></pre></div>
 <p>The merge runs in a single database transaction — it is all-or-nothing. If any conflict exists, <code>execute</code> is rejected until conflicts are resolved manually.</p>
 <hr />
 <h2 id="deleting-a-branch">Deleting a Branch<a class="headerlink" href="#deleting-a-branch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">DELETE /api/graph/branches/{id}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="err">DELETE /api/graph/branches/{id}</span>
 </code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
@@ -3336,17 +3398,17 @@
 </div>
 <hr />
 <h2 id="renaming-a-branch">Renaming a Branch<a class="headerlink" href="#renaming-a-branch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">PATCH /api/graph/branches/{id}</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="err">{ "name": "new-name" }</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="err">PATCH /api/graph/branches/{id}</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="err">{ "name": "new-name" }</span>
 </code></pre></div>
 <hr />
 <h2 id="branch-hierarchy">Branch hierarchy<a class="headerlink" href="#branch-hierarchy" title="Permanent link">&para;</a></h2>
 <p>Branches can optionally record a <code>parent_branch_id</code> — which branch they were forked from. This is <strong>lineage metadata only</strong> and does not affect merge behavior. The merge compares object content hashes directly between source and target regardless of parentage.</p>
 <p>A null <code>parent_branch_id</code> means the branch was created off the main graph.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>main graph (no branch ID)
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>├── feature-a          (parent_branch_id: null)
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>│   └── feature-a-sub  (parent_branch_id: feature-a)
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>└── feature-b          (parent_branch_id: null)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>main graph (no branch ID)
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>├── feature-a          (parent_branch_id: null)
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>│   └── feature-a-sub  (parent_branch_id: feature-a)
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>└── feature-b          (parent_branch_id: null)
 </code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -3358,17 +3420,17 @@
 unmerged branch is invisible to it. An agent definition can opt into reading
 branches that have not been merged yet, narrowed by why a branch exists and by
 its name:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="err">PATCH /api/projects/{projectId}/agent-definitions/{id}</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="err">{</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="err">  "branchScope": {</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="err">    "unmerged": true,</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="err">    "origins": ["extraction"],</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="err">    "branches": ["extraction/*"],</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="err">    "maxBranches": 3</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="err">  }</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="err">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="err">PATCH /api/projects/{projectId}/agent-definitions/{id}</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="err">{</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="err">  "branchScope": {</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="err">    "unmerged": true,</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="err">    "origins": ["extraction"],</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="err">    "branches": ["extraction/*"],</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="err">    "maxBranches": 3</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="err">  }</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="err">}</span>
 </code></pre></div>
 <table>
 <thead>

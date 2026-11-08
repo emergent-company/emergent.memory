@@ -3911,6 +3911,9 @@ minutes (its default safeguard).</p>
 turns a run into a <strong>staged proposal</strong>, and a human decides whether it becomes a
 skill. The feature is off everywhere until a project opts in.</p>
 <p><strong>Enable it on a project</strong></p>
+<p>Open <strong>Settings → General → Skill capture</strong> and pick a mode (<code>off</code>, <code>suggest</code>,
+or <code>auto</code>). The <strong>Auto-apply captured skills</strong> toggle sits below it and is only
+enabled in <code>auto</code>. Or PATCH the project:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span><span class="s2">"</span><span class="nv">$MEMORY_API</span><span class="s2">/api/projects/</span><span class="nv">$PROJECT_ID</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
@@ -3918,11 +3921,16 @@ skill. The feature is off everywhere until a project opts in.</p>
 </code></pre></div>
 <p><code>mode</code> is <code>off</code> (default), <code>suggest</code>, or <code>auto</code>. <code>suggest</code> is the recommended
 starting point: every candidate waits for approval. <code>auto</code> additionally requires
-<code>"autoApply": true</code> and passes only when the candidate is clean, confident, not a
-duplicate, not a delete, within the daily caps, and the agent has at least one
-previously approved proposal. Deletes are always human-reviewed.</p>
-<p>An agent definition may <strong>narrow</strong> the project policy with <code>skillCapture:
-{"mode": "off"}</code>. It cannot widen it.</p>
+auto-apply to be on (the toggle above, or <code>"autoApply": true</code> in the API), and
+passes only when the candidate is clean, confident, not a duplicate, not a
+delete, within the daily caps, and the agent has at least one previously
+approved proposal. Deletes are always human-reviewed.</p>
+<p><strong>Narrow it per agent</strong></p>
+<p>Each agent's <strong>Settings → Skills</strong> page has an Automatic skill capture control:
+<em>Inherit project setting</em>, <em>Suggest only</em>, or <em>Off</em>. The same override is
+available as <code>skillCapture: {"mode": "off"}</code> on the agent definition. It can only
+<strong>narrow</strong> the project policy — it never widens it, so the project mode stays the
+master switch. An override that is not set inherits the project value.</p>
 <p><strong>What the agent writes.</strong> Learned skills are named <code>{agent-slug}.{topic}</code> (for
 example <code>research-assistant.handling-empty-results</code>) and are auto-loaded on the
 next run when the agent has <code>autoLoadSkills</code> enabled. Skills the agent writes are
