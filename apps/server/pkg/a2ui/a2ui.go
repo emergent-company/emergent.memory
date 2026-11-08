@@ -11,6 +11,7 @@ package a2ui
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -126,22 +127,32 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Catalog maps a known component id to the prop names that component requires.
-// It is the single source of truth for which components an agent may emit.
-type Catalog map[string][]string
+// ComponentSpec describes one catalog component: the prop names the validator
+// requires plus a one-line purpose used when the catalog is rendered into the
+// system-prompt instruction. Keeping both in one place is what makes the prompt
+// and the validator share a single source of truth.
+type ComponentSpec struct {
+	Required []string // prop names the validator requires
+	Purpose  string   // one-line purpose, for prompt emission
+}
+
+// Catalog maps a known component id to its spec. It is the single source of
+// truth for which components an agent may emit: the validator checks membership
+// and the prompt instruction is rendered from the same map.
+type Catalog map[string]ComponentSpec
 
 // BasicCatalog is the built-in catalog of first-class card components. Required
 // props are kept minimal; a component may carry additional props beyond these.
 var BasicCatalog = Catalog{
-	"proposal":    {"kind", "summary"},
-	"approval":    {"tool"},
-	"question":    {"prompt"},
-	"code":        {"code"},
-	"entity":      {"type"},
-	"object-form": {"fields"},
-	"todo":        {"items"},
-	"result":      {"rows"},
-	"sources":     {"items"},
+	"proposal":    {Required: []string{"kind", "summary"}, Purpose: "review/accept/reject a proposed change"},
+	"approval":    {Required: []string{"tool"}, Purpose: "gate a tool call on the user's approval"},
+	"question":    {Required: []string{"prompt"}, Purpose: "collect a structured answer from the user"},
+	"code":        {Required: []string{"code"}, Purpose: "show a code block or diff"},
+	"entity":      {Required: []string{"type"}, Purpose: "preview a graph object"},
+	"object-form": {Required: []string{"fields"}, Purpose: "schema-driven data entry"},
+	"todo":        {Required: []string{"items"}, Purpose: "a checkable task list"},
+	"result":      {Required: []string{"rows"}, Purpose: "key/value rows or a table"},
+	"sources":     {Required: []string{"items"}, Purpose: "list the sources behind an answer"},
 }
 
 // Contains reports whether id is a known component in the catalog.
@@ -162,7 +173,49 @@ func (c Catalog) IDs() []string {
 // RequiredProps returns the required prop names for a component id, or nil if
 // the id is not in the catalog.
 func (c Catalog) RequiredProps(id string) []string {
-	return c[id]
+	return c[id].Required
+}
+
+// InstructionPrefix opens the A2UI prompt instruction. It doubles as the
+// no-duplication marker: the executor skips appending the instruction when the
+// resolved prompt already carries it.
+const InstructionPrefix = "Structured UI cards (A2UI):"
+
+// Instruction renders the system-prompt instruction that teaches a model how to
+// emit A2UI cards. The component list is rendered from the catalog — the same
+// map the validator reads — so the prompt and the validator cannot drift. The
+// fixed prose describes the fenced envelope and when a card beats plain prose.
+func (c Catalog) Instruction() string {
+	var b strings.Builder
+	b.WriteString(InstructionPrefix)
+	b.WriteString(" you may answer with a structured card instead of plain prose. ")
+	b.WriteString("To emit one, write a fenced ")
+	b.WriteString(fenceOpen)
+	b.WriteString(" code block (closed by a line of three backticks) containing one JSON message per line (JSONL). ")
+	b.WriteString("Open a surface first with {\"createSurface\":{\"surfaceId\":\"<id>\",\"catalogId\":\"")
+	b.WriteString(CatalogID)
+	b.WriteString("\"}}, then add components with {\"updateComponents\":{\"surfaceId\":\"<id>\",\"components\":[{\"id\":\"root\",\"component\":\"<name>\",...}]}}. ")
+	b.WriteString("Use a card only when the content is genuinely structured — a decision the user must make, a code block or diff, a task list, a table of results, a form, a graph-object preview, or a list of sources. ")
+	b.WriteString("Otherwise answer in prose; do not wrap ordinary prose in a card.\n\nComponents:\n")
+	b.WriteString(c.renderCatalog())
+	return b.String()
+}
+
+// renderCatalog lists every component as one line — id, purpose, and required
+// props — sorted by id for deterministic output.
+func (c Catalog) renderCatalog() string {
+	ids := c.IDs()
+	sort.Strings(ids)
+	lines := make([]string, 0, len(ids))
+	for _, id := range ids {
+		spec := c[id]
+		line := "- " + id + ": " + spec.Purpose
+		if len(spec.Required) > 0 {
+			line += " (required: " + strings.Join(spec.Required, ", ") + ")"
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Validate performs structural validation only. It checks envelope shape,

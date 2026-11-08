@@ -3,6 +3,8 @@ package agents
 import (
 	"strings"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 )
 
 func TestAgentLanguage(t *testing.T) {
@@ -79,7 +81,7 @@ func TestResolveInstructionLanguage(t *testing.T) {
 		if strings.Contains(got, "Always respond in") {
 			t.Fatalf("resolveInstruction() = %q, want no language directive", got)
 		}
-		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil); got != want {
+		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil) + "\n\n" + a2ui.BasicCatalog.Instruction(); got != want {
 			t.Fatalf("resolveInstruction() = %q, want %q", got, want)
 		}
 	})
@@ -90,8 +92,8 @@ func TestResolveInstructionLanguage(t *testing.T) {
 		if strings.Contains(got, "Always respond in") {
 			t.Fatalf("resolveInstruction() = %q, want no language directive", got)
 		}
-		if got != base {
-			t.Fatalf("resolveInstruction() = %q, want %q", got, base)
+		if want := base + "\n\n" + a2ui.BasicCatalog.Instruction(); got != want {
+			t.Fatalf("resolveInstruction() = %q, want %q", got, want)
 		}
 	})
 }

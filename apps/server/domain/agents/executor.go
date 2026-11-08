@@ -5026,6 +5026,17 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 		}
 	}
 
+	// A2UI cards are unconditionally enabled — the AgentCard always advertises
+	// the catalog and the executor extracts ```a2ui blocks from every surface —
+	// so the model must be told the fence and the catalog exist, otherwise
+	// whether it ever emits a card depends entirely on its own authored prompt
+	// (issue #414). There is no per-definition opt-out flag to mirror, so this is
+	// injected for every agent. Skip when the resolved instruction already
+	// carries the block so it is never injected twice.
+	if !strings.Contains(inst, a2ui.InstructionPrefix) {
+		inst += "\n\n" + a2ui.BasicCatalog.Instruction()
+	}
+
 	// If tool policies can reject or cancel a tool call, tell the model how to
 	// read those structured results so a "rejected" result stops the direction
 	// rather than being retried as a transient failure.
