@@ -74,11 +74,9 @@ struct TurnFooterModel {
     /// A short clock time ("14:05", "2:05 PM") for the current locale.
     static func format(clock: Date, timeZone: TimeZone, locale: Locale) -> String {
         clock.formatted(
-            Date.FormatStyle(date: .omitted, time: .shortened)
+            Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone)
                 .hour(.twoDigits(amPM: .abbreviated))
                 .minute(.twoDigits)
-                .locale(locale)
-                .timeZone(timeZone)
         )
     }
 
