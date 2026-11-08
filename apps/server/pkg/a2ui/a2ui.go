@@ -717,6 +717,16 @@ const (
 // a2ui block removed, and found=true only when at least one block validated.
 // It never returns an error: a bad surface degrades to plain text.
 func ExtractFromText(text string) ([]Message, string, bool) {
+	messages, rest, _, _ := ExtractWithIssues(text)
+	return messages, rest, len(messages) > 0
+}
+
+// ExtractWithIssues is ExtractFromText plus the validation issues of every
+// block that failed. It is what makes the single bounded repair pass possible:
+// a model that emitted an invalid surface gets the exact issues back instead of
+// a silent degradation. hasBlock is true for any recognised fence, valid or
+// not, so a caller can tell "no surface" from "the surface failed".
+func ExtractWithIssues(text string) (messages []Message, rest string, hasBlock bool, issues Issues) {
 	lines := strings.Split(text, "\n")
 
 	type block struct {
@@ -725,12 +735,12 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 	}
 
 	var (
-		blocks   []block
-		messages []Message
-		inFence  bool
-		cur      block
-		curMsgs  []Message
-		curValid bool
+		blocks    []block
+		inFence   bool
+		cur       block
+		curMsgs   []Message
+		curIssues Issues
+		curValid  bool
 	)
 
 	for i, line := range lines {
@@ -739,6 +749,7 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 				inFence = true
 				cur = block{start: i}
 				curMsgs = nil
+				curIssues = nil
 				curValid = true
 			}
 			continue
@@ -746,8 +757,20 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 		if strings.TrimSpace(line) == fenceClose {
 			inFence = false
 			cur.end = i
-			if curValid && len(curMsgs) > 0 && Validate(curMsgs) == nil {
-				messages = append(messages, curMsgs...)
+			switch {
+			case !curValid:
+				issues = append(issues, curIssues...)
+				if len(curIssues) == 0 {
+					issues = append(issues, Issue{Detail: "A2UI block did not parse"})
+				}
+			case len(curMsgs) == 0:
+				issues = append(issues, Issue{Detail: "A2UI block contained no messages"})
+			default:
+				if validated := ValidateAll(curMsgs); len(validated) > 0 {
+					issues = append(issues, validated...)
+				} else {
+					messages = append(messages, curMsgs...)
+				}
 			}
 			blocks = append(blocks, cur)
 			continue
@@ -758,6 +781,10 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 		var m Message
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
 			curValid = false
+			curIssues = append(curIssues, Issue{
+				Message: len(curMsgs),
+				Detail:  fmt.Sprintf("invalid JSON: %v", err),
+			})
 			continue
 		}
 		curMsgs = append(curMsgs, m)
@@ -766,10 +793,14 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 	if inFence {
 		cur.end = len(lines) - 1
 		blocks = append(blocks, cur)
+		issues = append(issues, Issue{
+			Message: len(curMsgs),
+			Detail:  "unterminated A2UI block (the response was cut off)",
+		})
 	}
 
 	if len(blocks) == 0 {
-		return nil, text, false
+		return nil, text, false, nil
 	}
 
 	drop := make([]bool, len(lines))
@@ -786,7 +817,7 @@ func ExtractFromText(text string) ([]Message, string, bool) {
 		}
 		out = append(out, line)
 	}
-	return messages, strings.Join(out, "\n"), len(messages) > 0
+	return messages, strings.Join(out, "\n"), true, issues
 }
 
 // SurfaceIDOf returns the first createSurface surfaceId in msgs, or

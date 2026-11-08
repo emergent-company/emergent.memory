@@ -76,7 +76,7 @@ func TestA2UIProgressiveEvents_ThrottledFrameDroppedButRetained(t *testing.T) {
 
 	// A second message inside the interval is dropped (not emitted) …
 	events = a2uiProgressiveEvents(s, th,
-		"{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\"}]}}\n")
+		"{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\",\"kind\":\"change\",\"summary\":\"hi\"}]}}\n")
 	if len(events) != 0 {
 		t.Fatalf("throttled frame = %d, want 0", len(events))
 	}
@@ -140,7 +140,7 @@ func TestA2UITeardownEvents_UpdateComponentsOnly(t *testing.T) {
 	// the surface — so it must be torn down too when the finished response is
 	// invalid, even though Opened() is false.
 	s := a2ui.NewSurfaceStream()
-	if got := s.Feed("```a2ui\n{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\"}]}}\n"); len(got) != 1 {
+	if got := s.Feed("```a2ui\n{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\",\"kind\":\"change\",\"summary\":\"hi\"}]}}\n"); len(got) != 1 {
 		t.Fatalf("Feed = %d messages, want 1", len(got))
 	}
 	if s.Opened() {

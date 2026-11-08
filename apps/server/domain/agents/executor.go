@@ -2968,6 +2968,10 @@ func (ae *AgentExecutor) runPipeline(
 	// rate-limited.
 	a2uiThrottle := newA2UIFrameThrottle(a2uiFrameInterval)
 
+	// a2uiRepair owns the single bounded repair turn (#417): when a final answer
+	// is only an invalid surface, the validator issues are sent back once.
+	a2uiRepair := &a2uiRepairState{}
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -4070,6 +4074,17 @@ func (ae *AgentExecutor) runPipeline(
 		}
 
 		if !malformed && !transientErr && !unknownTool {
+			// One bounded A2UI repair pass (#417): an answer that was only an
+			// invalid card would otherwise degrade silently, so send the
+			// validator issues back exactly once before accepting the fallback.
+			if prompt, ok := a2uiRepair.Next(eventParts(lastEvent)); ok {
+				ae.log.Info("a2ui validation failed, issuing one repair turn",
+					slog.String("run_id", run.ID),
+					slog.Int("max_repairs", maxA2UIRepairs),
+				)
+				currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
+				continue
+			}
 			break // normal completion — exit outer retry loop
 		}
 		// MALFORMED_FUNCTION_CALL retry: brief pause then re-enter inner loop
@@ -4172,6 +4187,17 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Build summary from the last event
 	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
+
+	// Log/metric the A2UI repair outcome per run (#417): "repaired" vs
+	// "degraded" is how we tell whether the catalog prompt is doing its job.
+	if a2uiRepair.Attempted() {
+		outcome := a2uiRepair.Outcome(eventParts(lastEvent))
+		summary["a2ui_repair"] = outcome
+		ae.log.Info("a2ui repair outcome",
+			slog.String("run_id", run.ID),
+			slog.String("outcome", outcome),
+		)
+	}
 
 	// Carry the work terminator marker (if any) into the returned summary so the
 	// worker pool can distinguish "success with a terminator" from a protocol
