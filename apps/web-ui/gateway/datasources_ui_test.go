@@ -490,10 +490,52 @@ func TestRenderOrgOAuthClientDetailPage(t *testing.T) {
 		t.Error("client_secret must not be prefilled")
 	}
 
-	// An unconfigured provider shows no delete form.
+	// #424: a saved secret is visible as state, and the field reads as a
+	// replacement control rather than an empty "not set" input.
+	for _, want := range []string{
+		`data-testid="ds-oauth-client-secret-saved"`,
+		"Enter a new one to replace it",
+		`placeholder="Leave blank to keep the saved secret"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("configured secret field missing %q", want)
+		}
+	}
+
+	// #425: one row at the bottom — Remove on the left, Save on the right —
+	// and the shared sticky footer pattern instead of an inline button.
+	if !strings.Contains(html, "sticky-form-actions") {
+		t.Errorf("save/remove row must use the sticky form footer:\n%s", html)
+	}
+	if !strings.Contains(html, `formaction="/orgs/org-1/settings/oauth-clients/google_drive/delete"`) {
+		t.Errorf("remove must post to the delete endpoint from the same row:\n%s", html)
+	}
+	removeAt := strings.Index(html, `data-testid="ds-oauth-client-delete"`)
+	saveAt := strings.Index(html, `class="memory-save-btn`)
+	if removeAt < 0 || saveAt < 0 || removeAt > saveAt {
+		t.Errorf("Remove must precede Save in the action row (remove=%d save=%d)", removeAt, saveAt)
+	}
+	// The Remove control lives inside the save form (no nested form): the
+	// delete URL must appear as a formaction, never as a second <form action>.
+	if strings.Contains(html, `<form method="post" action="/orgs/org-1/settings/oauth-clients/google_drive/delete"`) {
+		t.Errorf("delete must not render a second form:\n%s", html)
+	}
+	if n := strings.Count(html, "<form"); n != 1 {
+		t.Errorf("client card rendered %d forms, want 1:\n%s", n, html)
+	}
+
+	// An unconfigured provider shows no delete control and no saved-secret state.
 	bare := renderHTML(t, OrgOAuthClientDetailPage("org-1", "Acme", provider, DSOAuthClientConfig{}, nil, "", nil))
-	if strings.Contains(bare, `data-testid="ds-oauth-client-delete"`) {
-		t.Error("unconfigured provider must not render a delete form")
+	for _, unwanted := range []string{
+		`data-testid="ds-oauth-client-delete"`,
+		`data-testid="ds-oauth-client-secret-saved"`,
+	} {
+		if strings.Contains(bare, unwanted) {
+			t.Errorf("unconfigured provider must not render %q", unwanted)
+		}
+	}
+	if !strings.Contains(bare, `placeholder="Paste the client secret"`) {
+		t.Errorf("unconfigured secret field should invite a value:\n%s", bare)
 	}
 }
 

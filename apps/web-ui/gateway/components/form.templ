@@ -60,7 +60,8 @@ templ SaveChangesButton() {
 // StickyFormActionsProps configures StickyFormActions.
 type StickyFormActionsProps struct {
 	// Align is the horizontal alignment of the action buttons: "" (zero value)
-	// right-aligns, "start" left-aligns.
+	// right-aligns, "start" left-aligns, "between" pins the first action to the
+	// left and the rest to the right (destructive action left, primary right).
 	Align string
 	// Rail mirrors layout.Rail's grid so the actions align to the rail's
 	// content column on lg while the strip still spans the full pane.
@@ -92,8 +93,11 @@ type StickyFormActionsProps struct {
 // form.FormActions footer there.
 templ StickyFormActions(props StickyFormActionsProps) {
 	{{ align := "justify-end"
-	if props.Align == "start" {
+	switch props.Align {
+	case "start":
 		align = "justify-start"
+	case "between":
+		align = "justify-between"
 	} }}
 	<div class={ "sticky-form-actions", props.Class } { props.Attrs... }>
 		<div class="sfa__surface">
