@@ -3801,6 +3801,42 @@ func TestDSDetailPageRendersTheProviderSpecificSyncNote(t *testing.T) {
 	}
 }
 
+// TestDSDetailPageSyncOptionsOwnsTheSyncControls pins the #426 reorder: the
+// sync mode and interval controls belong to the "Sync options" section, not to
+// the card header above it.
+func TestDSDetailPageSyncOptionsOwnsTheSyncControls(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}
+	config, creds := dsConfigFields(testDSSchema(), nil)
+	html := renderHTML(t, DataSourceDetailPage(src, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, nil, nil, "", nil))
+
+	const heading = `<h3 class="text-sm font-semibold">Sync options</h3>`
+	start := strings.Index(html, heading)
+	if start < 0 {
+		t.Fatalf("detail page has no Sync options section:\n%s", html)
+	}
+	// The section runs to the next sibling heading (or the end of the form, for
+	// a provider with no credential block).
+	end := len(html)
+	if next := strings.Index(html[start+len(heading):], `<h3 class="text-sm font-semibold">`); next >= 0 {
+		end = start + len(heading) + next
+	}
+	section := html[start:end]
+
+	for _, want := range []string{`data-testid="ds-field-sync-mode"`, `data-testid="ds-field-sync-interval"`, "Sync mode", "Sync interval (minutes)"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Sync options section missing %q:\n%s", want, section)
+		}
+	}
+	// The name field stays in the first block, above the section.
+	if nameAt := strings.Index(html, `data-testid="ds-field-name"`); nameAt < 0 || nameAt > start {
+		t.Errorf("name field should render above the Sync options section")
+	}
+	// ...and neither sync control may leak into that first block.
+	if header := html[:start]; strings.Contains(header, "ds-field-sync-mode") || strings.Contains(header, "ds-field-sync-interval") {
+		t.Errorf("sync controls still render above the Sync options section:\n%s", header)
+	}
+}
+
 // TestDSDetailPageOmitsTheMissingAppWarningWhenTheCatalogIsUnknown asserts a
 // failed catalog read degrades quietly: with no provider entry the card cannot
 // tell whether an app is needed, and claiming "set one up" was the #2213

@@ -2314,32 +2314,22 @@ func (s *Server) invalidateObjectLabelSuggestions(ctx context.Context) {
 	s.labelSuggestionsGroup.Forget(pid)
 }
 
-// objectEndpointLabel resolves one relationship endpoint id to a display
-// label: the object itself, a related object, or a shortened id.
-// objectEndpointLabel resolves a relationship endpoint id to its object label
-// by canonical id or version id, falling back to a shortened id.
-func objectEndpointLabel(obj *GraphObject, related []GraphObject, id string) string {
-	if obj != nil && (id == obj.ID || id == obj.CanonicalID) {
-		return graphObjectLabel(*obj)
-	}
-	return graphObjectLabelByID(related, id)
-}
-
 // relationshipEndpointObject resolves a relationship endpoint id to the related
 // object so the row can render it like an objects-table entry (type icon, type
-// name, short id). The current object resolves to itself; an endpoint missing
-// from the fetched slice keeps the raw id so the row still renders something
-// linkable.
-func relationshipEndpointObject(obj *GraphObject, related []GraphObject, id string) GraphObject {
+// name, short id). The current object resolves to itself. ok is false when the
+// id matches neither this object nor the fetched related slice: loadRelatedObjects
+// swallows a fetch error, so an endpoint can be missing from the slice, and the
+// caller then renders plain text instead of a link that would 404.
+func relationshipEndpointObject(obj *GraphObject, related []GraphObject, id string) (GraphObject, bool) {
 	if obj != nil && (id == obj.ID || id == obj.CanonicalID) {
-		return *obj
+		return *obj, true
 	}
 	for _, o := range related {
 		if o.ID == id || o.CanonicalID == id {
-			return o
+			return o, true
 		}
 	}
-	return GraphObject{ID: id}
+	return GraphObject{ID: id}, false
 }
 
 // relationshipEndpointTarget is the id a relationship endpoint link opens: the

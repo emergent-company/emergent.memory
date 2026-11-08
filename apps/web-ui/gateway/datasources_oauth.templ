@@ -448,6 +448,10 @@ templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig
 				}
 			</div>
 		}
+		// The card sits in layout.Rail's content column, so the strip spans the
+		// column (not the pane) and Rail stays false: Rail: true would add the
+		// rail's 11rem spacer *inside* the content column. The strip's own px-6
+		// then matches PanelCard's inset, so the buttons line up with the fields.
 		@components.StickyFormActions(components.StickyFormActionsProps{Align: "between"}) {
 			if cfg.Configured {
 				@ui.Button(ui.ButtonProps{

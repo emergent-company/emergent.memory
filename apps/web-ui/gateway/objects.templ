@@ -1312,31 +1312,45 @@ templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []Gra
 // objects table renders an object: the type's icon tile, the type above the
 // short id, and the label as a link to the object. Resolving the endpoint to the
 // fetched related object (rather than printing its label text) is what makes
-// the row navigable (#421).
+// the row navigable (#421). An endpoint missing from the fetched slice renders
+// as the same block without a link: the related-object read is best-effort, so a
+// link there would point at an object page that may not exist.
 templ relationshipEndpointLink(obj *GraphObject, related []GraphObject, id string, typeUIByType map[string]typeUI) {
-	{{ ep := relationshipEndpointObject(obj, related, id)
-	hrefID := relationshipEndpointTarget(ep)
-	tui := typeUIOf(typeUIByType, ep.Type)
+	{{ ep, resolved := relationshipEndpointObject(obj, related, id)
+	hrefID := relationshipEndpointTarget(ep) }}
+	if resolved {
+		<a
+			href={ templ.URL("/objects/" + url.PathEscape(hrefID)) }
+			class="group hover:bg-base-200/40 flex min-w-0 items-center gap-2 rounded-field px-1.5 py-0.5"
+			data-testid="object-relationship-endpoint"
+			data-object-id={ hrefID }
+		>
+			@relationshipEndpointContent(ep, hrefID, typeUIByType)
+		</a>
+	} else {
+		<span class="flex min-w-0 items-center gap-2 px-1.5 py-0.5" data-testid="object-relationship-endpoint" data-object-id={ hrefID } data-unresolved="1">
+			@relationshipEndpointContent(ep, hrefID, typeUIByType)
+		</span>
+	}
+}
+
+// relationshipEndpointContent is the type tile, type name and short id block
+// shared by the linked and unresolved endpoint renderings.
+templ relationshipEndpointContent(ep GraphObject, hrefID string, typeUIByType map[string]typeUI) {
+	{{ tui := typeUIOf(typeUIByType, ep.Type)
 	typeLabel := ep.Type
 	if typeLabel == "" {
 		typeLabel = "object"
 	} }}
-	<a
-		href={ templ.URL("/objects/" + url.PathEscape(hrefID)) }
-		class="group hover:bg-base-200/40 flex min-w-0 items-center gap-2 rounded-field px-1.5 py-0.5"
-		data-testid="object-relationship-endpoint"
-		data-object-id={ hrefID }
-	>
-		@typeIconTileSmall(tui.Icon, tui.Color)
-		<div class="min-w-0">
-			<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
-				<span class="truncate">{ typeLabel }</span>
-				<span class="bg-base-content/25 size-1.5 shrink-0 rounded-full" aria-hidden="true"></span>
-				<span class="shrink-0">#{ objectShortID(hrefID) }</span>
-			</div>
-			<span class="group-hover:text-primary block truncate text-sm font-medium group-hover:underline">{ graphObjectLabel(ep) }</span>
+	@typeIconTileSmall(tui.Icon, tui.Color)
+	<div class="min-w-0">
+		<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
+			<span class="truncate">{ typeLabel }</span>
+			<span class="bg-base-content/25 size-1.5 shrink-0 rounded-full" aria-hidden="true"></span>
+			<span class="shrink-0">#{ objectShortID(hrefID) }</span>
 		</div>
-	</a>
+		<span class="group-hover:text-primary block truncate text-sm font-medium group-hover:underline">{ graphObjectLabel(ep) }</span>
+	</div>
 }
 
 // objectSimilarObjects lists objects semantically similar to the current one,

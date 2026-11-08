@@ -47,17 +47,29 @@ func TestGraphObjectProperties(t *testing.T) {
 	}
 }
 
-func TestObjectEndpointLabel(t *testing.T) {
+func TestRelationshipEndpointObject(t *testing.T) {
 	obj := &GraphObject{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam-lee"}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"}}
-	if got := objectEndpointLabel(obj, related, "c1"); got != "sam-lee" {
-		t.Errorf("self = %q, want sam", got)
+
+	for _, id := range []string{"o1", "c1"} {
+		got, ok := relationshipEndpointObject(obj, related, id)
+		if !ok || got.Key != "sam-lee" {
+			t.Errorf("%q: got %+v ok=%v, want the current object", id, got, ok)
+		}
 	}
-	if got := objectEndpointLabel(obj, related, "c2"); got != "call dentist" {
-		t.Errorf("related = %q, want call dentist", got)
+	// The edge stores the version id; the row resolves it and links the
+	// canonical id.
+	got, ok := relationshipEndpointObject(obj, related, "c2")
+	if !ok || got.Key != "call dentist" || relationshipEndpointTarget(got) != "c2" {
+		t.Errorf("related = %+v ok=%v, want the related object via its canonical id", got, ok)
 	}
-	if got := objectEndpointLabel(obj, related, "c9"); got == "" {
-		t.Error("unknown id should fall back to a shortened id")
+	// A failed related-object fetch must not invent a link target.
+	got, ok = relationshipEndpointObject(obj, related, "c9")
+	if ok {
+		t.Error("unknown id resolved, want ok=false so the row renders plain text")
+	}
+	if got.ID != "c9" {
+		t.Errorf("unknown id = %q, want the raw id preserved for display", got.ID)
 	}
 }
 
@@ -896,6 +908,25 @@ func TestRenderRelationshipsSubpage(t *testing.T) {
 	))
 	if !strings.Contains(accented, "lucide--user") {
 		t.Errorf("endpoint link missing the type's declared icon:\n%s", accented)
+	}
+
+	// A related-object fetch can fail (loadRelatedObjects swallows the error), so
+	// an endpoint may be missing from the slice. That endpoint must still render
+	// the type/short-id block, but not as a link to a page that would 404.
+	unresolved := renderHTML(t, objectRelationshipsPage(
+		objectDetailShellData{Obj: obj, Active: "relationships"}, relTypes,
+		[]GraphRelationship{{ID: "r2", Type: "works_with", SrcID: "o1", DstID: "o9"}}, nil, nil,
+	))
+	if strings.Contains(unresolved, `href="/objects/o9"`) {
+		t.Errorf("unresolved endpoint rendered a link to a non-existent object:\n%s", unresolved)
+	}
+	if !strings.Contains(unresolved, `data-unresolved="1"`) {
+		t.Errorf("unresolved endpoint did not render its plain-text fallback:\n%s", unresolved)
+	}
+	for _, want := range []string{"#o9", "object"} {
+		if !strings.Contains(unresolved, want) {
+			t.Errorf("unresolved endpoint missing %q:\n%s", want, unresolved)
+		}
 	}
 }
 
