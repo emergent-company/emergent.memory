@@ -3053,6 +3053,10 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 
 	var types []typeRow
 	var relTypes []relTypeRow
+	// declaredRelTypeNames holds relationship type names declared by installed
+	// schema packs. They are surfaced with count 0 even when no relationship
+	// instances exist yet (issue #403).
+	var declaredRelTypeNames []string
 	// Untyped objects (type = '') have no registry row, so the registry-driven
 	// query below can never surface them. Count them separately and fold the
 	// result into a synthetic bucket after the transaction (issue #323).
@@ -3087,7 +3091,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		err = tx.NewRaw(`
 			SELECT 
 				tr.type_name as name,
-				COALESCE(tr.description, '') as description,
+				COALESCE(tr.json_schema->>'description', tr.description, '') as description,
 				COUNT(go.id)::int as instance_count
 			FROM kb.project_object_schema_registry tr
 			LEFT JOIN kb.graph_objects go 
@@ -3096,10 +3100,16 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
 				`+branchClause+`
+			LEFT JOIN kb.project_schemas ps
+				ON ps.schema_id = tr.schema_id
+				AND ps.project_id = tr.project_id
+				AND ps.active = true
+				AND ps.removed_at IS NULL
 			WHERE tr.enabled = true 
 				AND tr.project_id = ?
+				AND (tr.schema_id IS NULL OR ps.id IS NOT NULL)
 				`+namespaceClause+`
-			GROUP BY tr.type_name, tr.description
+			GROUP BY tr.type_name, tr.json_schema->>'description', tr.description
 			ORDER BY tr.type_name
 		`, queryArgs...).Scan(ctx, &types)
 		if err != nil {
@@ -3196,6 +3206,40 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			if err != nil {
 				return err
 			}
+
+			// Relationship types declared by installed schema packs must appear
+			// even when no instances exist yet (issue #403). The instance query
+			// above only surfaces types with live graph_relationships rows, so a
+			// freshly installed pack's relationship types were invisible. Read
+			// their names from graph_schemas.relationship_type_schemas, handling
+			// both storage shapes (a map keyed by type name, or an array of
+			// {"name","sourceType","targetType"} objects).
+			err = tx.NewRaw(`
+				SELECT DISTINCT rel_name
+				FROM (
+					SELECT jsonb_object_keys(gs.relationship_type_schemas) AS rel_name
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
+					UNION
+					SELECT elem->>'name' AS rel_name
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					CROSS JOIN LATERAL jsonb_array_elements(gs.relationship_type_schemas) AS elem
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'array'
+				) declared
+				WHERE declared.rel_name IS NOT NULL AND declared.rel_name <> ''
+				ORDER BY declared.rel_name
+			`, projectUUID, projectUUID).Scan(ctx, &declaredRelTypeNames)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -3239,12 +3283,28 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		})
 	}
 
-	relationshipTypes := make([]RelationshipType, 0, len(relTypes))
+	relationshipTypes := make([]RelationshipType, 0, len(relTypes)+len(declaredRelTypeNames))
+	inUseTypes := make(map[string]bool, len(relTypes))
 	for _, r := range relTypes {
 		if !scope.AllowsRelationshipRow(r.Type, r.FromType, r.ToType) {
 			continue
 		}
 		relationshipTypes = append(relationshipTypes, RelationshipType(r))
+		inUseTypes[r.Type] = true
+	}
+	// Add relationship types declared by installed packs that have no in-use
+	// instances yet, so a freshly installed pack's relationship types are
+	// discoverable (issue #403). A declared type that already appears above
+	// keeps its real from/to/count; the zero-count row is only a fallback.
+	for _, name := range declaredRelTypeNames {
+		if name == "" || inUseTypes[name] {
+			continue
+		}
+		if !scope.AllowsRelationship(name) {
+			continue
+		}
+		relationshipTypes = append(relationshipTypes, RelationshipType{Type: name, FromType: "", ToType: "", Count: 0})
+		inUseTypes[name] = true
 	}
 
 	result := EntityTypesResult{
