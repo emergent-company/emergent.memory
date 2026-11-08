@@ -832,3 +832,182 @@ func TestBatchDeleteIsIdempotent(t *testing.T) {
 		Scan(ctx, &relVersions))
 	assert.Equal(t, 2, relVersions, "repeat relationship deletes must not append extra tombstones")
 }
+
+// TestBatchMutationSchemaOneOfAndItemSchema pins the machine-readable schema:
+// each widened tool advertises its two forms with anyOf, and entity-update's
+// array items require entity_id instead of being a bare object.
+func TestBatchMutationSchemaOneOfAndItemSchema(t *testing.T) {
+	svc := &Service{}
+
+	cases := map[string][2]string{
+		"entity-update":       {"entity_id", "updates"},
+		"entity-delete":       {"entity_id", "entity_ids"},
+		"relationship-delete": {"relationship_id", "relationship_ids"},
+	}
+	for tool, forms := range cases {
+		def := toolDefByName(t, svc, tool)
+		require.Len(t, def.InputSchema.AnyOf, 2, "%s must advertise anyOf with two forms", tool)
+		assert.Equal(t, []string{forms[0]}, def.InputSchema.AnyOf[0].Required)
+		assert.Equal(t, []string{forms[1]}, def.InputSchema.AnyOf[1].Required)
+
+		raw, err := json.Marshal(def.InputSchema)
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"anyOf":[{"required":["`+forms[0]+`"]},{"required":["`+forms[1]+`"]}]`,
+			"%s anyOf must marshal as standard JSON-Schema required branches", tool)
+	}
+
+	upd := toolDefByName(t, svc, "entity-update")
+	items := upd.InputSchema.Properties["updates"].Items
+	require.NotNil(t, items, "updates must advertise an item schema")
+	assert.Equal(t, []string{"entity_id"}, items.Required, "each updates item must require entity_id")
+	_, hasID := items.Properties["entity_id"]
+	assert.True(t, hasID, "the updates item schema must describe entity_id")
+}
+
+// TestBulkUpdateEntitiesWriteRulesDeny pins per-type write rules on the filter
+// tool: an agent that may not delete a type cannot soft-delete it through a
+// filter. It fails before any database access, so a bare Service is enough.
+func TestBulkUpdateEntitiesWriteRulesDeny(t *testing.T) {
+	svc := &Service{}
+	ctx := ContextWithAgentWriteRules(context.Background(), NewAgentWriteRules(map[string]ObjectWriteRule{
+		"Doc": {CanCreate: true, CanUpdate: true, CanDelete: false},
+	}))
+
+	_, err := svc.executeBulkUpdateEntities(ctx, uuid.NewString(), map[string]any{
+		"filter": map[string]any{"types": []any{"Doc"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowed for this agent", "a denied type must be refused")
+
+	// An update action is refused too when update is denied.
+	denyUpdate := ContextWithAgentWriteRules(context.Background(), NewAgentWriteRules(map[string]ObjectWriteRule{
+		"Doc": {CanUpdate: false},
+	}))
+	_, err = svc.executeBulkUpdateEntities(denyUpdate, uuid.NewString(), map[string]any{
+		"filter":  map[string]any{"types": []any{"Doc"}},
+		"action":  "update_status",
+		"value":   "done",
+		"dry_run": true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowed for this agent")
+}
+
+// TestBulkUpdateEntitiesRejectsNonIntegerLimit pins the strict integer limit:
+// 1.9 must be refused, not silently truncated to 1.
+func TestBulkUpdateEntitiesRejectsNonIntegerLimit(t *testing.T) {
+	svc := &Service{}
+	_, err := svc.executeBulkUpdateEntities(context.Background(), uuid.NewString(), map[string]any{
+		"filter": map[string]any{"types": []any{"Doc"}},
+		"limit":  1.9,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "limit must be an integer")
+}
+
+// TestBulkUpdateEntitiesLimitCap pins the cap and the matched > affected
+// contract: a capped run affects exactly `limit` rows and a re-run drains the
+// remainder.
+func TestBulkUpdateEntitiesLimitCap(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	for i := 0; i < 3; i++ {
+		seedBatchObject(t, db, projectID, "Doc", "cap-doc-"+uuid.NewString(), `{}`)
+	}
+
+	env := decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{
+			"filter": map[string]any{"types": []any{"Doc"}},
+			"limit":  2,
+		})
+	})
+	assert.True(t, env.OK)
+	assert.Equal(t, 3, env.Data.Matched, "matched reports the whole matching set")
+	assert.Equal(t, 2, env.Data.Affected, "a capped run affects only limit rows")
+
+	var live int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND type = 'Doc' AND deleted_at IS NULL", projectID).
+		Scan(ctx, &live))
+	assert.Equal(t, 1, live, "one row must remain for the re-run")
+
+	env = decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{
+			"filter": map[string]any{"types": []any{"Doc"}},
+			"limit":  2,
+		})
+	})
+	assert.Equal(t, 1, env.Data.Matched, "a re-run matches only the remainder")
+	assert.Equal(t, 1, env.Data.Affected)
+}
+
+// TestEntityUpdateSingleFormEndToEnd executes the untouched single-item path:
+// the envelope still carries data.entity and the row really changes.
+func TestEntityUpdateSingleFormEndToEnd(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	id := seedBatchObject(t, db, projectID, "Note", "single-update", `{"state":"old"}`)
+
+	res, err := svc.executeUpdateEntity(ctx, projectID, map[string]any{
+		"entity_id":  id,
+		"properties": map[string]any{"state": "new"},
+	})
+	text := toolResultText(t, res, err)
+
+	var top map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text), &top))
+	assert.Equal(t, true, top["ok"])
+	data, ok := top["data"].(map[string]any)
+	require.True(t, ok)
+	entity, ok := data["entity"].(map[string]any)
+	require.True(t, ok, "single-item update must return data.entity")
+	assert.Equal(t, id, entity["id"])
+
+	var state string
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("properties->>'state'").
+		Where("project_id = ? AND canonical_id = ? AND supersedes_id IS NULL", projectID, id).
+		Scan(ctx, &state))
+	assert.Equal(t, "new", state)
+}
+
+// TestRelationshipDeleteSingleFormEndToEnd executes the untouched single-item
+// relationship delete: the envelope still carries data.relationship_id and the
+// row is soft-deleted.
+func TestRelationshipDeleteSingleFormEndToEnd(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	src := seedBatchObject(t, db, projectID, "Note", "single-rel-src", `{}`)
+	dst := seedBatchObject(t, db, projectID, "Note", "single-rel-dst", `{}`)
+	relID := seedBatchRelationship(t, db, projectID, "links", src, dst)
+
+	res, err := svc.executeDeleteRelationship(ctx, projectID, map[string]any{"relationship_id": relID})
+	text := toolResultText(t, res, err)
+
+	var top map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text), &top))
+	assert.Equal(t, true, top["ok"])
+	data, ok := top["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, relID, data["relationship_id"])
+
+	var deleted int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_relationships").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND canonical_id = ? AND deleted_at IS NOT NULL", projectID, relID).
+		Scan(ctx, &deleted))
+	assert.Equal(t, 1, deleted)
+}

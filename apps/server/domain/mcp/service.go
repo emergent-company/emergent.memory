@@ -871,8 +871,38 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Description: "Single form: UUID or key of the entity to update. Omit when using 'updates'.",
 					},
 					"updates": {
-						Type:        "array",
-						Items:       &PropertySchema{Type: "object"},
+						Type: "array",
+						Items: &PropertySchema{
+							Type: "object",
+							Properties: map[string]PropertySchema{
+								"entity_id": {
+									Type:        "string",
+									Description: "UUID or key of the entity to update (required per item).",
+								},
+								"properties": {
+									Type:        "object",
+									Description: "Properties to merge into the entity (null removes a property).",
+								},
+								"labels": {
+									Type:        "array",
+									Items:       &PropertySchema{Type: "string"},
+									Description: "Labels to add for this item.",
+								},
+								"replace_labels": {
+									Type:        "boolean",
+									Description: "If true, replace all labels instead of merging (default: false).",
+								},
+								"status": {
+									Type:        "string",
+									Description: "Optional new status for this item.",
+								},
+								"branch_id": {
+									Type:        "string",
+									Description: "Optional branch UUID for this item.",
+								},
+							},
+							Required: []string{"entity_id"},
+						},
 						Description: "Batch form (max 100 items): each item {entity_id (required), properties, labels, replace_labels, status, branch_id?}. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes. No item is atomic with any other; a failure does not roll back the successes.",
 					},
 					"properties": {
@@ -901,6 +931,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
 					},
 				},
+				AnyOf: []SchemaBranch{
+					{Required: []string{"entity_id"}},
+					{Required: []string{"updates"}},
+				},
 			},
 		},
 		{
@@ -927,6 +961,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
+				},
+				AnyOf: []SchemaBranch{
+					{Required: []string{"entity_id"}},
+					{Required: []string{"entity_ids"}},
 				},
 			},
 		},
@@ -1491,6 +1529,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Optional branch name or UUID. If set, the delete is applied in this branch instead of the main graph.",
 					},
+				},
+				AnyOf: []SchemaBranch{
+					{Required: []string{"relationship_id"}},
+					{Required: []string{"relationship_ids"}},
 				},
 			},
 		},
@@ -5445,12 +5487,6 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 			return nil, fmt.Errorf("action=hard_delete permanently removes rows and requires confirm=true")
 		}
 	}
-	if v, present := args["limit"]; present {
-		if f, ok := v.(float64); ok && f != float64(int(f)) {
-			return nil, fmt.Errorf("limit must be an integer, got %v", f)
-		}
-	}
-
 	// Narrow an unrestricted request to the agent's object-type allowlist, and
 	// refuse when the allowlist leaves nothing to match. An empty types list
 	// means "every type", so it must never reach the repository in that state.
@@ -5506,7 +5542,11 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 		req.Properties = props
 	}
 	req.Labels = stringSliceArg(args, "labels")
-	if limit, ok := intArg(args, "limit"); ok {
+	limit, hasLimit, err := intArg(args, "limit")
+	if err != nil {
+		return nil, err
+	}
+	if hasLimit {
 		if limit < 0 {
 			return nil, fmt.Errorf("limit must not be negative")
 		}
@@ -5595,16 +5635,21 @@ func boolArg(args map[string]any, name string) bool {
 }
 
 // intArg reads an integer argument tolerantly (JSON numbers decode as float64).
-func intArg(args map[string]any, name string) (int, bool) {
+// A non-integral number is an error naming the argument instead of being
+// silently truncated (1.9 used to become 1).
+func intArg(args map[string]any, name string) (int, bool, error) {
 	switch v := args[name].(type) {
 	case int:
-		return v, true
+		return v, true, nil
 	case int64:
-		return int(v), true
+		return int(v), true, nil
 	case float64:
-		return int(v), true
+		if v != float64(int(v)) {
+			return 0, false, fmt.Errorf("%s must be an integer, got %v", name, v)
+		}
+		return int(v), true, nil
 	}
-	return 0, false
+	return 0, false, nil
 }
 
 // stringSliceArg reads a []string argument tolerantly (JSON arrays decode as []any).
