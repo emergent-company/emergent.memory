@@ -30,6 +30,41 @@ type Project struct {
 	// on to match the server-side default.
 	AutoDiscoveryEnabled *bool  `json:"auto_discovery_enabled,omitempty"`
 	MainBranchID         string `json:"main_branch_id,omitempty"`
+	// SkillCapture is the project-level automatic skill-capture policy, kept as
+	// a raw map so the UI round-trips the guardrail knobs it does not render
+	// (nudgeInterval, caps, thresholds…). memory REPLACES the whole policy on
+	// PATCH, so a typed struct narrowed to the two fields the UI edits would
+	// silently reset everything else on the first save. See
+	// apps/server/domain/skills/capture_config.go for the shape.
+	SkillCapture map[string]any `json:"skill_capture,omitempty"`
+}
+
+// SkillCaptureMode returns the project's normalized capture mode: "off",
+// "suggest", or "auto". Unset or unrecognized reads as "off", matching memory's
+// default (the feature is opt-in).
+func (p *Project) SkillCaptureMode() string {
+	if p == nil || p.SkillCapture == nil {
+		return "off"
+	}
+	v, _ := p.SkillCapture["mode"].(string)
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "suggest":
+		return "suggest"
+	case "auto":
+		return "auto"
+	default:
+		return "off"
+	}
+}
+
+// SkillCaptureAutoApply reports whether the project auto-apply key is on. It is
+// only meaningful when SkillCaptureMode is "auto" (memory requires both).
+func (p *Project) SkillCaptureAutoApply() bool {
+	if p == nil || p.SkillCapture == nil {
+		return false
+	}
+	v, _ := p.SkillCapture["autoApply"].(bool)
+	return v
 }
 
 // ProjectUpdate is the PATCH /api/projects/:id body. Every field is a pointer
@@ -45,6 +80,10 @@ type ProjectUpdate struct {
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
+	// SkillCapture replaces the project capture policy when non-nil. Callers
+	// must start from the current policy (see capturePolicyWith) so knobs the
+	// UI does not render survive the replace.
+	SkillCapture map[string]any `json:"skill_capture,omitempty"`
 }
 
 // AgentOverrideEntry is one entry of GET

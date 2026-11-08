@@ -865,7 +865,8 @@ templ agentToolsSettingsForm(data agentSettingsData) {
 }
 
 // agentSkillsSettingsForm is the Skills subpage (PRG → POST
-// /agents/:id/settings/skills): the skill checkbox picker.
+// /agents/:id/settings/skills): the skill checkbox picker plus the per-agent
+// half of the automatic skill-capture policy.
 templ agentSkillsSettingsForm(data agentSettingsData) {
 	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") } hx-disable="find button.memory-save-btn">
 		<div class={ pageFormFieldsClass }>
@@ -886,11 +887,72 @@ templ agentSkillsSettingsForm(data agentSettingsData) {
 							Items:         skillPickerItems(data.Skills, func(name string) bool { return containsString(data.Agent.Skills, name) }),
 						})
 					}
+				}
+				@agentSkillCaptureSection(data)
 			}
-		}
 		</div>
 		@agentSettingsSave()
 	</form>
+}
+
+// agentSkillCaptureSection is the per-agent skill-capture control. memory treats
+// the project mode as the master switch and lets an agent only narrow it, so the
+// radio set is inherit / off / suggest — "auto" would resolve to the project
+// value and is deliberately absent. When the project is off the control is inert,
+// so the section says so and links to the project setting.
+templ agentSkillCaptureSection(data agentSettingsData) {
+	@ui.Section("Automatic skill capture", ui.SectionProps{
+		Margin:    "mt-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-3">
+			if data.CaptureKnown && data.ProjectCaptureMode == "off" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					Skill capture is off for this project, so this setting has no effect.
+					<a href="/settings" class="link link-primary">Turn it on in project settings</a>.
+				}
+			}
+			@form.FormControl("agent-settings-capture", "", form.LabelAbove, "A successful run of this agent can be reviewed for a reusable skill. The project setting is the master switch; an agent can narrow it, never widen it.", "", nil) {
+				<label class="label flex w-full justify-start gap-2 py-1.5">
+					<input
+						id="agent-settings-capture-inherit"
+						type="radio"
+						name="skillCaptureMode"
+						value=""
+						class="radio radio-sm"
+						checked?={ captureOverrideValue(data.Agent) == "" }
+					/>
+					<span class="text-sm">Inherit project setting
+						if data.CaptureKnown {
+							<span class="text-muted">(effective: { captureModeShort(data.EffectiveCaptureMode) })</span>
+						}
+					</span>
+				</label>
+				<label class="label flex w-full justify-start gap-2 py-1.5">
+					<input
+						id="agent-settings-capture-suggest"
+						type="radio"
+						name="skillCaptureMode"
+						value="suggest"
+						class="radio radio-sm"
+						checked?={ captureOverrideValue(data.Agent) == "suggest" }
+					/>
+					<span class="text-sm">Suggest only — captured skills wait for human approval</span>
+				</label>
+				<label class="label flex w-full justify-start gap-2 py-1.5">
+					<input
+						id="agent-settings-capture-off"
+						type="radio"
+						name="skillCaptureMode"
+						value="off"
+						class="radio radio-sm"
+						checked?={ captureOverrideValue(data.Agent) == "off" }
+					/>
+					<span class="text-sm">Off — this agent never captures skills</span>
+				</label>
+			}
+		</div>
+	}
 }
 
 // agentDelegationSettingsForm is the Delegation subpage (PRG → POST
