@@ -81,6 +81,10 @@ type StreamEvent struct {
 	Role       string         // For Thinking: "operator" (planning text) or "reasoning" (chain-of-thought)
 	SurfaceID  string         // For A2UI: the stable surface identifier
 	A2UI       []a2ui.Message // For A2UI: the ordered surface messages
+	// Final is true only on the authoritative A2UI frame extracted from the
+	// finished response. Progressive frames (and a teardown) leave it false, so
+	// a replay/persistence consumer can ignore partial and deleted surfaces.
+	Final bool
 	// ID is a stable correlation key:
 	//   - For Thinking: the segment id ("step-<n>-<role>") shared by every delta
 	//     of one reasoning/planning segment and its closing event.
@@ -369,6 +373,7 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 					Type:      StreamEventA2UI,
 					SurfaceID: surfaceID,
 					A2UI:      msgs,
+					Final:     true,
 				})
 			}
 			if plainText != "" {
@@ -2968,6 +2973,10 @@ func (ae *AgentExecutor) runPipeline(
 	// rate-limited.
 	a2uiThrottle := newA2UIFrameThrottle(a2uiFrameInterval)
 
+	// a2uiRepair owns the single bounded repair turn (#417): when a final answer
+	// is only an invalid surface, the validator issues are sent back once.
+	a2uiRepair := &a2uiRepairState{}
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -3953,8 +3962,14 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 
-			// Persist assistant messages from events
+			// Persist assistant messages from events. A repaired answer that
+			// omitted its createSurface line is normalized first so both the
+			// persisted row and the streamed frame keep the failed surface's id
+			// and ordering (#417).
 			if event.Content != nil && !event.Partial {
+				if event.IsFinalResponse() && a2uiRepair.Attempted() {
+					event.Content.Parts = ensureRepairedCreateSurface(event.Content.Parts, a2uiRepair.SurfaceID())
+				}
 				ae.persistEventContent(dbCtx, run.ID, event, tracker.current())
 			}
 
@@ -4070,6 +4085,17 @@ func (ae *AgentExecutor) runPipeline(
 		}
 
 		if !malformed && !transientErr && !unknownTool {
+			// One bounded A2UI repair pass (#417): an answer that was only an
+			// invalid card would otherwise degrade silently, so send the
+			// validator issues back exactly once before accepting the fallback.
+			if prompt, ok := a2uiRepairFor(req, tracker, a2uiRepair, eventParts(lastEvent)); ok {
+				ae.log.Info("a2ui validation failed, issuing one repair turn",
+					slog.String("run_id", run.ID),
+					slog.Int("max_repairs", maxA2UIRepairs),
+				)
+				currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
+				continue
+			}
 			break // normal completion — exit outer retry loop
 		}
 		// MALFORMED_FUNCTION_CALL retry: brief pause then re-enter inner loop
@@ -4172,6 +4198,17 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Build summary from the last event
 	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
+
+	// Log/metric the A2UI repair outcome per run (#417): "repaired" vs
+	// "degraded" is how we tell whether the catalog prompt is doing its job.
+	if a2uiRepair.Attempted() {
+		outcome := a2uiRepair.Outcome(eventParts(lastEvent))
+		summary["a2ui_repair"] = outcome
+		ae.log.Info("a2ui repair outcome",
+			slog.String("run_id", run.ID),
+			slog.String("outcome", outcome),
+		)
+	}
 
 	// Carry the work terminator marker (if any) into the returned summary so the
 	// worker pool can distinguish "success with a terminator" from a protocol
@@ -5413,6 +5450,16 @@ func (st *stepTracker) exceeded() bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.steps >= st.maxSteps
+}
+
+// nextStepExceedsBudget reports whether incrementing for one more model call
+// would trip the step limit. beforeModelCb increments first and then checks
+// exceeded(), so a follow-up turn (a repair) is only safe while the NEXT step
+// still fits — not merely while the current count is under the limit.
+func (st *stepTracker) nextStepExceedsBudget() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.steps+1 >= st.maxSteps
 }
 
 // --- Doom Loop Detector ---
