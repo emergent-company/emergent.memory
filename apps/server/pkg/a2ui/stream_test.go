@@ -65,7 +65,7 @@ func TestTextFilterDropsUnterminatedSurface(t *testing.T) {
 
 // A line that cannot be a fence is shown as it arrives, so streaming keeps its
 // token-by-token feel.
-func TestTextFilterStreamsPartialLine(t *testing.T) {
+func TestTextFilterEmitsNonFencePartialLine(t *testing.T) {
 	f := NewTextFilter()
 	if got := f.Feed("Hel"); got != "Hel" {
 		t.Fatalf("first partial = %q, want %q", got, "Hel")

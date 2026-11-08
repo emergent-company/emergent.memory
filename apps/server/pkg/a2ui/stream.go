@@ -88,20 +88,23 @@ func (f *TextFilter) emitTail(out *strings.Builder) {
 	f.lineShown = true
 }
 
-// Flush returns the tail Feed is still holding. Text inside an unterminated
-// fence is dropped (it is a surface, not an answer); everything else is
-// returned. Call it once, when the response is complete.
+// Flush returns the tail Feed is still holding, once the response is complete.
+// Text inside an unterminated fence is dropped (it is a surface, not an
+// answer), and so is a bare opening marker that never received content. Any
+// other tail is ordinary text — e.g. the closing ``` of a markdown block that
+// ended the message without a trailing newline — and is returned.
 func (f *TextFilter) Flush() string {
-	if f.inFence {
-		f.pending = ""
-		f.inFence = false
-		f.lineShown = false
-		return ""
-	}
-	out := f.pending
+	pending := f.pending
 	f.pending = ""
 	f.lineShown = false
-	return out
+	if f.inFence {
+		f.inFence = false
+		return ""
+	}
+	if strings.TrimSpace(pending) == fenceOpen {
+		return ""
+	}
+	return pending
 }
 
 // isFencePrefix reports whether s is a prefix of the opening fence, or the

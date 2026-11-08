@@ -445,6 +445,37 @@ func deriveSurfaceID(msgs []a2ui.Message) string {
 	return "surface-1"
 }
 
+// answerTextEvents filters one streamed answer chunk through the A2UI surface
+// filter. It is the only place partial answer text becomes a StreamEvent, so a
+// call site cannot bypass the filter and paint raw protocol JSONL mid-stream.
+func answerTextEvents(filter *a2ui.TextFilter, chunk string) []StreamEvent {
+	text := filter.Feed(chunk)
+	if text == "" {
+		return nil
+	}
+	return []StreamEvent{{Type: StreamEventTextDelta, Text: text}}
+}
+
+// flushAnswerText releases the tail the surface filter still holds once the run
+// has finished. Text inside an unterminated fence is dropped by the filter —
+// that is a surface, not an answer.
+func flushAnswerText(filter *a2ui.TextFilter) []StreamEvent {
+	text := filter.Flush()
+	if text == "" {
+		return nil
+	}
+	return []StreamEvent{{Type: StreamEventTextDelta, Text: text}}
+}
+
+// stripSurfaceText removes A2UI fenced blocks from text that is about to be
+// stored or shown again (persisted reply, run summary). The stored text is
+// replayed verbatim by history and by the chat handler's empty-response
+// fallback, so a surface left in it would reach the user as raw JSONL.
+func stripSurfaceText(text string) (string, []a2ui.Message) {
+	msgs, rest, _ := a2ui.ExtractFromText(text)
+	return rest, msgs
+}
+
 // ModelLimitsLookup is a narrow interface for querying model token limits
 // from the provider catalog. It is satisfied by *provider.Repository but
 // declared here to avoid a direct import of the provider domain package into
@@ -2914,7 +2945,10 @@ func (ae *AgentExecutor) runPipeline(
 	// textFilter keeps a streaming ```a2ui surface out of the answer text. A
 	// surface is only extracted from the finished response, so without it the
 	// raw JSONL of a card (valid or not) is painted into the bubble mid-stream.
+	// It is per step: a step that opens a surface and never closes it must not
+	// swallow the next step's answer.
 	textFilter := a2ui.NewTextFilter()
+	filterStep := -1
 
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
@@ -3874,6 +3908,10 @@ func (ae *AgentExecutor) runPipeline(
 			// provider that streams chain-of-thought incrementally never leaks
 			// reasoning into the final answer stream.
 			if event.Partial && event.Content != nil && req.StreamCallback != nil {
+				if step := tracker.current(); step != filterStep {
+					textFilter = a2ui.NewTextFilter()
+					filterStep = step
+				}
 				for _, part := range event.Content.Parts {
 					if part == nil || part.Text == "" {
 						continue
@@ -3882,11 +3920,10 @@ func (ae *AgentExecutor) runPipeline(
 						step := tracker.current()
 						thinkTrack.markReasoningPartial(step)
 						thinkTrack.emit(step, "reasoning", part.Text)
-					} else if text := textFilter.Feed(part.Text); text != "" {
-						req.StreamCallback(StreamEvent{
-							Type: StreamEventTextDelta,
-							Text: text,
-						})
+					} else {
+						for _, ev := range answerTextEvents(textFilter, part.Text) {
+							req.StreamCallback(ev)
+						}
 					}
 				}
 			}
@@ -3943,6 +3980,11 @@ func (ae *AgentExecutor) runPipeline(
 						}
 					}
 				}
+				// The answer step is complete. Drop anything the surface filter
+				// still holds (a tail from THIS step's fence) so a step that
+				// began a surface without closing it cannot swallow the next
+				// step's answer.
+				textFilter = a2ui.NewTextFilter()
 			}
 
 			// Track the last non-partial event that carries text — used as fallback
@@ -3976,6 +4018,17 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 		} // end inner for-range r.Run(...)
+
+		// Release whatever the surface filter still holds. An answer that ended
+		// inside an unterminated ```a2ui block holds only that block and is
+		// dropped; an ordinary tail (e.g. a markdown fence's closing ``` with no
+		// trailing newline) is emitted. Safe to repeat across a retry: a flush
+		// leaves the filter empty.
+		if req.StreamCallback != nil {
+			for _, ev := range flushAnswerText(textFilter) {
+				req.StreamCallback(ev)
+			}
+		}
 
 		// A cancelled context is terminal: exit the outer retry loop so the
 		// post-loop cancellation block records the terminal status/reason.
@@ -5170,6 +5223,17 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	}
 
 	text, reasoning := persistedEventText(event.Content.Parts, event.IsFinalResponse())
+	// Stored text is replayed verbatim: by conversation history, and by the chat
+	// handler's fallback when the streamed answer was empty (e.g. a reply that
+	// is only a surface). Strip any A2UI block here so neither path can show raw
+	// JSONL; the extracted surfaces ride along so citation derivation on reload
+	// still sees them.
+	if stripped, surfaces := stripSurfaceText(text); stripped != "" || len(surfaces) > 0 {
+		text = stripped
+		if len(surfaces) > 0 {
+			contentMap["a2ui"] = surfaces
+		}
+	}
 	if text != "" {
 		contentMap["text"] = text
 	}
@@ -5241,6 +5305,11 @@ func (ae *AgentExecutor) buildSummary(lastEvent *session.Event, lastTextEvent *s
 	text := extractText(lastEvent)
 	if text == "" {
 		text = extractText(lastTextEvent)
+	}
+	// The summary feeds the chat handler's empty-response fallback, which streams
+	// it as an answer: it must never carry an A2UI block.
+	if text != "" {
+		text, _ = stripSurfaceText(text)
 	}
 	if text != "" {
 		summary["final_response"] = text
