@@ -205,23 +205,60 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// parseMemoryError converts a non-2xx memory response body into a clean
-// error. It extracts the {"error":{"code":...,"message":...}} shape when
-// present, else the {"error":"..."} string shape, else the raw body.
+// maxMemoryErrorMessageRunes caps a backend-authored message that is copied to
+// a user surface (a PRG flash, a toast). memory's own validation copy is short;
+// a multi-kilobyte blob is not a message and must not be rendered whole.
+const maxMemoryErrorMessageRunes = 300
+
+// genericMemoryStatusMessage is the status-derived copy used when a non-2xx
+// body does not carry a recognised error shape. It deliberately says nothing
+// about the body: a proxy's 502 HTML page or an unenveloped JSON slab is not
+// something a person can act on, and rendering it verbatim is a copy bug (and a
+// small content-injection surface).
+func genericMemoryStatusMessage(status int) string {
+	switch {
+	case status >= http.StatusInternalServerError:
+		return fmt.Sprintf("The service failed (HTTP %d).", status)
+	case status >= http.StatusBadRequest:
+		return fmt.Sprintf("The request was rejected (HTTP %d).", status)
+	default:
+		return fmt.Sprintf("The request could not be completed (HTTP %d).", status)
+	}
+}
+
+// truncateMemoryMessage caps a backend message at maxMemoryErrorMessageRunes
+// runes, ending in an ellipsis so it is visibly shortened rather than
+// silently cut.
+func truncateMemoryMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	runes := []rune(msg)
+	if len(runes) <= maxMemoryErrorMessageRunes {
+		return msg
+	}
+	return string(runes[:maxMemoryErrorMessageRunes-1]) + "…"
+}
+
+// parseMemoryError converts a non-2xx memory response body into a clean error.
+// It extracts the {"error":{"code":...,"message":...}} shape when present, else
+// the {"error":"..."} string shape, else a status-derived generic message — the
+// raw body is never echoed, because a non-standard body (a proxy 502 page, an
+// unenveloped JSON slab) is not user-facing copy. Recognised messages are
+// trimmed and capped at maxMemoryErrorMessageRunes; Status and Code are kept
+// intact for logging and status classification.
 func parseMemoryError(status int, raw []byte) error {
 	var obj struct {
 		Error apiError `json:"error"`
 	}
-	if json.Unmarshal(raw, &obj) == nil && obj.Error.Code != "" {
-		return &memoryHTTPError{Status: status, Code: obj.Error.Code, Message: obj.Error.Message}
+	if json.Unmarshal(raw, &obj) == nil && (obj.Error.Code != "" || obj.Error.Message != "") {
+		return &memoryHTTPError{Status: status, Code: obj.Error.Code, Message: truncateMemoryMessage(obj.Error.Message)}
 	}
 	var str struct {
 		Error string `json:"error"`
 	}
 	if json.Unmarshal(raw, &str) == nil && str.Error != "" {
-		return &memoryHTTPError{Status: status, Message: str.Error}
+		return &memoryHTTPError{Status: status, Message: truncateMemoryMessage(str.Error)}
 	}
-	return &memoryHTTPError{Status: status, Message: string(raw)}
+	return &memoryHTTPError{Status: status, Message: genericMemoryStatusMessage(status)}
 }
 
 // memoryStatus returns the HTTP status carried by a memory backend error, or 0

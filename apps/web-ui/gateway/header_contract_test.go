@@ -250,7 +250,7 @@ func TestCollectionCountsSitBelowTheHeader(t *testing.T) {
 	}
 	components := map[string]string{
 		"agents":   renderHTML(t, AgentsPage([]AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "tom"}}, nil, "", nil, "")),
-		"skills":   renderHTML(t, SkillsPage([]Skill{{Name: "summarise"}, {Name: "recall"}}, nil, nil, nil, "", nil, "", nil)),
+		"skills":   renderHTML(t, SkillsPage([]Skill{{Name: "summarise"}, {Name: "recall"}}, nil, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil)),
 		"sessions": renderHTML(t, SessionsPage(nil, []Conversation{{ID: "c1", Title: "one"}, {ID: "c2", Title: "two"}}, nil)),
 	}
 
@@ -293,7 +293,7 @@ func TestOneH1PerPage(t *testing.T) {
 		{"board (header then notice)", BoardPage(nil, nil, nil, boardAllowances{}, boardStatusMap{}, errTest), 1},
 		{"agents list", AgentsPage(nil, nil, "", errTest, ""), 1},
 		{"approvals", ApprovalsPage(nil, nil, errTest), 1},
-		{"skills", SkillsPage(nil, errTest, nil, nil, "", nil, "", nil), 1},
+		{"skills", SkillsPage(nil, errTest, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil), 1},
 		{"sessions", SessionsPage(nil, nil, errTest), 1},
 		{"usage", UsagePage(nil, nil, usageChartPayload{}, 0, false, 30, errTest), 1},
 		{"backups", BackupsPage(nil, 0, nil, false, "", errTest, "", nil), 1},

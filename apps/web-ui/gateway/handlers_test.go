@@ -472,6 +472,8 @@ type fakeMemory struct {
 
 	skillProposals     []SkillCaptureProposal // returned by ListSkillCaptureProposals
 	skillProposalErr   error                  // failure for any proposal read/action
+	proposalListStatus string                 // last status passed to ListSkillCaptureProposals
+	proposalListLimit  int                    // last limit passed to ListSkillCaptureProposals
 	approvedProposalID string                 // last id passed to ApproveSkillCaptureProposal
 	rejectedProposalID string                 // last id passed to RejectSkillCaptureProposal
 	approveProposalErr error                  // overrides skillProposalErr for approve
@@ -2311,11 +2313,24 @@ func (f *fakeMemory) RestoreSkill(ctx context.Context, id string, pin bool) (*Sk
 	return &Skill{ID: id, Name: "restored"}, nil
 }
 
-func (f *fakeMemory) ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error) {
+func (f *fakeMemory) ListSkillCaptureProposals(ctx context.Context, status string, limit int) ([]SkillCaptureProposal, error) {
+	f.proposalListStatus = status
+	f.proposalListLimit = limit
 	if f.skillProposalErr != nil {
 		return nil, f.skillProposalErr
 	}
-	return f.skillProposals, nil
+	// Mirror the server: filter by status ("" and "all" mean everything) and
+	// never return more than limit rows.
+	out := make([]SkillCaptureProposal, 0, len(f.skillProposals))
+	for _, p := range f.skillProposals {
+		if status == "" || status == proposalStatusAll || p.Status == status {
+			out = append(out, p)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (f *fakeMemory) GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
