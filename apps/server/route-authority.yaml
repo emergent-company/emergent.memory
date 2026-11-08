@@ -1641,6 +1641,10 @@ routes:
       path: /api/projects/:projectId/skills/:id
       level: project-token
       note: RequireAuth, RequireProjectTokenScope
+    - method: POST
+      path: /api/projects/:projectId/skills/:id/restore
+      level: project-token
+      note: RequireAuth, RequireProjectTokenScope
     - method: GET
       path: /api/projects/:projectId/skills/proposals
       level: project-token

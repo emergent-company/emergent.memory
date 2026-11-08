@@ -423,6 +423,37 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, dto *UpdateSkillD
 	return existing, nil
 }
 
+// RestoreSkill returns a skill to the active lifecycle state without replacing
+// its metadata: only metadata.lifecycle_state changes (and metadata.pinned when
+// pin is set). This is the explicit un-archive path for skills the curator aged;
+// callers do not have to send whole metadata back. A human restore is activity,
+// so updated_at moves and the curator's age clock restarts. Pinning is the
+// durable form: the curator skips pinned skills entirely.
+func (r *Repository) RestoreSkill(ctx context.Context, id uuid.UUID, pin bool) (*Skill, error) {
+	query := `
+		UPDATE kb.skills
+		   SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{lifecycle_state}', to_jsonb(?::text), true),
+		       updated_at = now()
+		 WHERE id = ?`
+	if pin {
+		query = `
+		UPDATE kb.skills
+		   SET metadata = jsonb_set(
+		           jsonb_set(COALESCE(metadata, '{}'::jsonb), '{lifecycle_state}', to_jsonb(?::text), true),
+		           '{pinned}', 'true'::jsonb, true),
+		       updated_at = now()
+		 WHERE id = ?`
+	}
+	res, err := r.db.NewRaw(query, SkillLifecycleActive, id).Exec(ctx)
+	if err != nil {
+		return nil, r.wrapDBError("failed to restore skill", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return nil, apperror.NewNotFound("skill", id.String())
+	}
+	return r.FindByID(ctx, id)
+}
+
 // Delete removes a skill by ID. Returns NotFound if the skill does not exist.
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	result, err := r.db.NewDelete().

@@ -463,6 +463,40 @@ func (h *Handler) UpdateProjectSkill(c echo.Context) error {
 	return h.UpdateSkill(c)
 }
 
+// RestoreProjectSkill handles POST /api/projects/:projectId/skills/:id/restore
+// @Summary      Restore an archived skill
+// @Description  Returns an archived (or stale) skill to the active lifecycle state without replacing its metadata. Optionally pins it, which stops the curator from archiving it again.
+// @Tags         skills
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string           true  "Project ID (UUID)"
+// @Param        id        path string           true  "Skill ID (UUID)"
+// @Param        body      body RestoreSkillDTO  false "Optional pin flag"
+// @Success      200 {object} SkillDTO
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      403 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/projects/{projectId}/skills/{id}/restore [post]
+// @Security     bearerAuth
+func (h *Handler) RestoreProjectSkill(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if _, err := h.requireProjectMember(c, projectID); err != nil {
+		return err
+	}
+	skill, err := h.requireProjectSkill(c, projectID)
+	if err != nil {
+		return err
+	}
+	var dto RestoreSkillDTO
+	_ = c.Bind(&dto)
+	restored, err := h.repo.RestoreSkill(c.Request().Context(), skill.ID, dto.Pin)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, restored.ToDTO())
+}
+
 // DeleteProjectSkill handles DELETE /api/projects/:projectId/skills/:id
 // @Summary      Delete a project skill
 // @Description  Delete a project-scoped skill
