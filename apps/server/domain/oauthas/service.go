@@ -27,7 +27,7 @@ const (
 	// maxRedirectURIsPerClient is the registration cap. It must stay above the
 	// number Google's Gemini connector sends: Gemini registers a sandbox/test/
 	// production triple for both the /r/ and /a/ redirect shapes, i.e. six URIs
-	// in one request, and a lower cap rejects the registration outright (#390).
+	// in one request, and a lower cap rejects the registration outright (#411).
 	maxRedirectURIsPerClient = 10
 	// tokenTypeBearer is the only token type this AS issues.
 	tokenTypeBearer = "Bearer"
