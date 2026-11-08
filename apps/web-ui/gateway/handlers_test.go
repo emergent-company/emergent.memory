@@ -468,6 +468,13 @@ type fakeMemory struct {
 	updatedSkillID string  // last id passed to UpdateSkill
 	deletedSkillID string  // last id passed to DeleteSkill
 
+	skillProposals     []SkillCaptureProposal // returned by ListSkillCaptureProposals
+	skillProposalErr   error                  // failure for any proposal read/action
+	approvedProposalID string                 // last id passed to ApproveSkillCaptureProposal
+	rejectedProposalID string                 // last id passed to RejectSkillCaptureProposal
+	approveProposalErr error                  // overrides skillProposalErr for approve
+	rejectProposalErr  error                  // overrides skillProposalErr for reject
+
 	backups           []Backup            // returned by ListBackups
 	backupErr         error               // failure for any backup read/list method
 	createdBackupReq  CreateBackupRequest // last create request forwarded
@@ -2269,6 +2276,47 @@ func (f *fakeMemory) DeleteSkill(ctx context.Context, id string) error {
 		return f.skillErr
 	}
 	f.deletedSkillID = id
+	return nil
+}
+
+func (f *fakeMemory) ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error) {
+	if f.skillProposalErr != nil {
+		return nil, f.skillProposalErr
+	}
+	return f.skillProposals, nil
+}
+
+func (f *fakeMemory) GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
+	if f.skillProposalErr != nil {
+		return nil, f.skillProposalErr
+	}
+	for i := range f.skillProposals {
+		if f.skillProposals[i].ID == id {
+			return &f.skillProposals[i], nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (f *fakeMemory) ApproveSkillCaptureProposal(ctx context.Context, id string) error {
+	if f.approveProposalErr != nil {
+		return f.approveProposalErr
+	}
+	if f.skillProposalErr != nil {
+		return f.skillProposalErr
+	}
+	f.approvedProposalID = id
+	return nil
+}
+
+func (f *fakeMemory) RejectSkillCaptureProposal(ctx context.Context, id string) error {
+	if f.rejectProposalErr != nil {
+		return f.rejectProposalErr
+	}
+	if f.skillProposalErr != nil {
+		return f.skillProposalErr
+	}
+	f.rejectedProposalID = id
 	return nil
 }
 
