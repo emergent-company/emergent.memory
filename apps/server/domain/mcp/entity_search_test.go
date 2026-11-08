@@ -44,6 +44,36 @@ func insertSearchEntity(t *testing.T, db bun.IDB, projectID, typ, key, title, na
 	return id
 }
 
+// insertSearchEntityVersion inserts one version row of a canonical object, so a
+// test can build the multi-version chain that kb.graph_objects keeps for every
+// update. id is the row's physical id (so a caller can pre-generate the head's
+// id and use it as the superseded row's forward pointer). supersedesID follows
+// the production write path: the OLD version is stamped with the id of the
+// version that replaces it, and the current HEAD carries NULL (see GraphObject
+// versioning). Returns the row's physical id.
+func insertSearchEntityVersion(t *testing.T, db bun.IDB, projectID, typ, key, name string,
+	canonicalID uuid.UUID, version int, id string, supersedesID *uuid.UUID,
+	createdAt, updatedAt time.Time) string {
+	t.Helper()
+	if id == "" {
+		id = uuid.NewString()
+	}
+	ctx := context.Background()
+	propsJSON, err := json.Marshal(map[string]any{"name": name})
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, status,
+			 properties, labels, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'active', ?::jsonb, '{}'::text[], ?, ?)
+	`, id, projectID, canonicalID, supersedesID, version, typ, key, string(propsJSON), createdAt, updatedAt)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM kb.graph_objects WHERE canonical_id = ?", canonicalID)
+	})
+	return id
+}
+
 // runEntitySearch executes executeSearchEntities and decodes the JSON text
 // response into a SearchEntitiesResult.
 func runEntitySearch(t *testing.T, svc *Service, projectID string, args map[string]any) SearchEntitiesResult {
@@ -183,6 +213,75 @@ func TestEntitySearchTypeFilter(t *testing.T) {
 	require.Len(t, out.Entities, 1)
 	assert.Equal(t, personID, out.Entities[0].ID)
 	assert.Equal(t, "Person", out.Entities[0].Type)
+}
+
+// TestEntitySearchReturnsOnlyCurrentVersion is the #399 regression for stale
+// per-version hits: kb.graph_objects keeps one row per version, all carrying
+// the same canonical_id, and entity-search used to scan every row. An object
+// updated twice therefore produced three hits, each with the old version's
+// physical id and properties. A search must return exactly one hit per object —
+// the current (head) version — identified by the canonical object id, with the
+// head's real version and updated_at.
+//
+// Fail-first: before the fix this query returned 2 entities (one per version),
+// reported the old physical id, version 0 and a zero updated_at.
+func TestEntitySearchReturnsOnlyCurrentVersion(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	canonicalID := uuid.New()
+	oldAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	headAt := time.Now().UTC().Truncate(time.Second)
+
+	// Production ordering: the old version is stamped with the new version's id
+	// (a superseded row never stays a head), then the new version is inserted as
+	// the sole head. The partial unique index forbids two heads for one object.
+	headID := uuid.New()
+	insertSearchEntityVersion(t, db, projectID, "Person", "person/alice",
+		"Zephyrine Alice Old", canonicalID, 1, uuid.NewString(), &headID, oldAt, oldAt)
+	insertSearchEntityVersion(t, db, projectID, "Person", "person/alice",
+		"Zephyrine Alice Current", canonicalID, 2, headID.String(), nil, headAt, headAt)
+
+	out := runEntitySearch(t, svc, projectID, map[string]any{"query": "Zephyrine"})
+	require.Len(t, out.Entities, 1, "search must return one hit per object, not one per version")
+	hit := out.Entities[0]
+	assert.Equal(t, canonicalID.String(), hit.ID, "hit must carry the canonical object id, not a version id")
+	assert.Equal(t, 2, hit.Version, "hit must carry the current version number")
+	assert.True(t, headAt.Equal(hit.UpdatedAt), "hit must carry the current version's updated_at, got %s", hit.UpdatedAt)
+	assert.Equal(t, "Zephyrine Alice Current", hit.Name, "hit must carry the current version's properties")
+	assert.Equal(t, 1, out.Count)
+}
+
+// TestEntitySearchExcludesSoftDeletedObject is the #399 regression for deleted
+// objects coming back from search. A soft delete stamps deleted_at on the head
+// row only; the older versions stay in kb.graph_objects with deleted_at NULL,
+// and the unfiltered scan returned one of them as a live entity. Search must
+// treat a soft-deleted head as deleted and return nothing for that object.
+//
+// Fail-first: before the fix this returned the superseded v1 row because it
+// matched the text query and had deleted_at NULL.
+func TestEntitySearchExcludesSoftDeletedObject(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	canonicalID := uuid.New()
+	at := time.Now().UTC().Truncate(time.Second)
+	headID := uuid.New()
+	insertSearchEntityVersion(t, db, projectID, "Domain", "domain/kucharz-family",
+		"Kucharz Family Domain", canonicalID, 1, uuid.NewString(), &headID, at, at)
+	insertSearchEntityVersion(t, db, projectID, "Domain", "domain/kucharz-family",
+		"Kucharz Family Domain", canonicalID, 2, headID.String(), nil, at, at)
+
+	// Soft delete the object the way the delete path does: stamp the head.
+	_, err := db.ExecContext(context.Background(),
+		`UPDATE kb.graph_objects SET deleted_at = now() WHERE id = ?`, headID)
+	require.NoError(t, err)
+
+	out := runEntitySearch(t, svc, projectID, map[string]any{"query": "Kucharz"})
+	assert.Empty(t, out.Entities, "a soft-deleted object must not be returned, not even via a superseded version")
+	assert.Equal(t, 0, out.Count)
 }
 
 // TestEntitySearchEmptyResult verifies a query matching nothing returns an
