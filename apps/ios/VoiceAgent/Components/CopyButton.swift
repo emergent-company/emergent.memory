@@ -46,11 +46,11 @@ final class CopyFeedback {
         isCopied = true
         return Task { [weak self] in
             guard let self else { return }
-            await self.sleep(self.duration)
+            await sleep(duration)
             // A tap that landed inside this window took a newer token: its
             // checkmark must outlive the older wait.
-            guard self.generation == token else { return }
-            self.isCopied = false
+            guard generation == token else { return }
+            isCopied = false
         }
     }
 }

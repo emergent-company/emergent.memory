@@ -36,7 +36,7 @@ extension MarkdownBlock {
             // The web's innerText omits generated list markers, so the text
             // reads as the items alone, one per line.
             return items
-                .map { $0.plainText }
+                .map(\.plainText)
                 .joined(separator: "\n")
         case let .table(table):
             let header = table.headers.map { $0.map(\.plainText).joined() }

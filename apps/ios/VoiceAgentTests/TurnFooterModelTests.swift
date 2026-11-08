@@ -5,7 +5,7 @@ import Testing
 /// The turn-footer line: the web's compact duration, the end clock in an
 /// injected zone and locale, and the rule that a partial footer is suppressed.
 struct TurnFooterModelTests {
-    private let gmt = TimeZone(secondsFromGMT: 0)!
+    private let gmt = TimeZone.gmt
     private let british = Locale(identifier: "en_GB")
 
     private func date(_ string: String) -> Date {
@@ -63,14 +63,13 @@ struct TurnFooterModelTests {
         #expect(model.line == nil)
     }
 
-    @Test func endClockUsesTheInjectedTimeZoneAndLocale() {
+    @Test func endClockUsesTheInjectedTimeZoneAndLocale() throws {
+        let shanghai = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let start = try #require(ISO8601DateFormatter().date(from: "2026-11-08T10:00:00Z"))
+        let end = try #require(ISO8601DateFormatter().date(from: "2026-11-08T10:02:30Z"))
         let model = TurnFooterModel(
-            run: TurnRunInfo(
-                model: "flash",
-                startedAt: date("2026-11-08T10:00:00Z"),
-                endedAt: date("2026-11-08T10:02:30Z")
-            ),
-            timeZone: TimeZone(identifier: "Asia/Shanghai")!,
+            run: TurnRunInfo(model: "flash", startedAt: start, endedAt: end),
+            timeZone: shanghai,
             locale: british
         )
 
