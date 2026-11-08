@@ -984,13 +984,23 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 
 		// One branch and one reason apply to the whole batch, matching the
 		// single-item form's semantics. The per-item helper resolves the
-		// branch-local HEAD for each relationship.
+		// branch-local HEAD for each relationship. The branch is resolved lazily
+		// on the first valid id so a wholly invalid batch never creates one.
 		var branchID *uuid.UUID
-		if branchRef, _ := args["branch"].(string); branchRef != "" {
-			branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-			if err != nil {
-				return nil, fmt.Errorf("resolve branch: %w", err)
+		branchResolved := false
+		resolveBranch := func() error {
+			if branchResolved {
+				return nil
 			}
+			branchResolved = true
+			if branchRef, _ := args["branch"].(string); branchRef != "" {
+				id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+				if rerr != nil {
+					return fmt.Errorf("resolve branch: %w", rerr)
+				}
+				branchID = id
+			}
+			return nil
 		}
 		reason := reasonFromArgs(args)
 
@@ -1008,6 +1018,9 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 				results = append(results, batchDeleteResult{Index: i, OK: false, Error: "invalid relationship_id: expected a non-empty UUID string"})
 				failed++
 				continue
+			}
+			if err := resolveBranch(); err != nil {
+				return nil, err
 			}
 			if _, err := s.deleteRelationshipOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
 				results = append(results, batchDeleteResult{Index: i, RelationshipID: idStr, OK: false, Error: err.Error()})
@@ -1077,6 +1090,12 @@ func (s *Service) deleteRelationshipOne(ctx context.Context, projectUUID uuid.UU
 	}
 
 	if _, err := s.graphService.DeleteRelationship(ctx, projectUUID, relID, branchID, reason, nil); err != nil {
+		// A repeat delete is a no-op success: DeleteRelationship checks the
+		// branch HEAD before writing, so retrying a batch cannot duplicate a
+		// tombstone and must not surface a false per-item failure.
+		if isAlreadyDeletedError(err) {
+			return relID, nil
+		}
 		return uuid.Nil, fmt.Errorf("delete relationship: %w", err)
 	}
 	return relID, nil

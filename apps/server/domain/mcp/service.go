@@ -38,6 +38,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
@@ -925,18 +926,18 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-bulk-update",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Bulk-update every entity matching a filter in one call, returning {matched, affected}. DEFAULT action is soft_delete (recoverable); hard_delete PERMANENTLY removes rows and must be named explicitly in 'action' — this tool never infers it. dry_run=true reports matched/affected and changes nothing. 'limit' caps how many rows are affected (server maximum 100000); when matched > affected, re-run to continue. NOT atomic: the action is applied as one project-scoped statement, not per item. Use entity-update/entity-delete for per-id batches where you need per-item results and retry.",
+			Description:  "Bulk-update every entity matching a filter in one call, returning {matched, affected} (up to the 'limit' cap, server maximum 100000 rows per call). DEFAULT action is soft_delete (recoverable); hard_delete PERMANENTLY removes rows and requires an explicit 'action' plus a non-empty filter.types and confirm=true — this tool never infers it. dry_run=true reports how many rows match (matched) and changes nothing; affected is 0 on a dry run. When matched > affected, re-run to continue. NOT atomic: the action is applied as one project-scoped statement, not per item. Use entity-update/entity-delete for per-id batches (max 100 items) where you need per-item results and retry.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"filter": {
 						Type:        "object",
-						Description: "Selects the entities to change. Must constrain at least one of: types ([]string), property_filters ([{property, operator, value}]), labels ([]string), created_after (RFC3339), namespace (string). An empty filter is rejected because it would match every entity in the project; a namespaced caller is additionally scoped to its own namespace.",
+						Description: "Selects the entities to change. Must constrain at least one of: types ([]string), property_filters (array of {path, op, value} where op is one of eq, neq, gt, gte, lt, lte, contains, exists, in), labels ([]string), created_after (RFC3339), namespace (string). Unknown keys, an empty path, an unknown op, or op=in without an array value are rejected. An empty filter is rejected because it would match every entity in the project. A namespaced caller is always scoped to its own namespace: a conflicting explicit namespace is refused. An agent run's branch scope bounds the rows it can change.",
 					},
 					"action": {
 						Type:        "string",
 						Enum:        []string{"soft_delete", "update_status", "merge_properties", "replace_properties", "add_labels", "remove_labels", "set_labels", "hard_delete"},
-						Description: "What to do with matched entities. Defaults to soft_delete. soft_delete sets deleted_at (restorable); hard_delete permanently deletes and must be requested explicitly; update_status requires 'value'; merge_properties/replace_properties require 'properties'; add_labels/remove_labels/set_labels require 'labels'.",
+						Description: "What to do with matched entities. Defaults to soft_delete. soft_delete sets deleted_at (restorable); hard_delete permanently deletes and requires filter.types and confirm=true; update_status requires 'value'; merge_properties/replace_properties require 'properties'; add_labels/remove_labels/set_labels require 'labels'.",
 					},
 					"value": {
 						Type:        "string",
@@ -957,7 +958,11 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"dry_run": {
 						Type:        "boolean",
-						Description: "When true, report matched/affected counts but change nothing.",
+						Description: "When true, report how many rows match (matched) but change nothing; affected is 0.",
+					},
+					"confirm": {
+						Type:        "boolean",
+						Description: "Explicit confirmation guard for action=hard_delete. hard_delete is refused unless confirm=true.",
 					},
 				},
 				Required: []string{"filter"},
@@ -5075,13 +5080,23 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		}
 
 		// One branch and one reason apply to the whole batch, matching the
-		// single-item form's semantics.
+		// single-item form's semantics. The branch is resolved lazily on the
+		// first valid id so a wholly invalid batch never creates one.
 		var branchID *uuid.UUID
-		if branchRef, _ := args["branch"].(string); branchRef != "" {
-			branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-			if err != nil {
-				return nil, fmt.Errorf("resolve branch: %w", err)
+		branchResolved := false
+		resolveBranch := func() error {
+			if branchResolved {
+				return nil
 			}
+			branchResolved = true
+			if branchRef, _ := args["branch"].(string); branchRef != "" {
+				id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+				if rerr != nil {
+					return fmt.Errorf("resolve branch: %w", rerr)
+				}
+				branchID = id
+			}
+			return nil
 		}
 		reason := reasonFromArgs(args)
 
@@ -5099,6 +5114,9 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 				results = append(results, batchDeleteResult{Index: i, OK: false, Error: "invalid entity_id: expected a non-empty UUID or key string"})
 				failed++
 				continue
+			}
+			if err := resolveBranch(); err != nil {
+				return nil, err
 			}
 			if _, err := s.deleteEntityOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
 				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: err.Error()})
@@ -5173,10 +5191,36 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 		}
 	}
 
+	// A repeat delete of an entity already deleted on main is a no-op success.
+	// graph.Delete fetches the row by id and then re-fetches its HEAD, so a
+	// second call on a live-by-id row would append a second tombstone version.
+	if branchID == nil {
+		if obj, gerr := s.graphService.GetByIDIncludingDeleted(ctx, projectUUID, entityID); gerr == nil &&
+			obj != nil && obj.DeletedAt != nil && obj.BranchID == nil {
+			return entityID, nil
+		}
+	}
+
 	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, branchID, reason); err != nil {
+		if isAlreadyDeletedError(err) {
+			return entityID, nil
+		}
 		return uuid.Nil, fmt.Errorf("delete entity: %w", err)
 	}
 	return entityID, nil
+}
+
+// isAlreadyDeletedError reports the server's "already deleted" conflict, which
+// the MCP delete helpers turn into an idempotent no-op success so retrying a
+// whole batch after a timeout cannot append another tombstone or report a false
+// failure.
+func isAlreadyDeletedError(err error) bool {
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusBadRequest {
+		return false
+	}
+	msg := strings.ToLower(appErr.Message)
+	return strings.Contains(msg, "already deleted") || strings.Contains(msg, "already_deleted")
 }
 
 // reasonFromArgs reads the optional shared deletion reason.
@@ -5218,15 +5262,17 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: filter (object; constrain at least one of types, property_filters, labels, created_after, namespace)")
 	}
-	var filter graph.BulkActionFilter
-	if raw, err := json.Marshal(filterRaw); err != nil {
-		return nil, fmt.Errorf("invalid filter: %w", err)
-	} else if err := json.Unmarshal(raw, &filter); err != nil {
-		return nil, fmt.Errorf("invalid filter: %w", err)
+	filter, err := decodeBulkActionFilter(filterRaw)
+	if err != nil {
+		return nil, err
 	}
-	// A namespaced caller (e.g. a per-namespace memory surface) must not reach
-	// rows outside its namespace just because the filter omitted it.
-	if ns := auth.NamespaceFromContext(ctx); ns != "" && (filter.Namespace == nil || *filter.Namespace == "") {
+	// A namespaced caller (e.g. a per-namespace memory surface) is ALWAYS
+	// scoped to its own namespace. Filling only when absent let a caller pass
+	// namespace:"team-b" from a team-a context and reach the sibling namespace.
+	if ns := auth.NamespaceFromContext(ctx); ns != "" {
+		if filter.Namespace != nil && *filter.Namespace != "" && *filter.Namespace != ns {
+			return nil, fmt.Errorf("filter.namespace %q conflicts with this caller's namespace; omit it to use the caller's own namespace", *filter.Namespace)
+		}
 		filter.Namespace = &ns
 	}
 	if filterIsEmpty(filter) {
@@ -5239,6 +5285,22 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 	}
 	if !slices.Contains(bulkActionNames, action) {
 		return nil, fmt.Errorf("unknown action %q (one of: %s)", action, strings.Join(bulkActionNames, ", "))
+	}
+	// hard_delete is irreversible, so require BOTH an explicitly typed target
+	// set and an explicit confirmation. Checked on the caller's own types,
+	// before the type allowlist below can widen an empty list into one.
+	if action == graph.BulkActionHardDelete {
+		if len(filter.Types) == 0 {
+			return nil, fmt.Errorf("action=hard_delete requires a non-empty filter.types: an untyped hard delete cannot be reviewed before it destroys rows")
+		}
+		if !boolArg(args, "confirm") {
+			return nil, fmt.Errorf("action=hard_delete permanently removes rows and requires confirm=true")
+		}
+	}
+	if v, present := args["limit"]; present {
+		if f, ok := v.(float64); ok && f != float64(int(f)) {
+			return nil, fmt.Errorf("limit must be an integer, got %v", f)
+		}
 	}
 
 	// Narrow an unrestricted request to the agent's object-type allowlist, and
@@ -5338,6 +5400,44 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 func filterIsEmpty(f graph.BulkActionFilter) bool {
 	return len(f.Types) == 0 && len(f.PropertyFilters) == 0 && len(f.Labels) == 0 &&
 		f.CreatedAfter == nil && (f.Namespace == nil || *f.Namespace == "")
+}
+
+// bulkPropertyFilterOps is the operator set graph.propertyFilterPredicates can
+// render. Anything outside it silently emitted no predicate, so the MCP layer
+// rejects it instead of widening the call.
+var bulkPropertyFilterOps = []string{"eq", "neq", "gt", "gte", "lt", "lte", "contains", "exists", "in"}
+
+// decodeBulkActionFilter decodes the `filter` argument strictly. Unknown keys
+// are rejected rather than silently dropped: dropping a mistyped
+// `property_filters` key used to leave zero predicates while the non-empty
+// array still passed the empty-filter guard, so the call matched (and deleted)
+// the whole type. It also validates every property filter against the only
+// shape that produces a predicate — {path, op, value}.
+func decodeBulkActionFilter(raw map[string]any) (graph.BulkActionFilter, error) {
+	var filter graph.BulkActionFilter
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return filter, fmt.Errorf("invalid filter: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(encoded))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&filter); err != nil {
+		return filter, fmt.Errorf("invalid filter: %w (property_filters items are {path, op, value})", err)
+	}
+	for i, pf := range filter.PropertyFilters {
+		if strings.TrimSpace(pf.Path) == "" {
+			return filter, fmt.Errorf("invalid filter: property_filters[%d] is missing 'path' (expected {path, op, value})", i)
+		}
+		if !slices.Contains(bulkPropertyFilterOps, pf.Op) {
+			return filter, fmt.Errorf("invalid filter: property_filters[%d] has unknown op %q (one of: %s)", i, pf.Op, strings.Join(bulkPropertyFilterOps, ", "))
+		}
+		if pf.Op == "in" {
+			if _, ok := pf.Value.([]any); !ok {
+				return filter, fmt.Errorf("invalid filter: property_filters[%d] op=in requires an array value", i)
+			}
+		}
+	}
+	return filter, nil
 }
 
 // boolArg reads a boolean argument tolerantly (JSON numbers decode as float64).

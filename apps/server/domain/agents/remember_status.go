@@ -25,6 +25,7 @@ var graphMutatingToolNames = []string{
 	"entity-update",
 	"entity-relationship-create",
 	"entity-delete",
+	"entity-bulk-update",
 	"relationship-delete",
 }
 
@@ -114,6 +115,8 @@ func aggregateRememberStatus(toolCalls []*AgentRunToolCall) rememberStatusAggreg
 			agg.parseRelationshipCreate(tc.Output)
 		case "entity-delete":
 			agg.parseEntityDelete(tc)
+		case "entity-bulk-update":
+			agg.parseEntityBulkUpdate(tc.Output)
 		case "relationship-delete":
 			agg.parseRelationshipDelete(tc)
 		}
@@ -396,11 +399,30 @@ func (a *rememberStatusAggregation) parseEntityCreate(output map[string]any) {
 
 // parseEntityUpdate counts an entity-update tool call output.
 //
-// Entity-update emits the uniform envelope with the entity payload nested under
-// data.entity — {"ok": true, "data": {"entity": {"id": "...", "type": "..."}}}.
-// Calls with ok=false or a missing/malformed entity payload are skipped
-// (defensive best-effort parsing).
+// Single form: the entity payload is nested under data.entity — {"ok": true,
+// "data": {"entity": {"id": "...", "type": "..."}}}. Batch form: per-item
+// results live under data.results[] — {"ok": false, "data": {"results": [{"ok":
+// true, "entity": {...}}, ...]}}, with the top-level ok=false on a partial
+// failure. The batch walk counts each successful item regardless of the
+// top-level flag; malformed items are skipped (defensive best-effort parsing).
 func (a *rememberStatusAggregation) parseEntityUpdate(output map[string]any) {
+	if results, isBatch := batchResults(output); isBatch {
+		for _, raw := range results {
+			item, ok := raw.(map[string]any)
+			if !ok || !mapBool(item, "ok") {
+				continue
+			}
+			ent := mapMap(item, "entity")
+			if ent == nil {
+				continue
+			}
+			a.ObjectsUpdated++
+			if t := mapStr(ent, "type"); t != "" {
+				addType(&a.DiscoveredTypes, t)
+			}
+		}
+		return
+	}
 	if !mapBool(output, "ok") {
 		return
 	}
@@ -448,12 +470,28 @@ func (a *rememberStatusAggregation) parseRelationshipCreate(output map[string]an
 
 // parseEntityDelete counts an entity-delete tool call output.
 //
-// Entity-delete emits the uniform envelope with the deleted id nested under
-// data.entity_id — {"ok": true, "data": {"entity_id": "..."}}. The id read
-// from the output data is authoritative; when absent, fall back to the call's
-// input args (entity_id, a UUID or key). Calls without an explicit ok flag are
-// skipped (defensive best-effort parsing).
+// Single form: the deleted id is nested under data.entity_id — {"ok": true,
+// "data": {"entity_id": "..."}}. Batch form: per-item results live under
+// data.results[] — {"ok": false, "data": {"results": [{"entity_id": "...", "ok":
+// true}, ...]}}; a partial failure sets the top-level ok=false but the
+// successful rows were still deleted, so each ok item is counted. The id read
+// from the output is authoritative; when absent, fall back to the call's input
+// args (entity_id, a UUID or key). Calls without an explicit ok flag are
+// skipped in the single form (defensive best-effort parsing).
 func (a *rememberStatusAggregation) parseEntityDelete(tc *AgentRunToolCall) {
+	if results, isBatch := batchResults(tc.Output); isBatch {
+		for _, raw := range results {
+			item, ok := raw.(map[string]any)
+			if !ok || !mapBool(item, "ok") {
+				continue
+			}
+			a.ObjectsDeleted++
+			if id := mapStr(item, "entity_id"); id != "" {
+				addID(&a.DeletedObjectIDs, id)
+			}
+		}
+		return
+	}
 	if !mapBool(tc.Output, "ok") {
 		return
 	}
@@ -469,11 +507,24 @@ func (a *rememberStatusAggregation) parseEntityDelete(tc *AgentRunToolCall) {
 
 // parseRelationshipDelete counts a relationship-delete tool call output.
 //
-// Relationship-delete emits the uniform envelope with the deleted id nested
-// under data.relationship_id — {"ok": true, "data": {"relationship_id": "..."}}.
-// The id read from the output data is authoritative; fall back to the input
-// relationship_id when it is absent.
+// Single form: the deleted id is nested under data.relationship_id — {"ok":
+// true, "data": {"relationship_id": "..."}}. Batch form: per-item results live
+// under data.results[] with the same partial-failure semantics as entity-delete,
+// so each successful item is counted regardless of the top-level ok flag.
 func (a *rememberStatusAggregation) parseRelationshipDelete(tc *AgentRunToolCall) {
+	if results, isBatch := batchResults(tc.Output); isBatch {
+		for _, raw := range results {
+			item, ok := raw.(map[string]any)
+			if !ok || !mapBool(item, "ok") {
+				continue
+			}
+			a.RelationshipsDeleted++
+			if id := mapStr(item, "relationship_id"); id != "" {
+				addID(&a.DeletedRelationshipIDs, id)
+			}
+		}
+		return
+	}
 	if !mapBool(tc.Output, "ok") {
 		return
 	}
@@ -485,6 +536,50 @@ func (a *rememberStatusAggregation) parseRelationshipDelete(tc *AgentRunToolCall
 	if id != "" {
 		addID(&a.DeletedRelationshipIDs, id)
 	}
+}
+
+// parseEntityBulkUpdate counts an entity-bulk-update tool call output.
+//
+// The filter-based tool is not per-item: it reports {"ok": true, "data":
+// {"matched": n, "affected": m, "dry_run": false, "action": "..."}}. Only rows
+// the server actually changed (affected) are counted, and a dry run changes
+// nothing. A delete action counts as object deletions; every other action
+// (status/properties/labels) counts as object updates.
+func (a *rememberStatusAggregation) parseEntityBulkUpdate(output map[string]any) {
+	if !mapBool(output, "ok") {
+		return
+	}
+	data := mapMap(output, "data")
+	if data == nil || mapBool(data, "dry_run") {
+		return
+	}
+	affected := mapInt(data, "affected")
+	if affected <= 0 {
+		return
+	}
+	switch mapStr(data, "action") {
+	case "soft_delete", "hard_delete":
+		a.ObjectsDeleted += affected
+	default:
+		a.ObjectsUpdated += affected
+	}
+}
+
+// batchResults returns data.results[] and whether the output carries a batch
+// envelope at all. Presence of the key — not a non-empty slice — is what
+// selects the batch parser, so a partial failure with zero successes still
+// reports zero rather than falling through to the single-item shape.
+func batchResults(output map[string]any) ([]any, bool) {
+	data := mapMap(output, "data")
+	if data == nil {
+		return nil, false
+	}
+	raw, present := data["results"]
+	if !present {
+		return nil, false
+	}
+	items, _ := raw.([]any)
+	return items, true
 }
 
 // collectEntity records a created entity's id/type from a slim entity payload.
@@ -572,6 +667,17 @@ func mapBool(m map[string]any, key string) bool {
 		return v
 	}
 	return false
+}
+
+// mapInt reads a JSON number (always float64 after decoding) as an int.
+func mapInt(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
 }
 
 func mapMap(m map[string]any, key string) map[string]any {

@@ -788,25 +788,33 @@ re-running a successful item is safe.
 Pass `entity_ids` (UUIDs or keys) instead of `entity_id`; one optional `reason`
 applies to every item. The per-item result is the same shape as
 `entity-update`, so a retry targets only the failed indexes. This stays a soft
-delete — deleted entities can be restored.
+delete — deleted entities can be restored. Deleting an already-deleted id is an
+idempotent no-op success (never a second tombstone), so replaying a whole batch
+after a timeout is safe.
 
 **`relationship-delete`** (batch) - Soft-delete up to 100 relationships
 
 Pass `relationship_ids` (UUIDs) instead of `relationship_id`, with one optional
-`reason` for all of them. Same per-item result and retry semantics.
+`reason` for all of them. Same per-item result and retry semantics; deleting an
+already-deleted relationship is an idempotent success, so a whole-batch retry is
+safe.
 
 **`entity-bulk-update`** - Apply one action to every entity matching a filter
 
 Mirrors the CLI's `graph objects bulk-update`. Takes `filter` (at least one of
 `types`, `property_filters`, `labels`, `created_after`, `namespace`), an
 optional `action`, `limit` and `dry_run`, and returns `{matched, affected}`.
+`property_filters` is an array of `{path, op, value}` with `op` one of `eq`,
+`neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `exists`, `in`; the filter is
+decoded strictly, so an unknown key, an empty `path`, an unknown `op`, or
+`op=in` without an array value is rejected rather than silently ignored.
 
 ```json
 {
   "name": "entity-bulk-update",
   "arguments": {
     "filter": { "types": ["Message"], "property_filters": [
-      { "property": "days_since_access", "operator": "gt", "value": 365 }
+      { "path": "days_since_access", "op": "gt", "value": 365 }
     ]},
     "action": "soft_delete",
     "dry_run": true
@@ -814,11 +822,20 @@ optional `action`, `limit` and `dry_run`, and returns `{matched, affected}`.
 }
 ```
 
-The default action is `soft_delete`; `hard_delete` permanently removes rows and
-must be named explicitly. `dry_run` reports the counts without changing
-anything. Unlike the per-id batches this is one project-scoped statement, not
-per item, and `limit` caps how many rows are affected (default 1000, max
-100000) — re-run while `matched > affected` to continue.
+The default action is `soft_delete`. `hard_delete` permanently removes rows and
+requires a non-empty `filter.types` plus `confirm: true`; it is never inferred.
+A namespaced caller is always scoped to its own namespace, and an agent run's
+branch scope bounds the rows it can change (a main-only run cannot reach
+branch-local rows). `dry_run` reports how many rows match (`matched`) without
+changing anything, so `affected` is 0. Unlike the per-id batches this is one
+project-scoped statement, not per item, and `limit` caps how many rows are
+affected (default 1000, max 100000) — re-run while `matched > affected` to
+continue.
+
+Note on trust boundaries: this tool is **not** in the share-link deny set by
+accident — it is denied to share runs, requires the `graph:write` scope, and
+enforces the agent's per-type write rules. Agents that may not delete a type
+cannot soft-delete or hard-delete it through a filter.
 
 ---
 

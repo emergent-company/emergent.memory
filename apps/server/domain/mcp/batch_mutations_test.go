@@ -12,6 +12,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,9 +77,36 @@ func cleanupBatchProjects(t *testing.T, db bun.IDB, orgID, projectID string) {
 		ctx := context.Background()
 		_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_relationships WHERE project_id = ?", projectID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_objects WHERE project_id = ?", projectID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM kb.branches WHERE project_id = ?", projectID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM kb.projects WHERE id = ?", projectID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM kb.orgs WHERE id = ?", orgID)
 	})
+}
+
+// seedBatchBranch inserts an unmerged branch row for branch-scope tests.
+func seedBatchBranch(t *testing.T, db bun.IDB, projectID, name, origin string) string {
+	t.Helper()
+	id := uuid.NewString()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.branches (id, project_id, name, origin, created_at)
+		VALUES (?, ?, ?, ?, now())
+	`, id, projectID, name, origin)
+	require.NoError(t, err)
+	return id
+}
+
+// seedBatchObjectOnBranch inserts a HEAD graph object on a branch.
+func seedBatchObjectOnBranch(t *testing.T, db bun.IDB, projectID, branchID, typ, key, propsJSON string) string {
+	t.Helper()
+	id := uuid.NewString()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, status,
+			 properties, labels, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULL, 1, ?, ?, 'active', ?::jsonb, '{}'::text[], now(), now())
+	`, id, projectID, branchID, id, typ, key, propsJSON)
+	require.NoError(t, err)
+	return id
 }
 
 type batchEnvelope struct {
@@ -93,8 +121,10 @@ type batchEnvelope struct {
 			Error    string         `json:"error"`
 			Entity   map[string]any `json:"entity"`
 		} `json:"results"`
-		Entity  map[string]any `json:"entity"`
-		Matched int            `json:"matched"`
+		Entity   map[string]any `json:"entity"`
+		Matched  int            `json:"matched"`
+		Affected int            `json:"affected"`
+		DryRun   bool           `json:"dry_run"`
 	} `json:"data"`
 	Meta struct {
 		Succeeded int `json:"succeeded"`
@@ -240,6 +270,22 @@ func TestBulkUpdateEntitiesNarrowsToContextNamespace(t *testing.T) {
 	})
 	assert.True(t, env.OK)
 	assert.Equal(t, 1, env.Data.Matched, "a namespaced caller must only match its own namespace")
+
+	// An explicit conflicting namespace must be refused, not trusted: filling
+	// only when absent let a team-a caller pass namespace:"team-b" and reach it.
+	_, err := svc.executeBulkUpdateEntities(namespacedCtx, projectID, map[string]any{
+		"filter":  map[string]any{"types": []any{"Doc"}, "namespace": "team-b"},
+		"dry_run": true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "conflicts", "a namespace override must be refused")
+
+	var live int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND namespace = 'team-b' AND deleted_at IS NULL", projectID).
+		Scan(context.Background(), &live))
+	assert.Equal(t, 1, live, "the conflicting call must not touch the other namespace")
 }
 
 // ── DB-backed behaviour ──────────────────────────────────────────────────────
@@ -531,4 +577,258 @@ func TestBatchUpdateEntityItemBranchID(t *testing.T) {
 	assert.False(t, env.Data.Results[0].OK)
 	assert.Contains(t, env.Data.Results[0].Error, "branch_id", "an invalid branch_id must fail only that item, naming the field")
 	assert.Contains(t, env.Error, "retry the failed indexes", "the envelope error must name the retry surface")
+}
+
+// TestBulkUpdateEntitiesPropertyFilterMatchesOnlyMatchingRows is the regression
+// test for the documented shape: property_filters items are {path, op, value},
+// and a match must select only the rows that satisfy the predicate. The old
+// README shape ({property, operator}) silently produced zero predicates and
+// soft-deleted the whole type.
+func TestBulkUpdateEntitiesPropertyFilterMatchesOnlyMatchingRows(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	keep := seedBatchObject(t, db, projectID, "Note", "prop-keep", `{"state":"keep"}`)
+	drop := seedBatchObject(t, db, projectID, "Note", "prop-drop", `{"state":"drop"}`)
+
+	env := decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{
+			"filter": map[string]any{
+				"types":            []any{"Note"},
+				"property_filters": []any{map[string]any{"path": "state", "op": "eq", "value": "keep"}},
+			},
+		})
+	})
+	assert.True(t, env.OK)
+	assert.Equal(t, 1, env.Data.Matched, "the property predicate must select exactly one row")
+	assert.Equal(t, 1, env.Data.Affected)
+
+	var keepDeleted, dropDeleted bool
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("deleted_at IS NOT NULL").
+		Where("project_id = ? AND canonical_id = ? AND supersedes_id IS NULL", projectID, keep).
+		Scan(ctx, &keepDeleted))
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("deleted_at IS NOT NULL").
+		Where("project_id = ? AND canonical_id = ? AND supersedes_id IS NULL", projectID, drop).
+		Scan(ctx, &dropDeleted))
+	assert.True(t, keepDeleted, "the matching row must be deleted")
+	assert.False(t, dropDeleted, "a non-matching row must survive")
+}
+
+// TestBulkUpdateEntitiesRejectsMalformedPropertyFilters pins the strict decode:
+// a wrong key spelling, an empty path, or an unknown op is an error, never a
+// silently-empty predicate set that widens the call to the whole type.
+func TestBulkUpdateEntitiesRejectsMalformedPropertyFilters(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	seedBatchObject(t, db, projectID, "Note", "malformed-1", `{"state":"keep"}`)
+	seedBatchObject(t, db, projectID, "Note", "malformed-2", `{"state":"drop"}`)
+
+	cases := []struct {
+		name   string
+		filter map[string]any
+		want   string
+	}{
+		{
+			name: "readme shape with property/operator keys",
+			filter: map[string]any{
+				"types":            []any{"Note"},
+				"property_filters": []any{map[string]any{"property": "state", "operator": "eq", "value": "keep"}},
+			},
+			want: "unknown field",
+		},
+		{
+			name: "empty path",
+			filter: map[string]any{
+				"types":            []any{"Note"},
+				"property_filters": []any{map[string]any{"path": "", "op": "eq", "value": "keep"}},
+			},
+			want: "missing 'path'",
+		},
+		{
+			name: "unknown op",
+			filter: map[string]any{
+				"types":            []any{"Note"},
+				"property_filters": []any{map[string]any{"path": "state", "op": "NOT_AN_OP", "value": "keep"}},
+			},
+			want: "unknown op",
+		},
+		{
+			name: "in without an array value",
+			filter: map[string]any{
+				"types":            []any{"Note"},
+				"property_filters": []any{map[string]any{"path": "state", "op": "in", "value": "keep"}},
+			},
+			want: "requires an array value",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{"filter": tc.filter})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	var live int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND type = 'Note' AND deleted_at IS NULL", projectID).
+		Scan(ctx, &live))
+	assert.Equal(t, 2, live, "a rejected filter must change nothing")
+}
+
+// TestBulkUpdateEntitiesHonoursBranchScope pins the branch boundary: an agent
+// run (which always has a scope installed, main-only by default) must not match
+// a branch-local row, and an explicitly scoped run may match only its in-scope
+// branches. Before this, the filter path had no branch predicate at all.
+func TestBulkUpdateEntitiesHonoursBranchScope(t *testing.T) {
+	db := connectTestDB(t)
+	baseCtx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	mainID := seedBatchObject(t, db, projectID, "Doc", "scope-main", `{}`)
+
+	inScopeBranch := seedBatchBranch(t, db, projectID, "scope-b1", "manual")
+	inScopeID := seedBatchObjectOnBranch(t, db, projectID, inScopeBranch, "Doc", "scope-branch-in", `{}`)
+
+	outBranch := seedBatchBranch(t, db, projectID, "scope-b2", "manual")
+	outID := seedBatchObjectOnBranch(t, db, projectID, outBranch, "Doc", "scope-branch-out", `{}`)
+
+	deleted := func(id string) bool {
+		var d bool
+		require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+			ColumnExpr("deleted_at IS NOT NULL").
+			Where("project_id = ? AND id = ?", projectID, id).
+			Scan(baseCtx, &d))
+		return d
+	}
+
+	// Main-only (the default agent run): only the main row is in bounds.
+	env := decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(ContextWithBranchScope(baseCtx, nil), projectID, map[string]any{
+			"filter": map[string]any{"types": []any{"Doc"}},
+		})
+	})
+	assert.True(t, env.OK)
+	assert.Equal(t, 1, env.Data.Matched, "a main-only run must not match branch-local rows")
+	assert.True(t, deleted(mainID))
+	assert.False(t, deleted(inScopeID), "a main-only run must not touch an in-scope branch row")
+
+	// Scoped to scope-b1: main plus that branch, never scope-b2.
+	scope, err := NewBranchScope(branchscope.Config{Unmerged: true, Branches: []string{"scope-b1"}})
+	require.NoError(t, err)
+	env = decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(ContextWithBranchScope(baseCtx, scope), projectID, map[string]any{
+			"filter": map[string]any{"types": []any{"Doc"}},
+		})
+	})
+	assert.True(t, env.OK)
+	assert.Equal(t, 1, env.Data.Matched, "only the in-scope branch row remains live and matchable")
+	assert.True(t, deleted(inScopeID), "the in-scope branch row must be matchable")
+	assert.False(t, deleted(outID), "an out-of-scope branch row must never be touched")
+}
+
+// TestBulkUpdateEntitiesHardDeleteGuards pins the irreversible path: hard_delete
+// needs a typed filter AND confirm=true, and only then removes rows.
+func TestBulkUpdateEntitiesHardDeleteGuards(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	seedBatchObject(t, db, projectID, "Doc", "hard-1", `{}`)
+	seedBatchObject(t, db, projectID, "Doc", "hard-2", `{}`)
+
+	_, err := svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{
+		"filter": map[string]any{"types": []any{"Doc"}},
+		"action": "hard_delete",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confirm=true", "hard_delete must require explicit confirmation")
+
+	_, err = svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{
+		"filter":  map[string]any{"labels": []any{"anything"}},
+		"action":  "hard_delete",
+		"confirm": true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "filter.types", "hard_delete must require a typed filter")
+
+	var rows int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND type = 'Doc'", projectID).
+		Scan(ctx, &rows))
+	assert.Equal(t, 2, rows, "a refused hard_delete must not remove rows")
+
+	env := decodeBatchCall(t, func() (*ToolResult, error) {
+		return svc.executeBulkUpdateEntities(ctx, projectID, map[string]any{
+			"filter":  map[string]any{"types": []any{"Doc"}},
+			"action":  "hard_delete",
+			"confirm": true,
+		})
+	})
+	assert.True(t, env.OK)
+	assert.Equal(t, 2, env.Data.Affected)
+
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND type = 'Doc'", projectID).
+		Scan(ctx, &rows))
+	assert.Equal(t, 0, rows, "a confirmed hard_delete must remove the rows")
+}
+
+// TestBatchDeleteIsIdempotent pins retry safety: deleting the same entity or
+// relationship twice succeeds both times and never appends a second tombstone,
+// so replaying a whole batch after a timeout is safe.
+func TestBatchDeleteIsIdempotent(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	orgID, projectID := seedProject(t, db)
+	cleanupBatchProjects(t, db, orgID, projectID)
+	svc := batchMutationService(t, db)
+
+	entityID := seedBatchObject(t, db, projectID, "Note", "idem-entity", `{}`)
+	src := seedBatchObject(t, db, projectID, "Note", "idem-src", `{}`)
+	dst := seedBatchObject(t, db, projectID, "Note", "idem-dst", `{}`)
+	relID := seedBatchRelationship(t, db, projectID, "links", src, dst)
+
+	for i := 0; i < 3; i++ {
+		env := decodeBatchCall(t, func() (*ToolResult, error) {
+			return svc.executeDeleteEntity(ctx, projectID, map[string]any{"entity_id": entityID})
+		})
+		assert.True(t, env.OK, "repeat entity delete #%d must succeed", i+1)
+	}
+	for i := 0; i < 3; i++ {
+		env := decodeBatchCall(t, func() (*ToolResult, error) {
+			return svc.executeDeleteRelationship(ctx, projectID, map[string]any{"relationship_id": relID})
+		})
+		assert.True(t, env.OK, "repeat relationship delete #%d must succeed", i+1)
+	}
+
+	var entityVersions int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_objects").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND canonical_id = ?", projectID, entityID).
+		Scan(ctx, &entityVersions))
+	assert.Equal(t, 2, entityVersions, "repeat deletes must not append extra tombstones (original + one tombstone)")
+
+	var relVersions int
+	require.NoError(t, db.NewSelect().TableExpr("kb.graph_relationships").
+		ColumnExpr("count(*)").
+		Where("project_id = ? AND canonical_id = ?", projectID, relID).
+		Scan(ctx, &relVersions))
+	assert.Equal(t, 2, relVersions, "repeat relationship deletes must not append extra tombstones")
 }
