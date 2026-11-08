@@ -2753,6 +2753,35 @@ func charCountLabel(s string) string {
 	return groupDigits(int64(n)) + " " + noun
 }
 
+// propertyHasCharCounter reports whether propertyInput renders the free-form
+// multi-line control for def — the only widget with a live character counter.
+// It mirrors propertyInput's branch order so the counter can be rendered in the
+// field's label row instead of under the textarea (#420).
+func propertyHasCharCounter(def objectPropertyDef) bool {
+	switch def.Type {
+	case "boolean", "date", "number", "integer", "url", "email", "phone",
+		"country", "currency", "time", "object", "array":
+		return false
+	}
+	if isHashPropertyType(def.Type) || len(def.Enum) > 0 || def.Widget == "input" {
+		return false
+	}
+	return true
+}
+
+// propertyCharCount renders the initial character count for a property field,
+// or "" when its widget has no counter.
+func propertyCharCount(def objectPropertyDef, vals []string) string {
+	if !propertyHasCharCounter(def) {
+		return ""
+	}
+	v := ""
+	if len(vals) > 0 {
+		v = vals[0]
+	}
+	return charCountLabel(v)
+}
+
 // groupDigits inserts thousands separators into a non-negative integer
 // ("41594" -> "41,594") so long counts stay readable.
 func groupDigits(n int64) string {

@@ -3988,7 +3988,7 @@ func TestPropertyInput(t *testing.T) {
 		{objectPropertyDef{Name: "notes", Type: "string", Widget: "bogus"}, "ok", "2 characters"},
 	}
 	for _, c := range multiLine {
-		html := renderHTML(t, propertyInput(c.def, []string{c.val}, nil, false))
+		html := renderHTML(t, objectPropertyField(c.def, c.def.Label(), "", []string{c.val}, nil, false))
 		for _, want := range []string{`data-char-counter`, `data-testid="char-count"`, `data-char-count-value`, c.want} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s: counter HTML missing %q in:\n%s", c.def.Name, want, html)
@@ -4011,7 +4011,7 @@ func TestPropertyInput(t *testing.T) {
 		{Name: "checksum", Type: "sha256"},
 	}
 	for _, def := range notMultiLine {
-		html := renderHTML(t, propertyInput(def, []string{"x"}, nil, false))
+		html := renderHTML(t, objectPropertyField(def, def.Label(), "", []string{"x"}, nil, false))
 		if strings.Contains(html, `data-testid="char-count"`) {
 			t.Errorf("%s: counter must not render on non-multi-line fields:\n%s", def.Name, html)
 		}
@@ -4071,6 +4071,51 @@ func TestObjectTypePropertiesCardLongTextFallback(t *testing.T) {
 	// exactly one counter across the card: only the multi-line field has one
 	if n := strings.Count(html, `data-testid="char-count"`); n != 1 {
 		t.Errorf("counter rendered %d times, want 1 (multi-line only):\n%s", n, html)
+	}
+}
+
+// TestObjectTypePropertyFieldLayout pins the two field-layout fixes:
+//   - #420: the live character counter sits in the label row, right-aligned,
+//     with the label — not under the textarea;
+//   - #419: the description is its own wrapping line under the control, and the
+//     field shell is a min-w-0 flex column rather than a min-content fieldset,
+//     so a long hint cannot push the field past its card.
+func TestObjectTypePropertyFieldLayout(t *testing.T) {
+	longText := renderHTML(t, objectTypePropertyField(objectTypePropertyRow{
+		Def:      objectPropertyDef{Name: "notes", Title: "Notes", Type: "string"},
+		Name:     "notes",
+		Label:    "Notes",
+		Hint:     "Free-form notes.",
+		Values:   []string{"hello world"},
+		Declared: true,
+	}))
+	// Same row: the label element is immediately followed by the counter block.
+	if !strings.Contains(longText, `<span class="text-sm font-medium" id="object-field-label-notes">Notes</span> <div class="text-muted-faint text-right text-xs" data-testid="char-count" data-char-count-value>11 characters</div>`) {
+		t.Errorf("character counter must share the label row, right-aligned:\n%s", longText)
+	}
+	if !strings.Contains(longText, `data-char-counter`) || !strings.Contains(longText, `data-autogrow`) {
+		t.Errorf("counter scope must wrap the auto-growing textarea:\n%s", longText)
+	}
+	if strings.Contains(longText, `<fieldset`) {
+		t.Errorf("property fields must not use the min-content fieldset shell:\n%s", longText)
+	}
+
+	// A description wraps as its own line after the control.
+	selectField := renderHTML(t, objectTypePropertyField(objectTypePropertyRow{
+		Def:      objectPropertyDef{Name: "confidence", Type: "string", Enum: []string{"confirmed", "unverified"}},
+		Name:     "confidence",
+		Label:    "confidence",
+		Hint:     "confirmed (by the user or an official document), from_source (read from a source, not confirmed), unverified (old or indirect data; check before relying on it)",
+		Values:   []string{"confirmed"},
+		Declared: true,
+	}))
+	controlAt := strings.Index(selectField, "<select")
+	hintAt := strings.Index(selectField, `<p class="text-faint text-xs break-words">confirmed (by the user`)
+	if controlAt < 0 || hintAt < 0 || hintAt < controlAt {
+		t.Errorf("description must wrap on its own line after the control (control=%d hint=%d):\n%s", controlAt, hintAt, selectField)
+	}
+	if !strings.Contains(selectField, `class="flex min-w-0 flex-col gap-1.5"`) {
+		t.Errorf("field shell must be a min-w-0 flex column so it cannot overflow:\n%s", selectField)
 	}
 }
 
@@ -4634,8 +4679,8 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 		{Name: "owner_notes", Title: "Owner notes", Type: "string"},
 		{Name: "plain", Type: "string"},
 	}
-	const labelledLegend = `<legend class="fieldset-legend">Owner notes</legend>`
-	const keyHintText = `>owner_notes</span>`
+	const labelledLegend = `<span class="text-sm font-medium" id="object-field-label-owner_notes">Owner notes</span>`
+	const keyHintText = `>owner_notes</p>`
 
 	form := renderHTML(t, ObjectCreatePage([]CompiledType{{Name: "Person"}}, defs, objectCreateForm{Type: "Person"}, nil, nil, nil))
 	if !strings.Contains(form, labelledLegend) {
@@ -4644,10 +4689,10 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 	if !strings.Contains(form, keyHintText) {
 		t.Errorf("create form must keep the machine key visible as text:\n%s", form)
 	}
-	if !strings.Contains(form, `<legend class="fieldset-legend">plain</legend>`) {
+	if !strings.Contains(form, `<span class="text-sm font-medium" id="object-field-label-plain">plain</span>`) {
 		t.Errorf("unlabelled property must keep its key as the label:\n%s", form)
 	}
-	if strings.Contains(form, `>plain</span>`) {
+	if strings.Contains(form, `>plain</p>`) {
 		t.Errorf("unlabelled property must not repeat its key as a hint:\n%s", form)
 	}
 

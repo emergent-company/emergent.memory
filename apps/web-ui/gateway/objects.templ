@@ -552,9 +552,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
 							}
 							for _, p := range propDefs {
-								@fm.FormControl(p.Name, p.Label(), fm.LabelAbove, p.KeyHint(), "", nil) {
-									@propertyInput(p, form.Props[p.Name], nil, form.JSONProps[p.Name])
-								}
+								@objectPropertyField(p, p.Label(), p.KeyHint(), form.Props[p.Name], nil, form.JSONProps[p.Name])
 							}
 						</div>
 					}
@@ -701,15 +699,50 @@ templ propertyInput(def objectPropertyDef, vals []string, stored any, submittedJ
 // longTextarea renders the free-form, multi-line string field used wherever an
 // object property may hold long text (schema string properties and stored
 // properties with no schema definition). It is an auto-growing, vertically
-// resizable textarea with a muted live character counter. The counter's initial
-// value is rendered server-side so it is correct before JS runs; app.js keeps
-// it in sync on input and re-initialises on HTMX swaps (boosted client-side
-// navigation does not fire DOMContentLoaded).
+// resizable textarea. The live character counter is NOT part of this control:
+// objectPropertyField renders it in the field's label row (#420) and wraps both
+// in the [data-char-counter] scope app.js updates.
 templ longTextarea(name string, value string) {
-	<div class="w-full" data-char-counter>
-		<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
-		<div class="text-muted-faint mt-1 text-right text-xs" data-testid="char-count" data-char-count-value>{ charCountLabel(value) }</div>
+	<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
+}
+
+// objectField renders one labelled object form field. The label row owns the
+// optional character counter (right-aligned, long-text fields only), the control
+// follows, and the description wraps onto its own line below the control instead
+// of widening the field past its card (#419, #420). The root is the counter's
+// [data-char-counter] scope, so app.js keeps the label-row count in sync with
+// the textarea inside it.
+templ objectField(name, label, hint, counter string) {
+	<div
+		class="flex min-w-0 flex-col gap-1.5"
+		role="group"
+		aria-labelledby={ "object-field-label-" + name }
+		if counter != "" {
+			data-char-counter
+		}
+	>
+		<div class="flex items-baseline justify-between gap-3">
+			<span class="text-sm font-medium" id={ "object-field-label-" + name }>{ label }</span>
+			if counter != "" {
+				<div class="text-muted-faint text-right text-xs" data-testid="char-count" data-char-count-value>{ counter }</div>
+			}
+		</div>
+		{ children... }
+		if hint != "" {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "break-words"}) {
+				{ hint }
+			}
+		}
 	</div>
+}
+
+// objectPropertyField renders one schema property: its label row (with the
+// long-text character counter), the type-appropriate control, and its
+// description.
+templ objectPropertyField(def objectPropertyDef, label, hint string, vals []string, stored any, submittedJSON bool) {
+	@objectField(def.Name, label, hint, propertyCharCount(def, vals)) {
+		@propertyInput(def, vals, stored, submittedJSON)
+	}
 }
 
 // jsonTextarea renders a JSON document property (an `object`, or an `array`
@@ -1131,10 +1164,10 @@ templ objectTypePropertyField(r objectTypePropertyRow) {
 	if len(r.Values) > 0 {
 		value = r.Values[0]
 	} }}
-	@fm.FormControl(r.Name, r.Label, fm.LabelAbove, r.Hint, "", nil) {
-		if r.Declared {
-			@propertyInput(r.Def, r.Values, r.Stored, false)
-		} else {
+	if r.Declared {
+		@objectPropertyField(r.Def, r.Label, r.Hint, r.Values, r.Stored, false)
+	} else {
+		@objectField(r.Name, r.Label, r.Hint, charCountLabel(value)) {
 			<input type="hidden" name={ "propm_present_" + r.Name } value="1"/>
 			@longTextarea("prop_"+r.Name, value)
 		}
