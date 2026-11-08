@@ -72,6 +72,14 @@ type SkillMetadata struct {
 	OriginID    string `json:"origin_id,omitempty"`
 	ContentHash string `json:"content_hash,omitempty"`
 	Location    string `json:"location,omitempty"`
+	// LifecycleState is maintained by memory's curator for agent-created
+	// skills: active | stale | archived. Archived skills are not auto-loaded
+	// or semantically retrieved; they remain readable by name.
+	LifecycleState string `json:"lifecycle_state,omitempty"`
+	// Pinned skills are never aged by the curator; locked skills refuse
+	// agent-initiated writes.
+	Pinned bool `json:"pinned,omitempty"`
+	Locked bool `json:"locked,omitempty"`
 }
 
 // Skill mirrors memory's SkillDTO. Skills responses are BARE JSON (a list is
@@ -90,6 +98,22 @@ type Skill struct {
 	CreatedAt    string         `json:"createdAt,omitempty"`
 	UpdatedAt    string         `json:"updatedAt,omitempty"`
 }
+
+// LifecycleState returns the stored lifecycle state, defaulting to active
+// (mirrors memory's Skill.LifecycleStateOrDefault).
+func (s Skill) LifecycleState() string {
+	if s.Metadata == nil || s.Metadata.LifecycleState == "" {
+		return "active"
+	}
+	return s.Metadata.LifecycleState
+}
+
+// Archived reports whether the curator has aged this skill out. Archived
+// skills stay visible here but are hidden from agents until restored.
+func (s Skill) Archived() bool { return s.LifecycleState() == "archived" }
+
+// IsPinned reports whether the curator is barred from ageing this skill.
+func (s Skill) IsPinned() bool { return s.Metadata != nil && s.Metadata.Pinned }
 
 // ListSkills lists the project's skills merged with org- and global-scope
 // skills (GET /api/projects/{projectID}/skills).
@@ -142,6 +166,20 @@ func (m *MemoryClient) UpdateSkill(ctx context.Context, id, description, content
 // /api/projects/{projectID}/skills/{id}, 204 no body).
 func (m *MemoryClient) DeleteSkill(ctx context.Context, id string) error {
 	return m.do(ctx, http.MethodDelete, "/api/projects/"+m.projectIDFor(ctx)+"/skills/"+id, nil, nil)
+}
+
+// RestoreSkill returns an archived skill to the active lifecycle state (POST
+// /api/projects/{projectID}/skills/{id}/restore). Memory changes only the
+// lifecycle state; every other metadata field is preserved. pin=true also pins
+// the skill, the durable form that stops the curator from archiving it again.
+func (m *MemoryClient) RestoreSkill(ctx context.Context, id string, pin bool) (*Skill, error) {
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/" + url.PathEscape(id) + "/restore"
+	body := map[string]any{"pin": pin}
+	var out Skill
+	if err := m.do(ctx, http.MethodPost, path, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // --- skill proposals ---

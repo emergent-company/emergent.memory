@@ -1724,6 +1724,35 @@ func scopeLabel(scope string) string {
 	return scope
 }
 
+// skillLifecycleLabel renders a lifecycle state for the UI. Unknown states are
+// shown verbatim rather than hidden.
+func skillLifecycleLabel(state string) string {
+	switch state {
+	case "archived":
+		return "Archived"
+	case "stale":
+		return "Stale"
+	case "active", "":
+		return "Active"
+	default:
+		return state
+	}
+}
+
+// skillLifecycleIntent maps a non-active lifecycle state to a badge colour:
+// archived is the one that removes the skill from agent loading, so it reads as
+// a warning; stale is a softer notice.
+func skillLifecycleIntent(state string) ui.BadgeIntent {
+	switch state {
+	case "archived":
+		return ui.BadgeWarning
+	case "stale":
+		return ui.BadgeInfo
+	default:
+		return ui.BadgeGhost
+	}
+}
+
 // provenanceLabel renders a skill's source/license/version provenance as one
 // "source · license · vX" string, or "" when nothing is recorded.
 func provenanceLabel(m *SkillMetadata) string {
@@ -1890,6 +1919,9 @@ func (s *Server) uiSkill(c echo.Context) error {
 	if c.QueryParam("updated") != "" {
 		flashMsg = "Skill updated."
 	}
+	if c.QueryParam("restored") != "" {
+		flashMsg = "Skill restored."
+	}
 	if err != nil {
 		return s.page(c, pageTitle("Skill"), SkillDetailPage(nil, userFacingError(err), "", nil))
 	}
@@ -1937,6 +1969,19 @@ func (s *Server) uiDeleteSkill(c echo.Context) error {
 		return redirectWithError(c, "/skills", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/skills?deleted=1")
+}
+
+// uiRestoreSkill un-archives a skill the curator aged out (PRG). Memory changes
+// only the lifecycle state, so unrelated metadata is preserved. pin=1 is the
+// durable form: the curator never ages a pinned skill. The id comes from the
+// detail page, so the redirect returns there with a flash.
+func (s *Server) uiRestoreSkill(c echo.Context) error {
+	id := c.Param("id")
+	pin := c.FormValue("pin") != ""
+	if _, err := s.memory.RestoreSkill(c.Request().Context(), id, pin); err != nil {
+		return redirectWithError(c, "/skills/"+url.PathEscape(id), err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/skills/"+url.PathEscape(id)+"?restored=1")
 }
 
 // uiApproveSkillCaptureProposal applies a staged proposal and returns to the review

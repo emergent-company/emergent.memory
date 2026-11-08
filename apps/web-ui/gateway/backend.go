@@ -277,6 +277,7 @@ type MemoryBackend interface {
 	CreateSkill(ctx context.Context, name, description, content string) (*Skill, error)
 	UpdateSkill(ctx context.Context, id, description, content string) (*Skill, error)
 	DeleteSkill(ctx context.Context, id string) error
+	RestoreSkill(ctx context.Context, id string, pin bool) (*Skill, error)
 	ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error)
 	GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error)
 	ApproveSkillCaptureProposal(ctx context.Context, id string) error

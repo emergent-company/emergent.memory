@@ -462,11 +462,13 @@ type fakeMemory struct {
 	migrationVersion string // to_version / through_version passed
 	migrationJobID   string
 
-	skills         []Skill
-	skillErr       error   // failure for any skill method
-	createdSkills  []Skill // skills passed to CreateSkill
-	updatedSkillID string  // last id passed to UpdateSkill
-	deletedSkillID string  // last id passed to DeleteSkill
+	skills          []Skill
+	skillErr        error   // failure for any skill method
+	createdSkills   []Skill // skills passed to CreateSkill
+	updatedSkillID  string  // last id passed to UpdateSkill
+	deletedSkillID  string  // last id passed to DeleteSkill
+	restoredSkillID string  // last id passed to RestoreSkill
+	restoredPinned  bool    // last pin flag passed to RestoreSkill
 
 	skillProposals     []SkillCaptureProposal // returned by ListSkillCaptureProposals
 	skillProposalErr   error                  // failure for any proposal read/action
@@ -2277,6 +2279,26 @@ func (f *fakeMemory) DeleteSkill(ctx context.Context, id string) error {
 	}
 	f.deletedSkillID = id
 	return nil
+}
+
+func (f *fakeMemory) RestoreSkill(ctx context.Context, id string, pin bool) (*Skill, error) {
+	if f.skillErr != nil {
+		return nil, f.skillErr
+	}
+	f.restoredSkillID = id
+	f.restoredPinned = pin
+	for i := range f.skills {
+		if f.skills[i].ID == id {
+			s := f.skills[i]
+			if s.Metadata == nil {
+				s.Metadata = &SkillMetadata{}
+			}
+			s.Metadata.LifecycleState = "active"
+			s.Metadata.Pinned = pin
+			return &s, nil
+		}
+	}
+	return &Skill{ID: id, Name: "restored"}, nil
 }
 
 func (f *fakeMemory) ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error) {

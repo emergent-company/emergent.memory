@@ -169,6 +169,67 @@ func TestDeleteSkill(t *testing.T) {
 	}
 }
 
+func TestRestoreSkill(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"s1","name":"agent.triage","description":"d","content":"c","metadata":{"lifecycle_state":"active","pinned":true,"author":"diane"},"scope":"project"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	sk, err := m.RestoreSkill(context.Background(), "s1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/projects/proj-1/skills/s1/restore" {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotBody["pin"] != true {
+		t.Errorf("body = %v, want pin=true", gotBody)
+	}
+	if sk == nil || !sk.Metadata.Pinned || sk.LifecycleState() != "active" {
+		t.Errorf("skill = %+v", sk)
+	}
+}
+
+func TestRestoreSkillError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"skill not found"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj-1")
+	if _, err := m.RestoreSkill(context.Background(), "missing", false); err == nil {
+		t.Fatal("want error, got nil")
+	}
+}
+
+// TestSkillLifecycleHelpers pins the defaults the UI relies on: a skill with no
+// metadata is active, and only an explicit archived state hides it from agents.
+func TestSkillLifecycleHelpers(t *testing.T) {
+	if got := (Skill{}).LifecycleState(); got != "active" {
+		t.Errorf("default lifecycle = %q, want active", got)
+	}
+	if (Skill{}).Archived() {
+		t.Error("a skill without metadata must not read as archived")
+	}
+	skill := Skill{Metadata: &SkillMetadata{LifecycleState: "archived"}}
+	if !skill.Archived() {
+		t.Error("archived state not detected")
+	}
+	if skill.IsPinned() {
+		t.Error("archived skill must not read as pinned")
+	}
+	if got := skillLifecycleLabel("archived"); got != "Archived" {
+		t.Errorf("label = %q", got)
+	}
+}
+
 // --- skill proposals (gateway client) ---
 
 func TestListSkillCaptureProposals(t *testing.T) {
@@ -629,6 +690,89 @@ func TestUIRouteSkills(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills?deleted=1", nil))
 	if !strings.Contains(rec.Body.String(), "Skill deleted.") {
 		t.Error("deleted flash missing on list page")
+	}
+}
+
+// TestUIRouteSkillRestore pins the un-archive surface: an archived skill shows
+// its lifecycle state and both restore actions, the POST forwards the pin flag
+// and redirects with a flash, and an active skill shows no restore affordance.
+func TestUIRouteSkillRestore(t *testing.T) {
+	f := &fakeMemory{skills: []Skill{{
+		ID: "s1", Name: "agent.triage", Description: "aged out", Content: "body", Scope: "project",
+		UpdatedAt: "2026-08-26T11:00:00Z",
+		Metadata:  &SkillMetadata{Source: "agent", LifecycleState: "archived", Version: "1.0.0"},
+	}}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/skills/:id", s.uiSkill)
+	e.POST("/skills/:id/restore", s.uiRestoreSkill)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills/s1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Archived", "This skill is archived", `action="/skills/s1/restore"`, `name="pin"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("archived detail page missing %q", want)
+		}
+	}
+
+	// Restore & pin: the form flag reaches memory, then PRG back to the detail page.
+	form := url.Values{"pin": {"1"}}
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/skills/s1/restore", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("restore redirect status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/skills/s1?restored=1" {
+		t.Errorf("restore location = %q", loc)
+	}
+	if f.restoredSkillID != "s1" || !f.restoredPinned {
+		t.Errorf("restore call = id %q pin %v, want s1/true", f.restoredSkillID, f.restoredPinned)
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills/s1?restored=1", nil))
+	if !strings.Contains(rec.Body.String(), "Skill restored.") {
+		t.Error("restored flash missing on the detail page")
+	}
+
+	// A plain restore sends pin=false.
+	f.restoredPinned = true
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/s1/restore", nil))
+	if f.restoredPinned {
+		t.Error("restore without the pin flag must not pin")
+	}
+
+	// Restore failure: the detail page returns with the backend error, and the
+	// skill is not reported as restored.
+	bad := &fakeMemory{skillErr: errTest}
+	sbad := &Server{cfg: Config{DefaultAgent: "memory"}, memory: bad}
+	ebad := echo.New()
+	ebad.POST("/skills/:id/restore", sbad.uiRestoreSkill)
+	rec = httptest.NewRecorder()
+	ebad.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/skills/s1/restore", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("failed restore status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/skills/s1?err=backend+unreachable" {
+		t.Errorf("failed restore location = %q", loc)
+	}
+
+	// An active skill has no un-archive affordance.
+	active := &fakeMemory{skills: []Skill{{ID: "s2", Name: "manual", Description: "d", Content: "c", Scope: "project"}}}
+	sactive := &Server{cfg: Config{DefaultAgent: "memory"}, memory: active}
+	eactive := echo.New()
+	eactive.GET("/skills/:id", sactive.uiSkill)
+	rec = httptest.NewRecorder()
+	eactive.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skills/s2", nil))
+	if strings.Contains(rec.Body.String(), "This skill is archived") {
+		t.Error("an active skill must not show the restore section")
 	}
 }
 
