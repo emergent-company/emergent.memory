@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -182,6 +183,7 @@ func (s *Service) Submit(ctx context.Context, sub Submission) (*Result, error) {
 	if !s.Enabled() {
 		return nil, ErrNotConfigured
 	}
+
 	if err := s.validate(&sub); err != nil {
 		return nil, err
 	}
@@ -290,6 +292,21 @@ func (s *Service) projectMeta(ctx context.Context, projectID string) (name, orgI
 		return "", ""
 	}
 	return row.Name, row.OrganizationID
+}
+
+// normaliseID keeps an identifier only when it is a UUID. The REST surface reads
+// project and organization ids from request headers, so they are
+// caller-controlled: a stray value must not be rendered into the issue or drive a
+// lookup that logs a warning on every submission.
+func normaliseID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return ""
+	}
+	return id
 }
 
 // submissionFingerprint is the dedupe key: identity is added by the guard, so

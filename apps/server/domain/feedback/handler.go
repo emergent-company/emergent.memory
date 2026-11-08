@@ -54,7 +54,7 @@ type SubmitResponse struct {
 
 // Submit handles POST /api/feedback.
 // @Summary      Submit feedback about Memory
-// @Description  Files feedback from the authenticated user (or their agent) as a GitHub issue in the Memory infrastructure repository. The submitter's account identity, project and basic environment details are attached automatically. Write what you were trying to do, what happened, and what you expected; one or two sentences is enough.
+// @Description  Files feedback from the authenticated user (or their agent) as a GitHub issue, with the submitter's account identity, project and basic environment details attached automatically. Write what you were trying to do, what happened, and what you expected; one or two sentences is enough.
 // @Tags         feedback
 // @Accept       json
 // @Produce      json
@@ -80,12 +80,17 @@ func (h *Handler) Submit(c echo.Context) error {
 		includeContext = *req.IncludeContext
 	}
 
+	// Project and organization fall back to the authenticated principal, which is
+	// trusted. A value from the request context may originate in the
+	// X-Project-ID header, so it is kept only when it is a well-formed UUID: a
+	// stray value must not be rendered into the issue or drive a lookup that
+	// logs a warning on every submission.
 	ctx := c.Request().Context()
-	projectID := auth.ProjectIDFromContext(ctx)
+	projectID := normaliseID(auth.ProjectIDFromContext(ctx))
 	if projectID == "" {
 		projectID = user.ProjectID
 	}
-	orgID := auth.OrgIDFromContext(ctx)
+	orgID := normaliseID(auth.OrgIDFromContext(ctx))
 	if orgID == "" {
 		orgID = user.OrgID
 	}

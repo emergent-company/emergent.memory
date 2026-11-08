@@ -89,13 +89,13 @@ func renderIssueBody(in issueInput, message string) string {
 
 func submitterCell(sub Submission) string {
 	if sub.UserEmail != "" && sub.UserID != "" {
-		return fmt.Sprintf("%s (`%s`)", cell(sub.UserEmail), sub.UserID)
+		return fmt.Sprintf("%s (%s)", cell(sub.UserEmail), codeCell(sub.UserID))
 	}
 	if sub.UserEmail != "" {
 		return cell(sub.UserEmail)
 	}
 	if sub.UserID != "" {
-		return fmt.Sprintf("`%s`", sub.UserID)
+		return codeCell(sub.UserID)
 	}
 	return "unknown"
 }
@@ -103,9 +103,9 @@ func submitterCell(sub Submission) string {
 func projectCell(projectID, name string) string {
 	switch {
 	case projectID != "" && name != "":
-		return fmt.Sprintf("%s (`%s`)", cell(name), projectID)
+		return fmt.Sprintf("%s (%s)", cell(name), codeCell(projectID))
 	case projectID != "":
-		return fmt.Sprintf("`%s`", projectID)
+		return codeCell(projectID)
 	case name != "":
 		return cell(name)
 	default:
@@ -116,9 +116,9 @@ func projectCell(projectID, name string) string {
 func serverCell(version, commit string) string {
 	switch {
 	case version != "" && commit != "" && commit != "unknown":
-		return fmt.Sprintf("`%s` (`%s`)", version, commit)
+		return fmt.Sprintf("%s (%s)", codeCell(version), codeCell(commit))
 	case version != "":
-		return fmt.Sprintf("`%s`", version)
+		return codeCell(version)
 	default:
 		return "unknown"
 	}
@@ -136,12 +136,19 @@ func codeCell(value string) string {
 	if value == "" {
 		return "unknown"
 	}
-	return "`" + strings.ReplaceAll(value, "`", "'") + "`"
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, "`", "'")
+	// A pipe ends the table cell even inside a code span, so it is escaped too.
+	value = strings.ReplaceAll(value, "|", `\|`)
+	return "`" + value + "`"
 }
 
 // cell makes a value safe for a single markdown table cell.
 func cell(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
+	// Escape the escape first, so a value that already contains a backslash does
+	// not turn into an accidental pipe escape.
+	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, "|", `\|`)
 	if value == "" {
 		return "unknown"

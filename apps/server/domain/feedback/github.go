@@ -17,7 +17,17 @@ import (
 
 const (
 	githubRequestTimeout = 20 * time.Second
-	maxGitHubErrorBytes  = 4 << 10
+
+	// maxGitHubErrorBytes bounds the error text echoed into logs.
+	maxGitHubErrorBytes = 4 << 10
+
+	// maxGitHubResponseBytes bounds the SUCCESS body. GitHub answers a create
+	// with the whole issue object, echoing the body it just stored — up to the
+	// 16 KiB message cap plus the context table and the rest of the issue. Reusing
+	// the small error bound here truncated that JSON and failed the unmarshal
+	// *after* the issue had been created, which surfaced as a 502 on a report
+	// that actually landed and made the retry a duplicate.
+	maxGitHubResponseBytes = 1 << 20
 )
 
 // issueCreator is the seam the service uses to file an issue. Tests substitute
@@ -38,12 +48,40 @@ type githubClient struct {
 	http    *http.Client
 }
 
+// splitRepo splits an operator-supplied "owner/name" identifier and rejects
+// anything that could smuggle a path segment into the request URL: an empty
+// segment, "." or "..", whitespace, or a query/fragment separator.
+func splitRepo(repo string) (owner, name string, ok bool) {
+	// modelref:allow: repository identifiers are owner/name, not routed model names.
+	owner, name, found := strings.Cut(repo, "/")
+	if !found || !validRepoSegment(owner) || !validRepoSegment(name) {
+		return "", "", false
+	}
+	return owner, name, true
+}
+
+// validRepoSegment accepts what GitHub allows in an owner or repository name.
+func validRepoSegment(segment string) bool {
+	if segment == "" || segment == "." || segment == ".." {
+		return false
+	}
+	for _, r := range segment {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // newGitHubClient validates the operator configuration. A malformed value is an
 // error here (the caller logs and disables feedback) rather than a failure on
 // the first submission.
 func newGitHubClient(cfg config.FeedbackConfig) (*githubClient, error) {
-	owner, name, ok := strings.Cut(strings.TrimSpace(cfg.Repo), "/")
-	if !ok || strings.TrimSpace(owner) == "" || strings.TrimSpace(name) == "" || strings.Contains(name, "/") {
+	owner, name, ok := splitRepo(strings.TrimSpace(cfg.Repo))
+	if !ok {
 		return nil, fmt.Errorf("feedback repo %q must be owner/name", cfg.Repo)
 	}
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
@@ -101,16 +139,26 @@ func (c *githubClient) create(ctx context.Context, title, body string, labels []
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubErrorBytes))
-	if err != nil {
-		return nil, fmt.Errorf("read issue response: %w", err)
-	}
-
+	// A 422 on the label is retried; its body is not needed.
 	if resp.StatusCode == http.StatusUnprocessableEntity && len(labels) > 0 && retryWithoutLabels {
 		return c.create(ctx, title, body, nil, false)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &githubError{status: resp.StatusCode, body: responseBody}
+		errorBody, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubErrorBytes))
+		if err != nil {
+			return nil, fmt.Errorf("read issue error response: %w", err)
+		}
+		return nil, &githubError{status: resp.StatusCode, body: errorBody}
+	}
+
+	// Read the success body with its own bound: it carries the issue we just
+	// created, including the echoed body, not an error message.
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read issue response: %w", err)
+	}
+	if len(responseBody) > maxGitHubResponseBytes {
+		return nil, fmt.Errorf("decode issue response: body exceeds %d bytes", maxGitHubResponseBytes)
 	}
 
 	var issue createdIssue

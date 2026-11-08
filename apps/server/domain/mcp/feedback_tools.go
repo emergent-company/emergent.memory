@@ -28,8 +28,8 @@ func (s *Service) executeSubmitFeedback(ctx context.Context, projectID string, a
 		includeContext = v
 	}
 
-	user := auth.UserFromContext(ctx)
-	if user == nil || user.ID == "" {
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("feedback-submit: no authenticated user")
 	}
 

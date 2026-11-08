@@ -233,3 +233,44 @@ func TestGuardDuplicateExpires(t *testing.T) {
 	now = now.Add(dedupeWindow + time.Second)
 	require.Nil(t, guard.lookupDuplicate("user-1", "fp"))
 }
+
+func TestFailedDeliveryConsumesTheBudgetSlot(t *testing.T) {
+	svc, fake := testService(t, func(c *config.FeedbackConfig) { c.RateLimitPerHour = 1 })
+	fake.err = errors.New("github is down")
+
+	_, err := svc.Submit(context.Background(), validSubmission())
+	require.Error(t, err)
+
+	// The slot is reserved before the GitHub call and never refunded: an outage
+	// must not become an unlimited retry amplifier.
+	fake.err = nil
+	sub := validSubmission()
+	sub.Message = "a different report, same hour"
+	_, err = svc.Submit(context.Background(), sub)
+
+	var limited *RateLimitError
+	require.ErrorAs(t, err, &limited)
+}
+
+func TestDuplicateRetryDoesNotConsumeTheBudgetSlot(t *testing.T) {
+	svc, fake := testService(t, func(c *config.FeedbackConfig) { c.RateLimitPerHour = 1 })
+
+	first, err := svc.Submit(context.Background(), validSubmission())
+	require.NoError(t, err)
+
+	// The duplicate check runs before the reservation, so with a budget of one a
+	// retried identical call still returns the original issue instead of a 429.
+	again, err := svc.Submit(context.Background(), validSubmission())
+	require.NoError(t, err)
+	require.True(t, again.Duplicate)
+	require.Equal(t, first.IssueNumber, again.IssueNumber)
+	require.Len(t, fake.calls, 1)
+}
+
+func TestNormaliseIDKeepsOnlyUUIDs(t *testing.T) {
+	const id = "3f1c1a9e-1b6e-4f2a-9f0e-2b7c4d5e6f70"
+	require.Equal(t, id, normaliseID("  "+id+" "))
+	require.Empty(t, normaliseID("project-1"))
+	require.Empty(t, normaliseID("../../etc/passwd"))
+	require.Empty(t, normaliseID(""))
+}

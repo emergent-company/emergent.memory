@@ -88,3 +88,18 @@ func TestSanitizeMessageRemovesControlCharacters(t *testing.T) {
 func TestSummarizeFallsBackWhenEmpty(t *testing.T) {
 	require.Equal(t, "user feedback", summarize("\n\n"))
 }
+
+func TestBuildIssueEscapesPipesInIdentifiers(t *testing.T) {
+	in := fixedIssueInput()
+	in.Submission.UserID = "user|1"
+	in.Submission.ProjectID = "project|1"
+	in.OrgID = "org|1"
+
+	body := buildIssue(in).Body
+
+	// A pipe ends the table cell even inside a code span, so an identifier that
+	// carries one is escaped rather than left to split the row.
+	require.Contains(t, body, "`user\\|1`")
+	require.Contains(t, body, "`project\\|1`")
+	require.Contains(t, body, "`org\\|1`")
+}
