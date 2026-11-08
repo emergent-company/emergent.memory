@@ -3938,6 +3938,15 @@ marked as agent-created; the scheduled curator ages them <code>active → stale 
 archived</code> when unused. Pin a skill to stop ageing, or lock it to refuse further
 agent writes.</p>
 <p><strong>Review the inbox</strong></p>
+<p>Open <strong>Agents → Skills</strong>. A <strong>Proposed skills</strong> panel sits above the skill list
+and shows every pending proposal: the skill name, the agent it came from, the
+change kind (<em>create</em>, <em>patch</em> or <em>delete</em>), the capture confidence, and the
+current linter and security findings. <strong>Approve</strong> applies the proposal;
+<strong>Reject</strong> discards it. Both actions return to the same panel, and a failed
+approve — the security scan runs again and can still block the write — leaves
+the proposal pending and shows the error. Approved and rejected proposals drop
+out of the panel; it lists pending decisions only.</p>
+<p>The same inbox is available over the API:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>GET<span class="w">  </span>/api/projects/:projectId/skills/proposals<span class="w">              </span><span class="c1"># pending by default</span>
 <a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>GET<span class="w">  </span>/api/projects/:projectId/skills/proposals/:proposalId
 <a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>POST<span class="w"> </span>/api/projects/:projectId/skills/proposals/:proposalId/approve
