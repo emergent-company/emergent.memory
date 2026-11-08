@@ -10,21 +10,29 @@
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 		<key>NSExtensionAttributes</key>
 		<dict>
-			<!-- What makes Memory appear in the share sheet: a Safari link (or a
-			     shared web page), a photo, a document, an audio memo, or selected
-			     text. Video is deliberately absent: Memory's converter has no
-			     video path, and offering a share it will refuse is worse than not
-			     appearing. -->
-			<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
-			<integer>1</integer>
-			<key>NSExtensionActivationSupportsWebPageWithMaxCount</key>
-			<integer>1</integer>
-			<key>NSExtensionActivationSupportsImageWithMaxCount</key>
-			<integer>4</integer>
-			<key>NSExtensionActivationSupportsFileWithMaxCount</key>
-			<integer>4</integer>
-			<key>NSExtensionActivationSupportsText</key>
-			<true/>
+			<!-- Apple reads the activation declaration from NSExtensionActivationRule.
+			     A dictionary of NSExtensionActivationSupports* keys placed directly
+			     under NSExtensionAttributes is not a rule at all: App Store Connect
+			     rejects the build at upload with 90360, "Missing Info.plist value
+			     ... NSExtensionActivationRule", long after the archive succeeded. -->
+			<key>NSExtensionActivationRule</key>
+			<dict>
+				<!-- What makes Memory appear in the share sheet: a Safari link (or a
+				     shared web page), a photo, a document, an audio memo, or selected
+				     text. Video is deliberately absent: Memory's converter has no
+				     video path, and offering a share it will refuse is worse than not
+				     appearing. -->
+				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+				<integer>1</integer>
+				<key>NSExtensionActivationSupportsWebPageWithMaxCount</key>
+				<integer>1</integer>
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
+				<integer>4</integer>
+				<key>NSExtensionActivationSupportsFileWithMaxCount</key>
+				<integer>4</integer>
+				<key>NSExtensionActivationSupportsText</key>
+				<true/>
+			</dict>
 		</dict>
 	</dict>
 	<!-- The extension talks to the same gateway the app does, which may be a
