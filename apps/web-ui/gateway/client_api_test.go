@@ -811,3 +811,34 @@ func TestProjectConfig(t *testing.T) {
 		})
 	}
 }
+
+// An assistant turn carries its citations through to the session record so the
+// iOS chat can draw the Sources footer for recorded turns; a user turn, and an
+// assistant turn that cited nothing (or carried an unreadable value), carries
+// none.
+func TestMessageRecordCarriesAssistantCitations(t *testing.T) {
+	cites := json.RawMessage(`[{"kind":"object","id":"11111111-1111-1111-1111-111111111111","type":"person","label":"Sam","url":"/objects/11111111-1111-1111-1111-111111111111"}]`)
+
+	rec := messageRecord(TimelineItem{Kind: "message", Role: "diane", Content: &MessageContent{Text: "Sam works here."}, Citations: cites})
+	if string(rec.Citations) != string(cites) {
+		t.Errorf("assistant citations = %s, want %s", rec.Citations, cites)
+	}
+	if user := messageRecord(TimelineItem{Kind: "message", Role: "user", Content: &MessageContent{Text: "who?"}, Citations: cites}); user.Citations != nil {
+		t.Errorf("user turn citations = %s, want none", user.Citations)
+	}
+	for _, raw := range []string{"", "null", "[]", `"oops"`} {
+		got := messageRecord(TimelineItem{Kind: "message", Role: "diane", Content: &MessageContent{Text: "x"}, Citations: json.RawMessage(raw)})
+		if got.Citations != nil {
+			t.Errorf("citations %q: record carries %s, want none", raw, got.Citations)
+		}
+	}
+
+	// Omitted on the wire when absent, so older clients see no new key.
+	out, err := json.Marshal(messageRecord(TimelineItem{Kind: "message", Role: "diane", Content: &MessageContent{Text: "x"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "citations") {
+		t.Errorf("record without citations marshals %s", out)
+	}
+}
