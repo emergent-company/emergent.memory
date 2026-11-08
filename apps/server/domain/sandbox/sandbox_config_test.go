@@ -1063,3 +1063,20 @@ func TestValidate_RunMode(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0], "invalid run_mode")
 }
+
+func TestOutputProxy(t *testing.T) {
+	valid := []string{"", "off", "rtk", "sqz", "auto"}
+	for _, v := range valid {
+		cfg := &AgentSandboxConfig{Enabled: true, OutputProxy: v}
+		assert.Empty(t, cfg.Validate(), "output_proxy %q should validate", v)
+	}
+	assert.True(t, (&AgentSandboxConfig{OutputProxy: "rtk"}).RTKProxyEnabled())
+	assert.True(t, (&AgentSandboxConfig{OutputProxy: "auto"}).RTKProxyEnabled())
+	assert.True(t, (&AgentSandboxConfig{OutputProxy: "auto"}).SQZProxyEnabled())
+	assert.False(t, (&AgentSandboxConfig{OutputProxy: "sqz"}).RTKProxyEnabled())
+	assert.False(t, (&AgentSandboxConfig{OutputProxy: "rtk"}).SQZProxyEnabled())
+
+	errs := (&AgentSandboxConfig{Enabled: true, OutputProxy: "turbo"}).Validate()
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0], "invalid output_proxy")
+}
