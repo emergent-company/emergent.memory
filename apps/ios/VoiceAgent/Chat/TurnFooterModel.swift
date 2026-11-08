@@ -66,8 +66,12 @@ struct TurnFooterModel {
     static func format(duration: TimeInterval) -> String? {
         guard duration.isFinite, duration >= 0 else { return nil }
         let total = Int(duration.rounded())
-        let minutes = total / 60
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
         let seconds = total % 60
+        if hours > 0 {
+            return "\(hours):" + twoDigits(minutes) + ":" + twoDigits(seconds)
+        }
         return "\(minutes):" + twoDigits(seconds)
     }
 

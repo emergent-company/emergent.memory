@@ -42,10 +42,14 @@ final class CopyFeedback {
     func copy(_ text: String, write: (String) -> Void) -> Task<Void, Never> {
         write(text)
         generation &+= 1
+        let token = generation
         isCopied = true
         return Task { [weak self] in
             guard let self else { return }
             await self.sleep(self.duration)
+            // A tap that landed inside this window took a newer token: its
+            // checkmark must outlive the older wait.
+            guard self.generation == token else { return }
             self.isCopied = false
         }
     }
