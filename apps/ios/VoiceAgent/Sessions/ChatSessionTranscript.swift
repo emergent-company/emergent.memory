@@ -14,6 +14,8 @@ struct ChatMessage: Identifiable, Equatable, Sendable {
     let id: String
     let role: ChatRole
     let text: String
+    /// An assistant reply's grounded references (its Sources footer).
+    var citations: [ChatCitation] = []
 }
 
 /// One entry of the unified transcript: a chat message or the tool calls that
@@ -29,6 +31,8 @@ struct LiveTranscriptMessage: Equatable, Sendable {
     let id: String
     let role: ChatRole
     let text: String
+    /// The streamed reply's citations (HTTP turns; the room sends none).
+    var citations: [ChatCitation] = []
 }
 
 /// Backs the unified chat: recorded history from `GET /api/session`, live
@@ -98,17 +102,21 @@ final class ChatSessionTranscriptStore {
             case "turn":
                 guard let roleText = record.role, let text = record.text, !text.isEmpty else { continue }
                 let role: ChatRole = roleText == "user" ? .user : .assistant
+                let citations = role == .assistant ? record.citations ?? [] : []
                 if case let .message(previous)? = entries.last, previous.role == role {
                     entries[entries.count - 1] = .message(ChatMessage(
                         id: previous.id,
                         role: role,
-                        text: previous.text + "\n" + text
+                        text: previous.text + "\n" + text,
+                        // A merged reply cites what each of its turns cited.
+                        citations: ChatCitation.deduplicated(previous.citations + citations)
                     ))
                 } else {
                     entries.append(.message(ChatMessage(
                         id: "history-\(entries.count)",
                         role: role,
-                        text: text
+                        text: text,
+                        citations: ChatCitation.deduplicated(citations)
                     )))
                 }
             case "tools_executed":
@@ -152,7 +160,7 @@ final class ChatSessionTranscriptStore {
         var live: [ChatMessage] = []
         for message in messages {
             guard !message.text.isEmpty else { continue }
-            let chat = ChatMessage(id: message.id, role: message.role, text: message.text)
+            let chat = ChatMessage(id: message.id, role: message.role, text: message.text, citations: message.citations)
             if let index = live.firstIndex(where: { $0.id == chat.id }) {
                 live[index] = chat
             } else {

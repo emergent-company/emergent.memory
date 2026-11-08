@@ -106,6 +106,11 @@ type Config struct {
 	// MCPRegistry configures the official MCP registry client.
 	MCPRegistry MCPRegistryConfig
 
+	// Feedback configures user/agent feedback intake. When a token is present,
+	// feedback submitted through POST /api/feedback or the feedback-submit MCP
+	// tool is filed as a GitHub issue in Feedback.Repo.
+	Feedback FeedbackConfig
+
 	// SourceOAuth configures the deployment-default OAuth clients used by the
 	// data-source connect flow when an org has no client of its own.
 	SourceOAuth SourceOAuthConfig
@@ -895,6 +900,33 @@ type MCPRegistryConfig struct {
 	// OAuthClientName is the client_name presented at dynamic client
 	// registration. Empty defaults to "Memory".
 	OAuthClientName string `env:"MCP_REGISTRY_OAUTH_CLIENT_NAME" envDefault:""`
+}
+
+// FeedbackConfig configures the user-facing feedback intake (REST endpoint and
+// MCP tool). Feedback is filed as a GitHub issue; the token needs only
+// issues:write on the target repository. An empty token disables the feature,
+// which is the expected state for self-hosted deployments (there is no Memory
+// team to receive the issue).
+type FeedbackConfig struct {
+	// Enabled is the explicit kill switch. The feature is still off when
+	// Enabled is true but GitHubToken or Repo is empty.
+	Enabled bool `env:"FEEDBACK_ENABLED" envDefault:"true"`
+	// GitHubToken is a fine-grained personal access token (or GitHub App
+	// installation token) with issues:write on Repo. Never log this value.
+	GitHubToken string `env:"FEEDBACK_GITHUB_TOKEN" envDefault:""`
+	// Repo is the "owner/name" repository that receives the issues. Empty
+	// disables the feature: there is no built-in destination, because the
+	// operator of a deployment is the only one who can say where its users'
+	// feedback should go. A deployment that sets a token must set this too.
+	Repo string `env:"FEEDBACK_GITHUB_REPO" envDefault:""`
+	// APIBaseURL overrides the GitHub REST origin (GitHub Enterprise).
+	APIBaseURL string `env:"FEEDBACK_GITHUB_API_BASE_URL" envDefault:"https://api.github.com"`
+	// Label is applied to every created issue. If the repository has no such
+	// label the issue is still created, without labels.
+	Label string `env:"FEEDBACK_GITHUB_LABEL" envDefault:"feedback"`
+	// RateLimitPerHour caps successful submissions per user per rolling hour.
+	// Zero falls back to the package default.
+	RateLimitPerHour int `env:"FEEDBACK_RATE_LIMIT_PER_HOUR" envDefault:"5"`
 }
 
 // SourceOAuthConfig holds the deployment-default OAuth client material and the

@@ -35,6 +35,9 @@ extension HTTPChatTransport {
         var completed = false
         /// The stream reported the run failed; no reply is coming.
         var serverFailed = false
+        /// The turn's grounded references (the `citations` frame, sent once
+        /// after the answer), drawn as the reply's Sources footer.
+        var citations: [ChatCitation] = []
     }
 
     /// A reply the client saw cut off mid-stream, and the live copy holding it.

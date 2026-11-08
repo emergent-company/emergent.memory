@@ -3344,11 +3344,11 @@ memory graph objects bulk-update [flags]
 
 ## memory graph objects create-batch
 
-Batch-create graph objects (and optionally relationships) from a JSON file
+Batch-create graph objects (and optionally relationships) from a JSON file or blueprint dump
 
 ### Synopsis
 
-Create multiple graph objects in one API call. Accepts two input formats:
+Create multiple graph objects in one API call. Accepts three input formats:
 
 FLAT ARRAY FORMAT (objects only):
   A JSON array of objects, each with:
@@ -3396,6 +3396,21 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
   Output (text): one line per object, then "Created N objects, M relationships"
   Output (--output json): full response including ref_map (placeholder → UUID)
 
+BLUEPRINT SEED FORMAT (round-trip for 'memory blueprints dump'):
+  --file may point at a dump root (containing seed/objects/ and
+  seed/relationships/), a directory of *.jsonl seed files, or a single
+  .jsonl file. Records are upserted by key, "srcKey"/"dstKey" relationship
+  endpoints are resolved after the objects are written, and each unreadable
+  row is reported without aborting the import. Files named _untyped.jsonl are
+  read back as type "Untyped".
+
+BRANCHES:
+  Pass --branch to write into a graph branch instead of the main graph. The
+  value may be a branch name or UUID. For the subgraph format on a branch,
+  objects are upserted by key and relationships by (type, src, dst) through
+  the branch-aware bulk endpoints, because the subgraph endpoint has no
+  branch parameter.
+
 ```
 memory graph objects create-batch [flags]
 ```
@@ -3403,8 +3418,9 @@ memory graph objects create-batch [flags]
 ### Options
 
 ```
-      --file string   Path to JSON file containing array of objects (required)
-  -h, --help          help for create-batch
+      --branch string   Branch name or UUID to import into (omit for main branch)
+      --file string     JSON file (array or subgraph), blueprint dump directory, or seed .jsonl file (required)
+  -h, --help            help for create-batch
 ```
 
 ## memory graph objects create
@@ -3739,6 +3755,15 @@ The input file must contain a JSON array of objects, each with:
 Use --upsert to make the operation idempotent: existing relationships (same
 type, from, to) are returned as-is instead of causing an error. Safe to retry.
 
+Pass --branch (a branch name or UUID) to create the relationships on a graph
+branch instead of the main graph. Both endpoint objects must already exist on
+that branch, because the server rejects an edge whose endpoints are not on the
+same branch as the edge.
+
+To import the JSONL files written by 'memory blueprints dump' (which reference
+objects by srcKey/dstKey and include the objects themselves), use
+'memory graph objects create-batch --file <dump-dir> --branch <name>'.
+
 Example relationships.json:
   [
     {"type": "knows", "from": "<entity-id-1>", "to": "<entity-id-2>"},
@@ -3754,9 +3779,10 @@ memory graph relationships create-batch [flags]
 ### Options
 
 ```
-      --file string   Path to JSON file containing array of relationships (required)
-  -h, --help          help for create-batch
-      --upsert        Apply upsert semantics to all items: skip existing relationships instead of failing
+      --branch string   Branch name or UUID to create relationships on (omit for main branch)
+      --file string     Path to JSON file containing array of relationships (required)
+  -h, --help            help for create-batch
+      --upsert          Apply upsert semantics to all items: skip existing relationships instead of failing
 ```
 
 ## memory graph relationships create
