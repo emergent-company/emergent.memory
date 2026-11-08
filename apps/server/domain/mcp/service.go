@@ -499,8 +499,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"include_properties": {
 						Type:        "boolean",
-						Description: "When true, return each entity's properties blob (projected to fields when supplied). Selects the full projection, whose effective limit is capped to bound the payload; paginate with offset for more rows. Default false (compact: no properties).",
-						Default:     false,
+						Description: "When true, return each entity's properties blob (projected to fields when supplied). Selects the full projection, whose effective limit is capped to bound the payload; paginate with offset for more rows. Default false for type/pagination queries (compact: no properties); the ids[] path returns properties by default, and include_properties=false opts it back into compact.",
 					},
 					"filters": {
 						Type:        "object",
@@ -3807,7 +3806,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	}
 	if fullLimitClamped {
 		warnings = append(warnings, fmt.Sprintf(
-			"limit capped to %d for field_strategy=full to bound the payload; paginate with offset for more rows.",
+			"limit capped to %d to bound the properties payload; paginate with offset for more rows.",
 			limit,
 		))
 	}

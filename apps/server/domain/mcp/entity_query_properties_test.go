@@ -92,4 +92,6 @@ func TestExecuteQueryEntities_IncludePropertiesPaginationBound(t *testing.T) {
 	require.Len(t, out.Entities, 2)
 	assert.NotEmpty(t, out.Entities[0].Properties)
 	assert.Contains(t, out.Warning, "capped to 2")
+	assert.NotContains(t, out.Warning, "field_strategy",
+		"the cap warning must describe the properties payload, not name a parameter the caller did not pass")
 }
