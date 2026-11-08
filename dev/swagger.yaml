@@ -9660,6 +9660,8 @@ definitions:
         type: string
       excludeFromSearch:
         type: boolean
+      initialStatus:
+        type: string
       label:
         type: string
       name:
@@ -15715,6 +15717,10 @@ paths:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: An identical submission is already being filed; retry shortly
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "429":
