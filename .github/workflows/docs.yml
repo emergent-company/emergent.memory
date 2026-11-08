@@ -132,28 +132,43 @@ jobs:
 
       - name: Sync root-level files to gh-pages
         run: |
-          # Copy files before switching branches so they survive the checkout
-          cp apps/server/docs/swagger/swagger.json /tmp/swagger.json
-          cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
-          cp docs/llms.md /tmp/llms.md
-          cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
-          cp docs/llms-python-sdk.md /tmp/llms-python-sdk.md
-          # gh-pages does not contain .github/, so stage the retry helper too.
-          cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
+          # Publish from a LINKED WORKTREE instead of `git checkout gh-pages`
+          # in this one (#464). Checking gh-pages out here deleted `.github/`
+          # from the workspace, so the runner's post-step for the local
+          # `./.github/actions/generate-openapi` action failed with
+          # "Can't find 'action.yml'" on every release — a red check on a deploy
+          # that had already succeeded (steps 9/10 passed, step 19 failed).
+          # Ordering alone cannot fix it: a composite action's post-step always
+          # runs at job end, after any mutation. So do not mutate the primary
+          # checkout at all; the local action stays resolvable and the deploy is
+          # the only thing that changes.
+          set -euo pipefail
           git fetch origin gh-pages
-          git checkout gh-pages
-          cp /tmp/swagger.json swagger.json
-          cp /tmp/swagger.yaml swagger.yaml
-          cp /tmp/swagger.json openapi.json
-          cp /tmp/llms.md llms.md
-          cp /tmp/llms-go-sdk.md llms-go-sdk.md
-          cp /tmp/llms-python-sdk.md llms-python-sdk.md
-          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
-          git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
+          publish_dir="$(mktemp -d "$RUNNER_TEMP/gh-pages.XXXXXX")"
+          # FETCH_HEAD, not origin/gh-pages: actions/checkout installs its own
+          # (single-ref) fetch refspec, so only the command-line fetch result is
+          # guaranteed to be here. --detach keeps this worktree off any branch
+          # name, so two jobs can never contend for one.
+          git worktree add --detach "$publish_dir" FETCH_HEAD
+          cp apps/server/docs/swagger/swagger.json "$publish_dir/swagger.json"
+          cp apps/server/docs/swagger/swagger.yaml "$publish_dir/swagger.yaml"
+          cp apps/server/docs/swagger/swagger.json "$publish_dir/openapi.json"
+          cp docs/llms.md "$publish_dir/llms.md"
+          cp docs/llms-go-sdk.md "$publish_dir/llms-go-sdk.md"
+          cp docs/llms-python-sdk.md "$publish_dir/llms-python-sdk.md"
+          git -C "$publish_dir" add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
+          git -C "$publish_dir" diff --cached --quiet || git -C "$publish_dir" commit -m "docs: sync root-level raw files [skip ci]"
           # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
-          # publisher pushes the same branch and may land first. Run the copy
-          # staged before the checkout (gh-pages has no .github/ directory).
-          bash /tmp/push-gh-pages-with-retry.sh
+          # publisher pushes the same branch and may land first. The helper runs
+          # in the worktree and is read from this checkout, which is no longer
+          # switched to gh-pages (so it no longer has to be staged in /tmp).
+          ( cd "$publish_dir" && bash "$GITHUB_WORKSPACE/.github/scripts/push-gh-pages-with-retry.sh" )
+          git worktree remove --force "$publish_dir"
+          # The invariant this step exists to keep: the local action the runner
+          # resolves its post-step against is still present in this workspace.
+          # A checkout that mutates the tree again fails here instead of at the
+          # end of the job, where it reads as a deploy failure (#464).
+          test -f .github/actions/generate-openapi/action.yml
 
   deploy-version:
     name: Deploy versioned release
@@ -216,25 +231,40 @@ jobs:
 
       - name: Sync root-level files to gh-pages
         run: |
-          # Copy files before switching branches so they survive the checkout
-          cp apps/server/docs/swagger/swagger.json /tmp/swagger.json
-          cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
-          cp docs/llms.md /tmp/llms.md
-          cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
-          cp docs/llms-python-sdk.md /tmp/llms-python-sdk.md
-          # gh-pages does not contain .github/, so stage the retry helper too.
-          cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
+          # Publish from a LINKED WORKTREE instead of `git checkout gh-pages`
+          # in this one (#464). Checking gh-pages out here deleted `.github/`
+          # from the workspace, so the runner's post-step for the local
+          # `./.github/actions/generate-openapi` action failed with
+          # "Can't find 'action.yml'" on every release — a red check on a deploy
+          # that had already succeeded (steps 9/10 passed, step 19 failed).
+          # Ordering alone cannot fix it: a composite action's post-step always
+          # runs at job end, after any mutation. So do not mutate the primary
+          # checkout at all; the local action stays resolvable and the deploy is
+          # the only thing that changes.
+          set -euo pipefail
           git fetch origin gh-pages
-          git checkout gh-pages
-          cp /tmp/swagger.json swagger.json
-          cp /tmp/swagger.yaml swagger.yaml
-          cp /tmp/swagger.json openapi.json
-          cp /tmp/llms.md llms.md
-          cp /tmp/llms-go-sdk.md llms-go-sdk.md
-          cp /tmp/llms-python-sdk.md llms-python-sdk.md
-          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
-          git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
+          publish_dir="$(mktemp -d "$RUNNER_TEMP/gh-pages.XXXXXX")"
+          # FETCH_HEAD, not origin/gh-pages: actions/checkout installs its own
+          # (single-ref) fetch refspec, so only the command-line fetch result is
+          # guaranteed to be here. --detach keeps this worktree off any branch
+          # name, so two jobs can never contend for one.
+          git worktree add --detach "$publish_dir" FETCH_HEAD
+          cp apps/server/docs/swagger/swagger.json "$publish_dir/swagger.json"
+          cp apps/server/docs/swagger/swagger.yaml "$publish_dir/swagger.yaml"
+          cp apps/server/docs/swagger/swagger.json "$publish_dir/openapi.json"
+          cp docs/llms.md "$publish_dir/llms.md"
+          cp docs/llms-go-sdk.md "$publish_dir/llms-go-sdk.md"
+          cp docs/llms-python-sdk.md "$publish_dir/llms-python-sdk.md"
+          git -C "$publish_dir" add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
+          git -C "$publish_dir" diff --cached --quiet || git -C "$publish_dir" commit -m "docs: sync root-level raw files [skip ci]"
           # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
-          # publisher pushes the same branch and may land first. Run the copy
-          # staged before the checkout (gh-pages has no .github/ directory).
-          bash /tmp/push-gh-pages-with-retry.sh
+          # publisher pushes the same branch and may land first. The helper runs
+          # in the worktree and is read from this checkout, which is no longer
+          # switched to gh-pages (so it no longer has to be staged in /tmp).
+          ( cd "$publish_dir" && bash "$GITHUB_WORKSPACE/.github/scripts/push-gh-pages-with-retry.sh" )
+          git worktree remove --force "$publish_dir"
+          # The invariant this step exists to keep: the local action the runner
+          # resolves its post-step against is still present in this workspace.
+          # A checkout that mutates the tree again fails here instead of at the
+          # end of the job, where it reads as a deploy failure (#464).
+          test -f .github/actions/generate-openapi/action.yml

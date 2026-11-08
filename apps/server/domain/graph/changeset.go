@@ -264,7 +264,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	for i, relItem := range req.Relationships {
-		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, actorType, actorUUID)
+		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, schemas, actorType, actorUUID)
 		if err != nil {
 			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
 		}
@@ -472,6 +472,7 @@ func (s *Service) applyChangesetRelationship(
 	sourceID uuid.UUID,
 	item *ChangesetRelationshipItem,
 	objByRef map[string]*GraphObject,
+	schemas *ExtractionSchemas,
 	actorType string,
 	actorID *uuid.UUID,
 ) (ChangesetItemResult, *uuid.UUID, error) {
@@ -548,6 +549,16 @@ func (s *Service) applyChangesetRelationship(
 		if item.Properties != nil {
 			version.Properties = item.Properties
 		}
+		// Date properties converge on this write path too. The endpoints are
+		// known, so the type-specific relationship schema applies. The helper
+		// copies first: when the push omits properties, version.Properties
+		// aliases head.Properties and must not be mutated in place.
+		//
+		// Look the schema up by head.Type, not version.Type: the repository
+		// inherits the head's type (it is part of the edge's identity), so a
+		// pushed type that differs is not the type the row is stored with.
+		version.Properties = normaliseChangesetRelationshipDateProperties(
+			version.Properties, schemas, head.Type, srcObj.Type, dstObj.Type)
 		if item.Weight != nil {
 			version.Weight = item.Weight
 		}
@@ -577,6 +588,7 @@ func (s *Service) applyChangesetRelationship(
 	if props == nil {
 		props = map[string]any{}
 	}
+	props = normaliseChangesetRelationshipDateProperties(props, schemas, relType, srcObj.Type, dstObj.Type)
 	rel := &GraphRelationship{
 		ProjectID:     projectID,
 		BranchID:      srcObj.BranchID,
@@ -669,9 +681,14 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 	schemaVersion := ""
 	if schema, ok := objectSchema(schemas, item.Type); ok {
 		schemaVersion = schema.Version
-		if err := checkSchemaProperties(props, schema); err != nil {
+		coerced, err := checkSchemaProperties(props, schema)
+		if err != nil {
 			return nil, err
 		}
+		// Store the coerced map, not the raw one: the changeset/source-push path
+		// is a write path and must normalise date properties like every other
+		// one (issue #402).
+		props = coerced
 	}
 
 	obj := &GraphObject{
@@ -742,6 +759,16 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 	if schema, ok := objectSchema(schemas, version.Type); ok {
 		schemaVersion := schema.Version
 		version.SchemaVersion = &schemaVersion
+		// Normalise dates in place of full validation: a source push replaces
+		// the property map and may legitimately be partial, so required-field
+		// enforcement must not start failing here. (A brand-new object through
+		// buildChangesetObject still runs full validation.) Date values still
+		// converge to YYYY-MM-DD (issue #402).
+		//
+		// Copy first: when the push omits properties, version.Properties still
+		// aliases head.Properties, and normalising in place would mutate the
+		// previous head the caller is holding.
+		version.Properties = normaliseDateProperties(copyProperties(version.Properties), schema)
 	}
 
 	// A source push is authoritative for its own record: the row stays
@@ -766,12 +793,36 @@ func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectS
 	return schema, ok
 }
 
-func checkSchemaProperties(props map[string]any, schema agents.ObjectSchema) error {
-	_, err := validateProperties(props, schema)
-	if err != nil {
-		return apperror.NewBadRequest("property validation failed: " + err.Error())
+// normaliseChangesetRelationshipDateProperties normalises an edge's date
+// properties on a source push, using the schemas already loaded for the
+// changeset. Both endpoint types are known here, so the type-specific
+// relationship schema applies (issue #402). The map is copied first: the
+// caller's request (or the previous head a version aliases) must not be
+// mutated.
+func normaliseChangesetRelationshipDateProperties(props map[string]any, schemas *ExtractionSchemas, relType, srcType, dstType string) map[string]any {
+	if len(props) == 0 || schemas == nil || schemas.RelationshipSchemas == nil || relType == "" {
+		return props
 	}
-	return nil
+	relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, relType, srcType, dstType)
+	if !ok || len(relSchema.Properties) == 0 {
+		return props
+	}
+	objSchema := agents.ObjectSchema{Properties: relSchema.Properties}
+	if !schemaHasDateProperties(objSchema) {
+		return props
+	}
+	return normaliseDateProperties(copyProperties(props), objSchema)
+}
+
+// checkSchemaProperties validates props and returns the coerced map. Callers
+// must store the returned map: `date` coercion is a write-path behaviour, so
+// discarding it would let the source-push path store a non-canonical shape.
+func checkSchemaProperties(props map[string]any, schema agents.ObjectSchema) (map[string]any, error) {
+	coerced, err := validateProperties(props, schema)
+	if err != nil {
+		return nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+	}
+	return coerced, nil
 }
 
 func newContribution(projectID uuid.UUID, branchID *uuid.UUID, kind string, versionID, sourceID uuid.UUID, externalID string, revision *string, seq int64) *ProvenanceContribution {

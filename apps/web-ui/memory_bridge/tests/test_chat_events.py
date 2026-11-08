@@ -105,6 +105,19 @@ def test_thinking_normalized_to_delta():
     assert mapper.handle({"type": "thinking", "role": "operator"}) == []
 
 
+def test_thinking_done_frame_emits_close():
+    mapper = ChatEventMapper()
+    # Segment-closing frame (done:true, no text) -> a single close frame, keeping id.
+    assert mapper.handle({"type": "thinking", "id": "3", "role": "reasoning",
+                          "done": True}) == [{"type": "thinking", "id": "3", "done": True}]
+    # No id present -> the close frame omits id.
+    assert mapper.handle({"type": "thinking", "role": "reasoning", "done": True}) == [
+        {"type": "thinking", "done": True}
+    ]
+    # Neither done nor text -> still dropped.
+    assert mapper.handle({"type": "thinking", "role": "operator"}) == []
+
+
 def test_approval_mapped_with_input_summary():
     mapper = ChatEventMapper()
     out = mapper.handle({
@@ -447,6 +460,7 @@ if __name__ == "__main__":
     test_tool_error_maps_to_error_result()
     test_parallel_same_tool_lifo_correlation()
     test_thinking_normalized_to_delta()
+    test_thinking_done_frame_emits_close()
     test_approval_mapped_with_input_summary()
     test_unknown_and_meta_events_ignored()
     test_ui_surface_forwarded_verbatim()

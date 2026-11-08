@@ -179,10 +179,19 @@ class ChatEventMapper:
             return self._handle_tool(event)
         if kind == "thinking":
             delta = _first_text(event, "delta", "text", "content")
-            if delta is None:
-                logger.debug("thinking event without text payload: %s", event)
-                return []
-            return [{"type": "thinking", "delta": delta}]
+            if delta is not None:
+                return [{"type": "thinking", "delta": delta}]
+            if event.get("done"):
+                # Segment-closing frame: done:true with no text. Emit a close
+                # frame so the client can stop its thinking shimmer; keep the
+                # stable segment id when the event carries one.
+                payload: dict = {"type": "thinking", "done": True}
+                ident = event.get("id")
+                if ident:
+                    payload["id"] = ident
+                return [payload]
+            logger.debug("thinking event without text payload: %s", event)
+            return []
         if kind == "approval":
             return [self._handle_approval(event)]
         if kind == "ui":

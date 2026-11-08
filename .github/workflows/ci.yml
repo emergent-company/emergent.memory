@@ -378,6 +378,20 @@ jobs:
       - name: Preflight guards
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/all.sh
+      # App Store Connect rejects a build whose app extension has no
+      # NSExtensionAttributes > NSExtensionActivationRule (error 90360), but only
+      # at the upload — the archive, the export and the simulator run all pass
+      # (v0.93.0 shipped that way, #480). The guard exists because nothing else
+      # can see the defect. It MUST run in a required context: it shipped in
+      # advisory `ios-lint` first and #481 merged with its own guard still QUEUED
+      # (#482). It is python3 + plistlib over apps/ios/**/Info.plist, so it costs
+      # nothing on a hosted ubuntu runner — do not move it back to ios.yml.
+      - name: Extension Info.plist guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: python3 .github/scripts/validate-extension-plists.py
+      - name: Extension Info.plist guard (self-test)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash .github/scripts/validate-extension-plists.test.sh
       # Reject dynamic ${{ ... }} interpolation (refs, inputs, outputs, event
       # payloads) inside shell run:/github-script script: payloads. Runs here so
       # the branch-protection-required `ci` check enforces it repo-wide.

@@ -32,7 +32,7 @@ tasks:
       - Scripts/mac-uitest-agent.sh install
 
   uitest:run:
-    desc: Build + run the UI suite from ssh via the LaunchAgent; exits with the suite's exit code
+    desc: Build + run the UI suite from ssh via the LaunchAgent; exits with the suite's exit code (3 = mirror is not the commit under test)
     cmds:
       - Scripts/mac-uitest-agent.sh run {{.CLI_ARGS}}
 

@@ -767,7 +767,7 @@ func (s *Service) GetMostAccessed(ctx context.Context, projectID uuid.UUID, limi
 			CanonicalID:    obj.CanonicalID,
 			Type:           obj.Type,
 			Key:            obj.Key,
-			Properties:     obj.Properties,
+			Properties:     s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
 			Labels:         obj.Labels,
 			LastAccessedAt: obj.LastAccessedAt,
 			CreatedAt:      obj.CreatedAt,
@@ -804,7 +804,7 @@ func (s *Service) GetUnused(ctx context.Context, projectID uuid.UUID, limit int,
 			CanonicalID:     obj.CanonicalID,
 			Type:            obj.Type,
 			Key:             obj.Key,
-			Properties:      obj.Properties,
+			Properties:      s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
 			Labels:          obj.Labels,
 			LastAccessedAt:  obj.LastAccessedAt,
 			DaysSinceAccess: daysSinceAccess,
@@ -876,10 +876,12 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		objects = objects[:params.Limit]
 	}
 
-	// Build paginated response
+	// Build paginated response. Date properties are normalised to YYYY-MM-DD on
+	// read so rows written before the write path was fixed converge (issue #402).
 	items := make([]*GraphObjectResponse, len(objects))
 	for i, obj := range objects {
 		items[i] = obj.ToResponse()
+		items[i].Properties = s.NormaliseDatePropertyValues(ctx, params.ProjectID, items[i].Type, items[i].Properties)
 	}
 
 	// Apply property projection if requested: `fields` includes only the named
@@ -942,6 +944,8 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 	}
 
 	resp := obj.ToResponse()
+	// Date properties converge to YYYY-MM-DD on read (issue #402).
+	resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
 	if err := s.fillObjectContributions(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
 		return nil, err
 	}
@@ -957,7 +961,9 @@ func (s *Service) GetByIDIncludingDeleted(ctx context.Context, projectID, id uui
 	if err != nil {
 		return nil, err
 	}
-	return obj.ToResponse(), nil
+	resp := obj.ToResponse()
+	resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+	return resp, nil
 }
 
 // Create creates a new graph object.
@@ -1316,7 +1322,9 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		if existing.EmbeddingUpdatedAt == nil {
 			s.enqueueEmbeddingForType(ctx, projectID, existing.Type, existing.ID.String())
 		}
-		return existing.ToResponse(), false, nil
+		resp := existing.ToResponse()
+		resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		return resp, false, nil
 	}
 
 	// Properties, status, labels, or assignee differ - create new version
@@ -1437,7 +1445,9 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
-		return current.ToResponse(), nil
+		resp := current.ToResponse()
+		resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		return resp, nil
 	}
 
 	// Merge properties
@@ -1481,6 +1491,10 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 			for k, v := range validatedDelta {
 				newProps[k] = v
 			}
+			// Normalise the merged map, not just the delta: a patch that touches
+			// an unrelated field must still converge inherited legacy date
+			// values to YYYY-MM-DD (issue #402).
+			newProps = normaliseDateProperties(newProps, schema)
 		}
 	}
 
@@ -1574,7 +1588,9 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
-		return current.ToResponse(), nil
+		resp := current.ToResponse()
+		resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		return resp, nil
 	}
 
 	// Only the assignee changed (no props/status/labels/key) → the stored content
@@ -1800,7 +1816,9 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding_v2.
 	s.enqueueEmbeddingForType(ctx, projectID, restored.Type, restored.ID.String())
 
-	return restored.ToResponse(), nil
+	resp := restored.ToResponse()
+	resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+	return resp, nil
 }
 
 // GetHistory returns version history for a graph object.
@@ -1819,6 +1837,7 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 	data := make([]*GraphObjectResponse, len(versions))
 	for i, v := range versions {
 		data[i] = v.ToResponse()
+		data[i].Properties = s.NormaliseDatePropertyValues(ctx, projectID, data[i].Type, data[i].Properties)
 	}
 
 	// Each version reports its own contributors, in one query for the whole
@@ -1859,6 +1878,10 @@ func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID, p
 	edges := make([]*GraphRelationshipResponse, 0, len(incomingResp)+len(outgoingResp))
 	edges = append(edges, incomingResp...)
 	edges = append(edges, outgoingResp...)
+	// Edge date properties converge on read as well. Only the queried object's
+	// type is loaded here, so an endpoint-agnostic schema or one keyed on that
+	// side matches; the other endpoint's type is unknown.
+	s.normaliseRelationshipResponseDates(ctx, projectID, edges, map[uuid.UUID]string{obj.CanonicalID: obj.Type})
 	if err := s.fillRelationshipContributions(ctx, projectID, edges); err != nil {
 		return nil, err
 	}
@@ -1896,6 +1919,12 @@ func (s *Service) GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canoni
 			Outgoing: outgoing,
 		}
 	}
+
+	// Endpoint object types are not loaded for a batch read, so only the
+	// endpoint-agnostic relationship schema can normalise here — same as
+	// ListRelationships. Without this, batch consumers would still see the
+	// legacy date shape that GetEdges has already converged.
+	s.normaliseRelationshipResponseDates(ctx, projectID, all, nil)
 
 	// Every edge in the batch shares one contributions query.
 	if err := s.fillRelationshipContributions(ctx, projectID, all); err != nil {
@@ -2181,6 +2210,9 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 	for i, rel := range rels {
 		items[i] = rel.ToResponse()
 	}
+	// Endpoint types are not loaded for a generic relationship list, so only an
+	// endpoint-agnostic relationship schema can normalise here.
+	s.normaliseRelationshipResponseDates(ctx, params.ProjectID, items, nil)
 
 	// One query for the whole page, so a list response is not N+1.
 	if err := s.fillRelationshipContributions(ctx, params.ProjectID, items); err != nil {
@@ -2214,6 +2246,9 @@ func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) 
 	}
 
 	resp := rel.ToResponse()
+	// The endpoint types are not fetched for a single-edge read; normalise with
+	// the endpoint-agnostic schema only.
+	s.normaliseRelationshipResponseDates(ctx, projectID, []*GraphRelationshipResponse{resp}, nil)
 	if err := s.fillRelationshipContributions(ctx, projectID, []*GraphRelationshipResponse{resp}); err != nil {
 		return nil, err
 	}
@@ -2737,6 +2772,8 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 			for k, v := range validatedDelta {
 				newProps[k] = v
 			}
+			// Converge inherited legacy date values as well as the delta (#402).
+			newProps = normaliseDateProperties(newProps, objSchema)
 		}
 	}
 
@@ -2831,10 +2868,12 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 
 	// Return the tombstone
 	tombstone, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, branchID, head.Type, head.SrcID, head.DstID)
-	if tombstone == nil {
-		return head.ToResponse(), nil
+	resp := head.ToResponse()
+	if tombstone != nil {
+		resp = tombstone.ToResponse()
 	}
-	return tombstone.ToResponse(), nil
+	s.normaliseRelationshipResponseDates(ctx, projectID, []*GraphRelationshipResponse{resp}, nil)
+	return resp, nil
 }
 
 // RestoreRelationship restores a soft-deleted relationship.
@@ -2876,14 +2915,22 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	}
 
 	// Return the restored version
-	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	restored, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding.
 	if restored != nil {
 		s.enqueueRelationshipEmbedding(ctx, restored.ID.String())
 	}
+	if restored == nil {
+		return nil, apperror.ErrNotFound
+	}
 
-	return restored.ToResponse(), nil
+	resp := restored.ToResponse()
+	s.normaliseRelationshipResponseDates(ctx, projectID, []*GraphRelationshipResponse{resp}, nil)
+	return resp, nil
 }
 
 // GetRelationshipHistory returns version history for a relationship.
@@ -2903,6 +2950,7 @@ func (s *Service) GetRelationshipHistory(ctx context.Context, projectID, id uuid
 	for i, v := range versions {
 		data[i] = v.ToResponse()
 	}
+	s.normaliseRelationshipResponseDates(ctx, projectID, data, nil)
 
 	// Each relationship version reports its own contributors, in one query.
 	if err := s.fillRelationshipContributions(ctx, projectID, data); err != nil {
@@ -2981,8 +3029,10 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 	objectIDs := make([]uuid.UUID, 0, len(results))
 
 	for i, r := range results {
+		obj := r.Object.ToResponse()
+		obj.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties)
 		data[i] = &SearchResultItem{
-			Object:       r.Object.ToResponse(),
+			Object:       obj,
 			Score:        r.Rank,
 			LexicalScore: &r.Rank,
 		}
@@ -3061,8 +3111,10 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 
 	for i, r := range results {
 		similarity := 1.0 - r.Distance
+		obj := r.Object.ToResponse()
+		obj.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties)
 		data[i] = &SearchResultItem{
-			Object:      r.Object.ToResponse(),
+			Object:      obj,
 			Score:       similarity,
 			VectorScore: &similarity,
 			VectorDist:  &r.Distance,
@@ -3420,8 +3472,10 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	// Build response
 	data := make([]*SearchResultItem, len(fusedResults))
 	for i, fr := range fusedResults {
+		obj := fr.object.ToResponse()
+		obj.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties)
 		data[i] = &SearchResultItem{
-			Object:       fr.object.ToResponse(),
+			Object:       obj,
 			Score:        fr.fusedScore,
 			LexicalScore: fr.lexicalScore,
 			VectorScore:  fr.vectorScore,
@@ -3925,10 +3979,16 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 	}
 
 	// Build primary results
+	normaliseObject := func(resp *GraphObjectResponse) *GraphObjectResponse {
+		if resp != nil {
+			resp.Properties = s.NormaliseDatePropertyValues(ctx, projectID, resp.Type, resp.Properties)
+		}
+		return resp
+	}
 	primaryResults := make([]*SearchWithNeighborsResultItem, len(ftsResults))
 	for i, r := range ftsResults {
 		primaryResults[i] = &SearchWithNeighborsResultItem{
-			Object: r.Object.ToResponse(),
+			Object: normaliseObject(r.Object.ToResponse()),
 			Score:  r.Rank,
 		}
 	}
@@ -3969,7 +4029,7 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 						if len(objectNeighbors) >= maxNeighbors {
 							break
 						}
-						objectNeighbors = append(objectNeighbors, vr.Object.ToResponse())
+						objectNeighbors = append(objectNeighbors, normaliseObject(vr.Object.ToResponse()))
 					}
 				} else {
 					s.log.Warn("vector search failed for neighbor expansion",
@@ -3998,7 +4058,7 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 						}
 					}
 					if !duplicate {
-						objectNeighbors = append(objectNeighbors, n.ToResponse())
+						objectNeighbors = append(objectNeighbors, normaliseObject(n.ToResponse()))
 					}
 				}
 			} else {
@@ -4115,7 +4175,7 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 			Type:        r.Type,
 			Key:         r.Key,
 			Status:      r.Status,
-			Properties:  r.Properties,
+			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, r.Type, r.Properties),
 			Labels:      r.Labels,
 			CreatedAt:   &createdAt,
 		}
@@ -4213,8 +4273,17 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 		} else {
 			node.Properties = obj.Properties
 		}
+		// Date properties converge on read like every other read path (issue #402).
+		node.Properties = s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, node.Properties)
 
 		nodes = append(nodes, node)
+	}
+
+	// Endpoint types are needed to pick the type-specific relationship schema
+	// for edge date properties.
+	nodeTypes := make(map[uuid.UUID]string, len(result.Nodes))
+	for id, obj := range result.Nodes {
+		nodeTypes[id] = obj.Type
 	}
 
 	edges := make([]*ExpandEdge, 0, len(result.Edges))
@@ -4226,7 +4295,8 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 			DstID: rel.DstID,
 		}
 		if req.IncludeRelationshipProperties {
-			edge.Properties = rel.Properties
+			edge.Properties = s.NormaliseRelationshipDatePropertyValues(
+				ctx, projectID, rel.Type, nodeTypes[rel.SrcID], nodeTypes[rel.DstID], rel.Properties)
 		}
 		edges = append(edges, edge)
 	}
@@ -4404,7 +4474,7 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 			Type:        obj.Type,
 			Key:         obj.Key,
 			Labels:      obj.Labels,
-			Properties:  obj.Properties,
+			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
 		}
 		nodes = append(nodes, node)
 	}
@@ -6367,6 +6437,12 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 		}
 	}
 
+	// Date properties in merge/replace are written as supplied: the action
+	// applies one JSONB object to every matched row, and those rows may span
+	// several types whose schemas disagree about the same key, so per-type
+	// coercion cannot be done safely in this single UPDATE. Reads normalise, so
+	// these values still present as YYYY-MM-DD (issue #402; write-side gap
+	// tracked separately).
 	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
 		ProjectID:  projectID,
 		Filter:     req.Filter,
