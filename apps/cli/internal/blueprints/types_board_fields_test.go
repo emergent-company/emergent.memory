@@ -20,6 +20,7 @@ func TestObjectTypeDefBoardFieldsMarshal(t *testing.T) {
   label: Task
   boardEnabled: true
   allowedStatuses: [todo, doing, done]
+  initialStatus: todo
   skipEmbeddings: true
   properties:
     title:
@@ -38,6 +39,9 @@ func TestObjectTypeDefBoardFieldsMarshal(t *testing.T) {
 	if len(types[0].AllowedStatuses) != 3 || types[0].AllowedStatuses[0] != "todo" {
 		t.Fatalf("allowedStatuses must round-trip, got %+v", types[0].AllowedStatuses)
 	}
+	if types[0].InitialStatus != "todo" {
+		t.Fatalf("initialStatus must round-trip, got %+v", types[0].InitialStatus)
+	}
 
 	raw, err := json.Marshal(types)
 	if err != nil {
@@ -48,6 +52,9 @@ func TestObjectTypeDefBoardFieldsMarshal(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"allowedStatuses":["todo","doing","done"]`) {
 		t.Fatalf("allowedStatuses must marshal, got %s", raw)
+	}
+	if !strings.Contains(string(raw), `"initialStatus":"todo"`) {
+		t.Fatalf("initialStatus must marshal, got %s", raw)
 	}
 }
 

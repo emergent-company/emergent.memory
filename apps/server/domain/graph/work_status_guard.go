@@ -18,6 +18,80 @@ func isBoardEnabledConfig(cfg *agents.ObjectTypeWorkConfig) bool {
 	return cfg != nil && cfg.BoardEnabled
 }
 
+// resolvedInitialStatus returns the entry status of a board-enabled type
+// (#422): its declared initialStatus when set and valid, otherwise the first
+// declared allowed status. A type that is not board-enabled, or declares no
+// allowed statuses, has no initial status and is left untouched.
+//
+// A type with no allowed statuses is unaffected: without a declared
+// vocabulary there is no lane to choose, even if a stray initialStatus is
+// present.
+//
+// A stored definition whose initialStatus is outside its own allowed set (a pack
+// authored before Validate existed) degrades to the first allowed status rather
+// than creating an object in a lane the board does not offer.
+func resolvedInitialStatus(cfg *agents.ObjectTypeWorkConfig) string {
+	if !isBoardEnabledConfig(cfg) || len(cfg.AllowedStatuses) == 0 {
+		return ""
+	}
+	if cfg.InitialStatus != "" && slices.Contains(cfg.AllowedStatuses, cfg.InitialStatus) {
+		return cfg.InitialStatus
+	}
+	return cfg.AllowedStatuses[0]
+}
+
+// requestedWorkStatus returns the status a create caller explicitly asked for,
+// with properties["status"] winning over the top-level field (matching
+// statusForWrite). An explicit empty string is not a status: it is the column's
+// zero value, so it is treated as "not supplied" and receives the initial
+// status like a missing field.
+func requestedWorkStatus(status *string, props map[string]any) *string {
+	if st := propertyStatus(props); st != nil {
+		return st
+	}
+	if status != nil && *status != "" {
+		return status
+	}
+	return nil
+}
+
+// applyInitialStatus returns the status a create should persist. An explicitly
+// requested status (or a properties["status"] mirror) is left untouched; only a
+// create with no status at all receives the type's resolved initial status. It
+// is a default, not a status write: it applies to every actor and does not need
+// to bypass the agent guard.
+func applyInitialStatus(cfg *agents.ObjectTypeWorkConfig, status *string, props map[string]any) *string {
+	if requestedWorkStatus(status, props) != nil {
+		return status
+	}
+	if initial := resolvedInitialStatus(cfg); initial != "" {
+		return &initial
+	}
+	return status
+}
+
+// rejectAgentCreateWorkStatus applies the agent work-status rule to a create
+// (#422 option 2): an agent may name the resolved initial status explicitly, so
+// existing watcher code that sends status: pending/open keeps working, while
+// every other status is still platform-owned. It falls through to the ordinary
+// guard for non-board types and for any other status.
+func rejectAgentCreateWorkStatus(ctx context.Context, actorType string, cfg *agents.ObjectTypeWorkConfig, status *string, props map[string]any) error {
+	return rejectAgentCreateWorkStatusWithAllow(actorType, cfg, requestedWorkStatus(status, props), auth.AgentWorkStatusAllowedFromContext(ctx))
+}
+
+// rejectAgentCreateWorkStatusWithAllow is the context-free form used by the
+// subgraph/bulk create path, which deliberately never inherits the scoped
+// reaction-agent exemption.
+func rejectAgentCreateWorkStatusWithAllow(actorType string, cfg *agents.ObjectTypeWorkConfig, requested *string, allow bool) error {
+	if requested == nil {
+		return nil
+	}
+	if initial := resolvedInitialStatus(cfg); initial != "" && *requested == initial {
+		return nil
+	}
+	return rejectAgentWorkStatusWriteWithAllow(actorType, isBoardEnabledConfig(cfg), true, allow)
+}
+
 // validateTypeStatus enforces the per-type allowed work-status values on a
 // write (P4.1). For a board-enabled type with a declared allowed set, a write
 // that sets a status (via the built-in status field or properties["status"])
@@ -183,7 +257,8 @@ func validateSubgraphWorkStatus(actorType string, schemas *ExtractionSchemas, ob
 			continue
 		}
 		cfg := &schema.ObjectTypeWorkConfig
-		if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(cfg), writesStatus(objects[i].Status, objects[i].Properties)); err != nil {
+		requested := requestedWorkStatus(objects[i].Status, objects[i].Properties)
+		if err := rejectAgentCreateWorkStatusWithAllow(actorType, cfg, requested, false); err != nil {
 			return err
 		}
 		if err := validateTypeStatus(cfg, objects[i].Status, objects[i].Properties); err != nil {

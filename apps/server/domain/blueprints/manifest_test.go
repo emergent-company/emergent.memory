@@ -130,6 +130,7 @@ func TestObjectTypeDefMarshalsBoardFields(t *testing.T) {
 				Properties:      map[string]any{"title": map[string]any{"type": "string"}},
 				BoardEnabled:    true,
 				AllowedStatuses: []string{"todo", "doing", "done"},
+				InitialStatus:   "todo",
 				SkipEmbeddings:  true,
 			}},
 		}},
@@ -141,6 +142,7 @@ func TestObjectTypeDefMarshalsBoardFields(t *testing.T) {
 
 	assert.Contains(t, s, `"boardEnabled":true`, "boardEnabled must marshal into the pack JSON")
 	assert.Contains(t, s, `"allowedStatuses":["todo","doing","done"]`, "allowedStatuses must marshal")
+	assert.Contains(t, s, `"initialStatus":"todo"`, "initialStatus must marshal")
 	assert.Contains(t, s, `"skipEmbeddings":true`, "skipEmbeddings must marshal")
 	// Zero-valued omitempty fields must stay absent (not emitted as false).
 	assert.NotContains(t, s, "skipExtraction")
@@ -152,10 +154,12 @@ func TestObjectTypeDefMarshalsBoardFields(t *testing.T) {
 	var parsed struct {
 		BoardEnabled    bool     `json:"boardEnabled"`
 		AllowedStatuses []string `json:"allowedStatuses"`
+		InitialStatus   string   `json:"initialStatus"`
 		SkipEmbeddings  bool     `json:"skipEmbeddings"`
 	}
 	require.NoError(t, json.Unmarshal(entries[0], &parsed))
 	assert.True(t, parsed.BoardEnabled)
 	assert.Equal(t, []string{"todo", "doing", "done"}, parsed.AllowedStatuses)
+	assert.Equal(t, "todo", parsed.InitialStatus)
 	assert.True(t, parsed.SkipEmbeddings)
 }

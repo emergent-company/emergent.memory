@@ -183,4 +183,46 @@ func TestCreateBoardObjectAppliesInitialStatus(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, resp.Status)
 	})
+
+	t.Run("subgraph create defaults the entry status per object", func(t *testing.T) {
+		resp, err := svc.CreateSubgraph(agentCtx, projectID, &graph.CreateSubgraphRequest{
+			Objects: []graph.SubgraphObjectRequest{
+				{Ref: "a", Type: "TaskFallback", Key: initialStatePtr("subgraph-a")},
+				{Ref: "b", Type: "TaskExplicit", Key: initialStatePtr("subgraph-b")},
+			},
+		}, nil)
+		require.NoError(t, err)
+		require.Len(t, resp.Objects, 2)
+		require.Equal(t, "pending", *resp.Objects[0].Status)
+		require.Equal(t, "open", *resp.Objects[1].Status)
+	})
+
+	t.Run("upsert create defaults, upsert update still forbids agent status", func(t *testing.T) {
+		resp, created, err := svc.CreateOrUpdate(agentCtx, projectID, &graph.CreateGraphObjectRequest{
+			Type: "TaskFallback",
+			Key:  initialStatePtr("upsert-key"),
+		}, nil)
+		require.NoError(t, err)
+		require.True(t, created)
+		require.Equal(t, "pending", *resp.Status)
+
+		pending := "pending"
+		_, _, err = svc.CreateOrUpdate(agentCtx, projectID, &graph.CreateGraphObjectRequest{
+			Type:   "TaskFallback",
+			Key:    initialStatePtr("upsert-key"),
+			Status: &pending,
+		}, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "work_status_owned_by_platform")
+	})
+
+	t.Run("human upsert create is defaulted", func(t *testing.T) {
+		resp, created, err := svc.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
+			Type: "TaskFallback",
+			Key:  initialStatePtr("human-upsert"),
+		}, nil)
+		require.NoError(t, err)
+		require.True(t, created)
+		require.Equal(t, "pending", *resp.Status)
+	})
 }
