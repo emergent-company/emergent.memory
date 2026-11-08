@@ -41,7 +41,7 @@ struct ChatSessionView: View {
     /// Recorded-history fetches for this chat. It owns "already loaded" so a
     /// cancelled request cannot mark a conversation as loaded and leave its
     /// failure banner with no retry.
-    @State private var history = ChatSessionHistoryLoader()
+    @State var history = ChatSessionHistoryLoader()
     @State private var messageText = ""
     @FocusState private var keyboardFocus: Bool
 
@@ -311,7 +311,8 @@ extension ChatSessionView {
         }
         // A turn ending on its own releases the queue parked behind it. A stop
         // does not: the user ended that turn on purpose.
-        transport.onTurnFinished = { pumpQueue() }
+        let sender = makeQueueSender()
+        transport.onTurnFinished = makeQueuePump(sender)
         switch adoptRoute() {
         case .unchanged:
             scopeQueue()
