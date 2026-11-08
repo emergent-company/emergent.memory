@@ -49,6 +49,9 @@ func TestCompressWithSQZ_Success(t *testing.T) {
 
 	// The helper writes the input into the container before running sqz.
 	assert.Equal(t, 1, provider.execCallCount)
+	require.NotNil(t, provider.lastExecReq)
+	assert.Contains(t, provider.lastExecReq.Command, "sqz compress --no-cache --no-abbrev")
+	assert.Contains(t, provider.lastExecReq.Command, "rm -f")
 }
 
 func TestCompressWithSQZ_FallsBack(t *testing.T) {
@@ -64,5 +67,19 @@ func TestCompressWithSQZ_FallsBack(t *testing.T) {
 	provider.execResult = &sandbox.ExecResult{ExitCode: 1, Stdout: "err"}
 	if _, ok := compressWithSQZ(context.Background(), provider, "p", out); ok {
 		t.Fatal("expected fallback on non-zero exit")
+	}
+
+	// A dedup ref is never acceptable output, even when shorter.
+	provider = newTestProvider()
+	provider.execResult = &sandbox.ExecResult{ExitCode: 0, Stdout: "§ref:b2c52d0a417a734f§"}
+	if _, ok := compressWithSQZ(context.Background(), provider, "p", out); ok {
+		t.Fatal("expected fallback on sqz dedup ref")
+	}
+
+	// A ref embedded in otherwise valid output is also rejected.
+	provider = newTestProvider()
+	provider.execResult = &sandbox.ExecResult{ExitCode: 0, Stdout: "prefix §ref:abc§ suffix"}
+	if _, ok := compressWithSQZ(context.Background(), provider, "p", out); ok {
+		t.Fatal("expected fallback on embedded sqz ref")
 	}
 }
