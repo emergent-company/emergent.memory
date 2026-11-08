@@ -21,7 +21,10 @@ type Document struct {
 	MimeType  *string `bun:"mime_type" json:"mimeType,omitempty"`
 
 	// Content
-	Content     *string `bun:"content" json:"content,omitempty"`
+	Content *string `bun:"content" json:"content,omitempty"`
+	// ContentHash is the content identity hash: sha256(content) in lowercase
+	// hex, maintained by the repository whenever Content is present. It is not
+	// the source-change hash (see SourceTextHash).
 	ContentHash *string `bun:"content_hash" json:"contentHash,omitempty"`
 	FileHash    *string `bun:"file_hash" json:"fileHash,omitempty"`
 
@@ -62,13 +65,17 @@ type Document struct {
 	Version      int     `bun:"version,notnull,default:1" json:"version"`
 
 	// Source attribution
-	SourceID         *string    `bun:"source_id" json:"sourceId,omitempty"`
-	SourceExternalID *string    `bun:"source_external_id" json:"sourceExternalId,omitempty"`
-	SourceRevisionID *string    `bun:"source_revision_id" json:"sourceRevisionId,omitempty"`
-	SourceTextHash   *string    `bun:"source_text_hash" json:"sourceTextHash,omitempty"`
-	SourceSyncedAt   *time.Time `bun:"source_synced_at" json:"sourceSyncedAt,omitempty"`
-	SourceStatus     string     `bun:"source_status,notnull,default:'active'" json:"sourceStatus"`
-	SourceDeletedAt  *time.Time `bun:"source_deleted_at" json:"sourceDeletedAt,omitempty"`
+	SourceID         *string `bun:"source_id" json:"sourceId,omitempty"`
+	SourceExternalID *string `bun:"source_external_id" json:"sourceExternalId,omitempty"`
+	SourceRevisionID *string `bun:"source_revision_id" json:"sourceRevisionId,omitempty"`
+	// SourceTextHash hashes the parsed source text for change detection during
+	// source sync. It is distinct from ContentHash (content identity): a re-sync
+	// can skip on an unchanged text hash, and two source items can legitimately
+	// share content bytes.
+	SourceTextHash  *string    `bun:"source_text_hash" json:"sourceTextHash,omitempty"`
+	SourceSyncedAt  *time.Time `bun:"source_synced_at" json:"sourceSyncedAt,omitempty"`
+	SourceStatus    string     `bun:"source_status,notnull,default:'active'" json:"sourceStatus"`
+	SourceDeletedAt *time.Time `bun:"source_deleted_at" json:"sourceDeletedAt,omitempty"`
 
 	// Domain classification (Phase 3)
 	DomainName            *string        `bun:"domain_name" json:"domainName,omitempty"`

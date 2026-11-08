@@ -83,15 +83,21 @@ func TestChunkNamespacePredicate(t *testing.T) {
 	})
 }
 
-// chunkScopedRE matches the namespace-scoped chunk query: the EXISTS restriction
+// chunkScopedRE matches the namespace-scoped chunk query: the document join must
+// be restricted to the canonical HEAD (d.supersedes_id IS NULL) so chunks from
+// superseded document versions cannot be returned, the EXISTS restriction
 // resolves the linked version to the object's live HEAD (supersedes_id /
 // deleted_at), is project-bounded, and carries the requested namespace. bun
 // interpolates the bound args into the SQL it hands the driver, so the assertion
 // matches the rendered value (o.namespace = 'system').
-const chunkScopedRE = `EXISTS[\s\S]*kb\.object_chunks[\s\S]*ov\.id = oc\.object_id[\s\S]*o\.canonical_id = ov\.canonical_id[\s\S]*oc\.chunk_id = c\.id[\s\S]*o\.project_id = d\.project_id[\s\S]*o\.supersedes_id IS NULL[\s\S]*o\.deleted_at IS NULL[\s\S]*o\.namespace = 'system'`
+const chunkScopedRE = `d\.project_id = [^\n]*[\s\S]*d\.supersedes_id IS NULL[\s\S]*EXISTS[\s\S]*kb\.object_chunks[\s\S]*ov\.id = oc\.object_id[\s\S]*o\.canonical_id = ov\.canonical_id[\s\S]*oc\.chunk_id = c\.id[\s\S]*o\.project_id = d\.project_id[\s\S]*o\.supersedes_id IS NULL[\s\S]*o\.deleted_at IS NULL[\s\S]*o\.namespace = 'system'`
 
 // chunkNullScopedRE matches the default (null) namespace chunk query.
-const chunkNullScopedRE = `EXISTS[\s\S]*kb\.object_chunks[\s\S]*ov\.id = oc\.object_id[\s\S]*o\.canonical_id = ov\.canonical_id[\s\S]*oc\.chunk_id = c\.id[\s\S]*o\.project_id = d\.project_id[\s\S]*o\.supersedes_id IS NULL[\s\S]*o\.deleted_at IS NULL[\s\S]*o\.namespace IS NULL`
+const chunkNullScopedRE = `d\.project_id = [^\n]*[\s\S]*d\.supersedes_id IS NULL[\s\S]*EXISTS[\s\S]*kb\.object_chunks[\s\S]*ov\.id = oc\.object_id[\s\S]*o\.canonical_id = ov\.canonical_id[\s\S]*oc\.chunk_id = c\.id[\s\S]*o\.project_id = d\.project_id[\s\S]*o\.supersedes_id IS NULL[\s\S]*o\.deleted_at IS NULL[\s\S]*o\.namespace IS NULL`
+
+// chunkHeadRE matches an unscoped chunk query (no namespace restriction) that
+// still filters the document join to the canonical HEAD.
+const chunkHeadRE = `d\.project_id = [^\n]*[\s\S]*d\.supersedes_id IS NULL[\s\S]*LIMIT`
 
 func TestLexicalSearch_NamespaceScopesChunkQuery(t *testing.T) {
 	repo, mock := newChunkSearchRepo(t)
@@ -157,6 +163,48 @@ func TestHybridSearch_NamespaceScopesBothLegs(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestLexicalSearch_FiltersSupersededDocumentVersions pins the canonical-HEAD
+// filter (#494) on the unscoped path: even when no namespace restriction applies,
+// the chunk query must join only HEAD documents (d.supersedes_id IS NULL) so
+// chunks belonging to superseded document versions never surface.
+func TestLexicalSearch_FiltersSupersededDocumentVersions(t *testing.T) {
+	repo, mock := newChunkSearchRepo(t)
+	projectID := uuid.New()
+
+	mock.ExpectQuery(chunkHeadRE).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "head hit", nil, 0.9))
+
+	resp, err := repo.LexicalSearch(context.Background(), TextSearchParams{
+		ProjectID: projectID,
+		Query:     "needle",
+		Limit:     20,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestVectorSearch_FiltersSupersededDocumentVersions is the vector-leg sibling
+// of TestLexicalSearch_FiltersSupersededDocumentVersions.
+func TestVectorSearch_FiltersSupersededDocumentVersions(t *testing.T) {
+	repo, mock := newChunkSearchRepo(t)
+	projectID := uuid.New()
+
+	mock.ExpectQuery(chunkHeadRE).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "parent_chunk_id", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "head hit", nil, 0.9))
+
+	resp, err := repo.VectorSearch(context.Background(), TextSearchParams{
+		ProjectID: projectID,
+		Vector:    []float32{0.1, 0.2},
+		Limit:     20,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 1)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

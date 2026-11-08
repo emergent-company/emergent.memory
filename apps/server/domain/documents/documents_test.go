@@ -2,6 +2,8 @@ package documents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"strings"
 	"testing"
@@ -284,6 +286,41 @@ func TestComputeContentHashDifferent(t *testing.T) {
 	hash1 := computeContentHash("hello")
 	hash2 := computeContentHash("world")
 	assert.NotEqual(t, hash1, hash2, "different content should produce different hashes")
+}
+
+func TestPopulateContentHash(t *testing.T) {
+	t.Run("nil content leaves hash nil", func(t *testing.T) {
+		doc := &Document{}
+		populateContentHash(doc)
+		assert.Nil(t, doc.ContentHash, "a document without content has no content identity yet")
+	})
+
+	t.Run("non-nil content sets sha256 hex", func(t *testing.T) {
+		content := "hello world"
+		doc := &Document{Content: &content}
+		populateContentHash(doc)
+
+		sum := sha256.Sum256([]byte(content))
+		want := hex.EncodeToString(sum[:])
+		if assert.NotNil(t, doc.ContentHash) {
+			assert.Equal(t, want, *doc.ContentHash)
+			assert.Len(t, *doc.ContentHash, 64)
+		}
+	})
+
+	t.Run("overwrites a wrong caller-supplied hash", func(t *testing.T) {
+		content := "repository owns the content identity invariant"
+		wrong := "caller-supplied-nonsense"
+		doc := &Document{Content: &content, ContentHash: &wrong}
+		populateContentHash(doc)
+
+		sum := sha256.Sum256([]byte(content))
+		want := hex.EncodeToString(sum[:])
+		if assert.NotNil(t, doc.ContentHash) {
+			assert.Equal(t, want, *doc.ContentHash)
+			assert.NotEqual(t, wrong, *doc.ContentHash)
+		}
+	})
 }
 
 func TestComputeFileHash(t *testing.T) {
