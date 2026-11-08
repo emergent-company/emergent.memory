@@ -297,6 +297,9 @@ skill. The feature is off everywhere until a project opts in.
 
 **Enable it on a project**
 
+Open **Settings → Skill capture** and pick a mode (`off`, `suggest`, or `auto`),
+or PATCH the project:
+
 ```bash
 curl -X PATCH "$MEMORY_API/api/projects/$PROJECT_ID" \
   -H "Authorization: Bearer $TOKEN" \
@@ -310,8 +313,13 @@ starting point: every candidate waits for approval. `auto` additionally requires
 duplicate, not a delete, within the daily caps, and the agent has at least one
 previously approved proposal. Deletes are always human-reviewed.
 
-An agent definition may **narrow** the project policy with `skillCapture:
-{"mode": "off"}`. It cannot widen it.
+**Narrow it per agent**
+
+Each agent's **Settings → Skills** page has an Automatic skill capture control:
+*Inherit project setting*, *Suggest only*, or *Off*. The same override is
+available as `skillCapture: {"mode": "off"}` on the agent definition. It can only
+**narrow** the project policy — it never widens it, so the project mode stays the
+master switch. An override that is not set inherits the project value.
 
 **What the agent writes.** Learned skills are named `{agent-slug}.{topic}` (for
 example `research-assistant.handling-empty-results`) and are auto-loaded on the

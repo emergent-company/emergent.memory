@@ -109,6 +109,14 @@ type agentSettingsData struct {
 	// the rest of the page intact.
 	RelayNodes []relayNode
 	Skills     []Skill
+	// ProjectCaptureMode is the active project's automatic skill-capture mode
+	// ("off" by default) and EffectiveCaptureMode is what this agent's override
+	// resolves to. CaptureKnown reports whether the project fetch succeeded, so
+	// the Skills form never renders a misleading "effective" label from a failed
+	// load.
+	ProjectCaptureMode   string
+	EffectiveCaptureMode string
+	CaptureKnown         bool
 	// ObjectTypes / RelationshipTypes are the project's compiled graph types,
 	// offered as the General form's scope allowlist. Best-effort: a failed or
 	// empty fetch leaves them nil and the picker shows its empty note.
@@ -629,10 +637,82 @@ func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]
 }
 
 // applyAgentSkillsSection maps the Skills form onto the definition, always
-// setting (even to empty) so clearing skills reaches memory.
+// setting (even to empty) so clearing skills reaches memory. The form also
+// carries the per-agent skill-capture override: "" means inherit (send {}) and
+// "off"/"suggest" narrow the project policy. AutoApply is preserved so an
+// API-set opt-out is not cleared by an unrelated save.
 func applyAgentSkillsSection(def *AgentDefinition, c echo.Context) error {
 	def.Skills = c.Request().Form["skill"]
+	mode := strings.ToLower(strings.TrimSpace(c.FormValue("skillCaptureMode")))
+	if def.SkillCapture == nil {
+		def.SkillCapture = &AgentSkillCapture{}
+	}
+	switch mode {
+	case "":
+		def.SkillCapture.Mode = nil
+	case "off", "suggest":
+		m := mode
+		def.SkillCapture.Mode = &m
+	case "auto":
+		// "auto" is not offered as an override: memory resolves an override to
+		// the project value, so it is identical to inherit. Reject it rather
+		// than silently storing a value the operator did not choose.
+		return fmt.Errorf("skill capture override cannot be auto — it can only narrow the project setting")
+	default:
+		return fmt.Errorf("unknown skill capture mode %q", mode)
+	}
 	return nil
+}
+
+// resolveSkillCaptureMode mirrors memory's ResolveCaptureMode
+// (apps/server/domain/skills/capture_config.go): the project policy is the
+// master switch and an agent override may only narrow it. The gateway cannot
+// import the server package, so the rule is restated here — keep the two in
+// step.
+func resolveSkillCaptureMode(projectMode string, agent *AgentDefinition) string {
+	base := strings.ToLower(strings.TrimSpace(projectMode))
+	if base != "suggest" && base != "auto" {
+		return "off"
+	}
+	if agent == nil || agent.SkillCapture == nil || agent.SkillCapture.Mode == nil {
+		return base
+	}
+	switch strings.ToLower(strings.TrimSpace(*agent.SkillCapture.Mode)) {
+	case "off":
+		return "off"
+	case "suggest":
+		return "suggest"
+	default:
+		return base
+	}
+}
+
+// captureOverrideValue is the Skills form's radio value for the agent's stored
+// override: "" (inherit), "off", or "suggest". A stored "auto" (only reachable
+// through the API) renders as inherit because memory resolves it to the project
+// value.
+func captureOverrideValue(agent *AgentDefinition) string {
+	if agent == nil || agent.SkillCapture == nil || agent.SkillCapture.Mode == nil {
+		return ""
+	}
+	switch m := strings.ToLower(strings.TrimSpace(*agent.SkillCapture.Mode)); m {
+	case "off", "suggest":
+		return m
+	default:
+		return ""
+	}
+}
+
+// captureModeShort is the compact form used in the per-agent "effective" hint.
+func captureModeShort(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "suggest":
+		return "Suggest"
+	case "auto":
+		return "Auto"
+	default:
+		return "Off"
+	}
 }
 
 // applyAgentDelegationSection maps the Delegation form onto the definition:
@@ -845,6 +925,16 @@ func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSe
 		skills, err := s.memory.ListSkills(ctx)
 		captureError(err)
 		data.Skills = skills
+		// The per-agent override only narrows the project policy, so the form
+		// needs the project mode to explain the effective outcome. Best-effort:
+		// a failed fetch leaves CaptureKnown false and the form omits the hint.
+		if p, perr := s.memory.GetCurrentProject(ctx); perr != nil {
+			captureError(perr)
+		} else if p != nil {
+			data.CaptureKnown = true
+			data.ProjectCaptureMode = p.SkillCaptureMode()
+			data.EffectiveCaptureMode = resolveSkillCaptureMode(data.ProjectCaptureMode, agent)
+		}
 	case sectionDelegation:
 		agents, err := s.memory.ListAgentDefinitions(ctx)
 		captureError(err)

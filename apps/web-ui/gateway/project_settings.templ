@@ -90,6 +90,7 @@ templ ProjectSettingsPage(data projectSettingsData) {
 		} else {
 			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
 				@projectInfoPanel(data.Project)
+				@skillCapturePanel(data.Project)
 				@editorAgentPanel(data.EditorAgent, data.EditorOptions, data.EditorAgentWarning)
 				@mergeAgentPanel(data.MergeAgent, data.MergeOptions, data.MergeAgentWarning)
 				@rememberDedupPanel(data.RememberAgent, data.DedupThreshold, data.Agents)
@@ -266,6 +267,33 @@ templ projectInfoPanel(p *Project) {
 @components.ToggleField("auto_merge_extraction_branches", "Auto-merge extraction branches", "When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.", p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches, templ.Attributes{"hx-post": "/settings/project/auto_merge_extraction_branches", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 @components.ToggleField("auto_discovery_enabled", "Auto-discover schema after sync", "When on, a source sync that adds documents also runs schema discovery on them, proposing entity types for review. Turning it off stops discovery from spending tokens on every sync — run it yourself from Schema → Schema discovery, or per document from the document page.", p.AutoDiscoveryEnabled == nil || *p.AutoDiscoveryEnabled, templ.Attributes{"hx-post": "/settings/project/auto_discovery_enabled", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 			</div>
+		</div>
+	}
+}
+
+// skillCapturePanel is the project-level master switch for automatic skill
+// capture. memory replaces the whole policy on PATCH, so each control writes
+// the current policy back with only its own key changed (capturePolicyWith);
+// guardrail knobs set through the API survive a toggle here.
+templ skillCapturePanel(p *Project) {
+	@ui.Section("Skill capture", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("skill-capture-mode", "Automatic skill capture", "Agents can learn reusable skills from their own successful runs: a bounded background review turns a run into a staged proposal, and a human decides whether it becomes a skill. This is the project master policy every agent inherits — off by default.", "Off leaves capture disabled for every agent.", nil) {
+				<select id="skill-capture-mode" name="mode" class="select w-full" hx-post="/settings/project/skill_capture_mode" hx-trigger="change" hx-include="this" hx-swap="none">
+					<option value="off" selected?={ p.SkillCaptureMode() == "off" }>Off — nothing is captured</option>
+					<option value="suggest" selected?={ p.SkillCaptureMode() == "suggest" }>Suggest only — every captured skill waits for approval</option>
+					<option value="auto" selected?={ p.SkillCaptureMode() == "auto" }>Auto — approve clean, confident skills once the agent earns trust</option>
+				</select>
+			}
+			if p.SkillCaptureMode() == "auto" {
+				@components.ToggleField("autoApply", "Auto-apply captured skills", "When on, a candidate that is clean, confident, not a duplicate and within the daily caps is applied without review — but only after a human has approved at least one of this agent's proposals. Deletes are always human-reviewed.", p.SkillCaptureAutoApply(), templ.Attributes{"hx-post": "/settings/project/skill_capture_auto_apply", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				Each agent can narrow this policy on its own Settings → Skills page. Rate caps, confidence and ageing guardrails stay API-only.
+			}
 		</div>
 	}
 }

@@ -595,6 +595,20 @@ func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
 	return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
 }
 
+// capturePolicyWith copies the project's current skill-capture policy with one
+// key replaced. memory replaces the whole policy on PATCH (projects.service
+// assigns the decoded struct), so every key the UI does not render —
+// nudgeInterval, caps, dedupThreshold, stale/archive ages — must be carried
+// through unchanged or a mode toggle would reset the project to defaults.
+func capturePolicyWith(current map[string]any, key string, value any) map[string]any {
+	out := make(map[string]any, len(current)+1)
+	for k, v := range current {
+		out[k] = v
+	}
+	out[key] = value
+	return out
+}
+
 // uiProjectSettingsProjectField handles one inline per-field project-record
 // save (HTMX → POST /settings/project/:field). Each field PATCHes only itself
 // via UpdateProject; the project name is required, and budget must be a
@@ -634,6 +648,16 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 		upd.AutoMergeExtractionBranches = boolPtr(c.FormValue("auto_merge_extraction_branches") == "on")
 	case "auto_discovery_enabled":
 		upd.AutoDiscoveryEnabled = boolPtr(c.FormValue("auto_discovery_enabled") == "on")
+	case "skill_capture_mode":
+		mode := strings.ToLower(strings.TrimSpace(c.FormValue("mode")))
+		switch mode {
+		case "off", "suggest", "auto":
+		default:
+			return toastTrigger(c, "error", "skill capture mode must be off, suggest, or auto")
+		}
+		upd.SkillCapture = capturePolicyWith(project.SkillCapture, "mode", mode)
+	case "skill_capture_auto_apply":
+		upd.SkillCapture = capturePolicyWith(project.SkillCapture, "autoApply", c.FormValue("autoApply") == "on")
 	case "budget_usd":
 		v := strings.TrimSpace(c.FormValue("budget_usd"))
 		if v == "" {
