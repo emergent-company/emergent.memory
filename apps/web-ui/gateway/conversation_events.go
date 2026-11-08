@@ -676,6 +676,31 @@ func (s *Server) runEvents(c echo.Context) error {
 // the hub/fingerprint key — a conversation id, or runScopeKey(runID).
 func (s *Server) streamEvents(c echo.Context, key string) error {
 	id := key
+
+	// A device credential may subscribe only to a conversation its bound user
+	// can see. The hub is keyed by conversation id and replays the cached
+	// refresh frame plus the live in-flight replay to every subscriber, so
+	// without an ownership check a device token could watch another user's
+	// conversation by id. Memory's owner-or-shared scope — the same authority
+	// /api/session and the history route use — decides: a foreign private
+	// conversation or another project's conversation is a 404. Session (web)
+	// subscribers keep their existing behaviour; this is the device principal's
+	// boundary.
+	if !isRunScope(key) {
+		if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Device {
+			if _, err := s.memory.GetConversation(c.Request().Context(), key); err != nil {
+				if isSessionNotFound(err) {
+					return c.JSON(http.StatusNotFound, map[string]string{"error": "conversation not found"})
+				}
+				if isMemoryStatus(err, http.StatusForbidden) {
+					return c.JSON(http.StatusForbidden, map[string]string{"error": "conversation forbidden"})
+				}
+				captureError(err)
+				return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
+			}
+		}
+	}
+
 	w := c.Response().Writer
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
