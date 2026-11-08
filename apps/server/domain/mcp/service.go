@@ -40,6 +40,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
+	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -5392,31 +5393,20 @@ func (s *Service) readSimilarityThreshold(ctx context.Context, projectID string)
 	return defaultSimilarityThreshold
 }
 
-// buildEntityEmbedText flattens type + key + properties into a deterministic
-// string for embedding. Sorted property keys mirror generateEntityKey.
+// buildEntityEmbedText builds the text embedded for a not-yet-created entity so
+// the near-duplicate check compares it against stored vectors in the same
+// representation.
+//
+// It MUST be embeddingtext.Text — the builder the extraction worker uses to
+// produce stored embeddings, and the one the graph write path hashes to decide
+// whether a write changes an embedding. A local re-implementation here (which
+// this function used to be: no name/title/summary boost, no skipKeys, no
+// namespace-prefix strip on the key, no character budget, JSON-encoded values
+// with their key names) silently measured a different vector than the one the
+// candidate object actually stores, so near-duplicates were under-detected.
+// pkg/embeddingtext exists precisely to stop that drift; see issue #1478.
 func buildEntityEmbedText(typeName string, key *string, properties map[string]any) string {
-	var b strings.Builder
-	b.WriteString(typeName)
-	if key != nil && *key != "" {
-		b.WriteString(" ")
-		b.WriteString(*key)
-	}
-	keys := make([]string, 0, len(properties))
-	for k := range properties {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v, err := json.Marshal(properties[k])
-		if err != nil {
-			continue
-		}
-		b.WriteString(" ")
-		b.WriteString(k)
-		b.WriteString(": ")
-		b.WriteString(string(v))
-	}
-	return b.String()
+	return embeddingtext.Text(typeName, key, properties)
 }
 
 // executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.

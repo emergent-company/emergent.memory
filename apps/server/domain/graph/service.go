@@ -4027,6 +4027,33 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 // Similar Objects
 // =============================================================================
 
+// similarMaxDistance converts the two public bounds on a similar-objects
+// request into the cosine DISTANCE bound the repository applies to
+// embedding_v2 (0..2, lower = more similar).
+//
+// maxDistance is already a distance. minScore is a SIMILARITY (0..1, higher =
+// more similar) — that is what every client calls it (OpenAPI annotation,
+// `memory graph objects similar --min-score`, the CLI skill reference) — so it
+// must be converted, not forwarded. Forwarding it as a distance is not merely
+// off by an inversion: minScore=0.9 became "distance <= 0.9", which admits
+// everything down to a 0.1 similarity, so the filter silently did nothing.
+//
+// maxDistance wins when both are supplied; a minScore of 0 (or less) means "no
+// threshold", matching the CLI's "0 means no threshold".
+func similarMaxDistance(req *SimilarObjectsRequest) *float32 {
+	if req.MaxDistance != nil {
+		return req.MaxDistance
+	}
+	if req.MinScore == nil || *req.MinScore <= 0 {
+		return nil
+	}
+	d := 1 - *req.MinScore
+	if d < 0 {
+		d = 0
+	}
+	return &d
+}
+
 // FindSimilarObjects finds objects similar to a given object.
 func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uuid.UUID, req *SimilarObjectsRequest) ([]*SimilarObjectResult, error) {
 	// Set defaults
@@ -4038,13 +4065,10 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 		limit = 100
 	}
 
-	// Use maxDistance or legacy minScore
-	var maxDistance *float32
-	if req.MaxDistance != nil {
-		maxDistance = req.MaxDistance
-	} else if req.MinScore != nil {
-		maxDistance = req.MinScore
-	}
+	// Similarity bound parsing. maxDistance is a cosine DISTANCE bound (0..2,
+	// lower = more similar); minScore is the public cosine SIMILARITY (0..1,
+	// higher = more similar) that clients use — see similarMaxDistance.
+	maxDistance := similarMaxDistance(req)
 
 	params := SimilarSearchParams{
 		ProjectID:   projectID,

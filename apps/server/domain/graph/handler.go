@@ -1778,8 +1778,8 @@ func (h *Handler) SearchWithNeighbors(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Object ID (UUID)"
 // @Param        limit query int false "Max results"
-// @Param        maxDistance query number false "Maximum vector distance"
-// @Param        minScore query number false "Minimum similarity score"
+// @Param        maxDistance query number false "Maximum cosine distance (0..2, lower = more similar)"
+// @Param        minScore query number false "Minimum cosine similarity (0..1, higher = more similar)"
 // @Param        type query string false "Filter by object type"
 // @Param        branchId query string false "Filter by branch ID"
 // @Param        keyPrefix query string false "Filter by key prefix"
