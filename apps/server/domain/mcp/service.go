@@ -3051,12 +3051,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		Count    int    `bun:"count"`
 	}
 
+	// declaredRelTypeRow is one relationship type declared by an installed schema
+	// pack. FromType/ToType are populated from the schema when a single
+	// source/target pair is known, so the scope check can apply the same row
+	// semantics as the in-use path; they are empty when the endpoints are
+	// unknown.
+	type declaredRelTypeRow struct {
+		Name     string `bun:"rel_name"`
+		FromType string `bun:"from_type"`
+		ToType   string `bun:"to_type"`
+	}
+
 	var types []typeRow
 	var relTypes []relTypeRow
-	// declaredRelTypeNames holds relationship type names declared by installed
-	// schema packs. They are surfaced with count 0 even when no relationship
-	// instances exist yet (issue #403).
-	var declaredRelTypeNames []string
+	// declaredRelTypes holds relationship types declared by installed schema
+	// packs. They are surfaced with count 0 even when no relationship instances
+	// exist yet (issue #403).
+	var declaredRelTypes []declaredRelTypeRow
 	// Untyped objects (type = '') have no registry row, so the registry-driven
 	// query below can never surface them. Count them separately and fold the
 	// result into a synthetic bucket after the transaction (issue #323).
@@ -3213,19 +3224,17 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			// freshly installed pack's relationship types were invisible. Read
 			// their names from graph_schemas.relationship_type_schemas, handling
 			// both storage shapes (a map keyed by type name, or an array of
-			// {"name","sourceType","targetType"} objects).
+			// {"name","sourceType","targetType"} objects), and carry each type's
+			// source/target endpoint types when a single pair is known so the
+			// result can scope-check the same way the in-use path does.
 			err = tx.NewRaw(`
-				SELECT DISTINCT rel_name
+				SELECT DISTINCT rel_name, from_type, to_type
 				FROM (
-					SELECT jsonb_object_keys(gs.relationship_type_schemas) AS rel_name
-					FROM kb.project_schemas ps
-					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
-					WHERE ps.project_id = ?
-						AND ps.active = true
-						AND ps.removed_at IS NULL
-						AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
-					UNION
-					SELECT elem->>'name' AS rel_name
+					-- Array shape: [{"name","sourceType","targetType"}].
+					SELECT
+						elem->>'name' AS rel_name,
+						elem->>'sourceType' AS from_type,
+						elem->>'targetType' AS to_type
 					FROM kb.project_schemas ps
 					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
 					CROSS JOIN LATERAL jsonb_array_elements(gs.relationship_type_schemas) AS elem
@@ -3233,10 +3242,30 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 						AND ps.active = true
 						AND ps.removed_at IS NULL
 						AND jsonb_typeof(gs.relationship_type_schemas) = 'array'
+					UNION
+					-- Map shape: {"name": {"sourceTypes": [...], "targetTypes": [...]}}
+					-- (older seeds/blueprints), with a singular-string fallback.
+					SELECT
+						keys.rel_name,
+						COALESCE(
+							NULLIF(gs.relationship_type_schemas->keys.rel_name->>'sourceType', ''),
+							gs.relationship_type_schemas->keys.rel_name->'sourceTypes'->>0
+						) AS from_type,
+						COALESCE(
+							NULLIF(gs.relationship_type_schemas->keys.rel_name->>'targetType', ''),
+							gs.relationship_type_schemas->keys.rel_name->'targetTypes'->>0
+						) AS to_type
+					FROM kb.project_schemas ps
+					JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+					CROSS JOIN LATERAL jsonb_object_keys(gs.relationship_type_schemas) AS keys(rel_name)
+					WHERE ps.project_id = ?
+						AND ps.active = true
+						AND ps.removed_at IS NULL
+						AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
 				) declared
 				WHERE declared.rel_name IS NOT NULL AND declared.rel_name <> ''
-				ORDER BY declared.rel_name
-			`, projectUUID, projectUUID).Scan(ctx, &declaredRelTypeNames)
+				ORDER BY declared.rel_name, declared.from_type, declared.to_type
+			`, projectUUID, projectUUID).Scan(ctx, &declaredRelTypes)
 			if err != nil {
 				return err
 			}
@@ -3283,7 +3312,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		})
 	}
 
-	relationshipTypes := make([]RelationshipType, 0, len(relTypes)+len(declaredRelTypeNames))
+	relationshipTypes := make([]RelationshipType, 0, len(relTypes)+len(declaredRelTypes))
 	inUseTypes := make(map[string]bool, len(relTypes))
 	for _, r := range relTypes {
 		if !scope.AllowsRelationshipRow(r.Type, r.FromType, r.ToType) {
@@ -3296,15 +3325,29 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 	// instances yet, so a freshly installed pack's relationship types are
 	// discoverable (issue #403). A declared type that already appears above
 	// keeps its real from/to/count; the zero-count row is only a fallback.
-	for _, name := range declaredRelTypeNames {
-		if name == "" || inUseTypes[name] {
+	for _, d := range declaredRelTypes {
+		if d.Name == "" || inUseTypes[d.Name] {
 			continue
 		}
-		if !scope.AllowsRelationship(name) {
-			continue
+		// When the schema names both endpoint object types, scope-check the
+		// relationship exactly like the in-use path (the from/to object names
+		// must also be permitted on the object axis). When the endpoints are
+		// unknown (the declaration carries no source/target types), fall back to
+		// the lenient relationship-type-only check rather than silently hiding a
+		// relationship whose endpoints we simply cannot see.
+		fromType, toType := d.FromType, d.ToType
+		if fromType != "" && toType != "" {
+			if !scope.AllowsRelationshipRow(d.Name, fromType, toType) {
+				continue
+			}
+		} else {
+			if !scope.AllowsRelationship(d.Name) {
+				continue
+			}
+			fromType, toType = "", ""
 		}
-		relationshipTypes = append(relationshipTypes, RelationshipType{Type: name, FromType: "", ToType: "", Count: 0})
-		inUseTypes[name] = true
+		relationshipTypes = append(relationshipTypes, RelationshipType{Type: d.Name, FromType: fromType, ToType: toType, Count: 0})
+		inUseTypes[d.Name] = true
 	}
 
 	result := EntityTypesResult{

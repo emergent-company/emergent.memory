@@ -90,9 +90,86 @@ func TestExecuteListEntityTypes_InstalledPacksOnly(t *testing.T) {
 	assert.Equal(t, "A meeting record", meeting.Description)
 	assert.Equal(t, 1, meeting.Count)
 
-	// (c) installed relationship types appear even with zero instances.
+	// (c) installed relationship types appear even with zero instances, and
+	// their declared endpoint object types are surfaced.
 	with := listEntityTypes(t, svc, projectID, map[string]any{"include_relationships": true, "namespace": "all"})
 	require.Len(t, with.Relationships, 1, "installed relationship type must appear")
 	assert.Equal(t, "attends", with.Relationships[0].Type)
+	assert.Equal(t, "Person", with.Relationships[0].FromType)
+	assert.Equal(t, "Meeting", with.Relationships[0].ToType)
 	assert.Equal(t, 0, with.Relationships[0].Count)
+}
+
+// TestExecuteListEntityTypes_MapShapeRelationshipTypes pins the map storage
+// shape of graph_schemas.relationship_type_schemas — {"name": {"sourceTypes":
+// [...], "targetTypes": [...]}} — used by older seeds/blueprints. The
+// jsonb_object_keys branch must list the relationship type with its declared
+// endpoint object types and a zero count.
+func TestExecuteListEntityTypes_MapShapeRelationshipTypes(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	ctx := context.Background()
+
+	packID := uuid.NewString()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO kb.graph_schemas (id, name, version, source, object_type_schemas, relationship_type_schemas)
+		VALUES (?, 'meetings-map', '1.0.0', 'custom',
+			'{}'::jsonb,
+			'{"attends":{"sourceTypes":["Person"],"targetTypes":["Meeting"]}}'::jsonb)
+	`, packID)
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
+		VALUES (?, ?, true, now())
+	`, projectID, packID)
+	require.NoError(t, err)
+
+	svc := &Service{db: db}
+	with := listEntityTypes(t, svc, projectID, map[string]any{"include_relationships": true, "namespace": "all"})
+	require.Len(t, with.Relationships, 1, "map-shape relationship type must appear")
+	rel := with.Relationships[0]
+	assert.Equal(t, "attends", rel.Type)
+	assert.Equal(t, "Person", rel.FromType)
+	assert.Equal(t, "Meeting", rel.ToType)
+	assert.Equal(t, 0, rel.Count)
+}
+
+// TestExecuteListEntityTypes_DeclaredRelationshipScope pins the scope precision
+// of the declared-relationship fallback: when the schema names both endpoint
+// object types, the relationship is scope-checked exactly like the in-use path
+// (the from/to object names must also be permitted on the object axis), so an
+// out-of-scope endpoint hides it rather than leaking the type name.
+func TestExecuteListEntityTypes_DeclaredRelationshipScope(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	ctx := context.Background()
+
+	packID := uuid.NewString()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO kb.graph_schemas (id, name, version, source, object_type_schemas, relationship_type_schemas)
+		VALUES (?, 'scoped', '1.0.0', 'custom', '{}'::jsonb,
+			'[{"name":"attends","sourceType":"Person","targetType":"Meeting"}]'::jsonb)
+	`, packID)
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
+		VALUES (?, ?, true, now())
+	`, projectID, packID)
+	require.NoError(t, err)
+
+	svc := &Service{db: db}
+
+	// Object axis restricted to Person; relationship axis allows attends.
+	// The declared "attends" (Person -> Meeting) has an out-of-scope target, so
+	// it must be hidden, matching how the in-use path filters its rows.
+	scoped := ContextWithTypeScope(ctx, NewTypeScope([]string{"Person"}, []string{"attends"}))
+	res, err := svc.executeListEntityTypes(scoped, projectID, map[string]any{"include_relationships": true, "namespace": "all"})
+	require.NoError(t, err)
+	text := toolResultText(t, res, nil)
+
+	var result EntityTypesResult
+	require.NoError(t, json.Unmarshal([]byte(text), &result))
+	assert.Empty(t, result.Relationships, "declared relationship with an out-of-scope endpoint must be hidden")
 }
