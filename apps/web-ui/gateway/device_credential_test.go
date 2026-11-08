@@ -324,6 +324,53 @@ func TestDeviceConversationEventsOwnConversationStreams(t *testing.T) {
 	}
 }
 
+// TestDeviceConversationEventsRunNamespaceRejected pins the route/key
+// distinction: an id of `run:<runId>` on the conversation route must not be
+// turned into the run-scoped hub key, because that key skips the device
+// ownership check (and run events are off-surface for a device).
+func TestDeviceConversationEventsRunNamespaceRejected(t *testing.T) {
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo()}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/run:R1/events", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "data:") {
+		t.Fatalf("a run-namespaced conversation id streamed frames: %q", rec.Body.String())
+	}
+}
+
+// TestSessionEventsSubscriptionNotDeviceChecked keeps the new device
+// authorization device-only: a web-session subscriber (Device=false) still
+// streams even when the summary read would fail, so shared streamEvents does
+// not change the web path's behaviour.
+func TestSessionEventsSubscriptionNotDeviceChecked(t *testing.T) {
+	f := &fakeMemory{detailErr: errors.New("memory: GET /api/chat/other: 404 not_found")}
+	shutdown := make(chan struct{})
+	close(shutdown)
+	s := &Server{cfg: Config{AuthMode: "session"}, memory: f, shutdownCh: shutdown}
+
+	e := echo.New()
+	e.GET("/api/conversations/:id/events", func(c echo.Context) error {
+		sc := &sessionContext{Token: "tok", ProjectID: "proj-1"}
+		c.SetRequest(c.Request().WithContext(withSessionContext(c.Request().Context(), sc)))
+		return s.conversationEvents(c)
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/other/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("web session subscriber status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"type":"refresh"`) {
+		t.Fatalf("web session stream carried no refresh frame: %q", rec.Body.String())
+	}
+}
+
 // TestDeviceConversationReadForeignIs404 is the cross-tenant boundary: a device
 // token asking for a conversation its bound user cannot see (another user's
 // private conversation, or one in another project) gets 404 — from the history

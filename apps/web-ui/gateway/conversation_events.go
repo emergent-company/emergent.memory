@@ -660,7 +660,15 @@ func runStateFromTimeline(items []TimelineItem, approvals []ToolApprovalItem, qu
 // immediate refresh so a fresh/reconnecting client gets current state, then
 // forwards hub broadcasts plus a 25s heartbeat until the client disconnects.
 func (s *Server) conversationEvents(c echo.Context) error {
-	return s.streamEvents(c, c.Param("id"))
+	id := c.Param("id")
+	// A conversation id is a UUID; a `run:`-prefixed hub key never is. Reject
+	// the run namespace here so a conversation-route id cannot hop onto a run
+	// subscription — that key skips the per-conversation device ownership check
+	// (and run events are off-surface for a device anyway).
+	if isRunScope(id) {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "conversation not found"})
+	}
+	return s.streamEvents(c, id)
 }
 
 // runEvents is the run-scoped counterpart of conversationEvents: a scheduled
