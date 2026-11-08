@@ -9,6 +9,9 @@ import Testing
 enum ChatStreamFixtures {
     static let meta = #"{"type":"meta","conversationId":"6f1c2a44-0000-4000-8000-000000000001","citations":[]}"#
     static let metaWithoutConversation = #"{"type":"meta"}"#
+    /// A `meta` frame that also names the server-side run, the handle a stop
+    /// needs to cancel it.
+    static let metaWithRun = #"{"type":"meta","conversationId":"6f1c2a44-0000-4000-8000-000000000001","runId":"run-1","citations":[]}"#
     static let tokenA = #"{"type":"token","token":"Hello"}"#
     static let tokenB = #"{"type":"token","token":" there"}"#
     static let html = #"{"type":"html","html":"<p>Hello there</p>"}"#

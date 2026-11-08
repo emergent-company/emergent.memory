@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // Branch is one graph branch (GET /api/graph/branches). The "main" branch is
@@ -141,4 +142,82 @@ func (m *MemoryClient) UpdateSkill(ctx context.Context, id, description, content
 // /api/projects/{projectID}/skills/{id}, 204 no body).
 func (m *MemoryClient) DeleteSkill(ctx context.Context, id string) error {
 	return m.do(ctx, http.MethodDelete, "/api/projects/"+m.projectIDFor(ctx)+"/skills/"+id, nil, nil)
+}
+
+// --- skill proposals ---
+
+// SkillCaptureFinding mirrors memory's skills.LintFinding: one linter or
+// security-scanner finding on a proposal. The list endpoint recomputes these
+// live for pending proposals, so they are the current verdict rather than a
+// snapshot taken when the proposal was staged.
+type SkillCaptureFinding struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+// SkillCaptureProposal mirrors memory's skills.ProposalDTO: an agent-captured skill
+// change waiting for a human decision. Proposals responses are BARE JSON (a list
+// is {"proposals":[...]}), like the other skills routes and unlike the
+// agent-definition {success,data,error} envelope.
+type SkillCaptureProposal struct {
+	ID          string                `json:"id"`
+	ProjectID   string                `json:"projectId"`
+	AgentID     string                `json:"agentId,omitempty"`
+	AgentName   string                `json:"agentName,omitempty"`
+	Kind        string                `json:"kind"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Content     string                `json:"content"`
+	BaseSkillID string                `json:"baseSkillId,omitempty"`
+	Evidence    string                `json:"evidence,omitempty"`
+	Confidence  float64               `json:"confidence"`
+	Source      string                `json:"source"`
+	Status      string                `json:"status"`
+	AutoApplied bool                  `json:"autoApplied"`
+	Findings    []SkillCaptureFinding `json:"findings,omitempty"`
+	CreatedAt   string                `json:"createdAt"`
+}
+
+// ListSkillCaptureProposals lists the project's pending skill proposals (GET
+// /api/projects/{projectID}/skills/proposals?status=pending). Pending is the
+// only state the review panel acts on; applied/rejected history is not shown.
+func (m *MemoryClient) ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error) {
+	var out struct {
+		Proposals []SkillCaptureProposal `json:"proposals"`
+	}
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals?status=pending"
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Proposals, nil
+}
+
+// GetSkillCaptureProposal fetches one proposal (GET
+// /api/projects/{projectID}/skills/proposals/{id}).
+func (m *MemoryClient) GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error) {
+	var out SkillCaptureProposal
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id)
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApproveSkillCaptureProposal approves and applies a pending proposal (POST
+// /api/projects/{projectID}/skills/proposals/{id}/approve). memory re-runs the
+// security scan on this path and can still block the write, so a failed call
+// means the proposal stayed pending — the panel's redirect re-reads the list
+// rather than assuming success.
+func (m *MemoryClient) ApproveSkillCaptureProposal(ctx context.Context, id string) error {
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id) + "/approve"
+	return m.do(ctx, http.MethodPost, path, map[string]any{}, nil)
+}
+
+// RejectSkillCaptureProposal marks a pending proposal rejected without touching the
+// skill library (POST
+// /api/projects/{projectID}/skills/proposals/{id}/reject).
+func (m *MemoryClient) RejectSkillCaptureProposal(ctx context.Context, id string) error {
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals/" + url.PathEscape(id) + "/reject"
+	return m.do(ctx, http.MethodPost, path, map[string]any{}, nil)
 }

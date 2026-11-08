@@ -505,6 +505,8 @@ func main() {
 	e.GET("/skills/new", s.uiNewSkill)
 	e.GET("/skills/:id", s.uiSkill)
 	e.POST("/skills", s.uiCreateSkill)
+	e.POST("/skills/proposals/:id/approve", s.uiApproveSkillCaptureProposal)
+	e.POST("/skills/proposals/:id/reject", s.uiRejectSkillCaptureProposal)
 	e.POST("/skills/:id/update", s.uiUpdateSkill)
 	e.POST("/skills/:id/delete", s.uiDeleteSkill)
 	e.GET("/backups", s.uiBackups)

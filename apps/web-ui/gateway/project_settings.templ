@@ -276,10 +276,10 @@ templ projectInfoPanel(p *Project) {
 // the current policy back with only its own key changed (capturePolicyWith);
 // guardrail knobs set through the API survive a toggle here.
 //
-// The auto-apply toggle is always rendered but disabled outside Auto mode: the
-// mode select saves with hx-swap="none" (a toast, no re-render), so rendering
-// it conditionally would leave the operator unable to reach auto-apply in the
-// same visit — and Auto without auto-apply behaves exactly like Suggest.
+// The auto-apply toggle is always rendered but disabled outside Auto mode. The
+// mode select answers with HX-Refresh, so switching to Auto reloads the panel
+// and enables the toggle in the same visit; rendering it conditionally would
+// still leave a brief mismatch before that reload.
 templ skillCapturePanel(p *Project) {
 	{{ auto := p.SkillCaptureMode() == "auto"
 	tip := "When on, a candidate that is clean, confident, not a duplicate and within the daily caps is applied without review — but only after a human has approved at least one of this agent's proposals. Deletes are always human-reviewed."
