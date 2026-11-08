@@ -1,14 +1,22 @@
 import { test, expect } from '@playwright/test';
 import { expectAppPage, goto } from '../../helpers/page';
+import { cleanupObjects, memoryAuthHeaders } from '../../helpers/objects';
+import { MEMORY_API_URL } from '../../helpers/tokens';
 
-// Deterministic client-render contract for the chat Sources footer. No LLM and
-// no backend fixture: we build an assistant bubble in the page and hand it to
-// the shared renderer (MemoryChatComponents.attachSources) exactly as the live
-// stream and history paths do, then assert the footer contract (in-bubble,
-// collapsed by default, expand, row testids, link safety, human type labels).
-// The compiled-type map the shell normally embeds is seeded in-page so the
-// schema-label path (map label replaces the raw type) is exercised, not just
-// the humanizer fallback.
+// Deterministic client-render contract for the chat Sources footer. Most tests
+// need no LLM and no backend fixture: we build an assistant bubble in the page
+// and hand it to the shared renderer (MemoryChatComponents.attachSources)
+// exactly as the live stream and history paths do, then assert the footer
+// contract (in-bubble, collapsed by default, expand, row testids, link safety,
+// human type labels). The compiled-type map the shell normally embeds is seeded
+// in-page so the schema-label path (map label replaces the raw type) is
+// exercised, not just the humanizer fallback.
+//
+// One test also exercises the relationship preview end-to-end: it creates two
+// scratch objects + an edge through the memory API, mounts a relationship
+// citation exactly as the stream now carries it (`/objects/<src>#relationship-
+// <rel>`), and asserts the drawer renders "Referenced via". The scratch graph
+// rows are deleted in `finally`, pass or fail.
 const UUID_A = '11111111-1111-4111-8111-111111111111';
 const UUID_B = '22222222-2222-4222-8222-222222222222';
 
@@ -18,6 +26,8 @@ type SourceItem = {
   type: string;
   label: string;
   url: string;
+  type_label?: string;
+  type_color?: string;
 };
 
 async function attachSources(page: import('@playwright/test').Page, items: SourceItem[]) {
@@ -31,7 +41,11 @@ async function attachSources(page: import('@playwright/test').Page, items: Sourc
     wrap.className = 'chat chat-start memory-rise memory-assistant';
     wrap.innerHTML =
       '<div class="memory-md">answer</div><div class="memory-assistant-actions"></div>';
-    document.body.appendChild(wrap);
+    // Mount inside the chat list so object-preview.js scopes clicks here and
+    // opens the drawer instead of navigating (its isChatObjectRef checks
+    // #chat-messages / #sidepanel-messages).
+    const host = document.getElementById('chat-messages') ?? document.body;
+    host.appendChild(wrap);
     // Called twice on purpose: attachSources must be idempotent.
     mc.attachSources(wrap, citations);
     mc.attachSources(wrap, citations);
@@ -118,6 +132,104 @@ test.describe('Chat sources footer', () => {
     await page.getByTestId('chat-sources-toggle').click();
     expect(await footer.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(true);
     await expect(page.getByTestId('chat-source').first()).toBeVisible();
+  });
+
+  test('a relationship source keeps its fragment and prefers the server type label', async ({ page }) => {
+    await goto(page, '/chat');
+    await expectAppPage(page, /Chat/);
+
+    // The map label ("Works at") intentionally differs from the server-supplied
+    // type_label so asserting the latter proves the wire field wins over the
+    // embedded map.
+    await seedObjectTypes(page, { works_at: { label: 'Works at', color: '#0EA5E9' } });
+
+    const REL = '33333333-3333-4333-8333-333333333333';
+    await attachSources(page, [
+      {
+        kind: 'relationship',
+        id: REL,
+        type: 'works_at',
+        type_label: 'Employed by',
+        type_color: '#16A34A',
+        label: 'Acme —works at→ Bob',
+        url: `/objects/${UUID_A}#relationship-${REL}`,
+      },
+    ]);
+
+    const row = page.getByTestId('chat-source').first();
+    // The source row link carries the relationship fragment, so object-preview
+    // parseRef sees rel and opens the referenced-via preview rather than the
+    // bare object page. The client scopes the path, so match the trailing path.
+    await expect(row.locator('a')).toHaveAttribute(
+      'href',
+      new RegExp(`/objects/${UUID_A}#relationship-${REL}$`),
+    );
+    await expect(row.locator('[data-testid=chat-source-type]')).toHaveText('Employed by');
+  });
+
+  test('a relationship source opens the preview with "Referenced via"', async ({ page }) => {
+    test.setTimeout(120_000);
+    const stamp = Date.now();
+    let taskId = '';
+    let personId = '';
+
+    try {
+      // Scratch grammar: personal-memory's assigned_to edge is Task → Person,
+      // so the Task is the relationship source whose page the citation opens.
+      const headers = await memoryAuthHeaders(page);
+      const createObject = async (type: string, key: string): Promise<string> => {
+        const resp = await page.request.post(`${MEMORY_API_URL}/api/graph/objects`, {
+          headers,
+          data: { type, key, status: 'ready', properties: { title: key } },
+          failOnStatusCode: false,
+        });
+        if (!resp.ok()) {
+          throw new Error(`create ${type} failed (HTTP ${resp.status()}): ${await resp.text()}`);
+        }
+        const body = (await resp.json()) as { canonical_id?: string };
+        if (!body.canonical_id) {
+          throw new Error(`create ${type}: response missing canonical_id`);
+        }
+        return body.canonical_id;
+      };
+      taskId = await createObject('Task', `E2E Sources Rel Task ${stamp}`);
+      personId = await createObject('Person', `E2E Sources Rel Person ${stamp}`);
+
+      const relResp = await page.request.post(`${MEMORY_API_URL}/api/graph/relationships`, {
+        headers,
+        data: { type: 'assigned_to', src_id: taskId, dst_id: personId },
+        failOnStatusCode: false,
+      });
+      if (!relResp.ok()) {
+        throw new Error(`create relationship failed (HTTP ${relResp.status()}): ${await relResp.text()}`);
+      }
+      const relId = ((await relResp.json()) as { id?: string }).id;
+      if (!relId) throw new Error('create relationship: response missing id');
+
+      await goto(page, '/chat');
+      await expectAppPage(page, /Chat/);
+
+      await attachSources(page, [
+        {
+          kind: 'relationship',
+          id: relId,
+          type: 'assigned_to',
+          label: 'Task —assigned to→ Person',
+          url: `/objects/${taskId}#relationship-${relId}`,
+        },
+      ]);
+
+      await page.getByTestId('chat-sources-toggle').click();
+      await page.getByTestId('chat-source').first().locator('a').click();
+
+      // object-preview.js passes ?rel= to the gateway, which renders the
+      // relationship line from the edge it names — never a plain object drawer.
+      const drawer = page.locator('#object-preview-body');
+      await expect(drawer).toContainText('Referenced via');
+      await expect(page).toHaveURL(/\/chat$/);
+    } finally {
+      await cleanupObjects(page, [taskId, personId]);
+    }
   });
 
   test('a single citation reads "1 source"', async ({ page }) => {

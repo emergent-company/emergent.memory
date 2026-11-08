@@ -287,6 +287,7 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	// the nil-LLM registration from newTestServerWithDB.
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
+	schemasRepo := schemas.NewRepository(db, log)
 
 	chatHandler := chat.NewHandler(
 		chatSvc,
@@ -300,6 +301,7 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		docsSvc,
 		nil,              // uploadHandler — file upload not needed in tests
 		domainClassifier, // pre-classify documents before agent runs
+		schemasRepo,
 		cfg,
 		log,
 	)
@@ -503,7 +505,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register chat routes
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
-	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, nil, nil, nil, nil, testDB.Config, log) // nil LLM client, executor, credSvc, modelFactory, apiTokenSvc, docSvc, uploadHandler, domainClassifier for tests
+	schemasRepo := schemas.NewRepository(db, log)
+	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, nil, nil, nil, nil, schemasRepo, testDB.Config, log) // nil LLM client, executor, credSvc, modelFactory, apiTokenSvc, docSvc, uploadHandler, domainClassifier for tests
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes
@@ -567,7 +570,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	notifications.RegisterRoutes(e, notificationsHandler, authMiddleware)
 
 	// Register schemas routes
-	schemasRepo := schemas.NewRepository(db, log)
 	schemasSvc := schemas.NewService(schemasRepo, graphSvc, log, testGraphCfg)
 	schemasHandler := schemas.NewHandler(schemasSvc)
 	schemas.RegisterRoutes(e, schemasHandler, authMiddleware)

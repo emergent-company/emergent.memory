@@ -55,8 +55,9 @@ var (
 	// relUUIDRe recognizes a full-UUID relationship id.
 	relUUIDRe = regexp.MustCompile(`^` + relUUIDPattern + `$`)
 	// relObjectURLRe is the canonical object page the client itself trusts for a
-	// relationship link target: exactly `/objects/<uuid>`.
-	relObjectURLRe = regexp.MustCompile(`^/objects/` + relUUIDPattern + `$`)
+	// relationship link target: `/objects/<uuid>`, optionally already carrying
+	// the `#relationship-<uuid>` fragment (memory's citations now include it).
+	relObjectURLRe = regexp.MustCompile(`^/objects/` + relUUIDPattern + `(?:#relationship-` + relUUIDPattern + `)?$`)
 	// bareRelRefRe matches a bare `#relationship-<uuid>` reference.
 	bareRelRefRe = regexp.MustCompile(`#relationship-(` + relUUIDPattern + `)`)
 	// Span masks — regions already carrying a link or code that must not be
@@ -75,21 +76,41 @@ func renderCitedMarkdown(text string, cites []citation) string {
 	return neutralizeCitationLinks(renderMarkdown(linkifyRelationshipRefs(text, cites)), cites)
 }
 
+// relationshipHref validates a relationship citation's object-page URL and
+// returns the stable `#relationship-<id>` link target. The URL may omit the
+// fragment (older citations) or carry exactly its own fragment (current
+// citations). A fragment naming a different relationship is not trusted.
+func relationshipHref(c citation) (string, bool) {
+	if c.Kind != "relationship" || !relUUIDRe.MatchString(c.ID) {
+		return "", false
+	}
+	path, frag, hasFrag := strings.Cut(c.URL, "#")
+	if !relObjectURLRe.MatchString(c.URL) {
+		return "", false
+	}
+	if hasFrag && frag != "relationship-"+c.ID {
+		return "", false
+	}
+	return path + "#relationship-" + c.ID, true
+}
+
 // linkifyRelationshipRefs rewrites bare `#relationship-<uuid>` references in an
 // answer/thinking markdown source into real links, using the turn's grounded
 // relationship citations as the only source of truth. A relationship id becomes
 // a link only when it is cited with a validated canonical object page URL
-// (`/objects/<uuid>` — the same trust rule the client applies); the target is
-// that page plus the `#relationship-<id>` fragment. Truncated forms, references
-// already inside a markdown link target, and references inside inline/fenced
-// code are left untouched. When nothing matches, text is returned byte-for-byte.
+// (`/objects/<uuid>`, optionally already carrying its `#relationship-<id>`
+// fragment — the same trust rule the client applies); the target is that page
+// plus the `#relationship-<id>` fragment. Truncated forms, references already
+// inside a markdown link target, and references inside inline/fenced code are
+// left untouched. When nothing matches, text is returned byte-for-byte.
 func linkifyRelationshipRefs(text string, citations []citation) string {
 	hrefs := make(map[string]string, len(citations))
 	for _, c := range citations {
-		if c.Kind != "relationship" || !relUUIDRe.MatchString(c.ID) || !relObjectURLRe.MatchString(c.URL) {
+		href, ok := relationshipHref(c)
+		if !ok {
 			continue
 		}
-		hrefs[c.ID] = c.URL + "#relationship-" + c.ID
+		hrefs[c.ID] = href
 	}
 	if len(hrefs) == 0 {
 		return text

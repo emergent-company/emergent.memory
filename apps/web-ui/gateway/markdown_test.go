@@ -164,6 +164,12 @@ func TestLinkifyRelationshipRefs(t *testing.T) {
 			notWant: []string{"](#relationship-", "](/objects/" + src + "#relationship-" + src},
 		},
 		{
+			name:    "citation url already carrying its fragment is not doubled",
+			in:      "see #relationship-" + src + " here",
+			want:    []string{"[#relationship-" + src + "](/objects/" + src + "#relationship-" + src + ")"},
+			notWant: []string{"#relationship-" + src + "#relationship-"},
+		},
+		{
 			name:    "inline code span left alone",
 			in:      "`#relationship-" + src + "`",
 			want:    []string{"`#relationship-" + src + "`"},
@@ -207,6 +213,7 @@ func TestLinkifyRelationshipRefsNoCitations(t *testing.T) {
 		{"empty citations", "#relationship-" + src, []citation{}},
 		{"object citation only", "[#relationship-" + src + "]", []citation{{Kind: "object", ID: src}}},
 		{"relationship with non-canonical url", "#relationship-" + src, []citation{{Kind: "relationship", ID: src, URL: "/objects/nope"}}},
+		{"relationship whose url names another rel", "#relationship-" + src, []citation{{Kind: "relationship", ID: src, URL: "/objects/" + src + "#relationship-22222222-2222-4222-8222-222222222222"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

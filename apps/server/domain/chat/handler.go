@@ -27,6 +27,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/a2ui"
@@ -58,12 +59,13 @@ type Handler struct {
 	docSvc           *documents.Service
 	uploadHandler    *documents.UploadHandler
 	domainClassifier mcp.DomainClassifierHandler
-	askV2Default     bool // server-level default for v2 code-gen agent
+	schemaRepo       *schemas.Repository // compiled type labels/colors for citations
+	askV2Default     bool                // server-level default for v2 code-gen agent
 	log              *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, uploadHandler *documents.UploadHandler, domainClassifier mcp.DomainClassifierHandler, cfg *config.Config, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, uploadHandler *documents.UploadHandler, domainClassifier mcp.DomainClassifierHandler, schemaRepo *schemas.Repository, cfg *config.Config, log *slog.Logger) *Handler {
 	return &Handler{
 		svc:              svc,
 		llmClient:        llmClient,
@@ -76,6 +78,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Servic
 		docSvc:           docSvc,
 		uploadHandler:    uploadHandler,
 		domainClassifier: domainClassifier,
+		schemaRepo:       schemaRepo,
 		askV2Default:     cfg.AskV2,
 		log:              log.With(logger.Scope("chat.handler")),
 	}
@@ -1720,7 +1723,9 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				}
 			}
 			candidates := citations.Candidates(outputs)
-			cits := citations.Derive(responseText, surfaces, candidates)
+			// Enrich citations with the compiled types' display labels/colors when
+			// available; best-effort so a schema read can never fail the turn.
+			cits := citations.Derive(responseText, surfaces, candidates, h.citationTypeMeta(ctx, projectID))
 			if len(cits) > 0 {
 				if err := sseWriter.WriteData(sse.NewCitationsEvent(cits)); err != nil {
 					h.log.Warn("failed to stream citations event",
