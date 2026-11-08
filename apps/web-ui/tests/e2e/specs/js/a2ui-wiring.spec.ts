@@ -218,4 +218,85 @@ test.describe('A2UI action wiring (chat-components.js)', () => {
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
+
+  test('progressive frames update the same surface in place (one card, not N)', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    // First frame: a single proposal.
+    await render(page, [
+      {
+        id: 'proposal-1',
+        component: 'proposal',
+        kind: 'deploy',
+        summary: 'PROPOSAL_SENTINEL',
+        body: { plan: 'ship it' },
+      },
+    ]);
+    await expect(page.locator(CARD_BODIES)).toHaveCount(1);
+
+    // Second frame for the SAME surface carries the cumulative set (proposal +
+    // approval). It must replace the first card, not append a second instance.
+    await render(page, [
+      {
+        id: 'proposal-1',
+        component: 'proposal',
+        kind: 'deploy',
+        summary: 'PROPOSAL_SENTINEL',
+        body: { plan: 'ship it' },
+      },
+      {
+        id: 'approval-1',
+        component: 'approval',
+        tool: 'APPROVAL_TOOL_SENTINEL',
+        input: { path: '/tmp/x' },
+      },
+    ]);
+    await expect(page.locator(CARD_BODIES)).toHaveCount(2);
+    await expect(card(page, 'PROPOSAL_SENTINEL')).toHaveCount(1);
+    await expect(card(page, 'APPROVAL_TOOL_SENTINEL')).toHaveCount(1);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('deleteSurface tears a rendered card down', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await render(page, [
+      {
+        id: 'proposal-1',
+        component: 'proposal',
+        kind: 'deploy',
+        summary: 'PROPOSAL_SENTINEL',
+        body: { plan: 'ship it' },
+      },
+    ]);
+    await expect(page.locator(CARD_BODIES)).toHaveCount(1);
+
+    // A deleteSurface message removes the surface's cards.
+    await page.evaluate(
+      ({ surfaceId }) => {
+        const container = document.getElementById('chat-messages');
+        const componentsApi = (
+          window as unknown as {
+            MemoryChatComponents: {
+              renderA2UISurface: (
+                surfaceId: string,
+                msgs: unknown[],
+                ctx: { messages: HTMLElement },
+              ) => void;
+            };
+          }
+        ).MemoryChatComponents;
+        componentsApi.renderA2UISurface(
+          surfaceId,
+          [{ deleteSurface: { surfaceId } }],
+          { messages: container as HTMLElement },
+        );
+      },
+      { surfaceId: SURFACE_ID },
+    );
+    await expect(page.locator(CARD_BODIES)).toHaveCount(0);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
 });
