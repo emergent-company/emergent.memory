@@ -683,7 +683,7 @@ type SearchWithNeighborsResultItem struct {
 type SimilarObjectsRequest struct {
 	Limit       int        `query:"limit"`
 	MaxDistance *float32   `query:"maxDistance"`
-	MinScore    *float32   `query:"minScore"` // Legacy: alias for maxDistance
+	MinScore    *float32   `query:"minScore"` // Cosine SIMILARITY (0..1, higher = more similar); converted to MaxDistance
 	Type        *string    `query:"type"`
 	BranchID    *uuid.UUID `query:"branchId"`
 	KeyPrefix   *string    `query:"keyPrefix"`

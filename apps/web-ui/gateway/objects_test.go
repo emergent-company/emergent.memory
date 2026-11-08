@@ -1236,12 +1236,12 @@ func TestSimilarityLabel(t *testing.T) {
 		d    float32
 		want string
 	}{
-		{0.0, "100% match"},
-		{0.12, "88% match"},
-		{0.5, "50% match"},
-		{1.0, "0% match"},
-		{1.5, "0% match"},    // clamped
-		{-0.2, "100% match"}, // clamped
+		{0.0, "100% similar"},
+		{0.12, "88% similar"},
+		{0.5, "50% similar"},
+		{1.0, "0% similar"},
+		{1.5, "0% similar"},    // clamped
+		{-0.2, "100% similar"}, // clamped
 	}
 	for _, c := range cases {
 		if got := similarityLabel(c.d); got != c.want {
@@ -4900,8 +4900,44 @@ func TestObjectSubpages(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d", rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "t2") || !strings.Contains(rec.Body.String(), "Merge") {
-			t.Errorf("similar partial missing results:\n%s", rec.Body.String())
+		body := rec.Body.String()
+		if !strings.Contains(body, "t2") || !strings.Contains(body, "Merge") {
+			t.Errorf("similar partial missing results:\n%s", body)
+		}
+		// The score is a similarity, not a "match": say so, and explain it.
+		if !strings.Contains(body, "90% similar") {
+			t.Errorf("similar partial should label the score as a similarity:\n%s", body)
+		}
+		if strings.Contains(body, "% match") {
+			t.Errorf("similar partial must not call the score a match:\n%s", body)
+		}
+		if !strings.Contains(body, `title="Cosine similarity`) || !strings.Contains(body, "it is not a probability that they are the same object") {
+			t.Errorf("similar partial badge should carry the metric tooltip:\n%s", body)
+		}
+	})
+
+	t.Run("similar partial reports a failed search instead of claiming there are none", func(t *testing.T) {
+		prevSimilar, prevErr := f.similar, f.similarErr
+		defer func() { f.similar, f.similarErr = prevSimilar, prevErr }()
+
+		f.similar = nil
+		f.similarErr = errors.New("vector search timed out")
+		body := get("/objects/o1/similar/partial").Body.String()
+
+		if !strings.Contains(body, `data-testid="object-similar-error"`) {
+			t.Errorf("failed similar search should render the error state:\n%s", body)
+		}
+		if strings.Contains(body, "No similar objects") {
+			t.Errorf("a failed search must not claim there are no similar objects:\n%s", body)
+		}
+		for _, want := range []string{
+			`hx-get="/objects/o1/similar/partial"`,
+			"Could not load similar objects",
+			"Retry",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("error state missing %q:\n%s", want, body)
+			}
 		}
 	})
 

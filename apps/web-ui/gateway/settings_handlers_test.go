@@ -389,6 +389,89 @@ func TestUIProjectSettingsProjectFieldToggle(t *testing.T) {
 	}
 }
 
+// TestUIProjectSettingsProjectFieldSkillCaptureMode pins that a mode change
+// sends the WHOLE capture policy back with the mode replaced: memory replaces
+// the policy on PATCH, so any guardrail knob the UI does not render must ride
+// along or it silently resets to the default.
+func TestUIProjectSettingsProjectFieldSkillCaptureMode(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home", SkillCapture: map[string]any{
+		"mode":          "suggest",
+		"autoApply":     true,
+		"nudgeInterval": float64(5),
+	}}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/skill_capture_mode", "mode=auto")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("mode save should trigger a success toast, got %q", hdr)
+	}
+	got := f.updatedProject
+	if got == nil || got.SkillCapture == nil {
+		t.Fatal("UpdateProject must receive the skill_capture policy")
+	}
+	if got.SkillCapture["mode"] != "auto" {
+		t.Errorf("mode = %v, want auto", got.SkillCapture["mode"])
+	}
+	if got.SkillCapture["nudgeInterval"] != float64(5) {
+		t.Errorf("nudgeInterval = %v, want 5 (must be carried through)", got.SkillCapture["nudgeInterval"])
+	}
+	if got.SkillCapture["autoApply"] != true {
+		t.Errorf("autoApply = %v, want true (must be carried through)", got.SkillCapture["autoApply"])
+	}
+	if got.Name != "" {
+		t.Errorf("name should not be touched by a capture save, got %q", got.Name)
+	}
+}
+
+func TestUIProjectSettingsProjectFieldSkillCaptureModeInvalid(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/skill_capture_mode", "mode=sometimes")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "must be off, suggest, or auto") {
+		t.Errorf("invalid mode should trigger an error toast, got %q", hdr)
+	}
+	if f.updatedProject != nil {
+		t.Error("UpdateProject must not be called for an invalid mode")
+	}
+}
+
+// TestUIProjectSettingsProjectFieldSkillCaptureAutoApply pins that unchecking
+// the toggle (which submits no field) writes false while leaving the mode alone.
+func TestUIProjectSettingsProjectFieldSkillCaptureAutoApply(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home", SkillCapture: map[string]any{
+		"mode": "auto", "autoApply": true,
+	}}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/skill_capture_auto_apply", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	got := f.updatedProject
+	if got == nil || got.SkillCapture == nil {
+		t.Fatal("UpdateProject must receive the skill_capture policy")
+	}
+	if got.SkillCapture["autoApply"] != false {
+		t.Errorf("autoApply = %v, want false", got.SkillCapture["autoApply"])
+	}
+	if got.SkillCapture["mode"] != "auto" {
+		t.Errorf("mode = %v, want auto (must be carried through)", got.SkillCapture["mode"])
+	}
+}
+
 func TestUIProjectSettingsProjectFieldEmptyName(t *testing.T) {
 	f := &fakeMemory{project: &Project{ID: "p1", Name: "Old"}}
 	s := &Server{cfg: Config{}, memory: f}

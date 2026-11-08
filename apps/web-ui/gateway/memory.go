@@ -669,6 +669,21 @@ type ToolPolicy struct {
 	Disabled bool   `json:"disabled,omitempty"`
 }
 
+// AgentSkillCapture mirrors memory's skills.AgentSkillCapture
+// (kb.agent_definitions.skill_capture): the per-agent override of the project's
+// automatic skill-capture policy. Mode is a pointer so "unset" (inherit the
+// project value) is distinguishable from an explicit mode; memory only lets an
+// override narrow the project policy, never widen it. AutoApply is round-tripped
+// untouched — the UI does not render it, but dropping it would clear an
+// API-set opt-out on the next save (memory replaces the whole override). A new
+// server-side field must be added here too, or the next Skills save drops it;
+// the project policy avoids that class of bug by staying a raw map, which is
+// affordable there because it carries many knobs.
+type AgentSkillCapture struct {
+	Mode      *string `json:"mode,omitempty"`
+	AutoApply *bool   `json:"autoApply,omitempty"`
+}
+
 // ToolGroup is the server-computed capability group on an agent definition
 // (read-only: the gateway renders it, never derives it). Tools is the group's
 // FULL membership — the project catalog for the group unioned with the agent's
@@ -710,16 +725,22 @@ type AgentDefinition struct {
 	// it before a create/update is serialized (group policies live under
 	// "@group:<id>" keys in ToolPolicies). Omitted when an older memory does not
 	// send it.
-	ToolGroups   []ToolGroup    `json:"toolGroups,omitempty"`
-	Skills       []string       `json:"skills"`
-	Config       map[string]any `json:"config"`
-	Delegation   *Delegation    `json:"delegation,omitempty"`
-	Visibility   string         `json:"visibility,omitempty"`
-	DispatchMode string         `json:"dispatchMode,omitempty"`
-	Enabled      bool           `json:"enabled"`
-	ToolCount    int            `json:"toolCount,omitempty"`
-	CreatedAt    string         `json:"createdAt,omitempty"`
-	UpdatedAt    string         `json:"updatedAt,omitempty"`
+	ToolGroups []ToolGroup `json:"toolGroups,omitempty"`
+	Skills     []string    `json:"skills"`
+	// SkillCapture is the per-agent override of the project's automatic
+	// skill-capture policy. The override may only narrow the project value
+	// ("off"/"suggest"); memory resolves the effective mode, which this field
+	// never widens. Nil inherits; the Skills form sends the field on every save
+	// so "inherit" clears a stored override by sending {}.
+	SkillCapture *AgentSkillCapture `json:"skillCapture,omitempty"`
+	Config       map[string]any     `json:"config"`
+	Delegation   *Delegation        `json:"delegation,omitempty"`
+	Visibility   string             `json:"visibility,omitempty"`
+	DispatchMode string             `json:"dispatchMode,omitempty"`
+	Enabled      bool               `json:"enabled"`
+	ToolCount    int                `json:"toolCount,omitempty"`
+	CreatedAt    string             `json:"createdAt,omitempty"`
+	UpdatedAt    string             `json:"updatedAt,omitempty"`
 	// UIConfig is the agent's user-picked appearance blob
 	// ({"icon":"<kebab-lucide-name>","color":"<CSS color>"}); absent/{} means no
 	// appearance. Parsed by agentUIOf; see agent_ui.go.

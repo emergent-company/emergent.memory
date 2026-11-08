@@ -229,6 +229,22 @@ final class ChatSessionTranscriptStore {
         }
     }
 
+    /// Whether a detail holds the reply for a turn the client saw *nothing* of,
+    /// so the text cannot be recognised the way ``recordedReply(extending:in:since:)``
+    /// recognises a partial.
+    ///
+    /// Growth past the baseline is not enough on its own: the gateway writes the
+    /// user's own message when it accepts the turn, before the run starts, so the
+    /// first read after a dropped stream can hold nothing but that message.
+    /// Accepting it would settle the wait with an empty turn on screen — the
+    /// `emergent.memory#445` symptom with the spinner removed. A reply is
+    /// therefore an assistant turn after the last user turn, which is exactly
+    /// what ``replySuffixes(from:)`` leaves.
+    static func recordedUnseenReply(in detail: SessionDetail, since baseline: Int) -> Bool {
+        guard detail.records.count > baseline else { return false }
+        return replySuffixes(from: detail.records).contains { !$0.isEmpty }
+    }
+
     /// The reply to the turn the client is waiting on — every assistant turn
     /// after the last user turn — as the text from each turn onward: the client's
     /// partial may start at any of them, and each continuation extends into the
