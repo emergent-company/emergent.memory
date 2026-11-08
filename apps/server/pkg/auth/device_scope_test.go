@@ -62,6 +62,25 @@ func TestRejectDeviceTokenOutsideSurface(t *testing.T) {
 		{"approval extra segment rejected", "GET", "/api/projects/p1/agent-approvals/x", deviceScopes, true},
 		{"search allowed", "POST", "/api/search/unified", deviceScopes, false},
 		{"graph objects search allowed", "GET", "/api/graph/objects/search", deviceScopes, false},
+
+		// Object card reads (iOS chat): one object by UUID, its history and
+		// edges, and the project's compiled types. Exact shapes only.
+		{"graph object read allowed", "GET", "/api/graph/objects/11111111-1111-1111-1111-111111111111", deviceScopes, false},
+		{"graph object history allowed", "GET", "/api/graph/objects/11111111-1111-1111-1111-111111111111/history", deviceScopes, false},
+		{"graph object edges allowed", "GET", "/api/graph/objects/11111111-1111-1111-1111-111111111111/edges", deviceScopes, false},
+		{"graph object non-uuid id rejected", "GET", "/api/graph/objects/count", deviceScopes, true},
+		{"graph object fts rejected", "GET", "/api/graph/objects/fts", deviceScopes, true},
+		{"graph object tags rejected", "GET", "/api/graph/objects/tags", deviceScopes, true},
+		{"graph object braced uuid rejected", "GET", "/api/graph/objects/{11111111-1111-1111-1111-111111111111}", deviceScopes, true},
+		{"graph object contributions rejected", "GET", "/api/graph/objects/11111111-1111-1111-1111-111111111111/contributions", deviceScopes, true},
+		{"graph object similar rejected", "GET", "/api/graph/objects/11111111-1111-1111-1111-111111111111/similar", deviceScopes, true},
+		{"graph object deeper path rejected", "GET", "/api/graph/objects/11111111-1111-1111-1111-111111111111/history/x", deviceScopes, true},
+		{"graph object patch rejected", "PATCH", "/api/graph/objects/11111111-1111-1111-1111-111111111111", deviceScopes, true},
+		{"graph object delete rejected", "DELETE", "/api/graph/objects/11111111-1111-1111-1111-111111111111", deviceScopes, true},
+		{"compiled types allowed", "GET", "/api/schemas/projects/p1/compiled-types", deviceScopes, false},
+		{"compiled types without project rejected", "GET", "/api/schemas/projects//compiled-types", deviceScopes, true},
+		{"compiled types deeper path rejected", "GET", "/api/schemas/projects/p1/compiled-types/x", deviceScopes, true},
+		{"other schema read rejected", "GET", "/api/schemas/projects/p1/installed", deviceScopes, true},
 		{"voice enablement setting allowed", "GET", "/api/projects/p1/settings/voice/enabled", deviceScopes, false},
 
 		{"chat run cancel allowed", "POST", "/api/chat/runs/r1/cancel", deviceScopes, false},

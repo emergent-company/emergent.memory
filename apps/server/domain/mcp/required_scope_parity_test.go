@@ -208,6 +208,12 @@ var unscopeableToolNames = map[string]bool{
 	"session-todo":        true, // consolidated list+update
 	"session-todo-list":   true, // deprecated alias
 	"session-todo-update": true, // deprecated alias
+	// feedback-submit is not a project-data operation: any authenticated caller
+	// may file product feedback, and the submission is bounded by the per-user
+	// rate limit in the feedback domain rather than by a token scope. Requiring
+	// a data scope here would exclude read-only and account tokens from the one
+	// action whose whole purpose is to report a problem with those surfaces.
+	"feedback-submit": true,
 }
 
 // TestChangedToolScopesPinned asserts the declared scope of every tool changed

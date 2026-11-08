@@ -176,4 +176,13 @@ extension ChatSessionView {
             activity: activity
         )
     }
+
+    /// Stops the text turn in flight: the working line and spinners stop now,
+    /// and the transport aborts the stream and cancels the run on the gateway.
+    /// The transport owns the outcome banner, including the honest "no run id"
+    /// case where nothing was cancelled.
+    func stopTextTurn() async {
+        activity.stopGenerating()
+        await transport.stop()
+    }
 }

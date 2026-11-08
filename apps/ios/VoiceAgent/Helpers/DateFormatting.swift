@@ -56,6 +56,14 @@ enum DateFormatting {
         return objectDisplay.string(from: parsed)
     }
 
+    /// Parses an object timestamp (RFC 3339, whole or fractional seconds), or
+    /// nil when it is empty or another shape. Used where the UI wants a date
+    /// to format itself, such as a relative "2 days ago" in a version history.
+    static func objectDate(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return isoFormatter.date(from: raw) ?? isoFractionalFormatter.date(from: raw)
+    }
+
     /// Formats a session timestamp as a locale-aware date + time. Chat sessions
     /// use RFC 3339 (`"2026-09-01T10:00:00Z"`, optionally fractional); older
     /// records still carry the legacy `"HH:mm:ss.SSS"` clock string. Returns

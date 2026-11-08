@@ -29,7 +29,7 @@ type oauthConsentData struct {
 templ OAuthConsentPage(data oauthConsentData) {
 	{{ description := data.ClientName + " wants to connect to a Memory project on your behalf." }}
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Authorize application", "", data.ClientName)), "", data.ClientName, description, detailHeaderOpts{Margin: "mb-6"})
+		@detailHeader(crumbsActive(nav.Crumbs("Authorize application", data.ClientName)), "", data.ClientName, description, detailHeaderOpts{Margin: "mb-6"})
 
 		if data.Error != "" {
 			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Message: data.Error})
@@ -49,7 +49,7 @@ templ OAuthConsentPage(data oauthConsentData) {
 					</ul>
 				</div>
 
-				<form method="post" action="/oauth/authorize" class="flex flex-col gap-4">
+				<form method="post" action="/oauth/authorize" hx-boost="false" class="flex flex-col gap-4">
 					<input type="hidden" name="client_id" value={ data.ClientID }/>
 					<input type="hidden" name="redirect_uri" value={ data.RedirectURI }/>
 					<input type="hidden" name="state" value={ data.State }/>
