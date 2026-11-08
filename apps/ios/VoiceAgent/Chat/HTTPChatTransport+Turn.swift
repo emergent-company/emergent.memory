@@ -64,6 +64,22 @@ extension HTTPChatTransport {
         }
     }
 
+    /// What a stop asked for and what came of it.
+    ///
+    /// ``cancelled`` is only ever returned for the gateway's explicit
+    /// `{"ok": true}`: a local abort on its own is not a cancellation and must
+    /// never be reported as one, because the run keeps going server-side.
+    enum StopOutcome: Equatable, Sendable {
+        /// The run was cancelled: `POST /api/chat/runs/{id}/cancel` answered
+        /// `{"ok": true}`.
+        case cancelled
+        /// No run id arrived in a `meta` frame, so no request was made and
+        /// nothing is claimed about the server-side run.
+        case noRunID
+        /// The gateway refused or the request failed, with the message to show.
+        case failed(String)
+    }
+
     /// A turn that ended without any reply this client could show, and the
     /// message that anchored it.
     ///

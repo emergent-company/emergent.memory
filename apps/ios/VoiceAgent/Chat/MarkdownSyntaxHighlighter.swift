@@ -5,6 +5,17 @@ import Splash
 /// SwiftUI-free) because Splash declares top-level types (`Font`, `Color`,
 /// `Theme`) that would shadow SwiftUI's in a view file.
 enum MarkdownSyntaxHighlighter {
+    /// Highlight results are expensive (Splash tokenizes the whole block) and
+    /// a rendered code block re-evaluates its body on every streamed delta of
+    /// the *following* tail, so the last results are memoized. Keyed by theme,
+    /// language and the exact code, and bounded so a long transcript cannot
+    /// grow it without limit (issue #441).
+    private static let cache: NSCache<NSString, NSAttributedString> = {
+        let cache = NSCache<NSString, NSAttributedString>()
+        cache.countLimit = 64
+        return cache
+    }()
+
     /// Highlights fenced code with Splash. Returns `nil` (caller falls back
     /// to plain monospaced text) on empty input or any highlight failure.
     ///
@@ -18,6 +29,10 @@ enum MarkdownSyntaxHighlighter {
     static func highlight(_ code: String, language _: String?, isDark: Bool) -> NSAttributedString? {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        let key = "\(isDark ? "dark" : "light")\u{1F}\(code)" as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
         let font = Splash.Font(size: 13)
         let theme = isDark
             ? Splash.Theme.midnight(withFont: font)
@@ -26,6 +41,11 @@ enum MarkdownSyntaxHighlighter {
             format: Splash.AttributedStringOutputFormat(theme: theme),
             grammar: SwiftGrammar()
         )
-        return highlighter.highlight(code)
+        // Annotated so this compiles whether Splash returns an optional or not.
+        let output: NSAttributedString? = highlighter.highlight(code)
+        if let output {
+            cache.setObject(output, forKey: key)
+        }
+        return output
     }
 }
