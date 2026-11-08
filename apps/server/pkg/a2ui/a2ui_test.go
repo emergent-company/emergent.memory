@@ -432,6 +432,34 @@ func TestInstructionRendersPropTypes(t *testing.T) {
 	}
 }
 
+func TestSummaryText(t *testing.T) {
+	one := []Message{{UpdateComponents: &UpdateComponents{SurfaceID: "s1", Components: []Component{
+		{ID: "c1", Component: "proposal", Props: map[string]any{"summary": "Ship it"}},
+	}}}}
+	if got := SummaryText(one); got != "Rendered a structured card (proposal): Ship it" {
+		t.Errorf("SummaryText(one) = %q", got)
+	}
+
+	bare := []Message{{UpdateComponents: &UpdateComponents{SurfaceID: "s1", Components: []Component{
+		{ID: "c1", Component: "code", Props: map[string]any{"code": "secret()"}},
+	}}}}
+	if got := SummaryText(bare); got != "Rendered a structured card (code)." {
+		t.Errorf("SummaryText(bare) = %q", got)
+	}
+
+	many := []Message{{UpdateComponents: &UpdateComponents{SurfaceID: "s1", Components: []Component{
+		{ID: "c1", Component: "proposal", Props: map[string]any{"summary": "a"}},
+		{ID: "c2", Component: "todo", Props: map[string]any{"items": []any{"x"}}},
+	}}}}
+	if got := SummaryText(many); got != "Rendered 2 structured cards (proposal, todo)." {
+		t.Errorf("SummaryText(many) = %q", got)
+	}
+
+	if got := SummaryText(nil); got != "Rendered a structured card." {
+		t.Errorf("SummaryText(nil) = %q", got)
+	}
+}
+
 func TestMessageVersionDefaults(t *testing.T) {
 	var m Message
 	if err := json.Unmarshal([]byte(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}`), &m); err != nil {

@@ -1569,6 +1569,18 @@
     scrollToBottom();
   }
 
+  // a2uiSurfaceIDOf derives the surface id from a persisted message list using
+  // the same "first createSurface wins" rule as the server's SurfaceIDOf, so a
+  // replayed card keeps its identity.
+  function a2uiSurfaceIDOf(messages) {
+    var list = Array.isArray(messages) ? messages : [];
+    for (var i = 0; i < list.length; i++) {
+      var created = list[i] && list[i].createSurface;
+      if (created && created.surfaceId) return String(created.surfaceId);
+    }
+    return "surface-1";
+  }
+
   // a2uiSurfaceRegistry stores each surface's rendered card nodes, keyed by
   // surfaceId, on its message container. Each page owns its own container, so
   // the registry is never shared across pages or the live stream and history.
@@ -2207,6 +2219,7 @@
       if (item.role === "user") return !!(text && !(CS.isResumePrompt && CS.isResumePrompt(text)));
       if (item.role === "tool" || item.role === "system") return false;
       if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
+      if (Array.isArray(content.a2ui) && content.a2ui.length) return true;
       return !!(text || html || content.reasoning);
     }
     // splits reports a boundary between tool calls even when the item itself
@@ -2227,6 +2240,7 @@
       var content = item.content || {};
       var text = content.text || "";
       if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
+      if (Array.isArray(content.a2ui) && content.a2ui.length) return true;
       return !!(text || content.html || content.reasoning);
     }
 
@@ -2560,6 +2574,17 @@
           // produced the message and which side of the stage the text is.
           var stage = typeof content.stage === "string" ? content.stage : "";
           var stageKind = typeof content.stage_kind === "string" ? content.stage_kind : "";
+          // A persisted surface is a first-class replayable item (#427): render
+          // the card(s) at the item's transcript position, even when the turn
+          // carries no text at all (a card-only answer was invisible on reload).
+          if (Array.isArray(content.a2ui) && content.a2ui.length &&
+              item.role !== "system" && item.role !== "user" && item.role !== "tool") {
+            renderA2UISurface(a2uiSurfaceIDOf(content.a2ui), content.a2ui, {
+              messages: container,
+              hideEmpty: ctx.hideEmpty,
+              scrollToBottom: silent ? function () {} : (ctx.scrollToBottom || function () {}),
+            });
+          }
           if (item.role === "system") {
             // The composed system instruction — already rendered once as the
             // agent-prompt card above; never a chat bubble.

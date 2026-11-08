@@ -832,3 +832,53 @@ func SurfaceIDOf(msgs []Message) string {
 	}
 	return DefaultSurfaceID
 }
+
+// SummaryText renders a short, deterministic plain-text description of the
+// cards in msgs. It exists for replay paths that carry text only (ACP/MCP
+// call_agent, a `kb.chat_messages` row) so a card-only answer is not reported as
+// an empty reply. It never echoes the raw protocol JSONL and never dumps a code
+// prop: at most a short human title is quoted.
+func SummaryText(msgs []Message) string {
+	var kinds []string
+	var title string
+	for _, m := range msgs {
+		if m.UpdateComponents == nil {
+			continue
+		}
+		for _, comp := range m.UpdateComponents.Components {
+			kinds = append(kinds, comp.Component)
+			if title == "" {
+				title = cardTitle(comp)
+			}
+		}
+	}
+	if len(kinds) == 0 {
+		return "Rendered a structured card."
+	}
+	if len(kinds) == 1 {
+		if title != "" {
+			return fmt.Sprintf("Rendered a structured card (%s): %s", kinds[0], title)
+		}
+		return fmt.Sprintf("Rendered a structured card (%s).", kinds[0])
+	}
+	return fmt.Sprintf("Rendered %d structured cards (%s).", len(kinds), strings.Join(kinds, ", "))
+}
+
+// cardTitle returns a short human title for a component, if it carries one.
+// Only title-like string props are considered; a `code` body is never echoed.
+func cardTitle(comp Component) string {
+	for _, name := range []string{"summary", "prompt", "label", "title"} {
+		if s, ok := comp.Props[name].(string); ok && strings.TrimSpace(s) != "" {
+			return truncateRunes(strings.TrimSpace(s), 160)
+		}
+	}
+	return ""
+}
+
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
+}

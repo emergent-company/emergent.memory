@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -350,6 +351,11 @@ func assistantReply(ctx context.Context, repo agentOnceRepository, runID string)
 		}
 		if b.Len() > 0 {
 			return b.String(), nil
+		}
+		// A card-only turn has no text: the surface is the reply. Summarise it
+		// rather than reporting "no assistant reply" (#427).
+		if surfaces := storedSurfaces(m.Content["a2ui"]); len(surfaces) > 0 {
+			return a2ui.SummaryText(surfaces), nil
 		}
 	}
 	return "", &mcp.AgentRunError{

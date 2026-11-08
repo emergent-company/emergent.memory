@@ -1,10 +1,12 @@
 package chat
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 )
 
 func at(sec int) time.Time { return time.Unix(int64(sec), 0).UTC() }
@@ -247,5 +249,33 @@ func TestConversationRunUserText(t *testing.T) {
 				t.Errorf("conversationRunUserText() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A card-only turn persists its surfaces in retrieval_context; the history item
+// must expose them so a reload can render the card (#427).
+func TestConversationMessageItemSurfacesA2UI(t *testing.T) {
+	m := Message{
+		Role:    RoleAssistant,
+		Content: "Rendered a structured card (proposal): Ship it",
+		RetrievalContext: json.RawMessage(`{"agent_run_id":"r1","a2ui":[` +
+			`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}},` +
+			`{"updateComponents":{"surfaceId":"s1","components":[{"id":"c1","component":"proposal","kind":"change","summary":"Ship it"}]}}]}`),
+	}
+	item := conversationMessageItem(m)
+	if got := item.Content["text"]; got != m.Content {
+		t.Errorf("content text = %v, want %q", got, m.Content)
+	}
+	surfaces, ok := item.Content["a2ui"].([]a2ui.Message)
+	if !ok || len(surfaces) != 2 {
+		t.Fatalf("content a2ui = %#v, want 2 messages", item.Content["a2ui"])
+	}
+	if surfaces[1].UpdateComponents == nil || surfaces[1].UpdateComponents.Components[0].ID != "c1" {
+		t.Fatalf("second surface message = %+v, want updateComponents for c1", surfaces[1])
+	}
+
+	plain := conversationMessageItem(Message{Role: RoleUser, Content: "hi"})
+	if _, exists := plain.Content["a2ui"]; exists {
+		t.Errorf("plain message gained an a2ui key: %#v", plain.Content)
 	}
 }
