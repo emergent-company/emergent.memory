@@ -39,10 +39,10 @@ struct StreamingMarkdownModel: Equatable {
     /// `true` once the whole message has been parsed as one document.
     private(set) var isSettled = false
 
-    init() {}
-
     /// All blocks in document order.
-    var blocks: [MarkdownBlock] { committed + tailBlocks }
+    var blocks: [MarkdownBlock] {
+        committed + tailBlocks
+    }
 
     /// Applies the latest full text of the message, keeping every block that
     /// ends before the last block boundary.

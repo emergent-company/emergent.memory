@@ -18,7 +18,6 @@ struct MarkdownBlockView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    @ViewBuilder
     var body: some View {
         switch block {
         case let .heading(level, inlines):
@@ -273,15 +272,15 @@ enum MarkdownInlineStyling {
     ) -> AttributedString {
         switch inline {
         case let .text(text), let .rawHTML(text):
-            return styledText(text, style: style)
+            styledText(text, style: style)
         case .softBreak:
-            return AttributedString(" ")
+            AttributedString(" ")
         case .lineBreak:
-            return AttributedString("\n")
+            AttributedString("\n")
         case let .code(code):
-            return styledText(code, style: decorated(style, code: true))
+            styledText(code, style: decorated(style, code: true))
         default:
-            return styledContainer(inline, style: style)
+            styledContainer(inline, style: style)
         }
     }
 
@@ -292,17 +291,17 @@ enum MarkdownInlineStyling {
     ) -> AttributedString {
         switch inline {
         case let .emphasis(inlines):
-            return makeAttributed(inlines, style: decorated(style, italic: true))
+            makeAttributed(inlines, style: decorated(style, italic: true))
         case let .strong(inlines):
-            return makeAttributed(inlines, style: decorated(style, bold: true))
+            makeAttributed(inlines, style: decorated(style, bold: true))
         case let .strikethrough(inlines):
-            return makeAttributed(inlines, style: decorated(style, strike: true))
+            makeAttributed(inlines, style: decorated(style, strike: true))
         case let .link(destination, inlines):
-            return linked(inlines, destination: destination, style: style)
+            linked(inlines, destination: destination, style: style)
         case let .image(source, alt):
-            return imageText(source: source, alt: alt, style: style)
+            imageText(source: source, alt: alt, style: style)
         default:
-            return AttributedString()
+            AttributedString()
         }
     }
 

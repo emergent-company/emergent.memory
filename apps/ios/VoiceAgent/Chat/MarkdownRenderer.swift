@@ -82,7 +82,9 @@ struct MarkdownRenderSnapshot {
     var committed: [MarkdownBlock] = []
     var tailBlocks: [MarkdownBlock] = []
 
-    var isEmpty: Bool { committed.isEmpty && tailBlocks.isEmpty }
+    var isEmpty: Bool {
+        committed.isEmpty && tailBlocks.isEmpty
+    }
 }
 
 /// Keeps the incremental parse alive across `body` evaluations.
@@ -99,7 +101,9 @@ final class MarkdownRenderCache {
     private var isStreamingMessage = false
 
     /// `true` once this message has been observed growing (i.e. it streams).
-    var isStreaming: Bool { isStreamingMessage }
+    var isStreaming: Bool {
+        isStreamingMessage
+    }
 
     func snapshot(for text: String) -> MarkdownRenderSnapshot {
         if !isStreamingMessage, grew(from: lastText, to: text) {

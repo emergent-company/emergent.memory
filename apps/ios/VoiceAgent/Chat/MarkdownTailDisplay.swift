@@ -39,7 +39,9 @@ struct MarkdownFenceTracker {
         } else {
             guard run.count >= 3 else { return false }
             // A backtick fence's info string may not contain a backtick.
-            if first == "`", text.dropFirst(run.count).contains("`") { return false }
+            if first == "`", text.dropFirst(run.count).contains("`") {
+                return false
+            }
             isInside = true
             marker = first
             length = run.count
@@ -99,7 +101,7 @@ enum MarkdownTailDisplay {
         var cursor = segment.startIndex
         for range in removals.sorted(by: { $0.lowerBound < $1.lowerBound }) {
             guard range.lowerBound >= cursor else { continue }
-            result += text[cursor..<range.lowerBound]
+            result += text[cursor ..< range.lowerBound]
             cursor = range.upperBound
         }
         result += text[cursor...]
@@ -115,7 +117,7 @@ enum MarkdownTailDisplay {
         var fences = MarkdownFenceTracker()
         while cursor < text.endIndex {
             let lineEnd = text[cursor...].firstIndex(of: "\n") ?? text.endIndex
-            let line = text[cursor..<lineEnd]
+            let line = text[cursor ..< lineEnd]
             let next = lineEnd == text.endIndex ? text.endIndex : text.index(after: lineEnd)
             if fences.consume(line) {
                 start = next
@@ -140,7 +142,7 @@ enum MarkdownTailDisplay {
                 continue
             }
             let run = segment[index...].firstIndex { $0 != marker } ?? segment.endIndex
-            let range = index..<run
+            let range = index ..< run
             if closes(marker, range, in: segment), !openers.isEmpty {
                 openers.removeLast()
             } else if opens(marker, range, in: segment) {
@@ -210,6 +212,6 @@ enum MarkdownTailDisplay {
             }
         }
         guard let start = open else { return nil }
-        return start..<segment.index(after: start)
+        return start ..< segment.index(after: start)
     }
 }
