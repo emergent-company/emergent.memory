@@ -831,11 +831,13 @@ func (p *GVisorProvider) ListFiles(ctx context.Context, providerID string, req *
 	// -name only matches the filename component and does not support ** patterns.
 	// -path matches the full path including directory separators; "*" in -path
 	// already crosses directory boundaries, so "**" and "*" are equivalent here.
-	// Examples: "**/*.go" → "*.go" matches /workspace/pkg/foo.go ✓
-	//           "**/*"    → "*"   matches all files ✓
-	//           "*.go"    → "*.go" matches /workspace/main.go ✓
-	findPattern := strings.ReplaceAll(req.Pattern, "**", "*")
-	cmd := fmt.Sprintf("find %q -path %q -printf '%%T@ %%y %%s %%p\\n' 2>/dev/null | sort -rn", searchPath, findPattern)
+	// Relative patterns are resolved against searchPath (see buildFindPathPatterns).
+	// Examples (searchPath=/workspace):
+	//   "**/*.go"                       → "/workspace/*/*.go" or "/workspace/*.go" ✓
+	//   "**/*"                          → "/workspace/*/*"   or "/workspace/*"   ✓
+	//   "apps/server/pkg/httputil/*.go" → "/workspace/apps/server/pkg/httputil/*.go" ✓
+	//   "*.go"                          → "/workspace/*.go" matches by name at any depth ✓
+	cmd := buildFindListCommand(searchPath, req.Pattern, 0)
 	result, err := p.Exec(ctx, providerID, &ExecRequest{Command: cmd})
 	if err != nil {
 		return nil, err

@@ -2,11 +2,13 @@
 # Provides BOTH Python and Go SDK execution tooling so that run_python and
 # run_go work out of the box in the default sandbox image.
 #
-# Base: golang:1.25-bookworm. Go 1.25 is REQUIRED — apps/server/pkg/sdk/go.mod
-# declares "go 1.25.0", so any Go toolchain < 1.25 cannot build the SDK.
-# (sdk/go/Dockerfile and apps/cli/Dockerfile now pin golang:1.25 too — keep
-# them in lockstep with this image.)
-FROM golang:1.25-bookworm
+# Base: golang:1.26-bookworm. The repo root go.work declares "go 1.26.6", and
+# official golang:* images set GOTOOLCHAIN=local, so the workspace toolchain must
+# be >= that or `go test ./...` inside /workspace fails before it starts (#392).
+# sdk/go/Dockerfile (golang:1.25-bookworm) and apps/cli/Dockerfile
+# (golang:1.25-alpine) stay on 1.25: they build apps/server/pkg/sdk, whose go.mod
+# declares "go 1.25.0", and never load the root go.work.
+FROM golang:1.26-bookworm
 
 # Install essential dev tools and AI agent-friendly utilities, plus Python.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -39,6 +41,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install ast-grep for the workspace_ast_grep tool (#393). Pinned release: the
+# tool validates `ast-grep --version`, and Debian bookworm's /usr/bin/sg is the
+# shadow-utils group tool, not ast-grep. Install ONLY the `ast-grep` binary so
+# /usr/bin/sg stays untouched; the archive also contains an `sg`, do not use it.
+ARG AST_GREP_VERSION=0.51.1
+ARG TARGETARCH
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) ast_grep_arch=x86_64-unknown-linux-gnu ;; \
+        arm64) ast_grep_arch=aarch64-unknown-linux-gnu ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/ast-grep.zip \
+        "https://github.com/ast-grep/ast-grep/releases/download/${AST_GREP_VERSION}/app-${ast_grep_arch}.zip" && \
+    unzip -q -j /tmp/ast-grep.zip ast-grep -d /usr/local/bin && \
+    rm -f /tmp/ast-grep.zip && \
+    chmod +x /usr/local/bin/ast-grep && \
+    ast-grep --version
 
 # Install the emergent-memory Python SDK from the memory repo.
 # --break-system-packages is required on Debian bookworm (PEP 668 externally
