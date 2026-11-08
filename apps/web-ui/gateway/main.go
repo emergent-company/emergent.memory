@@ -142,6 +142,10 @@ func main() {
 	// allowed on this path via deviceSurfacePath (auth.go).
 	api.GET("/agents/:id/objects", s.listAgentObjects)
 	api.POST("/chat", s.chat)
+	// Share capture (iOS share extension): a link/note, or a photo/PDF/audio
+	// memo. Device-reachable — see deviceSurfacePath and remember.go.
+	api.POST("/projects/:projectId/remember", s.rememberCapture)
+	api.POST("/projects/:projectId/remember/file", s.rememberFileCapture)
 	api.POST("/chat/questions/:questionId/respond", s.respondQuestion)
 	api.POST("/chat/questions/:questionId/cancel", s.cancelQuestion)
 	api.POST("/chat/runs/:runId/cancel", s.cancelAgentRun)
@@ -796,6 +800,10 @@ func bodyLimitSkipper(c echo.Context) bool {
 	p := c.Request().URL.Path
 	return strings.HasPrefix(p, "/documents") ||
 		strings.HasPrefix(p, "/api/documents") ||
+		// A shared photo/PDF is a multipart capture far larger than 4 MB;
+		// remember.go bounds the read itself (maxCaptureUploadSize) and answers
+		// 413 there.
+		strings.HasSuffix(p, "/remember/file") ||
 		p == "/profile/avatar"
 }
 

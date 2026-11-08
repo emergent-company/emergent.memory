@@ -263,11 +263,12 @@ func deviceScopesMatchCeiling(scopes []string) bool {
 // the device surface: the voice/read paths the gateway relays on a device
 // credential's behalf (agent picker, chat/session relay, conversation
 // archive/unarchive/delete, memory browsing, and the /api/auth/me introspection
-// the gateway uses to recognise the token). It also admits exactly one write
-// the iOS text composer needs to stop its own turn: the chat-scoped run
-// cancellation route (issue #81), which is owner-checked in the chat handler.
-// Everything else — token mint, members, org/project admin, other writes — is
-// out.
+// the gateway uses to recognise the token). It also admits the device's own
+// capture writes: the chat-scoped run cancellation route (issue #81), which is
+// owner-checked in the chat handler, and the two remember paths the iOS share
+// extension posts to (one project id, exact tails — see
+// deviceProjectRememberPath). Everything else — token mint, members,
+// org/project admin, other writes — is out.
 func deviceSurfaceAllowed(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -304,6 +305,14 @@ func deviceSurfaceAllowed(method, path string) bool {
 		return false
 	case http.MethodPost:
 		if path == "/api/chat/stream" || path == "/api/search/unified" {
+			return true
+		}
+		// Capture writes: the iOS share extension posts a shared link/note as
+		// text, or a shared photo/PDF as a multipart file. Both are exact
+		// shapes bound to exactly one project id; the token binding comes from
+		// RequireProjectTokenScope, so a mismatch between the path project and
+		// the credential's project is refused there, not here.
+		if deviceProjectRememberPath(path) {
 			return true
 		}
 		// The one device write beyond conversation/question lifecycle: stopping
@@ -368,6 +377,25 @@ func deviceProjectQuestionActionPath(path, action string) bool {
 	return len(parts) == 4 &&
 		parts[0] != "" && parts[1] == "agent-questions" &&
 		parts[2] != "" && parts[3] == action
+}
+
+// deviceProjectRememberPath reports whether path is exactly
+// `/api/projects/{projectId}/remember` or `/api/projects/{projectId}/remember/file`
+// — the two capture routes the iOS share extension writes through. Every
+// segment must be non-empty and nothing deeper matches, so the whole
+// /api/projects/{id} surface (settings, members, integrations) stays off.
+func deviceProjectRememberPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/projects/")
+	if !ok {
+		return false
+	}
+	// modelref:allow — URL path segmentation, not a routed model name.
+	parts := strings.Split(rest, "/")
+	if len(parts) == 2 {
+		return parts[0] != "" && parts[1] == "remember"
+	}
+	return len(parts) == 3 &&
+		parts[0] != "" && parts[1] == "remember" && parts[2] == "file"
 }
 
 // deviceChatRunCancelPath reports whether path is exactly

@@ -115,6 +115,11 @@ type MemoryBackend interface {
 	DiffChunkRevisions(ctx context.Context, chunkID string, from, to int) (ChunkDiff, error)
 	RollbackChunk(ctx context.Context, chunkID string, seq int) (ChunkEditResult, error)
 	UploadDocument(ctx context.Context, filename string, r io.Reader) (UploadResult, error)
+	// Share capture (iOS share extension). Both return memory's raw status and
+	// body so the handler passes its JSON through unchanged — the device must
+	// see memory's own {run_id, status} or {error:{code,message}}.
+	RememberCapture(ctx context.Context, projectID string, body captureRequest) (status int, raw []byte, err error)
+	RememberCaptureFile(ctx context.Context, projectID, filename string, r io.Reader, comment string) (status int, raw []byte, err error)
 	CreateExtractionJob(ctx context.Context, documentID string) (string, error)
 	GetExtractionSummary(ctx context.Context, documentID string) (*ExtractionSummary, error)
 	GetDocumentContent(ctx context.Context, documentID string) (string, error)

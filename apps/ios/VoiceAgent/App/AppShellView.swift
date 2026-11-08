@@ -41,12 +41,17 @@ struct AppShellView: View {
     @Environment(AgentStore.self) private var agentStore
     @Environment(ActiveSessionStore.self) private var activeSession
     @EnvironmentObject private var projectStore: MemoryProjectStore
+    /// Captures the share extension queued, uploaded by the app (see
+    /// ``ShareInbox``). The badge is the only entry point, and only when
+    /// something is actually waiting.
+    @EnvironmentObject private var shareInbox: ShareInbox
 
     /// The navigation path is owned by `AgentSessionRoot` (which recreates
     /// this shell when the selected agent changes) so controller rebuilds
     /// cannot reset it.
     @Binding var path: [AppRoute]
     @State private var qrPresented = false
+    @State private var shareInboxPresented = false
 
     init(path: Binding<[AppRoute]>) {
         _path = path
@@ -72,6 +77,7 @@ struct AppShellView: View {
         // presented from the shell: the Settings project list and the picker's
         // no-project prompt both open it.
         .sheet(isPresented: $qrPresented) { MemoryQRScannerView() }
+        .sheet(isPresented: $shareInboxPresented) { ShareInboxView() }
         .task {
             guard hasProject else { return }
             await agentStore.load()
@@ -194,6 +200,11 @@ struct AppShellView: View {
                     .foregroundStyle(.fg3)
             }
             Spacer()
+            // A capture can queue with no project connected — a file share
+            // always does, and a link share queues when nothing is mirrored — so
+            // the badge must not depend on one: it is the only sign that
+            // something is waiting.
+            shareInboxButton
             // No project, no switcher: a pill that says "No project" is a dead
             // control, and the picker body already offers the connect action.
             if hasProject {
@@ -202,6 +213,36 @@ struct AppShellView: View {
             }
         }
         .padding(.top, 2 * .grid)
+    }
+
+    /// Shared captures waiting to upload. Only shown when there are some: an
+    /// always-visible empty inbox is a badge nobody can clear.
+    @ViewBuilder
+    private var shareInboxButton: some View {
+        if shareInbox.pendingCount > 0 {
+            Button {
+                shareInboxPresented = true
+            } label: {
+                Image(systemName: shareInbox.hasFailures ? "tray.full.fill" : "tray.full")
+                    .font(.title3)
+                    .foregroundStyle(shareInbox.hasFailures ? .orange : .fg2)
+                    .padding(1.5 * .grid)
+                    .background(.bg2, in: Circle())
+                    .overlay(alignment: .topTrailing) {
+                        Text("\(shareInbox.pendingCount)")
+                            .font(.system(.caption2, weight: .bold))
+                            .foregroundStyle(.bg1)
+                            .padding(.horizontal, 1 * .grid)
+                            .padding(.vertical, 0.25 * .grid)
+                            .background(.fgAccent, in: Capsule())
+                            .offset(x: 2, y: -2)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("share.inbox.accessibility"))
+            .accessibilityValue(Text("\(shareInbox.pendingCount)"))
+            .padding(.top, 2 * .grid)
+        }
     }
 
     /// Switches the active project: mirrors the new connection and re-scopes
@@ -315,4 +356,5 @@ struct AppShellView: View {
         .environment(AgentStore())
         .environment(ActiveSessionStore())
         .environmentObject(MemoryProjectStore())
+        .environmentObject(ShareInbox())
 }

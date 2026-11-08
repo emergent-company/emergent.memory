@@ -580,9 +580,10 @@ func deviceCredentialToken(c echo.Context) string {
 // deviceSurfacePath reports whether a gateway request path/method is within the
 // device surface: room-token mint, agent picker (list/detail), the per-agent
 // object browser, chat relay + its run-cancel route, conversation lifecycle
-// (archive/unarchive/delete), session log/records, and memory browsing. A
-// device credential is rejected on everything else (defence in depth over the
-// server's own surface guard).
+// (archive/unarchive/delete), session log/records, memory browsing, and the
+// share-capture writes (a link/note or a photo/PDF). A device credential is
+// rejected on everything else (defence in depth over the server's own surface
+// guard).
 func deviceSurfacePath(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -610,6 +611,12 @@ func deviceSurfacePath(method, path string) bool {
 		if path == "/api/token" || path == "/api/chat" {
 			return true
 		}
+		// Share capture: the iOS share extension posts a shared link/note, or a
+		// shared photo/PDF. Both are exact shapes bound to exactly one project
+		// id; memory re-checks the same shapes against the same credential.
+		if deviceProjectRememberPath(path) {
+			return true
+		}
 		// Stopping a chat run the credential's user owns (#81). The gateway
 		// proxies this verbatim; memory owner-checks the run there.
 		if deviceChatRunCancelPath(path) {
@@ -626,6 +633,24 @@ func deviceSurfacePath(method, path string) bool {
 	default:
 		return false
 	}
+}
+
+// deviceProjectRememberPath reports whether path is exactly
+// `/api/projects/{projectId}/remember` or `/api/projects/{projectId}/remember/file`
+// — the two capture routes the iOS share extension writes through. Every
+// segment must be non-empty and nothing deeper matches, so the rest of the
+// /api/projects/{id} surface (settings, members, integrations) stays off.
+func deviceProjectRememberPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/projects/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) == 2 {
+		return parts[0] != "" && parts[1] == "remember"
+	}
+	return len(parts) == 3 &&
+		parts[0] != "" && parts[1] == "remember" && parts[2] == "file"
 }
 
 // deviceQuestionActionPath reports whether path is exactly

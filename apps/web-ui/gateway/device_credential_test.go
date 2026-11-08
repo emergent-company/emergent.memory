@@ -51,6 +51,18 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"GET", "/api/session", true},
 		{"GET", "/api/project/config", true},
 
+		// Share capture: exactly two shapes, one non-empty project id.
+		{"POST", "/api/projects/p1/remember", true},
+		{"POST", "/api/projects/p1/remember/file", true},
+		{"POST", "/api/projects//remember", false},
+		{"POST", "/api/projects/p1/remember/file/extra", false},
+		{"POST", "/api/projects/p1/remember/", false},
+		{"GET", "/api/projects/p1/remember", false},
+		{"PUT", "/api/projects/p1/remember/file", false},
+		{"POST", "/api/projects/p1/forget", false},
+		{"POST", "/api/projects/p1/settings/remember/field", false},
+		{"POST", "/api/projects/p1/remember/other", false},
+
 		{"GET", "/api/agents/abc/mcp-endpoint", false},
 		{"POST", "/api/agents", false},
 		{"GET", "/api/projects", false},

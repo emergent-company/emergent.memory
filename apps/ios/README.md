@@ -109,10 +109,62 @@ surfaced as a "token fetch" failure with a Retry button.
   agent-left).
 - `VoiceAgent/Memory/MemoryFailureView.swift` — minimal failure + retry UI
   (a design pass will restyle it; state is a plain enum).
+- `Shared/` — compiled into **both** the app and the share extension: the App
+  Group connection mirror, the capture model, the on-disk queue, and the
+  remember client. Foundation/ImageIO only, no app types, so it can build in a
+  ~30 s extension.
+- `MemoryShare/` — the share extension (`com.apple.share-services`): item
+  extraction, HEIC→JPEG transcode, the compose sheet.
+- `VoiceAgent/Share/` — the app side of sharing: the drain that uploads queued
+  captures and the inbox the picker's tray badge opens.
 - Renaming policy: project/target/folder names keep the upstream `VoiceAgent`
   names; only the **user-visible** product name (`Memory`), bundle id
   (`com.emergent.memory`), and display name were changed, via `VoiceAgent.xcconfig`
   and `Info.plist`.
+
+## Sharing into Memory
+
+Memory appears in the iOS share sheet for a **link** (Safari, or any app that
+shares a URL), a **photo**, a **document** (PDF and friends), an **audio file**
+and **selected text**. Every share carries one comment field — the note is what
+makes a bare photo useful, and it is the fallback document text when the parser
+finds nothing to extract.
+
+Where a share goes:
+
+| Shared | Path |
+|---|---|
+| Link / text | Posted straight from the extension to `POST /api/projects/{id}/remember`; Memory answers `202 {run_id}` as soon as the run exists. |
+| Photo / document / audio | Written to the shared queue and uploaded by the **app** to `POST /api/projects/{id}/remember/file`. |
+| Anything, while offline | Queued; uploaded the next time the app is open and connected. |
+
+Files never upload from inside the extension: Memory polls document conversion
+for up to 120 s before it answers a file remember, and a share extension is
+killed at about 30 s. The app drains the queue on launch and on every return to
+the foreground, and the picker shows a tray badge with the pending count; the
+sheet behind it lists each capture with its state, and offers retry and remove.
+
+Photos are transcoded to JPEG (downsampled to 2400 px) in the extension.
+iPhone photos are HEIC and Memory's document converter has no HEIC support, so
+shipping the original would be refused `415 unsupported_media_type`.
+
+### Operator prerequisite — App Group
+
+The extension is a separate process with its own container. The only thing it
+shares with the app is the App Group **`group.com.emergent.memory`**, which
+carries the active connection (`alfred.share.apiBaseURL`, `…apiKey`,
+`…projectID`, `…projectName`) and the capture queue
+(`<container>/ShareQueue/`). Both targets declare the entitlement in
+`VoiceAgent/VoiceAgent.entitlements` and `MemoryShare/MemoryShare.entitlements`.
+
+Before a **signed** build (device or TestFlight), enable **App Groups** with that
+identifier on **both** App IDs — `com.emergent.memory` and
+`com.emergent.memory.share` — in the Apple developer portal. Provisioning
+profiles regenerate automatically, but an App Group cannot be created by a build:
+without it the app's `containerURL(forSecurityApplicationGroupIdentifier:)` is
+nil, sharing is disabled, and the app still runs normally. Simulator builds do
+not enforce entitlements.
+
 
 ## Mac operator checklist (before first build)
 

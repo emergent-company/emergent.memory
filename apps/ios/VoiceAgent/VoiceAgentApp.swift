@@ -64,6 +64,10 @@ private struct AgentSessionRoot: View {
     /// `AppShellView`) so recreating the controller/shell on agent change
     /// cannot reset it and strand the user on the picker.
     @State private var path: [AppRoute] = []
+    /// Captures the share extension queued. Uploaded on launch and on every
+    /// return to the foreground — the extension cannot do it itself (a file
+    /// upload outlives its ~30 s budget).
+    @StateObject private var shareInbox = ShareInbox()
     /// The `ActiveSessionStore.launchKey` the installed controller was built
     /// for, so a re-render that does not launch a new session never rebuilds
     /// (and tears down) the connected room.
@@ -78,6 +82,7 @@ private struct AgentSessionRoot: View {
                     .environmentObject(controller.localMedia)
                     .environment(audioOptions)
                     .environment(controller.chatActivity)
+                    .environmentObject(shareInbox)
                     // A project with voice disabled must not offer Start call
                     // or audio options anywhere in the app.
                     .environment(\.voiceEnabled, projectConfig.voiceEnabled)
@@ -90,6 +95,8 @@ private struct AgentSessionRoot: View {
             agentStore.setActiveProject(projectStore.activeProjectID)
             syncActiveSession()
             install()
+            // A share the extension queued uploads as soon as the app is up.
+            Task { await shareInbox.drain() }
         }
         // Launch, and every project switch: publish that project's cached
         // voice setting, then refresh it.
@@ -125,6 +132,9 @@ private struct AgentSessionRoot: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await projectConfig.refresh(projectID: projectStore.activeProjectID) }
+            // Coming back to the app is the retry point for a capture shared
+            // while offline, or queued as a file.
+            Task { await shareInbox.drain() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .memoryConfigChanged)) { _ in
             install(force: true)
