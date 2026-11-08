@@ -54,12 +54,6 @@ func (f *fakeIssueCreator) CreateIssue(_ context.Context, title, body string, la
 	return &createdIssue{Number: 42, HTMLURL: "https://github.com/o/r/issues/42"}, nil
 }
 
-func (f *fakeIssueCreator) callSnapshot() []fakeIssueCall {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]fakeIssueCall(nil), f.calls...)
-}
-
 func (f *fakeIssueCreator) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
