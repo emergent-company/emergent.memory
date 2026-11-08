@@ -815,3 +815,26 @@ func TestAstGrepSearch_ExitOneWithStderrIsError(t *testing.T) {
 	assert.Nil(t, matches)
 	assert.Contains(t, err.Error(), "cannot read config")
 }
+
+func TestWorkspaceToolNamesForMode(t *testing.T) {
+	assert.Equal(t, []string{"bash"}, workspaceToolNamesForMode(&sandbox.AgentSandboxConfig{RunMode: sandbox.RunModeMini}))
+	assert.Equal(t, sandbox.ValidToolNames, workspaceToolNamesForMode(&sandbox.AgentSandboxConfig{}))
+	assert.Equal(t, sandbox.ValidToolNames, workspaceToolNamesForMode(nil))
+}
+
+func TestBuildWorkspaceTools_MiniModeBuildsOnlyBash(t *testing.T) {
+	provider := newTestProvider()
+	cfg := &sandbox.AgentSandboxConfig{Enabled: true, RunMode: sandbox.RunModeMini}
+	deps := WorkspaceToolDeps{
+		Provider:    provider,
+		ProviderID:  "test-provider-mini",
+		WorkspaceID: "ws-uuid-mini",
+		Config:      cfg,
+		Logger:      testAgentLogger(),
+	}
+
+	tools, err := BuildWorkspaceTools(deps)
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	assert.Equal(t, "workspace_bash", tools[0].Name())
+}

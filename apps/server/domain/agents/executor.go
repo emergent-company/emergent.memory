@@ -2464,6 +2464,16 @@ func (ae *AgentExecutor) runPipeline(
 ) (*ExecuteResult, error) {
 	dbCtx := context.Background()
 
+	// Mini run mode: sandbox_config.run_mode == "mini" exposes only
+	// workspace_bash plus the submit terminator, and enforces one action per
+	// model turn. Parsed here so tool assembly and the tool callback share it.
+	miniMode := false
+	if req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0 {
+		if cfg, cfgErr := sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig); cfgErr == nil && cfg.IsMini() {
+			miniMode = true
+		}
+	}
+
 	// The run row is the source of truth for the trust marker. Override the
 	// request with the persisted value so coordination tools (and any child they
 	// spawn) inherit the run's trust rather than whatever the current transport
@@ -2774,6 +2784,32 @@ func (ae *AgentExecutor) runPipeline(
 		ae.log.Info("extra tools added to agent pipeline",
 			slog.String("run_id", run.ID),
 			slog.Int("count", len(req.ExtraTools)),
+		)
+	}
+
+	// Mini mode exposes exactly workspace_bash plus the submit terminator.
+	// Every other resolved tool (project tools, coordination, skills, work
+	// terminators, caller extras) is dropped so the run is a single linear
+	// bash loop.
+	if miniMode {
+		kept := make([]tool.Tool, 0, 2)
+		for _, t := range resolvedTools {
+			if t != nil && t.Name() == "workspace_bash" {
+				kept = append(kept, t)
+			}
+		}
+		resolvedTools = kept
+		if submitTool, submitErr := buildSubmitTool(terminatorState); submitErr != nil {
+			ae.log.Warn("failed to build submit tool for mini mode",
+				slog.String("run_id", run.ID),
+				slog.String("error", submitErr.Error()),
+			)
+		} else {
+			resolvedTools = append(resolvedTools, submitTool)
+		}
+		ae.log.Info("mini run mode: tool surface resolved",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(resolvedTools)),
 		)
 	}
 
@@ -3120,6 +3156,24 @@ func (ae *AgentExecutor) runPipeline(
 	// is an in-memory catalog read, not a per-tool-call DB scan.
 	toolScopes := ae.toolPool.ToolScopes()
 
+	// Mini mode enforces exactly one executed tool call per model turn. ADK may
+	// dispatch parallel calls from one response; the first wins and the rest are
+	// rejected with an error result so the model sees why they did not run.
+	var miniTurnMu sync.Mutex
+	miniTurnStep := -1
+	miniTurnCalls := 0
+	allowMiniToolCall := func(step int) bool {
+		miniTurnMu.Lock()
+		defer miniTurnMu.Unlock()
+		if step != miniTurnStep {
+			miniTurnStep = step
+			miniTurnCalls = 1
+			return true
+		}
+		miniTurnCalls++
+		return miniTurnCalls == 1
+	}
+
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx agent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
 		// FunctionCallID is stable across the before/after callback pair, even
@@ -3139,6 +3193,16 @@ func (ae *AgentExecutor) runPipeline(
 		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
 		// round-trips) between model steps keep refreshing last_step_at.
 		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
+		if miniMode && !allowMiniToolCall(tracker.current()) {
+			ae.log.Info("mini mode: rejecting additional tool call in the same turn",
+				slog.String("run_id", run.ID),
+				slog.String("tool", t.Name()),
+			)
+			return map[string]any{
+				"error": "mini mode allows exactly one tool call per turn; no additional tool was executed. Use the result of the previous call.",
+			}, nil
+		}
 
 		// A tool start closes any open thinking segment: the pre-tool
 		// monologue/reasoning phase has ended.
