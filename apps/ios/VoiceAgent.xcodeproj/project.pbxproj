@@ -355,7 +355,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.92.0;
+				MARKETING_VERSION = 0.92.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.share;
 				PRODUCT_NAME = MemoryShare;
 				SDKROOT = iphoneos;
@@ -387,7 +387,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.92.0;
+				MARKETING_VERSION = 0.92.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.share;
 				PRODUCT_NAME = MemoryShare;
 				SDKROOT = iphoneos;
