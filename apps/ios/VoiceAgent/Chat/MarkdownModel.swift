@@ -284,16 +284,25 @@ private func inlinePlainText(_ children: MarkupChildren) -> String {
 }
 
 private func plainText(of inlines: [MarkdownInline]) -> String {
-    inlines.map { inline in
-        switch inline {
+    inlines.map(\.plainText).joined()
+}
+
+extension MarkdownInline {
+    /// This inline's text as the reader sees it: styling markers dropped and
+    /// breaks as spaces. Used for task markers and image alt text here, and by
+    /// the copy actions (`markdownPlainText`).
+    var plainText: String {
+        switch self {
         case let .text(text), let .code(text), let .rawHTML(text):
             text
         case let .emphasis(inlines), let .strong(inlines), let .strikethrough(inlines), let .link(_, inlines):
-            plainText(of: inlines)
+            inlines.map(\.plainText).joined()
         case .image:
+            // An inline image is not reading text; the block-level `.image`
+            // keeps its alt text.
             ""
         case .softBreak, .lineBreak:
             " "
         }
-    }.joined()
+    }
 }
