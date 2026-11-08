@@ -61,10 +61,16 @@ struct QuestionRequest: Identifiable, Equatable {
 /// One contiguous reasoning segment. A block opens on the first thinking delta
 /// and closes on the first non-thinking activity, so a turn can contain several
 /// blocks (reason → tool → reason).
+///
+/// `isLive` is the spinner only; `isOpen` is "a later delta may still append
+/// here". A `done: true` frame stops the spinner but leaves the block open, so
+/// the next delta before an activity boundary joins the same row (the web
+/// console's shimmer semantics). Only an activity boundary closes it.
 struct ThinkingBlock: Identifiable, Equatable {
     let id: String
     var text: String
     var isLive: Bool
+    var isOpen: Bool
 }
 
 /// A run of consecutive tool calls. A non-tool activity closes the run, so the
