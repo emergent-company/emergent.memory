@@ -90,9 +90,9 @@ struct StreamingMarkdownModelTests {
     @Test func blankLineInsideARawHTMLBlockIsNotABoundary() {
         let text = "Intro.\n\n<pre>\nlet a = 1;\n\nlet b = 2;\n</pre>\n\nAfter.\n\n"
         var model = StreamingMarkdownModel()
-        // Feed the block half way first: the blank line inside `<pre>` must not
-        // commit anything, so the block cannot be frozen in two halves.
-        model.update("Intro.\n\n<pre>\nlet a = 1;\n\n")
+        // Feed the block half way first, ending just inside it: the blank line
+        // inside `<pre>` must not commit anything.
+        model.update("Intro.\n\n<pre>\nlet a = 1;\n\nlet b = 2;")
         #expect(model.committed == [.paragraph([.text("Intro.")])])
         model.update(text)
         // A `<pre>` block (like `<script>`, a comment or CDATA) ends at its
