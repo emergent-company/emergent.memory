@@ -241,6 +241,19 @@ services:
       WORKSPACE_WARM_POOL_SIZE: ${WORKSPACE_WARM_POOL_SIZE:-0}
       GITHUB_APP_ENCRYPTION_KEY: ${GITHUB_APP_ENCRYPTION_KEY:-}
       LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
+
+      # Feedback intake (optional). POST /api/feedback and the `feedback-submit`
+      # MCP tool file feedback as GitHub issues. Empty token or repo = disabled
+      # (503, no outbound call), which is the default: there is no built-in
+      # destination, so feedback is never filed anywhere until the operator of
+      # this deployment names a repository for it. Set BOTH
+      # FEEDBACK_GITHUB_TOKEN (Issues: Read and write on the repo) and
+      # FEEDBACK_GITHUB_REPO in .env to enable it.
+      FEEDBACK_ENABLED: ${FEEDBACK_ENABLED:-true}
+      FEEDBACK_GITHUB_TOKEN: ${FEEDBACK_GITHUB_TOKEN:-}
+      FEEDBACK_GITHUB_REPO: ${FEEDBACK_GITHUB_REPO:-}
+      FEEDBACK_GITHUB_LABEL: ${FEEDBACK_GITHUB_LABEL:-feedback}
+      FEEDBACK_RATE_LIMIT_PER_HOUR: ${FEEDBACK_RATE_LIMIT_PER_HOUR:-5}
     depends_on:
       db:
         condition: service_healthy

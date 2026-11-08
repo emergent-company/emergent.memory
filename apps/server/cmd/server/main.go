@@ -47,6 +47,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
+	"github.com/emergent-company/emergent.memory/domain/feedback"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/health"
 	"github.com/emergent-company/emergent.memory/domain/invites"
@@ -212,6 +213,9 @@ func coreFxOptions() fx.Option {
 
 		// Documentation API (serves markdown files from docs/public)
 		docs.Module,
+
+		// User/agent feedback intake (REST + the feedback-submit MCP tool).
+		feedback.Module,
 
 		// Cross-domain wiring: expose apitoken.Repository as projects.TokenRevoker
 		fx.Provide(func(tokenRepo *apitoken.Repository) projects.TokenRevoker {

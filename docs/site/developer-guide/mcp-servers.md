@@ -108,6 +108,36 @@ The built-in server exposes tools including:
 
 > See `apps/server/domain/mcp/README.md` for the complete tools, resources, and prompts reference.
 
+### Sending feedback about Memory
+
+The built-in server exposes **`feedback-submit`**, and the same submission is
+available over REST as `POST /api/feedback`. Both accept the credential you
+already use and file the report as a GitHub issue, with your account, project and
+basic environment details attached automatically — you never need to paste a
+token or your email.
+
+There is no strict template. Write what you were trying to do, what happened,
+and what you expected. If you can, add the steps that reproduce it and the exact
+error text; one or two sentences is fine when that is all you have.
+
+```json
+{
+  "message": "The entity search tool returns stale results for a few minutes after an update.",
+  "category": "bug",
+  "severity": "medium",
+  "include_context": true
+}
+```
+
+`category` (`bug`, `feature`, `usability`, `docs`, `other`) and `severity`
+(`low`, `medium`, `high`) are optional. `include_context` defaults to `true`;
+set it to `false` to send only your message and account identity. A caller is
+limited to a handful of submissions per hour, and an immediate retry of the same
+text returns the issue created by the first call instead of filing a duplicate.
+
+A deployment that has no feedback tracker configured answers `503` and sends
+nothing anywhere — the endpoint is present, the destination is not.
+
 ### Sharing a scoped key with someone else
 
 To hand an outside client — a teammate's agent, a partner, a demo — access to
