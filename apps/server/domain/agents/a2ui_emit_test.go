@@ -36,6 +36,9 @@ func TestFinalResponseStreamEvents_ExtractsA2UI(t *testing.T) {
 	if a2uiEvent.SurfaceID != "s1" {
 		t.Fatalf("surfaceID = %q, want s1", a2uiEvent.SurfaceID)
 	}
+	if !a2uiEvent.Final {
+		t.Error("final extracted surface must be marked Final so replay ignores progressive frames")
+	}
 	if textDelta.Len() == 0 {
 		t.Error("expected remaining plain text delta")
 	}

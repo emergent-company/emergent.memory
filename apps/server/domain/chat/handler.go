@@ -1487,7 +1487,12 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		case agents.StreamEventToolApproval:
 			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
-			surfaces = append(surfaces, event.A2UI...)
+			// Persist/replay only the authoritative frame: progressive frames are
+			// partial and a teardown deletes the surface, so appending them would
+			// store a duplicated or already-deleted card (#427).
+			if event.Final {
+				surfaces = event.A2UI
+			}
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		case agents.StreamEventSubagent:
 			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
@@ -2007,7 +2012,12 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		case agents.StreamEventToolApproval:
 			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
-			surfaces = append(surfaces, event.A2UI...)
+			// Persist/replay only the authoritative frame: progressive frames are
+			// partial and a teardown deletes the surface, so appending them would
+			// store a duplicated or already-deleted card (#427).
+			if event.Final {
+				surfaces = event.A2UI
+			}
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		case agents.StreamEventSubagent:
 			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))

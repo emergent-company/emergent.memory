@@ -81,6 +81,10 @@ type StreamEvent struct {
 	Role       string         // For Thinking: "operator" (planning text) or "reasoning" (chain-of-thought)
 	SurfaceID  string         // For A2UI: the stable surface identifier
 	A2UI       []a2ui.Message // For A2UI: the ordered surface messages
+	// Final is true only on the authoritative A2UI frame extracted from the
+	// finished response. Progressive frames (and a teardown) leave it false, so
+	// a replay/persistence consumer can ignore partial and deleted surfaces.
+	Final bool
 	// ID is a stable correlation key:
 	//   - For Thinking: the segment id ("step-<n>-<role>") shared by every delta
 	//     of one reasoning/planning segment and its closing event.
@@ -369,6 +373,7 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 					Type:      StreamEventA2UI,
 					SurfaceID: surfaceID,
 					A2UI:      msgs,
+					Final:     true,
 				})
 			}
 			if plainText != "" {
