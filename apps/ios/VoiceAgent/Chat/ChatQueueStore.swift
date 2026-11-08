@@ -121,6 +121,9 @@ final class ChatQueueStore {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         items.append(QueuedMessage(id: Self.newID(), text: message))
+        if running {
+            armed = true
+        }
         persist()
     }
 

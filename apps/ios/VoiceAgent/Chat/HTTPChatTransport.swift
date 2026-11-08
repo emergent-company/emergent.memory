@@ -32,6 +32,11 @@ final class HTTPChatTransport {
     /// persist it in ``ActiveSessionStore``.
     var onConversationLearned: ((String) -> Void)?
 
+    /// Called when a turn ends on its own, so the composer releases the queue
+    /// parked behind it. Not called for a turn that was aborted (`stop()`,
+    /// `reset()`): its rows wait for the next explicit action.
+    var onTurnFinished: (() -> Void)?
+
     /// The turn whose reply was cut off mid-stream, set only once text is on
     /// screen. The run continues server-side and is recorded when it ends, so
     /// the view waits for that record and swaps it in
@@ -54,8 +59,9 @@ final class HTTPChatTransport {
     /// The turn in flight; ``stop()`` in its own file cancels it. Written only
     /// here (a finished task is replaced by the next ``send``).
     private(set) var turnTask: Task<Void, Never>?
-    /// Live transcript fed to the view (user turn + streamed reply).
-    private var liveMessages: [LiveTranscriptMessage] = []
+    /// Live transcript fed to the view (user turn + streamed reply). Mutated only
+    /// by this file and `HTTPChatTransport+LiveCopy.swift`.
+    var liveMessages: [LiveTranscriptMessage] = []
     private var fallbackToolCounter = 0
     /// Resolved agent definition id for the selected agent name (cached).
     private var agentDefinitionID: String?
@@ -152,48 +158,6 @@ final class HTTPChatTransport {
         liveRunID = nil
     }
 
-    /// Reloads the live transcript into the view (used after the view resets).
-    func refreshLiveTranscript(_ transcript: ChatSessionTranscriptStore) {
-        transcript.syncLive(liveMessages)
-    }
-
-    /// Trades the truncated live copy for the finished reply the record now
-    /// holds: the record renders on its own, so keeping the partial would stack
-    /// a shorter duplicate underneath it. The banner goes with it — the drop is
-    /// no longer the last word on the turn — but only if that banner is still
-    /// this drop's: the slot is shared, and a later turn may have failed in the
-    /// meantime (`emergent.memory#213`).
-    func discardInterruptedLiveCopy(in transcript: ChatSessionTranscriptStore) {
-        guard let interrupted = interruptedTurn else { return }
-        liveMessages.removeAll { $0.id == interrupted.liveMessageID }
-        transcript.syncLive(liveMessages)
-        interruptedTurn = nil
-        if errorMessage == interrupted.failureMessage {
-            errorMessage = nil
-        }
-    }
-
-    /// Clears the unanswered turn once its recorded reply is on screen, and the
-    /// banner with it if that banner is still this turn's.
-    ///
-    /// Nothing of the turn ever streamed, so the record now supplies both
-    /// halves: the live user copy would duplicate the recorded one, and the
-    /// empty live turn has nothing left to draw beneath the reply
-    /// (`emergent.memory#445`).
-    func settleUnansweredTurn(
-        in transcript: ChatSessionTranscriptStore,
-        activity: ChatActivityStore
-    ) {
-        guard let unanswered = unansweredTurn else { return }
-        unansweredTurn = nil
-        liveMessages.removeAll { $0.id == unanswered.anchorMessageID }
-        transcript.syncLive(liveMessages)
-        activity.discardTurn(anchoredTo: unanswered.anchorMessageID)
-        if errorMessage == unanswered.failureMessage {
-            errorMessage = nil
-        }
-    }
-
     // MARK: - Streaming
 
     private func runTurn(
@@ -208,10 +172,10 @@ final class HTTPChatTransport {
         var failure: Error?
         // The turn owns the run id only while it streams: once it ends (by
         // `done`, failure, or a stop) a later turn must not inherit it.
-        defer {
-            isStreaming = false
-            liveRunID = nil
-        }
+        // `ended` is set only where a turn really ends, so an aborted turn never
+        // releases the queue parked behind it.
+        var ended = false
+        defer { settleTurn(ended: ended) }
 
         do {
             let agentID = await resolveAgentDefinitionID(name: plan.agentName)
@@ -261,6 +225,19 @@ final class HTTPChatTransport {
         }
         guard !Task.isCancelled else { return }
         finishTurn(state: state, failure: failure, activity: activity)
+        ended = true
+    }
+
+    /// Clears the turn's streaming state, then tells the queue a turn ended.
+    ///
+    /// The flags clear first: a pump that starts the next turn must see an idle
+    /// transport, and an aborted turn (`ended == false`) must not release the
+    /// rows parked behind it.
+    private func settleTurn(ended: Bool) {
+        isStreaming = false
+        liveRunID = nil
+        guard ended else { return }
+        onTurnFinished?()
     }
 
     /// Ends a turn whatever the stream did.
