@@ -125,12 +125,29 @@ func (r *Repository) FindAll(ctx context.Context, projectID *string, orgID *stri
 //     (project_id IS NULL AND org_id IS NULL)
 //  2. De-duplicate by name: first occurrence wins when ordered project → org → global.
 //
+// Archived skills are excluded: agents never load or retrieve them. Use
+// FindForProjectListing for a management view that can include them.
+//
 // If orgID is empty, org-scoped skills are not included.
 func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID string) ([]*Skill, error) {
+	return r.findMergedForProject(ctx, projectID, orgID, false)
+}
+
+// FindForProjectListing returns the same merged, de-duplicated set as
+// FindForAgent, optionally including archived skills. It exists for the skills
+// management UI: archived skills must stay visible and restorable there, while
+// FindForAgent/FindRelevant keep excluding them from agent retrieval.
+func (r *Repository) FindForProjectListing(ctx context.Context, projectID string, orgID string, includeArchived bool) ([]*Skill, error) {
+	return r.findMergedForProject(ctx, projectID, orgID, includeArchived)
+}
+
+func (r *Repository) findMergedForProject(ctx context.Context, projectID string, orgID string, includeArchived bool) ([]*Skill, error) {
 	var all []*Skill
 
-	q := r.db.NewSelect().Model(&all).
-		Where("COALESCE(s.metadata->>'lifecycle_state', '') <> ?", SkillLifecycleArchived)
+	q := r.db.NewSelect().Model(&all)
+	if !includeArchived {
+		q = q.Where("COALESCE(s.metadata->>'lifecycle_state', '') <> ?", SkillLifecycleArchived)
+	}
 	if orgID != "" {
 		q = q.Where(
 			"s.project_id = ? OR (s.org_id = ? AND s.project_id IS NULL) OR (s.project_id IS NULL AND s.org_id IS NULL)",
@@ -421,6 +438,41 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, dto *UpdateSkillD
 		return nil, r.wrapDBError("failed to update skill", err)
 	}
 	return existing, nil
+}
+
+// RestoreSkill returns a skill to the active lifecycle state without replacing
+// its metadata: only metadata.lifecycle_state changes (and metadata.pinned when
+// pin is set). This is the explicit un-archive path for skills the curator aged;
+// callers do not have to send whole metadata back. A human restore is activity,
+// so updated_at moves and the curator's age clock restarts. Pinning is the
+// durable form: the curator skips pinned skills entirely.
+func (r *Repository) RestoreSkill(ctx context.Context, id uuid.UUID, pin bool) (*Skill, error) {
+	query := `
+		UPDATE kb.skills
+		   SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{lifecycle_state}', to_jsonb(?::text), true),
+		       updated_at = now()
+		 WHERE id = ?`
+	if pin {
+		query = `
+		UPDATE kb.skills
+		   SET metadata = jsonb_set(
+		           jsonb_set(COALESCE(metadata, '{}'::jsonb), '{lifecycle_state}', to_jsonb(?::text), true),
+		           '{pinned}', 'true'::jsonb, true),
+		       updated_at = now()
+		 WHERE id = ?`
+	}
+	res, err := r.db.NewRaw(query, SkillLifecycleActive, id).Exec(ctx)
+	if err != nil {
+		return nil, r.wrapDBError("failed to restore skill", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, apperror.NewInternal("failed to read skill restore result", err)
+	}
+	if n == 0 {
+		return nil, apperror.NewNotFound("skill", id.String())
+	}
+	return r.FindByID(ctx, id)
 }
 
 // Delete removes a skill by ID. Returns NotFound if the skill does not exist.

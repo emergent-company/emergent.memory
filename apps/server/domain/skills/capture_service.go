@@ -641,7 +641,7 @@ func (s *CaptureService) stageCandidate(ctx context.Context, review *SkillReview
 
 	if s.proposals != nil && s.autoApplyAllowed(ctx, review, *cfg, p, target, norm) {
 		if _, err := s.proposals.Apply(ctx, p, nil, true); err != nil {
-			s.log.Warn("skill capture: auto-apply failed, leaving pending",
+			s.log.Warn("skill capture: auto-apply failed; proposal marked failed",
 				slog.String("name", p.Name), logger.Error(err))
 		}
 		return true

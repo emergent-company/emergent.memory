@@ -28,6 +28,7 @@ struct ChatSessionView: View {
     @EnvironmentObject var controller: MemorySessionController
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var localMedia: LocalMediaModel
+    @EnvironmentObject var projectStore: MemoryProjectStore
     @Environment(ChatActivityStore.self) var activity
     @Environment(\.voiceEnabled) private var voiceEnabled
     @Environment(\.dismiss) private var dismiss
@@ -35,10 +36,16 @@ struct ChatSessionView: View {
     @State var transcript = ChatSessionTranscriptStore()
     /// Text turns: the HTTP transport the web chat uses (no LiveKit at all).
     @State var transport = HTTPChatTransport()
+    /// Messages staged while a turn is running, released when it ends.
+    @State var queue = ChatQueueStore()
+    /// The turn-end hook's target. The transport holds the hook, and the hook
+    /// only holds this pump weakly, so the view's state is what keeps it alive
+    /// after `start()` returns — a local there would be released immediately.
+    @State var queuePump: ChatQueuePump?
     /// Recorded-history fetches for this chat. It owns "already loaded" so a
     /// cancelled request cannot mark a conversation as loaded and leave its
     /// failure banner with no retry.
-    @State private var history = ChatSessionHistoryLoader()
+    @State var history = ChatSessionHistoryLoader()
     @State private var messageText = ""
     @FocusState private var keyboardFocus: Bool
 
@@ -269,16 +276,25 @@ extension ChatSessionView {
                         .padding(.horizontal, 4 * .grid)
                         .padding(.bottom, 1 * .grid)
                 }
+                if !queue.items.isEmpty {
+                    ChatQueueRowsView(
+                        items: queue.items,
+                        isRunning: transport.isStreaming,
+                        onEdit: editQueuedText,
+                        onSendNext: sendNextQueued,
+                        onRemove: removeQueued
+                    )
+                }
                 ChatInputView(
                     keyboardFocus: $keyboardFocus,
                     text: $messageText,
                     onSend: sendText,
+                    onEnqueue: enqueueText,
                     // A text turn can be cancelled: the stream's `meta` frame
-                    // gives the run id and the transport cancels it. The stop
-                    // stays up while the transport is streaming — the activity
-                    // store alone goes quiet 3s after the last token.
-                    allowsInterrupt: true,
-                    isRunning: transport.isStreaming,
+                    // gives the run id and the transport cancels it. While it
+                    // streams, Return and Send stage the next message in the
+                    // queue instead of dropping it; the stop button stays.
+                    mode: transport.isStreaming ? .running : .idle,
                     onStop: stopTextTurn
                 )
             }
@@ -289,30 +305,28 @@ extension ChatSessionView {
 
     // MARK: - Lifecycle
 
-    /// What the route asked for, versus what the active session already holds.
-    private enum RouteAdoption {
-        /// The controller is already listening on the route's conversation.
-        case unchanged
-        /// A new controller is being installed by the app root.
-        case rebuiltController
-        /// The same room configuration was restarted as a fresh conversation.
-        case restartInPlace
-    }
-
     /// Runs when the view appears (or its controller is replaced): adopt the
     /// route, fetch recorded history once, and connect only if the session is in
     /// voice mode. Text needs no connection.
     private func start() async {
         transport.onConversationLearned = { conversationID in
             activeSession.learnConversationID(conversationID)
+            queue.learnConversationID(conversationID)
         }
+        // A turn ending on its own releases the queue parked behind it. A stop
+        // does not: the user ended that turn on purpose.
+        attachQueuePump()
         switch adoptRoute() {
         case .unchanged:
+            scopeQueue()
             await loadHistoryIfNeeded()
+            maybeReleaseQueueOnReopen()
         case .restartInPlace:
             await endVoiceSession()
             resetTranscript()
+            scopeQueue()
             await loadHistoryIfNeeded()
+            maybeReleaseQueueOnReopen()
         case .rebuiltController:
             // Adopting the route changed `launchKey`, so the app root is
             // replacing the controller and this `.task` is about to be
@@ -325,51 +339,6 @@ extension ChatSessionView {
             await connectVoiceIfNeeded()
         }
         await applyCaptureForMode()
-    }
-
-    private func adoptRoute() -> RouteAdoption {
-        let sameAgent = activeSession.agentName == route.agentName
-        let sameLaunch = activeSession.launchConversationID == route.conversationID
-
-        guard let conversationID = route.conversationID else {
-            // This "new chat" may have created its conversation over HTTP and
-            // then been re-pointed at it so voice could join. The transport
-            // still holds that id, so adopt the installed controller instead of
-            // starting a second conversation.
-            if sameAgent, activeSession.launchConversationID != nil,
-               activeSession.launchConversationID == transport.conversationID
-            {
-                return .unchanged
-            }
-            if sameAgent, sameLaunch {
-                // Re-entering "new chat" after a live id was learned: the same
-                // launch key is still valid, so start a fresh conversation in
-                // place rather than rebuilding the controller.
-                guard activeSession.liveConversationID != nil else { return .unchanged }
-                activeSession.startNew(agentName: route.agentName, startsMuted: true)
-                return .restartInPlace
-            }
-            activeSession.startNew(agentName: route.agentName, startsMuted: true)
-            resetTranscript()
-            return .rebuiltController
-        }
-
-        if sameAgent, sameLaunch {
-            return .unchanged
-        }
-        activeSession.open(
-            agentName: route.agentName,
-            conversationID: conversationID,
-            startsMuted: true
-        )
-        resetTranscript()
-        return .rebuiltController
-    }
-
-    private func resetTranscript() {
-        transcript.reset()
-        transport.reset()
-        history.reset()
     }
 
     /// Loads the recorded transcript. A brand-new chat has no id until its

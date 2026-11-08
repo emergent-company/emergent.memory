@@ -187,3 +187,10 @@ type UpdateSkillDTO struct {
 	Content     *string        `json:"content,omitempty"`
 	Metadata    *SkillMetadata `json:"metadata,omitempty"`
 }
+
+// RestoreSkillDTO is the optional body for restoring an archived skill.
+// Pin additionally pins the skill, the durable form that stops the curator from
+// archiving it again.
+type RestoreSkillDTO struct {
+	Pin bool `json:"pin,omitempty"`
+}

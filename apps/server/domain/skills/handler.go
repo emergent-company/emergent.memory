@@ -1,8 +1,11 @@
 package skills
 
 import (
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -355,10 +358,11 @@ func (h *Handler) DeleteOrgSkill(c echo.Context) error {
 
 // ListProjectSkills handles GET /api/projects/:projectId/skills
 // @Summary      List project skills
-// @Description  List all skills available to agents in the project (global + org + project-scoped, merged)
+// @Description  List all skills available to agents in the project (global + org + project-scoped, merged). Archived skills are excluded by default; pass includeArchived=true for a management listing that includes them. Agents never retrieve or auto-load archived skills either way.
 // @Tags         skills
 // @Produce      json
-// @Param        projectId path string true "Project ID (UUID)"
+// @Param        projectId       path  string true  "Project ID (UUID)"
+// @Param        includeArchived query bool   false "Include archived skills (default false)"
 // @Success      200 {object} ListSkillsResponse
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
@@ -376,7 +380,17 @@ func (h *Handler) ListProjectSkills(c echo.Context) error {
 		return err
 	}
 
-	skills, err := h.repo.FindForAgent(c.Request().Context(), projectID, orgID)
+	includeArchived := false
+	if raw := c.QueryParam("includeArchived"); raw != "" {
+		includeArchived, err = strconv.ParseBool(raw)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("includeArchived must be a boolean")
+		}
+	}
+
+	// The listing variant only widens the lifecycle filter, never the project
+	// or org scope: archived rows from another project stay invisible.
+	skills, err := h.repo.FindForProjectListing(c.Request().Context(), projectID, orgID, includeArchived)
 	if err != nil {
 		return err
 	}
@@ -461,6 +475,43 @@ func (h *Handler) UpdateProjectSkill(c echo.Context) error {
 		return err
 	}
 	return h.UpdateSkill(c)
+}
+
+// RestoreProjectSkill handles POST /api/projects/:projectId/skills/:id/restore
+// @Summary      Restore an archived skill
+// @Description  Returns an archived (or stale) skill to the active lifecycle state without replacing its metadata. Optionally pins it, which stops the curator from archiving it again.
+// @Tags         skills
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string           true  "Project ID (UUID)"
+// @Param        id        path string           true  "Skill ID (UUID)"
+// @Param        body      body RestoreSkillDTO  false "Optional pin flag"
+// @Success      200 {object} SkillDTO
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      403 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/projects/{projectId}/skills/{id}/restore [post]
+// @Security     bearerAuth
+func (h *Handler) RestoreProjectSkill(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if _, err := h.requireProjectMember(c, projectID); err != nil {
+		return err
+	}
+	skill, err := h.requireProjectSkill(c, projectID)
+	if err != nil {
+		return err
+	}
+	var dto RestoreSkillDTO
+	if err := c.Bind(&dto); err != nil && !errors.Is(err, io.EOF) {
+		// An absent body is valid (defaults to pin=false); a malformed one is not.
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	restored, err := h.repo.RestoreSkill(c.Request().Context(), skill.ID, dto.Pin)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, restored.ToDTO())
 }
 
 // DeleteProjectSkill handles DELETE /api/projects/:projectId/skills/:id
