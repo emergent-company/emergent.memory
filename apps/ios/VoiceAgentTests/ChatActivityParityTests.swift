@@ -76,12 +76,14 @@ struct ChatActivityStoreTests {
             return
         }
         #expect(turn.thinkingBlocks[0].isLive == false)
+        #expect(turn.thinkingBlocks[0].isOpen == false)
 
         // The next reasoning segment is a new block, even without an id.
         store.apply(.thinking(id: nil, delta: "second"))
         #expect(store.liveTurn?.thinkingBlocks.count == 2)
         #expect(store.liveTurn?.thinkingBlocks[1].text == "second")
         #expect(store.liveTurn?.thinkingBlocks[1].isLive == true)
+        #expect(store.liveTurn?.thinkingBlocks[1].isOpen == true)
     }
 
     @MainActor

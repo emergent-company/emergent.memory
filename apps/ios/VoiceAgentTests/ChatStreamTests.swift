@@ -94,7 +94,8 @@ struct ChatStreamFrameDecoderTests {
         #expect(decode(ChatStreamFixtures.thinking) == .activity(.thinking(id: "t1", delta: "Checking the graph.")))
         // A segment-closing frame carries no new text, but it still has to
         // reach the store: it is what stops the live shimmer.
-        #expect(decode(ChatStreamFixtures.thinkingDone) != nil)
+        #expect(decode(ChatStreamFixtures.thinkingDone) == .activity(.thinkingDone(id: "t1")))
+        #expect(decode(#"{"type":"thinking","done":true}"#) == .activity(.thinkingDone(id: nil)))
     }
 
     @Test func thinkingFrameWithTextButNoDoneIsADelta() {

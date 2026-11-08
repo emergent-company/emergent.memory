@@ -13,6 +13,11 @@ enum ChatEvent: Equatable {
     /// accumulates deltas into the active block. `id` identifies a reasoning
     /// segment when the worker sends one; older workers omit it.
     case thinking(id: String?, delta: String)
+    /// The worker closed the current reasoning segment (`done: true`). It stops
+    /// the live shimmer but does not end the block: a later delta before an
+    /// activity boundary still appends to the same row. It is not an activity
+    /// boundary, so it leaves an open tool run alone.
+    case thinkingDone(id: String?)
     /// A live subagent run, surfaced as a composer-track pill.
     case subagent(ChatSubagentEvent)
     case approval(ChatApprovalEvent)
@@ -214,7 +219,11 @@ func decodeChatEvent(data: Data) -> ChatEvent? {
         return .toolResult(event)
     case "thinking":
         guard let event = try? decoder.decode(ChatThinkingEvent.self, from: data) else { return nil }
-        return .thinking(id: event.id, delta: event.delta)
+        if event.done == true {
+            return .thinkingDone(id: event.id)
+        }
+        guard let delta = event.delta, !delta.isEmpty else { return nil }
+        return .thinking(id: event.id, delta: delta)
     case "subagent":
         guard let event = try? decoder.decode(ChatSubagentEvent.self, from: data) else { return nil }
         return .subagent(event)
@@ -240,9 +249,27 @@ private struct ChatEventEnvelope: Decodable {
     let type: String
 }
 
+/// One `thinking` frame on the worker path. The worker's bridge sends the
+/// delta under `delta`; a raw memory event sends it under `text`. A
+/// segment-closing frame carries neither and sets `done`, which must still
+/// decode — that is what stops the shimmer.
 private struct ChatThinkingEvent: Decodable {
     let id: String?
-    let delta: String
+    let delta: String?
+    let done: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, delta, done, text
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        done = try container.decodeIfPresent(Bool.self, forKey: .done)
+        let deltaValue = try container.decodeIfPresent(String.self, forKey: .delta)
+        let textValue = try container.decodeIfPresent(String.self, forKey: .text)
+        delta = deltaValue ?? textValue
+    }
 }
 
 private struct ChatConversationEvent: Decodable {

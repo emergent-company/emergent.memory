@@ -127,8 +127,15 @@ enum ChatStreamFrameDecoder {
             // server-side HTML.
             return nil
         default:
-            guard let text = envelope.text, !text.isEmpty, envelope.done != true else {
-                // A segment-closing `done: true` carries no new text.
+            // A segment-closing frame (`done: true`) carries no new text, but it
+            // still has to reach the store: it is what stops the live shimmer.
+            // It is not a boundary — a later delta before an activity boundary
+            // appends to the same row and turns the shimmer back on.
+            if envelope.done == true {
+                return .activity(.thinkingDone(id: envelope.id?.nonEmpty))
+            }
+            guard let text = envelope.text, !text.isEmpty else {
+                // An empty frame that is not a close says nothing.
                 return nil
             }
             return .activity(.thinking(id: envelope.id?.nonEmpty, delta: text))

@@ -231,9 +231,12 @@ struct ChatEventDecodingTests {
     /// The worker's segment-closing frame (`done: true`, no text) must decode
     /// to an event instead of being dropped: it is what stops the shimmer.
     @Test func decodesThinkingDoneFrame() {
+        #expect(decodeChatEvent(#"{"type":"thinking","id":"r1","done":true}"#) == .thinkingDone(id: "r1"))
+        #expect(decodeChatEvent(#"{"type":"thinking","done":true}"#) == .thinkingDone(id: nil))
+        // A done frame that still carries a delta is a close, not a delta:
+        // the shimmer stops on it.
         #expect(
-            decodeChatEvent(#"{"type":"thinking","id":"r1","done":true}"#) != nil,
-            "a done thinking frame must decode to an event"
+            decodeChatEvent(#"{"type":"thinking","delta":"","done":true}"#) == .thinkingDone(id: nil)
         )
     }
 
