@@ -6118,6 +6118,17 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_mcpregistry.APIResponse-domain_mcpregistry_ImportMCPServersResultDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_mcpregistry.ImportMCPServersResultDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO:
     properties:
       data:
@@ -6239,6 +6250,69 @@ definitions:
     required:
     - name
     - type
+    type: object
+  domain_mcpregistry.ImportFailureDTO:
+    properties:
+      error:
+        type: string
+      name:
+        type: string
+    type: object
+  domain_mcpregistry.ImportMCPServersDTO:
+    properties:
+      config:
+        items:
+          type: integer
+        type: array
+      dryRun:
+        type: boolean
+      overwrite:
+        type: boolean
+      target:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerTarget'
+      targetInstanceId:
+        type: string
+    required:
+    - config
+    type: object
+  domain_mcpregistry.ImportMCPServersResultDTO:
+    properties:
+      created:
+        items:
+          type: string
+        type: array
+      dryRun:
+        type: boolean
+      failed:
+        items:
+          $ref: '#/definitions/domain_mcpregistry.ImportFailureDTO'
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/domain_mcpregistry.ImportSkipDTO'
+        type: array
+      updated:
+        items:
+          type: string
+        type: array
+      warnings:
+        items:
+          $ref: '#/definitions/domain_mcpregistry.ImportWarningDTO'
+        type: array
+    type: object
+  domain_mcpregistry.ImportSkipDTO:
+    properties:
+      name:
+        type: string
+      reason:
+        type: string
+    type: object
+  domain_mcpregistry.ImportWarningDTO:
+    properties:
+      message:
+        type: string
+      name:
+        type: string
     type: object
   domain_mcpregistry.MCPServerDTO:
     properties:
@@ -6462,10 +6536,12 @@ definitions:
     type: object
   domain_mcpregistry.MCPServerTarget:
     enum:
+    - auto
     - server
     - device
     type: string
     x-enum-varnames:
+    - importTargetAuto
     - TargetServer
     - TargetDevice
   domain_mcpregistry.MCPServerToolDTO:
@@ -13235,6 +13311,38 @@ paths:
       security:
       - bearerAuth: []
       summary: Call a tool on an MCP server
+      tags:
+      - mcp-registry
+  /api/admin/mcp-servers/import:
+    post:
+      consumes:
+      - application/json
+      description: Create or update MCP servers from a Claude-format mcpServers document
+      parameters:
+      - description: Claude config import
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcpregistry.ImportMCPServersDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_ImportMCPServersResultDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Import MCP servers from a Claude config
       tags:
       - mcp-registry
   /api/admin/orgs/{orgId}/tool-settings:
