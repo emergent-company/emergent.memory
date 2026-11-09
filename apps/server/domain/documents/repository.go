@@ -350,9 +350,11 @@ func (r *Repository) GetContentByID(ctx context.Context, projectID, documentID s
 // GetByContentHash retrieves a manual HEAD document by content hash (for
 // deduplication). The scope mirrors the partial unique index
 // idx_documents_project_content_hash_manual_head: only a live manual HEAD
-// participates in dedupe. Source-synced rows, superseded versions, and uploads
-// may legitimately share content bytes, so they must never be returned here as
-// a manual-create hit.
+// participates in dedupe. Source-synced rows, superseded versions, and file
+// uploads may legitimately share content bytes, so they must never be returned
+// here as a manual-create hit. File uploads are identified by file_hash, not by
+// source_type: kb.documents.source_type defaults to 'upload' for every row,
+// including manual text creates.
 func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHash string) (*Document, error) {
 	var doc Document
 	err := r.db.NewSelect().
@@ -361,7 +363,7 @@ func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHas
 		Where("content_hash = ?", contentHash).
 		Where("supersedes_id IS NULL").
 		Where("source_id IS NULL").
-		Where("source_type IS DISTINCT FROM ?", "upload").
+		Where("file_hash IS NULL").
 		Scan(ctx)
 
 	if err != nil {

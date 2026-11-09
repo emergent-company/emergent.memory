@@ -1154,7 +1154,7 @@ Table "kb"."documents" {
     (`(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id_lookup", note: '((source_type = \'email\'::text) AND ((metadata ->> \'messageId\'::text) IS NOT NULL))']
     (metadata) [name: "idx_documents_metadata", note: '((metadata IS NOT NULL) AND (metadata <> \'{}\'::jsonb))']
     (parent_document_id) [name: "idx_documents_parent_document_id"]
-    (project_id, content_hash) [name: "idx_documents_project_content_hash_manual_head", unique, note: '((content_hash IS NOT NULL) AND (supersedes_id IS NULL) AND (source_id IS NULL) AND (source_type IS DISTINCT FROM \'upload\'::text))']
+    (project_id, content_hash) [name: "idx_documents_project_content_hash_manual_head", unique, note: '((content_hash IS NOT NULL) AND (supersedes_id IS NULL) AND (source_id IS NULL) AND (file_hash IS NULL))']
     (project_id, created_at, id) [name: "idx_documents_project_created_id"]
     (project_id, source_id, source_status) [name: "idx_documents_project_source_status"]
     (project_id, updated_at, id) [name: "idx_documents_project_updated_id"]

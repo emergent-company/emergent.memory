@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
@@ -23,7 +24,7 @@ import (
 // depend on version-creation side effects such as retired-chunk deletion.
 func TestLexicalSearchExcludesSupersededDocumentVersions(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "searchdochead")

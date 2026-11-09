@@ -234,6 +234,38 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 	s.Greater(s.countChunks(r3.DocumentID), 0, "new HEAD must have fresh chunks")
 }
 
+// TestCreate_DeduplicatesManualDocument pins manual-create dedupe against the
+// default source_type. kb.documents.source_type defaults to 'upload' for every
+// row, including manual text creates, so the content-hash dedupe scope must
+// exclude file uploads by file_hash, not by source_type.
+func (s *DocumentSourceIngestionSuite) TestCreate_DeduplicatesManualDocument() {
+	svc, _ := s.newSeamService()
+	content := "manual document content that must deduplicate"
+
+	first, created, err := svc.Create(s.Ctx, documents.CreateParams{
+		ProjectID: s.ProjectID,
+		Filename:  testutil.StringPtr("original.txt"),
+		Content:   &content,
+	})
+	s.Require().NoError(err)
+	s.True(created)
+	s.Equal(sha256Hex(content), s.documentContentHash(first.ID))
+
+	second, createdAgain, err := svc.Create(s.Ctx, documents.CreateParams{
+		ProjectID: s.ProjectID,
+		Filename:  testutil.StringPtr("duplicate.txt"),
+		Content:   &content,
+	})
+	s.Require().NoError(err)
+	s.False(createdAgain, "identical manual content must deduplicate")
+	s.Equal(first.ID, second.ID)
+
+	var rows int
+	err = s.DB().NewRaw(`SELECT count(*) FROM kb.documents WHERE project_id = uuid(?) AND content_hash = ?`, s.ProjectID, sha256Hex(content)).Scan(s.Ctx, &rows)
+	s.Require().NoError(err)
+	s.Equal(1, rows, "dedupe must leave exactly one content_hash row")
+}
+
 func (s *DocumentSourceIngestionSuite) TestApplySourceItem_BypassesContentHashDedup() {
 	svc, _ := s.newSeamService()
 	srcA := s.insertSource("google_drive")

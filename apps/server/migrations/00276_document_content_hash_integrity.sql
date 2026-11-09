@@ -26,15 +26,18 @@ WHERE content IS NOT NULL
 
 -- Manual HEAD dedupe is preserved: at most one live manual document per project
 -- may own a given content hash. Source-synced documents, superseded version
--- rows, and uploads are excluded, because they may legitimately share content
--- bytes (token ingestion is explicitly not deduplicated, and history keeps
--- every version row).
+-- rows, and file uploads are excluded, because they may legitimately share
+-- content bytes (source ingestion is explicitly not deduplicated, and history
+-- keeps every version row). File uploads are identified by file_hash, NOT by
+-- source_type: kb.documents.source_type defaults to 'upload' for every row,
+-- including manual text creates, so a source_type predicate would disable
+-- manual dedupe entirely.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_project_content_hash_manual_head
     ON kb.documents (project_id, content_hash)
     WHERE content_hash IS NOT NULL
       AND supersedes_id IS NULL
       AND source_id IS NULL
-      AND source_type IS DISTINCT FROM 'upload';
+      AND file_hash IS NULL;
 
 -- One-shot GC for version rows retired before this migration. Retired versions
 -- stay in kb.documents for history, but they are intentionally no longer
