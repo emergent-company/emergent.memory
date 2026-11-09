@@ -503,6 +503,7 @@ type EntityTypesResult struct {
 // Entity represents a graph entity
 type Entity struct {
 	ID         string         `json:"id"`
+	Ref        string         `json:"ref"`
 	Key        string         `json:"key"`
 	Name       string         `json:"name"`
 	Type       string         `json:"type"`
@@ -573,6 +574,7 @@ type EdgeInfo struct {
 // ConnectedEntity represents basic info about an entity connected via an edge
 type ConnectedEntity struct {
 	ID         string         `json:"id"`
+	Ref        string         `json:"ref,omitempty"`
 	Type       string         `json:"type"`
 	Key        string         `json:"key,omitempty"`
 	Name       string         `json:"name,omitempty"`

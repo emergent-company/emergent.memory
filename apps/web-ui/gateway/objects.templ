@@ -539,9 +539,8 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 					}) {
 						<div class="flex flex-col gap-4">
 							<input type="hidden" name="type" value={ form.Type }/>
-							{{ keyRequired := objectTypeRequiresKey(objectTypes, form.Type) }}
-							@fm.FormControl("object-key", "Key", fm.LabelAbove, objectKeyHint(keyRequired), "", nil) {
-								<input id="object-key" name="key" type="text" value={ form.Key } required?={ keyRequired } class="input w-full"/>
+							@fm.FormControl("object-name", "Name", fm.LabelAbove, "Human-readable title. The object's reference and ID are assigned automatically.", "", nil) {
+								<input id="object-name" name="name" type="text" value={ form.Name } class="input w-full"/>
 							}
 							if status != nil && status.Show {
 								@fm.FormControl("object-status", "Workflow status", fm.LabelAbove, "", "", nil) {
@@ -982,8 +981,13 @@ templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType 
 // workflow status (suppressed on the Overview, whose Workflow panel carries the
 // editable control) and embedding state.
 templ objectDetailMeta(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, status *objectStatusControl, active string) {
-	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
+	{{ tui := typeUIOf(typeUIByType, obj.Type)
+	ref := obj.Ref
+	if ref == "" {
+		ref = "#" + objectShortID(obj.ID)
+	} }}
 	@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+	<span class="text-muted-strong font-mono text-xs" data-testid="object-ref">{ ref }</span>
 	@objectBranchChip(branch)
 	if obj.Status != "" && !(active == "overview" && !objectWorkControlDisabled(status)) {
 		@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
@@ -1076,17 +1080,17 @@ templ objectSourceRow(src objectSource) {
 }
 
 // objectBuiltinPropertiesCard renders the editable platform fields of the
-// detail page: the key and labels. Workflow status and assignee are edited in
+// detail page: the title and labels. Workflow status and assignee are edited in
 // the Workflow panel, and record facts have their own read-only panel, so
 // neither is repeated here. POST /objects/{id} delta-merges the submitted
-// fields.
+// fields. The display ref and UUID are not editable.
 templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string) {
 	@ui.Section("Properties", ui.SectionProps{
 		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4" data-testid="object-builtin-properties">
-			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
-				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
+			@fm.FormControl("object-name", "Name", fm.LabelAbove, "Human-readable title of this object.", "", nil) {
+				<input id="object-name" name="name" type="text" value={ obj.Name } class="input w-full"/>
 			}
 			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
 				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
@@ -1341,13 +1345,17 @@ templ relationshipEndpointContent(ep GraphObject, hrefID string, typeUIByType ma
 	typeLabel := ep.Type
 	if typeLabel == "" {
 		typeLabel = "object"
+	}
+	ref := ep.Ref
+	if ref == "" {
+		ref = "#" + objectShortID(hrefID)
 	} }}
 	@typeIconTileSmall(tui.Icon, tui.Color)
 	<div class="min-w-0">
 		<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
 			<span class="truncate">{ typeLabel }</span>
 			<span class="bg-base-content/25 size-1.5 shrink-0 rounded-full" aria-hidden="true"></span>
-			<span class="shrink-0">#{ objectShortID(hrefID) }</span>
+			<span class="shrink-0">{ ref }</span>
 		</div>
 		<span class="group-hover:text-primary block truncate text-sm font-medium group-hover:underline">{ graphObjectLabel(ep) }</span>
 	</div>

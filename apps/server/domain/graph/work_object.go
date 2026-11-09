@@ -411,6 +411,7 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	newProps := withStatusProperty(lockedHead.Properties, toStatus)
 	newVersion := &GraphObject{
 		Type:       lockedHead.Type,
+		Name:       lockedHead.Name,
 		Key:        lockedHead.Key,
 		Namespace:  lockedHead.Namespace,
 		Status:     &toStatus,

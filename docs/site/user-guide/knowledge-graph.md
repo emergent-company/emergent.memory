@@ -86,7 +86,10 @@ GET /api/type-registry/projects/{projectId}
 | `properties` | Key-value map of typed properties per the type schema |
 | `labels` | Free-form string tags for filtering and organization |
 | `status` | Optional status flag (e.g. `draft`, `approved`, `archived`) |
-| `key` | Optional human-readable unique key within the project |
+| `name` | Human-readable title shown in the UI and ranked first in search |
+| `ref` | Read-only display reference (`#` + last 12 hex of the canonical ID); never used for writes |
+| `canonical_id` / `entity_id` | Stable canonical UUID — the addressable handle for reads, writes, and relationships (`id` is the version id) |
+| `key` | Internal dedup/upsert identity; not a display label |
 
 ---
 

@@ -3977,7 +3977,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(go.properties->>'name', '') as name,
+				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
 				go.version,
 				`+fieldProjection+` as properties,
 				go.created_at,
@@ -4032,6 +4032,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	for i, e := range entities {
 		resultEntities[i] = Entity{
 			ID:         e.CanonicalID.String(),
+			Ref:        graph.ObjectRef(e.CanonicalID),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
@@ -4280,7 +4281,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(go.properties->>'name', '') as name,
+				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
 				go.version,
 				`+propsProjection+` as properties,
 				go.created_at,
@@ -4305,6 +4306,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		}
 		resultEntities = append(resultEntities, Entity{
 			ID:         e.CanonicalID.String(),
+			Ref:        graph.ObjectRef(e.CanonicalID),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
@@ -4645,7 +4647,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			SELECT 
 				go.canonical_id,
 				go.key,
-				COALESCE(go.properties->>'name', '') as name,
+				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
 				go.version,
 				go.properties,
 				go.type as type_name,
@@ -4744,6 +4746,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		}
 		resultEntities = append(resultEntities, Entity{
 			ID:         e.CanonicalID.String(),
+			Ref:        graph.ObjectRef(e.CanonicalID),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
@@ -4865,15 +4868,18 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 
 func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uuid.UUID) (*ConnectedEntity, error) {
 	type entityRow struct {
-		ID         uuid.UUID      `bun:"id"`
-		Type       string         `bun:"type"`
-		Key        string         `bun:"key"`
-		Properties map[string]any `bun:"properties,type:jsonb"`
+		ID          uuid.UUID      `bun:"id"`
+		CanonicalID uuid.UUID      `bun:"canonical_id"`
+		Type        string         `bun:"type"`
+		Key         string         `bun:"key"`
+		Name        string         `bun:"name"`
+		Properties  map[string]any `bun:"properties,type:jsonb"`
 	}
 
 	var entity entityRow
 	err := s.db.NewRaw(`
-		SELECT id, type, COALESCE(key, '') as key, properties
+		SELECT id, canonical_id, type, COALESCE(key, '') as key,
+		       COALESCE(NULLIF(name, ''), properties->>'name', '') as name, properties
 		FROM kb.graph_objects
 		WHERE id = ? AND project_id = ? AND deleted_at IS NULL
 	`, entityID, projectID).Scan(ctx, &entity)
@@ -4882,16 +4888,12 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 		return nil, err
 	}
 
-	name := ""
-	if n, ok := entity.Properties["name"].(string); ok {
-		name = n
-	}
-
 	return &ConnectedEntity{
 		ID:         entity.ID.String(),
+		Ref:        graph.ObjectRef(entity.CanonicalID),
 		Type:       entity.Type,
 		Key:        entity.Key,
-		Name:       name,
+		Name:       entity.Name,
 		Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectID, entity.Type, entity.Properties)),
 	}, nil
 }
@@ -6306,7 +6308,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	// silently dropped (issue #401).
 	type slimEntity struct {
 		ID                  string                     `json:"id"`
+		Ref                 string                     `json:"ref,omitempty"`
 		Type                string                     `json:"type"`
+		Name                string                     `json:"name,omitempty"`
 		Key                 string                     `json:"key,omitempty"`
 		Relationships       []inlineRelationship       `json:"relationships,omitempty"`
 		RelationshipResults []inlineRelationshipResult `json:"relationship_results,omitempty"`
@@ -6533,7 +6537,11 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 
 		slim := &slimEntity{
 			ID:   result.CanonicalID.String(),
+			Ref:  result.Ref,
 			Type: result.Type,
+		}
+		if result.Name != nil {
+			slim.Name = *result.Name
 		}
 		if result.Key != nil {
 			slim.Key = *result.Key

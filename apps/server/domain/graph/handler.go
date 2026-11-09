@@ -29,6 +29,23 @@ type HandlerConfig struct {
 	MaxBatchRelationships int
 }
 
+// displayRefPattern matches the display-only object ref (# + 12 hex). A ref is
+// never a valid write/lookup handle; callers must use the canonical UUID.
+var displayRefPattern = regexp.MustCompile(`^#?[0-9a-fA-F]{12}$`)
+
+// parsePathID parses a UUID path parameter and turns a display ref into a clear
+// rejection instead of a generic parse error.
+func parsePathID(raw string) (uuid.UUID, error) {
+	if displayRefPattern.MatchString(raw) {
+		return uuid.Nil, apperror.ErrBadRequest.WithMessage("refs are display-only; use the object's id (canonical UUID)")
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, apperror.ErrBadRequest.WithMessage("invalid id")
+	}
+	return id, nil
+}
+
 // bulkUpsertMaxItems caps the number of items accepted by the bulk-upsert
 // endpoints. It is independent of HandlerConfig.MaxBatchObjects/MaxBatchRelationships.
 const bulkUpsertMaxItems = 100
@@ -589,9 +606,9 @@ func (h *Handler) GetObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	// Parse resolveHead option — defaults to true for user-friendly behavior.
@@ -752,9 +769,9 @@ func (h *Handler) MoveObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	var req MoveObjectRequest
@@ -793,9 +810,9 @@ func (h *Handler) PatchObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	var req PatchGraphObjectRequest
@@ -833,9 +850,9 @@ func (h *Handler) DeleteObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	// Parse optional branch_id query param
@@ -883,9 +900,9 @@ func (h *Handler) RestoreObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	actorID, _ := getUserID(c)
@@ -917,9 +934,9 @@ func (h *Handler) GetObjectHistory(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	result, err := h.svc.GetHistory(c.Request().Context(), projectID, id)
@@ -952,9 +969,9 @@ func (h *Handler) GetObjectEdges(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	params := GetEdgesParams{}
@@ -1183,9 +1200,9 @@ func (h *Handler) GetRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+		return err
 	}
 
 	result, err := h.svc.GetRelationship(c.Request().Context(), projectID, id)
@@ -1319,9 +1336,9 @@ func (h *Handler) PatchRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+		return err
 	}
 
 	var req PatchGraphRelationshipRequest
@@ -1359,9 +1376,9 @@ func (h *Handler) DeleteRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+		return err
 	}
 
 	var branchID *uuid.UUID
@@ -1408,9 +1425,9 @@ func (h *Handler) RestoreRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+		return err
 	}
 
 	actorID, _ := getUserID(c)
@@ -1442,9 +1459,9 @@ func (h *Handler) GetRelationshipHistory(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+		return err
 	}
 
 	result, err := h.svc.GetRelationshipHistory(c.Request().Context(), projectID, id)
@@ -1798,9 +1815,9 @@ func (h *Handler) GetSimilarObjects(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	objectID, err := uuid.Parse(c.Param("id"))
+	objectID, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid object id")
+		return err
 	}
 
 	// Parse query parameters
@@ -2606,9 +2623,9 @@ func (h *Handler) GetObjectContributions(c echo.Context) error {
 		return apperror.NewBadRequest("invalid project_id")
 	}
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return apperror.NewBadRequest("invalid object id")
+		return err
 	}
 
 	resolveHead := c.QueryParam("resolveHead")

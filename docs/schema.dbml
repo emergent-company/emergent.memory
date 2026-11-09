@@ -1391,6 +1391,7 @@ Table "kb"."graph_objects" {
   "data_class" text [not null, default: 'synthesized']
   "owner_source_id" uuid
   "input_hash" text
+  "name" text
 
   Indexes {
     (type) [name: "IDX_b8c7752534a444c2f16ebf3d91"]
@@ -1417,6 +1418,7 @@ Table "kb"."graph_objects" {
     (project_id, type, created_at, id) [name: "idx_graph_objects_project_type_created_id"]
     (project_id, type, key) [name: "idx_graph_objects_project_type_key_c", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
     (project_id, type, `"left"(properties ->> 'name'::text, 256)`, key) [name: "idx_graph_objects_project_type_name", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
+    (project_id, type, `lower(name)`) [name: "idx_graph_objects_project_type_name_lower"]
     (project_id, type, properties) [name: "idx_graph_objects_project_type_props_gin", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
     (schema_version) [name: "idx_graph_objects_schema_version"]
     (project_id, last_accessed_at, id) [name: "idx_graph_objects_unused_main", note: '((supersedes_id IS NULL) AND (deleted_at IS NULL))']

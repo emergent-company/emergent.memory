@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -214,8 +215,14 @@ func (s *Server) collectExtractionRelationships(ctx context.Context, branchID st
 // common to all types: its key, else the type + short id. It deliberately does
 // NOT fall back to type-specific properties (name/title/summary/content), which
 // can be arbitrarily long and are not present on every object type.
+var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$`)
+
 func graphObjectLabel(o GraphObject) string {
-	if o.Key != "" {
+	if o.Name != "" {
+		return o.Name
+	}
+	// Machine keys (the old generated "<type>-<12 hex>") are never titles.
+	if o.Key != "" && !machineObjectKey.MatchString(o.Key) {
 		return o.Key
 	}
 	if o.Type != "" {

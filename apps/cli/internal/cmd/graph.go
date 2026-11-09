@@ -663,6 +663,12 @@ Examples:
 		fmt.Fprintf(out, "Entity ID:   %s\n", obj.EntityID)
 		fmt.Fprintf(out, "Version ID:  %s\n", obj.VersionID)
 		fmt.Fprintf(out, "Type:        %s\n", obj.Type)
+		if obj.Ref != "" {
+			fmt.Fprintf(out, "Ref:         %s\n", obj.Ref)
+		}
+		if obj.Name != nil && *obj.Name != "" {
+			fmt.Fprintf(out, "Name:        %s\n", *obj.Name)
+		}
 		fmt.Fprintf(out, "Version:     %d\n", obj.Version)
 		if key != "" {
 			fmt.Fprintf(out, "Key:         %s\n", key)
@@ -1140,18 +1146,18 @@ Examples:
 		}
 
 		table := internalui.NewTable(internalui.TableConfig{Compact: true})
-		table.SetHeaders([]string{"Score", "Type", "Entity ID", "Status", "Key"})
+		table.SetHeaders([]string{"Score", "Type", "Entity ID", "Status", "Ref", "Name"})
 		for _, r := range results {
 			score := fmt.Sprintf("%.4f", 1-r.Distance)
-			key := ""
-			if r.Key != nil {
-				key = *r.Key
+			name := ""
+			if r.Name != nil {
+				name = *r.Name
 			}
 			canonicalID := r.ID
 			if r.CanonicalID != nil {
 				canonicalID = *r.CanonicalID
 			}
-			table.AddRow([]string{score, r.Type, canonicalID, r.Status, key})
+			table.AddRow([]string{score, r.Type, canonicalID, r.Status, r.Ref, name})
 		}
 		fmt.Fprint(out, table.Render())
 		return nil

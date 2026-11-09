@@ -814,7 +814,7 @@ func TestNormalizeObjectsSearchMode(t *testing.T) {
 
 func TestRenderObjectDetailPage(t *testing.T) {
 	obj := &GraphObject{
-		ID: "o1", Type: "person", Key: "sam-lee", Status: "suggested",
+		ID: "o1", Type: "person", Name: "sam-lee", Key: "sam-lee", Status: "suggested",
 		Properties: map[string]any{"first_name": "Sam", "relationship": "colleague"},
 	}
 	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0))
@@ -963,7 +963,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 
 func TestRenderObjectDetailEditable(t *testing.T) {
 	obj := &GraphObject{
-		ID: "o1", Type: "person", Key: "sam-lee", Status: "suggested",
+		ID: "o1", Type: "person", Name: "sam-lee", Key: "sam-lee", Status: "suggested",
 		Labels: []string{"contact", "colleague"},
 		Properties: map[string]any{
 			"first_name": "Sam",
@@ -979,7 +979,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// The Overview Workflow panel carries labelled status/assignee controls;
 	// the properties form carries the key, labels, and schema fields.
 	for _, want := range []string{
-		`name="key"`, `value="sam-lee"`,
+		`name="name"`, `value="sam-lee"`,
 		`data-testid="object-workflow-panel"`,
 		`data-testid="object-status-control"`, `data-status="suggested"`,
 		`data-testid="object-assignee-control"`,
@@ -1064,7 +1064,7 @@ func TestRenderObjectDetailTwoPropertyCards(t *testing.T) {
 	}
 	// Card 1: the editable platform fields only.
 	for _, want := range []string{
-		`id="object-key"`, `id="object-labels"`,
+		`id="object-name"`, `id="object-labels"`,
 	} {
 		if !strings.Contains(builtin, want) {
 			t.Errorf("built-in card missing %q:\n%s", want, builtin)
@@ -1194,7 +1194,9 @@ func TestGraphObjectLabel(t *testing.T) {
 		obj  GraphObject
 		want string
 	}{
-		{"key wins", GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, "sam-lee"},
+		{"name wins", GraphObject{ID: "o1", Type: "person", Name: "Sam Lee", Key: "sam-lee"}, "Sam Lee"},
+		{"human key fallback", GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, "sam-lee"},
+		{"machine key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "task-9f1c0a2e3b4d"}, "task abcdef1234"},
 		{"type+short id fallback", GraphObject{ID: "abcdef123456", Type: "task"}, "task abcdef1234"},
 		{"short id only", GraphObject{ID: "o1"}, "o1"},
 		// Type-specific properties must never become the label.
@@ -2803,7 +2805,7 @@ func TestUIObjectCreate(t *testing.T) {
 
 		form := url.Values{}
 		form.Set("type", "person")
-		form.Set("key", "sam-lee")
+		form.Set("name", "sam-lee")
 		form.Set("status", "confirmed")
 		form.Add("labels[0]", "a")
 		form.Add("labels[1]", "b")
@@ -2825,8 +2827,8 @@ func TestUIObjectCreate(t *testing.T) {
 		if got.Type != "person" {
 			t.Errorf("type = %q, want person", got.Type)
 		}
-		if got.Key == nil || *got.Key != "sam-lee" {
-			t.Errorf("key = %v, want sam-lee", got.Key)
+		if got.Name == nil || *got.Name != "sam-lee" {
+			t.Errorf("name = %v, want sam-lee", got.Name)
 		}
 		if got.Status == nil || *got.Status != "confirmed" {
 			t.Errorf("status = %v, want confirmed", got.Status)
@@ -3075,7 +3077,7 @@ func TestUIObjectCreate(t *testing.T) {
 			t.Fatalf("status=%d location=%q, want 303 /objects/o-min", rec.Code, rec.Header().Get("Location"))
 		}
 		got := f.lastCreateObjectReq
-		if got.Type != "person" || got.Key != nil || got.Status != nil || len(got.Labels) != 0 || len(got.Properties) != 0 {
+		if got.Type != "person" || got.Name != nil || got.Key != nil || got.Status != nil || len(got.Labels) != 0 || len(got.Properties) != 0 {
 			t.Errorf("req = %+v, want only type set", got)
 		}
 	})
@@ -3087,7 +3089,7 @@ func TestUIObjectCreate(t *testing.T) {
 
 		form := url.Values{}
 		form.Set("type", "person")
-		form.Set("key", "sam-lee")
+		form.Set("name", "sam-lee")
 		form.Set("status", "confirmed")
 		form.Add("labels[0]", "vip")
 		form.Set("prop_first_name", "Sam")
@@ -3209,11 +3211,11 @@ func TestRenderObjectCreatePage(t *testing.T) {
 	}
 
 	t.Run("renders the type selector and TagList labels input", func(t *testing.T) {
-		form := objectCreateForm{Type: "person", Key: "k", Status: "s", Labels: []string{"vip"}, Props: map[string][]string{"first_name": {"Sam"}}}
+		form := objectCreateForm{Type: "person", Name: "k", Status: "s", Labels: []string{"vip"}, Props: map[string][]string{"first_name": {"Sam"}}}
 		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, []string{"vip", "urgent"}, nil, objectStatusControlFor(objectTypes, "person")))
 		for _, want := range []string{
 			"New object", `name="type"`, "Pick a type…", "Person", "task",
-			`name="key"`, `value="k"`, "Create object", `action="/objects"`,
+			`name="name"`, `value="k"`, "Create object", `action="/objects"`,
 			// labels are a chip TagList, not a comma-separated text input
 			"Labels/Tags", "Comma-separated labels.",
 			`id="object-labels"`, `placeholder="Add a label..."`,
@@ -3389,27 +3391,20 @@ func TestObjectStatusControl(t *testing.T) {
 	}
 }
 
-// TestObjectCreateKeyRequiredForBoardEnabledType pins the #238 fix: a
-// board-enabled type (Task) marks the Key field required with an explanatory
-// hint, while a non-board type leaves it optional.
-func TestObjectCreateKeyRequiredForBoardEnabledType(t *testing.T) {
+// TestObjectCreateUsesNameField pins the display-ref change: the create form
+// asks for a title, never a key. Board-enabled keys are minted server-side.
+func TestObjectCreateUsesNameField(t *testing.T) {
 	board := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "done"}}}
 
 	html := renderHTML(t, ObjectCreatePage(board, nil, objectCreateForm{Type: "Task"}, nil, nil, objectStatusControlFor(board, "Task")))
-	if !strings.Contains(html, `id="object-key"`) {
-		t.Fatal("create page missing the Key field")
+	if !strings.Contains(html, `id="object-name"`) {
+		t.Fatal("create page missing the Name field")
 	}
-	if !strings.Contains(html, `required class="input w-full"`) {
-		t.Errorf("board-enabled type must mark Key required:\n%s", html)
+	if strings.Contains(html, `id="object-key"`) {
+		t.Fatal("create page must not expose the internal key field")
 	}
-	if !strings.Contains(html, "board-enabled") {
-		t.Errorf("board-enabled type must explain that the key is required:\n%s", html)
-	}
-
-	note := []CompiledType{{Name: "Note"}}
-	html = renderHTML(t, ObjectCreatePage(note, nil, objectCreateForm{Type: "Note"}, nil, nil, objectStatusControlFor(note, "Note")))
-	if strings.Contains(html, "required") {
-		t.Errorf("non-board type must not mark Key required:\n%s", html)
+	if strings.Contains(html, `name="key"`) {
+		t.Fatal("create form must not submit a key")
 	}
 }
 
