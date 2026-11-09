@@ -196,12 +196,12 @@ Only the types above are interpreted: `type` drives coercion and validation for
 array's `items.type` is interpreted as well: every element is coerced to that
 type, and an element of the wrong type is rejected with its index
 (`authors: element 2: expected string, got float64`). A nested array's own
-`items` recurses the same way; an `items` schema with no `type` constrains
-nothing. `required` is interpreted per property, `default` is applied when an
-object is created, and `enum` is enforced on writes and drives the editor's
-select. The remaining JSON-Schema keywords (`pattern`, `minLength`,
-`maxLength`, `minItems`, `maxItems`) are carried through for documentation and
-tooling but are **not** enforced when an object is written.
+`items` recurses the same way; an `items` schema with no `type` **and no
+`enum`** constrains nothing. `required` is interpreted per property, `default`
+is applied when an object is created, and `enum` is enforced on writes and
+drives the editor's select. The remaining JSON-Schema keywords (`pattern`,
+`minLength`, `maxLength`, `minItems`, `maxItems`) are carried through for
+documentation and tooling but are **not** enforced when an object is written.
 
 `enum` is enforced on primitive property types: `string` (including the
 semantic and hex-digest spellings) and `number`/`integer`/`boolean`, on object

@@ -371,10 +371,14 @@ func validatePropertyEnums(owner string, rawProperties json.RawMessage) []string
 		if err := json.Unmarshal(props[name], &def); err != nil {
 			continue
 		}
-		if enumTypeSupported(def.Type) {
-			errs = append(errs, validateEnumDeclaration(
-				fmt.Sprintf("%s property %q.enum", owner, name), def.Type, def.Enum)...)
-		}
+		// Shape-check any declared enum, even when the property has no type
+		// (or an unsupported one). validateEnumDeclaration runs the list/type
+		// checks only for supported primitives, but the enum must parse as a
+		// non-empty list either way: write-time enforcement constrains a
+		// typeless property's value, so a malformed declaration would be
+		// installed and then silently ignored or misread.
+		errs = append(errs, validateEnumDeclaration(
+			fmt.Sprintf("%s property %q.enum", owner, name), def.Type, def.Enum)...)
 		if len(def.Items) > 0 && def.Items[0] == '{' {
 			var items struct {
 				Type string          `json:"type"`
