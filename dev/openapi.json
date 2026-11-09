@@ -1031,6 +1031,57 @@
                 }
             }
         },
+        "/api/admin/mcp-servers/import": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Create or update MCP servers from a Claude-format mcpServers document",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "Import MCP servers from a Claude config",
+                "parameters": [
+                    {
+                        "description": "Claude config import",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.ImportMCPServersDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_ImportMCPServersResultDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/mcp-servers/{id}": {
             "get": {
                 "security": [
@@ -37057,6 +37108,23 @@
                 }
             }
         },
+        "domain_mcpregistry.APIResponse-domain_mcpregistry_ImportMCPServersResultDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_mcpregistry.ImportMCPServersResultDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO": {
             "type": "object",
             "properties": {
@@ -37227,6 +37295,103 @@
                     ]
                 },
                 "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.ImportFailureDTO": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.ImportMCPServersDTO": {
+            "type": "object",
+            "required": [
+                "config"
+            ],
+            "properties": {
+                "config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "dryRun": {
+                    "type": "boolean"
+                },
+                "overwrite": {
+                    "type": "boolean"
+                },
+                "target": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerTarget"
+                },
+                "targetInstanceId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.ImportMCPServersResultDTO": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dryRun": {
+                    "type": "boolean"
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcpregistry.ImportFailureDTO"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcpregistry.ImportSkipDTO"
+                    }
+                },
+                "updated": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcpregistry.ImportWarningDTO"
+                    }
+                }
+            }
+        },
+        "domain_mcpregistry.ImportSkipDTO": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.ImportWarningDTO": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }
@@ -37529,10 +37694,12 @@
         "domain_mcpregistry.MCPServerTarget": {
             "type": "string",
             "enum": [
+                "auto",
                 "server",
                 "device"
             ],
             "x-enum-varnames": [
+                "importTargetAuto",
                 "TargetServer",
                 "TargetDevice"
             ]

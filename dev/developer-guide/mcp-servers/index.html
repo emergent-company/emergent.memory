@@ -875,6 +875,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#import-a-claude-mcp-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import a Claude MCP config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#inspect-a-server-preview-tools-without-saving" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3554,6 +3565,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#import-a-claude-mcp-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import a Claude MCP config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#inspect-a-server-preview-tools-without-saving" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4115,58 +4137,119 @@ projects.</p>
 <a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="s1">    "enabled": true</span>
 <a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="s1">  }'</span>
 </code></pre></div>
+<h3 id="import-a-claude-mcp-config">Import a Claude MCP config<a class="headerlink" href="#import-a-claude-mcp-config" title="Permanent link">&para;</a></h3>
+<p>Memory can import the <code>mcpServers</code> format used by Claude Desktop
+(<code>claude_desktop_config.json</code>), Claude Code (<code>.mcp.json</code> / <code>~/.claude.json</code>), and
+<code>claude mcp add-json</code>. Each valid entry is created; malformed entries and name
+conflicts are reported without aborting the rest.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># From a file</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>memory<span class="w"> </span>agents<span class="w"> </span>mcp-servers<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>~/.claude.json<span class="w"> </span>--device<span class="w"> </span>laptop-connector
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># From stdin</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>cat<span class="w"> </span>claude_desktop_config.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>memory<span class="w"> </span>agents<span class="w"> </span>mcp-servers<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>-
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># Preview the plan without writing</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>memory<span class="w"> </span>agents<span class="w"> </span>mcp-servers<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>./.mcp.json<span class="w"> </span>--device<span class="w"> </span>laptop-connector<span class="w"> </span>--dry-run
+</code></pre></div>
+<p>Delivery is chosen per entry by default (<code>--target auto</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Lands as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>http</code> / <code>sse</code> (remote)</td>
+<td>a server-target registry row, connected outbound by the Memory host</td>
+</tr>
+<tr>
+<td><code>stdio</code> (local command)</td>
+<td>a device-target registry row, pushed to the connector named by <code>--device</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>--target server</code> forces every entry onto the Memory host; <code>--target device</code>
+forces every entry onto the connector. A stdio entry without a device is a
+broadcast, which only project admins may create. Existing names are skipped
+unless <code>--overwrite</code> is passed. <code>${VAR}</code> placeholders in env/headers values are
+stored literally — Memory does not expand them.</p>
+<p>The same import is available in the web UI (<strong>Settings → MCP Servers → Add
+server → Import from Claude</strong>) and over the REST API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/import<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="s1">    "config": {"mcpServers": {"github": {"command": "npx", "args": ["-y", "pkg"]}}},</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="s1">    "target": "auto",</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="s1">    "targetInstanceId": "laptop-connector",</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="s1">    "overwrite": false,</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="s1">    "dryRun": false</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="s1">  }'</span>
+</code></pre></div>
+<p>The response lists <code>created</code>, <code>updated</code>, <code>skipped</code>, and <code>failed</code> entries.</p>
+<p>Local stdio entries are better imported by the <strong>connector</strong> itself, which runs
+them on the machine that owns the command. In the macOS connector app open
+<strong>Hosted MCP Servers → Import from Claude…</strong>, or on a Linux connector run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>memory-connector<span class="w"> </span>mcp<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>~/.claude.json<span class="w"> </span>--dry-run
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>memory-connector<span class="w"> </span>mcp<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>~/.claude.json<span class="w"> </span>--overwrite
+</code></pre></div>
+<p>The connector import refuses while the connector is running (it would race the
+config file); use the app or its loopback management API for a live connector.
+An overwrite keeps the existing server's enabled state and <code>disabled_tools</code>.</p>
 <h3 id="inspect-a-server-preview-tools-without-saving">Inspect a server (preview tools without saving)<a class="headerlink" href="#inspect-a-server-preview-tools-without-saving" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/inspect<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/inspect<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <p>Returns the tool list from the live server without persisting anything.</p>
 <h3 id="sync-tool-catalog">Sync tool catalog<a class="headerlink" href="#sync-tool-catalog" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/sync<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/sync<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <p>Connects to the server, calls <code>tools/list</code>, and upserts results into the local tool catalog. Safe to call repeatedly (idempotent).</p>
 <h3 id="list-synced-tools">List synced tools<a class="headerlink" href="#list-synced-tools" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>curl<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/tools<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>curl<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/tools<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <h3 id="enable-disable-a-tool">Enable / disable a tool<a class="headerlink" href="#enable-disable-a-tool" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/tools/&lt;toolId&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"enabled": false}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;/tools/&lt;toolId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"enabled": false}'</span>
 </code></pre></div>
 <p>Disabled tools are filtered from the agent context.</p>
 <h3 id="update-a-server">Update a server<a class="headerlink" href="#update-a-server" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"enabled": false}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"enabled": false}'</span>
 </code></pre></div>
 <h3 id="delete-a-server">Delete a server<a class="headerlink" href="#delete-a-server" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.example.com/api/admin/mcp-servers/&lt;serverId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <hr />
 <h2 id="official-mcp-registry">Official MCP registry<a class="headerlink" href="#official-mcp-registry" title="Permanent link">&para;</a></h2>
 <p>Browse and install servers from the official MCP registry at <code>registry.modelcontextprotocol.io</code>.</p>
 <h3 id="search-the-registry">Search the registry<a class="headerlink" href="#search-the-registry" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/admin/mcp-registry/search?q=github"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/admin/mcp-registry/search?q=github"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <h3 id="get-details-for-a-registry-server">Get details for a registry server<a class="headerlink" href="#get-details-for-a-registry-server" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>curl<span class="w"> </span>https://api.example.com/api/admin/mcp-registry/servers/github<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>curl<span class="w"> </span>https://api.example.com/api/admin/mcp-registry/servers/github<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <h3 id="install-from-the-registry">Install from the registry<a class="headerlink" href="#install-from-the-registry" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-registry/install<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
-<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="s1">    "serverName": "github",</span>
-<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="s1">    "config": {</span>
-<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="s1">      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a><span class="s1">    }</span>
-<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="s1">  }'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/admin/mcp-registry/install<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="s1">    "serverName": "github",</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a><span class="s1">    "config": {</span>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="s1">      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="s1">    }</span>
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a><span class="s1">  }'</span>
 </code></pre></div>
 <p>This creates a new <code>MCPServer</code> record for your project and immediately runs a sync to populate the tool catalog.</p>
 <hr />

@@ -886,6 +886,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#memory-agents-mcp-servers-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory agents mcp-servers import
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3098,6 +3109,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#memory-agents-mcp-servers-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory agents mcp-servers import
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3304,6 +3326,51 @@
 <a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>memory<span class="w"> </span>install-memory-skills<span class="w"> </span>--force
 </code></pre></div>
 <p>Existing skill directories are skipped by default. Use <code>--force</code> to update them to the latest embedded versions.</p>
+<hr />
+<h2 id="memory-agents-mcp-servers-import"><code>memory agents mcp-servers import</code><a class="headerlink" href="#memory-agents-mcp-servers-import" title="Permanent link">&para;</a></h2>
+<p>Import MCP servers from a Claude-format config document (<code>mcpServers</code>).</p>
+<p><strong>Flags</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--from-claude &lt;path|-&gt;</code></td>
+<td>Claude config file, or <code>-</code> for stdin (required)</td>
+</tr>
+<tr>
+<td><code>--device &lt;instance-id&gt;</code></td>
+<td>Connector instance for device-targeted (stdio) servers</td>
+</tr>
+<tr>
+<td><code>--target &lt;auto\|server\|device&gt;</code></td>
+<td>Delivery target (default <code>auto</code>)</td>
+</tr>
+<tr>
+<td><code>--overwrite</code></td>
+<td>Update servers whose name already exists instead of skipping</td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Validate and plan without writing</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>Emit the per-entry result as JSON</td>
+</tr>
+</tbody>
+</table>
+<p><code>auto</code> creates remote <code>http</code>/<code>sse</code> servers on the Memory host and pushes local
+<code>stdio</code> servers to the connector named by <code>--device</code>. <code>${VAR}</code> placeholders are
+stored literally.</p>
+<p><strong>Example</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>memory<span class="w"> </span>agents<span class="w"> </span>mcp-servers<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>~/.claude.json<span class="w"> </span>--device<span class="w"> </span>laptop-connector
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>cat<span class="w"> </span>claude_desktop_config.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>memory<span class="w"> </span>agents<span class="w"> </span>mcp-servers<span class="w"> </span>import<span class="w"> </span>--from-claude<span class="w"> </span>-<span class="w"> </span>--dry-run
+</code></pre></div>
 
 
 
