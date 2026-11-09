@@ -92,10 +92,15 @@ Sub-projects carry their own `Taskfile.yml` (`apps/server/`, `apps/web-ui/`,
 
 ## Pull Requests
 
-- `main` is protected. Do not push directly.
+- `dev` is the default branch and receives feature work. `main` is protected;
+  do not push directly to either.
 - Use conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
-- Open a pull request against `main`. An independent review is required before
-  merge; the PR is squashed on merge.
+- Open a feature/docs/chore pull request against **`dev`**
+  (`gh pr create --base dev`). Run the test suite locally first.
+- Hotfixes (`fix/*`) may target `main` directly. `dev -> main` is the promotion
+  PR and carries the full suite; it merges with a merge commit (not squash).
+- An independent review is required before merge. Feature/hotfix PRs are
+  squashed on merge; promotions keep their history.
 
 ## CI
 
