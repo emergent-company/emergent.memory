@@ -58,6 +58,10 @@ type openaiCompatibleModel struct {
 	// true → always request thinking tokens
 	// false → always suppress thinking tokens
 	enableThinking *bool
+	// reasoningEffort is a graded thinking level (minimal/low/medium/high/max).
+	// When set it is sent as reasoning_effort and implies thinking is enabled
+	// unless EnableThinking is explicitly false.
+	reasoningEffort string
 }
 
 // ThinkingConfigurator is implemented by models that support an explicit
@@ -104,6 +108,12 @@ func NewOpenAICompatibleModelWithCompat(baseURL, apiKey, modelName string, auth 
 // the default per-request logic (disable thinking when tools are present).
 func (m *openaiCompatibleModel) SetEnableThinking(v *bool) {
 	m.enableThinking = v
+}
+
+// SetReasoningEffort implements ReasoningEffortConfigurator. Pass "" to omit
+// the field and fall back to the thinking default.
+func (m *openaiCompatibleModel) SetReasoningEffort(effort string) {
+	m.reasoningEffort = effort
 }
 
 // Name returns the model name.
@@ -164,6 +174,9 @@ type openaiRequest struct {
 	// DeepSeek ignores chat_template_kwargs (a vLLM/Qwen3 mechanism), so DeepSeek
 	// models must use this top-level field instead to disable thinking.
 	Thinking any `json:"thinking,omitempty"`
+	// ReasoningEffort is the graded thinking level (minimal/low/medium/high/max)
+	// understood by OpenAI-compatible reasoning models and LiteLLM relays.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type responseFormat struct {
@@ -536,6 +549,9 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			Model:    m.modelName,
 			Messages: messages,
 		}
+		if m.reasoningEffort != "" {
+			body.ReasoningEffort = m.reasoningEffort
+		}
 
 		// Attach tool declarations when present.
 		if req.Config != nil && len(req.Config.Tools) > 0 {
@@ -563,6 +579,10 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			wantThinking := true // default: allow thinking when no tools
 			if m.enableThinking != nil {
 				wantThinking = *m.enableThinking
+			} else if m.reasoningEffort != "" {
+				// An explicit effort implies thinking is wanted; sending
+				// `thinking: disabled` alongside reasoning_effort is contradictory.
+				wantThinking = true
 			} else {
 				wantThinking = false // default: disable when tools present
 			}
