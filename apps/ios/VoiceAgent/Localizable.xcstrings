@@ -1517,6 +1517,29 @@
         }
       }
     },
+    "sessions.detail.result.batch.relationshipsFailed %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld relationship failed"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld relationships failed"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "sessions.detail.result.batch.similar %lld": {
       "extractionState": "manual",
       "localizations": {

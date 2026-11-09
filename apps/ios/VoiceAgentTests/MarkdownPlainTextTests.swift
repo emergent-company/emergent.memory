@@ -35,4 +35,54 @@ struct MarkdownPlainTextTests {
     @Test func blockQuotesReadAsTheirText() {
         #expect(markdownPlainText("> quoted\n") == "quoted")
     }
+
+    @Test func inlineImagesReadAsTheirAltText() {
+        #expect(
+            markdownPlainText("Before ![A duck](https://example.com/duck.png) after.")
+                == "Before A duck after."
+        )
+    }
+
+    @Test func aLinkedImageKeepsItsAltTextAndURL() {
+        #expect(
+            markdownPlainText("[![A duck](https://example.com/duck.png)](https://example.com/duck)")
+                == "A duck (https://example.com/duck)"
+        )
+    }
+
+    @Test func aBlockImageReadsAsItsAltText() {
+        #expect(markdownPlainText("![A duck](https://example.com/duck.png)") == "A duck")
+    }
+
+    @Test func tablesCopyAsTabSeparatedRowsWithoutMarkers() {
+        let text = """
+        | Name | Age |
+        | --- | --- |
+        | Ada | 36 |
+        | Bob | 41 |
+        """
+        let plain = markdownPlainText(text)
+        #expect(plain == "Name\tAge\nAda\t36\nBob\t41")
+        #expect(!plain.contains("|"))
+        #expect(!plain.contains("---"))
+    }
+
+    @Test func nestedListsKeepEveryItemWithoutMarkers() {
+        let text = """
+        - parent
+          - child
+        - second
+        """
+        let plain = markdownPlainText(text)
+        #expect(plain.contains("parent"))
+        #expect(plain.contains("child"))
+        #expect(plain.contains("second"))
+        #expect(!plain.contains("- "))
+    }
+
+    @Test func rawHTMLBlocksStayAsTextInsteadOfDisappearing() {
+        let plain = markdownPlainText("<div class=\"note\">hello</div>")
+        #expect(plain.contains("<div"))
+        #expect(plain.contains("hello"))
+    }
 }

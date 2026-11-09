@@ -294,15 +294,36 @@ extension MarkdownInline {
     var plainText: String {
         switch self {
         case let .text(text), let .code(text), let .rawHTML(text):
-            text
-        case let .emphasis(inlines), let .strong(inlines), let .strikethrough(inlines), let .link(_, inlines):
-            inlines.map(\.plainText).joined()
-        case .image:
-            // An inline image is not reading text; the block-level `.image`
-            // keeps its alt text.
-            ""
+            return text
+        case let .emphasis(inlines), let .strong(inlines), let .strikethrough(inlines):
+            return inlines.map(\.plainText).joined()
+        case let .link(destination, inlines):
+            let text = inlines.map(\.plainText).joined()
+            // A linked image must keep both its alt text and its URL: the alt
+            // is all the reader sees, and the destination is otherwise lost.
+            let wrapsImage = inlines.contains {
+                if case .image = $0 {
+                    true
+                } else {
+                    false
+                }
+            }
+            guard wrapsImage, let destination, !destination.isEmpty else {
+                return text
+            }
+            return text.isEmpty ? destination : "\(text) (\(destination))"
+        case let .image(source, alt):
+            // Match the inline renderer's fallback: alt text first, then the
+            // source, then nothing.
+            if let alt, !alt.isEmpty {
+                return alt
+            }
+            if let source, !source.isEmpty {
+                return source
+            }
+            return ""
         case .softBreak, .lineBreak:
-            " "
+            return " "
         }
     }
 }
