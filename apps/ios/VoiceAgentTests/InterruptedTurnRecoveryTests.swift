@@ -173,6 +173,50 @@ struct InterruptedTurnRecoveryTests {
         #expect(!ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: parked, since: 2))
     }
 
+    /// A placeholder-only suffix is not progress. The gateway records its
+    /// function-call step as an assistant turn of its own, and the client never
+    /// streams that text, so a record holding `"hi the"` and then
+    /// `"(calls: search)"` has not finished the reply. Judging the placeholder
+    /// as reply text settled the wait early and dropped the answer (#231).
+    @Test func aToolPlaceholderDoesNotSettleTheTruncatedCopy() {
+        let detail = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            turn("assistant", "hi the"),
+            turn("assistant", "(calls: search)"),
+        ])
+
+        #expect(!ChatSessionTranscriptStore.recordedReply(extending: "hi the", in: detail, since: 2))
+    }
+
+    /// The partial can hold answer text written *after* a tool call:
+    /// `"Let me check. Hi"`. The gateway's placeholder sits between the two
+    /// halves of the reply; ignoring it joins them into the text the client
+    /// saw, so the recorded continuation is swapped in instead of the wait
+    /// running out its window (#231).
+    @Test func recognisesAReplyWhosePartialContinuesPastAToolPlaceholder() {
+        let detail = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            turn("assistant", "Let me check."),
+            turn("assistant", "(calls: search)"),
+            SessionRecord(kind: "tools_executed", calls: [], outputs: []),
+            turn("assistant", " Hi there"),
+        ])
+
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: "Let me check. Hi", in: detail, since: 2))
+    }
+
+    /// Only the gateway's exact shape is a placeholder. Answer text that merely
+    /// opens with the same words is still the reply, so the shape is matched
+    /// in full rather than by prefix (#231).
+    @Test func answerTextThatOnlyOpensLikeAPlaceholderIsStillTheReply() {
+        let detail = SessionDetail(room: "conv-1", records: [
+            turn("user", "hello"),
+            turn("assistant", "(calls: search) and then"),
+        ])
+
+        #expect(ChatSessionTranscriptStore.recordedReply(extending: "(calls: search)", in: detail, since: 1))
+    }
+
     /// The tool record is not itself the reply: with only the truncated copy
     /// recorded, a tool call in between must not look like progress.
     @Test func aToolCallDoesNotMakeTheTruncatedCopyLookFinished() {

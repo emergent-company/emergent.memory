@@ -39,14 +39,23 @@ extension ChatSessionView {
     /// run in the background, so the transcript is polled for the continuation.
     func respondOverHTTP(questionId: String, response: String, message: String) {
         guard let conversationID = openConversationID else { return }
+        // The ownership fingerprint is taken now, before the decision's traffic
+        // can replace the transcript on screen (#208).
         let scope = TranscriptWaitScope(conversationID: conversationID, baseline: transcript.lastRecordCount)
         Task {
+            let client = SessionLogClient(config: MemoryConfig())
+            // Read the parked record count *before* answering: the resumed run is
+            // recorded only after the decision. A fresh text chat never loaded
+            // its history, so its own count is zero while the server already
+            // holds the parked exchange (#228); measuring against that zero
+            // accepted the parked transcript. One read here is the request the
+            // wait makes anyway; a failed read leaves the count unknown and the
+            // wait falls back to the transcript's baseline.
+            let parkedDetail = try? await client.detail(room: conversationID)
+            let parkedRecordCount = parkedDetail?.records.count
             do {
                 try await transport.respond(questionID: questionId, response: response, message: message)
-                await pollResumedHistory(
-                    client: SessionLogClient(config: MemoryConfig()),
-                    scope: scope
-                )
+                await pollResumedHistory(client: client, scope: scope, parkedRecordCount: parkedRecordCount)
             } catch {
                 transcript.historyLoadFailed(error.localizedDescription)
             }
@@ -65,6 +74,10 @@ extension ChatSessionView {
         let scope = TranscriptWaitScope(conversationID: conversationID, baseline: transcript.lastRecordCount)
         transcript.markApprovalAnswered(questionId: request.questionId)
         Task {
+            // The parked record count, read before the decision for the same
+            // reason as `respondOverHTTP` (#228).
+            let parkedDetail = try? await client.detail(room: conversationID)
+            let parkedRecordCount = parkedDetail?.records.count
             do {
                 let response: String
                 let message: String
@@ -81,7 +94,7 @@ extension ChatSessionView {
                     response: response,
                     message: message
                 )
-                await pollResumedHistory(client: client, scope: scope)
+                await pollResumedHistory(client: client, scope: scope, parkedRecordCount: parkedRecordCount)
             } catch {
                 transcript.historyLoadFailed(error.localizedDescription)
             }
@@ -94,10 +107,18 @@ extension ChatSessionView {
     /// was measuring against, and stops as soon as the view no longer matches:
     /// answering a card and switching chats inside the window used to write the
     /// old conversation's records into the new one (`emergent.memory#208`).
-    func pollResumedHistory(client: any SessionLogFetching, scope: TranscriptWaitScope) async {
+    /// `parkedRecordCount` is the server's count before the decision, which the
+    /// continuation has to exceed; `nil` falls back to the transcript's count
+    /// (`emergent.memory#228`).
+    func pollResumedHistory(
+        client: any SessionLogFetching,
+        scope: TranscriptWaitScope,
+        parkedRecordCount: Int?
+    ) async {
         let poll = ResumedHistoryPoll(client: client)
         await poll.run(
             scope: scope,
+            parkedRecordCount: parkedRecordCount,
             isCurrent: { scopeIsCurrent(scope) },
             apply: { transcript.loadHistory(from: $0) }
         )

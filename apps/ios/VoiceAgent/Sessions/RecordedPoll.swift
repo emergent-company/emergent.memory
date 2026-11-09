@@ -67,11 +67,11 @@ struct RecordedTurnPoll {
 ///
 /// The gateway resumes the parked run in the background, so nothing streams back
 /// over the live channel in text mode and the transcript has to be read until it
-/// grows past the baseline. Answering a card and switching chats inside the
-/// window used to write the old conversation's records into the new one; the
-/// wait now stops as soon as the transcript is no longer the one it started for
-/// (`emergent.memory#208`). Giving up leaves the transcript as it was — the user
-/// can reopen the chat to load the record.
+/// grows past the count the server held before the decision. Answering a card
+/// and switching chats inside the window used to write the old conversation's
+/// records into the new one; the wait now stops as soon as the transcript is no
+/// longer the one it started for (`emergent.memory#208`). Giving up leaves the
+/// transcript as it was — the user can reopen the chat to load the record.
 @MainActor
 struct ResumedHistoryPoll {
     let client: any SessionLogFetching
@@ -80,8 +80,18 @@ struct ResumedHistoryPoll {
     var interval: Duration = .seconds(1)
     var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
 
+    /// - Parameters:
+    ///   - scope: what the wait owns, including the transcript's record count
+    ///     when it started (the ownership fingerprint of #208).
+    ///   - parkedRecordCount: the server's record count before the decision.
+    ///     The continuation has to grow past it. It cannot be the transcript's
+    ///     count: a fresh text chat never loads history, so its count stays zero
+    ///     while the server already holds the parked conversation (#228). Pass
+    ///     `nil` when the count could not be read; the transcript's baseline is
+    ///     then used, which is correct for a chat that did load its history.
     func run(
         scope: TranscriptWaitScope,
+        parkedRecordCount: Int? = nil,
         isCurrent: () -> Bool,
         apply: (SessionDetail) -> Void
     ) async {
@@ -89,9 +99,9 @@ struct ResumedHistoryPoll {
         await poll.run(
             conversationID: scope.conversationID,
             isCurrent: isCurrent,
-            // Growth past the scope's own baseline is the signal: the resumed
-            // run appends at least one record when it finishes.
-            accept: { $0.records.count > scope.baseline },
+            // Growth past the parked count is the signal: the resumed run
+            // appends at least one record when it finishes.
+            accept: { $0.records.count > (parkedRecordCount ?? scope.baseline) },
             apply: apply
         )
     }
