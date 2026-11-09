@@ -2,25 +2,29 @@ name: Meta CI
 
 # NO `paths:` filter on either trigger.
 #
-# `ci` is a branch-protection-required status check on `main` (the required
-# context list is exactly ["ci", "verify"]; `verify` is the merge-guard job). A
-# path-filtered required check never reports for PRs that do not touch the
-# listed paths, so the required check would simply be absent for those PRs and
-# the whole required-check set would become unenforceable. This workflow is
-# therefore unfiltered and MUST run for every PR and every push to main.
+# `ci` is a branch-protection-required status check on `dev` and `main`
+# (required contexts: `["ci", "verify"]` on `dev`; `["ci", "verify",
+# "promotion"]` on `main`; `verify` is the merge-guard job and `promotion` is
+# promotion.yml's full-suite gate). A path-filtered required check never reports
+# for PRs that do not touch the listed paths, so such a check would simply be
+# absent for those PRs and the required-check set would become unenforceable.
+# This workflow is therefore unfiltered and MUST run for every PR and every push
+# to either branch.
 #
-# The heavy suites (server unit/DB, E2E, CLI, web-ui, iOS, docker) are
-# intentionally path-filtered and are therefore NOT required: their job contexts
-# cannot be made required without deadlocking PRs that do not touch those paths.
-# To make the cheap, always-applicable guards actually gate merges, they run here
-# in the required `ci` job instead:
+# The heavy suites (server unit/DB, E2E, CLI, web-ui, iOS, docker) no longer run
+# on feature PRs at all: feature work goes to `dev` for a fast lane, and the
+# suites run on the `dev -> main` promotion PR through promotion.yml (which
+# calls them as reusable workflows) plus on pushes to `main`. They are not
+# individually required — a path-filtered context cannot be required without
+# deadlocking unrelated PRs — but `promotion` is, and it fails when any invoked
+# suite fails. To make the cheap, always-applicable guards gate every PR, they
+# run here in the required `ci` job instead:
 #   * migration numbering + immutability (through scripts/preflight/all.sh, which
 #     calls migration-number.sh -> migration-immutability.sh --base origin/<base>),
 #   * migration workspace hygiene (stray untracked files / duplicate versions),
 #   * the route-authority guard,
 #   * the swagger raw-JSON guard (#162).
-# The heavy suites still run for the PRs that touch their paths; they stay
-# advisory. See emergent-company/emergent.memory#1673.
+# See emergent-company/emergent.memory#1673.
 #
 # Fork PRs run a green no-op `ci`: every step is gated on
 # `github.event_name != 'pull_request' || head.repo.full_name == repository`, so
@@ -32,14 +36,12 @@ name: Meta CI
 # context; a maintainer must re-run from a trusted ref to actually validate a
 # fork.
 #
-# DRAFT PRS (2026-11-04). Every path-filtered suite (`server.yml`,
-# `web-ui.yml`, `e2e.yml`, `cli.yml`, `connector.yml`, `server-sdk.yml`,
-# `python-sdk.yml`, `ios-test.yml`) skips its heavy jobs while the PR is a
-# draft and adds `ready_for_review` to its `pull_request.types`. Measure that
-# drove it: a draft PR in flight carried 22 check runs against a tree nobody
-# could merge, on a 7-slot pool where the same runs were queueing 3-9 minutes
-# each. `ci` deliberately keeps running on drafts — it is the cheap, always
-# applicable guard and the author needs its feedback before requesting review.
+# DRAFT PRS. A feature PR to `dev` already only runs the cheap guards here, so a
+# draft costs little; `ci` deliberately keeps running on drafts so the author
+# gets feedback before requesting review. `promotion.yml` skips its called suites
+# while the promotion/hotfix PR to `main` is a draft and adds
+# `ready_for_review` to its `pull_request.types`, so a draft does not occupy the
+# heavy runners.
 #
 # Two of the gated jobs are MATRIX jobs (`cli.yml`'s `Build (${{ matrix.label }})`
 # and `python-sdk.yml`'s `Test (Python ${{ matrix.python-version }})`), which the

@@ -33,8 +33,12 @@ permissions:
 
 concurrency:
   group: promotion-${{ github.ref }}
-  # A superseded promotion run is safe to cancel; the new head is what matters.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Do NOT cancel an in-flight run: a cancelled caller would stop a called E2E
+  # suite mid-step, strand its Docker Compose project, and skip the always()
+  # teardown (e2e.yml keeps `cancel-in-progress: false` for exactly this, and a
+  # caller-level cancel overrides the callee's setting). A superseded promotion
+  # queues instead.
+  cancel-in-progress: false
 
 jobs:
   server:

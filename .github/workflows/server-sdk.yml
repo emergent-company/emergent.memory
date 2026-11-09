@@ -19,7 +19,7 @@ concurrency:
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only
 # behind the fork guard; keep the checkout token read-only as defense-in-depth.
-# (create-sdk-tag below keeps its own job-level `contents: write`.)
+# (The tag job that needs `contents: write` lives in server-sdk-release.yml.)
 permissions:
   contents: read
 
