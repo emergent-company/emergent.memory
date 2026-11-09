@@ -141,6 +141,16 @@ func TestResolveSpawnSandbox(t *testing.T) {
 		assert.Nil(t, got)
 	})
 
+	t.Run("shared with a non-ready lease falls back to isolated", func(t *testing.T) {
+		ws := sharedTestWorkspace()
+		ws.Status = sandbox.StatusStopped
+		deps := &CoordinationToolDeps{WorkspaceLease: &sandbox.WorkspaceLease{Workspace: ws, OwnerRunID: "run-parent"}}
+		mode, got, reason := resolveSpawnSandbox(deps, sandboxedDefinition(), "")
+		assert.Equal(t, SandboxModeIsolated, mode)
+		assert.Nil(t, got)
+		assert.Contains(t, reason, "not ready")
+	})
+
 	t.Run("shared with a sandbox-less delegate never borrows", func(t *testing.T) {
 		deps := &CoordinationToolDeps{WorkspaceLease: lease}
 		mode, got, reason := resolveSpawnSandbox(deps, &AgentDefinition{ID: "def-2"}, "")
@@ -280,9 +290,11 @@ func TestWorkspaceLeaseContextRoundTrip(t *testing.T) {
 	ctx := ContextWithWorkspaceLease(context.Background(), lease)
 	assert.Same(t, lease, WorkspaceLeaseFromContext(ctx))
 
-	// nil is a no-op rather than storing a nil value, so a run without a
-	// workspace cannot accidentally shadow an inherited lease.
+	// nil is stored explicitly: a run with no workspace must clear an inherited
+	// lease rather than letting a sandbox-less child re-publish its parent's.
 	assert.Nil(t, WorkspaceLeaseFromContext(ContextWithWorkspaceLease(context.Background(), nil)))
+	assert.Nil(t, WorkspaceLeaseFromContext(ContextWithWorkspaceLease(ctx, nil)),
+		"installing a nil lease must clear the inherited one")
 }
 
 func TestAugmentInstructionWithWorkspace_SharedNote(t *testing.T) {

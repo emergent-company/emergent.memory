@@ -2293,6 +2293,17 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 				slog.String("workspace_id", res.Workspace.ID),
 				slog.String("owner_run_id", res.BorrowedFromRunID),
 			)
+			// Persist the borrow marker while the run is live and again on
+			// completion (the final summary repeats it), so run responses can
+			// distinguish a shared child from an isolated or sandbox-less one.
+			if ae.repo != nil {
+				if markErr := ae.repo.MarkRunWorkspaceShared(ctx, runID, res.BorrowedFromRunID); markErr != nil {
+					ae.log.Warn("failed to mark run as using a shared workspace",
+						slog.String("run_id", runID),
+						slog.String("error", markErr.Error()),
+					)
+				}
+			}
 			return res, nil
 		} else if reason != "" {
 			ae.log.Warn("shared sandbox unavailable; falling back to normal provisioning",
@@ -2613,13 +2624,17 @@ func (ae *AgentExecutor) runPipeline(
 	// A run that is itself borrowing re-publishes the owner's lease unchanged:
 	// grandchildren share the same workspace and the original owner still owns
 	// teardown. Only a run that provisioned the container becomes the owner.
+	var lease *sandbox.WorkspaceLease
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
-		lease := &sandbox.WorkspaceLease{Workspace: wsResult.Workspace, OwnerRunID: run.ID}
+		lease = &sandbox.WorkspaceLease{Workspace: wsResult.Workspace, OwnerRunID: run.ID}
 		if wsResult.Borrowed {
 			lease.OwnerRunID = wsResult.BorrowedFromRunID
 		}
-		ctx = ContextWithWorkspaceLease(ctx, lease)
 	}
+	// Always install, including a nil lease: a run with no workspace must clear
+	// any lease inherited from its delegating run, or a sandbox-less child would
+	// pass its parent's workspace to its own children.
+	ctx = ContextWithWorkspaceLease(ctx, lease)
 
 	// Inject project and org IDs into context so the credential resolver can look up
 	// the org-level provider config via the DB hierarchy (project → org), and so

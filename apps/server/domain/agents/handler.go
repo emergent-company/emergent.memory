@@ -158,6 +158,17 @@ func (h *Handler) getWorkspaceInfo(ctx context.Context, runID string) *RunWorksp
 		return nil
 	}
 
+	// Only a run explicitly marked as sharing may inherit an ancestor's
+	// workspace. An isolated child and a sandbox-less delegate have the same
+	// parent chain but must NOT be reported as using the parent's container.
+	run, err := h.repo.FindRunByID(ctx, runID)
+	if err != nil || run == nil {
+		return nil
+	}
+	if shared, _ := run.Summary["workspace_shared"].(bool); !shared {
+		return nil
+	}
+
 	// Walk up the delegation chain looking for the run that owns the container.
 	current := runID
 	for depth := 0; depth < maxSharedWorkspaceAncestorDepth; depth++ {

@@ -73,9 +73,9 @@ type CoordinationToolDeps struct {
 	ParentAuthToken string
 
 	// ParentEnvVars are the delegating run's runtime environment variables. A
-	// shared child inherits them (lower priority than its own sandbox-config env
-	// and the system keys), matching the environment the container is already
-	// running with.
+	// shared child inherits them as per-session tool env, matching the
+	// environment the leased container is already running with. System keys
+	// injected by the executor still win over both.
 	ParentEnvVars map[string]string
 }
 
@@ -338,11 +338,22 @@ func definitionSandboxEnabled(def *AgentDefinition) bool {
 // isolated, for logging. Explicit "isolated" is honoured unconditionally.
 func resolveSpawnSandbox(deps *CoordinationToolDeps, def *AgentDefinition, requested string) (mode string, lease *sandbox.WorkspaceLease, fallbackReason string) {
 	mode = SandboxModeOrDefault(requested)
-	if mode != SandboxModeShared {
-		return mode, nil, ""
+	switch mode {
+	case SandboxModeIsolated:
+		return SandboxModeIsolated, nil, ""
+	case SandboxModeShared:
+		// handled below
+	default:
+		// parseSpawnRequests rejects unknown modes, but executeSingleSpawn can be
+		// called directly. Degrade to isolation rather than propagating an
+		// unrecognised mode into the run.
+		return SandboxModeIsolated, nil, fmt.Sprintf("unknown sandbox_mode %q", requested)
 	}
 	if deps == nil || deps.WorkspaceLease == nil || deps.WorkspaceLease.Workspace == nil {
 		return SandboxModeIsolated, nil, "delegating run has no live workspace"
+	}
+	if deps.WorkspaceLease.Workspace.Status != sandbox.StatusReady {
+		return SandboxModeIsolated, nil, "delegating run's workspace is not ready"
 	}
 	if !definitionSandboxEnabled(def) {
 		return SandboxModeIsolated, nil, "target agent has no enabled sandbox config"

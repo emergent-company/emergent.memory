@@ -13,11 +13,10 @@ import (
 type workspaceLeaseKey struct{}
 
 // ContextWithWorkspaceLease attaches a sandbox lease to the context. A nil lease
-// is a no-op, so callers do not need to guard the call.
+// is stored explicitly (rather than skipped) so a run with no workspace clears
+// any lease inherited from the delegating run; otherwise a sandbox-less child
+// would re-publish its parent's lease to its own children.
 func ContextWithWorkspaceLease(ctx context.Context, lease *sandbox.WorkspaceLease) context.Context {
-	if lease == nil {
-		return ctx
-	}
 	return context.WithValue(ctx, workspaceLeaseKey{}, lease)
 }
 

@@ -2095,6 +2095,22 @@ func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMe
 	return err
 }
 
+// MarkRunWorkspaceShared records on the child run that it borrowed an ancestor
+// run's sandbox. The marker lives in the existing summary JSONB (no schema
+// change) so run responses can attribute the workspace without guessing from the
+// parent chain; workspaces are not relinked to the borrowing run.
+func (r *Repository) MarkRunWorkspaceShared(ctx context.Context, runID, ownerRunID string) error {
+	if runID == "" || ownerRunID == "" {
+		return nil
+	}
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("summary = coalesce(summary, '{}'::jsonb) || jsonb_build_object('workspace_shared', true, 'workspace_owner_run_id', ?::text)", ownerRunID).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // CompleteRunWithSteps marks a run as successfully completed with step count and
 // duration. Guarded like the other terminal writes: if an explicit cancel won
 // the terminal transition first, this is a no-op, so the row's status always
