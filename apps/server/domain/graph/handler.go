@@ -1952,6 +1952,63 @@ func (h *Handler) TraverseGraph(c echo.Context) error {
 // Branch Merge Handler
 // =============================================================================
 
+// ExtractionBacklog reports extraction output that is still stranded on
+// unmerged staging branches and therefore invisible to default graph reads.
+// @Summary      Extraction merge backlog
+// @Description  Returns the count of unmerged extraction branches and the live objects/relationships on them, plus whether the main graph is empty.
+// @Tags         graph
+// @Produce      json
+// @Success      200 {object} ExtractionBacklogResponse
+// @Failure      400 {object} apperror.Error "Invalid project"
+// @Router       /api/graph/extraction-backlog [get]
+// @Security     bearerAuth
+func (h *Handler) ExtractionBacklog(c echo.Context) error {
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	result, err := h.svc.ExtractionBacklog(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// MergeExtractionBacklog merges pending extraction branches into the main graph
+// in bounded batches. The request is a dry run unless execute is explicitly true.
+// @Summary      Merge pending extraction branches
+// @Description  Merges up to `limit` unmerged extraction branches into the main graph using the non-destructive "partial" policy. Dry run unless execute=true. Repeat while branches_remaining > 0.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body ExtractionBacklogMergeRequest true "Merge options"
+// @Success      200 {object} ExtractionBacklogMergeResponse
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Router       /api/graph/extraction-backlog/merge [post]
+// @Security     bearerAuth
+func (h *Handler) MergeExtractionBacklog(c echo.Context) error {
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req ExtractionBacklogMergeRequest
+	// An absent body means "dry run with defaults"; a malformed body is a client
+	// error rather than a silent default.
+	if c.Request().ContentLength > 0 {
+		if err := c.Bind(&req); err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid request body")
+		}
+	}
+
+	result, err := h.svc.MergeExtractionBacklog(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
 // MergeBranch performs dry-run or actual merge of a source branch into target branch.
 // @Summary      Merge graph branches
 // @Description  Merge a source branch into a target branch (supports dry-run mode)

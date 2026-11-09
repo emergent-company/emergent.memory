@@ -87,6 +87,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, g
 	branches.GET("/:branchId/compare", h.CompareBranches)
 	branches.POST("/:id/fork", h.ForkBranch)
 
+	// Project-level extraction backlog. Default graph reads resolve to the main
+	// graph, so extraction output left on unmerged staging branches is invisible
+	// (#496). The read reports how much is pending; the merge action is an
+	// explicit, bounded, non-destructive bulk merge (dry run unless execute=true),
+	// so it is admitted through the governor like other bulk work.
+	g.GET("/extraction-backlog", h.ExtractionBacklog)
+	g.POST("/extraction-backlog/merge", bulkAdmit(gov, h.MergeExtractionBacklog))
+
 	// Analytics routes
 	analytics := g.Group("/analytics")
 	analytics.GET("/most-accessed", h.GetMostAccessed)

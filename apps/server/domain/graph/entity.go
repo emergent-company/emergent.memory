@@ -184,6 +184,20 @@ type Branch struct {
 	OriginLabel *string    `bun:"origin_label" json:"origin_label,omitempty"`
 }
 
+// PendingExtractionBranch is an unmerged extraction staging branch together
+// with the live HEAD rows that make it part of a project's extraction backlog.
+// Merged ledger rows (merged_to_canonical_id set) and superseded/deleted rows
+// are excluded, so the counts describe what a default graph read still cannot
+// see.
+type PendingExtractionBranch struct {
+	ID                uuid.UUID `bun:"id"`
+	Name              string    `bun:"name"`
+	OriginLabel       *string   `bun:"origin_label"`
+	CreatedAt         time.Time `bun:"created_at"`
+	ObjectCount       int       `bun:"object_count"`
+	RelationshipCount int       `bun:"relationship_count"`
+}
+
 // BranchLineage stores the transitive closure of branch ancestry.
 type BranchLineage struct {
 	bun.BaseModel `bun:"table:kb.branch_lineage,alias:bl"`

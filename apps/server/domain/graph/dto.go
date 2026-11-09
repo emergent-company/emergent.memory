@@ -1015,6 +1015,77 @@ type MergeReadinessResponse struct {
 	PendingEmbeddings int  `json:"pending_embeddings"`
 }
 
+// ExtractionBacklogBranch is one unmerged extraction staging branch that still
+// holds objects or relationships not present on the main graph.
+type ExtractionBacklogBranch struct {
+	ID                uuid.UUID `json:"id"`
+	Name              string    `json:"name"`
+	OriginLabel       *string   `json:"origin_label,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	ObjectCount       int       `json:"object_count"`
+	RelationshipCount int       `json:"relationship_count"`
+}
+
+// ExtractionBacklogResponse is the project-level view of extraction output that
+// is still stranded on unmerged staging branches. Default graph reads fall back
+// to the main graph (branch_id IS NULL), so this is the objects a reader will not
+// see until the branches are merged.
+type ExtractionBacklogResponse struct {
+	// BranchCount is the number of unmerged extraction branches that still hold
+	// at least one live HEAD object or relationship.
+	BranchCount int `json:"branch_count"`
+	// ObjectCount and RelationshipCount are live HEAD rows on those branches that
+	// have not already been cloned to the main graph (the merge ledger is
+	// excluded, so the count shrinks as branches are merged).
+	ObjectCount       int `json:"object_count"`
+	RelationshipCount int `json:"relationship_count"`
+	// MainGraphObjectCount is the number of live HEAD objects visible to a
+	// default read (branch_id IS NULL).
+	MainGraphObjectCount int `json:"main_graph_object_count"`
+	// Stranded is true when extraction produced objects but the main graph is
+	// empty, i.e. every default read reports an empty knowledge base.
+	Stranded bool `json:"stranded"`
+	// Branches is capped at extractionBacklogBranchPageSize; the aggregate counts
+	// above always cover every branch.
+	Branches          []*ExtractionBacklogBranch `json:"branches"`
+	BranchesTruncated bool                       `json:"branches_truncated,omitempty"`
+}
+
+// ExtractionBacklogMergeRequest is the request for the one-click backlog merge.
+// Execute must be set explicitly: an unset request performs a dry run.
+type ExtractionBacklogMergeRequest struct {
+	Execute bool `json:"execute"`
+	// Limit bounds how many branches one call merges (default 25, max 100).
+	// Callers repeat the request while BranchesRemaining is non-zero.
+	Limit int `json:"limit,omitempty"`
+	// WaitForEmbeddings refuses to merge a branch whose objects are not fully
+	// embedded, so similarity classification has full coverage.
+	WaitForEmbeddings bool `json:"wait_for_embeddings,omitempty"`
+}
+
+// ExtractionBacklogMergeItem is the outcome for one branch in a backlog merge.
+type ExtractionBacklogMergeItem struct {
+	BranchID uuid.UUID `json:"branch_id"`
+	Name     string    `json:"name"`
+	// Result is the normal merge response for a successful (or dry-run) merge.
+	Result *BranchMergeResponse `json:"result,omitempty"`
+	// Error is set when this branch could not be merged; other branches still run.
+	Error string `json:"error,omitempty"`
+}
+
+// ExtractionBacklogMergeResponse is the response for the backlog merge action.
+type ExtractionBacklogMergeResponse struct {
+	DryRun            bool                          `json:"dry_run"`
+	BranchesTotal     int                           `json:"branches_total"`
+	BranchesProcessed int                           `json:"branches_processed"`
+	BranchesRemaining int                           `json:"branches_remaining"`
+	Results           []*ExtractionBacklogMergeItem `json:"results"`
+	// LeftForReviewCount aggregates the objects the partial policy deliberately
+	// left on their branch, so a caller can tell a complete merge from a
+	// merge that needs human review.
+	LeftForReviewCount int `json:"left_for_review_count"`
+}
+
 // BranchMergeObjectSummary represents merge status for a single object.
 type BranchMergeObjectSummary struct {
 	CanonicalID uuid.UUID `json:"canonical_id"`
