@@ -159,7 +159,7 @@ func readImportSource(path string) ([]byte, error) {
 		return nil, fmt.Errorf("reading Claude config %q: %w", path, err)
 	}
 	if len(strings.TrimSpace(string(b))) == 0 {
-		return nil, fmt.Errorf("Claude config %q is empty", path)
+		return nil, fmt.Errorf("claude config %q is empty", path)
 	}
 	return b, nil
 }

@@ -202,9 +202,9 @@ struct ImportClaudeConfigSheet: View {
         errorMessage = nil
         let data = Data(trimmed.utf8)
         Task {
-            let ok = await store.importClaudeConfig(config: data, overwrite: overwrite, dryRun: dryRun)
+            let succeeded = await store.importClaudeConfig(config: data, overwrite: overwrite, dryRun: dryRun)
             isSaving = false
-            if !ok {
+            if !succeeded {
                 errorMessage = store.errorMessage
             }
         }
@@ -236,5 +236,21 @@ struct ImportClaudeConfigSheet: View {
         let prefix = result.dryRun ? "Dry run: " : ""
         return "\(prefix)\(result.created.count) created, \(result.updated.count) updated, "
             + "\(result.skipped.count) skipped, \(result.failed.count) failed"
+    }
+}
+
+/// Toolbar control that opens the Claude import sheet. Extracted from
+/// MCPServersPage so that view stays within its type-length budget.
+struct ImportClaudeToolbarButton: View {
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Import from Claude…", systemImage: "file.json")
+        }
+        .buttonStyle(.borderless)
+        .disabled(!isEnabled)
+        .help("Import servers from a Claude MCP config")
     }
 }

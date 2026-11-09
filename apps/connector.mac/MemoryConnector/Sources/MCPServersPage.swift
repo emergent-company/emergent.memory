@@ -51,14 +51,9 @@ struct MCPServersPage: View {
                     .buttonStyle(.borderless)
                     .disabled(!availability.isAvailable)
                     .help("Search the MCP registry and add a suggested server")
-                    Button {
+                    ImportClaudeToolbarButton(isEnabled: availability.isAvailable) {
                         showingImport = true
-                    } label: {
-                        Label("Import from Claude…", systemImage: "file.json")
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(!availability.isAvailable)
-                    .help("Import servers from a Claude MCP config")
                     Button {
                         showingAdd = true
                     } label: {

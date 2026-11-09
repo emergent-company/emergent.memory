@@ -185,28 +185,6 @@ struct HostedMCPServerConfig: Codable, Equatable, Sendable {
     }
 }
 
-/// One entry the connector skipped during a Claude-config import.
-struct HostedMCPImportSkip: Decodable, Equatable, Sendable {
-    var name: String
-    var reason: String
-}
-
-/// One entry that failed to import.
-struct HostedMCPImportFailure: Decodable, Equatable, Sendable {
-    var name: String
-    var error: String
-}
-
-/// `POST /api/mcp-servers/import` result. Valid entries are applied even when
-/// others fail.
-struct HostedMCPImportResult: Decodable, Equatable, Sendable {
-    var created: [String]
-    var updated: [String]
-    var skipped: [HostedMCPImportSkip]
-    var failed: [HostedMCPImportFailure]
-    var dryRun: Bool
-}
-
 /// Full config + live status returned by `GET /api/mcp-servers/{name}` and by
 /// the create/update/toggle endpoints. The flat `serverDetail` JSON is split
 /// into `config` (name/transport/connection fields) and `status`.

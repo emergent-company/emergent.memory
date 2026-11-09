@@ -871,7 +871,7 @@ func readMCPImportSource(path string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("reading Claude config %q: %w", path, err)
 	}
 	if len(strings.TrimSpace(string(b))) == 0 {
-		return nil, fmt.Errorf("Claude config %q is empty", path)
+		return nil, fmt.Errorf("claude config %q is empty", path)
 	}
 	return json.RawMessage(b), nil
 }
