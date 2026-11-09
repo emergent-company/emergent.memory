@@ -6099,13 +6099,24 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: branch mismatch between src %q and dst %q", i, srcLabel, dstLabel))
 		}
 
+		validatedProps := relReq.Properties
+		if schemas != nil {
+			validated, err := validateRelationshipProperties(relType, srcObj.Type, dstObj.Type, relReq.Properties, schemas)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
+			}
+			if relReq.Properties != nil {
+				validatedProps = validated
+			}
+		}
+
 		rel := &GraphRelationship{
 			ProjectID:  projectID,
 			BranchID:   srcObj.BranchID,
 			Type:       relType,
 			SrcID:      srcObj.CanonicalID,
 			DstID:      dstObj.CanonicalID,
-			Properties: relReq.Properties,
+			Properties: validatedProps,
 			Weight:     relReq.Weight,
 			Namespace:  srcObj.Namespace,
 			ActorType:  &actorType,
@@ -6113,7 +6124,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		}
 
 		// Compute change summary
-		rel.ChangeSummary = computeChangeSummary(nil, relReq.Properties)
+		rel.ChangeSummary = computeChangeSummary(nil, validatedProps)
 
 		if _, err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
 			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
@@ -6123,7 +6134,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relType, srcObj, dstObj, relReq.Properties, relReq.Weight, actorType, actorID)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relType, srcObj, dstObj, validatedProps, relReq.Weight, actorType, actorID)
 		}
 
 		resp := rel.ToResponse()

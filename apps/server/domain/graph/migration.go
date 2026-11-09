@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -248,6 +249,25 @@ func (m *SchemaMigrator) MigrateRelationship(
 		result.MigratedProps = append(result.MigratedProps, propName)
 	}
 
+	if toSchema != nil {
+		objSchema := agents.ObjectSchema{Properties: toSchema.Properties, Required: toSchema.Required}
+		validationResult := m.validator.ValidateProperties(result.NewProperties, &objSchema)
+		if !validationResult.Valid {
+			for _, err := range validationResult.Errors {
+				result.Issues = append(result.Issues, MigrationIssue{
+					Type:        IssueTypeValidationFailed,
+					Field:       err.Field,
+					Description: err.Message,
+					Suggestion:  "Fix validation error before migration can complete",
+					Severity:    "error",
+				})
+			}
+			result.Success = false
+		} else {
+			result.NewProperties = validationResult.Coerced
+		}
+	}
+
 	return result
 }
 
@@ -402,6 +422,14 @@ func propertyItemsEqual(a, b *agents.PropertyDef) bool {
 	}
 	if at == "" {
 		return true
+	}
+	if len(a.Enum) != len(b.Enum) {
+		return false
+	}
+	for i := range a.Enum {
+		if !reflect.DeepEqual(a.Enum[i], b.Enum[i]) {
+			return false
+		}
 	}
 	return propertyItemsEqual(a.Items, b.Items)
 }

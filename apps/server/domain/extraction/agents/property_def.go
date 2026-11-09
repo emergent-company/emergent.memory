@@ -47,6 +47,15 @@ func PropertyDefFromMap(m map[string]any) PropertyDef {
 	if f, ok := m["format"].(string); ok {
 		def.Format = f
 	}
+	switch values := m["enum"].(type) {
+	case []any:
+		def.Enum = values
+	case []string:
+		def.Enum = make([]any, len(values))
+		for i, v := range values {
+			def.Enum[i] = v
+		}
+	}
 	// JSON numbers decode as float64 here; a bound may legitimately be 0, so
 	// only a decoded number sets the pointer.
 	if v, ok := m["minimum"].(float64); ok {

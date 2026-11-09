@@ -423,7 +423,10 @@ func (s *Service) applyChangesetObject(
 			adopt = true
 		}
 
-		version := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, adopt, s)
+		version, err := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, adopt, s)
+		if err != nil {
+			return result, nil, err
+		}
 		if err := s.repo.CreateVersion(ctx, tx, head, version); err != nil {
 			return result, nil, err
 		}
@@ -557,8 +560,17 @@ func (s *Service) applyChangesetRelationship(
 		// Look the schema up by head.Type, not version.Type: the repository
 		// inherits the head's type (it is part of the edge's identity), so a
 		// pushed type that differs is not the type the row is stored with.
+		validated := version.Properties
+		if item.Properties != nil {
+			var err error
+			validated, err = validateChangesetRelationshipProperties(
+				version.Properties, schemas, head.Type, srcObj.Type, dstObj.Type)
+			if err != nil {
+				return result, nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+			}
+		}
 		version.Properties = normaliseChangesetRelationshipDateProperties(
-			version.Properties, schemas, head.Type, srcObj.Type, dstObj.Type)
+			validated, schemas, head.Type, srcObj.Type, dstObj.Type)
 		if item.Weight != nil {
 			version.Weight = item.Weight
 		}
@@ -588,7 +600,11 @@ func (s *Service) applyChangesetRelationship(
 	if props == nil {
 		props = map[string]any{}
 	}
-	props = normaliseChangesetRelationshipDateProperties(props, schemas, relType, srcObj.Type, dstObj.Type)
+	validated, err := validateChangesetRelationshipProperties(props, schemas, relType, srcObj.Type, dstObj.Type)
+	if err != nil {
+		return result, nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+	}
+	props = normaliseChangesetRelationshipDateProperties(validated, schemas, relType, srcObj.Type, dstObj.Type)
 	rel := &GraphRelationship{
 		ProjectID:     projectID,
 		BranchID:      srcObj.BranchID,
@@ -714,7 +730,7 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 // push is authoritative for the content it owns, but never rewrites the
 // `_sources` array: that array belongs to the document-extraction path and this
 // capability leaves it alone.
-func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, adopt bool, s *Service) *GraphObject {
+func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, adopt bool, s *Service) (*GraphObject, error) {
 	version := *head
 	version.ID = uuid.Nil
 	version.SupersedesID = nil
@@ -759,16 +775,25 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 	if schema, ok := objectSchema(schemas, version.Type); ok {
 		schemaVersion := schema.Version
 		version.SchemaVersion = &schemaVersion
-		// Normalise dates in place of full validation: a source push replaces
-		// the property map and may legitimately be partial, so required-field
-		// enforcement must not start failing here. (A brand-new object through
+		// A source push replaces the property map and may legitimately be
+		// partial, so validate the supplied delta without enforcing required
+		// fields. Type coercion and enums still apply, exactly as they do on
+		// the ordinary patch path. (A brand-new object through
 		// buildChangesetObject still runs full validation.) Date values still
 		// converge to YYYY-MM-DD (issue #402).
 		//
 		// Copy first: when the push omits properties, version.Properties still
-		// aliases head.Properties, and normalising in place would mutate the
-		// previous head the caller is holding.
-		version.Properties = normaliseDateProperties(copyProperties(version.Properties), schema)
+		// aliases head.Properties, and validating/normalising in place would
+		// mutate the previous head the caller is holding.
+		version.Properties = copyProperties(version.Properties)
+		if item.Properties != nil {
+			validated, err := validatePatchProperties(version.Properties, schema)
+			if err != nil {
+				return nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+			}
+			version.Properties = validated
+		}
+		version.Properties = normaliseDateProperties(version.Properties, schema)
 	}
 
 	// A source push is authoritative for its own record: the row stays
@@ -782,7 +807,7 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 		version.DataClass = DataClassSource
 	}
 	version.OwnerSourceID = &sourceID
-	return &version
+	return &version, nil
 }
 
 func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectSchema, bool) {
@@ -791,6 +816,20 @@ func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectS
 	}
 	schema, ok := schemas.ObjectSchemas[objectType]
 	return schema, ok
+}
+
+// validateChangesetRelationshipProperties coerces and validates the supplied
+// edge-property delta against the matched relationship schema. Required fields
+// are not enforced because a source push may legitimately send a partial map.
+func validateChangesetRelationshipProperties(props map[string]any, schemas *ExtractionSchemas, relType, srcType, dstType string) (map[string]any, error) {
+	if len(props) == 0 || schemas == nil || schemas.RelationshipSchemas == nil || relType == "" {
+		return props, nil
+	}
+	relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, relType, srcType, dstType)
+	if !ok || len(relSchema.Properties) == 0 {
+		return props, nil
+	}
+	return validatePatchProperties(props, agents.ObjectSchema{Properties: relSchema.Properties})
 }
 
 // normaliseChangesetRelationshipDateProperties normalises an edge's date

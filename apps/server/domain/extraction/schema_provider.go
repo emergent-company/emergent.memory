@@ -715,6 +715,9 @@ func applySchemaOverrides(base agents.ObjectSchema, overrides any) agents.Object
 			if d, ok := propMap["description"].(string); ok {
 				propDef.Description = d
 			}
+			if _, ok := propMap["enum"]; ok {
+				propDef.Enum = agents.PropertyDefFromMap(propMap).Enum
+			}
 			if items, ok := propMap["items"].(map[string]any); ok {
 				itemDef := agents.PropertyDefFromMap(items)
 				propDef.Items = &itemDef

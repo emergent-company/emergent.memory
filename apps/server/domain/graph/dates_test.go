@@ -207,7 +207,8 @@ func TestChangesetVersionNormalisesInheritedDates(t *testing.T) {
 		"title":    "new",
 	}}
 
-	version := buildChangesetObjectVersion(head, item, uuid.New(), schemas, "source", nil, false, nil)
+	version, err := buildChangesetObjectVersion(head, item, uuid.New(), schemas, "source", nil, false, nil)
+	require.NoError(t, err)
 	assert.Equal(t, "2026-12-01", version.Properties["next_due"])
 	assert.Equal(t, "new", version.Properties["title"])
 }
@@ -225,7 +226,8 @@ func TestChangesetVersionWithoutPropertiesDoesNotMutateHead(t *testing.T) {
 		Properties: map[string]any{"next_due": "2026-12-01T00:00:00Z", "title": "old"},
 	}
 
-	version := buildChangesetObjectVersion(head, &ChangesetObjectItem{}, uuid.New(), schemas, "source", nil, false, nil)
+	version, err := buildChangesetObjectVersion(head, &ChangesetObjectItem{}, uuid.New(), schemas, "source", nil, false, nil)
+	require.NoError(t, err)
 
 	assert.Equal(t, "2026-12-01", version.Properties["next_due"], "the new version converges")
 	assert.Equal(t, "2026-12-01T00:00:00Z", head.Properties["next_due"], "the previous head must not be mutated")

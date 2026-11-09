@@ -133,6 +133,11 @@ type PropertyDef struct {
 	// type does, so the JSON-Schema spelling the authoring guides recommend is
 	// not a no-op.
 	Format string `json:"format,omitempty"`
+	// Enum lists the values a primitive property may take. Write-time
+	// validation enforces it after coercion, so `country` still matches "DE"
+	// when the caller supplied "de". The extraction prompt renders the same
+	// values, so the model is told the constraint the server enforces.
+	Enum []any `json:"enum,omitempty"`
 }
 
 // promptTypeLabel renders the type the extraction prompt shows for a property.
@@ -153,6 +158,12 @@ func (p PropertyDef) promptTypeLabel() string {
 	if p.Format != "" {
 		constraints = append(constraints, "format "+p.Format)
 	}
+	if len(p.Enum) > 0 && p.Type != "array" && p.Type != "object" {
+		constraints = append(constraints, "one of: "+formatEnumValues(p.Enum))
+	}
+	if p.Items != nil && len(p.Items.Enum) > 0 {
+		constraints = append(constraints, "elements one of: "+formatEnumValues(p.Items.Enum))
+	}
 	if p.Minimum != nil {
 		constraints = append(constraints, "min "+formatBound(*p.Minimum))
 	}
@@ -163,6 +174,26 @@ func (p PropertyDef) promptTypeLabel() string {
 		t += ", " + strings.Join(constraints, ", ")
 	}
 	return t
+}
+
+// formatEnumValues renders a property's allowed values for the extraction
+// prompt. Plain strings stay unquoted; a string that would be ambiguous in a
+// comma-separated list (empty, whitespace or comma) is quoted. Every other
+// scalar keeps its JSON spelling so a numeric or boolean enum is unambiguous.
+func formatEnumValues(values []any) string {
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		if s, ok := v.(string); ok && s != "" && !strings.ContainsAny(s, ", \t\r\n") {
+			parts = append(parts, s)
+			continue
+		}
+		if s, ok := v.(string); ok {
+			parts = append(parts, strconv.Quote(s))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%v", v))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // formatBound renders a numeric bound without an exponent or a trailing ".0",
