@@ -18,10 +18,9 @@ import (
 // existing pending discovered pack instead of appending a new timestamped row.
 func TestUpsertDiscoveredMemorySchemaReusesCurrentRow(t *testing.T) {
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "discoveryjobs_reconcile")
-	if err != nil {
-		t.Skipf("test database unavailable: %v", err)
-	}
+	// SetupTestDBOrFail owns the environment gate (and its skip decision) in the
+	// shared helper; this test must not add its own counted skip site.
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "discoveryjobs_reconcile")
 	defer testDB.Close()
 	require.NoError(t, testutil.TruncateTables(ctx, testDB.DB))
 	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
