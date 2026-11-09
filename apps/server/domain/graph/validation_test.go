@@ -396,6 +396,33 @@ func TestValidatePropertiesEnum(t *testing.T) {
 		assert.Equal(t, "DE", out["country"])
 	})
 
+	t.Run("non-canonical declared enum is canonicalised", func(t *testing.T) {
+		nonCanonical := agents.ObjectSchema{
+			Name: "Thing",
+			Properties: map[string]agents.PropertyDef{
+				"country": {Type: "country", Enum: []any{"de"}},
+			},
+		}
+		out, err := validateProperties(map[string]any{"country": "de"}, nonCanonical)
+		assert.NoError(t, err)
+		assert.Equal(t, "DE", out["country"])
+	})
+
+	t.Run("items enum without an item type still constrains elements", func(t *testing.T) {
+		enumOnly := agents.ObjectSchema{
+			Name: "Thing",
+			Properties: map[string]agents.PropertyDef{
+				"tags": {Type: "array", Items: &agents.PropertyDef{Enum: []any{"a", "b"}}},
+			},
+		}
+		if _, err := validateProperties(map[string]any{"tags": []any{"a", "b"}}, enumOnly); err != nil {
+			t.Fatalf("expected valid enum-only items: %v", err)
+		}
+		_, err := validateProperties(map[string]any{"tags": []any{"a", "c"}}, enumOnly)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "element 1")
+	})
+
 	t.Run("rejects an array element outside the item enum", func(t *testing.T) {
 		_, err := validateProperties(map[string]any{"tags": []any{"a", "c"}}, schema)
 		assert.Error(t, err)

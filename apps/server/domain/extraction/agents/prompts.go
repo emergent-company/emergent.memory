@@ -158,9 +158,10 @@ func (p PropertyDef) promptTypeLabel() string {
 	if p.Format != "" {
 		constraints = append(constraints, "format "+p.Format)
 	}
-	if len(p.Enum) > 0 {
+	if len(p.Enum) > 0 && p.Type != "array" && p.Type != "object" {
 		constraints = append(constraints, "one of: "+formatEnumValues(p.Enum))
-	} else if p.Items != nil && len(p.Items.Enum) > 0 {
+	}
+	if p.Items != nil && len(p.Items.Enum) > 0 {
 		constraints = append(constraints, "elements one of: "+formatEnumValues(p.Items.Enum))
 	}
 	if p.Minimum != nil {
@@ -176,11 +177,20 @@ func (p PropertyDef) promptTypeLabel() string {
 }
 
 // formatEnumValues renders a property's allowed values for the extraction
-// prompt. Strings are shown as written (without quotes); every other scalar
-// keeps its JSON spelling so a numeric or boolean enum is unambiguous.
+// prompt. Plain strings stay unquoted; a string that would be ambiguous in a
+// comma-separated list (empty, whitespace or comma) is quoted. Every other
+// scalar keeps its JSON spelling so a numeric or boolean enum is unambiguous.
 func formatEnumValues(values []any) string {
 	parts := make([]string, 0, len(values))
 	for _, v := range values {
+		if s, ok := v.(string); ok && s != "" && !strings.ContainsAny(s, ", \t\r\n") {
+			parts = append(parts, s)
+			continue
+		}
+		if s, ok := v.(string); ok {
+			parts = append(parts, strconv.Quote(s))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%v", v))
 	}
 	return strings.Join(parts, ", ")

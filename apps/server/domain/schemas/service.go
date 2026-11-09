@@ -364,32 +364,46 @@ func validatePropertyEnums(owner string, rawProperties json.RawMessage) []string
 	var errs []string
 	for _, name := range names {
 		var def struct {
-			Type string          `json:"type"`
-			Enum json.RawMessage `json:"enum"`
+			Type  string          `json:"type"`
+			Enum  json.RawMessage `json:"enum"`
+			Items json.RawMessage `json:"items"`
 		}
 		if err := json.Unmarshal(props[name], &def); err != nil {
 			continue
 		}
-		if len(def.Enum) == 0 || string(def.Enum) == "null" {
-			continue
+		if enumTypeSupported(def.Type) {
+			errs = append(errs, validateEnumDeclaration(
+				fmt.Sprintf("%s property %q.enum", owner, name), def.Type, def.Enum)...)
 		}
-		if !enumTypeSupported(def.Type) {
-			continue
-		}
-		field := fmt.Sprintf("%s property %q.enum", owner, name)
-		var values []any
-		if err := json.Unmarshal(def.Enum, &values); err != nil {
-			errs = append(errs, field+" must be a non-empty list")
-			continue
-		}
-		if len(values) == 0 {
-			errs = append(errs, field+" must be a non-empty list")
-			continue
-		}
-		for i, v := range values {
-			if !enumValueMatchesType(def.Type, v) {
-				errs = append(errs, fmt.Sprintf("%s[%d] value %v does not match property type %q", field, i, v, def.Type))
+		if len(def.Items) > 0 && def.Items[0] == '{' {
+			var items struct {
+				Type string          `json:"type"`
+				Enum json.RawMessage `json:"enum"`
 			}
+			if err := json.Unmarshal(def.Items, &items); err == nil {
+				errs = append(errs, validateEnumDeclaration(
+					fmt.Sprintf("%s property %q.items.enum", owner, name), items.Type, items.Enum)...)
+			}
+		}
+	}
+	return errs
+}
+
+func validateEnumDeclaration(field, typ string, raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var values []any
+	if err := json.Unmarshal(raw, &values); err != nil || len(values) == 0 {
+		return []string{field + " must be a non-empty list"}
+	}
+	var errs []string
+	if typ == "" || !enumTypeSupported(typ) {
+		return errs
+	}
+	for i, v := range values {
+		if !enumValueMatchesType(typ, v) {
+			errs = append(errs, fmt.Sprintf("%s[%d] value %v does not match property type %q", field, i, v, typ))
 		}
 	}
 	return errs

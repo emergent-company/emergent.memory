@@ -169,8 +169,8 @@ Type-specific validation:
 - **`enum`** — the supplied value must be one of the declared values. Matching
   runs after coercion, so `"de"` passes a `country` enum of `["DE"]` and stores
   `"DE"`. A value outside the list fails the whole write with the allowed
-  values named. Enum is supported on primitive types only; an empty list is
-  rejected when the schema is created or updated.
+  values named. Enum is supported on primitive types only; an empty enum list
+  on a primitive property is rejected when the schema is created or updated.
 - **`number` / `integer`** — `minimum`/`maximum`, when declared, are enforced;
   `integer` also rejects a fractional value.
 

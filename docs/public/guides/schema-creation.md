@@ -210,7 +210,7 @@ rejected with the allowed values named. Matching runs after type coercion, so
 a `country` enum of `["DE"]` accepts `"de"` and stores `"DE"`. An array's
 `items.enum` constrains every element. An enum on `array`/`object` itself is
 documentation only, because the list would have to match a whole compound
-value. An empty list is rejected when the schema is installed or updated.
+value. An empty enum list on a primitive property is rejected when the schema is installed or updated.
 
 `minimum` and `maximum` are enforced on `number` and `integer` properties: a
 write above or below the bound is rejected. `format` on a `string` property is

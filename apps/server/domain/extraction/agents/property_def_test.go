@@ -172,4 +172,13 @@ func TestPropertyDefPromptTypeLabel_Enum(t *testing.T) {
 		Type:  "array",
 		Items: &PropertyDef{Type: "string", Enum: []any{"a", "b"}},
 	}.promptTypeLabel())
+	assert.Equal(t, "array of string, elements one of: \"a,b\", c", PropertyDef{
+		Type:  "array",
+		Items: &PropertyDef{Type: "string", Enum: []any{"a,b", "c"}},
+	}.promptTypeLabel(), "ambiguous string values are quoted")
+	assert.Equal(t, "array of string, elements one of: a, b", PropertyDef{
+		Type:  "array",
+		Enum:  []any{"whole-array-value"},
+		Items: &PropertyDef{Type: "string", Enum: []any{"a", "b"}},
+	}.promptTypeLabel(), "array-level enum is documentation-only and does not hide the item enum")
 }

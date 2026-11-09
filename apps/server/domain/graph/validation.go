@@ -461,11 +461,17 @@ func coerceScalarValue(value any, def agents.PropertyDef) (any, error) {
 // declared enum values. An enum on a non-primitive type is documentation only
 // (the CLI warns about it), so it does not gate writes here.
 func checkEnumValue(value any, def agents.PropertyDef) (any, error) {
-	if len(def.Enum) == 0 || !enumAppliesToType(def.Type) {
+	if len(def.Enum) == 0 || (def.Type != "" && !enumAppliesToType(def.Type)) {
 		return value, nil
 	}
 	for _, allowed := range def.Enum {
-		if enumValueMatches(value, allowed) {
+		// Canonicalise the declared value through the same coercion the write
+		// used: a country enum may be authored as "de" while writes store "DE".
+		canonicalAllowed, err := coerceScalarValue(allowed, def)
+		if err != nil {
+			continue
+		}
+		if enumValueMatches(value, canonicalAllowed) {
 			return value, nil
 		}
 	}
@@ -577,9 +583,10 @@ func coerceArrayElements(value any, items *agents.PropertyDef) ([]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected array, got %T", value)
 	}
-	// An items schema with no declared type constrains nothing (same rule as an
-	// unknown top-level type), so the elements are stored as supplied.
-	if items == nil || items.Type == "" {
+	// An items schema with no declared type and no enum constrains nothing
+	// (same rule as an unknown top-level type), so the elements are stored as
+	// supplied. An enum alone still constrains each element.
+	if items == nil || (items.Type == "" && len(items.Enum) == 0) {
 		return vals, nil
 	}
 	out := make([]any, len(vals))
