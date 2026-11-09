@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
@@ -26,6 +27,11 @@ import (
 // Repository handles database operations for agents
 type Repository struct {
 	db bun.IDB
+
+	// schemaRepo supplies compiled object/relationship type metadata for the
+	// citations it re-derives on read (history, MCP session history). Optional:
+	// nil in repository-only tests, in which case citations keep empty labels.
+	schemaRepo *schemas.Repository
 
 	// agentDeletionListeners are invoked, inside the same delete call, with the
 	// ids of runtime agents whose rows were just removed. This is how in-memory
@@ -49,6 +55,23 @@ type Repository struct {
 // NewRepository creates a new agents repository
 func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
+}
+
+// WithSchemaRepo attaches the compiled-type source used to fill citation
+// type_label/type_color on read-side derivations. Called from fx Invoke; nil is
+// safe and leaves citations with empty (omitted) labels.
+func (r *Repository) WithSchemaRepo(repo *schemas.Repository) {
+	r.schemaRepo = repo
+}
+
+// citationTypeMeta loads the project's compiled citation metadata. Best-effort:
+// a nil repository yields nil, so a failed/missing schema read never fails a
+// transcript read.
+func (r *Repository) citationTypeMeta(ctx context.Context, projectID string) map[string]citations.TypeMeta {
+	if r.schemaRepo == nil || projectID == "" {
+		return nil
+	}
+	return r.schemaRepo.CitationTypeMeta(ctx, projectID)
 }
 
 // AddAgentDeletionListener registers a callback invoked with the ids of runtime
@@ -3902,7 +3925,7 @@ type ConversationHistoryItem struct {
 // GetConversationFullHistory returns the unified ordered timeline for a session:
 // run lifecycle events, all LLM messages (user + assistant), and all tool invocations.
 // Items are ordered by (run.created_at asc, item.step_number asc, item.created_at asc).
-func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error) {
+func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID string, typeLabels ...map[string]citations.TypeMeta) ([]*ConversationHistoryItem, error) {
 	// Fetch runs ordered by start time
 	var runs []*AgentRun
 	if err := r.db.NewSelect().
@@ -3995,7 +4018,7 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID s
 				Content:    m.Content,
 			}
 			if IsAgentReplyRole(m.Role) {
-				item.Citations = deriveMessageCitations(m.Content, candsByRun[run.ID])
+				item.Citations = deriveMessageCitations(m.Content, candsByRun[run.ID], typeLabels...)
 			}
 			entries = append(entries, timelineEntry{
 				step:      m.StepNumber,
@@ -4053,7 +4076,7 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID s
 // from its text content (including any embedded A2UI surface) and the run's
 // citation candidates. It is a pure read-side derivation — the same inputs the
 // live turn uses — so a reloaded transcript renders the same citations.
-func deriveMessageCitations(content map[string]any, candidates map[string]citations.Reference) []citations.Citation {
+func deriveMessageCitations(content map[string]any, candidates map[string]citations.Reference, typeLabels ...map[string]citations.TypeMeta) []citations.Citation {
 	if content == nil {
 		return nil
 	}
@@ -4068,7 +4091,7 @@ func deriveMessageCitations(content map[string]any, candidates map[string]citati
 			surfaces, text = extracted, stripped
 		}
 	}
-	return citations.Derive(text, surfaces, candidates)
+	return citations.Derive(text, surfaces, candidates, typeLabels...)
 }
 
 // storedSurfaces decodes the A2UI surfaces persisted alongside a reply's text.
@@ -4110,7 +4133,7 @@ func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectI
 		return nil, apperror.NewNotFound("session", sessionID)
 	}
 
-	items, err := r.GetConversationFullHistory(ctx, sessionID)
+	items, err := r.GetConversationFullHistory(ctx, sessionID, r.citationTypeMeta(ctx, projectID))
 	if err != nil {
 		return nil, err
 	}

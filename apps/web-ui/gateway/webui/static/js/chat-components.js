@@ -1293,22 +1293,27 @@
 
   // UUID-shaped id, the only object identifier we will turn into a link.
   var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  // A trusted object-page url: /objects/<uuid> and nothing else (no scheme, no
-  // query, no fragment). Anything else is ignored rather than trusted.
-  var OBJECT_URL_RE = /^\/objects\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // A trusted object-page url: /objects/<uuid>, optionally carrying the
+  // relationship fragment `/objects/<uuid>#relationship-<uuid>` a relationship
+  // citation points at. No scheme, no query, and no other fragment is trusted.
+  var OBJECT_URL_RE = /^\/objects\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:#relationship-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i;
 
   function isUUID(s) {
     return typeof s === "string" && UUID_RE.test(s);
   }
 
   // citationHref resolves a SAFE href for a citation, or "" when none can be
-  // trusted. An agent-supplied url is only used when it is exactly a
-  // /objects/<uuid> path; otherwise the id itself must be a UUID. This is the
-  // only place a citation becomes a link — labels/types stay textContent.
+  // trusted. An agent-supplied url is only used when it is a trusted
+  // /objects/<uuid> path (optionally with its #relationship-<uuid> fragment);
+  // otherwise an OBJECT id itself must be a UUID. A relationship id is never
+  // opened as an object: it is not an object page, so with no trusted url the
+  // row stays inert instead of linking to a page that shows "Object
+  // unavailable". This is the only place a citation becomes a link — labels and
+  // types stay textContent.
   function citationHref(c) {
     if (!c || typeof c !== "object") return "";
     if (typeof c.url === "string" && OBJECT_URL_RE.test(c.url)) return scopedPath(c.url);
-    if (isUUID(c.id)) return scopedPath("/objects/" + c.id);
+    if (c.kind !== "relationship" && isUUID(c.id)) return scopedPath("/objects/" + c.id);
     return "";
   }
 
@@ -1347,15 +1352,28 @@
     return s.replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
-  // objectTypeLabel resolves a citation/item type to its human label: the
-  // compiled type's label when the embedded map knows it, else a humanized form
-  // of the raw name. An empty type resolves to "".
-  function objectTypeLabel(typeName) {
+  // objectTypeLabel resolves a citation/item type to its human label. A
+  // server-supplied `type_label` wins (other clients, like iOS, have no
+  // embedded map and rely on it); otherwise the compiled type's label when the
+  // embedded map knows it, else a humanized form of the raw name. An empty type
+  // resolves to "".
+  function objectTypeLabel(typeName, typeLabel) {
+    if (typeof typeLabel === "string" && typeLabel) return typeLabel;
     var name = typeName == null ? "" : String(typeName);
     if (!name) return "";
     var t = objectTypes()[name];
     if (t && typeof t.label === "string" && t.label) return t.label;
     return humanizeTypeName(name);
+  }
+
+  // objectTypeColor resolves the badge accent: the server-supplied `type_color`
+  // wins, else the compiled map's declared color. Returns "" when neither is a
+  // simple hex color. Only a trusted hex value ever reaches the style rule.
+  function objectTypeColor(typeName, typeColor) {
+    if (typeof typeColor === "string" && /^#[0-9a-fA-F]{3,8}$/.test(typeColor)) return typeColor;
+    var accent = objectTypeAccent(typeName);
+    if (accent && /^#[0-9a-fA-F]{3,8}$/.test(accent.color)) return accent.color;
+    return "";
   }
 
   // objectTypeAccent returns the type's declared {icon,color} when the map
@@ -1413,19 +1431,21 @@
     row.appendChild(nameEl);
 
     var type = isObj ? (item.type == null ? "" : String(item.type)) : "";
-    var typeLabel = objectTypeLabel(type);
+    var typeLabel = isObj
+      ? objectTypeLabel(type, item.type_label)
+      : objectTypeLabel(type);
     if (typeLabel) {
       var badge = document.createElement("span");
       badge.className = "badge badge-ghost badge-xs shrink-0 font-normal";
       badge.setAttribute("data-testid", "chat-source-type");
       badge.textContent = typeLabel;
-      var accent = objectTypeAccent(type);
-      if (accent && /^#[0-9a-fA-F]{3,8}$/.test(accent.color)) {
+      var color = isObj ? objectTypeColor(type, item.type_color) : "";
+      if (color) {
         badge.setAttribute(
           "style",
-          "color:" + accent.color +
-            ";background-color:color-mix(in oklch," + accent.color + " 10%,transparent)" +
-            ";border-color:color-mix(in oklch," + accent.color + " 15%,transparent)"
+          "color:" + color +
+            ";background-color:color-mix(in oklch," + color + " 10%,transparent)" +
+            ";border-color:color-mix(in oklch," + color + " 15%,transparent)"
         );
       }
       row.appendChild(badge);

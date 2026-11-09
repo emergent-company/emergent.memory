@@ -17,6 +17,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -327,7 +328,7 @@ func (f *fakeShareRepo) FindQuestionByID(_ context.Context, _ string) (*AgentQue
 func (f *fakeShareRepo) GetRunTokenUsage(_ context.Context, _ string) (*RunTokenUsage, error) {
 	return f.runUsage, nil
 }
-func (f *fakeShareRepo) GetConversationFullHistory(_ context.Context, _ string) ([]*ConversationHistoryItem, error) {
+func (f *fakeShareRepo) GetConversationFullHistory(_ context.Context, _ string, _ ...map[string]citations.TypeMeta) ([]*ConversationHistoryItem, error) {
 	f.historyCalled = true
 	return f.historyItems, nil
 }

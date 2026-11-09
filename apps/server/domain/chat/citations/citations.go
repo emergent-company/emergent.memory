@@ -25,8 +25,40 @@ type Citation struct {
 	ID    string `json:"id"`
 	Type  string `json:"type"` // object schema type, or relationship type
 	Label string `json:"label"`
-	URL   string `json:"url"`           // "/objects/<id>"; relationship -> source object's page
-	Key   string `json:"key,omitempty"` // object's human key, set when referenced by key
+	// URL is "/objects/<id>" for an object; a relationship points at its source
+	// object's page plus the "#relationship-<rel>" fragment, so opening the
+	// citation keeps the relationship context ("Referenced via …") the answer's
+	// inline link carries.
+	URL string `json:"url"`
+	Key string `json:"key,omitempty"` // object's human key, set when referenced by key
+	// TypeLabel/TypeColor are the compiled type's display label and accent
+	// color, filled from the compiled object/relationship types when they are
+	// available. Empty when the type has no compiled entry, so they are omitted
+	// on the wire and existing clients are unaffected.
+	TypeLabel string `json:"type_label,omitempty"`
+	TypeColor string `json:"type_color,omitempty"`
+}
+
+// TypeMeta is a compiled type's display metadata, keyed by type name for
+// ApplyTypeLabels.
+type TypeMeta struct {
+	Label string
+	Color string
+}
+
+// ApplyTypeLabels fills each citation's TypeLabel/TypeColor from the compiled
+// type metadata keyed by type name. Citations whose type is absent from types
+// keep empty labels (omitted on the wire). Mutates cits in place.
+func ApplyTypeLabels(cits []Citation, types map[string]TypeMeta) {
+	if len(types) == 0 {
+		return
+	}
+	for i := range cits {
+		if t, ok := types[cits[i].Type]; ok {
+			cits[i].TypeLabel = t.Label
+			cits[i].TypeColor = t.Color
+		}
+	}
 }
 
 // Reference is an internal candidate/reference record used during derivation.
@@ -245,7 +277,7 @@ type posRef struct {
 // matches a candidate, and returns object/relationship citations ordered by
 // first appearance in the text (then surfaces). References are deduped by
 // (kind, canonical id), keeping the first label.
-func Derive(answerText string, surfaces []a2ui.Message, candidates map[string]Reference) []Citation {
+func Derive(answerText string, surfaces []a2ui.Message, candidates map[string]Reference, typeLabels ...map[string]TypeMeta) []Citation {
 	var ordered []posRef
 	ordered = append(ordered, textRefs(answerText)...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].pos < ordered[j].pos })
@@ -308,6 +340,9 @@ func Derive(answerText string, surfaces []a2ui.Message, candidates map[string]Re
 		}
 		seen[k] = true
 		out = append(out, buildCitation(r, cand, keyUsed, keyToID))
+	}
+	if len(typeLabels) > 0 && typeLabels[0] != nil {
+		ApplyTypeLabels(out, typeLabels[0])
 	}
 	return out
 }
@@ -416,7 +451,15 @@ func buildCitation(r Reference, cand Reference, keyUsed bool, keyToID map[string
 		} else if src == "" {
 			src = cand.SrcID
 		}
+		// Keep the relationship in the url: the preview reads the fragment and
+		// renders "Referenced via <type>" instead of a plain object drawer. Only a
+		// canonical UUID relationship id can be expressed as a fragment; a
+		// synthesized "src:type:dst" id is not a real relationship the preview can
+		// resolve, so it keeps the previous source-object url.
 		url = "/objects/" + src
+		if isUUID(r.ID) {
+			url += "#relationship-" + r.ID
+		}
 	}
 	cit := Citation{
 		Kind:  r.Kind,

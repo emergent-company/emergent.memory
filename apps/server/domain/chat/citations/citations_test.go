@@ -228,8 +228,8 @@ func TestDerive_RelationshipFragment(t *testing.T) {
 	if rel.Label != "Acme —works_at→ Bob" {
 		t.Errorf("relationship label = %q, want %q", rel.Label, "Acme —works_at→ Bob")
 	}
-	if rel.URL != "/objects/"+obj1 {
-		t.Errorf("relationship url = %q, want %q", rel.URL, "/objects/"+obj1)
+	if rel.URL != "/objects/"+obj1+"#relationship-"+rel1 {
+		t.Errorf("relationship url = %q, want %q", rel.URL, "/objects/"+obj1+"#relationship-"+rel1)
 	}
 }
 
@@ -403,8 +403,8 @@ func TestDerive_EntityEdgesRelationship(t *testing.T) {
 	if rel.ID != rel1 || rel.Type != "has_paragraph" {
 		t.Errorf("relationship = %+v, want id %s type has_paragraph", *rel, rel1)
 	}
-	if rel.URL != "/objects/"+obj1 {
-		t.Errorf("relationship url = %q, want %q", rel.URL, "/objects/"+obj1)
+	if rel.URL != "/objects/"+obj1+"#relationship-"+rel1 {
+		t.Errorf("relationship url = %q, want %q", rel.URL, "/objects/"+obj1+"#relationship-"+rel1)
 	}
 }
 
@@ -461,8 +461,63 @@ func TestDerive_RelationshipWithKeySource(t *testing.T) {
 	if rel.ID != rel1 || rel.Type != "references" {
 		t.Errorf("relationship = %+v, want id %s type references", *rel, rel1)
 	}
-	if rel.URL != "/objects/"+obj1 {
-		t.Errorf("relationship url = %q, want canonical src %q", rel.URL, "/objects/"+obj1)
+	if rel.URL != "/objects/"+obj1+"#relationship-"+rel1 {
+		t.Errorf("relationship url = %q, want canonical src + fragment %q", rel.URL, "/objects/"+obj1+"#relationship-"+rel1)
+	}
+}
+
+func TestApplyTypeLabels(t *testing.T) {
+	types := map[string]TypeMeta{
+		"Law":    {Label: "Legal Case", Color: "#4F46E5"},
+		"Person": {Label: "Person"},
+	}
+	cits := []Citation{
+		{Type: "Law"},
+		{Type: "Person"},
+		{Type: "Unknown"},
+	}
+	ApplyTypeLabels(cits, types)
+
+	if got := cits[0].TypeLabel; got != "Legal Case" {
+		t.Errorf("Law TypeLabel = %q, want %q", got, "Legal Case")
+	}
+	if got := cits[0].TypeColor; got != "#4F46E5" {
+		t.Errorf("Law TypeColor = %q, want %q", got, "#4F46E5")
+	}
+	if got := cits[1].TypeLabel; got != "Person" {
+		t.Errorf("Person TypeLabel = %q, want %q", got, "Person")
+	}
+	if got := cits[1].TypeColor; got != "" {
+		t.Errorf("Person TypeColor = %q, want empty (undeclared color)", got)
+	}
+	// Absent type keeps empty label/color (omitted on the wire via omitempty).
+	if got := cits[2].TypeLabel; got != "" {
+		t.Errorf("Unknown TypeLabel = %q, want empty", got)
+	}
+	if got := cits[2].TypeColor; got != "" {
+		t.Errorf("Unknown TypeColor = %q, want empty", got)
+	}
+}
+
+func TestDerive_TypeLabels(t *testing.T) {
+	cands := Candidates([]ToolCall{{Output: searchHybridOutput(
+		map[string]any{"id": obj1, "type": "Law", "name": "Lov"},
+	)}})
+	answer := "[Lov](/objects/" + obj1 + ")"
+
+	types := map[string]TypeMeta{"Law": {Label: "Legal Case", Color: "#4F46E5"}}
+	cits := Derive(answer, nil, cands, types)
+	if len(cits) != 1 {
+		t.Fatalf("Derive() = %+v, want 1 citation", cits)
+	}
+	if cits[0].TypeLabel != "Legal Case" || cits[0].TypeColor != "#4F46E5" {
+		t.Errorf("citation = %+v, want TypeLabel Legal Case TypeColor #4F46E5", cits[0])
+	}
+
+	// Without a type map, the citation keeps an empty label (omitted).
+	plain := Derive(answer, nil, cands)
+	if len(plain) != 1 || plain[0].TypeLabel != "" || plain[0].TypeColor != "" {
+		t.Errorf("Derive() without types = %+v, want empty TypeLabel/TypeColor", plain)
 	}
 }
 
@@ -476,4 +531,37 @@ func citationIDs(cits []Citation) map[string]bool {
 
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
+}
+
+// TestDerive_SynthesizedRelationshipURLKeepsSourcePage proves a synthesized
+// "src:type:dst" relationship id (A2UI props without an id) still resolves to
+// the source object's page. Such an id is not a real relationship the preview
+// can look up, so no #relationship- fragment is appended — and the web's
+// fragment regex therefore still matches and links the row.
+func TestDerive_SynthesizedRelationshipURLKeepsSourcePage(t *testing.T) {
+	synth := obj1 + ":works_at:" + obj2
+	cands := map[string]Reference{
+		synth: {Kind: "relationship", ID: synth, Type: "works_at", SrcID: obj1, DstID: obj2},
+	}
+	surfaces := []a2ui.Message{{
+		UpdateComponents: &a2ui.UpdateComponents{
+			SurfaceID: "s1",
+			Components: []a2ui.Component{{
+				ID:        "rel-1",
+				Component: "relationship",
+				Props:     map[string]any{"src_id": obj1, "dst_id": obj2, "type": "works_at"},
+			}},
+		},
+	}}
+
+	cits := Derive("", surfaces, cands)
+	if len(cits) != 1 {
+		t.Fatalf("Derive() = %+v, want 1 citation", cits)
+	}
+	if cits[0].ID != synth {
+		t.Errorf("citation id = %q, want synthesized %q", cits[0].ID, synth)
+	}
+	if cits[0].URL != "/objects/"+obj1 {
+		t.Errorf("synthesized relationship url = %q, want %q (no non-UUID fragment)", cits[0].URL, "/objects/"+obj1)
+	}
 }

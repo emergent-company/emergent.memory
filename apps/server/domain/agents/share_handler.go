@@ -358,7 +358,7 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 	if result != nil {
 		// Derive and emit grounded citations after the run completes and before
 		// the `done` event (non-fatal; emitted only when at least one exists).
-		if cits := h.svc.DeriveCitations(c.Request().Context(), result.RunID, fullResponse.String(), surfaces); len(cits) > 0 {
+		if cits := h.svc.DeriveCitations(c.Request().Context(), result.RunID, fullResponse.String(), surfaces, binding.Link.ProjectID); len(cits) > 0 {
 			_ = writer.WriteData(sse.NewCitationsEvent(cits))
 		}
 		_ = writer.WriteData(sse.NewDoneEventWithRun(result.RunID))
