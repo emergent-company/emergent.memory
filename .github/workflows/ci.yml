@@ -15,7 +15,7 @@ name: Meta CI
 # To make the cheap, always-applicable guards actually gate merges, they run here
 # in the required `ci` job instead:
 #   * migration numbering + immutability (through scripts/preflight/all.sh, which
-#     calls migration-number.sh -> migration-immutability.sh --base origin/main),
+#     calls migration-number.sh -> migration-immutability.sh --base origin/<base>),
 #   * migration workspace hygiene (stray untracked files / duplicate versions),
 #   * the route-authority guard,
 #   * the swagger raw-JSON guard (#162).
@@ -62,9 +62,9 @@ name: Meta CI
 # review verdict as a comment, and `verify` reads it.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 # Cancel superseded PR runs; never cancel a default-branch run (a merge to main
 # should always finish and report its status).
@@ -111,7 +111,7 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         with:
           # Full history: the preflight/migration guards diff the working tree
-          # against the base ref (`--base origin/main`) and need the base commit
+          # against the base ref (`--base origin/<base>`) and need the base commit
           # and blob history present in this checkout.
           fetch-depth: 0
       # Repo-wide secret scan (#1917). gitleaks was previously only wired into
@@ -206,7 +206,7 @@ jobs:
       # be a required check, so its guards would otherwise only surface after
       # merge. Migration numbering + immutability are already covered by the
       # all.sh step below (migration-number.sh calls
-      # migration-immutability.sh --base origin/main), so they are deliberately
+      # migration-immutability.sh --base origin/<base>), so they are deliberately
       # not repeated here.
       - name: Guard migration workspace
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -371,7 +371,7 @@ jobs:
       # Preflight guards: the same checks lanes run locally before pushing —
       # stale base, migration numbering + immutability (goose panics on duplicate
       # versions; migration-number.sh delegates the immutability rule to
-      # migration-immutability.sh --base origin/main), tracked-file gofmt, skip
+      # migration-immutability.sh --base origin/<base>), tracked-file gofmt, skip
       # census, mcp authz, modelref split, and schemadrift. Runs here so the
       # branch-protection-required `ci` check enforces them on merge.
       # (See emergent-company/emergent.memory#1074.)

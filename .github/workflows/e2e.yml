@@ -17,18 +17,9 @@ on:
       - 'VERSION'
       - '.github/workflows/e2e.yml'
       - '.dockerignore'
-  pull_request:
-    # `ready_for_review` is not a default type; the suite skips drafts.
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'apps/server/**'
-      - 'apps/cli/**'
-      - 'deploy/**'
-      - 'e2e/**'
-      - 'go.work'
-      - 'VERSION'
-      - '.github/workflows/e2e.yml'
-      - '.dockerignore'
+  # No `pull_request` trigger: feature PRs go to `dev` for a fast lane. Runs on
+  # the `dev -> main` promotion/hotfix PR via promotion.yml and on pushes to main.
+  workflow_call:
   workflow_dispatch:
     inputs:
       TEST_RUN:
@@ -44,7 +35,7 @@ on:
 # one. `teardown` below reaps anything an earlier attempt of the same run left
 # behind.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: e2e-ci-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
