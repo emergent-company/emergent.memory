@@ -1859,6 +1859,176 @@ func proposalFindingIntent(severity string) ui.BadgeIntent {
 	return ui.BadgeWarning
 }
 
+// proposalStatusLabel is the human label for a proposal's lifecycle status.
+func proposalStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case proposalStatusPending:
+		return "Pending"
+	case proposalStatusApplied:
+		return "Applied"
+	case proposalStatusRejected:
+		return "Rejected"
+	case proposalStatusFailed:
+		return "Failed"
+	case "applying":
+		return "Applying"
+	default:
+		return "Unknown"
+	}
+}
+
+// proposalStatusIntent maps a proposal status to a badge colour. Only pending
+// rows are actionable; the settled states read as outcomes.
+func proposalStatusIntent(status string) ui.BadgeIntent {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case proposalStatusPending:
+		return ui.BadgeWarning
+	case proposalStatusApplied:
+		return ui.BadgeSuccess
+	case proposalStatusRejected:
+		return ui.BadgeNeutral
+	case proposalStatusFailed:
+		return ui.BadgeError
+	case "applying":
+		return ui.BadgeInfo
+	default:
+		return ui.BadgeGhost
+	}
+}
+
+// proposalFilterLabel is the chip label for a status bucket; "All" is a filter
+// bucket, not a status memory ever stores.
+func proposalFilterLabel(status string) string {
+	if status == proposalStatusAll {
+		return "All"
+	}
+	return proposalStatusLabel(status)
+}
+
+// --- skill proposal filter state ---
+
+const (
+	// defaultSkillProposalLimit is memory's own default row cap.
+	defaultSkillProposalLimit = 50
+	// maxSkillProposalLimit is memory's hard ceiling; a larger ?limit= is
+	// clamped to it.
+	maxSkillProposalLimit = 200
+)
+
+// skillProposalLimitChoices is the explicit page-size control. 200 is the
+// server ceiling, so it is also where a larger ?limit= lands after clamping.
+var skillProposalLimitChoices = []int{25, 50, 100, maxSkillProposalLimit}
+
+// skillProposalStatusFilters is the status filter, in display order.
+var skillProposalStatusFilters = []string{
+	proposalStatusPending,
+	proposalStatusApplied,
+	proposalStatusRejected,
+	proposalStatusFailed,
+	proposalStatusAll,
+}
+
+// skillProposalQuery is the validated state of the proposals panel, derived
+// from ?status= and ?limit=. The same value drives the memory request, the
+// filter/limit links and the count line, so the page can never claim a limit it
+// did not ask for or silently swap one control's value.
+type skillProposalQuery struct {
+	// Status is pending, applied, rejected, failed or all.
+	Status string
+	// Limit is the row cap sent to memory (50 by default, at most 200).
+	Limit int
+	// LimitNote explains a ?limit= that could not be honoured verbatim, so a
+	// fallback is never silent. Empty when the request value was usable.
+	LimitNote string
+}
+
+// newSkillProposalQuery validates the raw ?status= / ?limit= values. An absent
+// (or unknown) status means pending, the review inbox. An absent or unusable
+// limit means memory's 50; a limit above memory's 200 ceiling is clamped to
+// 200. Every fallback that differs from the URL value is reported in
+// LimitNote.
+func newSkillProposalQuery(rawStatus, rawLimit string) skillProposalQuery {
+	q := skillProposalQuery{Status: proposalStatusPending, Limit: defaultSkillProposalLimit}
+	switch s := strings.ToLower(strings.TrimSpace(rawStatus)); s {
+	case proposalStatusApplied, proposalStatusRejected, proposalStatusFailed, proposalStatusAll:
+		q.Status = s
+	}
+	q.Limit, q.LimitNote = parseSkillProposalLimit(rawLimit)
+	return q
+}
+
+// parseSkillProposalLimit validates one ?limit= value against the page's
+// offered sizes and memory's ceiling, returning the effective limit and, when
+// the value was not used verbatim, the copy that says so.
+func parseSkillProposalLimit(raw string) (int, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultSkillProposalLimit, ""
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultSkillProposalLimit, fmt.Sprintf("Limit %q is not a number — showing up to %d.", raw, defaultSkillProposalLimit)
+	}
+	if n > maxSkillProposalLimit {
+		return maxSkillProposalLimit, fmt.Sprintf("Limit %d is above the maximum — showing at most %d.", n, maxSkillProposalLimit)
+	}
+	// The control offers one of the sizes below; anything else would leave the
+	// page unable to show which limit is in force, so fall back and say so.
+	for _, choice := range skillProposalLimitChoices {
+		if n == choice {
+			return n, ""
+		}
+	}
+	return defaultSkillProposalLimit, fmt.Sprintf("Limit %d is not one of %d, %d, %d or %d — showing up to %d.",
+		n, 25, 50, 100, maxSkillProposalLimit, defaultSkillProposalLimit)
+}
+
+// skillProposalsHref builds a /skills URL carrying the whole filter state, so
+// switching status keeps the limit and changing the limit keeps the status.
+func skillProposalsHref(status string, limit int) string {
+	q := url.Values{}
+	q.Set("status", status)
+	q.Set("limit", strconv.Itoa(limit))
+	return "/skills?" + q.Encode()
+}
+
+// activeChipVariant highlights the chip for the value currently in force.
+func activeChipVariant(active bool) ui.ButtonVariant {
+	if active {
+		return ui.ButtonPrimary
+	}
+	return ui.ButtonGhost
+}
+
+// skillProposalCountLabel is the honest count line above the rows. memory
+// returns no total, so a full page says "the most recent N" and points at the
+// status filter instead of inventing a total; a short page really is all of
+// them.
+func skillProposalCountLabel(n, limit int) string {
+	if n == limit {
+		return fmt.Sprintf("Showing the most recent %d proposals — there may be older ones; narrow the status filter to see them.", n)
+	}
+	return "Showing all " + countLabel(n, "proposal", "proposals") + "."
+}
+
+// skillProposalsEmptyLabel names the filter that came back empty, so the
+// history views never read like the pending inbox. The pending copy is the one
+// shipped with the inbox and is asserted verbatim.
+func skillProposalsEmptyLabel(status string) string {
+	switch status {
+	case proposalStatusApplied:
+		return "No proposals have been applied yet — an approved proposal appears here."
+	case proposalStatusRejected:
+		return "No proposals have been rejected yet — a rejected proposal appears here."
+	case proposalStatusFailed:
+		return "No proposals have failed to apply yet — a failed apply appears here."
+	case proposalStatusAll:
+		return "No skill proposals have been recorded yet."
+	default:
+		return "No skill proposals are waiting for review. When automatic capture is on, a successful agent run can stage one here."
+	}
+}
+
 // uiSkills renders the skills management page: the pending-proposal review
 // panel plus the list of skills. A failed skills list fetch renders the
 // whole-page error state; a failed proposals fetch degrades only that panel.
@@ -1866,6 +2036,9 @@ func proposalFindingIntent(severity string) ui.BadgeIntent {
 // surface PRG feedback from the create/delete/review flows.
 func (s *Server) uiSkills(c echo.Context) error {
 	ctx := c.Request().Context()
+	// The status/limit filter is validated before the request, so memory only
+	// ever sees an accepted status and a limit within its ceiling.
+	q := newSkillProposalQuery(c.QueryParam("status"), c.QueryParam("limit"))
 	var (
 		skills       []Skill
 		skillsErr    error
@@ -1877,7 +2050,10 @@ func (s *Server) uiSkills(c echo.Context) error {
 	var g errgroup.Group
 	g.Go(func() error { skills, skillsErr = s.memory.ListSkillsIncludingArchived(ctx); return nil })
 	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
-	g.Go(func() error { proposals, proposalsErr = s.memory.ListSkillCaptureProposals(ctx); return nil })
+	g.Go(func() error {
+		proposals, proposalsErr = s.memory.ListSkillCaptureProposals(ctx, q.Status, q.Limit)
+		return nil
+	})
 	_ = g.Wait()
 
 	var flashMsg string
@@ -1904,7 +2080,7 @@ func (s *Server) uiSkills(c echo.Context) error {
 	if proposalsErr != nil {
 		proposalsLoadErr = userFacingError(proposalsErr)
 	}
-	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, proposals, proposalsLoadErr, flashMsg, flashErr, assistant, usedBy))
+	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, proposals, proposalsLoadErr, q, flashMsg, flashErr, assistant, usedBy))
 }
 
 // uiSkill renders one skill: scope + provenance badges, the full content, the

@@ -274,6 +274,29 @@ func TestRunAgentOncePicksLastAssistantMessage(t *testing.T) {
 	assert.Equal(t, "second", reply)
 }
 
+// A card-only turn is a reply: the surface is summarised instead of being
+// reported as "agent run produced no assistant reply" (#427).
+func TestRunAgentOnceCardOnlyReplyIsSummarised(t *testing.T) {
+	surfaces := []any{map[string]any{
+		"updateComponents": map[string]any{
+			"surfaceId": "s1",
+			"components": []any{map[string]any{
+				"id": "c1", "component": "proposal", "kind": "change", "summary": "Ship it",
+			}},
+		},
+	}}
+	repo := &fakeOnceRepo{
+		agent: enabledAgent(),
+		msgs:  []*AgentRunMessage{{Role: agentReplyRole, Content: map[string]any{"a2ui": surfaces}}},
+	}
+	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+	h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+	reply, _, err := h.RunAgentOnce(context.Background(), "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
+	require.NoError(t, err)
+	assert.Equal(t, "Rendered a structured card (proposal): Ship it", reply)
+}
+
 func TestRunAgentOnceUsesProvidedBudget(t *testing.T) {
 	repo := &fakeOnceRepo{agent: enabledAgent(), msgs: assistantMessages("ok")}
 	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}

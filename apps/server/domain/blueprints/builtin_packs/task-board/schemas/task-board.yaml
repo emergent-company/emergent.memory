@@ -11,6 +11,7 @@ objectTypes:
     description: A single unit of work tracked on the Kanban board.
     boardEnabled: true
     allowedStatuses: [ready, in_progress, review, revision, blocked, done]
+    initialStatus: ready
     skipEmbeddings: true
     skipExtraction: true
     excludeFromSearch: true

@@ -229,6 +229,7 @@ type ObjectTypeDef struct {
 	// ObjectTypeDef so memory blueprints round-trips the board-enabled fields.
 	BoardEnabled      bool     `json:"boardEnabled,omitempty"      yaml:"boardEnabled,omitempty"`
 	AllowedStatuses   []string `json:"allowedStatuses,omitempty"   yaml:"allowedStatuses,omitempty"`
+	InitialStatus     string   `json:"initialStatus,omitempty"     yaml:"initialStatus,omitempty"`
 	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"    yaml:"skipEmbeddings,omitempty"`
 	SkipExtraction    bool     `json:"skipExtraction,omitempty"    yaml:"skipExtraction,omitempty"`
 	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty" yaml:"excludeFromSearch,omitempty"`

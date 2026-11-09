@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,6 +49,18 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"POST", "/api/conversations/c1", false},
 		{"DELETE", "/api/conversations/c1/nested", false},
 		{"DELETE", "/api/conversations/c1/archive", false},
+
+		// Conversation reads (issue #431): history + events only, one
+		// non-empty id segment, GET only. This is the exact-shape matcher the
+		// iOS timeline and reattach lanes depend on.
+		{"GET", "/api/conversations/abc/history", true},
+		{"GET", "/api/conversations/abc/events", true},
+		{"GET", "/api/conversations/abc/dump", false},
+		{"GET", "/api/conversations/abc/history/x", false},
+		{"GET", "/api/conversations//history", false},
+		{"GET", "/api/conversations/abc/archive", false},
+		{"POST", "/api/conversations/abc/history", false},
+		{"POST", "/api/conversations/abc/events", false},
 		{"GET", "/api/sessions", true},
 		{"GET", "/api/session", true},
 		{"GET", "/api/project/config", true},
@@ -234,5 +248,191 @@ func TestRequireDeviceCredentialMissingProjectFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "ok") {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+// testDeviceTokenInfo is the introspected identity every device test uses.
+func testDeviceTokenInfo() *deviceTokenInfo {
+	return &deviceTokenInfo{
+		Type:      "api_token",
+		Scopes:    []string{"device:api", "agents:read", "data:read"},
+		ProjectID: "proj-1",
+		OrgID:     "org-1",
+	}
+}
+
+// deviceConversationEcho wires the device gate to the conversation read routes
+// so the authz boundary can be exercised end to end.
+func deviceConversationEcho(f *fakeMemory) (*Server, *echo.Echo) {
+	shutdown := make(chan struct{})
+	close(shutdown) // let a permitted SSE subscription finish instead of blocking
+	s := &Server{cfg: Config{AuthMode: "session", SessionSecret: "test-secret"}, memory: f, shutdownCh: shutdown}
+	e := echo.New()
+	e.Use(s.requireSessionOrKey)
+	e.GET("/api/conversations/:id/history", s.getConversationHistory)
+	e.GET("/api/conversations/:id/events", s.conversationEvents)
+	return s, e
+}
+
+// TestDeviceCredentialAttachesScopedContext pins the property streamEvents
+// depends on: a device request carries a sessionContext (token + token-derived
+// project/org, Device=true) in its request context. Without it the
+// conversation-events poller would run unscoped — the cross-tenant leak issue
+// #431 requires us to rule out.
+func TestDeviceCredentialAttachesScopedContext(t *testing.T) {
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo()}
+	s := &Server{cfg: Config{AuthMode: "session", SessionSecret: "test-secret"}, memory: f}
+	e := echo.New()
+	var got *sessionContext
+	e.GET("/api/agents", func(c echo.Context) error {
+		got, _ = sessionContextFrom(c.Request().Context())
+		return c.String(http.StatusOK, "ok")
+	})
+	e.Use(s.requireSessionOrKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.Header.Set("Authorization", "Bearer emt_dev")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got == nil || !got.Device {
+		t.Fatalf("device request carried no device session context: %+v", got)
+	}
+	if got.Token != "emt_dev" || got.ProjectID != "proj-1" || got.OrgID != "org-1" {
+		t.Fatalf("device session context = %+v, want the introspected token/project/org", got)
+	}
+}
+
+// TestDeviceConversationEventsOwnConversationStreams proves the positive half of
+// the boundary: for a conversation the device's user can see, the events route
+// subscribes and emits the initial refresh frame (the shape iOS #437 consumes).
+func TestDeviceConversationEventsOwnConversationStreams(t *testing.T) {
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo()}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/own/events", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"type":"refresh"`) {
+		t.Fatalf("events stream carried no refresh frame: %q", rec.Body.String())
+	}
+}
+
+// TestDeviceConversationEventsRunNamespaceRejected pins the route/key
+// distinction: an id of `run:<runId>` on the conversation route must not be
+// turned into the run-scoped hub key, because that key skips the device
+// ownership check (and run events are off-surface for a device).
+func TestDeviceConversationEventsRunNamespaceRejected(t *testing.T) {
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo()}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/run:R1/events", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "data:") {
+		t.Fatalf("a run-namespaced conversation id streamed frames: %q", rec.Body.String())
+	}
+}
+
+// TestSessionEventsSubscriptionNotDeviceChecked keeps the new device
+// authorization device-only: a web-session subscriber (Device=false) still
+// streams even when the summary read would fail, so shared streamEvents does
+// not change the web path's behaviour.
+func TestSessionEventsSubscriptionNotDeviceChecked(t *testing.T) {
+	f := &fakeMemory{detailErr: errors.New("memory: GET /api/chat/other: 404 not_found")}
+	shutdown := make(chan struct{})
+	close(shutdown)
+	s := &Server{cfg: Config{AuthMode: "session"}, memory: f, shutdownCh: shutdown}
+
+	e := echo.New()
+	e.GET("/api/conversations/:id/events", func(c echo.Context) error {
+		sc := &sessionContext{Token: "tok", ProjectID: "proj-1"}
+		c.SetRequest(c.Request().WithContext(withSessionContext(c.Request().Context(), sc)))
+		return s.conversationEvents(c)
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/other/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("web session subscriber status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"type":"refresh"`) {
+		t.Fatalf("web session stream carried no refresh frame: %q", rec.Body.String())
+	}
+}
+
+// TestDeviceConversationReadForeignIs404 is the cross-tenant boundary: a device
+// token asking for a conversation its bound user cannot see (another user's
+// private conversation, or one in another project) gets 404 — from the history
+// route and from the events subscription, which must authorize before it
+// streams anything.
+func TestDeviceConversationReadForeignIs404(t *testing.T) {
+	notFound := errors.New("memory: GET /api/chat/foreign: 404 not_found")
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo(), histErr: notFound, detailErr: notFound}
+	_, e := deviceConversationEcho(f)
+
+	for _, path := range []string{
+		"/api/conversations/foreign/history",
+		"/api/conversations/foreign/events",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("X-API-Key", "emt_dev")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404 (a device token must not read another user's conversation); body=%s",
+				path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestDeviceConversationHistoryCarriesToolPresentation pins the "check also" in
+// issue #431: a history tool_call item carries the same category/subject/view
+// presentation (snake_case on the recorded wire) as a live mcp_tool frame
+// (camelCase), so iOS can render recorded and live steps identically. The
+// enrichment is applied by renderHistoryHTML on this route.
+func TestDeviceConversationHistoryCarriesToolPresentation(t *testing.T) {
+	const item = `{"kind":"tool_call",` +
+		`"tool_name":"document-get","tool_status":"completed",` +
+		`"tool_input":{"id":"d1","path":"notes.md"},` +
+		`"tool_output":{"id":"d1","filename":"notes.md","content":"a line","ok":true}}`
+	f := &fakeMemory{
+		introspectInfo: testDeviceTokenInfo(),
+		histories: map[string]*ConversationHistory{
+			"own": {ConversationID: "own", Items: []json.RawMessage{json.RawMessage(item)}},
+		},
+	}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/own/history", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("history body is not JSON: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(body.Items))
+	}
+	for _, field := range []string{"tool_category", "tool_subject", "tool_view"} {
+		if _, ok := body.Items[0][field]; !ok {
+			t.Errorf("history tool_call item missing %q: %v", field, body.Items[0])
+		}
 	}
 }

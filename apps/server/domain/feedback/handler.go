@@ -62,6 +62,7 @@ type SubmitResponse struct {
 // @Success      201 {object} SubmitResponse "Feedback filed"
 // @Failure      400 {object} apperror.Error "Invalid feedback"
 // @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      409 {object} apperror.Error "An identical submission is already being filed; retry shortly"
 // @Failure      429 {object} apperror.Error "Per-user submission limit reached"
 // @Failure      502 {object} apperror.Error "GitHub issue creation failed"
 // @Failure      503 {object} apperror.Error "Feedback is not enabled on this deployment"
@@ -139,6 +140,17 @@ func (h *Handler) mapError(c echo.Context, err error) error {
 		c.Response().Header().Set("Retry-After", strconv.Itoa(seconds))
 		return apperror.New(http.StatusTooManyRequests, "feedback_rate_limited",
 			"You have submitted a lot of feedback in the last hour. Please try again later.")
+	}
+
+	var inProgress *InProgressError
+	if errors.As(err, &inProgress) {
+		seconds := int(inProgress.RetryAfter.Round(time.Second) / time.Second)
+		if seconds < 1 {
+			seconds = 1
+		}
+		c.Response().Header().Set("Retry-After", strconv.Itoa(seconds))
+		return apperror.New(http.StatusConflict, "feedback_in_progress",
+			"An identical submission is already being filed. Retry shortly; do not resend it with a different message.")
 	}
 
 	if errors.Is(err, ErrNotConfigured) {

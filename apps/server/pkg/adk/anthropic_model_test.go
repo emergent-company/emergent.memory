@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 )
@@ -555,4 +557,27 @@ func TestAnthropicModel_CancelDuringBackoffSurfacesCancellation(t *testing.T) {
 	if tr.calls != 1 {
 		t.Errorf("provider calls = %d, want 1 (no retry once the context ended)", tr.calls)
 	}
+}
+
+// TestAnthropicModel_CachedPromptTokens verifies cache reads are surfaced in
+// usage metadata and cache reads/writes are folded into the prompt total, since
+// Anthropic's input_tokens excludes both.
+func TestAnthropicModel_CachedPromptTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":80,"cache_creation_input_tokens":20}}`))
+	}))
+	defer srv.Close()
+
+	m := NewAnthropicModel(srv.URL, "sk-ant-test", "claude-sonnet-4-5")
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+
+	resp, err := collectAnthropicResponse(m.GenerateContent(context.Background(), req, false))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.UsageMetadata)
+	assert.EqualValues(t, 110, resp.UsageMetadata.PromptTokenCount)
+	assert.EqualValues(t, 5, resp.UsageMetadata.CandidatesTokenCount)
+	assert.EqualValues(t, 115, resp.UsageMetadata.TotalTokenCount)
+	assert.EqualValues(t, 80, resp.UsageMetadata.CachedContentTokenCount)
 }

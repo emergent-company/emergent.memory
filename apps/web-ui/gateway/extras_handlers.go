@@ -26,6 +26,18 @@ func (s *Server) getConversationHistory(c echo.Context) error {
 	id := c.Param("id")
 	out, err := s.conversationTimeline(ctx, id)
 	if err != nil {
+		// A conversation the caller cannot see — another project's, another
+		// user's private one, or a deleted id — is a 404, not an outage. Memory
+		// answers 404 for them under its owner-or-shared scope, and the device
+		// contract is "the token's own visible conversations only". Mapping this
+		// to 502 made a foreign id look like a memory failure a client would
+		// retry.
+		if isSessionNotFound(err) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "conversation not found"})
+		}
+		if isMemoryStatus(err, http.StatusForbidden) {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "conversation forbidden"})
+		}
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}

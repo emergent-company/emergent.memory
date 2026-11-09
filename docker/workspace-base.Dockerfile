@@ -42,6 +42,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# rtk — token-optimizing CLI proxy (https://github.com/rtk-ai/rtk) used by the
+# agent rig to compress tool output before it reaches the model. Pinned to the
+# rig version and checksum-verified. amd64 only: publish-workspace-image.yml
+# builds linux/amd64.
+ARG RTK_VERSION=1.0.1
+RUN curl -fsSL -o /tmp/rtk.tgz \
+      "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-x86_64-unknown-linux-musl.tar.gz" \
+    && echo "5b919c3bccb799b67a61866d0e617410a4fcdf173e2614440e59de2fa2003436  /tmp/rtk.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/rtk.tgz -C /usr/local/bin rtk \
+    && chmod 0755 /usr/local/bin/rtk \
+    && rm -f /tmp/rtk.tgz \
+    && rtk --version
+
+# sqz — context compression for AI coding agents (https://github.com/ojuschugh1/sqz).
+# Used by the server-side output proxy to compress oversized bash output.
+# Pinned + checksum-verified; amd64 only, matching the publish workflow.
+ARG SQZ_VERSION=2.1.1
+RUN curl -fsSL -o /tmp/sqz.tgz \
+      "https://github.com/ojuschugh1/sqz/releases/download/v${SQZ_VERSION}/sqz-v${SQZ_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+    && echo "29abeba6a29b83e2a0b0f642681800e62b3dd0df8991e372c3927b8556d55c65  /tmp/sqz.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/sqz.tgz -C /usr/local/bin sqz \
+    && chmod 0755 /usr/local/bin/sqz \
+    && rm -f /tmp/sqz.tgz \
+    && sqz --version
+
 # Install ast-grep for the workspace_ast_grep tool (#393). Pinned release: the
 # tool validates `ast-grep --version`, and Debian bookworm's /usr/bin/sg is the
 # shadow-utils group tool, not ast-grep. Install ONLY the `ast-grep` binary so

@@ -492,11 +492,29 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 // them opaquely, and the transcript renderer keys on kind/role/content/
 // created_at; run-scoped "message" items are unaffected.
 func conversationMessageItem(m Message) *agents.ConversationHistoryItem {
+	content := map[string]any{"text": m.Content}
+	// A card-only turn stores its surfaces in retrieval_context; surface them so
+	// a chat-message replay (no agent run) still renders the card (#427).
+	if len(m.RetrievalContext) > 0 {
+		var rc struct {
+			A2UI []a2ui.Message `json:"a2ui"`
+		}
+		if err := json.Unmarshal(m.RetrievalContext, &rc); err == nil && len(rc.A2UI) > 0 {
+			content["a2ui"] = rc.A2UI
+			// The stored text of a card-only turn is the SummaryText placeholder
+			// kept for text-only consumers (ACP/MCP). A surface-aware replay must
+			// not also paint that placeholder as a second, empty-looking bubble
+			// next to the card (#427 follow-up).
+			if m.Content == a2ui.SummaryText(rc.A2UI) {
+				delete(content, "text")
+			}
+		}
+	}
 	return &agents.ConversationHistoryItem{
 		Kind:      "message",
 		CreatedAt: m.CreatedAt,
 		Role:      m.Role,
-		Content:   map[string]any{"text": m.Content},
+		Content:   content,
 	}
 }
 
@@ -1476,7 +1494,10 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		case agents.StreamEventToolApproval:
 			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
-			surfaces = append(surfaces, event.A2UI...)
+			// Persist/replay only the authoritative frame: progressive frames are
+			// partial and a teardown deletes the surface, so appending them would
+			// store a duplicated or already-deleted card (#427).
+			surfaces = finalA2UISurfaces(surfaces, event)
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		case agents.StreamEventSubagent:
 			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
@@ -1698,8 +1719,10 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	// instead, keeping any genuine pre-pause text in front of it.
 	if result != nil && result.Status == agents.RunStatusPaused {
 		h.persistPausedRunMessage(ctx, projectID, userID, conv, result, responseText)
-	} else if responseText != "" {
-		h.persistAssistantMessage(ctx, projectID, userID, conv, result, responseText)
+	} else if responseText != "" || len(surfaces) > 0 {
+		// A card-only answer has no text: persist the surface's summary so the
+		// turn is replayable instead of vanishing from history (#427).
+		h.persistAssistantMessage(ctx, projectID, userID, conv, result, assistantPersistText(responseText, surfaces), surfaces)
 	}
 
 	// Derive and emit grounded citations after the run completes and before the
@@ -1766,6 +1789,27 @@ func agentRunMessageText(content map[string]any) string {
 	return text
 }
 
+// finalA2UISurfaces keeps only the authoritative finished-response frame. A
+// progressive frame is partial and a teardown deletes the surface, so replacing
+// the tracked set with either would persist a duplicate or an already-deleted
+// card (#427).
+func finalA2UISurfaces(current []a2ui.Message, event agents.StreamEvent) []a2ui.Message {
+	if event.Type == agents.StreamEventA2UI && event.Final {
+		return event.A2UI
+	}
+	return current
+}
+
+// assistantPersistText keeps the stored row replayable for text-only consumers:
+// a card-only turn has no text, so it stores the surface summary. Surface-aware
+// history items omit that placeholder again (see conversationMessageItem).
+func assistantPersistText(text string, surfaces []a2ui.Message) string {
+	if text != "" {
+		return text
+	}
+	return a2ui.SummaryText(surfaces)
+}
+
 // persistAssistantMessage stores an assistant turn in kb.chat_messages, tagged
 // with the run that produced it.
 //
@@ -1778,14 +1822,24 @@ func agentRunMessageText(content map[string]any) string {
 // result reader; the citation query's Rows.Next then panics with
 // "index out of range [0] with length 0" (issue #302). One extra round trip to
 // make the turn durable before the stream reports done is the cheaper trade.
-func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID string, conv *Conversation, result *agents.ExecuteResult, text string) {
-	if text == "" {
+func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID string, conv *Conversation, result *agents.ExecuteResult, text string, surfaces []a2ui.Message) {
+	if text == "" && len(surfaces) == 0 {
 		return
 	}
 	var retrievalCtx json.RawMessage
+	retrieval := make(map[string]any)
 	if result != nil && result.RunID != "" {
-		rc, _ := json.Marshal(map[string]string{"agent_run_id": result.RunID})
-		retrievalCtx = rc
+		retrieval["agent_run_id"] = result.RunID
+	}
+	if len(surfaces) > 0 {
+		// Raw surfaces ride along so a history item can render the card, while
+		// the row's text keeps every text-only replay path non-empty.
+		retrieval["a2ui"] = surfaces
+	}
+	if len(retrieval) > 0 {
+		if rc, err := json.Marshal(retrieval); err == nil {
+			retrievalCtx = rc
+		}
 	}
 	if _, err := h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
 		Role:             RoleAssistant,
@@ -1835,7 +1889,7 @@ func (h *Handler) persistPausedRunMessage(ctx context.Context, projectID, userID
 	if body == "" {
 		body = "Execution paused."
 	}
-	h.persistAssistantMessage(ctx, projectID, userID, conv, result, body)
+	h.persistAssistantMessage(ctx, projectID, userID, conv, result, body, nil)
 }
 
 // formatQuestionForChat renders a question and its options as markdown.
@@ -1956,6 +2010,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 	)
 
 	var fullResponse strings.Builder
+	var surfaces []a2ui.Message
 	streamCallback := func(event agents.StreamEvent) {
 		switch event.Type {
 		case agents.StreamEventTextDelta:
@@ -1979,6 +2034,10 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		case agents.StreamEventToolApproval:
 			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
+			// Persist/replay only the authoritative frame: progressive frames are
+			// partial and a teardown deletes the surface, so appending them would
+			// store a duplicated or already-deleted card (#427).
+			surfaces = finalA2UISurfaces(surfaces, event)
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		case agents.StreamEventSubagent:
 			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
@@ -2047,8 +2106,8 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 				_ = sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg))))
 			}
 		default:
-			if text != "" {
-				h.persistAssistantMessage(ctx, user.ProjectID, user.ID, conv, result, text)
+			if text != "" || len(surfaces) > 0 {
+				h.persistAssistantMessage(ctx, user.ProjectID, user.ID, conv, result, assistantPersistText(text, surfaces), surfaces)
 			}
 		}
 	}

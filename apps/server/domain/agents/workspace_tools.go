@@ -52,9 +52,10 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 	}
 
 	var tools []tool.Tool
-	for _, name := range sandbox.ValidToolNames {
-		// Check if tool is allowed by workspace config
-		if deps.Config != nil && !deps.Config.IsToolAllowed(name) {
+	for _, name := range workspaceToolNamesForMode(deps.Config) {
+		// Check if tool is allowed by workspace config. Mini mode always keeps
+		// bash regardless of the Tools allowlist (the mode is the contract).
+		if deps.Config != nil && !deps.Config.IsMini() && !deps.Config.IsToolAllowed(name) {
 			deps.Logger.Debug("workspace tool filtered by config",
 				slog.String("tool", name),
 				slog.String("workspace_id", deps.WorkspaceID),
@@ -86,6 +87,16 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 	}
 
 	return tools, nil
+}
+
+// workspaceToolNames returns the workspace tools to build for the config's run
+// mode. Mini mode exposes only bash; structured mode keeps the full allowlist
+// (which the config can narrow further via its Tools field).
+func workspaceToolNamesForMode(cfg *sandbox.AgentSandboxConfig) []string {
+	if cfg.IsMini() {
+		return []string{"bash"}
+	}
+	return sandbox.ValidToolNames
 }
 
 // --- Individual tool builders ---
@@ -146,6 +157,10 @@ Usage notes:
 				timeoutMs = int(t)
 			}
 
+			if deps.Config.RTKProxyEnabled() {
+				command = rewriteRTKCommand(command)
+			}
+
 			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   command,
 				Workdir:   workdir,
@@ -166,13 +181,26 @@ Usage notes:
 				return map[string]any{"error": fmt.Sprintf("command execution failed: %s", err.Error())}, nil
 			}
 
-			return map[string]any{
-				"stdout":      result.Stdout,
+			stdout := result.Stdout
+			proxyNote := ""
+			if deps.Config.SQZProxyEnabled() && len(stdout) > sqzCompressThreshold {
+				if compressed, ok := compressWithSQZ(ctx, provider, providerID, stdout); ok {
+					stdout = compressed
+					proxyNote = "output compressed by sqz"
+				}
+			}
+
+			out := map[string]any{
+				"stdout":      stdout,
 				"stderr":      result.Stderr,
 				"exit_code":   result.ExitCode,
 				"duration_ms": result.DurationMs,
 				"truncated":   result.Truncated,
-			}, nil
+			}
+			if proxyNote != "" {
+				out["proxy"] = proxyNote
+			}
+			return out, nil
 		},
 	)
 }

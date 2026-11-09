@@ -872,68 +872,85 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 // dsResourceNeededBanner prompts the user to finish a source whose config is
 // missing its sync target. A Drive source opens the in-page Google Picker modal;
 // a provider with a generic resource step links to it.
+//
+// The action is part of the banner, not a block underneath it: it renders as the
+// alert's third child (icon, text, action), so it reads as that banner's action
+// and sits at the banner's right edge (#462).
 templ dsResourceNeededBanner(p dsResourcePrompt) {
 	<div class="mb-4" data-testid="ds-resource-needed">
 		@ui.Alert(ui.AlertProps{
-			Type:    ui.AlertWarning,
-			Style:   ui.AlertStyleSoft,
-			Icon:    "lucide--folder-tree",
-			Message: p.Description,
+			Type:  ui.AlertWarning,
+			Style: ui.AlertStyleSoft,
+			Icon:  "lucide--folder-tree",
+			Body:  dsResourceNeededBody(p),
 		})
-		<div class="mt-2">
-			if p.OpenPicker {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeButton,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--folder-search",
-					Attrs: templ.Attributes{
-						"data-ds-open-folder-picker": "true",
-						"data-testid":                "ds-resource-needed-link",
-					},
-				}) {
-					{ p.Title }
-				}
-			} else {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    p.Href,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--folder-search",
-					Attrs:   templ.Attributes{"data-testid": "ds-resource-needed-link"},
-				}) {
-					{ p.Title }
-				}
-			}
-		</div>
 	</div>
+}
+
+// dsResourceNeededBody is the resource-needed banner's composed body: the
+// description and the banner's action as sibling children of the alert.
+// Alert.Body renders in place of the message span, so the alert keeps three
+// children — the icon, this text and the action.
+templ dsResourceNeededBody(p dsResourcePrompt) {
+	<span>{ p.Description }</span>
+	if p.OpenPicker {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--folder-search",
+			Attrs: templ.Attributes{
+				"data-ds-open-folder-picker": "true",
+				"data-testid":                "ds-resource-needed-link",
+			},
+		}) {
+			{ p.Title }
+		}
+	} else {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    p.Href,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--folder-search",
+			Attrs:   templ.Attributes{"data-testid": "ds-resource-needed-link"},
+		}) {
+			{ p.Title }
+		}
+	}
 }
 
 // dsPickerBlockedNotice explains why a drive.file source cannot use the folder
 // picker and gives the one remediation that works: reconnect with the read-only
 // scope (the token's grant is fixed at connect time).
+//
+// Like the resource-needed banner, the action is the alert's third child rather
+// than a block underneath it (#462).
 templ dsPickerBlockedNotice(summary dsCredentialSummary) {
 	<div class="mb-4" data-testid="ds-picker-blocked">
 		@ui.Alert(ui.AlertProps{
-			Type:    ui.AlertWarning,
-			Style:   ui.AlertStyleSoft,
-			Icon:    "lucide--lock",
-			Message: summary.PickerError,
+			Type:  ui.AlertWarning,
+			Style: ui.AlertStyleSoft,
+			Icon:  "lucide--lock",
+			Body:  dsPickerBlockedBody(summary),
 		})
-		<div class="mt-2">
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    "/data-sources/" + url.PathEscape(summary.SourceID) + "/reconnect",
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--plug-zap",
-				Attrs:   templ.Attributes{"data-testid": "ds-picker-reconnect"},
-			}) {
-				Reconnect Google Drive
-			}
-		</div>
 	</div>
+}
+
+// dsPickerBlockedBody is the picker-blocked notice's composed body: the error
+// text and the reconnect action as sibling children of the alert.
+templ dsPickerBlockedBody(summary dsCredentialSummary) {
+	<span>{ summary.PickerError }</span>
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    "/data-sources/" + url.PathEscape(summary.SourceID) + "/reconnect",
+		Variant: ui.ButtonPrimary,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--plug-zap",
+		Attrs:   templ.Attributes{"data-testid": "ds-picker-reconnect"},
+	}) {
+		Reconnect Google Drive
+	}
 }
 
 // dsSyncScopeAction returns the sync-scope header action, or nil when the
@@ -1374,9 +1391,9 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 					</div>
 				</div>
 			}
-			<div class="flex flex-wrap items-center gap-2 justify-start">
+			@components.InlineFormActions(components.InlineFormActionsProps{}) {
 				@components.SaveChangesButton()
-			</div>
+			}
 		</form>
 	}
 }

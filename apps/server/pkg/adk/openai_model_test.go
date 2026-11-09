@@ -888,3 +888,24 @@ func TestOpenAICompatibleModel_CancelDuringBackoffSurfacesCancellation(t *testin
 		t.Errorf("provider calls = %d, want 1 (no retry once the context ended)", tr.calls)
 	}
 }
+
+// TestOpenAICompatibleModel_CachedPromptTokens verifies prompt-cache hits are
+// surfaced in usage metadata (OpenAI-compatible prompt_tokens_details).
+func TestOpenAICompatibleModel_CachedPromptTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_tokens_details":{"cached_tokens":80}}}`))
+	}))
+	defer srv.Close()
+
+	m := NewOpenAICompatibleModel(srv.URL, "", "m")
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+
+	resp, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.UsageMetadata)
+	assert.EqualValues(t, 100, resp.UsageMetadata.PromptTokenCount)
+	assert.EqualValues(t, 5, resp.UsageMetadata.CandidatesTokenCount)
+	assert.EqualValues(t, 80, resp.UsageMetadata.CachedContentTokenCount)
+}

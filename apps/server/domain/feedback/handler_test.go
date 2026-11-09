@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -114,4 +115,20 @@ func TestHandlerMalformedJSON(t *testing.T) {
 	h, _ := newTestHandler(t, nil)
 	rec := postFeedback(t, h, `{"message":`, &auth.AuthUser{ID: "user-1"})
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestHandlerInProgressMapsToConflict keeps the REST answer in agreement with
+// the MCP reply: 409 + Retry-After for "an identical submission is being filed".
+func TestHandlerInProgressMapsToConflict(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	e := echo.New()
+	rec := httptest.NewRecorder()
+	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/feedback", nil), rec)
+
+	err := h.mapError(c, &InProgressError{RetryAfter: 7 * time.Second})
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	require.Equal(t, http.StatusConflict, appErr.HTTPStatus)
+	require.Equal(t, "feedback_in_progress", appErr.Code)
+	require.Equal(t, "7", rec.Header().Get("Retry-After"))
 }

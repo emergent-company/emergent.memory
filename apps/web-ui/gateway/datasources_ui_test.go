@@ -3979,6 +3979,67 @@ func TestRenderConfigBooleanSwitchKeepsItsWiring(t *testing.T) {
 	}
 }
 
+// TestResourceNeededBannerActionLivesInTheAlert pins #462: the banner's action
+// is a child of the banner alert (icon, text, action) instead of a block in a
+// div underneath it, so the action reads as that banner's own action while its
+// data-testid stays on the button (anchor_stable).
+func TestResourceNeededBannerActionLivesInTheAlert(t *testing.T) {
+	config, creds := dsConfigFields(testDSSchema(), nil)
+	incomplete := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+	prompt := dsResourcePromptFor(incomplete)
+	if prompt == nil {
+		t.Fatal("incomplete Drive source must produce a resource prompt")
+	}
+	html := renderHTML(t, DataSourceDetailPage(incomplete, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, prompt, nil, "", nil))
+	doc := parseDOM(t, html)
+
+	banner := findElementByAttr(doc, "data-testid", "ds-resource-needed")
+	if banner == nil {
+		t.Fatal("resource-needed banner missing")
+	}
+	action := findElementByAttr(banner, "data-testid", "ds-resource-needed-link")
+	if action == nil {
+		t.Fatal("resource-needed action missing")
+	}
+	alert := action.Parent
+	if !hasClasses(alert, "alert") || !isDescendantOf(alert, banner) {
+		t.Fatalf("the banner action must be a direct child of the banner's alert; parent is %v", nodeDesc(alert))
+	}
+	// Three element children: the icon, the description, and the action.
+	if got := childIndexOf(alert, action); got != 2 {
+		t.Errorf("banner action is element child %d of the alert, want 2 (icon, text, action)", got)
+	}
+	if !strings.Contains(elementText(alert), prompt.Description) {
+		t.Error("the alert must keep the prompt description alongside the action")
+	}
+}
+
+// TestDSSettingsFormActionsAlignRight pins #486 at the reported element: the
+// data-source settings form's action row right-aligns its main action, matching
+// the system-wide pattern instead of leaving "Save changes" on the left.
+func TestDSSettingsFormActionsAlignRight(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Config: map[string]any{"folder_id": "f1"}}
+	config, creds := dsConfigFields(testDSSchema(), src.Config)
+	html := renderHTML(t, DataSourceDetailPage(src, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, nil, nil, "", nil))
+	doc := parseDOM(t, html)
+
+	form := findElementByAttr(doc, "data-testid", "ds-edit-form")
+	if form == nil {
+		t.Fatal("settings form missing")
+	}
+	save := findElementByClass(form, "memory-save-btn")
+	if save == nil {
+		t.Fatal("save action missing from the settings form")
+	}
+	row := save.Parent
+	if !hasClasses(row, "justify-end") {
+		t.Errorf("the settings form's action row must right-align its main action; row is %v", nodeDesc(row))
+	}
+	if hasClasses(row, "justify-start") {
+		t.Error("the settings form's action row must not left-align its main action")
+	}
+}
+
 // elementText returns the concatenated text nodes under n.
 func elementText(n *html.Node) string {
 	var b strings.Builder

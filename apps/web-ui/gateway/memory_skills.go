@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 // Branch is one graph branch (GET /api/graph/branches). The "main" branch is
@@ -232,14 +233,39 @@ type SkillCaptureProposal struct {
 	CreatedAt   string                `json:"createdAt"`
 }
 
-// ListSkillCaptureProposals lists the project's pending skill proposals (GET
-// /api/projects/{projectID}/skills/proposals?status=pending). Pending is the
-// only state the review panel acts on; applied/rejected history is not shown.
-func (m *MemoryClient) ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error) {
+// Skill-capture proposal statuses as memory reports them. "applying" is a
+// transient state (a reviewer claimed the row and the write is running) and is
+// not offered as a filter: it lasts only for the duration of an approve.
+const (
+	proposalStatusPending  = "pending"
+	proposalStatusApplied  = "applied"
+	proposalStatusRejected = "rejected"
+	proposalStatusFailed   = "failed"
+	// proposalStatusAll asks memory for every status (the server maps "all" to
+	// "no status filter").
+	proposalStatusAll = "all"
+)
+
+// ListSkillCaptureProposals lists the project's skill proposals (GET
+// /api/projects/{projectID}/skills/proposals?status=...&limit=...). status is
+// pending, applied, rejected, failed or all; limit is the server's row cap
+// (default 50, max 200 — the server clamps it). Pending is the only state the
+// review controls act on; the other statuses are read-only history.
+func (m *MemoryClient) ListSkillCaptureProposals(ctx context.Context, status string, limit int) ([]SkillCaptureProposal, error) {
 	var out struct {
 		Proposals []SkillCaptureProposal `json:"proposals"`
 	}
-	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals?status=pending"
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/api/projects/" + m.projectIDFor(ctx) + "/skills/proposals"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}

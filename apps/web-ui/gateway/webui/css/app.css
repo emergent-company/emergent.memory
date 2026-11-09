@@ -1348,6 +1348,22 @@ main#main-content {
   color: var(--color-neutral-content);
 }
 
+/* ---------- Neutral icon tiles (dark theme) ---------- */
+/* go-daisy's ui/IconTile paints a tile's glyph with the tone token and tints
+   its surface and border from the same token. For Tone: "neutral" that is
+   --color-neutral, which in this dark-only theme (oklch 0.265) is
+   near-identical in lightness to base-100 — the tile's key/lock/history glyphs
+   were almost invisible on the card (#463). Unlike a content token,
+   --color-neutral has no light variant to pick up, so point the tile's glyph at
+   --color-neutral-content and tint its border from that same foreground instead
+   of the near-black neutral step. Keyed on the class triple IconTile emits for a
+   neutral tone (bg-neutral/10 + text-neutral + border-neutral/15) so no other
+   neutral surface is touched; unlayered so it beats Tailwind's utility layer. */
+.text-neutral.bg-neutral\/10.border-neutral\/15 {
+  color: var(--color-neutral-content);
+  border-color: color-mix(in oklch, var(--color-neutral-content) 22%, transparent);
+}
+
 /* Schema property-type badges (blueprint/schema browsers).
  * The type column colour-codes each registry property type so it is scannable
  * at a glance. Four tones have no distinct semantic tone in the dark theme —

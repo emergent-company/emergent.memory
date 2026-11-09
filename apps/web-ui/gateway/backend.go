@@ -279,7 +279,9 @@ type MemoryBackend interface {
 	UpdateSkill(ctx context.Context, id, description, content string) (*Skill, error)
 	DeleteSkill(ctx context.Context, id string) error
 	RestoreSkill(ctx context.Context, id string, pin bool) (*Skill, error)
-	ListSkillCaptureProposals(ctx context.Context) ([]SkillCaptureProposal, error)
+	// ListSkillCaptureProposals lists the proposal inbox/history: status is
+	// pending, applied, rejected, failed or all, limit caps the rows returned.
+	ListSkillCaptureProposals(ctx context.Context, status string, limit int) ([]SkillCaptureProposal, error)
 	GetSkillCaptureProposal(ctx context.Context, id string) (*SkillCaptureProposal, error)
 	ApproveSkillCaptureProposal(ctx context.Context, id string) error
 	RejectSkillCaptureProposal(ctx context.Context, id string) error

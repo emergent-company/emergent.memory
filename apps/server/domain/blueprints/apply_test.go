@@ -200,6 +200,56 @@ func TestValidateManifest_StaticErrors(t *testing.T) {
 		})
 		require.NoError(t, err)
 	})
+
+	// #422: the entry lane a new board item lands in must be one of the type's
+	// own allowed statuses, rejected before any pack is materialized.
+	t.Run("initialStatus outside allowedStatuses rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Packs: []PackManifest{{
+				Name:    "board",
+				Version: "1.0.0",
+				ObjectTypes: []ObjectTypeDef{{
+					Name:            "Task",
+					BoardEnabled:    true,
+					AllowedStatuses: []string{"pending", "done"},
+					InitialStatus:   "open",
+				}},
+			}},
+		})
+		require.Error(t, err)
+		assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+		assert.Contains(t, err.Error(), `pack "board" type "Task"`)
+	})
+
+	t.Run("initialStatus inside allowedStatuses accepted", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Packs: []PackManifest{{
+				Name:    "board",
+				Version: "1.0.0",
+				ObjectTypes: []ObjectTypeDef{{
+					Name:            "Task",
+					BoardEnabled:    true,
+					AllowedStatuses: []string{"pending", "done"},
+					InitialStatus:   "pending",
+				}},
+			}},
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("initialStatus on non-board type ignored", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Packs: []PackManifest{{
+				Name:    "board",
+				Version: "1.0.0",
+				ObjectTypes: []ObjectTypeDef{{
+					Name:          "Note",
+					InitialStatus: "open",
+				}},
+			}},
+		})
+		require.NoError(t, err)
+	})
 }
 
 // TestValidateManifest_UsesConfiguredMinCronInterval verifies apply enforces the

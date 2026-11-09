@@ -49,8 +49,11 @@ type MCPSession struct {
 	Scopes          []string
 	Initialized     bool
 	ProtocolVersion string
-	CreatedAt       time.Time
-	LastAccessAt    time.Time
+	// ClientName is the sanitized clientInfo.name from initialize, carried into
+	// tools/call so tools can name the real client (issue #472).
+	ClientName   string
+	CreatedAt    time.Time
+	LastAccessAt time.Time
 }
 
 // SSEStream represents an active SSE connection
@@ -546,6 +549,7 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 	session.Initialized = true
 	session.ProtocolVersion = params.ProtocolVersion
 	session.ProjectID = candidate
+	session.ClientName = sanitizeClientName(params.ClientInfo.Name)
 
 	h.sessionsMu.Lock()
 	h.sessions[session.ID] = session
@@ -710,6 +714,7 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 
 	// Execute tool
 	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	execCtx = withClientName(execCtx, session.ClientName)
 	// The transport already enforced per-tool AgentOnly / RequiredScope /
 	// SuperadminOnly above. Mark the call transport-enforced so ExecuteTool's
 	// in-process gate (which covers the agent-run path) does not re-fire for an

@@ -3,21 +3,30 @@ package feedback
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 type fakeIssueCreator struct {
+	mu    sync.Mutex
 	calls []fakeIssueCall
 	issue *createdIssue
 	err   error
+	// onCall, when set, runs after the call is recorded and before it returns.
+	// A test uses it to hold the first (winning) GitHub call in flight while
+	// the other submissions arrive.
+	onCall func(callIndex int)
 }
 
 type fakeIssueCall struct {
@@ -27,17 +36,50 @@ type fakeIssueCall struct {
 }
 
 func (f *fakeIssueCreator) CreateIssue(_ context.Context, title, body string, labels []string) (*createdIssue, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, fakeIssueCall{title: title, body: body, labels: labels})
-	if f.err != nil {
-		return nil, f.err
+	index := len(f.calls)
+	issue, err, onCall := f.issue, f.err, f.onCall
+	f.mu.Unlock()
+
+	if onCall != nil {
+		onCall(index)
 	}
-	if f.issue != nil {
-		return f.issue, nil
+	if err != nil {
+		return nil, err
+	}
+	if issue != nil {
+		return issue, nil
 	}
 	return &createdIssue{Number: 42, HTMLURL: "https://github.com/o/r/issues/42"}, nil
 }
 
+func (f *fakeIssueCreator) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// connectFeedbackDB opens a throwaway test database owned by this test. The
+// harness applies the embedded migrations to a template first, so a new
+// migration is exercised here rather than only on a developer's database.
+func connectFeedbackDB(t *testing.T) *bun.DB {
+	t.Helper()
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "feedback")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
+}
+
 func testService(t *testing.T, mutate func(*config.FeedbackConfig)) (*Service, *fakeIssueCreator) {
+	t.Helper()
+	svc, fake, _ := testServiceWithDB(t, mutate)
+	return svc, fake
+}
+
+func testServiceWithDB(t *testing.T, mutate func(*config.FeedbackConfig)) (*Service, *fakeIssueCreator, *bun.DB) {
 	t.Helper()
 	cfg := &config.Config{
 		Environment: "test",
@@ -53,12 +95,13 @@ func testService(t *testing.T, mutate func(*config.FeedbackConfig)) (*Service, *
 	if mutate != nil {
 		mutate(&cfg.Feedback)
 	}
-	svc := NewService(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	db := connectFeedbackDB(t)
+	svc := NewService(cfg, db, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	fake := &fakeIssueCreator{}
 	if svc.Enabled() {
 		svc.client = fake
 	}
-	return svc, fake
+	return svc, fake, db
 }
 
 func validSubmission() Submission {
@@ -211,7 +254,7 @@ func TestSubmissionFingerprintIsStableAndContentSensitive(t *testing.T) {
 
 func TestGuardRateLimitWindowExpires(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	guard := newSubmissionGuard(1, dedupeWindow, func() time.Time { return now })
+	guard := newSubmissionGuard(1, func() time.Time { return now })
 
 	require.Zero(t, guard.reserve("user-1"))
 	require.Positive(t, guard.reserve("user-1"))
@@ -220,18 +263,44 @@ func TestGuardRateLimitWindowExpires(t *testing.T) {
 	require.Zero(t, guard.reserve("user-1"))
 }
 
-func TestGuardDuplicateExpires(t *testing.T) {
+// A rate-limited identity must not lose its budget to a flood of new
+// identities: eviction is idle-only (issue #472).
+func TestGuardFloodKeepsLiveBudget(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	guard := newSubmissionGuard(5, dedupeWindow, func() time.Time { return now })
+	guard := newSubmissionGuard(1, func() time.Time { return now })
+	guard.maxEntries = 3
 
-	require.Nil(t, guard.lookupDuplicate("user-1", "fp"))
-	guard.rememberResult("user-1", "fp", &Result{IssueNumber: 7, IssueURL: "url"})
-	dup := guard.lookupDuplicate("user-1", "fp")
-	require.NotNil(t, dup)
-	require.Equal(t, 7, dup.IssueNumber)
+	require.Zero(t, guard.reserve("victim"))
+	require.Positive(t, guard.reserve("victim"))
 
-	now = now.Add(dedupeWindow + time.Second)
-	require.Nil(t, guard.lookupDuplicate("user-1", "fp"))
+	for i := range 50 {
+		guard.reserve(fmt.Sprintf("flood-%d", i))
+	}
+
+	// The victim's hit is still live, so its budget is still exhausted.
+	require.Positive(t, guard.reserve("victim"), "a live hit must never be evicted")
+	require.Contains(t, guard.entries, "victim")
+	require.Len(t, guard.entries["victim"].hits, 1)
+	// The map is allowed past maxEntries rather than refunding a budget.
+	require.Greater(t, len(guard.entries), guard.maxEntries)
+}
+
+// When an idle identity is available it is the one evicted, before any
+// identity that holds a live hit.
+func TestGuardEvictsIdleIdentityFirst(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	guard := newSubmissionGuard(1, func() time.Time { return now })
+	guard.maxEntries = 2
+
+	require.Zero(t, guard.reserve("live"))
+	guard.entries["idle"] = &guardEntry{lastSeen: now.Add(-2 * time.Hour)}
+	guard.lastSweep = time.Time{}
+
+	require.Zero(t, guard.reserve("newcomer"))
+
+	require.NotContains(t, guard.entries, "idle", "the idle identity is evicted first")
+	require.Contains(t, guard.entries, "live")
+	require.Contains(t, guard.entries, "newcomer")
 }
 
 func TestFailedDeliveryConsumesTheBudgetSlot(t *testing.T) {

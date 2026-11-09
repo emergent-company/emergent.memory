@@ -527,3 +527,22 @@ func TestOpenAIResponsesModel_CancelDuringBackoffSurfacesCancellation(t *testing
 	assert.True(t, errors.Is(err, context.Canceled), "errors.Is(%v, context.Canceled) = false, want true", err)
 	assert.Equal(t, 1, tr.calls, "no retry once the context ended")
 }
+
+// TestOpenAIResponsesModel_CachedPromptTokens verifies prompt-cache hits are
+// surfaced from input_tokens_details.cached_tokens.
+func TestOpenAIResponsesModel_CachedPromptTokens(t *testing.T) {
+	const responseJSON = `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":100,"output_tokens":5,"total_tokens":105,"input_tokens_details":{"cached_tokens":80}}}`
+	var cap responsesCaptured
+	srv := newResponsesServer(t, responseJSON, &cap)
+
+	m := NewOpenAIResponsesModel(srv.URL+"/v1", "sk-test", "gpt-5", AuthBearer)
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+
+	resp, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.UsageMetadata)
+	assert.EqualValues(t, 100, resp.UsageMetadata.PromptTokenCount)
+	assert.EqualValues(t, 5, resp.UsageMetadata.CandidatesTokenCount)
+	assert.EqualValues(t, 80, resp.UsageMetadata.CachedContentTokenCount)
+}

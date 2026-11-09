@@ -81,6 +81,10 @@ type StreamEvent struct {
 	Role       string         // For Thinking: "operator" (planning text) or "reasoning" (chain-of-thought)
 	SurfaceID  string         // For A2UI: the stable surface identifier
 	A2UI       []a2ui.Message // For A2UI: the ordered surface messages
+	// Final is true only on the authoritative A2UI frame extracted from the
+	// finished response. Progressive frames (and a teardown) leave it false, so
+	// a replay/persistence consumer can ignore partial and deleted surfaces.
+	Final bool
 	// ID is a stable correlation key:
 	//   - For Thinking: the segment id ("step-<n>-<role>") shared by every delta
 	//     of one reasoning/planning segment and its closing event.
@@ -369,6 +373,7 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 					Type:      StreamEventA2UI,
 					SurfaceID: surfaceID,
 					A2UI:      msgs,
+					Final:     true,
 				})
 			}
 			if plainText != "" {
@@ -2459,6 +2464,16 @@ func (ae *AgentExecutor) runPipeline(
 ) (*ExecuteResult, error) {
 	dbCtx := context.Background()
 
+	// Mini run mode: sandbox_config.run_mode == "mini" exposes only
+	// workspace_bash plus the submit terminator, and enforces one action per
+	// model turn. Parsed here so tool assembly and the tool callback share it.
+	miniMode := false
+	if req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0 {
+		if cfg, cfgErr := sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig); cfgErr == nil && cfg.IsMini() {
+			miniMode = true
+		}
+	}
+
 	// The run row is the source of truth for the trust marker. Override the
 	// request with the persisted value so coordination tools (and any child they
 	// spawn) inherit the run's trust rather than whatever the current transport
@@ -2772,6 +2787,32 @@ func (ae *AgentExecutor) runPipeline(
 		)
 	}
 
+	// Mini mode exposes exactly workspace_bash plus the submit terminator.
+	// Every other resolved tool (project tools, coordination, skills, work
+	// terminators, caller extras) is dropped so the run is a single linear
+	// bash loop.
+	if miniMode {
+		kept := make([]tool.Tool, 0, 2)
+		for _, t := range resolvedTools {
+			if t != nil && t.Name() == "workspace_bash" {
+				kept = append(kept, t)
+			}
+		}
+		resolvedTools = kept
+		if submitTool, submitErr := buildSubmitTool(terminatorState); submitErr != nil {
+			ae.log.Warn("failed to build submit tool for mini mode",
+				slog.String("run_id", run.ID),
+				slog.String("error", submitErr.Error()),
+			)
+		} else {
+			resolvedTools = append(resolvedTools, submitTool)
+		}
+		ae.log.Info("mini run mode: tool surface resolved",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(resolvedTools)),
+		)
+	}
+
 	// Persist the final tool list on the run record for observability
 	if len(resolvedTools) > 0 {
 		toolNames := make([]string, len(resolvedTools))
@@ -2968,6 +3009,10 @@ func (ae *AgentExecutor) runPipeline(
 	// rate-limited.
 	a2uiThrottle := newA2UIFrameThrottle(a2uiFrameInterval)
 
+	// a2uiRepair owns the single bounded repair turn (#417): when a final answer
+	// is only an invalid surface, the validator issues are sent back once.
+	a2uiRepair := &a2uiRepairState{}
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -3111,6 +3156,24 @@ func (ae *AgentExecutor) runPipeline(
 	// is an in-memory catalog read, not a per-tool-call DB scan.
 	toolScopes := ae.toolPool.ToolScopes()
 
+	// Mini mode enforces exactly one executed tool call per model turn. ADK may
+	// dispatch parallel calls from one response; the first wins and the rest are
+	// rejected with an error result so the model sees why they did not run.
+	var miniTurnMu sync.Mutex
+	miniTurnStep := -1
+	miniTurnCalls := 0
+	allowMiniToolCall := func(step int) bool {
+		miniTurnMu.Lock()
+		defer miniTurnMu.Unlock()
+		if step != miniTurnStep {
+			miniTurnStep = step
+			miniTurnCalls = 1
+			return true
+		}
+		miniTurnCalls++
+		return miniTurnCalls == 1
+	}
+
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx agent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
 		// FunctionCallID is stable across the before/after callback pair, even
@@ -3130,6 +3193,16 @@ func (ae *AgentExecutor) runPipeline(
 		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
 		// round-trips) between model steps keep refreshing last_step_at.
 		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
+		if miniMode && !allowMiniToolCall(tracker.current()) {
+			ae.log.Info("mini mode: rejecting additional tool call in the same turn",
+				slog.String("run_id", run.ID),
+				slog.String("tool", t.Name()),
+			)
+			return map[string]any{
+				"error": "mini mode allows exactly one tool call per turn; no additional tool was executed. Use the result of the previous call.",
+			}, nil
+		}
 
 		// A tool start closes any open thinking segment: the pre-tool
 		// monologue/reasoning phase has ended.
@@ -3953,8 +4026,14 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 
-			// Persist assistant messages from events
+			// Persist assistant messages from events. A repaired answer that
+			// omitted its createSurface line is normalized first so both the
+			// persisted row and the streamed frame keep the failed surface's id
+			// and ordering (#417).
 			if event.Content != nil && !event.Partial {
+				if event.IsFinalResponse() && a2uiRepair.Attempted() {
+					event.Content.Parts = ensureRepairedCreateSurface(event.Content.Parts, a2uiRepair.SurfaceID())
+				}
 				ae.persistEventContent(dbCtx, run.ID, event, tracker.current())
 			}
 
@@ -4070,6 +4149,17 @@ func (ae *AgentExecutor) runPipeline(
 		}
 
 		if !malformed && !transientErr && !unknownTool {
+			// One bounded A2UI repair pass (#417): an answer that was only an
+			// invalid card would otherwise degrade silently, so send the
+			// validator issues back exactly once before accepting the fallback.
+			if prompt, ok := a2uiRepairFor(req, tracker, a2uiRepair, eventParts(lastEvent)); ok {
+				ae.log.Info("a2ui validation failed, issuing one repair turn",
+					slog.String("run_id", run.ID),
+					slog.Int("max_repairs", maxA2UIRepairs),
+				)
+				currentContent = genai.NewContentFromText(prompt, genai.RoleUser)
+				continue
+			}
 			break // normal completion — exit outer retry loop
 		}
 		// MALFORMED_FUNCTION_CALL retry: brief pause then re-enter inner loop
@@ -4172,6 +4262,17 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Build summary from the last event
 	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
+
+	// Log/metric the A2UI repair outcome per run (#417): "repaired" vs
+	// "degraded" is how we tell whether the catalog prompt is doing its job.
+	if a2uiRepair.Attempted() {
+		outcome := a2uiRepair.Outcome(eventParts(lastEvent))
+		summary["a2ui_repair"] = outcome
+		ae.log.Info("a2ui repair outcome",
+			slog.String("run_id", run.ID),
+			slog.String("outcome", outcome),
+		)
+	}
 
 	// Carry the work terminator marker (if any) into the returned summary so the
 	// worker pool can distinguish "success with a terminator" from a protocol
@@ -5413,6 +5514,16 @@ func (st *stepTracker) exceeded() bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.steps >= st.maxSteps
+}
+
+// nextStepExceedsBudget reports whether incrementing for one more model call
+// would trip the step limit. beforeModelCb increments first and then checks
+// exceeded(), so a follow-up turn (a repair) is only safe while the NEXT step
+// still fits — not merely while the current count is under the limit.
+func (st *stepTracker) nextStepExceedsBudget() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.steps+1 >= st.maxSteps
 }
 
 // --- Doom Loop Detector ---

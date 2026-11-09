@@ -1306,6 +1306,22 @@ Table "kb"."external_sources" {
   }
 }
 
+Table "kb"."feedback_dedupe_claims" {
+  "owner_identity" text [pk]
+  "dedupe_key" text [pk]
+  "state" text [not null, default: 'pending']
+  "claim_token" uuid [not null]
+  "issue_number" integer
+  "issue_url" text
+  "claimed_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+
+  Indexes {
+    (claimed_at) [name: "feedback_dedupe_claims_claimed_at_idx"]
+  }
+}
+// kb.feedback_dedupe_claims: One atomic claim per (submitter identity, submission fingerprint) for feedback duplicate suppression; see issue #472.
+
 Table "kb"."github_credentials" {
   "project_id" uuid [pk]
   "encrypted_token" bytea [not null]

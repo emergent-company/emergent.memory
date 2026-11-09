@@ -1049,7 +1049,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	if err != nil {
 		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
 	}
-	if err := rejectAgentWorkStatusWriteCtx(ctx, actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+	if err := rejectAgentCreateWorkStatus(ctx, actorType, workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
 	}
 	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
@@ -1064,12 +1064,17 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		return nil, err
 	}
 
+	// A board-enabled type gets its resolved entry status when the caller
+	// supplies none (#422). This is a default, not a status write, so it applies
+	// to every actor.
+	createStatus := applyInitialStatus(workCfg, req.Status, req.Properties)
+
 	obj := &GraphObject{
 		ProjectID:       projectID,
 		BranchID:        req.BranchID,
 		Type:            req.Type,
 		Key:             req.Key,
-		Status:          req.Status,
+		Status:          createStatus,
 		Assignee:        req.Assignee,
 		Namespace:       req.Namespace,
 		Properties:      validatedProps,
@@ -1159,7 +1164,15 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if err != nil {
 		return nil, false, apperror.ErrInternal.WithMessage("failed to load schemas")
 	}
-	if err := rejectAgentWorkStatusWriteCtx(ctx, actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+	// Create and update are different contracts for work status: a create may
+	// name the type's entry status (#422), while an update may never move the
+	// status (every later transition is platform-owned). The upsert only applies
+	// the initial-status default when it actually creates a new object.
+	if existing == nil {
+		if err := rejectAgentCreateWorkStatus(ctx, actorType, workCfg, req.Status, req.Properties); err != nil {
+			return nil, false, err
+		}
+	} else if err := rejectAgentWorkStatusWriteCtx(ctx, actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
 		return nil, false, err
 	}
 	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
@@ -1168,12 +1181,13 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	if existing == nil {
 		// Create new object
+		createStatus := applyInitialStatus(workCfg, req.Status, req.Properties)
 		obj := &GraphObject{
 			ProjectID:       projectID,
 			BranchID:        req.BranchID,
 			Type:            req.Type,
 			Key:             req.Key,
-			Status:          statusForWrite(validatedProps, req.Status),
+			Status:          statusForWrite(validatedProps, createStatus),
 			Assignee:        req.Assignee,
 			Namespace:       req.Namespace,
 			Properties:      validatedProps,
@@ -5952,9 +5966,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		// Validate properties against schema
 		validatedProps := objReq.Properties
 		schemaVersion := ""
+		var workCfg *agents.ObjectTypeWorkConfig
 		if schemas != nil {
 			if schema, ok := schemas.ObjectSchemas[objReq.Type]; ok {
 				schemaVersion = schema.Version
+				workCfg = &schema.ObjectTypeWorkConfig
 				start := time.Now()
 				validated, err := validateProperties(objReq.Properties, schema)
 				duration := time.Since(start)
@@ -5968,12 +5984,15 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			}
 		}
 
+		// A board-enabled type gets its resolved entry status when the batch
+		// object supplies none (#422), matching the single-object create path.
+		createStatus := applyInitialStatus(workCfg, objReq.Status, validatedProps)
 		obj := &GraphObject{
 			ProjectID:  projectID,
 			BranchID:   objReq.BranchID,
 			Type:       objReq.Type,
 			Key:        objReq.Key,
-			Status:     statusForWrite(validatedProps, objReq.Status),
+			Status:     statusForWrite(validatedProps, createStatus),
 			Properties: validatedProps,
 			Labels:     objReq.Labels,
 			ActorType:  &actorType,
