@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
@@ -122,6 +124,65 @@ type mcpKVField struct {
 	Placeholder string
 	Auth        bool
 	AuthScheme  string
+}
+
+// mcpImportPageData backs the Claude-config import page. Config is the pasted
+// document; Target is "auto" (remote → shared host, stdio → connector),
+// "server", or "device"; DeviceInstanceID binds device entries. Result is
+// populated after a POST so the created/skipped/failed report is visible
+// without a round trip.
+type mcpImportPageData struct {
+	Config           string
+	Target           string
+	DeviceInstanceID string
+	Overwrite        bool
+	DryRun           bool
+	Devices          []RelaySession
+	DevicesErr       error
+	FieldErrConfig   string
+	FieldErrTarget   string
+	GeneralErr       error
+	FlashErr         error
+	Result           *MCPImportResult
+}
+
+// mcpImportTargets are the accepted delivery-target choices.
+func mcpImportTargets() []string { return []string{"auto", "server", "device"} }
+
+// validateImportDraft checks the import form before calling memory. The
+// per-entry transport rules are memory's job; this only rejects an empty or
+// non-JSON document and an unknown target.
+func (d *mcpImportPageData) validate() {
+	d.FieldErrConfig = ""
+	d.FieldErrTarget = ""
+	if strings.TrimSpace(d.Config) == "" {
+		d.FieldErrConfig = "Paste a Claude MCP config document."
+	} else if !json.Valid([]byte(d.Config)) {
+		d.FieldErrConfig = "That is not valid JSON."
+	}
+	if d.Target == "" {
+		d.Target = "auto"
+	}
+	if !slices.Contains(mcpImportTargets(), d.Target) {
+		d.FieldErrTarget = "Choose auto, server, or device."
+	}
+}
+
+// Summary renders the one-line import outcome.
+func (r *MCPImportResult) Summary() string {
+	if r == nil {
+		return ""
+	}
+	prefix := ""
+	if r.DryRun {
+		prefix = "Dry run: "
+	}
+	return fmt.Sprintf("%s%d created, %d updated, %d skipped, %d failed",
+		prefix, len(r.Created), len(r.Updated), len(r.Skipped), len(r.Failed))
+}
+
+func (d *mcpImportPageData) hasFieldErrs() bool {
+	return d.FieldErrConfig != "" || d.FieldErrTarget != ""
 }
 
 // mcpServerSettingsBase is the base path for the MCP Servers management area.

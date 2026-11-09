@@ -226,6 +226,51 @@ func (m *MemoryClient) GetMCPServer(ctx context.Context, id string) (*MCPServer,
 	return &env.Data, nil
 }
 
+// MCPImportResult mirrors memory's ImportMCPServersResultDTO.
+type MCPImportResult struct {
+	Created []string           `json:"created"`
+	Updated []string           `json:"updated"`
+	Skipped []MCPImportSkip    `json:"skipped"`
+	Failed  []MCPImportFailure `json:"failed"`
+	DryRun  bool               `json:"dryRun"`
+}
+
+// MCPImportSkip names one entry left untouched and why.
+type MCPImportSkip struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// MCPImportFailure names one entry that could not be imported.
+type MCPImportFailure struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
+}
+
+// ImportMCPServers posts a Claude-format config document to memory's import
+// endpoint. target is "auto", "server", or "device"; instanceID binds device
+// entries to one connector.
+func (m *MemoryClient) ImportMCPServers(ctx context.Context, config json.RawMessage, target, instanceID string, overwrite, dryRun bool) (*MCPImportResult, error) {
+	body := struct {
+		Config           json.RawMessage `json:"config"`
+		Target           string          `json:"target,omitempty"`
+		TargetInstanceID string          `json:"targetInstanceId,omitempty"`
+		Overwrite        bool            `json:"overwrite,omitempty"`
+		DryRun           bool            `json:"dryRun,omitempty"`
+	}{
+		Config:           config,
+		Target:           target,
+		TargetInstanceID: instanceID,
+		Overwrite:        overwrite,
+		DryRun:           dryRun,
+	}
+	var env successEnvelope[MCPImportResult]
+	if err := m.do(ctx, http.MethodPost, "/api/admin/mcp-servers/import", body, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
 func (m *MemoryClient) CreateMCPServer(ctx context.Context, in *MCPServer) (*MCPServer, error) {
 	var env successEnvelope[MCPServer]
 	if err := m.do(ctx, http.MethodPost, "/api/admin/mcp-servers", in, &env); err != nil {

@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mcp-servers", s.handleList)
 	mux.HandleFunc("POST /api/mcp-servers", s.handleCreate)
+	mux.HandleFunc("POST /api/mcp-servers/import", s.handleImport)
 	mux.HandleFunc("GET /api/mcp-servers/{name}", s.handleGet)
 	mux.HandleFunc("PUT /api/mcp-servers/{name}/config", s.handleUpdateConfig)
 	mux.HandleFunc("PUT /api/mcp-servers/{name}/enabled", s.handleSetEnabled)

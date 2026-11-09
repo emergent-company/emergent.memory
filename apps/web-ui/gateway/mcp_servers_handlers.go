@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -165,6 +166,57 @@ func (s *Server) uiMCPCreate(c echo.Context) error {
 		return s.renderMCPNewPage(c, draft)
 	}
 	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?created=1")
+}
+
+// --- Claude config import ---
+
+// uiMCPImportPage renders the import form (GET /settings/mcp-servers/import).
+// The device list feeds the optional "bind to device" picker; a failed fetch
+// only degrades that picker.
+func (s *Server) uiMCPImportPage(c echo.Context) error {
+	data := mcpImportPageData{Target: "auto", FlashErr: flashError(c)}
+	s.loadMCPImportDevices(c, &data)
+	return s.page(c, pageTitle("Import MCP servers"), MCPServerImportPage(data))
+}
+
+// uiMCPImport handles the import form (POST /settings/mcp-servers/import).
+// Validation failures re-render the form; a completed import re-renders the
+// same page with the created/updated/skipped/failed report so partial imports
+// are visible in one step.
+func (s *Server) uiMCPImport(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := mcpImportPageData{
+		Config:           strings.TrimSpace(c.FormValue("config")),
+		Target:           strings.TrimSpace(c.FormValue("target")),
+		DeviceInstanceID: strings.TrimSpace(c.FormValue("device")),
+		Overwrite:        c.FormValue("overwrite") != "",
+		DryRun:           c.FormValue("dryRun") != "",
+	}
+	data.validate()
+	if data.hasFieldErrs() {
+		s.loadMCPImportDevices(c, &data)
+		return s.page(c, pageTitle("Import MCP servers"), MCPServerImportPage(data))
+	}
+	result, err := s.memory.ImportMCPServers(ctx, json.RawMessage(data.Config), data.Target, data.DeviceInstanceID, data.Overwrite, data.DryRun)
+	if err != nil {
+		data.GeneralErr = userFacingError(err)
+		s.loadMCPImportDevices(c, &data)
+		return s.page(c, pageTitle("Import MCP servers"), MCPServerImportPage(data))
+	}
+	data.Result = result
+	s.loadMCPImportDevices(c, &data)
+	return s.page(c, pageTitle("Import MCP servers"), MCPServerImportPage(data))
+}
+
+// loadMCPImportDevices fills the import page's device picker.
+func (s *Server) loadMCPImportDevices(c echo.Context, data *mcpImportPageData) {
+	devices, err := s.memory.ListRelaySessions(c.Request().Context())
+	if err != nil {
+		data.DevicesErr = userFacingError(err)
+		return
+	}
+	sortRelaySessions(devices)
+	data.Devices = devices
 }
 
 // --- edit page + update flow ---

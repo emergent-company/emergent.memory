@@ -1172,6 +1172,45 @@ memory agents mcp-servers get [server-id] [flags]
   -h, --help   help for get
 ```
 
+## memory agents mcp-servers import
+
+Import MCP servers from a Claude config
+
+### Synopsis
+
+Import MCP servers from a Claude-format config document.
+
+Accepts the mcpServers object used by Claude Desktop
+(claude_desktop_config.json), Claude Code (.mcp.json / ~/.claude.json), and
+claude mcp add-json. Remote http/sse servers are created on the Memory host;
+local stdio commands are pushed to a connector device, because that is the only
+place they can run.
+
+Existing servers are skipped unless --overwrite is set. The command reports
+created, updated, skipped, and failed entries; valid entries are imported even
+when others fail.
+
+Examples:
+  memory agents mcp-servers import --from-claude ~/Library/Application Support/Claude/claude_desktop_config.json --device laptop-connector
+  memory agents mcp-servers import --from-claude ./.mcp.json
+  cat claude_desktop_config.json | memory agents mcp-servers import --from-claude - --dry-run
+
+```
+memory agents mcp-servers import [flags]
+```
+
+### Options
+
+```
+      --device string        Connector instance id for device-targeted (stdio) servers
+      --dry-run              Validate and plan the import without writing anything
+      --from-claude string   Claude config file path, or - for stdin (required)
+  -h, --help                 help for import
+      --json                 Emit the import result as JSON
+      --overwrite            Update servers whose name already exists instead of skipping them
+      --target string        Delivery target for imported servers: auto, server, or device (default "auto")
+```
+
 ## memory agents mcp-servers inspect
 
 Inspect an MCP server

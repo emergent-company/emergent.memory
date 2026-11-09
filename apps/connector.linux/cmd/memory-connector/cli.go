@@ -96,6 +96,7 @@ Run 'memory-connector <command> --help' for details on any command, and
 		leaf("install", "install + start the systemd user unit (Linux only)", "Install and start the systemd user unit that runs 'memory-connector daemon'. Linux only.", installFlags, runInstall),
 		leaf("uninstall", "stop + remove the systemd user unit (Linux only)", "Stop, disable, and remove the systemd user unit installed by 'memory-connector install'. Linux only and idempotent.", configFlags, runUninstall),
 		newUpgradeCmd(),
+		newMCPCmd(),
 	)
 	return root
 }

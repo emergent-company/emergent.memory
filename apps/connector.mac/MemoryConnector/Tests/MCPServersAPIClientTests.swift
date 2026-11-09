@@ -285,3 +285,43 @@ func XCTAssertThrowsErrorAsync(
         handler(error)
     }
 }
+
+// MARK: - Claude import
+
+extension MCPServersAPIClientTests {
+    private var importJSON: String {
+        """
+        {"created":["github"],"updated":["files"],"skipped":[{"name":"old","reason":"already exists"}],
+         "failed":[{"name":"bad","error":"no transport"}],"dryRun":false}
+        """
+    }
+
+    func testImportClaudeConfigDecodesResult() async throws {
+        StubURLProtocol.registry.setHandler { _ in .ok(self.importJSON) }
+
+        let config = Data(#"{"mcpServers":{"github":{"command":"npx"}}}"#.utf8)
+        let result = try await makeClient().importClaudeConfig(config: config,
+                                                               overwrite: true,
+                                                               dryRun: false)
+
+        XCTAssertEqual(result.created, ["github"])
+        XCTAssertEqual(result.updated, ["files"])
+        XCTAssertEqual(result.skipped, [HostedMCPImportSkip(name: "old", reason: "already exists")])
+        XCTAssertEqual(result.failed, [HostedMCPImportFailure(name: "bad", error: "no transport")])
+        XCTAssertFalse(result.dryRun)
+
+        let request = StubURLProtocol.registry.capturedRequest
+        XCTAssertEqual(request?.httpMethod, "POST")
+        XCTAssertEqual(request?.url?.path, "/api/mcp-servers/import")
+    }
+
+    func testImportClaudeConfigRejectsInvalidJSON() async {
+        let config = Data("not json".utf8)
+        do {
+            _ = try await makeClient().importClaudeConfig(config: config, overwrite: false, dryRun: false)
+            XCTFail("expected a decoding error")
+        } catch {
+            // expected
+        }
+    }
+}

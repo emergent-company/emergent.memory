@@ -185,6 +185,28 @@ struct HostedMCPServerConfig: Codable, Equatable, Sendable {
     }
 }
 
+/// One entry the connector skipped during a Claude-config import.
+struct HostedMCPImportSkip: Decodable, Equatable, Sendable {
+    var name: String
+    var reason: String
+}
+
+/// One entry that failed to import.
+struct HostedMCPImportFailure: Decodable, Equatable, Sendable {
+    var name: String
+    var error: String
+}
+
+/// `POST /api/mcp-servers/import` result. Valid entries are applied even when
+/// others fail.
+struct HostedMCPImportResult: Decodable, Equatable, Sendable {
+    var created: [String]
+    var updated: [String]
+    var skipped: [HostedMCPImportSkip]
+    var failed: [HostedMCPImportFailure]
+    var dryRun: Bool
+}
+
 /// Full config + live status returned by `GET /api/mcp-servers/{name}` and by
 /// the create/update/toggle endpoints. The flat `serverDetail` JSON is split
 /// into `config` (name/transport/connection fields) and `status`.
@@ -295,6 +317,31 @@ struct MCPServersAPIClient: Sendable {
     /// `GET /api/mcp-servers/{name}/tools` — tools discovered on a server.
     func tools(name: String) async throws -> [HostedMCPTool] {
         try await get("/api/mcp-servers/\(Self.pathEscape(name))/tools", as: [HostedMCPTool].self)
+    }
+
+    /// `POST /api/mcp-servers/import` — import a Claude-format config document.
+    /// The document is parsed and embedded as a JSON object (not a string), so
+    /// the connector receives the same shape Claude writes.
+    func importClaudeConfig(config: Data, overwrite: Bool, dryRun: Bool) async throws -> HostedMCPImportResult {
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: config)
+        } catch {
+            throw MCPServersAPIError.decoding("The config is not valid JSON.")
+        }
+        let payload: [String: Any] = [
+            "config": object,
+            "overwrite": overwrite,
+            "dryRun": dryRun,
+        ]
+        let body: Data
+        do {
+            body = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            throw MCPServersAPIError.decoding(error.localizedDescription)
+        }
+        let data = try await perform(method: "POST", path: "/api/mcp-servers/import", body: body)
+        return try decode(HostedMCPImportResult.self, from: data)
     }
 
     /// `GET /api/status` — relay runtime state.
