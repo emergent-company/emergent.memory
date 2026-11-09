@@ -761,6 +761,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// before a reviewer merges it (#240).
 	w.applyRunVariance(ctx, job, runID, totalResult)
 
+	w.maybeWarnPendingExtractionBacklog(ctx, job, stagingBranchID, totalResult)
 	w.emitExtractionOutcome(ctx, job, stagingBranchID, totalResult)
 
 	return totalResult, nil
@@ -833,6 +834,46 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 		slog.Int("conflicts", result.ConflictCount),
 		slog.Int("similar", result.SimilarCount),
 		slog.Int("left_for_review", result.LeftForReviewCount))
+}
+
+// maybeWarnPendingExtractionBacklog logs the project-level extraction backlog
+// after a run that left objects on a staging branch. The per-run review-ready
+// notification tells a member about one branch; the aggregate says how much of
+// the project's graph is invisible to default reads, which is the signal that
+// was missing when a production project stranded 29k objects across 556
+// branches (#496). The review-ready notification already names the branch, so
+// this is a log line for operators and the HTTP status surface, not a second
+// notification.
+func (w *ObjectExtractionWorker) maybeWarnPendingExtractionBacklog(ctx context.Context, job *ObjectExtractionJob, stagingBranchID *uuid.UUID, result *ObjectExtractionResults) {
+	if stagingBranchID == nil || result == nil || w.graphService == nil || job == nil {
+		return
+	}
+	if result.ObjectsCreated+result.ObjectsMerged == 0 {
+		return
+	}
+	projectID, err := uuid.Parse(job.ProjectID)
+	if err != nil {
+		return
+	}
+	backlog, err := w.graphService.ExtractionBacklog(ctx, projectID)
+	if err != nil {
+		w.log.Debug("could not read extraction backlog",
+			slog.String("job_id", job.ID),
+			logger.Error(err))
+		return
+	}
+	if backlog == nil || backlog.BranchCount == 0 {
+		return
+	}
+	w.log.Warn("extraction output awaiting merge is invisible to default graph reads",
+		slog.String("job_id", job.ID),
+		slog.String("branch_id", stagingBranchID.String()),
+		slog.Int("objects_created", result.ObjectsCreated),
+		slog.Int("pending_branches", backlog.BranchCount),
+		slog.Int("pending_objects", backlog.ObjectCount),
+		slog.Int("pending_relationships", backlog.RelationshipCount),
+		slog.Bool("main_graph_empty", backlog.Stranded),
+	)
 }
 
 // waitForEmbeddings polls merge readiness until every object on the branch has

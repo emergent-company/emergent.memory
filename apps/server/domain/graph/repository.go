@@ -3709,6 +3709,69 @@ func (r *Repository) GetBranchByID(ctx context.Context, projectID, branchID uuid
 	return &branch, nil
 }
 
+// PendingExtractionBranches returns every unmerged extraction staging branch
+// that still holds live HEAD objects or relationships not yet cloned to the
+// main graph, with per-branch counts. A branch whose output was fully merged is
+// excluded twice over: merged_at is stamped, and its cloned objects carry
+// merged_to_canonical_id so they do not count even if the branch row lingers
+// after a partial merge.
+func (r *Repository) PendingExtractionBranches(ctx context.Context, projectID uuid.UUID) ([]*PendingExtractionBranch, error) {
+	var branches []*PendingExtractionBranch
+	err := r.db.NewRaw(`
+		SELECT b.id,
+		       b.name,
+		       b.origin_label,
+		       b.created_at,
+		       COALESCE(o.object_count, 0) AS object_count,
+		       COALESCE(rel.relationship_count, 0) AS relationship_count
+		FROM kb.branches b
+		LEFT JOIN (
+		    SELECT branch_id, COUNT(*) AS object_count
+		    FROM kb.graph_objects
+		    WHERE project_id = ?
+		      AND branch_id IS NOT NULL
+		      AND supersedes_id IS NULL
+		      AND merged_to_canonical_id IS NULL
+		      AND deleted_at IS NULL
+		    GROUP BY branch_id
+		) o ON o.branch_id = b.id
+		LEFT JOIN (
+		    SELECT branch_id, COUNT(*) AS relationship_count
+		    FROM kb.graph_relationships
+		    WHERE project_id = ?
+		      AND branch_id IS NOT NULL
+		      AND supersedes_id IS NULL
+		      AND deleted_at IS NULL
+		    GROUP BY branch_id
+		) rel ON rel.branch_id = b.id
+		WHERE b.project_id = ?
+		  AND b.origin = 'extraction'
+		  AND b.merged_at IS NULL
+		  AND (COALESCE(o.object_count, 0) > 0 OR COALESCE(rel.relationship_count, 0) > 0)
+		ORDER BY b.created_at ASC, b.id ASC
+	`, projectID, projectID, projectID).Scan(ctx, &branches)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return branches, nil
+}
+
+// CountMainGraphObjects returns the number of live HEAD objects a default graph
+// read sees for a project (branch_id IS NULL).
+func (r *Repository) CountMainGraphObjects(ctx context.Context, projectID uuid.UUID) (int, error) {
+	n, err := r.db.NewSelect().
+		Model((*GraphObject)(nil)).
+		Where("project_id = ?", projectID).
+		Where("branch_id IS NULL").
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return n, nil
+}
+
 // IsAncestorBranch checks if ancestorBranchID is an ancestor of branchID.
 func (r *Repository) IsAncestorBranch(ctx context.Context, branchID, ancestorBranchID uuid.UUID) (bool, error) {
 	count, err := r.db.NewSelect().
