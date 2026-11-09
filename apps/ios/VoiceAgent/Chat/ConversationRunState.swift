@@ -37,6 +37,9 @@ struct ConversationRunState: Equatable, Sendable {
     }
 
     /// A status the gateway uses for a run that is still in flight.
+    ///
+    /// `cancelling` is a status; `running` is a bucket, kept here only because
+    /// older frames and the web's `renderHeaderStatus` also accept it.
     var isWorkingStatus: Bool {
         switch runStatus {
         case "submitted", "working", "running", "cancelling": true

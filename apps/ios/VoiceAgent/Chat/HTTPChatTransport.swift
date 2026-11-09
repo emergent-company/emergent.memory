@@ -111,8 +111,10 @@ final class HTTPChatTransport {
         // record must not reload it under this one.
         unansweredTurn = nil
         // The new turn replaces any attached-run state the events stream was
-        // showing; its own refresh frames will re-establish it.
+        // showing; its own refresh frames will re-establish it. The old run id
+        // must go too, or a pre-meta stop() would cancel the previous run.
         resetAttachedRunState()
+        liveRunID = nil
         isStreaming = true
 
         // A surface action has no typed text: the card the user clicked is the

@@ -15,7 +15,10 @@ extension HTTPChatTransport {
     /// it can never clear a turn this client is streaming.
     func applyRunRefresh(_ state: ConversationRunState) {
         guard !state.isBare else { return }
-        liveRunID = state.runID
+        // A completed run's frame still names the run it finished. Keeping that
+        // id would let the next turn's pre-meta stop() cancel the wrong
+        // (already finished) run, so only an active or parked run owns the id.
+        liveRunID = (state.isActive || state.isParked) ? state.runID : nil
         isRunning = state.isActive
         // A stop is settled by the next refresh that is no longer "cancelling".
         if !state.isWorking || state.runStatus != "cancelling" {

@@ -289,6 +289,58 @@ extension HTTPChatTransportTests {
         #expect(transport.liveRunID == nil)
     }
 
+    /// A completed run's refresh frame still names the run it finished. That id
+    /// must not survive, or a stop before the next turn's `meta` frame would
+    /// cancel the previous (already finished) run and leave the new one going.
+    @Test func completedRunFrameClearsTheStaleRunID() async {
+        let recorder = RequestRecorder()
+        HTTPChatStubProtocol.handler = { request in
+            recorder.paths.append(request.url?.path ?? "")
+            return conversationEventsStubResponse(request, body: #"{"ok":true}"#)
+        }
+        defer { HTTPChatStubProtocol.handler = nil }
+
+        let transport = eventsTransport()
+        transport.applyRunRefresh(ConversationRunState(bucket: "running", runID: "run-A", runStatus: "working"))
+        #expect(transport.liveRunID == "run-A")
+
+        transport.applyRunRefresh(ConversationRunState(
+            bucket: "done",
+            runID: "run-A",
+            runStatus: "completed"
+        ))
+
+        #expect(transport.liveRunID == nil)
+        #expect(transport.isRunning == false)
+
+        // With the stale id gone there is no run to cancel: stop() must not
+        // POST run-A's cancel route.
+        let outcome = await transport.stop()
+        #expect(outcome == .noRunID)
+        #expect(recorder.paths.isEmpty)
+    }
+
+    /// A new turn clears the attached run's id before its own `meta` arrives,
+    /// so the same pre-meta stop cannot reach for the previous run.
+    @Test func newTurnClearsTheAttachedRunID() async throws {
+        let stream = InFlightChatStream()
+        let transport = HTTPChatTransport(config: MemoryConfig(), stream: stream, session: makeSession())
+        transport.applyRunRefresh(ConversationRunState(bucket: "running", runID: "run-A", runStatus: "working"))
+        #expect(transport.liveRunID == "run-A")
+
+        let task = try #require(transport.send(
+            "next",
+            conversationID: nil,
+            agentName: "",
+            transcript: ChatSessionTranscriptStore(),
+            activity: ChatActivityStore()
+        ))
+        #expect(transport.liveRunID == nil)
+
+        transport.reset()
+        await task.value
+    }
+
     /// The fieldless connect refresh must not clear the run this client streams
     /// (its `meta` frame is the only stop handle it has).
     @Test func bareRefreshKeepsTheStreamingRunID() async throws {
