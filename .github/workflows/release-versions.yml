@@ -3,11 +3,11 @@ name: Release Version Map
 # Record what each release is supposed to contain (#2111).
 #
 # Where the Release is created: the GitHub Release object is created by the
-# "Memory CLI & Release" workflow (.github/workflows/cli.yml, job `release`,
+# "Memory CLI & Release" workflow (.github/workflows/cli-release.yml, job `release`,
 # softprops/action-gh-release). The images the map describes are published by
 # *other* workflows — build-publish.yml (web-ui), publish-self-hosted-images.yml
-# (server), cli.yml's `docker` job (cli) and publish-workspace-image.yml
-# (workspace) — concurrently with that release job, so cli.yml cannot know their
+# (server), cli-release.yml's `docker` job (cli) and publish-workspace-image.yml
+# (workspace) — concurrently with that release job, so cli-release.yml cannot know their
 # digests when it creates the release.
 #
 # This workflow is therefore the step that owns the release-versions.json asset:
@@ -267,7 +267,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # cli.yml creates the Release object; this workflow can finish the
+          # cli-release.yml creates the Release object; this workflow can finish the
           # images first. Same wait pattern as images-ready.txt.
           for attempt in $(seq 1 90); do
             if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then

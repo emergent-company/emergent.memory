@@ -1,0 +1,413 @@
+name: Memory CLI Release
+
+# Tag-only release automation, split out of cli.yml so the checks workflow stays
+# callable as a read-only reusable workflow (a called workflow cannot declare
+# job permissions broader than its caller — the release/docker jobs need write).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-cross:
+    name: Build Cross-Platform Binaries
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+          # macOS
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli/go.mod
+          cache: false
+      - name: Get version info
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
+          VERSION="${VERSION#v}"
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+      - name: Warm module cache (retry)
+        working-directory: apps/cli
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            go mod download && exit 0
+            echo "go mod download retry $i"
+            sleep 3
+          done
+          exit 1
+      - name: Build binary
+        working-directory: apps/cli
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          GOWORK: off
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          BUILD_TIME: ${{ steps.version.outputs.build_time }}
+        run: |
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXT=".exe"
+          fi
+
+          go build \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+            -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
+            ./cmd
+
+      - name: Create archive
+        working-directory: apps/cli/dist
+        run: |
+          tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            apps/cli/dist/*.tar.gz
+            apps/cli/dist/*.zip
+          # Release artifacts are attached to the GitHub Release by the `release`
+          # job in the same run, so 90 days of artifact retention was excessive
+          # and fed the artifact-storage quota pressure (#1834). 30 days still
+          # covers post-release debugging, well above the CI debug-log floor.
+          retention-days: 30
+
+  release:
+    name: Create Unified GitHub Release
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: [build-cross]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: release-artifacts
+        run: |
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep "^v" | head -2 | tail -1 || echo "")
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${GITHUB_REF_NAME}" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+          fi
+          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREV_TAG"
+
+      - name: Get commit messages for changelog
+        id: commits
+        env:
+          PREV_TAG: ${{ steps.prev_tag.outputs.tag }}
+        run: |
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          git log "${PREV_TAG}".."${GITHUB_REF_NAME}" --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT || echo "- Initial release" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Pass the commit list via an env var, never by interpolating it into the
+      # JS source. Interpolating it into a template literal lets a backtick or
+      # ${...} in any commit message break the script's parse (v0.82.1: a commit
+      # message contained `memory acp`), which skipped this step AND every later
+      # step in the job (asset upload included), shipping a release with no CLI
+      # binaries. continue-on-error keeps a future changelog failure from ever
+      # blocking release creation again.
+      - name: Generate changelog
+        id: changelog
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          COMMITS: ${{ steps.commits.outputs.commits }}
+        with:
+          script: |
+            const commits = process.env.COMMITS || '';
+
+            const lines = commits.split('\n').filter(l => l.trim());
+
+            let features = [];
+            let fixes = [];
+            let other = [];
+
+            for (const line of lines) {
+              const lower = line.toLowerCase();
+              if (lower.includes('feat') || lower.includes('add') || lower.includes('new')) {
+                features.push(line);
+              } else if (lower.includes('fix') || lower.includes('bug') || lower.includes('patch')) {
+                fixes.push(line);
+              } else {
+                other.push(line);
+              }
+            }
+
+            let changelog = '';
+            if (features.length > 0) {
+              changelog += '### Features\n' + features.join('\n') + '\n\n';
+            }
+            if (fixes.length > 0) {
+              changelog += '### Bug Fixes\n' + fixes.join('\n') + '\n\n';
+            }
+            if (other.length > 0) {
+              changelog += '### Other Changes\n' + other.join('\n') + '\n\n';
+            }
+
+            if (!changelog) {
+              changelog = '### Initial Release\n\n';
+            }
+
+            core.setOutput('changelog', changelog);
+
+      - name: Compute image owner
+        id: owner
+        run: echo "lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Generate unified release notes
+        run: |
+          cat > release_notes.md << 'ENDOFNOTES'
+          ## What's Changed
+
+          ${{ steps.changelog.outputs.changelog }}
+
+          ---
+
+          ## Memory CLI
+
+          ### One-Line Install
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/apps/cli/install.sh | bash
+          ```
+
+          ### Manual Install
+
+          | OS | Architecture | Download |
+          |----|-------------|----------|
+          | Linux | amd64 | [memory-cli-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-amd64.tar.gz) |
+          | macOS | Apple Silicon | [memory-cli-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-arm64.tar.gz) |
+          | macOS | Intel | [memory-cli-darwin-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-amd64.tar.gz) |
+
+          Verify downloads: `sha256sum -c checksums.txt`
+
+          [CLI Documentation](https://github.com/${{ github.repository }}/blob/main/apps/cli/README.md)
+
+          ---
+
+          ## Go SDK
+
+          ```bash
+          go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@${{ github.ref_name }}
+          ```
+
+          ```go
+          import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+          ```
+
+          [SDK Documentation](https://pkg.go.dev/github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@${{ github.ref_name }}) | [Examples](https://github.com/${{ github.repository }}/tree/main/apps/server/pkg/sdk/examples)
+
+          ---
+
+          ## Docker Image
+
+          ```bash
+          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/memory-server:${{ steps.version.outputs.version }}
+          ```
+
+          Available platforms: `linux/amd64, linux/arm64`
+
+          Includes: Memory API server, CLI, migration tooling, and Swagger docs.
+
+          [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/deploy/self-hosted/README.md)
+          ENDOFNOTES
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Memory ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          files: |
+            release-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+      # Fail loudly if the published release is missing any of the CLI assets
+      # that build-cross must produce (and that install.sh + the release-notes
+      # table advertise). This would have caught v0.82.1, whose release object
+      # existed (created by the Connector Release workflow) but had no
+      # memory-cli-* binaries, because the changelog parse error skipped the
+      # upload. if: always() makes the job red even when an earlier step is
+      # skipped or fails, so a half-populated release can never ship silently.
+      - name: Verify CLI release assets
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ASSETS=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets[].name' 2>/dev/null || true)
+          echo "Assets on release ${TAG}:"
+          printf '%s\n' "${ASSETS}"
+          missing=0
+          for asset in \
+            memory-cli-linux-amd64.tar.gz \
+            memory-cli-darwin-amd64.tar.gz \
+            memory-cli-darwin-arm64.tar.gz; do
+            if ! printf '%s\n' "${ASSETS}" | grep -qx "${asset}"; then
+              echo "::error::missing expected asset: ${asset}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "::error::release ${TAG} is missing memory-cli-* assets"
+            exit 1
+          fi
+          echo "OK: all memory-cli-* assets present on ${TAG}"
+
+  docker:
+    name: Docker Build (CLI Container)
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: [build-cross]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-linux-*
+          path: apps/cli/artifacts
+          merge-multiple: true
+
+      - name: Extract binaries for Docker
+        working-directory: apps/cli
+        run: |
+          echo "=== Downloaded artifacts ==="
+          ls -la artifacts/
+
+          # Extract Linux amd64 binary
+          tar xzf artifacts/memory-cli-linux-amd64.tar.gz -C .
+
+          echo "=== Extracted binaries ==="
+          ls -la memory-cli-linux-*
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          #
+          # `[registry."docker.io"] mirrors` routes `golang:*` / `alpine:*` and
+          # their blobs through Google's public Docker Hub mirror instead of the
+          # anonymous per-IP quota that kills builds with `429 Too Many Requests`
+          # (#211, same block as e2e.yml). BuildKit falls through to Docker Hub
+          # when the mirror is down or a tag is missing.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/cli
+          file: apps/cli/Dockerfile.prebuilt
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:latest
+          build-args: |
+            TARGETARCH=amd64
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=Memory CLI
+            org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
+          platforms: linux/amd64
+          # Verified single-stage (apps/cli/Dockerfile.prebuilt): min already
+          # exports every layer of the image, so max would add nothing. Export
+          # errors stay fatal here so a broken cache stays visible on releases.
+          cache-from: type=gha,scope=memory-cli
+          cache-to: type=gha,scope=memory-cli,mode=min
+

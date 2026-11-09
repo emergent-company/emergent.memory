@@ -1,9 +1,9 @@
 name: Dispatch dev deploy
 
 # Thin caller that tells the private infra repo emergent-company/emergent.memory.infra
-# to deploy the new product `main` to dev. The durable dev-deploy trigger is a
+# to deploy the new product `dev` to dev. The durable dev-deploy trigger is a
 # `repository_dispatch` fired by the event that matters — a product merge to
-# `main` — rather than a sub-daily cron in the infra repo, where GitHub throttles
+# `dev` — rather than a sub-daily cron in the infra repo, where GitHub throttles
 # every schedule (a `*/15` declaration delivers a handful of runs a day, so no
 # cron there can gate dev at sub-hour). The decision and its measurements live in
 # the infra repo's dev auto-deploy doc.
@@ -25,7 +25,7 @@ name: Dispatch dev deploy
 # Client payload contract with the infra workflow:
 #   repository -> github.repository (trace/logging)
 #   sha        -> github.sha, informational only. The infra drift gate compares
-#                 its own origin/main with the deployed marker, so a stale or
+#                 its own origin/dev with the deployed marker, so a stale or
 #                 duplicate payload can never deploy an older commit, and a
 #                 duplicate dispatch is a seconds-long no-op.
 #
@@ -37,10 +37,10 @@ name: Dispatch dev deploy
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
 
 # A burst of merges collapses to one in-flight dispatch: the infra drift gate
-# deploys whatever `main` is when the run starts, so a superseded dispatch has
+# deploys whatever `dev` is when the run starts, so a superseded dispatch has
 # nothing extra to do.
 concurrency:
   group: dispatch-dev-deploy

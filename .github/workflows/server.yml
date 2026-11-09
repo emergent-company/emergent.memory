@@ -6,21 +6,16 @@ on:
     paths:
       - 'apps/server/**'
       - '.github/workflows/server.yml'
-  pull_request:
-    branches: [main]
-    # `ready_for_review` is NOT a default pull_request activity type. A draft PR
-    # skips the heavy jobs below (see their `if:`), so without this the suites
-    # would never run when the PR is marked ready without a further push.
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'apps/server/**'
-      - '.github/workflows/server.yml'
+  # No `pull_request` trigger: feature PRs go to `dev` and skip this suite for a
+  # fast lane. The full suite runs on the `dev -> main` promotion/hotfix PR via
+  # promotion.yml (which calls this workflow), and on pushes to main.
+  workflow_call:
   workflow_dispatch:
 
 # Cancel superseded PR runs; never cancel a default-branch run (a merge to main
 # should always finish and report its status).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: server-ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

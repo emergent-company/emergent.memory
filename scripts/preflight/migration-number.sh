@@ -7,20 +7,20 @@
 # (Older goose releases de-duplicated by version number and silently skipped the
 # later one; this repro's goose fails loudly instead. Either way, a collision
 # means the second migration never applies and the schema diverges.) If a branch
-# adds a migration whose version already exists on origin/main (or in another
+# adds a migration whose version already exists on the base branch (or in another
 # concurrent branch), startup panics on any environment that embeds both files.
 # Two collisions have already happened: 00180 (#977 vs #981) and 00183
 # (#1057 vs #1053).
 #
 # Rules, for *.sql files under apps/server/migrations/:
-#   1. Existing migrations (present on origin/main) must never be modified,
+#   1. Existing migrations (present on the base branch) must never be modified,
 #      renamed, or deleted. This rule is implemented once, in
 #      scripts/preflight/migration-immutability.sh, which this script calls and
 #      which CI's `Migration Immutability` job also calls — so the preflight and
 #      CI gates always agree. (It includes a narrow, documented exception for
 #      repairing an already-merged duplicate base version; see that script's
 #      header.)
-#   2. New migrations must be numbered strictly above max(origin/main) AND
+#   2. New migrations must be numbered strictly above max(base) AND
 #      contiguous ascending starting at max+1 — no gaps, no duplicates.
 #
 # Offline is tolerated the same way as base-check.sh: warn-and-skip.
@@ -29,14 +29,15 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-base="origin/main"
+base_branch="${PREFLIGHT_BASE:-${GITHUB_BASE_REF:-dev}}"
+base="origin/$base_branch"
 mig_dir="apps/server/migrations"
 
-# Refresh the remote tracking ref first — a stale local `origin/main` is exactly
-# the hazard this guard exists to catch (a worktree handed an outdated main would
+# Refresh the remote tracking ref first — a stale local base ref is exactly
+# the hazard this guard exists to catch (a worktree handed an outdated base would
 # otherwise compare against an old ref and MISS a real collision). Tolerate
 # no-network gracefully: fall back to a cached ref, or skip when none exists.
-if ! git fetch --quiet origin main; then
+if ! git fetch --quiet origin "$base_branch"; then
   if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
     echo "migration-number: WARNING could not reach origin; using cached $base" >&2
   else
@@ -67,7 +68,7 @@ while IFS= read -r f; do
   if [ "$v" -gt "$max_base" ]; then max_base="$v"; fi
 done <<< "$base_files"
 
-echo "migration-number: max(origin/main) = $max_base"
+echo "migration-number: max($base) = $max_base"
 
 status=0
 added_versions=""

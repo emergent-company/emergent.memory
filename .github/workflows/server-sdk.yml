@@ -6,26 +6,20 @@ on:
     paths:
       - 'apps/server/pkg/sdk/**'
       - '.github/workflows/server-sdk.yml'
-    tags:
-      - 'v*'
-  pull_request:
-    branches: [master, main]
-    # `ready_for_review` is not a default type; the heavy jobs skip drafts.
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'apps/server/pkg/sdk/**'
-      - '.github/workflows/server-sdk.yml'
+  # No `pull_request` trigger: feature PRs go to `dev` for a fast lane. Runs on
+  # the `dev -> main` promotion/hotfix PR via promotion.yml and on pushes to main.
+  workflow_call:
   workflow_dispatch:
 
 # Cancel superseded PR runs; never cancel a default-branch run (a merge to main
 # should always finish and report its status).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: server-sdk-ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only
 # behind the fork guard; keep the checkout token read-only as defense-in-depth.
-# (create-sdk-tag below keeps its own job-level `contents: write`.)
+# (The tag job that needs `contents: write` lives in server-sdk-release.yml.)
 permissions:
   contents: read
 
@@ -156,33 +150,6 @@ jobs:
       - name: Build projects example
         working-directory: apps/server/pkg/sdk/examples/projects
         run: go build -o projects .
-
-  create-sdk-tag:
-    name: Create SDK Module Tag
-    runs-on: [self-hosted, linux, x64, memory]
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          # RELEASE_TOKEN must be a PAT (classic) with `repo` + `workflow` scope,
-          # or the GitHub App must be granted the `workflows` permission; otherwise
-          # the fallback GITHUB_TOKEN push will still be rejected for modifying .github/workflows/.
-          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
-
-      - name: Create SDK module tag
-        run: |
-          SDK_TAG="apps/server/pkg/sdk/${GITHUB_REF#refs/tags/}"
-          echo "Creating SDK module tag: $SDK_TAG"
-          if git rev-parse "$SDK_TAG" >/dev/null 2>&1; then
-            echo "Tag $SDK_TAG already exists, skipping"
-          else
-            git tag "$SDK_TAG"
-            git push origin "$SDK_TAG"
-          fi
 
   server-sdk-ci-status:
     name: server-sdk-ci-status
