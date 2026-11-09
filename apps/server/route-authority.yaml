@@ -766,6 +766,14 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
+      path: /api/graph/extraction-backlog
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/graph/extraction-backlog/merge
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
       path: /api/graph/journal
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember

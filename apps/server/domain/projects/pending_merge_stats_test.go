@@ -17,7 +17,7 @@ func TestPopulateStatsReportsPendingExtractionMerge(t *testing.T) {
 
 	row.populateStats()
 
-	stats := row.Project.Stats
+	stats := row.Stats
 	if stats == nil || stats.PendingExtractionMerge == nil {
 		t.Fatal("PendingExtractionMerge was not populated")
 	}
@@ -45,7 +45,7 @@ func TestPopulateStatsPendingMergeNotStrandedWhenMainHasObjects(t *testing.T) {
 
 	row.populateStats()
 
-	got := row.Project.Stats.PendingExtractionMerge
+	got := row.Stats.PendingExtractionMerge
 	if got == nil {
 		t.Fatal("PendingExtractionMerge was not populated")
 	}
