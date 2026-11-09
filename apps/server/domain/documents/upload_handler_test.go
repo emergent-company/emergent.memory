@@ -53,10 +53,12 @@ func (f *fakeStorage) Delete(_ context.Context, key string) error {
 type fakeParsingJobs struct {
 	called bool
 	err    error
+	got    []ParsingJobOptions
 }
 
-func (f *fakeParsingJobs) CreateJob(_ context.Context, _ ParsingJobOptions) error {
+func (f *fakeParsingJobs) CreateJob(_ context.Context, opts ParsingJobOptions) error {
 	f.called = true
+	f.got = append(f.got, opts)
 	return f.err
 }
 
@@ -107,6 +109,21 @@ func multipartBody(t *testing.T, field, filename string, data []byte) (*bytes.Bu
 	t.Helper()
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
+	part, err := w.CreateFormFile(field, filename)
+	require.NoError(t, err)
+	_, err = part.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return buf, w.FormDataContentType()
+}
+
+func multipartBodyWithFields(t *testing.T, field, filename string, data []byte, fields map[string]string) (*bytes.Buffer, string) {
+	t.Helper()
+	buf := new(bytes.Buffer)
+	w := multipart.NewWriter(buf)
+	for name, value := range fields {
+		require.NoError(t, w.WriteField(name, value))
+	}
 	part, err := w.CreateFormFile(field, filename)
 	require.NoError(t, err)
 	_, err = part.Write(data)
@@ -347,7 +364,7 @@ func TestNewUploadHandler_AllowedMIMETypesFromConfig(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	cfg := &config.Config{}
 	cfg.Storage.AllowedMIMETypes = "application/pdf,image/png"
-	h := NewUploadHandler(nil, nil, nil, nil, cfg, log)
+	h := NewUploadHandler(nil, nil, nil, nil, nil, cfg, log)
 	require.NotNil(t, h.allowedMIMETypes)
 	assert.Contains(t, h.allowedMIMETypes, "application/pdf")
 	assert.Contains(t, h.allowedMIMETypes, "image/png")
@@ -356,7 +373,7 @@ func TestNewUploadHandler_AllowedMIMETypesFromConfig(t *testing.T) {
 func TestNewUploadHandler_EmptyAllowedMIMETypes_NoRestriction(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	cfg := &config.Config{} // AllowedMIMETypes = ""
-	h := NewUploadHandler(nil, nil, nil, nil, cfg, log)
+	h := NewUploadHandler(nil, nil, nil, nil, nil, cfg, log)
 	assert.Nil(t, h.allowedMIMETypes)
 }
 

@@ -55,12 +55,13 @@ func NewRetryConflict(message string) error {
 
 // Handler handles document HTTP requests
 type Handler struct {
-	svc            *Service
-	storage        *storage.Service
-	extraction     ExtractionRetrier
-	chunking       ChunkingService
-	extractionJobs ExtractionJobCreator
-	log            *slog.Logger
+	svc                *Service
+	storage            *storage.Service
+	extraction         ExtractionRetrier
+	chunking           ChunkingService
+	extractionJobs     ExtractionJobCreator
+	projectAutoExtract ProjectAutoExtractReader
+	log                *slog.Logger
 }
 
 // NewHandler creates a new documents handler
@@ -70,15 +71,17 @@ func NewHandler(
 	extraction ExtractionRetrier,
 	chunkingSvc ChunkingService,
 	extractionJobsSvc ExtractionJobCreator,
+	projectAutoExtract ProjectAutoExtractReader,
 	log *slog.Logger,
 ) *Handler {
 	return &Handler{
-		svc:            svc,
-		storage:        storageSvc,
-		extraction:     extraction,
-		chunking:       chunkingSvc,
-		extractionJobs: extractionJobsSvc,
-		log:            log.With(logger.Scope("documents.handler")),
+		svc:                svc,
+		storage:            storageSvc,
+		extraction:         extraction,
+		chunking:           chunkingSvc,
+		extractionJobs:     extractionJobsSvc,
+		projectAutoExtract: projectAutoExtract,
+		log:                log.With(logger.Scope("documents.handler")),
 	}
 }
 
@@ -314,7 +317,8 @@ func (h *Handler) Create(c echo.Context) error {
 	// because content is already stored inline. We still need to set conversion
 	// status, chunk the text, and optionally trigger extraction.
 	if wasCreated && req.Content != "" {
-		autoExtract := c.QueryParam("autoExtract") == "true"
+		requested := requestedAutoExtractFromQuery(c)
+		autoExtract := h.effectiveAutoExtract(c.Request().Context(), user.ProjectID, requested)
 		h.processNewDocument(c.Request().Context(), user.ProjectID, doc.ID, autoExtract)
 	}
 

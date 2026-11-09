@@ -1527,6 +1527,7 @@ Table "kb"."graph_schemas" {
     (parent_version_id) [name: "IDX_graph_schemas_parent_version_id", note: '(parent_version_id IS NOT NULL)']
     (name, version) [name: "graph_schemas_builtin_name_version_key", unique, note: '(source = \'builtin\'::text)']
     (project_id) [name: "idx_graph_schemas_project_id", note: '(project_id IS NOT NULL)']
+    (project_id) [name: "uq_graph_schemas_current_discovered", unique, note: '((source = \'discovered\'::text) AND (pending_review = true) AND (superseded_by IS NULL) AND (project_id IS NOT NULL))']
   }
 }
 

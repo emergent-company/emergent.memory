@@ -35,7 +35,7 @@ func TestDocumentCreateAutoExtractSkipsWithoutGenerativeModel(t *testing.T) {
 	docsSvc := documents.NewService(documents.NewRepository(testDB.GetDB(), log), log)
 	jobsSvc := extraction.NewObjectExtractionJobsService(testDB.GetDB(), log, extraction.DefaultObjectExtractionConfig()).
 		WithGenerativeModelResolver(stubGenerativeResolver{}) // no model resolves
-	handler := documents.NewHandler(docsSvc, nil, nil, noopChunking{}, jobsSvc, log)
+	handler := documents.NewHandler(docsSvc, nil, nil, noopChunking{}, jobsSvc, nil, log)
 
 	e := echo.New()
 	e.HideBanner = true
@@ -73,7 +73,7 @@ func TestDocumentCreateAutoExtractCreatesWithGenerativeModel(t *testing.T) {
 	docsSvc := documents.NewService(documents.NewRepository(testDB.GetDB(), log), log)
 	jobsSvc := extraction.NewObjectExtractionJobsService(testDB.GetDB(), log, extraction.DefaultObjectExtractionConfig()).
 		WithGenerativeModelResolver(stubGenerativeResolver{model: "deepseek/deepseek-v4-flash"})
-	handler := documents.NewHandler(docsSvc, nil, nil, noopChunking{}, jobsSvc, log)
+	handler := documents.NewHandler(docsSvc, nil, nil, noopChunking{}, jobsSvc, nil, log)
 
 	e := echo.New()
 	e.HideBanner = true
