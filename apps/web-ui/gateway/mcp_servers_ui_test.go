@@ -696,8 +696,8 @@ func TestRenderMCPServerImportPage(t *testing.T) {
 	}
 
 	resultHTML := renderHTML(t, mcpImportResultPanel(&MCPImportResult{
-		Created: []string{"github"},
-		Updated: []string{"files"},
+		Created:  []string{"github"},
+		Updated:  []string{"files"},
 		Skipped:  []MCPImportSkip{{Name: "old", Reason: "already exists"}},
 		Failed:   []MCPImportFailure{{Name: "bad", Error: "no transport"}},
 		Warnings: []MCPImportWarning{{Name: "local", Message: "placeholders are literal"}},
