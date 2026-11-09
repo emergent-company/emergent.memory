@@ -283,6 +283,7 @@ func (r *Repository) runChunkLexical(ctx context.Context, params TextSearchParam
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.tsv @@ ` + tsqueryFn + `('simple', ?)
 		  AND d.project_id = ?
+		  AND d.supersedes_id IS NULL
 		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false` + nsPredicate + `
 		ORDER BY score DESC, c.id ASC
 		LIMIT ?
@@ -346,6 +347,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
+		  AND d.supersedes_id IS NULL
 		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false` + nsPredicate + `
 		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
@@ -452,6 +454,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
+		  AND d.supersedes_id IS NULL
 		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false` + nsPredicate + `
 		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?

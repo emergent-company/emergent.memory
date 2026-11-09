@@ -347,13 +347,23 @@ func (r *Repository) GetContentByID(ctx context.Context, projectID, documentID s
 	return &doc, nil
 }
 
-// GetByContentHash retrieves a document by content hash (for deduplication)
+// GetByContentHash retrieves a manual HEAD document by content hash (for
+// deduplication). The scope mirrors the partial unique index
+// idx_documents_project_content_hash_manual_head: only a live manual HEAD
+// participates in dedupe. Source-synced rows, superseded versions, and file
+// uploads may legitimately share content bytes, so they must never be returned
+// here as a manual-create hit. File uploads are identified by file_hash, not by
+// source_type: kb.documents.source_type defaults to 'upload' for every row,
+// including manual text creates.
 func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHash string) (*Document, error) {
 	var doc Document
 	err := r.db.NewSelect().
 		Model(&doc).
 		Where("project_id = ?", projectID).
 		Where("content_hash = ?", contentHash).
+		Where("supersedes_id IS NULL").
+		Where("source_id IS NULL").
+		Where("file_hash IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -416,8 +426,29 @@ func (r *Repository) GetDistinctSourceIDs(ctx context.Context, projectID string)
 	return results, nil
 }
 
+// populateContentHash enforces the content identity invariant the repository
+// owns: whenever a document carries content, content_hash is sha256(content) in
+// lowercase hex, even when a caller supplied a different value. This keeps every
+// insert path (manual create, source ingestion, version append) consistent.
+//
+// source_text_hash is a different thing and is deliberately not touched:
+// content_hash identifies the stored bytes, while source_text_hash hashes the
+// parsed source text so the ingestion seam can detect whether a re-sync changed
+// the document at all.
+//
+// A nil Content leaves the hash as supplied (nil for uploads, which have no
+// content until conversion fills it in).
+func populateContentHash(doc *Document) {
+	if doc == nil || doc.Content == nil {
+		return
+	}
+	hash := computeContentHash(*doc.Content)
+	doc.ContentHash = &hash
+}
+
 // Create creates a new document in the database
 func (r *Repository) Create(ctx context.Context, doc *Document) error {
+	populateContentHash(doc)
 	_, err := r.db.NewInsert().
 		Model(doc).
 		Returning("*").
@@ -473,6 +504,7 @@ func (r *Repository) GetHeadBySource(ctx context.Context, projectID, sourceID, e
 // versioning/attribution fields; a zero-valued CanonicalID/Version/SourceStatus
 // falls back to the column defaults (uuid_generate_v4() / 1 / 'active').
 func (r *Repository) InsertDocument(ctx context.Context, doc *Document) error {
+	populateContentHash(doc)
 	_, err := r.db.NewInsert().
 		Model(doc).
 		Exec(ctx)
@@ -487,7 +519,12 @@ func (r *Repository) InsertDocument(ctx context.Context, doc *Document) error {
 // mirroring the graph-object versioning convention (HEAD is the row whose
 // supersedes_id IS NULL). The caller sets doc.CanonicalID (shared), doc.Version
 // (incremented), and doc.ID; doc.SupersedesID must be nil for the new head.
+//
+// Retired versions stay in kb.documents for history but are deliberately no
+// longer chunk-searchable: their chunks are deleted here so stale text cannot be
+// retrieved. A re-sync creates fresh chunks for the new HEAD.
 func (r *Repository) CreateVersion(ctx context.Context, doc *Document) error {
+	populateContentHash(doc)
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Retire the current HEAD by pointing it at the new version. This frees
 		// the partial unique index slot (one HEAD per canonical) before the new
@@ -503,6 +540,18 @@ func (r *Repository) CreateVersion(ctx context.Context, doc *Document) error {
 			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("retire prior head: %w", err)
+		}
+
+		// The just-retired row now points at doc.ID. Delete its chunks in the
+		// same transaction: the FK cascade releases object_chunks,
+		// chunk_revisions, and chunk_embedding_jobs. The row itself is retained
+		// for version history.
+		_, err = tx.NewDelete().
+			TableExpr("kb.chunks").
+			Where("document_id IN (SELECT id FROM kb.documents WHERE canonical_id = ? AND project_id = ? AND supersedes_id = ?)", doc.CanonicalID, doc.ProjectID, doc.ID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("delete retired version chunks: %w", err)
 		}
 
 		if _, err := tx.NewInsert().Model(doc).Exec(ctx); err != nil {
@@ -1860,12 +1909,16 @@ func (r *Repository) UpdateConversionStatus(ctx context.Context, documentID, sta
 	return nil
 }
 
-// UpdateContentAndStatus updates the document content and conversion status after parsing completes
+// UpdateContentAndStatus updates the document content and conversion status after parsing completes.
+// It also refreshes content_hash to sha256(content), so upload/conversion paths
+// populate the content identity hash as soon as content exists.
 func (r *Repository) UpdateContentAndStatus(ctx context.Context, documentID, content, status string) error {
 	now := time.Now().UTC()
+	contentHash := computeContentHash(content)
 	_, err := r.db.NewUpdate().
 		Model((*Document)(nil)).
 		Set("content = ?", content).
+		Set("content_hash = ?", contentHash).
 		Set("conversion_status = ?", status).
 		Set("conversion_completed_at = ?", now).
 		Set("conversion_error = NULL").

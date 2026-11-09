@@ -9,6 +9,9 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -111,6 +114,23 @@ func (s *DocumentSourceIngestionSuite) countChunks(documentID string) int {
 	return n
 }
 
+// documentContentHash reads the stored content identity hash for a document row.
+// A content-bearing row must always have one (the repository owns the
+// invariant), so a NULL here is a hard failure rather than an empty string.
+func (s *DocumentSourceIngestionSuite) documentContentHash(documentID string) string {
+	s.T().Helper()
+	var hash sql.NullString
+	err := s.DB().NewRaw(`SELECT content_hash FROM kb.documents WHERE id = uuid(?)`, documentID).Scan(s.Ctx, &hash)
+	s.Require().NoError(err)
+	s.Require().True(hash.Valid, "content_hash must be populated for a content-bearing document")
+	return hash.String
+}
+
+func sha256Hex(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *DocumentSourceIngestionSuite) countHeads(canonicalID string) int {
 	s.T().Helper()
 	var n int
@@ -140,6 +160,7 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 	// First ingest: creates v1 with chunks and triggers extraction.
 	p := base
 	p.Content = "the quick brown fox jumps over the lazy dog. this is a long enough body of text to split into more than one chunk when the default chunk size applies, and it carries real words so the splitter has something to work with across the content."
+	v1Content := p.Content
 	r1, err := svc.ApplySourceItem(s.Ctx, p)
 	s.Require().NoError(err)
 	s.Require().NotNil(r1)
@@ -154,7 +175,9 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 	s.Empty(notifier.notices, "first ingest must not announce")
 
 	s.Greater(s.countChunks(r1.DocumentID), 0, "first ingest must create chunks")
+	s.Equal(sha256Hex(p.Content), s.documentContentHash(r1.DocumentID), "v1 content_hash must be sha256 of the stored content")
 	s.Len(rec.documentIDs, 1, "first ingest must trigger extraction once")
+	v1Chunks := s.countChunks(r1.DocumentID)
 
 	// Identical text re-ingest: skipped, same id, no new version, no duplicate chunks, no extraction.
 	p.RevisionID = "rev-2" // provider revision moved, text unchanged
@@ -167,7 +190,7 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 	s.Equal(1, r2.Version, "a skip reports the HEAD version it matched")
 	s.Empty(notifier.notices, "a skip must not announce")
 
-	s.Equal(s.countChunks(r1.DocumentID), s.countChunks(r1.DocumentID), "no duplicate chunks")
+	s.Equal(v1Chunks, s.countChunks(r1.DocumentID), "no duplicate chunks")
 	s.Len(rec.documentIDs, 1, "skip must not trigger extraction")
 
 	// Changed text: appends a version, retains the prior, exactly one HEAD.
@@ -200,6 +223,47 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 	canonicalID := versions[0].CanonicalID
 	s.Equal(1, s.countHeads(canonicalID), "exactly one HEAD must exist")
 	s.Len(rec.documentIDs, 2, "changed text must trigger extraction once more")
+
+	// The repository hashes content on every insert path, including the version
+	// append, so both rows carry a content identity hash.
+	s.Equal(sha256Hex(p.Content), s.documentContentHash(r3.DocumentID), "v2 content_hash must be sha256 of the new stored content")
+	s.Equal(sha256Hex(v1Content), s.documentContentHash(r1.DocumentID), "v1 content_hash must still match its own stored content")
+	// Retired versions remain in history but are deliberately no longer
+	// chunk-searchable; the new HEAD has fresh chunks.
+	s.Equal(0, s.countChunks(r1.DocumentID), "superseded v1 chunks must be released")
+	s.Greater(s.countChunks(r3.DocumentID), 0, "new HEAD must have fresh chunks")
+}
+
+// TestCreate_DeduplicatesManualDocument pins manual-create dedupe against the
+// default source_type. kb.documents.source_type defaults to 'upload' for every
+// row, including manual text creates, so the content-hash dedupe scope must
+// exclude file uploads by file_hash, not by source_type.
+func (s *DocumentSourceIngestionSuite) TestCreate_DeduplicatesManualDocument() {
+	svc, _ := s.newSeamService()
+	content := "manual document content that must deduplicate"
+
+	first, created, err := svc.Create(s.Ctx, documents.CreateParams{
+		ProjectID: s.ProjectID,
+		Filename:  testutil.StringPtr("original.txt"),
+		Content:   &content,
+	})
+	s.Require().NoError(err)
+	s.True(created)
+	s.Equal(sha256Hex(content), s.documentContentHash(first.ID))
+
+	second, createdAgain, err := svc.Create(s.Ctx, documents.CreateParams{
+		ProjectID: s.ProjectID,
+		Filename:  testutil.StringPtr("duplicate.txt"),
+		Content:   &content,
+	})
+	s.Require().NoError(err)
+	s.False(createdAgain, "identical manual content must deduplicate")
+	s.Equal(first.ID, second.ID)
+
+	var rows int
+	err = s.DB().NewRaw(`SELECT count(*) FROM kb.documents WHERE project_id = uuid(?) AND content_hash = ?`, s.ProjectID, sha256Hex(content)).Scan(s.Ctx, &rows)
+	s.Require().NoError(err)
+	s.Equal(1, rows, "dedupe must leave exactly one content_hash row")
 }
 
 func (s *DocumentSourceIngestionSuite) TestApplySourceItem_BypassesContentHashDedup() {
@@ -288,12 +352,15 @@ func (s *DocumentSourceIngestionSuite) TestVersionHistoryEndpoint() {
 	now := time.Now().UTC()
 	rev1 := "rev-1"
 	rev2 := "rev-2"
+	content1 := "first version body inserted directly through the repository"
+	content2 := "second version body appended as a new HEAD, sharing the canonical id"
 
 	v1 := &documents.Document{
 		ID:               uuid.New().String(),
 		ProjectID:        s.ProjectID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+		Content:          &content1,
 		CanonicalID:      canonicalID,
 		Version:          1,
 		SourceID:         &sourceID,
@@ -308,6 +375,7 @@ func (s *DocumentSourceIngestionSuite) TestVersionHistoryEndpoint() {
 		ProjectID:        s.ProjectID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+		Content:          &content2,
 		CanonicalID:      canonicalID,
 		Version:          2,
 		SourceID:         &sourceID,
@@ -316,6 +384,10 @@ func (s *DocumentSourceIngestionSuite) TestVersionHistoryEndpoint() {
 		SourceStatus:     documents.SourceStatusActive,
 	}
 	s.Require().NoError(repo.CreateVersion(s.Ctx, v2))
+
+	// Both repository insert paths enforce the content identity invariant.
+	s.Equal(sha256Hex(content1), s.documentContentHash(v1.ID), "InsertDocument must store sha256(content)")
+	s.Equal(sha256Hex(content2), s.documentContentHash(v2.ID), "CreateVersion must store sha256(content)")
 
 	resp := s.Client.GET(
 		"/api/documents/"+v2.ID+"/versions",
