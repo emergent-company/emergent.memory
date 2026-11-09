@@ -19,9 +19,6 @@ import (
 // scope), so this test seeds each shape and asserts the aggregate rather than
 // only the Go mapping (covered by pending_merge_stats_test.go).
 func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database integration test in short mode (#496)")
-	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "projectpendingmerge")
 	t.Cleanup(testDB.Close)

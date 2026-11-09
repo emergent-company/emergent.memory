@@ -19,9 +19,6 @@ import (
 // graph only) report nothing. The backlog must count those objects, ignore
 // merged/agent/manual branches, and expose the stranded state.
 func TestExtractionBacklogCountsOnlyPendingExtractionBranches(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database integration test in short mode (#496)")
-	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "extractionbacklog")
 	t.Cleanup(testDB.Close)
@@ -99,9 +96,6 @@ func TestExtractionBacklogCountsOnlyPendingExtractionBranches(t *testing.T) {
 // branch and its objects untouched. This is the "one-click preview" half of the
 // acceptance criteria — merging must be an explicit second step.
 func TestMergeExtractionBacklogDryRunTouchesNothing(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database integration test in short mode (#496)")
-	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "extractionbacklogmerge")
 	t.Cleanup(testDB.Close)
