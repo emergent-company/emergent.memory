@@ -137,20 +137,72 @@ func (h *Handler) citationTypeMeta(ctx context.Context, projectID string) map[st
 	return h.schemaRepo.CitationTypeMeta(ctx, projectID)
 }
 
+// maxSharedWorkspaceAncestorDepth bounds the parent-chain walk used to find the
+// run that owns a shared workspace. Spawn depth is capped by DefaultMaxDepth, so
+// this is a safety net against a corrupted parent chain, not a real limit.
+const maxSharedWorkspaceAncestorDepth = 8
+
 // getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.
+// A run that used a shared sandbox (spawn_agents shared mode) has no
+// agent_sandboxes row of its own: the container is still linked to the ancestor
+// run that provisioned it, so the chain is walked and the owner's workspace
+// returned with Shared=true.
 func (h *Handler) getWorkspaceInfo(ctx context.Context, runID string) *RunWorkspaceDTO {
 	if h.sandboxStore == nil {
 		return nil
 	}
-	sb, err := h.sandboxStore.GetBySessionID(ctx, runID)
-	if err != nil || sb == nil {
+	if sb := h.workspaceForRun(ctx, runID); sb != nil {
+		return workspaceDTO(sb, false, "")
+	}
+	if h.repo == nil {
 		return nil
 	}
+
+	// Only a run explicitly marked as sharing may inherit an ancestor's
+	// workspace. An isolated child and a sandbox-less delegate have the same
+	// parent chain but must NOT be reported as using the parent's container.
+	run, err := h.repo.FindRunByID(ctx, runID)
+	if err != nil || run == nil {
+		return nil
+	}
+	if shared, _ := run.Summary["workspace_shared"].(bool); !shared {
+		return nil
+	}
+
+	// Walk up the delegation chain looking for the run that owns the container.
+	current := runID
+	for depth := 0; depth < maxSharedWorkspaceAncestorDepth; depth++ {
+		run, err := h.repo.FindRunByID(ctx, current)
+		if err != nil || run == nil || run.ParentRunID == nil || *run.ParentRunID == "" {
+			return nil
+		}
+		ownerID := *run.ParentRunID
+		if sb := h.workspaceForRun(ctx, ownerID); sb != nil {
+			return workspaceDTO(sb, true, ownerID)
+		}
+		current = ownerID
+	}
+	return nil
+}
+
+// workspaceForRun returns the workspace linked to a run, or nil.
+func (h *Handler) workspaceForRun(ctx context.Context, runID string) *sandbox.AgentSandbox {
+	sb, err := h.sandboxStore.GetBySessionID(ctx, runID)
+	if err != nil {
+		return nil
+	}
+	return sb
+}
+
+// workspaceDTO maps a workspace row onto the run response shape.
+func workspaceDTO(sb *sandbox.AgentSandbox, shared bool, ownerRunID string) *RunWorkspaceDTO {
 	return &RunWorkspaceDTO{
 		Provider:    string(sb.Provider),
 		ContainerID: sb.ProviderWorkspaceID,
 		BaseImage:   sb.BaseImage,
 		ImageDigest: sb.ImageDigest,
+		Shared:      shared,
+		OwnerRunID:  ownerRunID,
 	}
 }
 
