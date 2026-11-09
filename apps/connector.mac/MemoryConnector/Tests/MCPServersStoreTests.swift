@@ -425,10 +425,10 @@ extension MCPServersStoreTests {
     func testImportClaudeConfigStoresReportAndReloads() async {
         StubURLProtocol.registry.setHandler { request in
             switch (request.httpMethod ?? "", request.url?.path ?? "") {
-            case ("POST", "/api/mcp-servers/import"): return .ok(self.importJSON)
-            case ("GET", "/api/mcp-servers"): return .ok(self.listJSON)
-            case ("GET", "/api/status"): return .ok(self.statusJSON)
-            default: return .status(404)
+            case ("POST", "/api/mcp-servers/import"): .ok(self.importJSON)
+            case ("GET", "/api/mcp-servers"): .ok(self.listJSON)
+            case ("GET", "/api/status"): .ok(self.statusJSON)
+            default: .status(404)
             }
         }
         let store = makeStore()

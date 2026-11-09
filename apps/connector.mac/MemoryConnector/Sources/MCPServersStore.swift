@@ -165,8 +165,8 @@ final class MCPServersStore {
     func importClaudeConfig(config: Data, overwrite: Bool, dryRun: Bool) async -> Bool {
         do {
             importResult = try await client.importClaudeConfig(config: config,
-                                                              overwrite: overwrite,
-                                                              dryRun: dryRun)
+                                                               overwrite: overwrite,
+                                                               dryRun: dryRun)
             return await didMutate()
         } catch {
             return didFail(error)

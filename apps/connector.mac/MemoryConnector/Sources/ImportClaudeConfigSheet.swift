@@ -49,7 +49,8 @@ struct ImportClaudeConfigSheet: View {
         .onAppear { store.clearImportResult() }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: [.json],
-                      allowsMultipleSelection: false) { result in
+                      allowsMultipleSelection: false)
+        { result in
             loadFile(result)
         }
     }
@@ -214,7 +215,9 @@ struct ImportClaudeConfigSheet: View {
             guard let url = try result.get().first else { return }
             let scoped = url.startAccessingSecurityScopedResource()
             defer {
-                if scoped { url.stopAccessingSecurityScopedResource() }
+                if scoped {
+                    url.stopAccessingSecurityScopedResource()
+                }
             }
             let data = try Data(contentsOf: url)
             guard let contents = String(data: data, encoding: .utf8) else {
