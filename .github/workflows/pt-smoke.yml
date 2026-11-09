@@ -1,0 +1,13 @@
+name: PT Smoke
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  ping:
+    name: ping
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping
+        run: echo "pull_request_target started"
