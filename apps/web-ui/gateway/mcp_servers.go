@@ -239,38 +239,51 @@ func mcpServerOAuthShown(s MCPServer) bool {
 }
 
 // mcpServerAuthBadge returns the list summary's at-a-glance operational-state
-// badge for a server whose "enabled" state alone can be misleading. A remote
-// server that participates in OAuth connect but has no stored token and no
-// cached tools cannot operate yet, so it renders "Needs auth" instead of
-// looking healthy; a stored token renders "Connected" (the server was
-// authorized at least once). A non-remote external server with no cached tools
+// badge for a server whose "enabled" state alone can be misleading.
+//
+// "Needs auth" requires positive OAuth evidence: memory's list DTO attaches an
+// OAuth summary to every remote server, including header-auth and public ones,
+// so an empty summary is NOT evidence that a server needs authorization. Only
+// a registered client row (Configured) or a stored authorization server means
+// the server has an OAuth credential that is not connected yet.
+//
+// "Connected" means a token set is stored (the server was authorized at least
+// once). Without positive OAuth evidence, an external row with no cached tools
 // has never completed a successful sync/probe and renders "Never tested".
 //
 // This derives entirely from existing list-DTO state: OAuth summary
-// (configured/connected) and the cached tool rows. It deliberately does not
-// invent a persisted last-tested/last-connected field — the backend has none
-// (see PR notes), so "Connected" means a token set is stored and "Never
-// tested" means no tools have ever been cached.
+// (configured/connected/authorization-server) and the cached tool rows. It
+// deliberately does not invent a persisted last-tested/last-connected field —
+// the backend has none (see PR notes), so "Connected" means a token set is
+// stored and "Never tested" means no tools have ever been cached.
 //
-// Builtin rows, device-targeted rows, and rows that already carry a
-// "Needs configuration" warning are skipped (one warning per row is enough).
+// Disabled rows already say "disabled", and builtin/device rows carry their own
+// state; rows that already carry a "Needs configuration" warning are skipped
+// (one warning per row is enough).
 func mcpServerAuthBadge(s MCPServer) (label string, variant ui.BadgeIntent, icon string, ok bool) {
-	if mcpServerIsBuiltin(s) || mcpServerIsDevice(s) || s.NeedsConfiguration {
+	if !s.Enabled || mcpServerIsBuiltin(s) || mcpServerIsDevice(s) || s.NeedsConfiguration {
 		return "", "", "", false
 	}
 	if s.OAuth != nil {
 		if s.OAuth.Connected {
 			return "Connected", ui.BadgeSuccess, "lucide--shield-check", true
 		}
-		if len(s.Tools) == 0 && s.ToolCount == 0 {
+		if mcpServerOAuthRequirementKnown(s) {
 			return "Needs auth", ui.BadgeWarning, "lucide--key-round", true
 		}
-		return "", "", "", false
 	}
 	if len(s.Tools) == 0 && s.ToolCount == 0 {
 		return "Never tested", ui.BadgeNeutral, "lucide--circle-help", true
 	}
 	return "", "", "", false
+}
+
+// mcpServerOAuthRequirementKnown reports positive evidence that a server has an
+// OAuth credential requirement: a registered client row (Configured) or a
+// stored authorization server. The list decorator attaches an OAuth summary to
+// every remote server, so a non-nil summary alone is not evidence.
+func mcpServerOAuthRequirementKnown(s MCPServer) bool {
+	return s.OAuth != nil && (s.OAuth.Configured || s.OAuth.AuthorizationServer != nil)
 }
 
 // mcpServerDisplayName is the list summary's label for a server. The builtin
