@@ -190,6 +190,8 @@ struct ChatTranscriptView: View {
 struct ChatMessageBubble: View {
     let message: ChatMessage
 
+    @Environment(\.copyBoard) private var copyBoard
+
     var body: some View {
         let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -225,9 +227,8 @@ struct ChatMessageBubble: View {
                         // as plain reading text, never its markdown source.
                         HStack(spacing: 2 * .grid) {
                             CopyButton(
-                                text: { markdownPlainText(message.text) },
-                                label: "chat.message.copy",
-                                showsLabel: true
+                                intent: { message.copyIntent },
+                                label: "chat.message.copy"
                             )
                             Spacer(minLength: 0)
                         }
@@ -239,19 +240,12 @@ struct ChatMessageBubble: View {
             // can carry. It copies the same text the action row would.
             .contextMenu {
                 Button {
-                    CopyButton.writeToPasteboard(copiedText)
+                    copyBoard.write(message.copyIntent.text)
                 } label: {
                     Label("chat.message.copy", systemImage: "doc.on.doc")
                 }
             }
         }
-    }
-
-    /// The context menu's text: the assistant's reading text, or the user's
-    /// message as typed (already plain).
-    private var copiedText: String {
-        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.role == .assistant ? markdownPlainText(text) : text
     }
 }
 

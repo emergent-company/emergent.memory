@@ -27,7 +27,7 @@ struct TurnFooterView: View {
                     .foregroundStyle(.fg3)
                     .textSelection(.enabled)
                 Spacer(minLength: 2 * .grid)
-                CopyButton(text: text, label: "chat.turn.copy")
+                CopyButton(intent: { .turn(text()) }, label: "chat.turn.copy")
             }
             .padding(.leading, 1 * .grid)
         }

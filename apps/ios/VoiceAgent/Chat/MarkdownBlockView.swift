@@ -134,10 +134,18 @@ struct MarkdownBlockView: View {
 
     private func codeBlockView(language: String?, code: String) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
-            if let language, !language.isEmpty {
-                Text(language)
-                    .font(.system(.caption2, design: .monospaced, weight: .semibold))
-                    .foregroundStyle(.fg3)
+            // The glyph lives in the header row, outside the horizontal scroller,
+            // so it never covers the code's first line or the drag-selection
+            // area; it copies the block's source only — no fence, no language
+            // label.
+            HStack(alignment: .center, spacing: 2 * .grid) {
+                if let language, !language.isEmpty {
+                    Text(language)
+                        .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                        .foregroundStyle(.fg3)
+                }
+                Spacer(minLength: 0)
+                CopyButton(intent: { .code(code) }, label: "chat.code.copy")
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 if highlightsCode,
@@ -161,17 +169,6 @@ struct MarkdownBlockView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(2 * .grid)
             .background(.codeBackground, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-            // The copy glyph rides the block, outside the horizontal scroller,
-            // so it stays put while a long line scrolls under it. It copies the
-            // block's source only — no fence, no language label.
-            .overlay(alignment: .topTrailing) {
-                CopyButton(text: { code }, label: "chat.code.copy")
-                    .padding(0.5 * .grid)
-                    .background(
-                        .codeBackground,
-                        in: RoundedRectangle(cornerRadius: .cornerRadiusSmall)
-                    )
-            }
         }
         .padding(.top, 1 * .grid)
     }

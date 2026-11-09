@@ -84,4 +84,9 @@ struct CopyButtonTests {
 
         #expect(written == ["one", "two"])
     }
+
+    @Test func theDefaultWindowIsTheSharedConstant() {
+        #expect(CopyFeedback().duration == CopyFeedback.confirmationWindow)
+        #expect(CopyFeedback.confirmationWindow == .seconds(1.4))
+    }
 }

@@ -80,8 +80,34 @@ struct ToolResultPresentationTests {
         let presentation = try #require(ToolResultPresentation.parse(Payload.entityCreate))
         let tally = try #require(presentation.batch)
         #expect(tally == ToolResultPresentation.BatchTally(created: 1, failed: 0, similar: 0))
+        #expect(tally.relationshipsFailed == 0)
         #expect(!tally.isFailure)
         #expect(tally.text(locale: Locale(identifier: "en_US")) == "1 created, 0 failed")
+    }
+
+    @Test func aBatchWithoutARelationshipCountReadsAsClean() throws {
+        // No `relationships_failed` on the meta: the count stays zero and the
+        // line is unchanged, so an ordinary clean batch never grows a clause.
+        let tally = try #require(ToolResultPresentation.parse(Payload.entityCreate)?.batch)
+        #expect(tally.relationshipsFailed == 0)
+        #expect(!tally.isFailure)
+        #expect(tally.text(locale: Locale(identifier: "en_US")) == "1 created, 0 failed")
+    }
+
+    @Test func readsInlineRelationshipFailuresFromMeta() throws {
+        // An entity can be created while its inline relationship failed (#401).
+        // `meta.relationships_failed` is the source; the records below still
+        // read as created.
+        let payload = #"{"ok":true,"data":{"results":[{"ok":true,"index":0,"entity":{"id":"e1","type":"Note"}},{"ok":true,"index":1,"entity":{"id":"e2","type":"Note"}}]},"meta":{"created":2,"failed":0,"relationships_failed":1}}"#
+        let tally = try #require(ToolResultPresentation.parse(payload)?.batch)
+        #expect(tally.created == 2)
+        #expect(tally.failed == 0)
+        #expect(tally.relationshipsFailed == 1)
+        #expect(tally.isFailure)
+        #expect(
+            tally.text(locale: Locale(identifier: "en_US"))
+                == "2 created, 0 failed, 1 relationship failed"
+        )
     }
 
     @Test func readsABatchWithAFailedItemAsAFailure() throws {

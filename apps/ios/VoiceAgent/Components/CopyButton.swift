@@ -17,7 +17,11 @@ import SwiftUI
 @MainActor
 @Observable
 final class CopyFeedback {
-    /// How long the checkmark stays up. The web uses 1400 ms.
+    /// The one confirmation window: how long the checkmark stays up. The web
+    /// uses 1400 ms, and the view and the tests share this constant.
+    static let confirmationWindow: Duration = .seconds(1.4)
+
+    /// How long the checkmark stays up.
     var duration: Duration
     /// Injected in tests; the shipped one waits without blocking a thread.
     var sleep: (Duration) async -> Void
@@ -28,7 +32,7 @@ final class CopyFeedback {
     private(set) var generation = 0
 
     init(
-        duration: Duration = .seconds(1.4),
+        duration: Duration = CopyFeedback.confirmationWindow,
         sleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     ) {
         self.duration = duration
@@ -55,7 +59,7 @@ final class CopyFeedback {
     }
 }
 
-/// The app's one copy affordance: copies `text()`, swaps the glyph for a
+/// The app's one copy affordance: writes `intent()`, swaps the glyph for a
 /// checkmark for 1.4 s, and announces "Copied" while it shows.
 ///
 /// One component for every copy control — an object card's id, a fenced code
@@ -64,38 +68,35 @@ final class CopyFeedback {
 struct CopyButton: View {
     /// What goes on the pasteboard. Evaluated on tap, so a reply that is still
     /// streaming copies the text as it stands then.
-    let text: () -> String
+    let intent: () -> CopyIntent
     /// The control's name while idle ("Copy message", "Copy code", ...).
     let label: LocalizedStringKey
     /// Show `label` beside the glyph instead of the glyph alone.
     var showsLabel = false
     /// The name announced while the checkmark shows.
     var copiedLabel: LocalizedStringKey = "chat.copy.done"
-    /// Injected in tests in place of the singleton pasteboard.
-    var write: (String) -> Void = CopyButton.writeToPasteboard
 
+    @Environment(\.copyBoard) private var copyBoard
     @State private var feedback: CopyFeedback
 
     init(
-        text: @escaping () -> String,
+        intent: @escaping () -> CopyIntent,
         label: LocalizedStringKey,
         showsLabel: Bool = false,
         copiedLabel: LocalizedStringKey = "chat.copy.done",
-        write: @escaping (String) -> Void = CopyButton.writeToPasteboard,
-        duration: Duration = .seconds(1.4),
+        duration: Duration = CopyFeedback.confirmationWindow,
         sleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     ) {
-        self.text = text
+        self.intent = intent
         self.label = label
         self.showsLabel = showsLabel
         self.copiedLabel = copiedLabel
-        self.write = write
         _feedback = State(initialValue: CopyFeedback(duration: duration, sleep: sleep))
     }
 
     var body: some View {
         Button {
-            feedback.copy(text(), write: write)
+            feedback.copy(intent().text, write: copyBoard.write)
         } label: {
             HStack(spacing: 1 * .grid) {
                 Image(systemName: feedback.isCopied ? "checkmark" : "doc.on.doc")

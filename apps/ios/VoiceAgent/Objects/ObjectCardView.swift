@@ -172,7 +172,7 @@ private struct ObjectCardHeader: View {
                     // The drawer's copy control: the canonical id, with the
                     // same confirmation every other copy action gives.
                     CopyButton(
-                        text: { card.copyID },
+                        intent: { .objectID(card.copyID) },
                         label: "objects.card.copyID",
                         copiedLabel: "objects.card.copied"
                     )

@@ -20,12 +20,18 @@ enum ToolResultBatch {
         let failedItems = results.filter { result in
             (result as? [String: Any])?["ok"] as? Bool == false
         }.count
+        let relationshipsFailed = meta.flatMap { integer($0["relationships_failed"]) } ?? 0
         let similar = meta.flatMap { integer($0["similar_count"]) } ?? 0
 
         if let created = meta.flatMap({ integer($0["created"]) }),
            let failed = meta.flatMap({ integer($0["failed"]) })
         {
-            return ToolResultPresentation.BatchTally(created: created, failed: failed, similar: similar)
+            return ToolResultPresentation.BatchTally(
+                created: created,
+                failed: failed,
+                similar: similar,
+                relationshipsFailed: relationshipsFailed
+            )
         }
 
         // No tally: only a batch-shaped result may be counted from its items, so
@@ -38,7 +44,8 @@ enum ToolResultBatch {
         return ToolResultPresentation.BatchTally(
             created: max(0, results.count - failedItems),
             failed: failedItems,
-            similar: similar
+            similar: similar,
+            relationshipsFailed: 0
         )
     }
 
