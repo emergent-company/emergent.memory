@@ -162,7 +162,8 @@ seed:
 ```
 
 Property `title` is the label the UI shows (the key stays visible beneath it);
-`url`, `sha256`, and `date` are validated property types. See
+`url`, `sha256`, and `date` are validated property types, and `enum` constrains
+a primitive property to a fixed set of values. See
 [Schema § Property definitions](../developer-guide/schema.md#property-definitions) for the full vocabulary.
 
 ### With the CLI (a directory)

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/mail"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -373,12 +374,25 @@ func (v *PropertyValidator) ValidateProperties(
 	}
 }
 
-// coercePropertyValue coerces value to def's declared type. An array is also
+// coercePropertyValue coerces value to def's declared type and enforces its
+// declared enum. Enum matching runs after coercion, so a canonical value such
+// as "DE" (from "de") still matches the enum the schema declares. Unknown
+// property types pass through unchanged, matching the long-standing leniency
+// of the type vocabulary; an enum on a non-primitive type is documentation
+// only.
+func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
+	coerced, err := coerceScalarValue(value, def)
+	if err != nil {
+		return nil, err
+	}
+	return checkEnumValue(coerced, def)
+}
+
+// coerceScalarValue coerces value to def's declared type. An array is also
 // checked against its declared element schema: when def.Items is set, every
 // element is coerced the same way, so a wrong element type is rejected (with
-// its index) instead of being stored. Unknown property types pass through
-// unchanged, matching the long-standing leniency of the type vocabulary.
-func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
+// its index) instead of being stored.
+func coerceScalarValue(value any, def agents.PropertyDef) (any, error) {
 	switch def.Type {
 	case "number":
 		n, err := coerceToNumber(value)
@@ -443,6 +457,103 @@ func coercePropertyValue(value any, def agents.PropertyDef) (any, error) {
 	}
 }
 
+// checkEnumValue rejects a coerced value that is not one of the property's
+// declared enum values. An enum on a non-primitive type is documentation only
+// (the CLI warns about it), so it does not gate writes here.
+func checkEnumValue(value any, def agents.PropertyDef) (any, error) {
+	if len(def.Enum) == 0 || !enumAppliesToType(def.Type) {
+		return value, nil
+	}
+	for _, allowed := range def.Enum {
+		if enumValueMatches(value, allowed) {
+			return value, nil
+		}
+	}
+	allowed := make([]string, 0, len(def.Enum))
+	for _, v := range def.Enum {
+		allowed = append(allowed, formatEnumValue(v))
+	}
+	return nil, fmt.Errorf("%v is not one of the allowed values: %s", value, strings.Join(allowed, ", "))
+}
+
+// enumAppliesToType reports whether a property type takes a write-time enum.
+// The set mirrors the CLI validator's primitive-type rule.
+func enumAppliesToType(t string) bool {
+	switch t {
+	case "string", "number", "integer", "boolean",
+		"date", "time", "url", "email", "phone", "country", "currency",
+		"md5", "sha1", "sha256", "sha512":
+		return true
+	default:
+		return false
+	}
+}
+
+// enumValueMatches compares a coerced value with one declared enum entry.
+// Numbers may arrive as any Go numeric type or json.Number; strings and
+// booleans compare exactly. The reflect fallback covers values a future
+// decoder hands over in a different shape.
+func enumValueMatches(value, allowed any) bool {
+	if s, ok := allowed.(string); ok {
+		v, ok := value.(string)
+		return ok && v == s
+	}
+	if b, ok := allowed.(bool); ok {
+		v, ok := value.(bool)
+		return ok && v == b
+	}
+	if a, ok := numericValue(allowed); ok {
+		v, ok := numericValue(value)
+		return ok && a == v
+	}
+	return reflect.DeepEqual(value, allowed)
+}
+
+// numericValue converts the numeric shapes a decoder may produce. A string is
+// deliberately not parsed: a numeric enum must not match the string "1".
+func numericValue(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// formatEnumValue renders one allowed value for an error message. Strings are
+// quoted so an empty or whitespace value stays visible.
+func formatEnumValue(v any) string {
+	if s, ok := v.(string); ok {
+		return strconv.Quote(s)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 // coerceArrayElements checks that value is a list and, when the schema declares
 // an element schema, coerces every element to it. The first failing element
 // names its index, so a rejected document points at the element to fix.
@@ -483,10 +594,21 @@ func coerceArrayElements(value any, items *agents.PropertyDef) ([]any, error) {
 }
 
 // coerceElementValue coerces one array element to the schema's declared element
-// type. Unlike a top-level property — whose string and unknown types are stored
-// as supplied for backward compatibility — a declared element type is enforced:
-// a string array rejects a number and an integer array rejects a fraction.
+// type and enforces the element schema's enum, if it declares one.
 func coerceElementValue(value any, def *agents.PropertyDef) (any, error) {
+	coerced, err := coerceElementScalar(value, def)
+	if err != nil {
+		return nil, err
+	}
+	return checkEnumValue(coerced, *def)
+}
+
+// coerceElementScalar coerces one array element to the schema's declared
+// element type. Unlike a top-level property — whose string and unknown types
+// are stored as supplied for backward compatibility — a declared element type
+// is enforced: a string array rejects a number and an integer array rejects a
+// fraction.
+func coerceElementScalar(value any, def *agents.PropertyDef) (any, error) {
 	switch def.Type {
 	case "string":
 		s, ok := value.(string)
@@ -496,7 +618,7 @@ func coerceElementValue(value any, def *agents.PropertyDef) (any, error) {
 		// A declared `format` is a contract on the element too: route it through
 		// the scalar path so `items: {type: string, format: email}` validates.
 		if strings.TrimSpace(def.Format) != "" {
-			return coercePropertyValue(value, *def)
+			return coerceScalarValue(value, *def)
 		}
 		return s, nil
 	case "integer":
@@ -511,7 +633,7 @@ func coerceElementValue(value any, def *agents.PropertyDef) (any, error) {
 		// as they do for a scalar integer property.
 		return checkNumericBounds(n, *def)
 	default:
-		return coercePropertyValue(value, *def)
+		return coerceScalarValue(value, *def)
 	}
 }
 

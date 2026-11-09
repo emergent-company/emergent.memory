@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -402,6 +403,14 @@ func propertyItemsEqual(a, b *agents.PropertyDef) bool {
 	}
 	if at == "" {
 		return true
+	}
+	if len(a.Enum) != len(b.Enum) {
+		return false
+	}
+	for i := range a.Enum {
+		if !reflect.DeepEqual(a.Enum[i], b.Enum[i]) {
+			return false
+		}
 	}
 	return propertyItemsEqual(a.Items, b.Items)
 }

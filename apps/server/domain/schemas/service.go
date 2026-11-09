@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -287,6 +289,8 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 					errs = append(errs, fmt.Sprintf("objectTypeSchemas[%d] is missing required field 'name'", i))
 					continue
 				}
+				errs = append(errs, validatePropertyEnums(
+					fmt.Sprintf("objectTypeSchemas[%d] (%q)", i, e.Name), e.Properties)...)
 				// Validate the optional scope-key declaration (issue #1148,
 				// option 2). Fail closed on an unknown property or target. A
 				// JSON null means absent — treat it exactly like an omitted
@@ -312,9 +316,10 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 	// Validate relationship types (optional but if present must be well-formed)
 	if len(relationshipTypeSchemas) > 0 {
 		var entries []struct {
-			Name       string `json:"name"`
-			SourceType string `json:"sourceType"`
-			TargetType string `json:"targetType"`
+			Name       string          `json:"name"`
+			SourceType string          `json:"sourceType"`
+			TargetType string          `json:"targetType"`
+			Properties json.RawMessage `json:"properties"`
 		}
 		if err := json.Unmarshal(relationshipTypeSchemas, &entries); err != nil {
 			errs = append(errs, relationshipTypeSchemasShapeError(relationshipTypeSchemas))
@@ -329,11 +334,93 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 				if e.TargetType == "" {
 					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] (%q) is missing required field 'targetType'", i, e.Name))
 				}
+				errs = append(errs, validatePropertyEnums(
+					fmt.Sprintf("relationshipTypeSchemas[%d] (%q)", i, e.Name), e.Properties)...)
 			}
 		}
 	}
 
 	return errs
+}
+
+// validatePropertyEnums checks the enum declarations on one type's properties.
+// It mirrors the CLI validator's primitive-type rule: an enum is meaningful
+// only on string-backed, number, integer and boolean properties, and was
+// previously carried through while never being enforced.
+func validatePropertyEnums(owner string, rawProperties json.RawMessage) []string {
+	if len(rawProperties) == 0 {
+		return nil
+	}
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal(rawProperties, &props); err != nil || len(props) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var errs []string
+	for _, name := range names {
+		var def struct {
+			Type string          `json:"type"`
+			Enum json.RawMessage `json:"enum"`
+		}
+		if err := json.Unmarshal(props[name], &def); err != nil {
+			continue
+		}
+		if len(def.Enum) == 0 || string(def.Enum) == "null" {
+			continue
+		}
+		if !enumTypeSupported(def.Type) {
+			continue
+		}
+		field := fmt.Sprintf("%s property %q.enum", owner, name)
+		var values []any
+		if err := json.Unmarshal(def.Enum, &values); err != nil {
+			errs = append(errs, field+" must be a non-empty list")
+			continue
+		}
+		if len(values) == 0 {
+			errs = append(errs, field+" must be a non-empty list")
+			continue
+		}
+		for i, v := range values {
+			if !enumValueMatchesType(def.Type, v) {
+				errs = append(errs, fmt.Sprintf("%s[%d] value %v does not match property type %q", field, i, v, def.Type))
+			}
+		}
+	}
+	return errs
+}
+
+func enumTypeSupported(t string) bool {
+	switch t {
+	case "string", "number", "integer", "boolean",
+		"date", "time", "url", "email", "phone", "country", "currency",
+		"md5", "sha1", "sha256", "sha512":
+		return true
+	default:
+		return false
+	}
+}
+
+func enumValueMatchesType(t string, v any) bool {
+	switch t {
+	case "number":
+		_, ok := v.(float64)
+		return ok
+	case "integer":
+		n, ok := v.(float64)
+		return ok && n == math.Trunc(n)
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	default:
+		_, ok := v.(string)
+		return ok
+	}
 }
 
 // objectTypeSchemasExpectedShape is the request shape validateSchemaDefinitions

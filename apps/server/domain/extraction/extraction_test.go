@@ -160,7 +160,7 @@ func TestConvertToObjectSchema(t *testing.T) {
 			for k, v := range tt.expected.Properties {
 				if got, ok := result.Properties[k]; !ok {
 					t.Errorf("Missing property %q", k)
-				} else if got != v {
+				} else if !reflect.DeepEqual(got, v) {
 					t.Errorf("Property[%q] = %v, want %v", k, got, v)
 				}
 			}
@@ -925,6 +925,26 @@ func TestApplySchemaOverrides(t *testing.T) {
 				Properties: map[string]agents.PropertyDef{
 					"authors": {Type: "array", Items: &agents.PropertyDef{Type: "number"}},
 					"tags":    {Type: "array", Items: &agents.PropertyDef{Type: "string"}},
+				},
+			},
+		},
+		{
+			name: "enum override replaces the base enum",
+			base: agents.ObjectSchema{
+				Name: "Task",
+				Properties: map[string]agents.PropertyDef{
+					"status": {Type: "string", Enum: []any{"open", "closed"}},
+				},
+			},
+			overrides: map[string]any{
+				"properties": map[string]any{
+					"status": map[string]any{"type": "string", "enum": []any{"new", "done"}},
+				},
+			},
+			expected: agents.ObjectSchema{
+				Name: "Task",
+				Properties: map[string]agents.PropertyDef{
+					"status": {Type: "string", Enum: []any{"new", "done"}},
 				},
 			},
 		},

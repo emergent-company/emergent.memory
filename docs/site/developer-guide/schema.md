@@ -145,6 +145,7 @@ round-trip.
 | `title` | Display label. The UI shows it in place of the key, which stays visible beneath it |
 | `description` | Help text shown with the field |
 | `items` | Element schema for `array`; every element is coerced (a wrong element fails with its index) |
+| `enum` | Allowed values for a primitive property (`string`-backed, `number`, `integer`, `boolean`), enforced on object and relationship writes after coercion. An array's `items.enum` constrains every element. On `array`/`object` itself it is documentation only |
 | `format` | On a `string` property, validates like the matching type for `email`, `phone`, `country`, `currency` and `time`. Any other format is documentation only |
 | `minimum` / `maximum` | Enforced on `number` and `integer`: a value outside the bound fails the write |
 | `required` | Type-level list of property names that must be present on a write |
@@ -165,6 +166,11 @@ Type-specific validation:
 - **`country`** — ISO 3166-1 alpha-2 or alpha-3 country code; stored as the
   canonical two-letter upper-case code.
 - **`currency`** — ISO 4217 currency code; stored upper-case.
+- **`enum`** — the supplied value must be one of the declared values. Matching
+  runs after coercion, so `"de"` passes a `country` enum of `["DE"]` and stores
+  `"DE"`. A value outside the list fails the whole write with the allowed
+  values named. Enum is supported on primitive types only; an empty list is
+  rejected when the schema is created or updated.
 - **`number` / `integer`** — `minimum`/`maximum`, when declared, are enforced;
   `integer` also rejects a fractional value.
 
@@ -193,6 +199,10 @@ properties:
     minimum: -90
     maximum: 90
     title: Latitude
+  status:
+    type: string
+    enum: [draft, published, archived]
+    title: Status
 ```
 
 Label every key a reader cannot scan at a glance — any `snake_case` key, or one

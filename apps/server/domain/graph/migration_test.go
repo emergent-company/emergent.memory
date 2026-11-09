@@ -745,3 +745,17 @@ func TestSchemaMigration_RollbackPreservesNewerArchiveEntries(t *testing.T) {
 	assert.Equal(t, "2.0.0", survivor["from_version"], "surviving entry keeps its from_version")
 	assert.Equal(t, map[string]any{"v2_field": "dropped going 2→3"}, survivor["dropped_data"], "surviving entry keeps its dropped_data")
 }
+
+// An element enum is part of the declared element schema: changing it must not
+// look like an unchanged array during migration.
+func TestPropertyItemsEqual_Enum(t *testing.T) {
+	base := &agents.PropertyDef{Type: "string", Enum: []any{"a", "b"}}
+	same := &agents.PropertyDef{Type: "string", Enum: []any{"a", "b"}}
+	different := &agents.PropertyDef{Type: "string", Enum: []any{"a", "c"}}
+	assert.True(t, propertyItemsEqual(base, same))
+	assert.False(t, propertyItemsEqual(base, different))
+	assert.True(t, propertyItemsEqual(
+		&agents.PropertyDef{Type: "array", Items: base},
+		&agents.PropertyDef{Type: "array", Items: same},
+	))
+}
