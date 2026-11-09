@@ -73,6 +73,7 @@ func TestBackupsAuthzOrgTier(t *testing.T) {
 
 		{"member delete", http.MethodDelete, delPath, "", f.orgMemberAToken, http.StatusForbidden},
 		{"org_admin delete", http.MethodDelete, delPath, "", f.orgAdminAToken, http.StatusNoContent},
+		{"org_admin delete non-uuid", http.MethodDelete, "/api/v1/organizations/" + f.orgA + "/backups/new", "", f.orgAdminAToken, http.StatusNotFound},
 	}
 
 	for _, p := range probes {

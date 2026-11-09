@@ -134,16 +134,12 @@ func (s *Server) objectTypeUIMap(ctx context.Context) map[string]objectTypeUI {
 		pid = sc.ProjectID
 	}
 	if pid == "" {
-		// No project scope at all: nothing to key or cache on.
-		compiled, err := s.memory.GetCompiledTypes(ctx)
-		if err != nil {
-			captureError(err)
-			return nil
-		}
-		if compiled == nil {
-			return nil
-		}
-		return objectTypeMapFor(compiled.ObjectTypes, compiled.RelationshipTypes)
+		// No project scope at all: there is no project-scoped compiled-type
+		// view to fetch. GetCompiledTypes would build
+		// /api/schemas/projects//compiled-types and fail with 400
+		// "projectId is required", so skip it and let the client fall back to
+		// humanized type names.
+		return nil
 	}
 
 	// Fast path: a fresh cached entry skips the fetch entirely.
