@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -412,6 +413,9 @@ func (h *Handler) DeleteBackup(c echo.Context) error {
 		return err
 	}
 	backupID := c.Param("backupId")
+	if _, err := uuid.Parse(backupID); err != nil {
+		return apperror.NewNotFound("backup", backupID)
+	}
 
 	if err := h.service.DeleteBackup(c.Request().Context(), orgID, backupID); err != nil {
 		h.log.Error("failed to delete backup",
