@@ -30312,6 +30312,10 @@
                     "description": "Provider is the provider instance slug that serves Name. When empty, the\nproject's default instance for the dialect is used. This makes the model\nidentity structured (provider + model) rather than a single string.",
                     "type": "string"
                 },
+                "reasoningEffort": {
+                    "description": "ReasoningEffort is a graded thinking level passed to providers that\nsupport it (e.g. \"minimal\", \"low\", \"medium\", \"high\", \"max\"). When set it\ntakes precedence over the tool-presence default and is sent as\nreasoning_effort on OpenAI-compatible chat requests. EnableThinking=false\nstill wins and suppresses thinking entirely.",
+                    "type": "string"
+                },
                 "temperature": {
                     "type": "number"
                 }
