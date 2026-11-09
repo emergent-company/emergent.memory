@@ -236,15 +236,27 @@ func (h *queryLoggingHook) AfterQuery(ctx context.Context, event *bun.QueryEvent
 	)
 }
 
-// SetRLSContext sets the RLS context variables for the current connection
-// This must be called within a transaction to be effective
+// rlsNoProjectID is the sentinel written when no project is in scope. It is a
+// valid UUID, so policies may cast current_setting(...)::uuid safely, and it
+// is not the id of any project, so fail-closed policies match no row.
+const rlsNoProjectID = "00000000-0000-0000-0000-000000000000"
+
+// SetRLSContext sets the RLS project context for the current transaction.
+//
+// The value is written with SET LOCAL, so it is discarded when the transaction
+// ends: it can never survive on a pooled connection and leak into a later
+// request. This must be called within a transaction to be effective.
+//
+// An empty projectID is not a no-op. It sets the sentinel UUID, which matches
+// no row, so a caller that has no project scope fails closed instead of
+// inheriting a previous transaction's context.
 func SetRLSContext(ctx context.Context, db bun.IDB, projectID string) error {
 	if projectID == "" {
-		return nil
+		projectID = rlsNoProjectID
 	}
 
-	// Set the project ID for RLS policies
-	_, err := db.ExecContext(ctx, "SET app.current_project_id = ?", projectID)
+	// Set the project ID for RLS policies for this transaction only.
+	_, err := db.ExecContext(ctx, "SET LOCAL app.current_project_id = ?", projectID)
 	if err != nil {
 		return fmt.Errorf("set RLS context: %w", err)
 	}
