@@ -38,6 +38,24 @@ type PatchGraphObjectRequest struct {
 	BranchID      *uuid.UUID     `json:"branch_id,omitempty"`
 }
 
+// DerivedFromInput is one recorded input of a synthesized version.
+type DerivedFromInput struct {
+	Kind      string    `json:"kind"`
+	ID        uuid.UUID `json:"id"`
+	DerivedAt time.Time `json:"derived_at"`
+}
+
+// DerivedFromResponse answers "derived from what" for one version row.
+//
+// Known is false when the version has no recorded inputs: a row synthesized
+// before input lineage existed reads as "unknown inputs" rather than failing.
+// Source-owned rows are described by contributions instead and do not carry
+// this block.
+type DerivedFromResponse struct {
+	Known  bool                `json:"known"`
+	Inputs []*DerivedFromInput `json:"inputs"`
+}
+
 // GraphObjectResponse is the API response for a graph object.
 //
 // The JSON output includes both legacy field names (id, canonical_id) and new
@@ -82,6 +100,12 @@ type GraphObjectResponse struct {
 	// version history — from one batched query per request. Absent on write
 	// responses, which do not pay for the read-back.
 	Contributions []*ProvenanceContribution `json:"contributions,omitempty"`
+
+	// DerivedFrom names the inputs this synthesized version was derived from —
+	// document, extraction job, and the version row it was derived from. Like
+	// contributions it is keyed to the version row and populated on the read
+	// paths from one batched query per request. Absent on write responses.
+	DerivedFrom *DerivedFromResponse `json:"derived_from,omitempty"`
 
 	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
 	DeleteReason  *string        `json:"delete_reason,omitempty"`

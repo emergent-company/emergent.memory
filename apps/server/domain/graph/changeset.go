@@ -949,5 +949,11 @@ func (s *Service) unionMergeContributions(
 	if _, err := s.repo.CopyContributionsToVersion(ctx, tx, projectID, kind, fromVersionIDs, toVersionID, toBranchID); err != nil {
 		return fmt.Errorf("copy %s contributions: %w", kind, err)
 	}
+	// A merge unions the recorded synthesis inputs of both sides the same way:
+	// the merged version was derived from the source document/job as well as the
+	// target head, and a reader must be able to say so (#153).
+	if _, err := s.repo.copySynthesisLineageToVersion(ctx, tx, kind, fromVersionIDs, toVersionID); err != nil {
+		return fmt.Errorf("copy %s synthesis lineage: %w", kind, err)
+	}
 	return nil
 }
