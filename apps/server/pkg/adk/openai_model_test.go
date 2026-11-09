@@ -909,3 +909,56 @@ func TestOpenAICompatibleModel_CachedPromptTokens(t *testing.T) {
 	assert.EqualValues(t, 5, resp.UsageMetadata.CandidatesTokenCount)
 	assert.EqualValues(t, 80, resp.UsageMetadata.CachedContentTokenCount)
 }
+
+// TestOpenAICompatibleModel_ReasoningEffort verifies the graded thinking level
+// is sent as reasoning_effort and that an explicit effort does not also send
+// the contradictory thinking:disabled toggle when tools are present.
+func TestOpenAICompatibleModel_ReasoningEffort(t *testing.T) {
+	makeReq := func() *model.LLMRequest {
+		return &model.LLMRequest{
+			Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}},
+			Config: &genai.GenerateContentConfig{
+				Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{{Name: "foo"}}}},
+			},
+		}
+	}
+
+	t.Run("effort is sent and thinking is not disabled", func(t *testing.T) {
+		var captured openaiRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &captured)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(makeOpenAIResponse("ok")))
+		}))
+		defer srv.Close()
+
+		m := NewOpenAICompatibleModel(srv.URL, "", "deepseek-v4-flash")
+		eff, ok := m.(ReasoningEffortConfigurator)
+		require.True(t, ok, "openai-compatible adapter must implement ReasoningEffortConfigurator")
+		eff.SetReasoningEffort("high")
+
+		_, err := collectResponse(m.GenerateContent(context.Background(), makeReq(), false))
+		require.NoError(t, err)
+		assert.Equal(t, "high", captured.ReasoningEffort)
+		assert.Nil(t, captured.Thinking, "explicit effort must not also send thinking:disabled")
+	})
+
+	t.Run("empty effort omits the field and keeps the tool default", func(t *testing.T) {
+		var captured openaiRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &captured)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(makeOpenAIResponse("ok")))
+		}))
+		defer srv.Close()
+
+		m := NewOpenAICompatibleModel(srv.URL, "", "deepseek-v4-flash")
+		_, err := collectResponse(m.GenerateContent(context.Background(), makeReq(), false))
+		require.NoError(t, err)
+		assert.Empty(t, captured.ReasoningEffort)
+		// DeepSeek default with tools present: thinking disabled.
+		assert.NotNil(t, captured.Thinking)
+	})
+}

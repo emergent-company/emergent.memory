@@ -2643,9 +2643,13 @@ func (ae *AgentExecutor) runPipeline(
 	// when the provider adapter supports it. Only the OpenAI Responses adapter
 	// implements ReasoningEffortConfigurator today; TrackingModel delegates so
 	// the wrapped model stays configurable. Non-supporting providers ignore it.
-	if req.ReasoningEffort != "" {
+	reasoningEffort := req.ReasoningEffort
+	if reasoningEffort == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+		reasoningEffort = req.AgentDefinition.Model.ReasoningEffort
+	}
+	if reasoningEffort != "" {
 		if rc, ok := llm.(adk.ReasoningEffortConfigurator); ok {
-			rc.SetReasoningEffort(req.ReasoningEffort)
+			rc.SetReasoningEffort(reasoningEffort)
 		}
 	}
 

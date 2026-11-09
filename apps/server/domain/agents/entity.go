@@ -385,6 +385,12 @@ type ModelConfig struct {
 	// default applies. Set to false to suppress thinking tokens and improve
 	// instruction-following for tool-heavy agents.
 	EnableThinking *bool `json:"enableThinking,omitempty"`
+	// ReasoningEffort is a graded thinking level passed to providers that
+	// support it (e.g. "minimal", "low", "medium", "high", "max"). When set it
+	// takes precedence over the tool-presence default and is sent as
+	// reasoning_effort on OpenAI-compatible chat requests. EnableThinking=false
+	// still wins and suppresses thinking entirely.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 }
 
 // ToolPolicy defines a confirmation requirement for a specific tool.
