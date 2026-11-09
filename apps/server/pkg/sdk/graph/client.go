@@ -83,6 +83,8 @@ type GraphObject struct {
 	SupersedesID      *string        `json:"supersedes_id,omitempty"`
 	Version           int            `json:"version"`
 	Type              string         `json:"type"`
+	Name              *string        `json:"name,omitempty"`
+	Ref               string         `json:"ref,omitempty"`
 	Key               *string        `json:"key,omitempty"`
 	Status            *string        `json:"status,omitempty"`
 	Properties        map[string]any `json:"properties"`
@@ -628,6 +630,8 @@ type SimilarObjectResult struct {
 	ProjectID   *string        `json:"project_id,omitempty"`
 	BranchID    *string        `json:"branch_id,omitempty"`
 	Type        string         `json:"type"`
+	Name        *string        `json:"name,omitempty"`
+	Ref         string         `json:"ref,omitempty"`
 	Key         *string        `json:"key,omitempty"`
 	Status      string         `json:"status"`
 	Properties  map[string]any `json:"properties,omitempty"`

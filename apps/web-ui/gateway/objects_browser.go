@@ -187,6 +187,7 @@ func objectsBulkBackURL(data objectsPageData) string {
 // fields (Score) are zero in browse mode and simply not rendered.
 type objectsBrowserRowView struct {
 	ID               string
+	Ref              string
 	Label            string
 	Type             string
 	Status           string
@@ -227,6 +228,7 @@ func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, score f
 	embedIcon, embedClass := embeddingStatusIcon(o.EmbeddingStatus)
 	return objectsBrowserRowView{
 		ID:               o.ID,
+		Ref:              o.Ref,
 		Label:            graphObjectLabel(o),
 		Type:             o.Type,
 		Status:           o.Status,

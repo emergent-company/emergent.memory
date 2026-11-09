@@ -15,6 +15,8 @@ type GraphObject struct {
 	CanonicalID string         `json:"canonical_id"`
 	BranchID    string         `json:"branch_id"`
 	Type        string         `json:"type"`
+	Name        string         `json:"name"`
+	Ref         string         `json:"ref"`
 	Key         string         `json:"key"`
 	Status      string         `json:"status"`
 	Assignee    string         `json:"assignee"`
@@ -51,6 +53,8 @@ type SimilarObject struct {
 	Version     int            `json:"version"`
 	Distance    float32        `json:"distance"`
 	Type        string         `json:"type"`
+	Name        string         `json:"name"`
+	Ref         string         `json:"ref"`
 	Key         string         `json:"key"`
 	Status      string         `json:"status"`
 	Properties  map[string]any `json:"properties"`
@@ -70,6 +74,7 @@ type GraphRelationship struct {
 
 // UpdateObjectRequest patches a graph object (delta-merge semantics).
 type UpdateObjectRequest struct {
+	Name          *string        `json:"name,omitempty"`
 	Key           *string        `json:"key,omitempty"`
 	Status        *string        `json:"status,omitempty"`
 	Assignee      *string        `json:"assignee,omitempty"`
@@ -115,6 +120,7 @@ type CreateRelationshipRequest struct {
 // CreateObjectRequest creates a graph object (POST /api/graph/objects).
 type CreateObjectRequest struct {
 	Type       string         `json:"type"`
+	Name       *string        `json:"name,omitempty"`
 	Key        *string        `json:"key,omitempty"`
 	Status     *string        `json:"status,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`

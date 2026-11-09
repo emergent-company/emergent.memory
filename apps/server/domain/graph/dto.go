@@ -12,6 +12,7 @@ import (
 // CreateGraphObjectRequest is the request body for creating a graph object.
 type CreateGraphObjectRequest struct {
 	Type       string         `json:"type" validate:"required,max=64"`
+	Name       *string        `json:"name,omitempty" validate:"omitempty,max=512"`
 	Key        *string        `json:"key,omitempty" validate:"omitempty,max=128"`
 	Status     *string        `json:"status,omitempty" validate:"omitempty,max=64"`
 	Assignee   *string        `json:"assignee,omitempty" validate:"omitempty,max=255"`
@@ -29,6 +30,7 @@ type CreateGraphObjectRequest struct {
 // PatchGraphObjectRequest is the request body for patching a graph object.
 // Patching creates a new version.
 type PatchGraphObjectRequest struct {
+	Name          *string        `json:"name,omitempty"`
 	Key           *string        `json:"key,omitempty"`
 	Properties    map[string]any `json:"properties,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
@@ -61,14 +63,18 @@ type DerivedFromResponse struct {
 // The JSON output includes both legacy field names (id, canonical_id) and new
 // names (version_id, entity_id) via custom MarshalJSON, for backward compatibility.
 type GraphObjectResponse struct {
-	ID            uuid.UUID      `json:"id"`
-	OrgID         *string        `json:"org_id,omitempty"`
-	ProjectID     uuid.UUID      `json:"project_id"`
-	BranchID      *uuid.UUID     `json:"branch_id,omitempty"`
-	CanonicalID   uuid.UUID      `json:"canonical_id"`
-	SupersedesID  *uuid.UUID     `json:"supersedes_id,omitempty"`
-	Version       int            `json:"version"`
-	Type          string         `json:"type"`
+	ID           uuid.UUID  `json:"id"`
+	OrgID        *string    `json:"org_id,omitempty"`
+	ProjectID    uuid.UUID  `json:"project_id"`
+	BranchID     *uuid.UUID `json:"branch_id,omitempty"`
+	CanonicalID  uuid.UUID  `json:"canonical_id"`
+	SupersedesID *uuid.UUID `json:"supersedes_id,omitempty"`
+	Version      int        `json:"version"`
+	Type         string     `json:"type"`
+	// Name is the human title; Ref is the display-only reference derived from
+	// CanonicalID. Key is the internal dedup identity (deprecated for display).
+	Name          *string        `json:"name,omitempty"`
+	Ref           string         `json:"ref"`
 	Key           *string        `json:"key,omitempty"`
 	Status        *string        `json:"status,omitempty"`
 	Assignee      *string        `json:"assignee,omitempty"`
@@ -160,6 +166,8 @@ func (o *GraphObject) ToResponse() *GraphObjectResponse {
 		SupersedesID:       o.SupersedesID,
 		Version:            o.Version,
 		Type:               o.Type,
+		Name:               o.Name,
+		Ref:                ObjectRef(o.CanonicalID),
 		Key:                o.Key,
 		Status:             o.Status,
 		Assignee:           o.Assignee,
@@ -724,6 +732,8 @@ type SimilarObjectResult struct {
 	ProjectID   *uuid.UUID     `json:"project_id,omitempty"`
 	BranchID    *uuid.UUID     `json:"branch_id,omitempty"`
 	Type        string         `json:"type"`
+	Name        *string        `json:"name,omitempty"`
+	Ref         string         `json:"ref"`
 	Key         *string        `json:"key,omitempty"`
 	Status      *string        `json:"status,omitempty"`
 	Properties  map[string]any `json:"properties,omitempty"`
@@ -1090,6 +1100,7 @@ type BranchMergeRelationshipSummary struct {
 type SubgraphObjectRequest struct {
 	Ref        string         `json:"_ref" validate:"omitempty,max=128"`
 	Type       string         `json:"type" validate:"required,max=64"`
+	Name       *string        `json:"name,omitempty" validate:"omitempty,max=512"`
 	Key        *string        `json:"key,omitempty" validate:"omitempty,max=128"`
 	Status     *string        `json:"status,omitempty" validate:"omitempty,max=64"`
 	Properties map[string]any `json:"properties,omitempty"`

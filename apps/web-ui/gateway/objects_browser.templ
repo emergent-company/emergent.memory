@@ -520,7 +520,7 @@ templ objectsBrowserRow(r objectsBrowserRowView, search, unified bool) {
 }
 
 // objectsObjectMeta is the identity line above an object's name: its type, a dot
-// tinted with the type's declared colour, and the short id ("task · #9f1c0a2e").
+// tinted with the type's declared colour, and the display ref ("Task · #a1b2c3d4e5f6").
 // The type lives here instead of in its own column so the row reads as one
 // identity, and the name below stays the row's single loud line.
 templ objectsObjectMeta(r objectsBrowserRowView) {
@@ -532,11 +532,15 @@ templ objectsObjectMeta(r objectsBrowserRowView) {
 		if style := typeDotStyle(r.UI.Color); style != "" {
 			dotAttrs["style"] = style
 		}
+		ref := r.Ref
+		if ref == "" {
+			ref = "#" + objectShortID(r.ID)
+		}
 	}}
 	<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
 		<span class="truncate">{ r.Type }</span>
 		<span { dotAttrs... }></span>
-		<span class="shrink-0">#{ objectShortID(r.ID) }</span>
+		<span class="shrink-0">{ ref }</span>
 	</div>
 }
 

@@ -1060,6 +1060,12 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
 	}
+	// Board-enabled items need a claimable key; mint an internal one when the
+	// caller did not supply it (users only see name/ref).
+	if isBoardEnabledConfig(workCfg) && (req.Key == nil || *req.Key == "") {
+		k := autoWorkKey(req.Type, resolveObjectName(req.Name, req.Properties))
+		req.Key = &k
+	}
 	if err := requireBoardEnabledKey(workCfg, req.Key); err != nil {
 		return nil, err
 	}
@@ -1078,6 +1084,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		ProjectID:       projectID,
 		BranchID:        req.BranchID,
 		Type:            req.Type,
+		Name:            resolveObjectName(req.Name, validatedProps),
 		Key:             req.Key,
 		Status:          createStatus,
 		Assignee:        req.Assignee,
@@ -1191,6 +1198,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:       projectID,
 			BranchID:        req.BranchID,
 			Type:            req.Type,
+			Name:            resolveObjectName(req.Name, validatedProps),
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, createStatus),
 			Assignee:        req.Assignee,
@@ -1225,6 +1233,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		// Was deleted, create new version to "restore" with new properties
 		newVersion := &GraphObject{
 			Type:            req.Type,
+			Name:            resolveObjectName(req.Name, validatedProps),
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, req.Status),
 			Assignee:        req.Assignee,
@@ -1295,6 +1304,16 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		}
 	}
 
+	// Title: an explicit name wins; otherwise backfill from the merged
+	// properties the first time a title is available.
+	newName := existing.Name
+	if req.Name != nil {
+		newName = trimName(*req.Name)
+	} else if newName == nil {
+		newName = resolveObjectName(nil, newProps)
+	}
+	nameChanged := !namesEqual(newName, existing.Name)
+
 	// Cheap property-change probe. When status and labels are unchanged the
 	// stored ContentHash isolates the properties (it hashes props+status+key+
 	// labels, and upsert's key is fixed): a matching hash proves the properties
@@ -1310,7 +1329,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		diff = computeChangeSummary(existing.Properties, newProps)
 	}
 
-	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged {
+	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged && !nameChanged {
 		// No change - return existing (no-op)
 		if existing.ExtractionJobID == nil && req.ExtractionJobID != nil {
 			if _, err := tx.NewUpdate().Model((*GraphObject)(nil)).
@@ -1346,6 +1365,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	// Properties, status, labels, or assignee differ - create new version
 	newVersion := &GraphObject{
 		Type:            existing.Type,
+		Name:            newName,
 		Key:             existing.Key,
 		Status:          newStatus,
 		Assignee:        newAssignee,
@@ -1363,7 +1383,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	// If properties/status/labels are unchanged (only the assignee changed), the
 	// stored content hash is still valid — reuse it instead of re-marshalling.
-	if diff == nil && !statusChanged && !labelsChanged {
+	if diff == nil && !statusChanged && !labelsChanged && !nameChanged {
 		newVersion.ContentHash = existing.ContentHash
 	}
 
@@ -1457,7 +1477,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	// Fast no-op: a patch that touches no property/status/label/key/assignee field
 	// cannot produce a new version. Skip building the merged map and the diff.
-	if len(req.Properties) == 0 && req.Status == nil && req.Key == nil && req.Assignee == nil && !req.ReplaceLabels && len(req.Labels) == 0 {
+	if len(req.Properties) == 0 && req.Status == nil && req.Name == nil && req.Key == nil && req.Assignee == nil && !req.ReplaceLabels && len(req.Labels) == 0 {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -1551,6 +1571,15 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
+	// Handle title: explicit name wins; otherwise preserve, backfilling from
+	// merged properties when the object never had a title.
+	newName := current.Name
+	if req.Name != nil {
+		newName = trimName(*req.Name)
+	} else if newName == nil {
+		newName = resolveObjectName(nil, newProps)
+	}
+
 	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
 	newAssignee := current.Assignee
 	if req.Assignee != nil {
@@ -1559,6 +1588,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	newVersion := &GraphObject{
 		Type:       current.Type,
+		Name:       newName,
 		Key:        newKey,
 		Status:     newStatus,
 		Assignee:   newAssignee,
@@ -1599,8 +1629,11 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 	}
 
+	// Check if title changed
+	nameChanged := !namesEqual(newName, current.Name)
+
 	// No effective change — return existing version without creating a new one
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged && !nameChanged {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -1611,7 +1644,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	// Only the assignee changed (no props/status/labels/key) → the stored content
 	// hash still describes this version; reuse it instead of re-marshalling.
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !nameChanged {
 		newVersion.ContentHash = current.ContentHash
 	}
 
@@ -4194,6 +4227,8 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 			ProjectID:   &r.ProjectID,
 			BranchID:    r.BranchID,
 			Type:        r.Type,
+			Name:        r.Name,
+			Ref:         ObjectRef(r.CanonicalID),
 			Key:         r.Key,
 			Status:      r.Status,
 			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, r.Type, r.Properties),
@@ -5188,6 +5223,7 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphObject{
 				Type:       prevHead.Type,
+				Name:       src.Name,
 				Key:        src.Key,
 				Status:     targetStatus,
 				Namespace:  src.Namespace,
@@ -5282,6 +5318,7 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphObject{
 				Type:          prevHead.Type,
+				Name:          tgt.Name,
 				Key:           tgt.Key,
 				Status:        resolvedStatus,
 				Namespace:     src.Namespace,
@@ -5375,6 +5412,7 @@ func (s *Service) applyMerge(
 				}
 				newVersion := &GraphObject{
 					Type:          existingTarget.Type,
+					Name:          existingTarget.Name,
 					Key:           existingTarget.Key,
 					Status:        existingTarget.Status,
 					Namespace:     existingTarget.Namespace,
@@ -5963,9 +6001,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	// Guard: board-enabled object types require a stable key, matching the
-	// single-create path (issue #1655). Validate every object up front, before
-	// the transaction, so a keyless board-enabled object rejects the whole batch
-	// atomically with no partial writes.
+	// single-create path (issue #1655). Batch/subgraph callers are programmatic
+	// and supply keys; the UI's single-create path mints one automatically.
+	// Validate every object up front, before the transaction, so a keyless
+	// board-enabled object rejects the whole batch atomically with no partial
+	// writes.
 	if err := validateSubgraphObjectKeys(schemas, req.Objects); err != nil {
 		return nil, err
 	}
@@ -6028,6 +6068,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:  projectID,
 			BranchID:   objReq.BranchID,
 			Type:       objReq.Type,
+			Name:       resolveObjectName(objReq.Name, validatedProps),
 			Key:        objReq.Key,
 			Status:     statusForWrite(validatedProps, createStatus),
 			Properties: validatedProps,

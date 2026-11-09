@@ -1204,6 +1204,8 @@ func (s *Server) uiObjectUpdate(c echo.Context) error {
 	}
 
 	req := &UpdateObjectRequest{ReplaceLabels: true}
+	name := strings.TrimSpace(c.FormValue("name"))
+	req.Name = &name
 	if key := c.FormValue("key"); key != "" {
 		req.Key = &key
 	}
@@ -1325,7 +1327,7 @@ func (s *Server) uiObjectSearch(c echo.Context) error {
 // objectCreateForm carries create-form state for rendering and re-render on error.
 type objectCreateForm struct {
 	Type   string
-	Key    string
+	Name   string
 	Status string
 	Labels []string
 	Props  map[string][]string // prop name -> raw submitted values (indexed for multi-value TagLists)
@@ -1730,7 +1732,7 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 	}
 	form := objectCreateForm{
 		Type:      c.FormValue("type"),
-		Key:       c.FormValue("key"),
+		Name:      c.FormValue("name"),
 		Status:    c.FormValue("status"),
 		Labels:    indexedFormValues(c.Request().PostForm, "labels"),
 		Props:     map[string][]string{},
@@ -1793,8 +1795,8 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 	}
 
 	req := &CreateObjectRequest{Type: form.Type}
-	if form.Key != "" {
-		req.Key = &form.Key
+	if form.Name != "" {
+		req.Name = &form.Name
 	}
 	if form.Status != "" {
 		req.Status = &form.Status
@@ -2042,7 +2044,7 @@ func (s *Server) resolveFlowAgentID(ctx context.Context, category, key string, r
 // similarObjectLabel renders the display label for a similar-object row: the
 // object's key, else a name/title/summary/content property, else type + short id.
 func similarObjectLabel(so SimilarObject) string {
-	return graphObjectLabel(GraphObject{ID: so.ID, Type: so.Type, Key: so.Key, Properties: so.Properties})
+	return graphObjectLabel(GraphObject{ID: so.ID, Type: so.Type, Name: so.Name, Key: so.Key, Properties: so.Properties})
 }
 
 // similarMatchThresholdPercent is the minimum similarity percentage (0..100) a

@@ -1171,6 +1171,7 @@ func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject
 	now := time.Now()
 	tombstone := &GraphObject{
 		Type:         obj.Type,
+		Name:         obj.Name,
 		Key:          obj.Key,
 		Status:       obj.Status,
 		Properties:   obj.Properties,
@@ -1195,6 +1196,7 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 		ProjectID:       mainHead.ProjectID,
 		BranchID:        branchID,
 		Type:            mainHead.Type,
+		Name:            mainHead.Name,
 		Key:             mainHead.Key,
 		Status:          mainHead.Status,
 		Namespace:       mainHead.Namespace,
@@ -3162,6 +3164,7 @@ type SimilarSearchResult struct {
 	ProjectID   uuid.UUID
 	BranchID    *uuid.UUID
 	Type        string
+	Name        *string
 	Key         *string
 	Status      *string
 	Properties  map[string]any
@@ -3255,11 +3258,11 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	// applies the deterministic (distance, id) tie-break on the limited window.
 	query := `
 		SELECT id, canonical_id, version, project_id, branch_id,
-			type, key, status, properties, labels, created_at,
+			type, name, key, status, properties, labels, created_at,
 			_dist AS distance
 		FROM (
 			SELECT id, canonical_id, version, project_id, branch_id,
-				type, key, status, properties, labels, created_at,
+				type, name, key, status, properties, labels, created_at,
 				(embedding_v2 <=> ?::vector) AS _dist
 			FROM kb.graph_objects
 			` + whereClause + `
@@ -3802,6 +3805,7 @@ type BranchObjectHead struct {
 	ID          uuid.UUID
 	ContentHash []byte
 	Type        string
+	Name        *string
 	Key         *string
 	Status      *string
 	Namespace   *string
@@ -3826,7 +3830,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id", "actor_type", "actor_id", "data_class", "owner_source_id").
+		Column("id", "canonical_id", "content_hash", "type", "name", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id", "actor_type", "actor_id", "data_class", "owner_source_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL")
 
@@ -3848,6 +3852,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			ID:                  obj.ID,
 			ContentHash:         obj.ContentHash,
 			Type:                obj.Type,
+			Name:                obj.Name,
 			Key:                 obj.Key,
 			Status:              obj.Status,
 			Namespace:           obj.Namespace,
@@ -4099,6 +4104,7 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			CanonicalID:     obj.CanonicalID, // Preserve canonical ID for merge-back support
 			Version:         1,
 			Type:            obj.Type,
+			Name:            obj.Name,
 			Key:             obj.Key,
 			Status:          obj.Status,
 			Properties:      obj.Properties,
