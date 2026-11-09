@@ -49,6 +49,16 @@ type Service struct {
 	// stops being parked. It is optional: nil means "do not publish", which is
 	// what the CLI, the dev MCP and every unit test get.
 	publisher NotificationPublisher
+
+	// graph persists typed source records. Optional: nil disables typed sync
+	// (unit tests that exercise document-only paths).
+	graph *graph.Service
+
+	// objectTypes installs provider-declared schema packs. Optional.
+	objectTypes ObjectTypeProvisioner
+
+	// mcpServers owns per-account MCP server rows. Optional.
+	mcpServers SourceMCPServerManager
 }
 
 // carriedConfigKeys are non-secret config keys owned by dedicated flows rather
@@ -73,6 +83,21 @@ type ServiceOption func(*Service)
 // WithOAuthClients overrides the deployment-default OAuth clients by provider.
 func WithOAuthClients(clients map[string]OAuthClient) ServiceOption {
 	return func(s *Service) { s.oauthClients = clients }
+}
+
+// WithGraphService wires the graph writer used for typed source records.
+func WithGraphService(g *graph.Service) ServiceOption {
+	return func(s *Service) { s.graph = g }
+}
+
+// WithObjectTypeProvisioner wires schema-pack installation for typed providers.
+func WithObjectTypeProvisioner(p ObjectTypeProvisioner) ServiceOption {
+	return func(s *Service) { s.objectTypes = p }
+}
+
+// WithSourceMCPServers wires per-account MCP server provisioning.
+func WithSourceMCPServers(m SourceMCPServerManager) ServiceOption {
+	return func(s *Service) { s.mcpServers = m }
 }
 
 // WithOAuthHTTPClient overrides the HTTP client used for token exchange.
@@ -478,6 +503,17 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		return nil, err
 	}
 
+	// Typed providers declare their own schema pack; install it before the
+	// source row exists so a failed install cannot leave a source that syncs
+	// objects no schema knows about.
+	if typed, ok := p.(TypedObjectProvider); ok && s.objectTypes != nil {
+		if pack := typed.ObjectTypes(); pack != nil {
+			if err := s.objectTypes.EnsureObjectTypes(ctx, projectID.String(), pack); err != nil {
+				return nil, apperror.NewInternal("install source schema pack", err)
+			}
+		}
+	}
+
 	now := s.now()
 	src := &Source{
 		ID:                   uuid.New(),
@@ -493,6 +529,10 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		Status:               "active",
 		CreatedAt:            now,
 		UpdatedAt:            now,
+	}
+	if _, ok := p.(SourceToolProvider); ok {
+		slug := s.deriveMcpSlug(ctx, src)
+		src.McpSlug = &slug
 	}
 
 	// Bind the creating credential to the new source (slice 2 of #2376, issue
@@ -533,6 +573,10 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	created, err := s.repo.CreateWithGrant(ctx, src, grant)
 	if err != nil {
 		return nil, err
+	}
+	if err := s.provisionSourceMCP(ctx, created); err != nil {
+		_ = s.repo.Delete(ctx, created.ID, created.ProjectID)
+		return nil, apperror.NewInternal("provision source MCP server", err)
 	}
 
 	return s.toIntegration(created), nil
@@ -769,6 +813,21 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			return nil, err
 		}
 	}
+	if provider, ok := s.providers.Get(updated.Provider); ok {
+		if _, toolProvider := provider.(SourceToolProvider); toolProvider {
+			if updated.McpSlug == nil {
+				slug := s.deriveMcpSlug(ctx, updated)
+				updated.McpSlug = &slug
+				if _, uerr := s.repo.Update(ctx, updated); uerr != nil {
+					return nil, uerr
+				}
+			}
+			if perr := s.provisionSourceMCP(ctx, updated); perr != nil {
+				return nil, apperror.NewInternal("provision source MCP server", perr)
+			}
+		}
+	}
+
 	// An update that leaves the source not parked has nothing left to act on: an
 	// explicit enable retries the credential, an explicit disable stops the
 	// source, and a settings save preserves the status another writer chose.
@@ -790,8 +849,18 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 
 // Delete removes a source scoped by project.
 func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID) error {
+	if err := s.deleteSourceMCP(ctx, projectID, id); err != nil {
+		return err
+	}
 	if err := s.repo.Delete(ctx, id, projectID); err != nil {
 		return err
+	}
+	if s.mcpServers != nil {
+		if remaining, rerr := s.repo.List(ctx, projectID); rerr == nil && len(remaining) == 0 {
+			if derr := s.mcpServers.DeleteSourceAdminServer(ctx, projectID.String()); derr != nil {
+				s.log.Warn("failed to delete source-admin MCP server", "project_id", projectID, "error", derr)
+			}
+		}
 	}
 	// A deleted source must not leave an actionable item behind: the member can
 	// no longer fix it, so the item is resolved rather than left pointing at a
@@ -1001,6 +1070,7 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		SourceType:          sourceType,
 		SyncMode:            src.SyncPolicy,
 		SyncIntervalMinutes: src.SyncIntervalMinutes,
+		McpSlug:             src.McpSlug,
 		Config:              s.publicConfig(src),
 		LastSyncedAt:        src.LastSyncedAt,
 		Status:              src.Status,
@@ -1010,4 +1080,18 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		CreatedAt:           src.CreatedAt,
 		UpdatedAt:           src.UpdatedAt,
 	}
+}
+
+// PreviewFilter validates an unsaved provider filter and returns its compiled
+// query. Providers without a filter preview return a validation error.
+func (s *Service) PreviewFilter(ctx context.Context, providerType string, cfg map[string]any) (string, error) {
+	p, ok := s.providers.Get(providerType)
+	if !ok {
+		return "", apperror.NewValidation("unsupported providerType: " + providerType)
+	}
+	preview, ok := p.(FilterPreviewProvider)
+	if !ok {
+		return "", apperror.NewValidation("provider does not support filter preview: " + providerType)
+	}
+	return preview.FilterPreview(cfg)
 }

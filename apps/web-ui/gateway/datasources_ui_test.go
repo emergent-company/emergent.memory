@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -808,6 +809,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.POST("/data-sources/refs", s.uiDataSourceRefs)
 	e.POST("/data-sources/:id/field-options", s.uiDataSourceFieldOptions)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
+	e.POST("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
 	e.GET("/data-sources/:id/reconnect", s.uiDataSourceReconnect)
@@ -4054,4 +4056,54 @@ func elementText(n *html.Node) string {
 	}
 	walk(n)
 	return strings.TrimSpace(b.String())
+}
+
+func TestUIDataSourceGmailOAuthStartCarriesFilter(t *testing.T) {
+	f := &fakeMemory{dsOAuthAuthorizeResp: &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=g1"}}
+	e := newDSUIServer(f)
+
+	form := url.Values{
+		"providerType":            {"gmail"},
+		"filter.categories":       {"Primary", "Updates"},
+		"filter.labels":           {"Label_7"},
+		"filter.hasAttachment":    {"true"},
+		"filter.after":            {"2025-01-01"},
+		"object_types":            {"EmailMessage"},
+		"mcp_write_tools_enabled": {"true"},
+		"mcp_alias":               {"work"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/oauth/start", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsLastOAuthProvider != "gmail" {
+		t.Fatalf("provider = %q, want gmail", f.dsLastOAuthProvider)
+	}
+	filter, _ := f.dsLastOAuthConfig["filter"].(map[string]any)
+	if cats := filter["categories"]; fmt.Sprint(cats) != "[Primary Updates]" {
+		t.Errorf("categories = %v", cats)
+	}
+	if f.dsLastOAuthConfig["mcp_write_tools_enabled"] != true {
+		t.Errorf("mcp_write_tools_enabled = %v", f.dsLastOAuthConfig["mcp_write_tools_enabled"])
+	}
+}
+
+func TestUIDataSourceGmailConnectFormRendered(t *testing.T) {
+	gmail := &DSProvider{Type: "gmail", Name: "Gmail", AuthMethods: []string{"oauth"}}
+	html := renderHTML(t, DataSourceNewPage([]DSProvider{*gmail}, gmail, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil))
+	for _, want := range []string{
+		`data-testid="ds-gmail-filter-form"`,
+		`name="filter.categories"`,
+		`name="object_types"`,
+		`name="mcp_write_tools_enabled"`,
+		"Mailbox scope",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("gmail connect form missing %q", want)
+		}
+	}
 }

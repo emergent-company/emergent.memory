@@ -36,6 +36,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/:id/sync-jobs", h.ListSyncJobs)
 	readGroup.GET("/:id/sync-jobs/latest", h.GetLatestSyncJob)
 	readGroup.GET("/:id/sync-jobs/:jobId", h.GetSyncJob)
+	readGroup.POST("/:id/scope/preview", h.PreviewSourceScope)
 
 	// Write operations (create/update/test + sync trigger/cancel).
 	writeGroup := g.Group("")
@@ -43,6 +44,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("", h.Create)
 	writeGroup.PATCH("/:id", h.Update)
 	writeGroup.POST("/test-config", h.TestConfig)
+	writeGroup.POST("/providers/:providerType/filter-preview", h.PreviewFilter)
 	writeGroup.POST("/resources", h.ListProviderResources)
 	writeGroup.POST("/refs", h.ListProviderRefs)
 	writeGroup.POST("/credentials/saved", h.CreateSavedCredential)
@@ -57,6 +59,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("/:id/sync", h.TriggerSync)
 	writeGroup.POST("/:id/sync-jobs/:jobId/cancel", h.CancelSyncJob)
 	writeGroup.GET("/providers/:providerType/oauth/authorize", h.StartOAuth)
+
+	// Scope changes are ingestion-affecting and use the dedicated sources:write
+	// scope rather than the broad documents:write grant used by CRUD.
+	scopeGroup := g.Group("")
+	scopeGroup.Use(authMiddleware.RequireAPITokenScopes("sources:write"))
+	scopeGroup.PATCH("/:id/scope", h.UpdateSourceScope)
 
 	// Delete operation.
 	deleteGroup := g.Group("")

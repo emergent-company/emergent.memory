@@ -207,6 +207,7 @@ var models = []any{
 
 	// domain/sources
 	(*sources.Source)(nil),
+	(*sources.SourceObject)(nil),
 	(*sources.SourceCredential)(nil),
 	(*sources.SyncJob)(nil),
 	(*sources.OAuthPendingState)(nil),

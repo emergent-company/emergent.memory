@@ -57,7 +57,7 @@ var (
 	// roleUserScopes = viewer + write to knowledge data.
 	roleUserScopes = withScopes(viewerReadOnlyScopes, "data:write")
 	// roleAdminScopes = user + write to agents and schemas.
-	roleAdminScopes = withScopes(roleUserScopes, "agents:write", "schema:write")
+	roleAdminScopes = withScopes(roleUserScopes, "agents:write", "schema:write", "email:write", "sources:write")
 )
 
 // withScopes returns a fresh slice of base followed by extra, so the derived

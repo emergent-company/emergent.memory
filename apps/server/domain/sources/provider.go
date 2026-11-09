@@ -37,6 +37,62 @@ type SourceItem struct {
 	RevisionID   string
 	Trashed      bool
 	ModifiedTime time.Time
+	// Records carries structured graph records derived from source metadata.
+	// The sync worker upserts them alongside the item's document.
+	Records []ObjectRecord
+}
+
+// ObjectRecord is one structured graph object emitted by a provider.
+type ObjectRecord struct {
+	Type          string
+	Key           string
+	Properties    map[string]any
+	Labels        []string
+	DocumentID    string
+	Relationships []ObjectRelationship
+}
+
+// ObjectRelationship links this record to another record in the same sync.
+type ObjectRelationship struct {
+	Type       string
+	TargetType string
+	TargetKey  string
+}
+
+// ObjectTypePack is a provider-declared schema pack installed on connect.
+type ObjectTypePack struct {
+	Name              string
+	Version           string
+	Description       string
+	ObjectTypes       []ObjectTypeDefinition
+	RelationshipTypes []RelationshipTypeDefinition
+	// SkipDiscovery suppresses automatic schema discovery for this provider:
+	// the declared pack (or a user schema) owns the types.
+	SkipDiscovery bool
+}
+
+// ObjectTypeDefinition is one object type in a pack.
+type ObjectTypeDefinition struct {
+	Name           string
+	Label          string
+	Description    string
+	Properties     map[string]any
+	Required       []string
+	SkipExtraction bool
+}
+
+// RelationshipTypeDefinition is one relationship type in a pack.
+type RelationshipTypeDefinition struct {
+	Name        string
+	SourceType  string
+	TargetType  string
+	Description string
+}
+
+// TypedObjectProvider is implemented by providers that emit structured records
+// and declare the schema types those records use.
+type TypedObjectProvider interface {
+	ObjectTypes() *ObjectTypePack
 }
 
 // ConnectorDeps carries the generic collaborators a provider's connector may
@@ -83,6 +139,13 @@ type Connector interface {
 // A connector that does not implement it is enumerated from scratch each run.
 type CursorConnector interface {
 	EnumerateWithCursor(ctx context.Context, cfg map[string]any, cursor map[string]any) (items []SourceItem, nextCursor map[string]any, err error)
+}
+
+// RecordFetchConnector is implemented by a connector that derives typed records
+// while fetching an item (Gmail decodes message metadata from the same thread
+// response it uses for the document body).
+type RecordFetchConnector interface {
+	FetchWithRecords(ctx context.Context, item SourceItem) (content, mimeType string, records []ObjectRecord, err error)
 }
 
 // Resource is a provider-neutral selectable sync target (a Drive folder, a

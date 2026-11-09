@@ -812,3 +812,67 @@ func (h *Handler) CancelSyncJob(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, resp)
 }
+
+// PreviewFilter handles POST /api/data-source-integrations/providers/:providerType/filter-preview.
+// It validates an unsaved sync scope and returns the compiled provider query.
+func (h *Handler) PreviewFilter(c echo.Context) error {
+	var req TestConfigRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	query, err := h.svc.PreviewFilter(c.Request().Context(), c.Param("providerType"), req.Config)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]any{"query": query})
+}
+
+// PreviewSourceScope handles POST /api/data-source-integrations/:id/scope/preview.
+func (h *Handler) PreviewSourceScope(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	id, err := h.pathID(c)
+	if err != nil {
+		return err
+	}
+	var req SourceScopeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	preview, err := h.svc.PreviewSourceScope(c.Request().Context(), projectID, id, &req)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, preview)
+}
+
+// UpdateSourceScope handles PATCH /api/data-source-integrations/:id/scope.
+func (h *Handler) UpdateSourceScope(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	id, err := h.pathID(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Filter               map[string]any `json:"filter"`
+		ObjectTypes          []string       `json:"objectTypes"`
+		MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled"`
+		PreviewHash          string         `json:"previewHash"`
+		BaseScopeHash        string         `json:"baseScopeHash"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	result, err := h.svc.UpdateSourceScope(c.Request().Context(), projectID, id, &SourceScopeRequest{
+		Filter: req.Filter, ObjectTypes: req.ObjectTypes, MCPWriteToolsEnabled: req.MCPWriteToolsEnabled,
+	}, req.PreviewHash, req.BaseScopeHash)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, result)
+}

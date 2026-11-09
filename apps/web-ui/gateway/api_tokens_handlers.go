@@ -123,7 +123,7 @@ var apiTokenScopeAreas = map[string]string{
 	"schema:read": apiTokenAreaSchemas, "schema:write": apiTokenAreaSchemas, "schema:migrate": apiTokenAreaSchemas,
 	"data:read": apiTokenAreaData, "data:write": apiTokenAreaData,
 	"documents:read": apiTokenAreaDocuments, "documents:write": apiTokenAreaDocuments,
-	"documents:delete": apiTokenAreaDocuments, "ingest:write": apiTokenAreaDocuments,
+	"documents:delete": apiTokenAreaDocuments, "email:write": apiTokenAreaDocuments, "sources:write": apiTokenAreaDocuments, "ingest:write": apiTokenAreaDocuments,
 	"chunks:read": apiTokenAreaDocuments, "chunks:write": apiTokenAreaDocuments,
 	"extraction:read": apiTokenAreaExtraction, "extraction:write": apiTokenAreaExtraction,
 	"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
@@ -152,7 +152,7 @@ func apiTokenScopeArea(scope string) string {
 // migration, or an execution like chat/search — rather than only read it.
 func apiTokenScopeMutates(scope string) bool {
 	switch scope {
-	case "admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search", "documents:delete":
+	case "admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search", "documents:delete", "email:write", "sources:write":
 		return true
 	}
 	return strings.HasSuffix(scope, ":write")
@@ -218,7 +218,7 @@ var scopePickerGroups = []apiTokenScopeGroup{
 		Label: apiTokenAreaDocuments, Hint: "Documents, chunks and their content.",
 		Options: []apiTokenScopeOption{
 			{"documents:read", "Read documents"}, {"documents:write", "Write documents"},
-			{"documents:delete", "Delete documents"}, {"ingest:write", "Trigger ingestion"},
+			{"documents:delete", "Delete documents"}, {"email:write", "Send email"}, {"sources:write", "Change source sync scope"}, {"ingest:write", "Trigger ingestion"},
 			{"chunks:read", "Read chunks"}, {"chunks:write", "Write chunks"},
 		},
 	},

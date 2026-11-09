@@ -92,6 +92,8 @@ type DSIntegration struct {
 	SourceType          string  `json:"sourceType"`
 	SyncMode            string  `json:"syncMode"`
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
+	// McpSlug is the immutable MCP tool-name segment for a source-backed server.
+	McpSlug *string `json:"mcpSlug,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the edit UI can round-trip a source's persisted settings.
 	Config map[string]any `json:"config,omitempty"`
@@ -753,4 +755,17 @@ func (m *MemoryClient) ListDocumentVersions(ctx context.Context, documentID stri
 		return nil, err
 	}
 	return out.Versions, nil
+}
+
+// PreviewDSFilter validates an unsaved provider filter and returns the compiled
+// query. Used by the Gmail connect form before starting OAuth.
+func (m *MemoryClient) PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error) {
+	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/filter-preview"
+	var out struct {
+		Query string `json:"query"`
+	}
+	if err := m.doH(ctx, http.MethodPost, path, map[string]any{"providerType": providerType, "config": config}, m.documentHeaders(ctx), &out); err != nil {
+		return "", err
+	}
+	return out.Query, nil
 }

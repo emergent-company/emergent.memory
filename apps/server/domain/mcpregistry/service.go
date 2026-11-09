@@ -384,7 +384,7 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 	}
 
 	// Cannot modify builtin servers (except enable/disable)
-	if server.Type == ServerTypeBuiltin {
+	if server.Type == ServerTypeBuiltin || server.Type == ServerTypeSource {
 		if dto.Name != nil || dto.Command != nil || dto.URL != nil || dto.Args != nil || dto.Env != nil || dto.Headers != nil ||
 			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil || dto.Type != nil ||
 			dto.Target != nil || dto.TargetInstanceID != nil {

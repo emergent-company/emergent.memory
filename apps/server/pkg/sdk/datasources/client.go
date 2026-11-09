@@ -175,6 +175,8 @@ type Integration struct {
 	SourceType          string  `json:"sourceType"`
 	SyncMode            string  `json:"syncMode"`
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
+	// McpSlug is the immutable MCP tool-name segment for a source-backed server.
+	McpSlug *string `json:"mcpSlug,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the connect/edit UI can round-trip a source's persisted settings.
 	Config map[string]interface{} `json:"config,omitempty"`
@@ -1332,4 +1334,71 @@ func (c *Client) DeleteProjectOAuthClient(ctx context.Context, projectID, provid
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return nil
+}
+
+// SourceScopeRequest is a partial sync-scope change for a typed source.
+type SourceScopeRequest struct {
+	Filter               map[string]interface{} `json:"filter,omitempty"`
+	ObjectTypes          []string               `json:"objectTypes,omitempty"`
+	MCPWriteToolsEnabled *bool                  `json:"mcpWriteToolsEnabled,omitempty"`
+}
+
+// SourceScopePreview is the validated result of a scope preview or update.
+type SourceScopePreview struct {
+	ProviderType  string             `json:"providerType"`
+	CompiledQuery string             `json:"compiledQuery"`
+	Current       SourceScopeRequest `json:"current"`
+	Proposed      SourceScopeRequest `json:"proposed"`
+	PreviewHash   string             `json:"previewHash"`
+	BaseScopeHash string             `json:"baseScopeHash"`
+	Changed       bool               `json:"changed"`
+}
+
+// PreviewSourceScope validates and hashes a proposed sync scope.
+// POST /api/data-source-integrations/:id/scope/preview
+func (c *Client) PreviewSourceScope(ctx context.Context, integrationID string, scope *SourceScopeRequest) (*SourceScopePreview, error) {
+	return c.sourceScopeRequest(ctx, "POST", integrationID+"/scope/preview", scope)
+}
+
+// UpdateSourceScope applies a hash-guarded sync-scope change.
+// PATCH /api/data-source-integrations/:id/scope
+func (c *Client) UpdateSourceScope(ctx context.Context, integrationID string, scope *SourceScopeRequest, previewHash, baseScopeHash string) (*SourceScopePreview, error) {
+	body := map[string]any{
+		"filter":        scope.Filter,
+		"objectTypes":   scope.ObjectTypes,
+		"previewHash":   previewHash,
+		"baseScopeHash": baseScopeHash,
+	}
+	if scope.MCPWriteToolsEnabled != nil {
+		body["mcpWriteToolsEnabled"] = *scope.MCPWriteToolsEnabled
+	}
+	return c.sourceScopeRequest(ctx, "PATCH", integrationID+"/scope", body)
+}
+
+func (c *Client) sourceScopeRequest(ctx context.Context, method, path string, body any) (*SourceScopePreview, error) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+"/api/data-source-integrations/"+path, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var out SourceScopePreview
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &out, nil
 }

@@ -362,28 +362,37 @@ templ dsOAuthConnectPanel(p DSProvider) {
 				}
 			</div>
 		</div>
-		<div class="mt-4 flex flex-wrap items-center gap-2">
-			// hx-boost is off: the handler redirects to the provider
-			// (cross-origin), which a boosted fetch cannot follow.
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--plug-zap",
-				Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect", "hx-boost": "false"},
-			}) {
-				Connect with { p.Name }
-			}
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    "/data-sources",
-				Variant: ui.ButtonGhost,
-				Size:    ui.ButtonSM,
-			}) {
-				Cancel
-			}
-		</div>
+		if p.Type == "gmail" {
+			@dsGmailConnectForm(p)
+			<div class="mt-3">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/data-sources", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
+					Cancel
+				}
+			</div>
+		} else {
+			<div class="mt-4 flex flex-wrap items-center gap-2">
+				// hx-boost is off: the handler redirects to the provider
+				// (cross-origin), which a boosted fetch cannot follow.
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plug-zap",
+					Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect", "hx-boost": "false"},
+				}) {
+					Connect with { p.Name }
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/data-sources",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+				}) {
+					Cancel
+				}
+			</div>
+		}
 	}
 }
 
@@ -848,6 +857,9 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			}
 			if src.ProviderType == dsProviderTypeGoogleDrive {
 				@dsSyncScopeCard(src, credentialSummary)
+			}
+			if src.ProviderType == "gmail" {
+				@dsGmailDetailCard(src)
 			}
 			@dsConnectionCard(src)
 			// The credentials card is an OAuth-app summary; a config/credentials
@@ -1324,6 +1336,9 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 				<label class="text-sm font-medium" for="name">Name</label>
 				<input id="name" name="name" type="text" class="input input-bordered w-full" value={ src.Name } data-testid="ds-field-name"/>
 			</div>
+			if src.ProviderType == "gmail" {
+				@dsGmailEditFields(src)
+			}
 			<div>
 				<h3 class="text-sm font-semibold">Sync options</h3>
 				if syncNote != "" {
@@ -1618,5 +1633,188 @@ templ dsVersionRow(v DocumentVersion) {
 				}
 			</div>
 		}
+	</div>
+}
+
+// dsGmailConnectForm is the required pre-consent scope form for Gmail. Without
+// an explicit filter the backend refuses to sync, so the user picks the scope
+// before the browser leaves for Google.
+templ dsGmailConnectForm(p DSProvider) {
+	<form method="post" action="/data-sources/oauth/start" data-testid="ds-gmail-filter-form" class="mt-4 flex flex-col gap-4">
+		<input type="hidden" name="providerType" value={ p.Type }/>
+		<div>
+			<h3 class="text-sm font-semibold">Mailbox scope</h3>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+				Gmail sources never sync the whole mailbox. Pick at least one category, label, sender, date range, or a raw Gmail query.
+			}
+			<div class="mt-3 flex flex-wrap gap-3" data-testid="ds-gmail-categories">
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.categories" value="Primary" class="checkbox checkbox-sm"/> Primary</label>
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.categories" value="Social" class="checkbox checkbox-sm"/> Social</label>
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.categories" value="Promotions" class="checkbox checkbox-sm"/> Promotions</label>
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.categories" value="Updates" class="checkbox checkbox-sm"/> Updates</label>
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.categories" value="Forums" class="checkbox checkbox-sm"/> Forums</label>
+			</div>
+			<div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-labels">Labels (one per line)</label>
+					<textarea id="gmail-labels" name="filter.labels" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-exclude-labels">Exclude labels</label>
+					<textarea id="gmail-exclude-labels" name="filter.excludeLabels" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-senders">Senders</label>
+					<textarea id="gmail-senders" name="filter.senders" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-exclude-senders">Exclude senders</label>
+					<textarea id="gmail-exclude-senders" name="filter.excludeSenders" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-domains">Domains</label>
+					<textarea id="gmail-domains" name="filter.domains" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-exclude-domains">Exclude domains</label>
+					<textarea id="gmail-exclude-domains" name="filter.excludeDomains" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-subject">Subject contains</label>
+					<textarea id="gmail-subject" name="filter.subjectContains" class="textarea w-full" rows="2"></textarea>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-query">Raw Gmail query</label>
+					<input id="gmail-query" name="filter.query" type="text" class="input w-full" placeholder="e.g. in:inbox newer_than:30d"/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-after">After</label>
+					<input id="gmail-after" name="filter.after" type="date" class="input w-full"/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gmail-before">Before</label>
+					<input id="gmail-before" name="filter.before" type="date" class="input w-full"/>
+				</div>
+			</div>
+			<div class="mt-3 flex flex-wrap gap-4 text-sm" data-testid="ds-gmail-filter-flags">
+				<label class="flex items-center gap-2"><input type="checkbox" name="filter.hasAttachment" value="true" class="checkbox checkbox-sm"/> Has attachment</label>
+				<label class="flex items-center gap-2"><input type="checkbox" name="filter.unreadOnly" value="true" class="checkbox checkbox-sm"/> Unread only</label>
+				<label class="flex items-center gap-2"><input type="checkbox" name="filter.starredOnly" value="true" class="checkbox checkbox-sm"/> Starred only</label>
+			</div>
+		</div>
+		<div>
+			<h3 class="text-sm font-semibold">Object types</h3>
+			<div class="mt-2 flex flex-wrap gap-4 text-sm">
+				<label class="flex items-center gap-2"><input type="checkbox" name="object_types" value="EmailMessage" checked class="checkbox checkbox-sm"/> Email messages</label>
+				<label class="flex items-center gap-2"><input type="checkbox" name="object_types" value="EmailThread" checked class="checkbox checkbox-sm"/> Email threads</label>
+			</div>
+		</div>
+		<div>
+			<h3 class="text-sm font-semibold">Agent tools</h3>
+			<div class="mt-2 flex flex-col gap-2">
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="mcp_write_tools_enabled" value="true" class="checkbox checkbox-sm"/> Enable send and draft tools (requires email:write)</label>
+				<label class="flex flex-col gap-1 text-sm">
+					<span class="font-medium">MCP alias</span>
+					<input name="mcp_alias" type="text" class="input w-full" placeholder="optional, e.g. work-mail"/>
+					<span class="text-xs text-muted">Immutable after connect. Used in tool names and the MCP server name.</span>
+				</label>
+			</div>
+		</div>
+		<div>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plug-zap",
+				Attrs:   templ.Attributes{"data-testid": "ds-gmail-connect"},
+			}) {
+				Continue to Google
+			}
+		</div>
+	</form>
+}
+
+// dsGmailDetailCard shows the persisted Gmail scope and MCP tool state.
+templ dsGmailDetailCard(src *DSIntegration) {
+	@components.PanelCard("", nil) {
+		<h2 class="text-base font-semibold">Mailbox scope</h2>
+		<ul class="mt-2 flex flex-col gap-1 text-sm" data-testid="ds-gmail-scope">
+			for _, line := range dsGmailFilterSummary(src.Config) {
+				<li>{ line }</li>
+			}
+		</ul>
+		<div class="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2" data-testid="ds-gmail-object-types">
+			<p><span class="font-medium">Object types:</span> { dsGmailObjectTypes(src.Config) }</p>
+			<p><span class="font-medium">MCP alias:</span> { dsIntegrationMcpSlug(src) }</p>
+			<p><span class="font-medium">Write tools:</span> { dsGmailWriteLabel(src.Config) }</p>
+		</div>
+	}
+}
+
+func dsIntegrationMcpSlug(src *DSIntegration) string {
+	if src.McpSlug == nil || *src.McpSlug == "" {
+		return "—"
+	}
+	return *src.McpSlug
+}
+
+func dsGmailWriteLabel(cfg map[string]any) string {
+	if dsGmailWriteEnabled(cfg) {
+		return "enabled (email:write required)"
+	}
+	return "disabled"
+}
+
+// dsGmailEditFields renders the persisted Gmail filter in the settings form.
+templ dsGmailEditFields(src *DSIntegration) {
+	<div data-testid="ds-gmail-edit-scope">
+		<h3 class="text-sm font-semibold">Mailbox scope</h3>
+		<div class="mt-3 flex flex-wrap gap-3">
+			for _, cat := range []string{"Primary", "Social", "Promotions", "Updates", "Forums"} {
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.categories" value={ cat } checked?={ dsGmailHasCategory(src.Config, cat) } class="checkbox checkbox-sm"/> { cat }</label>
+			}
+		</div>
+		<div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-labels">Labels</label>
+				<textarea id="edit-gmail-labels" name="filter.labels" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "labels") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-exclude-labels">Exclude labels</label>
+				<textarea id="edit-gmail-exclude-labels" name="filter.excludeLabels" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "excludeLabels") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-senders">Senders</label>
+				<textarea id="edit-gmail-senders" name="filter.senders" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "senders") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-subject">Subject contains</label>
+				<textarea id="edit-gmail-subject" name="filter.subjectContains" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "subjectContains") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-after">After</label>
+				<input id="edit-gmail-after" name="filter.after" type="date" class="input w-full" value={ dsGmailFormString(src.Config, "after") }/>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-before">Before</label>
+				<input id="edit-gmail-before" name="filter.before" type="date" class="input w-full" value={ dsGmailFormString(src.Config, "before") }/>
+			</div>
+			<div class="flex flex-col gap-1 sm:col-span-2">
+				<label class="text-sm font-medium" for="edit-gmail-query">Raw Gmail query</label>
+				<input id="edit-gmail-query" name="filter.query" type="text" class="input w-full" value={ dsGmailFormString(src.Config, "query") }/>
+			</div>
+		</div>
+		<div class="mt-3 flex flex-wrap gap-4 text-sm">
+			<label class="flex items-center gap-2"><input type="checkbox" name="filter.hasAttachment" value="true" checked?={ dsGmailFormBool(src.Config, "hasAttachment") } class="checkbox checkbox-sm"/> Has attachment</label>
+			<label class="flex items-center gap-2"><input type="checkbox" name="filter.unreadOnly" value="true" checked?={ dsGmailFormBool(src.Config, "unreadOnly") } class="checkbox checkbox-sm"/> Unread only</label>
+			<label class="flex items-center gap-2"><input type="checkbox" name="filter.starredOnly" value="true" checked?={ dsGmailFormBool(src.Config, "starredOnly") } class="checkbox checkbox-sm"/> Starred only</label>
+		</div>
+		<div class="mt-3 flex flex-wrap gap-4 text-sm">
+			<label class="flex items-center gap-2"><input type="checkbox" name="object_types" value="EmailMessage" checked?={ dsGmailHasObjectType(src.Config, "EmailMessage") } class="checkbox checkbox-sm"/> Email messages</label>
+			<label class="flex items-center gap-2"><input type="checkbox" name="object_types" value="EmailThread" checked?={ dsGmailHasObjectType(src.Config, "EmailThread") } class="checkbox checkbox-sm"/> Email threads</label>
+		</div>
+		<div class="mt-3 flex flex-wrap gap-4 text-sm">
+			<label class="flex items-center gap-2"><input type="checkbox" name="mcp_write_tools_enabled" value="true" checked?={ dsGmailWriteEnabled(src.Config) } class="checkbox checkbox-sm"/> Enable send and draft tools</label>
+		</div>
 	</div>
 }

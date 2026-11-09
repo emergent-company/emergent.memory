@@ -256,6 +256,17 @@ func (s *Service) CreatePack(ctx context.Context, projectID string, req *CreateP
 	return s.repo.CreatePack(ctx, projectID, req)
 }
 
+// EnsureProjectPack returns the project-scoped pack for (name, version),
+// creating it when absent. It is the idempotent entry point for source-provided
+// schema packs: connecting a second source of the same provider reuses the pack
+// instead of creating a duplicate.
+func (s *Service) EnsureProjectPack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+	if existing, err := s.repo.GetProjectPackByNameVersion(ctx, projectID, req.Name, req.Version); err == nil && existing != nil {
+		return existing, nil
+	}
+	return s.CreatePack(ctx, projectID, req)
+}
+
 // validateSchemaDefinitions checks that objectTypeSchemas and relationshipTypeSchemas
 // contain valid entries. Each object type must have a non-empty "name". Each relationship
 // type must have non-empty "name", "sourceType", and "targetType".

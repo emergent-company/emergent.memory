@@ -308,6 +308,8 @@ func TestValidApiTokenScopes(t *testing.T) {
 		"journal:read", "journal:write",
 		"skills:read", "skills:write",
 		"documents:read", "documents:write",
+		"email:write",
+		"sources:write",
 		"documents:delete",
 		"ingest:write",
 		"chunks:read",

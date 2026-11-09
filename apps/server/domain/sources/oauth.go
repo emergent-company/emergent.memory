@@ -191,19 +191,29 @@ var driveScopeStrategies = []ScopeStrategy{ScopeStrategyDriveReadonly, ScopeStra
 type googleOAuthStrategy struct {
 	// scope is the default requested scope.
 	scope string
+	// extraScopes are requested alongside scope (e.g. Gmail compose).
+	extraScopes []string
 }
 
 func newGoogleOAuthStrategy() *googleOAuthStrategy {
 	return &googleOAuthStrategy{scope: googleDriveReadonly}
 }
 
-// newGmailOAuthStrategy is the Gmail provider's Google strategy: same flow,
-// Gmail's readonly scope.
+// gmailComposeScope authorizes draft create/update/send.
+const gmailComposeScope = "https://www.googleapis.com/auth/gmail.compose"
+
+// newGmailOAuthStrategy is the Gmail provider's Google strategy: full-body read
+// plus compose for the opt-in send/draft tools.
 func newGmailOAuthStrategy() *googleOAuthStrategy {
-	return &googleOAuthStrategy{scope: gmailReadonlyScope}
+	return &googleOAuthStrategy{scope: gmailReadonlyScope, extraScopes: []string{gmailComposeScope}}
 }
 
-func (s *googleOAuthStrategy) DefaultScopes() []string { return []string{s.scope} }
+func (s *googleOAuthStrategy) DefaultScopes() []string {
+	out := make([]string, 0, 1+len(s.extraScopes))
+	out = append(out, s.scope)
+	out = append(out, s.extraScopes...)
+	return out
+}
 
 // ScopesForStrategy maps an org-selected Drive strategy to its scope set. Only
 // Drive advertises ScopeStrategies (the Google vendor app supports both Drive

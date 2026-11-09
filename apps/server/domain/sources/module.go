@@ -8,6 +8,10 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
 )
@@ -25,16 +29,27 @@ var Module = fx.Module("sources",
 		RegisterRoutes,
 		RegisterSyncWorkerLifecycle,
 		RegisterSyncSchedulerTask,
+		RegisterSourceToolHandler,
 	),
 )
 
 // ProvideService builds the production source service. It wires the Drive
 // account-email lookup used to label a source's credentials; unit tests build
 // the service directly (NewService) and therefore never make the network call.
-func ProvideService(repo *Repository, cfg *config.Config, log *slog.Logger, registry *Registry, publisher NotificationPublisher) *Service {
+func ProvideService(repo *Repository, cfg *config.Config, log *slog.Logger, registry *Registry, publisher NotificationPublisher, graphSvc *graph.Service, schemasSvc *schemas.Service, mcpReg *mcpregistry.Service) *Service {
 	return NewService(repo, cfg, log, registry,
 		WithAccountEmailResolver(driveAccountEmailResolver),
-		WithNotificationPublisher(publisher))
+		WithNotificationPublisher(publisher),
+		WithGraphService(graphSvc),
+		WithObjectTypeProvisioner(NewSchemaProvisioner(schemasSvc)),
+		WithSourceMCPServers(mcpReg))
+}
+
+// RegisterSourceToolHandler exposes the sources domain as an mcp.Service tool
+// handler, so Gmail tools appear on the official /api/mcp surface and in the
+// agent tool pool.
+func RegisterSourceToolHandler(mcpSvc *mcp.Service, svc *Service) {
+	mcpSvc.RegisterSourceToolHandler(svc)
 }
 
 // driveAccountEmailResolver reads the account email through a short-lived Drive

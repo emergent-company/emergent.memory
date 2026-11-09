@@ -155,6 +155,19 @@ type MCPRegistryToolHandler interface {
 	ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (config map[string]any, source string, err error)
 }
 
+// SourceToolHandler is the interface for source-backed MCP tools (Gmail etc.).
+// Implemented by the sources domain to avoid a circular import.
+type SourceToolHandler interface {
+	// GetSourceToolDefinitionsForProject returns the enabled source tools for the
+	// project (one set per connected account).
+	GetSourceToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
+	// HandlesSourceTool reports whether the tool name belongs to a source-backed
+	// server in this build.
+	HandlesSourceTool(toolName string) bool
+	// ExecuteSourceTool runs a source tool using the owning source's credentials.
+	ExecuteSourceTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error)
+}
+
 // AgentToolHandler is the interface for executing agent-related MCP tools.
 // Implemented by the agents domain to avoid circular imports (agents → mcp).
 type AgentToolHandler interface {

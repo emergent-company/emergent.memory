@@ -5073,6 +5073,10 @@ func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, conf
 	return &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=s1"}, nil
 }
 
+func (f *fakeMemory) PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error) {
+	return "in:inbox", nil
+}
+
 func (f *fakeMemory) ListDSOAuthClients(ctx context.Context, orgID string) ([]DSOAuthClientConfig, error) {
 	if f.dsOrgOAuthClientErr != nil {
 		return nil, f.dsOrgOAuthClientErr
