@@ -430,6 +430,15 @@ func (s *Service) excludedSearchTypes(ctx context.Context, projectID uuid.UUID) 
 }
 
 // nameFromProps extracts the "name" property from a properties map, or returns an empty string.
+// objectTitle prefers the first-class name and falls back to the properties
+// convention, for event metadata that still reports a human title.
+func objectTitle(o *GraphObject) string {
+	if o.Name != nil {
+		return *o.Name
+	}
+	return nameFromProps(o.Properties)
+}
+
 func nameFromProps(props map[string]any) string {
 	if props == nil {
 		return ""
@@ -1122,7 +1131,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *obj.Key,
-				"name":        nameFromProps(obj.Properties),
+				"name":        objectTitle(obj),
 				"object_type": obj.Type,
 			},
 		})
@@ -1686,7 +1695,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":            *newVersion.Key,
-				"name":           nameFromProps(newVersion.Properties),
+				"name":           objectTitle(newVersion),
 				"object_type":    newVersion.Type,
 				"fields_changed": fieldsChanged,
 			},
@@ -1787,7 +1796,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *current.Key,
-				"name":        nameFromProps(current.Properties),
+				"name":        objectTitle(current),
 				"object_type": current.Type,
 			},
 		})
@@ -1854,7 +1863,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *restored.Key,
-				"name":        nameFromProps(restored.Properties),
+				"name":        objectTitle(restored),
 				"object_type": restored.Type,
 			},
 		})
@@ -5142,6 +5151,7 @@ func (s *Service) applyMerge(
 				BranchID:        targetBranchID,
 				Version:         1,
 				Type:            src.Type,
+				Name:            src.Name,
 				Key:             src.Key,
 				Status:          src.Status,
 				Namespace:       src.Namespace,
@@ -5293,8 +5303,10 @@ func (s *Service) applyMerge(
 			mergedProps = applyProvenanceUnion(mergedProps, tgt.Properties, src.Properties)
 			// Status: preserve target unless overwrite.
 			resolvedStatus := tgt.Status
+			resolvedName := tgt.Name
 			if strategy == "overwrite" {
 				resolvedStatus = src.Status
+				resolvedName = src.Name
 			}
 			labels := tgt.Labels
 			if strategy == "overwrite" {
@@ -5318,7 +5330,7 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphObject{
 				Type:          prevHead.Type,
-				Name:          tgt.Name,
+				Name:          resolvedName,
 				Key:           tgt.Key,
 				Status:        resolvedStatus,
 				Namespace:     src.Namespace,
@@ -5852,8 +5864,9 @@ func classifyMergeObject(sourceHead, targetHead *BranchObjectHead) (status strin
 		// Exists only on source — added.
 		return "added", nil
 	case sourceHead != nil && targetHead != nil:
-		// Exists on both — compare content hash (covers properties, status, key, labels).
-		if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
+		// Exists on both — compare content hash (covers properties, status, key,
+		// labels) and the title (the hash predates `name`, so it does not cover it).
+		if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) && namesEqual(sourceHead.Name, targetHead.Name) {
 			return "unchanged", nil
 		}
 		// Content differs — find which property keys have conflicting values.
@@ -6342,7 +6355,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":                 *current.Key,
-				"name":                nameFromProps(current.Properties),
+				"name":                objectTitle(current),
 				"object_type":         current.Type,
 				"source_branch":       branchLabel(sourceBranchID),
 				"target_branch":       branchLabel(targetBranchID),

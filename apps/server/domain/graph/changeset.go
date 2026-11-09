@@ -695,6 +695,7 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 		ProjectID:     projectID,
 		BranchID:      branchID,
 		Type:          item.Type,
+		Name:          resolveObjectName(nil, props),
 		Key:           item.Key,
 		Status:        statusForWrite(props, item.Status),
 		Properties:    props,
@@ -754,6 +755,9 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 			props[provenanceSourcesKey] = sources
 		}
 		version.Properties = props
+		if n := resolveObjectName(nil, props); n != nil {
+			version.Name = n
+		}
 	}
 
 	if schema, ok := objectSchema(schemas, version.Type); ok {

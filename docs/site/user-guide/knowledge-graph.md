@@ -88,7 +88,7 @@ GET /api/type-registry/projects/{projectId}
 | `status` | Optional status flag (e.g. `draft`, `approved`, `archived`) |
 | `name` | Human-readable title shown in the UI and ranked first in search |
 | `ref` | Read-only display reference (`#` + last 12 hex of the canonical ID); never used for writes |
-| `id` | Stable canonical UUID — the addressable handle for reads, writes, and relationships |
+| `canonical_id` / `entity_id` | Stable canonical UUID — the addressable handle for reads, writes, and relationships (`id` is the version id) |
 | `key` | Internal dedup/upsert identity; not a display label |
 
 ---

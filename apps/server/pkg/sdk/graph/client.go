@@ -218,6 +218,7 @@ func (r *GraphRelationship) UnmarshalJSON(data []byte) error {
 // CreateObjectRequest is the request body for creating a graph object.
 type CreateObjectRequest struct {
 	Type       string         `json:"type"`
+	Name       *string        `json:"name,omitempty"`
 	Key        *string        `json:"key,omitempty"`
 	Status     *string        `json:"status,omitempty"`
 	Assignee   *string        `json:"assignee,omitempty"`
@@ -228,6 +229,7 @@ type CreateObjectRequest struct {
 
 // UpdateObjectRequest is the request body for patching a graph object.
 type UpdateObjectRequest struct {
+	Name          *string        `json:"name,omitempty"`
 	Key           *string        `json:"key,omitempty"`
 	Properties    map[string]any `json:"properties,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
@@ -772,6 +774,7 @@ type BulkUpsertRelationshipResult struct {
 type SubgraphObjectRequest struct {
 	Ref        string         `json:"_ref"`
 	Type       string         `json:"type"`
+	Name       *string        `json:"name,omitempty"`
 	Key        *string        `json:"key,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 }

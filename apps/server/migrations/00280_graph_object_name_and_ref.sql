@@ -13,7 +13,7 @@ UPDATE kb.graph_objects
 SET name = COALESCE(
     NULLIF(properties->>'name', ''),
     NULLIF(properties->>'title', ''),
-    CASE WHEN key ~ '^[a-z0-9_]+-[0-9a-f]{12}$' THEN NULL ELSE NULLIF(key, '') END
+    CASE WHEN key ~ '^[a-z0-9_-]+-[0-9a-f]{12}$' THEN NULL ELSE NULLIF(key, '') END
 )
 WHERE name IS NULL;
 
@@ -21,10 +21,6 @@ WHERE name IS NULL;
 CREATE INDEX IF NOT EXISTS idx_graph_objects_project_type_name_lower
     ON kb.graph_objects (project_id, type, lower(name));
 
--- Display ref lookup: last 12 hex of the canonical UUID (dashes stripped). The
--- ref is display-only; this expression index backs exact-ref search.
-CREATE INDEX IF NOT EXISTS idx_graph_objects_ref
-    ON kb.graph_objects ((right(replace(canonical_id::text, '-', ''), 12)));
 
 -- +goose StatementEnd
 
@@ -153,7 +149,6 @@ UPDATE kb.graph_objects
    SET fts = kb.graph_object_fts(key, type, properties)
  WHERE fts IS DISTINCT FROM kb.graph_object_fts(key, type, properties);
 
-DROP INDEX IF EXISTS kb.idx_graph_objects_ref;
 DROP INDEX IF EXISTS kb.idx_graph_objects_project_type_name_lower;
 ALTER TABLE kb.graph_objects DROP COLUMN IF EXISTS name;
 -- +goose StatementEnd

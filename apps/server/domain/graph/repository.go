@@ -1252,6 +1252,7 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID) error {
 	restored := &GraphObject{
 		Type:       obj.Type,
+		Name:       obj.Name,
 		Key:        obj.Key,
 		Status:     obj.Status,
 		Properties: obj.Properties,
