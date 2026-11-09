@@ -1,5 +1,8 @@
 name: Merge guard
-run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
+# Read the dispatch input from the event payload, not the `inputs` context:
+# `inputs` is defined only for workflow_dispatch/workflow_call, and evaluating it
+# in `run-name` for a pull_request_target event fails workflow startup.
+run-name: merge-guard PR ${{ github.event.pull_request.number || github.event.inputs.pr }}
 
 # Check that binds the merged commit to the reviewed commit. It still runs on
 # every PR, and its `verify` job check is a required status check on `main`.
@@ -92,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           TRUSTED_IDS: ${{ vars.MERGE_GUARD_TRUSTED_USER_IDS }}
           # `pull_request_target` is the automatic evaluation a push triggers;
@@ -328,7 +331,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           OUTCOME: ${{ steps.verify.outcome }}
           AWAITING: ${{ steps.verify.outputs.awaiting }}
