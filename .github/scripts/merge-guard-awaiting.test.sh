@@ -318,7 +318,7 @@ resolve_env() { # <envfile>  -> KEY=VALUE lines on stdout (fails on unknown)
     case $expr in
       'github.token') val=dummy-token ;;
       'github.repository') val=$REPO ;;
-      'github.event.pull_request.number || inputs.pr') val=$PR ;;
+      'github.event.pull_request.number || github.event.inputs.pr') val=$PR ;;
       "github.event.pull_request.head.sha || ''") val=${HEAD_ENV-} ;;
       'vars.MERGE_GUARD_TRUSTED_USER_IDS') val=$TRUSTED_IDS ;;
       'github.event_name') val=$MODE ;;
@@ -354,6 +354,16 @@ if ! resolve_env "$STEP_DIR/step1.env" >"$tmp/env1.resolved" 2>"$tmp/env1.err" |
   exit 1
 fi
 ok "every env input of both steps resolves"
+
+# `run-name` is evaluated at workflow startup. Referencing the `inputs` context
+# there is undefined for pull_request_target and fails the whole run before any
+# job exists, which silently withholds the required `verify` check.
+run_name=$(grep -m1 '^run-name:' "$workflow" || true)
+if [[ $run_name == *'github.event.inputs.pr'* && $run_name != *'${{ inputs.'* ]]; then
+  ok "run-name reads the dispatch input from the event payload"
+else
+  bad "run-name must use github.event.inputs.pr, not the inputs context: ${run_name:-<missing>}"
+fi
 
 assert_env_keys 1 "$STEP_DIR/step1.env" $'GH_TOKEN\nHEAD\nMODE\nPR\nREPO\nTRUSTED_IDS'
 assert_env_keys 2 "$STEP_DIR/step2.env" $'AWAITING\nGH_TOKEN\nHEAD\nOUTCOME\nPR\nREPO\nSUMMARY_PATH'
