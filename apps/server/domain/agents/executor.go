@@ -635,6 +635,12 @@ type ExecuteRequest struct {
 	AuthToken        string
 	EphemeralTokenID string
 
+	// WorkspaceLease, when set, attaches this run to a sandbox owned by another
+	// live run instead of provisioning its own container. spawn_agents sets it in
+	// shared mode; the owner keeps teardown and the workspace's run linkage.
+	// The run's own sandbox_config still decides which workspace tools it gets.
+	WorkspaceLease *sandbox.WorkspaceLease
+
 	// EnvVars are runtime environment variables passed per-run by the caller.
 	// They are merged into the sandbox container environment with lower priority
 	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
@@ -2231,6 +2237,35 @@ func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string,
 	}()
 }
 
+// sharedWorkspaceResult turns a lease into the borrowed provisioning result for
+// a run that attaches to another run's sandbox. It returns (nil, reason) when
+// the lease cannot be used — no workspace, the delegate has no enabled sandbox
+// config, or the owner's container is no longer ready — so the caller can fall
+// back to provisioning. A nil lease returns (nil, ""): no sharing was requested.
+func sharedWorkspaceResult(lease *sandbox.WorkspaceLease, def *AgentDefinition) (*sandbox.ProvisioningResult, string) {
+	if lease == nil {
+		return nil, ""
+	}
+	ws := lease.Workspace
+	if ws == nil {
+		return nil, "lease carries no workspace"
+	}
+	if !definitionSandboxEnabled(def) {
+		return nil, "agent has no enabled sandbox config"
+	}
+	if ws.Status != sandbox.StatusReady {
+		return nil, fmt.Sprintf("workspace %s is %q, not ready", ws.ID, ws.Status)
+	}
+	return &sandbox.ProvisioningResult{
+		Workspace:         ws,
+		ProviderType:      ws.Provider,
+		RepoURL:           derefString(ws.RepositoryURL),
+		Branch:            derefString(ws.Branch),
+		Borrowed:          true,
+		BorrowedFromRunID: lease.OwnerRunID,
+	}, ""
+}
+
 // provisionWorkspace provisions a workspace for the agent run if configured.
 // Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
 // Returns (result, nil) on success or degraded provisioning.
@@ -2243,6 +2278,28 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 	}
 	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
 		return nil, nil
+	}
+
+	// Shared-sandbox path: a delegating run handed us a lease on its live
+	// workspace. Attach instead of provisioning, provided this run's own config
+	// enables a sandbox (a delegate with no sandbox must not gain filesystem
+	// access merely by being spawned) and the owner's container is still usable.
+	// A lease that cannot be used falls through to normal provisioning so the
+	// child keeps the behaviour it had before sharing existed.
+	if lease := req.WorkspaceLease; lease != nil {
+		if res, reason := sharedWorkspaceResult(lease, req.AgentDefinition); res != nil {
+			ae.log.Info("attaching agent run to shared sandbox",
+				slog.String("run_id", runID),
+				slog.String("workspace_id", res.Workspace.ID),
+				slog.String("owner_run_id", res.BorrowedFromRunID),
+			)
+			return res, nil
+		} else if reason != "" {
+			ae.log.Warn("shared sandbox unavailable; falling back to normal provisioning",
+				slog.String("run_id", runID),
+				slog.String("reason", reason),
+			)
+		}
 	}
 
 	ae.log.Info("provisioning workspace for agent run",
@@ -2322,6 +2379,17 @@ func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.
 	}
 
 	if result == nil || result.Workspace == nil || ae.provisioner == nil {
+		return
+	}
+
+	// A borrowed sandbox belongs to the run that provisioned it. Destroying it
+	// here would kill the delegating run's workspace (and any siblings still
+	// using it), so teardown stops at revoking this run's own token.
+	if result.Borrowed {
+		ae.log.Info("skipping teardown of borrowed sandbox",
+			slog.String("workspace_id", result.Workspace.ID),
+			slog.String("owner_run_id", result.BorrowedFromRunID),
+		)
 		return
 	}
 
@@ -2538,6 +2606,19 @@ func (ae *AgentExecutor) runPipeline(
 	// cost to the full orchestration tree, not just the immediate run.
 	if req.RootRunID != nil {
 		ctx = provider.ContextWithRootRunID(ctx, *req.RootRunID)
+	}
+
+	// Expose this run's sandbox lease so coordination tools can let spawned
+	// children attach to the same container instead of each provisioning one.
+	// A run that is itself borrowing re-publishes the owner's lease unchanged:
+	// grandchildren share the same workspace and the original owner still owns
+	// teardown. Only a run that provisioned the container becomes the owner.
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
+		lease := &sandbox.WorkspaceLease{Workspace: wsResult.Workspace, OwnerRunID: run.ID}
+		if wsResult.Borrowed {
+			lease.OwnerRunID = wsResult.BorrowedFromRunID
+		}
+		ctx = ContextWithWorkspaceLease(ctx, lease)
 	}
 
 	// Inject project and org IDs into context so the credential resolver can look up
@@ -4301,6 +4382,12 @@ func (ae *AgentExecutor) runPipeline(
 		if wsResult.Degraded {
 			summary["workspace_degraded"] = true
 		}
+		if wsResult.Borrowed {
+			summary["workspace_shared"] = true
+			if wsResult.BorrowedFromRunID != "" {
+				summary["workspace_owner_run_id"] = wsResult.BorrowedFromRunID
+			}
+		}
 	}
 
 	// If workspace was required but ended up degraded, mark as error.
@@ -4369,6 +4456,15 @@ func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsR
 	wsContext := "\n\n## Workspace Environment\n" +
 		"You have a sandboxed workspace container available for this run.\n" +
 		fmt.Sprintf("- Workspace ID: %s\n", wsResult.Workspace.ID)
+
+	if wsResult.Borrowed {
+		wsContext += "- Shared: this workspace is the delegating run's live sandbox, also used by the delegating agent"
+		if wsResult.BorrowedFromRunID != "" {
+			wsContext += fmt.Sprintf(" (owner run %s)", wsResult.BorrowedFromRunID)
+		}
+		wsContext += " and any sibling agents running at the same time.\n" +
+			"- Changes you make to files are immediately visible to those agents, and theirs to you. Do not reset, clean, or rewrite the working tree wholesale; use destructive git commands only when the task explicitly requires them.\n"
+	}
 
 	if wsResult.RepoURL != "" {
 		wsContext += fmt.Sprintf("- Repository: %s\n", wsResult.RepoURL)
@@ -4535,6 +4631,16 @@ func (ae *AgentExecutor) buildCoordinationTools(ctx context.Context, req Execute
 		SpawnPolicy:     extractSpawnPolicy(req.AgentDefinition),
 		TrustedInternal: req.TrustedInternal,
 		ParentMetadata:  req.TriggerMetadata,
+		// Shared-sandbox context: a spawned child may attach to this run's live
+		// workspace instead of provisioning one. The lease is nil when this run
+		// has no workspace (sandbox disabled, unconfigured, or degraded).
+		WorkspaceLease: WorkspaceLeaseFromContext(ctx),
+		// ParentAuthToken lets a shared child's workspace tools authenticate
+		// against the API from inside the already-warm container. It is the
+		// parent's raw token, never a newly minted one, so teardown does not
+		// revoke credentials the parent still needs.
+		ParentAuthToken: auth.RawTokenFromContext(ctx),
+		ParentEnvVars:   req.EnvVars,
 	}
 	// Project spawned children's lifecycle onto the parent run's stream. The
 	// emitter is the run's shared, serialized one (install by runPipeline and

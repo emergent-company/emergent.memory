@@ -13,6 +13,8 @@ import (
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 )
 
 // CoordinationToolDeps holds the dependencies needed by coordination tools.
@@ -56,6 +58,25 @@ type CoordinationToolDeps struct {
 	// implementation is safe for concurrent use because parallel spawns emit
 	// concurrently (see newStreamSubagentEmitter).
 	EmitSubagent SubagentEmitter
+
+	// WorkspaceLease is this run's live sandbox lease, if it has one. A spawn
+	// requesting shared mode attaches the same workspace to its child instead of
+	// letting the child provision a container. Nil when the delegating run has no
+	// workspace, in which case every child provisions its own (pre-sharing
+	// behaviour).
+	WorkspaceLease *sandbox.WorkspaceLease
+
+	// ParentAuthToken is the delegating run's raw API token. It is handed to a
+	// shared child so its workspace tools can authenticate from inside the warm
+	// container without minting (and then revoking) a token of its own. Empty when
+	// the parent run has no token.
+	ParentAuthToken string
+
+	// ParentEnvVars are the delegating run's runtime environment variables. A
+	// shared child inherits them (lower priority than its own sandbox-config env
+	// and the system keys), matching the environment the container is already
+	// running with.
+	ParentEnvVars map[string]string
 }
 
 // emitSubagent is a nil-safe helper for projecting a child-run update.
@@ -281,12 +302,64 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 
 // --- spawn_agents ---
 
+// Sandbox modes accepted by spawn_agents.
+const (
+	// SandboxModeShared attaches the child to the delegating run's live sandbox.
+	// It is the default: work done by the child stays in the same working tree,
+	// so the parent sees files the child wrote without any transfer step.
+	SandboxModeShared = "shared"
+	// SandboxModeIsolated makes the child provision its own container, exactly
+	// as every spawn did before sharing existed.
+	SandboxModeIsolated = "isolated"
+)
+
+// SandboxModeOrDefault normalises an empty sandbox_mode to the shared default.
+func SandboxModeOrDefault(mode string) string {
+	if mode == "" {
+		return SandboxModeShared
+	}
+	return mode
+}
+
+// definitionSandboxEnabled reports whether the definition asks for a sandbox
+// container. A spawn only receives a shared workspace when this is true: a
+// delegate without a sandbox gains no filesystem tools by being spawned.
+func definitionSandboxEnabled(def *AgentDefinition) bool {
+	if def == nil || len(def.SandboxConfig) == 0 {
+		return false
+	}
+	cfg, err := sandbox.ParseAgentSandboxConfig(def.SandboxConfig)
+	return err == nil && cfg != nil && cfg.Enabled
+}
+
+// resolveSpawnSandbox decides the effective sandbox mode for one spawn and
+// returns the lease to attach (nil when the child provisions its own container).
+// It also returns a human-readable reason when a shared request degraded to
+// isolated, for logging. Explicit "isolated" is honoured unconditionally.
+func resolveSpawnSandbox(deps *CoordinationToolDeps, def *AgentDefinition, requested string) (mode string, lease *sandbox.WorkspaceLease, fallbackReason string) {
+	mode = SandboxModeOrDefault(requested)
+	if mode != SandboxModeShared {
+		return mode, nil, ""
+	}
+	if deps == nil || deps.WorkspaceLease == nil || deps.WorkspaceLease.Workspace == nil {
+		return SandboxModeIsolated, nil, "delegating run has no live workspace"
+	}
+	if !definitionSandboxEnabled(def) {
+		return SandboxModeIsolated, nil, "target agent has no enabled sandbox config"
+	}
+	return SandboxModeShared, deps.WorkspaceLease, ""
+}
+
 // SpawnRequest is a single sub-agent spawn request.
 type SpawnRequest struct {
 	AgentName   string  `json:"agent_name"`
 	Task        string  `json:"task"`
 	Timeout     *int    `json:"timeout,omitempty"`       // timeout in seconds
 	ResumeRunID *string `json:"resume_run_id,omitempty"` // for resuming paused runs
+	// SandboxMode selects where the child runs: "shared" (default) attaches it to
+	// the delegating run's live sandbox; "isolated" provisions a fresh container
+	// for the child. Empty means shared.
+	SandboxMode string `json:"sandbox_mode,omitempty"`
 	// Context is an optional per-spawn metadata map. Keys are merged with the
 	// parent's TriggerMetadata (these per-spawn keys take precedence) and
 	// propagated to the child run as its TriggerMetadata.
@@ -301,6 +374,10 @@ type SpawnResult struct {
 	Summary   map[string]any `json:"summary,omitempty"`
 	Steps     int            `json:"steps"`
 	Error     string         `json:"error,omitempty"`
+	// SandboxMode reports the mode the child actually ran in (shared|isolated).
+	// A shared request falls back to isolated when the delegating run has no live
+	// workspace.
+	SandboxMode string `json:"sandbox_mode,omitempty"`
 }
 
 // SpawnAgentsResult is the aggregate response from spawn_agents.
@@ -313,8 +390,9 @@ type SpawnAgentsResult struct {
 // deps is passed by pointer so that executeSingleSpawn can propagate a
 // SuspendSignal back to the parent executor via deps.SuspendSignal.
 func BuildSpawnAgentsTool(deps *CoordinationToolDeps) (tool.Tool, error) {
-	desc := "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, and steps."
+	desc := "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, steps, and the sandbox_mode used. By default a spawned agent shares your sandbox workspace: it runs in the same /workspace as you (and any sibling spawned at the same time), so files it writes are immediately visible to you without any transfer. Set sandbox_mode to \"isolated\" for a spawn that must not share files (conflicting edits, destructive resets, or a clean checkout); the isolated child gets its own container and its own copy of the repository."
 	agentNameDesc := "Name of the agent to spawn (from list_available_agents)"
+	sandboxModeDesc := "Where the sub-agent runs. \"shared\" (default) reuses your live sandbox workspace, so its file changes are visible to you and to sibling agents. \"isolated\" provisions a separate container for this sub-agent, for work that must not share the working tree."
 	if len(deps.SpawnPolicy) > 0 {
 		allowed := strings.Join(deps.SpawnPolicy, ", ")
 		desc += " Allowed agent_name values: " + allowed + "."
@@ -333,9 +411,10 @@ func BuildSpawnAgentsTool(deps *CoordinationToolDeps) (tool.Tool, error) {
 						Items: &jsonschema.Schema{
 							Type: "object",
 							Properties: map[string]*jsonschema.Schema{
-								"agent_name": {Type: "string", Description: agentNameDesc},
-								"task":       {Type: "string", Description: "Task description to pass to the sub-agent"},
-								"timeout":    {Type: "integer", Description: "Optional timeout in seconds"},
+								"agent_name":   {Type: "string", Description: agentNameDesc},
+								"task":         {Type: "string", Description: "Task description to pass to the sub-agent"},
+								"timeout":      {Type: "integer", Description: "Optional timeout in seconds"},
+								"sandbox_mode": {Type: "string", Enum: []any{SandboxModeShared, SandboxModeIsolated}, Description: sandboxModeDesc},
 							},
 							Required: []string{"agent_name", "task"},
 						},
@@ -540,6 +619,28 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		TrustedInternal: deps.TrustedInternal,
 	}
 
+	// Resolve the sandbox mode for this spawn. Shared is the default: the child
+	// attaches to the delegating run's live workspace, so work lands in the same
+	// working tree. A shared request degrades to isolated when the parent has no
+	// live workspace lease or when the child has no sandbox config of its own
+	// (a sandbox-less delegate must not gain workspace tools by delegating).
+	sandboxMode, lease, fallbackReason := resolveSpawnSandbox(deps, def, req.SandboxMode)
+	if lease != nil {
+		execReq.WorkspaceLease = lease
+		// Reuse the parent's token rather than minting one for the child: the
+		// child's teardown revokes only tokens it minted, so the parent's
+		// credentials survive, and the warm container already has its env.
+		execReq.AuthToken = deps.ParentAuthToken
+		execReq.EnvVars = deps.ParentEnvVars
+	}
+	if fallbackReason != "" {
+		deps.Logger.Info("spawn requested shared sandbox but falling back to isolated",
+			slog.String("agent_name", req.AgentName),
+			slog.String("parent_run_id", deps.ParentRunID),
+			slog.String("reason", fallbackReason),
+		)
+	}
+
 	// childRunID is captured when the child run row is created. It keeps the
 	// terminal update correlated even when execution returns no result.
 	childRunID := ""
@@ -643,11 +744,12 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		}
 
 		return SpawnResult{
-			AgentName: req.AgentName,
-			RunID:     result.RunID,
-			Status:    result.Status,
-			Summary:   result.Summary,
-			Steps:     result.Steps,
+			AgentName:   req.AgentName,
+			RunID:       result.RunID,
+			Status:      result.Status,
+			Summary:     result.Summary,
+			Steps:       result.Steps,
+			SandboxMode: sandboxMode,
 		}
 	}
 
@@ -655,6 +757,8 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		slog.String("agent_name", req.AgentName),
 		slog.String("project_id", deps.ProjectID),
 		slog.Int("depth", deps.Depth+1),
+		slog.String("sandbox_mode", sandboxMode),
+		slog.Bool("shared_sandbox", lease != nil),
 	)
 
 	// Execute the sub-agent (context propagation happens automatically via ctx)
@@ -681,11 +785,12 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 	}
 
 	return SpawnResult{
-		AgentName: req.AgentName,
-		RunID:     result.RunID,
-		Status:    result.Status,
-		Summary:   result.Summary,
-		Steps:     result.Steps,
+		AgentName:   req.AgentName,
+		RunID:       result.RunID,
+		Status:      result.Status,
+		Summary:     result.Summary,
+		Steps:       result.Steps,
+		SandboxMode: sandboxMode,
 	}
 }
 
@@ -747,6 +852,21 @@ func parseSpawnRequests(args map[string]any) ([]SpawnRequest, error) {
 		if ctxRaw, ok := m["context"]; ok {
 			if ctxMap, ok := ctxRaw.(map[string]any); ok {
 				req.Context = ctxMap
+			}
+		}
+
+		// Optional sandbox_mode (shared|isolated, default shared)
+		if modeRaw, ok := m["sandbox_mode"]; ok && modeRaw != nil {
+			mode, isString := modeRaw.(string)
+			if !isString {
+				return nil, fmt.Errorf("spawn request at index %d: 'sandbox_mode' must be a string", i)
+			}
+			switch mode {
+			case "", SandboxModeShared, SandboxModeIsolated:
+				req.SandboxMode = mode
+			default:
+				return nil, fmt.Errorf("spawn request at index %d: unknown sandbox_mode %q (use %q or %q)",
+					i, mode, SandboxModeShared, SandboxModeIsolated)
 			}
 		}
 
