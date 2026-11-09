@@ -1307,6 +1307,14 @@ definitions:
           project's default instance for the dialect is used. This makes the model
           identity structured (provider + model) rather than a single string.
         type: string
+      reasoningEffort:
+        description: |-
+          ReasoningEffort is a graded thinking level passed to providers that
+          support it (e.g. "minimal", "low", "medium", "high", "max"). When set it
+          takes precedence over the tool-presence default and is sent as
+          reasoning_effort on OpenAI-compatible chat requests. EnableThinking=false
+          still wins and suppresses thinking entirely.
+        type: string
       temperature:
         type: number
     type: object
