@@ -63,6 +63,29 @@ struct RecordedPollTests {
         #expect(client.detailRoomIDs == ["conv-1", "conv-1"])
     }
 
+    /// A fresh text chat never loads history, so the transcript's record count
+    /// is still zero while the server already holds the parked exchange. The
+    /// wait must not read that growth as the continuation: it accepted the
+    /// parked transcript and the resumed run's reply never showed (#228).
+    @Test func aFreshChatDoesNotAcceptTheParkedRecordAsTheContinuation() async {
+        let client = SequencedSessionLogClient([.success(parked()), .success(resumed())])
+        var applied: [SessionDetail] = []
+        // The transcript holds no records yet; the server holds the parked pair.
+        let scope = TranscriptWaitScope(conversationID: "conv-1", baseline: 0)
+
+        await poll(client).run(
+            scope: scope,
+            parkedRecordCount: 2,
+            isCurrent: { true },
+            apply: { applied.append($0) }
+        )
+
+        #expect(applied.count == 1)
+        #expect(applied.first?.records.last?.text == "Deployed.")
+        // Two reads: the parked detail kept the wait going, then the record.
+        #expect(client.detailCallCount == 2)
+    }
+
     /// A detail that has not grown is not the continuation: a resumed run can be
     /// slow, and the window keeps reading until it records.
     @Test func keepsWaitingWhenTheRecordHasNotGrown() async {

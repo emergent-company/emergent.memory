@@ -1013,8 +1013,12 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 
 	if existing != nil {
 		// Self-heal: update tools, system prompt, and max steps to pick up
-		// any changes deployed in code. Do NOT overwrite the model — let whatever
+		// any changes deployed in code. Do NOT overwrite a valid model — let whatever
 		// is explicitly set persist, and fall back to the project default when empty.
+		// An unparsable stored reference (e.g. a legacy bare name with no provider
+		// prefix) is cleared: preserving it would fail every query at model
+		// construction instead of resolving the project default.
+		healAgentModelRef(existing.Model)
 		existing.Tools = canonicalTools
 		existing.SystemPrompt = &systemPrompt
 		existing.MaxSteps = &maxSteps

@@ -217,7 +217,9 @@ final class ChatSessionTranscriptStore {
     ///   its own, `"(calls: …)"` (`apps/web-ui/gateway/client_api.go`,
     ///   `messageRecord`), so a reply with no preamble to its first tool step is
     ///   stored as `"(calls: …)"` and then the answer — the text the client saw
-    ///   starts after that placeholder.
+    ///   starts after that placeholder. That turn is a tool step, not reply
+    ///   text (the client never streams it), so it is left out of the suffixes
+    ///   altogether (#231).
     ///
     /// Judging only the last rendered entry was what #213 found broken; judging
     /// one concatenation only moves the break to the placeholder shape.
@@ -261,7 +263,7 @@ final class ChatSessionTranscriptStore {
                     turns.removeAll()
                     continue
                 }
-                guard let text = record.text else { continue }
+                guard let text = record.text, !isToolPlaceholder(text) else { continue }
                 turns.append(text)
             default:
                 // `tools_executed` between assistant segments does not split the
@@ -270,6 +272,22 @@ final class ChatSessionTranscriptStore {
             }
         }
         return turns.indices.map { turns[$0...].joined() }
+    }
+
+    /// Whether a turn's text is only the gateway's function-call placeholder.
+    ///
+    /// A function-call-only step is recorded as an assistant turn of its own,
+    /// `"(calls: <names>)"` (`messageRecord` in
+    /// `apps/web-ui/gateway/client_api.go`), and the client never streams that
+    /// text: it is a rendering artefact of a tool step. Counting it as reply
+    /// text made a placeholder-only suffix settle a dropped stream's wait early,
+    /// and one inside the partial stop the join from matching at all (#231).
+    ///
+    /// The shape is matched in full — a leading `"(calls: "` *and* a trailing
+    /// `")"` — rather than by prefix, so answer text that merely opens with the
+    /// same words is still treated as the reply.
+    private static func isToolPlaceholder(_ text: String) -> Bool {
+        text.hasPrefix("(calls: ") && text.hasSuffix(")")
     }
 
     /// Marks the start of a history fetch (the previous result stays visible

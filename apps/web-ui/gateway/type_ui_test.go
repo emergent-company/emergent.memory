@@ -397,3 +397,30 @@ func TestRenderTypeNameChip(t *testing.T) {
 		t.Errorf("unknown-icon chip should fall back to box without echoing the name:\n%s", html)
 	}
 }
+
+func TestObjectTypeUIMapNoProjectSkipsFetch(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{memory: f}
+	if got := s.objectTypeUIMap(t.Context()); got != nil {
+		t.Fatalf("objectTypeUIMap() = %v, want nil", got)
+	}
+	if n := f.catalogCallCount("GetCompiledTypes"); n != 0 {
+		t.Fatalf("GetCompiledTypes calls = %d, want 0 (no project scope)", n)
+	}
+}
+
+func TestObjectTypeUIMapCachesPerProject(t *testing.T) {
+	f := &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", Label: "Person"}}}}
+	s := &Server{cfg: Config{MemoryProjectID: "proj-1"}, memory: f}
+	got := s.objectTypeUIMap(t.Context())
+	if got == nil {
+		t.Fatal("objectTypeUIMap() = nil, want a type map")
+	}
+	if got["person"].Label != "Person" {
+		t.Fatalf("person label = %q, want %q", got["person"].Label, "Person")
+	}
+	s.objectTypeUIMap(t.Context())
+	if n := f.catalogCallCount("GetCompiledTypes"); n != 1 {
+		t.Fatalf("GetCompiledTypes calls = %d, want 1 (cached)", n)
+	}
+}
