@@ -44,6 +44,21 @@ func NormalizeAgentModelConfig(m *ModelConfig) error {
 	return nil
 }
 
+// healAgentModelRef normalizes a stored model reference in place. A reference
+// that cannot be parsed (for example a legacy bare name with no provider
+// prefix) is cleared so the agent falls back to the project default instead of
+// failing at model construction. Valid references — including the legacy
+// structured {name,provider} shape — are canonicalized.
+func healAgentModelRef(m *ModelConfig) {
+	if m == nil {
+		return
+	}
+	if err := NormalizeAgentModelConfig(m); err != nil {
+		m.Name = ""
+		m.Provider = ""
+	}
+}
+
 // FoldAgentModelRef returns a normalized copy of m with any legacy structured
 // provider folded into the canonical "provider/model" name and Provider cleared.
 // It never mutates m and never errors: a reference that cannot be parsed is
