@@ -895,6 +895,9 @@ func printMCPImportResult(result *mcpregistry.ImportResult) {
 	for _, failure := range result.Failed {
 		fmt.Printf("  ! %s: %s\n", failure.Name, failure.Error)
 	}
+	for _, warning := range result.Warnings {
+		fmt.Printf("  ? %s: %s\n", warning.Name, warning.Message)
+	}
 }
 
 func init() {

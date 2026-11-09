@@ -698,13 +698,14 @@ func TestRenderMCPServerImportPage(t *testing.T) {
 	resultHTML := renderHTML(t, mcpImportResultPanel(&MCPImportResult{
 		Created: []string{"github"},
 		Updated: []string{"files"},
-		Skipped: []MCPImportSkip{{Name: "old", Reason: "already exists"}},
-		Failed:  []MCPImportFailure{{Name: "bad", Error: "no transport"}},
+		Skipped:  []MCPImportSkip{{Name: "old", Reason: "already exists"}},
+		Failed:   []MCPImportFailure{{Name: "bad", Error: "no transport"}},
+		Warnings: []MCPImportWarning{{Name: "local", Message: "placeholders are literal"}},
 	}))
 	for _, want := range []string{
 		"1 created", "1 updated", "1 skipped", "1 failed",
 		"github", "files", "already exists", "no transport",
-		`data-testid="mcp-import-result"`,
+		"placeholders are literal", `data-testid="mcp-import-result"`,
 	} {
 		if !strings.Contains(resultHTML, want) {
 			t.Errorf("import result missing %q", want)

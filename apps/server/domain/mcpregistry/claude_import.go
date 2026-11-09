@@ -39,14 +39,18 @@ func (s *Service) ImportServers(ctx context.Context, projectID string, dto *Impo
 	}
 
 	result := &ImportMCPServersResultDTO{
-		Created: []string{},
-		Updated: []string{},
-		Skipped: []ImportSkipDTO{},
-		Failed:  []ImportFailureDTO{},
-		DryRun:  dto.DryRun,
+		Created:  []string{},
+		Updated:  []string{},
+		Skipped:  []ImportSkipDTO{},
+		Failed:   []ImportFailureDTO{},
+		Warnings: []ImportWarningDTO{},
+		DryRun:   dto.DryRun,
 	}
 	for _, entryErr := range parsed.Errors {
 		result.Failed = append(result.Failed, ImportFailureDTO{Name: entryErr.Name, Error: entryErr.Err.Error()})
+	}
+	for _, warning := range parsed.Warnings {
+		result.Warnings = append(result.Warnings, ImportWarningDTO{Name: warning.Name, Message: warning.Message})
 	}
 
 	for _, entry := range parsed.Servers {

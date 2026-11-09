@@ -228,11 +228,12 @@ func (m *MemoryClient) GetMCPServer(ctx context.Context, id string) (*MCPServer,
 
 // MCPImportResult mirrors memory's ImportMCPServersResultDTO.
 type MCPImportResult struct {
-	Created []string           `json:"created"`
-	Updated []string           `json:"updated"`
-	Skipped []MCPImportSkip    `json:"skipped"`
-	Failed  []MCPImportFailure `json:"failed"`
-	DryRun  bool               `json:"dryRun"`
+	Created  []string           `json:"created"`
+	Updated  []string           `json:"updated"`
+	Skipped  []MCPImportSkip    `json:"skipped"`
+	Failed   []MCPImportFailure `json:"failed"`
+	Warnings []MCPImportWarning `json:"warnings"`
+	DryRun   bool               `json:"dryRun"`
 }
 
 // MCPImportSkip names one entry left untouched and why.
@@ -245,6 +246,12 @@ type MCPImportSkip struct {
 type MCPImportFailure struct {
 	Name  string `json:"name"`
 	Error string `json:"error"`
+}
+
+// MCPImportWarning is a non-fatal observation about one entry.
+type MCPImportWarning struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
 }
 
 // ImportMCPServers posts a Claude-format config document to memory's import

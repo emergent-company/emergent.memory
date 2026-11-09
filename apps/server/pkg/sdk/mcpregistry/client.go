@@ -162,14 +162,21 @@ type ImportFailure struct {
 	Error string `json:"error"`
 }
 
+// ImportWarning is a non-fatal observation about one entry.
+type ImportWarning struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
 // ImportResult summarises a Claude-config import. A partially successful import
 // reports the good entries in Created/Updated and the rest in Skipped/Failed.
 type ImportResult struct {
-	Created []string        `json:"created"`
-	Updated []string        `json:"updated"`
-	Skipped []ImportSkip    `json:"skipped"`
-	Failed  []ImportFailure `json:"failed"`
-	DryRun  bool            `json:"dryRun"`
+	Created  []string        `json:"created"`
+	Updated  []string        `json:"updated"`
+	Skipped  []ImportSkip    `json:"skipped"`
+	Failed   []ImportFailure `json:"failed"`
+	Warnings []ImportWarning `json:"warnings"`
+	DryRun   bool            `json:"dryRun"`
 }
 
 // MCPServerInspect is the response for the inspect/test-connection endpoint.

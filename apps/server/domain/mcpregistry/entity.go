@@ -397,15 +397,23 @@ type ImportFailureDTO struct {
 	Error string `json:"error"`
 }
 
+// ImportWarningDTO is a non-fatal observation about one entry (literal ${VAR}
+// placeholders, fields ignored for the chosen transport).
+type ImportWarningDTO struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
 // ImportMCPServersResultDTO summarises an import. Import is per-entry
 // tolerant: valid entries land in Created/Updated, the rest are reported in
 // Skipped/Failed.
 type ImportMCPServersResultDTO struct {
-	Created []string           `json:"created"`
-	Updated []string           `json:"updated"`
-	Skipped []ImportSkipDTO    `json:"skipped"`
-	Failed  []ImportFailureDTO `json:"failed"`
-	DryRun  bool               `json:"dryRun"`
+	Created  []string           `json:"created"`
+	Updated  []string           `json:"updated"`
+	Skipped  []ImportSkipDTO    `json:"skipped"`
+	Failed   []ImportFailureDTO `json:"failed"`
+	Warnings []ImportWarningDTO `json:"warnings"`
+	DryRun   bool               `json:"dryRun"`
 }
 
 // InstallFromRegistryDTO is the request DTO for installing a server from the official MCP registry.

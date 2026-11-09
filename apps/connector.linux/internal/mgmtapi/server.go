@@ -377,19 +377,29 @@ func (s *Server) commitLocked(next []mcphost.ServerConfig) ([]mcphost.ServerStat
 	if err := mcphost.ValidateServers(next); err != nil {
 		return nil, &badRequest{msg: err.Error()}
 	}
+	oldServers := append([]mcphost.ServerConfig(nil), s.cfg.MCPServers...)
 	snapshot := *s.cfg
 	snapshot.MCPServers = next
 	if err := snapshot.Save(s.configPath); err != nil {
 		return nil, fmt.Errorf("save config: %w", err)
 	}
 	// Persisted: make the in-memory config match the file before reloading so
-	// the reloader sees the new server set. On reload failure the saved config
-	// and in-memory config stay consistent (the file change is already durable).
+	// the reloader sees the new server set.
 	s.cfg.MCPServers = next
 	ctx, cancel := context.WithTimeout(context.Background(), reloadTimeout)
 	defer cancel()
 	statuses, err := s.reload(ctx, s.cfg)
 	if err != nil {
+		// The reloader builds the new manager before swapping, so a failure
+		// leaves the old servers running. Restore the file and in-memory set to
+		// match that running state instead of leaving a config that would only
+		// apply on the next restart.
+		s.cfg.MCPServers = oldServers
+		rollback := *s.cfg
+		rollback.MCPServers = append([]mcphost.ServerConfig(nil), oldServers...)
+		if saveErr := rollback.Save(s.configPath); saveErr != nil {
+			return nil, fmt.Errorf("apply config: %w (rollback save failed: %v)", err, saveErr)
+		}
 		return nil, fmt.Errorf("apply config: %w", err)
 	}
 	s.statuses = statuses

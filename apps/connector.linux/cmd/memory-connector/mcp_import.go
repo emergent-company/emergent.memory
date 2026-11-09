@@ -183,4 +183,7 @@ func printMCPImportResult(w io.Writer, result mcpimport.Result) {
 	for _, failure := range result.Failed {
 		_, _ = fmt.Fprintf(w, "  ! %s: %s\n", failure.Name, failure.Error)
 	}
+	for _, warning := range result.Warnings {
+		_, _ = fmt.Fprintf(w, "  ? %s: %s\n", warning.Name, warning.Message)
+	}
 }

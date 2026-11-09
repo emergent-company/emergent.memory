@@ -133,6 +133,16 @@ struct ImportClaudeConfigSheet: View {
                     }
                 }
             }
+            if let warnings = result.warnings, !warnings.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Warnings").font(.caption.weight(.semibold))
+                    ForEach(warnings, id: \.name) { warning in
+                        Text("\(warning.name) — \(warning.message)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
             if !result.failed.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Failed").font(.caption.weight(.semibold)).foregroundStyle(.orange)

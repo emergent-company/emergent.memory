@@ -902,6 +902,16 @@ templ mcpImportResultPanel(result *MCPImportResult) {
 					</ul>
 				</div>
 			}
+			if len(result.Warnings) > 0 {
+				<div>
+					<p class="text-xs font-medium">Warnings</p>
+					<ul class="text-muted mt-1 flex flex-col gap-0.5 text-xs">
+						for _, warning := range result.Warnings {
+							<li><span class="font-mono">{ warning.Name }</span> — { warning.Message }</li>
+						}
+					</ul>
+				</div>
+			}
 			if len(result.Failed) > 0 {
 				<div>
 					<p class="text-error text-xs font-medium">Failed</p>

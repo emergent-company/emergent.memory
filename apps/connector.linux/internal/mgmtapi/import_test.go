@@ -2,10 +2,12 @@ package mgmtapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcpimport"
 )
@@ -145,4 +147,28 @@ func TestImportRejectsMissingOrMalformedConfig(t *testing.T) {
 
 	code, _ = h.do(t, http.MethodPost, "/api/mcp-servers/import", map[string]any{"config": "not json"})
 	h.requireStatus(t, code, http.StatusBadRequest)
+}
+
+func TestImportReloadFailureRollsBack(t *testing.T) {
+	h := newHarness(t)
+	h.reloader.setError(errors.New("boom"))
+
+	code, _ := h.do(t, http.MethodPost, "/api/mcp-servers/import", importBody(sampleClaude, false, false))
+	if code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", code)
+	}
+	cfg, err := config.Load(h.config)
+	if err != nil {
+		t.Fatalf("load rolled-back config: %v", err)
+	}
+	if len(cfg.MCPServers) != 0 {
+		t.Fatalf("servers in rolled-back config = %d, want 0", len(cfg.MCPServers))
+	}
+
+	code, data := h.do(t, http.MethodGet, "/api/mcp-servers", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	list := decodeInto[[]serverSummary](t, data)
+	if len(list) != 0 {
+		t.Fatalf("servers after failed reload = %d, want 0", len(list))
+	}
 }
