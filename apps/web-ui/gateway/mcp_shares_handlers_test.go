@@ -850,6 +850,40 @@ func TestMCPShareEditPagePrefills(t *testing.T) {
 	}
 }
 
+// A share minted before the catalog consolidation stores per-verb names the
+// advertised catalog no longer lists. The edit form must render them as checked
+// options so saving does not silently narrow the share's grant (issue observed
+// on prod: search-knowledge survived, 15 consolidated aliases were dropped).
+func TestMCPShareEditPagePreservesAllowlistToolsMissingFromCatalog(t *testing.T) {
+	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
+	f.shares[0].Tools = []string{"search_memory", "entity-search", "schema-version"}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpShareGet(e, "/settings/mcp-servers/shares/sh-1/edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET edit = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Saved tools no longer in the catalog") {
+		t.Error("edit page must label the saved-but-unlisted tools section")
+	}
+	for _, name := range []string{"entity-search", "schema-version"} {
+		if !strings.Contains(body, `name="tools" value="`+name+`"`) {
+			t.Errorf("edit page must resubmit saved tool %q", name)
+		}
+		if !strings.Contains(body, `value="`+name+`" class="checkbox checkbox-sm mt-0.5" checked`) {
+			t.Errorf("saved tool %q must render checked", name)
+		}
+	}
+	if got := strings.Count(body, `name="tools" value="search_memory"`); got != 1 {
+		t.Errorf("catalog tool rendered %d times, want exactly once", got)
+	}
+	if !strings.Contains(body, "3 selected") {
+		t.Error("counter must include saved tools absent from the catalog")
+	}
+}
+
 func TestMCPShareEditLegacyRedirects(t *testing.T) {
 	f := newMCPShareTestBackend(mcpShareFixture(), mcpShareCatalogFixture())
 	s := &Server{cfg: Config{}, memory: f}
@@ -1618,7 +1652,6 @@ func TestMCPShareSameToolSet(t *testing.T) {
 }
 
 func TestMCPShareSelectedLabel(t *testing.T) {
-	catalog := []MCPShareTool{{Name: "a"}, {Name: "b"}, {Name: "c"}}
 	cases := []struct {
 		name string
 		in   []string
@@ -1627,13 +1660,33 @@ func TestMCPShareSelectedLabel(t *testing.T) {
 		{"none", nil, "0 selected"},
 		{"some", []string{"b"}, "1 selected"},
 		{"all", []string{"a", "b", "c"}, "3 selected"},
-		// A tool the catalog no longer offers has no checkbox to tick, so it
-		// must not inflate the count the picker shows.
-		{"unknown ignored", []string{"a", "gone"}, "1 selected"},
+		{"duplicates collapse", []string{"a", "a", "b"}, "2 selected"},
+		// A saved tool absent from the advertised catalog is still rendered by
+		// the edit form, so it must be counted.
+		{"uncatalogued counted", []string{"a", "gone"}, "2 selected"},
 	}
 	for _, tc := range cases {
-		if got := mcpShareSelectedLabel(catalog, tc.in); got != tc.want {
+		if got := mcpShareSelectedLabel(tc.in); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestMCPShareMissingCatalogTools(t *testing.T) {
+	catalog := []MCPShareTool{{Name: "search"}, {Name: "document"}, {Name: "entity"}}
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"none selected", nil, nil},
+		{"all catalogued", []string{"search", "document"}, nil},
+		{"uncatalogued preserved in order", []string{"entity-search", "search", "schema-list"}, []string{"entity-search", "schema-list"}},
+		{"duplicates collapse", []string{"entity-search", "entity-search"}, []string{"entity-search"}},
+	}
+	for _, tc := range cases {
+		if got := mcpShareMissingCatalogTools(catalog, tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
@@ -478,7 +479,7 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 							<input id="mcp-share-emails" name="emails" type="text" value={ data.Emails } placeholder="alice@example.com, bob@example.com" class="input w-full"/>
 						}
 					}
-					@mcpShareToolPicker(data)
+					@mcpShareToolPicker(data, editing)
 					if data.GeneralErr != nil {
 						@ui.Alert(ui.AlertProps{
 							Type:    ui.AlertError,
@@ -519,7 +520,7 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 // mcpShareToolPicker is the searchable, category-grouped multi-select of memory
 // tools, preceded by the share preset row. At least one tool is required; the
 // inline error renders under the header.
-templ mcpShareToolPicker(data mcpShareFormData) {
+templ mcpShareToolPicker(data mcpShareFormData, editing bool) {
 	<div class="flex flex-col gap-2" data-mcp-tool-picker>
 		if len(data.Templates) > 0 {
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col gap-1.5"}) {
@@ -558,7 +559,7 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			@ui.Eyebrow("Memory tools", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
 			<div class="flex items-center gap-1">
-				<span class="text-muted text-[11px]" data-mcp-tool-count aria-live="polite">{ mcpShareSelectedLabel(data.Catalog, data.Tools) }</span>
+				<span class="text-muted text-[11px]" data-mcp-tool-count aria-live="polite">{ mcpShareSelectedLabel(data.Tools) }</span>
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-mcp-tool-select-all": ""}}) {
 					Select all
 				}
@@ -604,6 +605,30 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 					</div>
 				}
 			</div>
+		}
+		if missing := mcpShareMissingCatalogTools(data.Catalog, data.Tools); editing && len(missing) > 0 {
+			// Saved allowlists can name per-verb tools the consolidated catalog no
+			// longer lists. They stay callable aliases; render them so saving the
+			// edit form resubmits them instead of dropping the share's access.
+			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col gap-1"}) {
+				<p class="text-muted-strong text-[11px] font-semibold tracking-wide uppercase">Saved tools no longer in the catalog</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-1"}) {
+					Keep these checked to preserve the share's existing access, or uncheck one to remove it.
+				}
+				for _, name := range missing {
+					<label
+						class="flex cursor-pointer items-start gap-2.5 rounded-box px-2 py-1.5 transition-colors hover:bg-base-100"
+						data-mcp-tool-option
+						data-tool-search={ strings.ToLower(name) }
+					>
+						<input type="checkbox" name="tools" value={ name } class="checkbox checkbox-sm mt-0.5" checked/>
+						<span class="min-w-0">
+							<span class="block font-mono text-xs font-medium">{ name }</span>
+							<span class="text-muted-faint mt-0.5 block text-[10px]">deprecated alias — still callable</span>
+						</span>
+					</label>
+				}
+			}
 		}
 	</div>
 }
