@@ -100,6 +100,61 @@
         }
       }
     },
+    "chat.run.working": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working…"
+          }
+        }
+      }
+    },
+    "chat.run.waiting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting on you"
+          }
+        }
+      }
+    },
+    "chat.run.waiting %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting on you · %lld"
+          }
+        }
+      }
+    },
+    "chat.run.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run failed"
+          }
+        }
+      }
+    },
+    "chat.run.cancelled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run cancelled."
+          }
+        }
+      }
+    },
     "chat.approval.title": {
       "extractionState": "manual",
       "localizations": {

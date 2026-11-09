@@ -180,7 +180,7 @@ extension ChatSessionView {
     func sendText(_ text: String) {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
-        guard !transport.isStreaming else {
+        guard !transport.isStreaming, !transport.isRunning else {
             enqueueText(message)
             return
         }

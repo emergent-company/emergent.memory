@@ -22,16 +22,17 @@ extension HTTPChatTransport {
         let runID = liveRunID
         let task = turnTask
         task?.cancel()
-        // Let the turn settle first, so `isStreaming` (the composer's stop gate)
-        // is already false when the outcome lands. Its `CancellationError` is
-        // the expected result of a stop: no banner, and not an interrupted turn.
-        await task?.value
 
+        // The server cancel is sent without waiting for the local settle: a
+        // slow first-turn call must not delay ending the run on the server
+        // (`emergent.memory#470`). The local stream still settles below.
         guard let runID else {
+            await task?.value
             errorMessage = "Stopped — no active run id, so the server run could not be cancelled."
             return .noRunID
         }
         guard let base = config.gatewayBaseURL else {
+            await task?.value
             let message = "Could not derive the gateway URL from the token endpoint: \(config.tokenEndpoint)"
             errorMessage = message
             return .failed(message)
@@ -51,11 +52,18 @@ extension HTTPChatTransport {
         )
         do {
             let (data, http) = try await GatewayHTTP.perform(request, session: urlSession)
+            // The local stream has settled by now (or settles right after); the
+            // outcome is reported only once both halves are done.
+            await task?.value
             let body = try? JSONDecoder().decode(CancelRunResponse.self, from: data)
             if body?.isOK == true {
                 // The turn is over, so nothing is wrong with it: clear any
-                // banner left from the stream it was stopped in.
+                // banner left from the stream it was stopped in and hold the
+                // settled "cancelling" state until the next refresh arrives.
                 errorMessage = nil
+                isRunning = false
+                isCancelling = true
+                showsCancelledNotice = true
                 return .cancelled
             }
             let reason = (body?.reason ?? body?.error)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -66,8 +74,10 @@ extension HTTPChatTransport {
             // The stop request itself was abandoned, with the view that asked
             // for it: no banner for a view that cannot show one, and never a
             // claim that the run was cancelled.
+            await task?.value
             return .failed("The stop request was cancelled before the gateway answered.")
         } catch {
+            await task?.value
             errorMessage = "Could not cancel the server run: \(error.localizedDescription)"
             return .failed(error.localizedDescription)
         }

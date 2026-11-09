@@ -24,9 +24,16 @@ final class HTTPChatTransport {
     /// reported for a new chat.
     private(set) var conversationID: String?
 
-    /// The server-side run from the `meta` frame; ``stop()`` cancels it. Cleared
+    /// Run id from the `meta`/`refresh` frames; ``stop()`` cancels it. Cleared
     /// at the end of the turn and in ``reset()`` so it cannot cancel a later run.
-    private(set) var liveRunID: String?
+    var liveRunID: String?
+
+    /// Attached-run state from conversation events (`#437`, `#470`):
+    /// `isRunning` gates the stop control; `isCancelling`/`showsCancelledNotice`
+    /// hold the settled stop UI until the next refresh.
+    var isRunning = false
+    var isCancelling = false
+    var showsCancelledNotice = false
 
     /// Called once when a new conversation's id is first learned, so the UI can
     /// persist it in ``ActiveSessionStore``.
@@ -62,8 +69,8 @@ final class HTTPChatTransport {
     private var liveMessages: [LiveTranscriptMessage] = []
     private var fallbackToolCounter = 0
     /// Resolved agent definition id for the selected agent name (cached).
-    private var agentDefinitionID: String?
-    private var agentDefinitionResolved = false
+    var agentDefinitionID: String?
+    var agentDefinitionResolved = false
 
     init(
         config: MemoryConfig = MemoryConfig(),
@@ -103,6 +110,9 @@ final class HTTPChatTransport {
         // A newer turn owns the transcript now: a wait for the previous turn's
         // record must not reload it under this one.
         unansweredTurn = nil
+        // The new turn replaces any attached-run state the events stream was
+        // showing; its own refresh frames will re-establish it.
+        resetAttachedRunState()
         isStreaming = true
 
         // A surface action has no typed text: the card the user clicked is the
@@ -154,6 +164,7 @@ final class HTTPChatTransport {
         liveMessages.removeAll()
         conversationID = nil
         liveRunID = nil
+        resetAttachedRunState()
     }
 
     // MARK: - Streaming
@@ -219,7 +230,7 @@ final class HTTPChatTransport {
                         return "http-tool-\(fallbackToolCounter)"
                     }
                 ) else { continue }
-                apply(event, state: &state, transcript: transcript, activity: activity)
+                applyFrame(event, state: &state, transcript: transcript, activity: activity)
             }
         } catch is CancellationError {
             // Cancelled by ``reset()`` or ``stop()``: the view has left this
@@ -266,14 +277,11 @@ final class HTTPChatTransport {
     ///
     /// A reply that started is finished, unless the stream stopped without
     /// saying the turn was over: the server always closes a turn with `done`, so
-    /// a missing one means this client stopped receiving before the run ended,
-    /// and the reply on screen is a prefix of the recorded one.
+    /// a missing one means this client stopped receiving before the run ended.
     ///
-    /// A turn that never produced a token is closed too — otherwise the working
-    /// line and the composer's busy gate stay live on a turn that will never move
-    /// again — and, when the reply may still be recorded, handed to the view as
-    /// ``unansweredTurn`` so it can load the finished answer instead of waiting
-    /// for a stream that is gone (`emergent.memory#445`).
+    /// A turn that never produced a token is closed too, and handed to the view
+    /// as ``unansweredTurn`` so it can load the finished answer instead of
+    /// waiting for a stream that is gone (`emergent.memory#445`).
     private func finishTurn(
         state: TurnState,
         failure: Error?,
@@ -312,7 +320,7 @@ final class HTTPChatTransport {
         )
     }
 
-    private func apply(
+    func apply(
         _ event: ChatStreamEvent,
         state: inout TurnState,
         transcript: ChatSessionTranscriptStore,
@@ -345,13 +353,13 @@ final class HTTPChatTransport {
             state.serverFailed = true
             errorMessage = message
             activity.markReplyFinished()
+        case let .refresh(runState): applyRunRefresh(runState)
         case .done:
             state.completed = true
             activity.markReplyFinished()
-        case let .replay(events):
-            for event in events {
-                apply(event, state: &state, transcript: transcript, activity: activity)
-            }
+        case .replay:
+            // Handled before the switch (``runTurn``); kept for exhaustiveness.
+            break
         }
     }
 
@@ -371,27 +379,5 @@ final class HTTPChatTransport {
             liveMessages.append(message)
         }
         transcript.syncLive(liveMessages)
-    }
-}
-
-// MARK: - Agent definition
-
-extension HTTPChatTransport {
-    /// Resolves the selected agent's definition id, which the chat request
-    /// needs to talk to the agent the user picked. Best-effort: when the lookup
-    /// fails the request omits it and the server uses the project default.
-    private func resolveAgentDefinitionID(name: String) async -> String? {
-        if agentDefinitionResolved {
-            return agentDefinitionID
-        }
-        agentDefinitionResolved = true
-        guard !name.isEmpty else { return nil }
-        do {
-            let agents = try await ControlPlaneClient(config: config).listAgents()
-            agentDefinitionID = agents.first { $0.name == name }?.id
-        } catch {
-            agentDefinitionID = nil
-        }
-        return agentDefinitionID
     }
 }

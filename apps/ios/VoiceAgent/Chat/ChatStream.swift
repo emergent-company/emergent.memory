@@ -23,6 +23,10 @@ enum ChatStreamEvent: Equatable {
     case failure(String)
     /// The turn finished.
     case done
+    /// The conversation's current run facts (`/api/conversations/:id/events`).
+    /// The fieldless connect frame is dropped by the decoder, so a `.refresh`
+    /// always carries at least one fact.
+    case refresh(ConversationRunState)
     /// Retained in-flight frames replayed for a stream this client did not run.
     case replay([ChatStreamEvent])
 }
@@ -101,6 +105,8 @@ enum ChatStreamFrameDecoder {
             return surfaceEvent(envelope)
         case "subagent":
             return subagentEvent(envelope)
+        case "refresh":
+            return refreshEvent(envelope)
         case "live_replay":
             return replay(data: data, fallbackToolID: fallbackToolID)
         default:
@@ -249,6 +255,20 @@ enum ChatStreamFrameDecoder {
         }
     }
 
+    /// The conversation events stream's state frame: the active run and the
+    /// human decisions it is parked on. A bare connect frame is not a state
+    /// fact, so it is dropped rather than clearing a turn this client streams.
+    private static func refreshEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        let state = ConversationRunState(
+            bucket: envelope.bucket?.nonEmpty,
+            runID: envelope.runId?.nonEmpty,
+            runStatus: envelope.runStatus?.nonEmpty,
+            pendingApprovals: envelope.pendingApprovals ?? 0,
+            pendingQuestions: envelope.pendingQuestions ?? 0
+        )
+        return state.isBare ? nil : .refresh(state)
+    }
+
     /// `live_replay` re-runs the per-frame switch over its in-order `frames`
     /// array, so retained in-flight state renders exactly like the live path.
     private static func replay(
@@ -296,6 +316,11 @@ private struct ChatStreamEnvelope: Decodable {
     let type: String
     let conversationId: String?
     let runId: String?
+    /// `refresh` frame facts (the fields are absent on every other frame kind).
+    let bucket: String?
+    let runStatus: String?
+    let pendingApprovals: Int?
+    let pendingQuestions: Int?
     let parentRunId: String?
     let agentName: String?
     let task: String?

@@ -80,6 +80,24 @@ extension HTTPChatTransport {
         case failed(String)
     }
 
+    /// Applies one decoded frame, expanding a replayed list through the live
+    /// path. Extracted from ``HTTPChatTransport/runTurn`` to keep its lint
+    /// complexity and the primary type's body length bounded.
+    func applyFrame(
+        _ event: ChatStreamEvent,
+        state: inout TurnState,
+        transcript: ChatSessionTranscriptStore,
+        activity: ChatActivityStore
+    ) {
+        if case let .replay(events) = event {
+            for nested in events {
+                apply(nested, state: &state, transcript: transcript, activity: activity)
+            }
+            return
+        }
+        apply(event, state: &state, transcript: transcript, activity: activity)
+    }
+
     /// A turn that ended without any reply this client could show, and the
     /// message that anchored it.
     ///

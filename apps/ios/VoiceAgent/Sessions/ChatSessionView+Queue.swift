@@ -31,13 +31,17 @@ extension ChatSessionView {
     /// Stages a message without sending it. While a turn is running it is armed
     /// for release at that turn's end; when idle it waits for Send next.
     func enqueueText(_ text: String) {
-        queue.enqueue(text, whileRunning: transport.isStreaming)
+        queue.enqueue(text, whileRunning: transport.isStreaming || transport.isRunning)
     }
 
     /// Send next: one row only. While a turn runs the row is promoted to the
     /// head; when idle the rest stay parked (#1301).
     func sendNextQueued(_ id: String) {
-        queue.sendNext(id, whileRunning: transport.isStreaming, dispatch: dispatchQueuedText)
+        queue.sendNext(
+            id,
+            whileRunning: transport.isStreaming || transport.isRunning,
+            dispatch: dispatchQueuedText
+        )
     }
 
     /// Releases the head of an armed queue, one row per finished turn.
@@ -170,7 +174,7 @@ final class ChatQueueSender {
     /// (the composer is free), but its queue waits until the user answers and
     /// the run ends.
     var isBlocked: Bool {
-        transport.isStreaming || activity.turns.contains(where: \.isWaitingOnUser)
+        transport.isStreaming || transport.isRunning || activity.turns.contains(where: \.isWaitingOnUser)
     }
 
     /// Starts one turn; false when the transport refused (one is streaming).

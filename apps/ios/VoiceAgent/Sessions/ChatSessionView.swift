@@ -31,11 +31,20 @@ struct ChatSessionView: View {
     @EnvironmentObject var projectStore: MemoryProjectStore
     @Environment(ChatActivityStore.self) var activity
     @Environment(\.voiceEnabled) private var voiceEnabled
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
     @State var transcript = ChatSessionTranscriptStore()
     /// Text turns: the HTTP transport the web chat uses (no LiveKit at all).
     @State var transport = HTTPChatTransport()
+    /// The conversation events subscription: what makes an already-running run
+    /// visible, stoppable and current when this chat is opened or foregrounded.
+    @State var liveRun = ConversationEventsModel()
+    /// The synthetic anchor id of the activity turn opened for an attached run.
+    @State var attachedTurnID: String?
+    /// Debounce state for the recorded-history reload driven by refresh frames.
+    @State var historyReloadInFlight = false
+    @State var historyReloadPending = false
     /// Messages staged while a turn is running, released when it ends.
     @State var queue = ChatQueueStore()
     /// The turn-end hook's target. The transport holds the hook, and the hook
@@ -70,6 +79,7 @@ struct ChatSessionView: View {
                     setMode(.text)
                 }
             }
+            .modifier(ChatRunLifecycleModifier(mode: activeSession.mode, onStart: startConversationEventsIfNeeded, onStop: stopConversationEvents))
             .onChange(of: transport.interruptedTurn) { _, turn in
                 guard turn != nil else { return }
                 Task { await recoverInterruptedTurn() }
@@ -96,8 +106,8 @@ struct ChatSessionView: View {
     private var header: some View {
         ScreenHeader(
             title: headerTitle,
-            subtitle: Text(headerSubtitle),
-            subtitleFont: route.conversationID == nil ? MemoryFont.meta : MemoryFont.metaMono,
+            subtitle: headerSubtitle,
+            subtitleFont: headerRunStatus == nil && route.conversationID != nil ? MemoryFont.metaMono : MemoryFont.meta,
             // No mode picker when the project has voice disabled: there is no
             // call to switch to, and text must not look conditional.
             trailing: voiceEnabled ? AnyView(modePicker) : nil
@@ -113,11 +123,16 @@ struct ChatSessionView: View {
         return Text(route.agentName)
     }
 
-    private var headerSubtitle: String {
-        if let conversationID = openConversationID {
-            return conversationID
+    /// The header's subtitle slot: the run status while there is one, otherwise
+    /// the conversation id (or "New chat").
+    private var headerSubtitle: Text? {
+        if let status = headerRunStatus {
+            return status.label
         }
-        return String(localized: "chats.new")
+        if let conversationID = openConversationID {
+            return Text(conversationID)
+        }
+        return Text("chats.new")
     }
 
     /// Text / Voice switch. Voice joins the conversation's room; text leaves it.
@@ -149,6 +164,7 @@ extension ChatSessionView {
             case .voice:
                 // Voice is the only mode that needs a room: mint a token and
                 // join the conversation's room now.
+                stopConversationEvents()
                 await connectVoiceIfNeeded()
                 await applyCaptureForMode()
             case .text:
@@ -162,6 +178,7 @@ extension ChatSessionView {
                 // would re-render every HTTP turn twice.
                 await loadHistoryIfNeeded(force: true)
                 transport.refreshLiveTranscript(transcript)
+                startConversationEventsIfNeeded()
             }
         }
     }
@@ -268,6 +285,14 @@ extension ChatSessionView {
                 ChatSessionControls(mode: activeSession.mode, onHangUp: hangUp)
             }
             if activeSession.mode == .text {
+                if transport.showsCancelledNotice {
+                    Text("chat.run.cancelled")
+                        .font(MemoryFont.meta)
+                        .foregroundStyle(.fg2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4 * .grid)
+                        .padding(.bottom, 1 * .grid)
+                }
                 if let error = transport.errorMessage {
                     Text(error)
                         .font(MemoryFont.meta)
@@ -279,7 +304,7 @@ extension ChatSessionView {
                 if !queue.items.isEmpty {
                     ChatQueueRowsView(
                         items: queue.items,
-                        isRunning: transport.isStreaming,
+                        isRunning: transport.isStreaming || transport.isRunning,
                         onEdit: editQueuedText,
                         onSendNext: sendNextQueued,
                         onRemove: removeQueued
@@ -290,11 +315,12 @@ extension ChatSessionView {
                     text: $messageText,
                     onSend: sendText,
                     onEnqueue: enqueueText,
-                    // A text turn can be cancelled: the stream's `meta` frame
-                    // gives the run id and the transport cancels it. While it
-                    // streams, Return and Send stage the next message in the
-                    // queue instead of dropping it; the stop button stays.
-                    mode: transport.isStreaming ? .running : .idle,
+                    // A text turn can be cancelled: the stream's `meta` frame or
+                    // a conversation refresh gives the run id and the transport
+                    // cancels it. While a run is in flight (own or attached),
+                    // Return and Send stage the next message in the queue
+                    // instead of dropping it; the stop button stays.
+                    mode: isTextRunActive ? .running : .idle,
                     onStop: stopTextTurn
                 )
             }
@@ -312,6 +338,9 @@ extension ChatSessionView {
         transport.onConversationLearned = { conversationID in
             activeSession.learnConversationID(conversationID)
             queue.learnConversationID(conversationID)
+            // A new chat learns its id from the `meta` frame mid-turn: this is
+            // where its events subscription can finally start.
+            startConversationEventsIfNeeded()
         }
         // A turn ending on its own releases the queue parked behind it. A stop
         // does not: the user ended that turn on purpose.
@@ -339,6 +368,9 @@ extension ChatSessionView {
             await connectVoiceIfNeeded()
         }
         await applyCaptureForMode()
+        // A chat opened/foregrounded while its run is still going attaches here;
+        // the immediate refresh frame carries the run facts.
+        startConversationEventsIfNeeded()
     }
 
     /// Loads the recorded transcript. A brand-new chat has no id until its
