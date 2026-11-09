@@ -318,7 +318,7 @@ resolve_env() { # <envfile>  -> KEY=VALUE lines on stdout (fails on unknown)
     case $expr in
       'github.token') val=dummy-token ;;
       'github.repository') val=$REPO ;;
-      'github.event.pull_request.number || github.event.inputs.pr') val=$PR ;;
+      'github.event.inputs.pr || github.event.pull_request.number') val=$PR ;;
       "github.event.pull_request.head.sha || ''") val=${HEAD_ENV-} ;;
       'vars.MERGE_GUARD_TRUSTED_USER_IDS') val=$TRUSTED_IDS ;;
       'github.event_name') val=$MODE ;;
