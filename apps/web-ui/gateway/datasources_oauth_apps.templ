@@ -1,0 +1,267 @@
+package main
+
+import (
+	"net/url"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// dsOAuthAppAddAction is the header action that opens the new-app form.
+templ dsOAuthAppAddAction(href, label string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    href,
+		Variant: ui.ButtonPrimary,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--plus",
+		Attrs:   templ.Attributes{"data-testid": "ds-oauth-app-add"},
+	}) {
+		{ label }
+	}
+}
+
+// OrgOAuthAppsPage lists the organization's named OAuth apps.
+templ OrgOAuthAppsPage(orgID, orgName string, rows []dsCredentialRow, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth apps"), "", "Data source OAuth apps", dsOrgOAuthClientSubtitle(orgName), detailHeaderOpts{Margin: "mb-6"}) {
+			@dsOAuthAppAddAction("/orgs/"+url.PathEscape(orgID)+"/settings/oauth-apps/new", "Add OAuth app")
+		}
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageErrorNotice("OAuth apps unavailable", loadErr)
+		} else {
+			@layout.Rail(orgSettingsSubNav(orgID, "oauth-clients", true), nil) {
+				<div class="flex flex-col gap-4" data-testid="ds-oauth-apps">
+					@ui.EmptyNote() {
+						OAuth apps are shared by their vendor and can back more than one data source. Add as many as you need; each data source chooses which app it uses.
+					}
+					@dsCredentialTable(rows)
+				</div>
+			}
+		}
+	}
+}
+
+// OAuthAppFormPage creates or edits one named OAuth app.
+templ OAuthAppFormPage(data dsOAuthAppFormData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Credentials", data.BackHref)), "", oauthAppFormTitle(data), "A named, vendor-level OAuth app. One app can back several data sources.", detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    data.BackHref,
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--arrow-left",
+				Attrs:   templ.Attributes{"data-testid": "ds-oauth-app-back"},
+			}) {
+				Back
+			}
+		}
+		if data.FlashErr != nil {
+			@pageErrorNotice("OAuth app not saved", data.FlashErr)
+		}
+		<div class="flex flex-col gap-4" data-testid="ds-oauth-app-form-page">
+			@components.PanelCard("", templ.Attributes{"data-testid": "ds-oauth-app-form-card"}) {
+				<form method="post" action={ templ.URL(data.Action) } class="flex flex-col gap-4" data-testid="ds-oauth-app-form">
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="oauth-app-name">Name <span class="text-error" aria-hidden="true">*</span></label>
+							<input id="oauth-app-name" name="name" type="text" required class="input w-full" value={ oauthAppName(data) } data-testid="ds-oauth-app-name"/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="oauth-app-vendor">Vendor <span class="text-error" aria-hidden="true">*</span></label>
+							if data.App != nil {
+								<input type="hidden" name="vendor" value={ oauthAppVendor(data) }/>
+								<input id="oauth-app-vendor" type="text" readonly class="input w-full" value={ oauthAppVendorName(data) } data-testid="ds-oauth-app-vendor"/>
+							} else {
+								<select id="oauth-app-vendor" name="vendor" required class="select w-full" data-testid="ds-oauth-app-vendor">
+									for _, v := range data.Vendors {
+										<option value={ v.Vendor }>{ v.VendorName }</option>
+									}
+								</select>
+							}
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="oauth-app-client-id">Client ID <span class="text-error" aria-hidden="true">*</span></label>
+							<input id="oauth-app-client-id" name="client_id" type="text" required class="input w-full" value={ oauthAppClientID(data) } data-testid="ds-oauth-app-client-id"/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="oauth-app-client-secret">Client secret</label>
+							<input id="oauth-app-client-secret" name="client_secret" type="password" class="input w-full" placeholder={ oauthAppSecretPlaceholder(data) } data-testid="ds-oauth-app-client-secret"/>
+							@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+								The secret is write-only. Leave blank to keep the stored one.
+							}
+						</div>
+					</div>
+					if oauthAppIsGoogle(data) {
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="oauth-app-drive-strategy">Google Drive scope</label>
+							<select id="oauth-app-drive-strategy" name="google_drive_strategy" class="select w-full" data-testid="ds-oauth-app-drive-strategy">
+								<option value="">Provider default (drive.readonly)</option>
+								<option value="drive.readonly" selected?={ oauthAppStrategy(data, "google_drive") == "drive.readonly" }>drive.readonly — list the user's whole Drive</option>
+								<option value="drive.file" selected?={ oauthAppStrategy(data, "google_drive") == "drive.file" }>drive.file — only files this app created or the user picked</option>
+							</select>
+						</div>
+					}
+					if data.App != nil && len(data.App.RedirectURIs) > 0 {
+						@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "flex flex-col gap-2", Attrs: templ.Attributes{"data-testid": "ds-oauth-app-redirects"}}) {
+							<h3 class="text-sm font-semibold">Authorized redirect URIs</h3>
+							for providerType, uri := range data.App.RedirectURIs {
+								<div class="flex flex-col gap-1">
+									<span class="text-xs text-muted">{ providerType }</span>
+									<input type="text" readonly class="input w-full font-mono text-xs" value={ uri }/>
+								</div>
+							}
+							if data.App.JavascriptOrigin != "" {
+								<div class="flex flex-col gap-1">
+									<span class="text-xs text-muted">JavaScript origin</span>
+									<input type="text" readonly class="input w-full font-mono text-xs" value={ data.App.JavascriptOrigin }/>
+								</div>
+							}
+						}
+					}
+					<div class="flex items-center justify-between gap-2">
+						<div>
+							if data.DeleteHref != "" {
+								<form method="post" action={ templ.URL(data.DeleteHref) } hx-confirm="Delete this OAuth app? Data sources still using it must be switched first." class="inline-flex">
+									@ui.Button(ui.ButtonProps{
+										Type:    ui.ButtonTypeSubmit,
+										Variant: ui.ButtonGhost,
+										Size:    ui.ButtonSM,
+										Icon:    "lucide--trash-2",
+										Attrs:   templ.Attributes{"data-testid": "ds-oauth-app-delete"},
+									}) {
+										Delete
+									}
+								</form>
+							}
+						</div>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--save",
+							Attrs:   templ.Attributes{"data-testid": "ds-oauth-app-save"},
+						}) {
+							Save
+						}
+					</div>
+				</form>
+			}
+		</div>
+	}
+}
+
+func oauthAppFormTitle(data dsOAuthAppFormData) string {
+	if data.App != nil {
+		return data.App.Name
+	}
+	return "Add OAuth app"
+}
+
+func oauthAppName(data dsOAuthAppFormData) string {
+	if data.App != nil {
+		return data.App.Name
+	}
+	return ""
+}
+
+func oauthAppVendor(data dsOAuthAppFormData) string {
+	if data.App != nil {
+		return data.App.Vendor
+	}
+	return ""
+}
+
+func oauthAppVendorName(data dsOAuthAppFormData) string {
+	if data.App != nil {
+		return data.App.VendorName
+	}
+	return ""
+}
+
+func oauthAppClientID(data dsOAuthAppFormData) string {
+	if data.App != nil {
+		return data.App.ClientID
+	}
+	return ""
+}
+
+func oauthAppSecretPlaceholder(data dsOAuthAppFormData) string {
+	if data.App != nil {
+		return "Saved — leave blank to keep"
+	}
+	return "Client secret"
+}
+
+func oauthAppIsGoogle(data dsOAuthAppFormData) bool {
+	if data.App != nil {
+		return data.App.Vendor == "google"
+	}
+	for _, v := range data.Vendors {
+		if v.Vendor == "google" {
+			return true
+		}
+	}
+	return false
+}
+
+func oauthAppStrategy(data dsOAuthAppFormData, providerType string) string {
+	if data.App != nil {
+		if cfg, ok := data.App.ProviderConfigs[providerType]; ok {
+			return cfg.Strategy
+		}
+	}
+	return ""
+}
+
+// OAuthAppChoicePage asks the user which named OAuth app a new source should
+// use when the vendor has more than one.
+templ OAuthAppChoicePage(providerType string, apps []DSOAuthApp) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", "Choose an OAuth app")), "", "Choose an OAuth app", "This connection has more than one app available. Pick the one it should use.", detailHeaderOpts{Margin: "mb-6"})
+		<div class="flex flex-col gap-3" data-testid="ds-oauth-app-choice">
+			for _, app := range apps {
+				@components.PanelCard("", nil) {
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<h2 class="text-base font-semibold">{ app.Name }</h2>
+							@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { { app.VendorName } · client { shortCredentialID(app.ClientID) } }
+						</div>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(providerType) + "&oauthAppId=" + url.QueryEscape(app.ID),
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plug-zap",
+							Attrs:   templ.Attributes{"hx-boost": "false", "data-testid": "ds-oauth-app-choice-use"},
+						}) {
+							Use this app
+						}
+					</div>
+				}
+			}
+			@components.PanelCard("", nil) {
+				<div class="flex flex-wrap items-center justify-between gap-3">
+					<div>
+						<h2 class="text-base font-semibold">Deployment default</h2>
+						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { The built-in app configured by the operator. }
+					</div>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(providerType),
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--server",
+						Attrs:   templ.Attributes{"hx-boost": "false", "data-testid": "ds-oauth-app-choice-deployment"},
+					}) {
+						Use deployment default
+					}
+				</div>
+			}
+		</div>
+	}
+}

@@ -477,6 +477,10 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
+	oauthAppID, err := s.validateSourceApp(ctx, projectID, req.ProviderType, req.OAuthAppID)
+	if err != nil {
+		return nil, err
+	}
 
 	now := s.now()
 	src := &Source{
@@ -487,6 +491,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		Config:               stripCredentialKeys(cfg, p.CredentialKeys()),
 		EncryptedCredentials: blob,
 		CredentialID:         credentialID,
+		OAuthAppID:           oauthAppID,
 		SyncPolicy:           mode,
 		SyncIntervalMinutes:  interval,
 		Cursor:               map[string]any{},
@@ -566,7 +571,7 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 	// the Google Picker) instead of re-deriving the resolution itself.
 	if p, ok := s.providers.Get(src.Provider); ok {
 		if _, oauth := p.OAuth(); oauth {
-			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider)
+			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider, src.OAuthAppID)
 			if g, ok := src.Config[oauthGrantedStrategyKey].(string); ok {
 				out.OAuthGrantedStrategy = g
 			}
@@ -703,6 +708,13 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			existing.EncryptedCredentials = nil
 			savedRefActive = true
 		}
+	}
+	if req.OAuthAppID != nil {
+		appID, aerr := s.validateSourceApp(ctx, projectID, existing.Provider, req.OAuthAppID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		existing.OAuthAppID = appID
 	}
 	if req.Config != nil {
 		p, ok := s.providers.Get(existing.Provider)
@@ -993,6 +1005,11 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		id := src.CredentialID.String()
 		credentialID = &id
 	}
+	var oauthAppID *string
+	if src.OAuthAppID != nil {
+		id := src.OAuthAppID.String()
+		oauthAppID = &id
+	}
 	return &Integration{
 		ID:                  src.ID.String(),
 		ProjectID:           src.ProjectID.String(),
@@ -1007,6 +1024,7 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		ErrorMessage:        src.LastError,
 		ErrorCount:          src.ErrorCount,
 		CredentialID:        credentialID,
+		OAuthAppID:          oauthAppID,
 		CreatedAt:           src.CreatedAt,
 		UpdatedAt:           src.UpdatedAt,
 	}

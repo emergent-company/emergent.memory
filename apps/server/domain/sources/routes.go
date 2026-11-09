@@ -90,4 +90,22 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	projectClients.GET("/:providerType", h.GetProjectOAuthClient)
 	projectClients.PUT("/:providerType", h.UpsertProjectOAuthClient)
 	projectClients.DELETE("/:providerType", h.DeleteProjectOAuthClient)
+
+	// Named, vendor-level OAuth apps. These are the current surface; the
+	// per-provider groups above are deprecated shims over the vendor's sole app.
+	orgApps := e.Group("/api/orgs/:orgId/data-source-integrations/oauth-apps")
+	orgApps.Use(authMiddleware.RequireAuth())
+	orgApps.GET("", h.ListOrgOAuthApps)
+	orgApps.POST("", h.CreateOrgOAuthApp)
+	orgApps.GET("/:appId", h.GetOrgOAuthApp)
+	orgApps.PUT("/:appId", h.UpdateOrgOAuthApp)
+	orgApps.DELETE("/:appId", h.DeleteOrgOAuthApp)
+
+	projectApps := e.Group("/api/projects/:projectId/data-source-integrations/oauth-apps")
+	projectApps.Use(authMiddleware.RequireAuth())
+	projectApps.GET("", h.ListProjectOAuthApps)
+	projectApps.POST("", h.CreateProjectOAuthApp)
+	projectApps.GET("/:appId", h.GetProjectOAuthApp)
+	projectApps.PUT("/:appId", h.UpdateProjectOAuthApp)
+	projectApps.DELETE("/:appId", h.DeleteProjectOAuthApp)
 }

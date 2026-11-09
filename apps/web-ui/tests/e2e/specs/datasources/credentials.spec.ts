@@ -33,29 +33,15 @@ test.describe('project credentials', () => {
     expect(savedBox && oauthBox && savedBox.y < oauthBox.y).toBe(true);
   });
 
-  test('renders the OAuth credentials table with vendor-level app labels', async ({ page }) => {
+  test('renders an empty OAuth apps list with an add action', async ({ page }) => {
     await page.goto('/settings/credentials');
 
-    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
-
-    // Vendor-level labels, with the data source shown separately.
-    const driveRows = page.getByTestId('ds-credential-row').filter({ hasText: 'Google Drive' });
-    await expect(driveRows.first().getByText('Google OAuth app')).toBeVisible();
-    await expect(page.getByTestId('ds-credential-row').filter({ hasText: 'GitHub' }).first().getByText('GitHub OAuth app')).toBeVisible();
-
-    // One project row per provider. Organization rows are added only for a
-    // provider whose org app is configured, so they never double the table.
-    await expect(driveRows).toHaveCount(1);
-    await expect(driveRows.filter({ hasText: 'Project' })).toHaveCount(1);
-    await expect(
-      page.getByTestId('ds-credential-row').filter({ hasText: 'GitHub' }).filter({ hasText: 'Project' }),
-    ).toHaveCount(1);
-
-    // Admins get an editor link on the project row.
-    await expect(driveRows.filter({ hasText: 'Project' }).getByTestId('ds-credential-manage')).toHaveAttribute(
-      'href',
-      '/settings/credentials/google_drive',
-    );
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'OAuth apps' })).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
+    // No catalog rows are pre-rendered: the list starts empty.
+    await expect(page.getByTestId('ds-credential-row')).toHaveCount(0);
+    await expect(page.getByText('No OAuth apps yet')).toBeVisible();
 
     // Credential configuration never appears on the connections table.
     await page.goto('/data-sources');
@@ -157,77 +143,62 @@ test.describe('project credentials', () => {
     }
   });
 
-  test('saves the project OAuth app and never echoes the secret', async ({ page }) => {
-    await page.goto('/settings/credentials/google_drive');
+  test('adds, edits, and deletes a named project OAuth app without echoing the secret', async ({ page }) => {
+    const name = `e2e-google-${Date.now()}`;
+    await page.goto('/settings/credentials/apps/new');
 
-    // The editor reuses the shared OAuth-client card.
-    await expect(page.getByTestId('ds-credential-detail')).toBeVisible();
-    await expect(page.getByTestId('ds-oauth-client-form')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-app-form')).toBeVisible();
+    await page.getByTestId('ds-oauth-app-vendor').selectOption('google');
+    await page.getByTestId('ds-oauth-app-name').fill(name);
+    await page.getByTestId('ds-oauth-app-client-id').fill('e2e-project-client-id');
+    await page.getByTestId('ds-oauth-app-client-secret').fill('super-secret-e2e-value');
+    await page.getByTestId('ds-oauth-app-save').click();
 
-    const secret = page.getByTestId('ds-field-client_secret').first();
-    await expect(secret).toHaveAttribute('type', 'password');
-    await expect(secret).toHaveValue('');
-
-    await page.getByTestId('ds-field-client_id').first().fill('e2e-project-client-id');
-    await secret.fill('super-secret-e2e-value');
-    await page.getByTestId('ds-oauth-client-form').getByRole('button', { name: 'Save' }).click();
-
-    await expect(page).toHaveURL(/\/settings\/credentials\/google_drive\?saved=1/);
-    await expect(page.getByText('OAuth app saved.')).toBeVisible();
-
-    // The submitted secret is never echoed back into the page.
+    await expect(page).toHaveURL(/\/settings\/credentials\?saved=1$/);
+    const row = page.getByTestId('ds-credential-row').filter({ hasText: name });
+    await expect(row).toHaveCount(1);
+    await expect(row.getByTestId('ds-credential-client-id')).toHaveAttribute('title', 'e2e-project-client-id');
     expect(await page.content()).not.toContain('super-secret-e2e-value');
-    await expect(page.getByTestId('ds-field-client_secret').first()).toHaveValue('');
 
-    // The table now shows the project app as the one in use.
-    await page.goto('/settings/credentials');
-    const projectRow = page.getByTestId('ds-credential-row').filter({ hasText: 'Google Drive' }).filter({ hasText: 'Project' });
-    await expect(projectRow.getByTestId('ds-credential-client-id')).toHaveAttribute('title', 'e2e-project-client-id');
-    await expect(projectRow.getByTestId('ds-credential-in-use')).toBeVisible();
+    // Editing preserves the stored secret when the field is left blank.
+    await row.getByTestId('ds-credential-manage').click();
+    await expect(page.getByTestId('ds-oauth-app-form')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-app-client-secret')).toHaveValue('');
+    await page.getByTestId('ds-oauth-app-name').fill(name + '-renamed');
+    await page.getByTestId('ds-oauth-app-save').click();
+    await expect(page.getByTestId('ds-credential-row').filter({ hasText: name + '-renamed' })).toHaveCount(1);
+
+    // Delete removes it from the list.
+    await page.getByTestId('ds-credential-row').filter({ hasText: name + '-renamed' }).getByTestId('ds-credential-manage').click();
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByTestId('ds-oauth-app-delete').click();
+    await expect(page).toHaveURL(/\/settings\/credentials\?deleted=1$/);
+    await expect(page.getByTestId('ds-credential-row').filter({ hasText: name + '-renamed' })).toHaveCount(0);
   });
 
-  test('organization rows appear only once an org app is configured', async ({ page }) => {
-    // Gmail is used here because no other spec configures an org app for it, so
-    // the row appears and disappears with this test alone.
-    await page.goto('/settings/credentials');
-    const gmailOrgRows = page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' });
-    await expect(gmailOrgRows).toHaveCount(0);
-
-    // The org settings page is a table; the row opens the provider's editor.
+  test('organization OAuth apps are added from the org settings page', async ({ page }) => {
+    const name = `e2e-org-google-${Date.now()}`;
     await page.goto('/orgs/org-1/settings/oauth-clients');
-    await expect(page.getByTestId('ds-oauth-apps-table')).toBeVisible();
-    const gmailRow = page.getByTestId('ds-oauth-app-row').filter({ hasText: 'Gmail' });
-    await expect(gmailRow).toContainText('Not configured');
-    await gmailRow.getByTestId('ds-oauth-app-manage').click();
-    await expect(page).toHaveURL(/\/o\/org-1\/settings\/oauth-clients\/gmail$/);
+    await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
+    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
 
-    // The editor is the shared card, not a field on the table page.
-    await expect(page.getByTestId('ds-oauth-client-detail')).toBeVisible();
-    await expect(page.getByTestId('ds-field-client_secret')).toHaveAttribute('type', 'password');
-    await page.getByTestId('ds-field-client_id').fill('e2e-gmail-org-client-id');
-    await page.getByTestId('ds-field-client_secret').fill('super-secret-e2e-value');
-    await page.getByTestId('ds-oauth-client-form').getByRole('button', { name: 'Save' }).click();
+    await page.getByTestId('ds-oauth-app-add').click();
+    await expect(page).toHaveURL(/\/orgs\/org-1\/settings\/oauth-apps\/new$/);
+    await page.getByTestId('ds-oauth-app-vendor').selectOption('google');
+    await page.getByTestId('ds-oauth-app-name').fill(name);
+    await page.getByTestId('ds-oauth-app-client-id').fill('e2e-org-client-id');
+    await page.getByTestId('ds-oauth-app-client-secret').fill('super-secret-e2e-value');
+    await page.getByTestId('ds-oauth-app-save').click();
 
-    // PRG returns to the table with the flash and the row now configured.
     await expect(page).toHaveURL(/oauth-clients\?saved=1/);
-    await expect(page.getByText('OAuth client saved.')).toBeVisible();
-    await expect(page.getByTestId('ds-oauth-app-row').filter({ hasText: 'Gmail' })).toContainText('Configured');
+    await expect(page.getByTestId('ds-credential-row').filter({ hasText: name })).toHaveCount(1);
 
-    // The project table gains the organization row, marked In use because the
-    // project has no app of its own for Gmail.
-    await page.goto('/settings/credentials');
-    const orgRow = page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' });
-    await expect(orgRow).toHaveCount(1);
-    await expect(orgRow.getByTestId('ds-credential-in-use')).toBeVisible();
-    await expect(orgRow.getByTestId('ds-credential-client-id')).toHaveAttribute('title', 'e2e-gmail-org-client-id');
-
-    // Removing the org app drops the row again. Wait for the delete PRG before
-    // navigating, so the assertion cannot race the removal.
-    await page.goto('/orgs/org-1/settings/oauth-clients/gmail');
-    await page.getByTestId('ds-oauth-client-delete').click();
+    // Delete restores the empty list.
+    await page.getByTestId('ds-credential-row').filter({ hasText: name }).getByTestId('ds-credential-manage').click();
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByTestId('ds-oauth-app-delete').click();
     await expect(page).toHaveURL(/oauth-clients\?deleted=1/);
-    await page.goto('/settings/credentials');
-    await expect(page.getByTestId('ds-credential-row').filter({ hasText: 'Gmail' }).filter({ hasText: 'Organization' })).toHaveCount(0);
+    await expect(page.getByTestId('ds-credential-row').filter({ hasText: name })).toHaveCount(0);
   });
 
   test('the retired OAuth-clients URL redirects to credentials', async ({ page }) => {

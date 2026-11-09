@@ -99,6 +99,10 @@ type DSIntegration struct {
 	// connected with one. The saved credential's secret fields are never
 	// returned — only this metadata id.
 	CredentialID string `json:"credentialId,omitempty"`
+	// OAuthAppID names the named OAuth app the source uses; empty means the
+	// deployment default or automatic resolution.
+	OAuthAppID   string `json:"oauthAppId,omitempty"`
+	OAuthAppName string `json:"oauthAppName,omitempty"`
 	// OAuthStrategy is the effective scope strategy the server resolved for this
 	// source (project → org → provider default). Present on the single-source
 	// read only; empty means the provider default applies.
@@ -203,6 +207,8 @@ type DSCreateIntegrationRequest struct {
 	// CredentialID references a project-scoped saved credential instead of
 	// carrying secret material in Config.
 	CredentialID string `json:"credentialId,omitempty"`
+	// OAuthAppID selects a named OAuth app; empty uses automatic resolution.
+	OAuthAppID string `json:"oauthAppId,omitempty"`
 }
 
 // DSUpdateIntegrationRequest is the partial update body. Omitted fields are left
@@ -215,6 +221,9 @@ type DSUpdateIntegrationRequest struct {
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
 	// CredentialID switches the source to another saved credential.
 	CredentialID string `json:"credentialId,omitempty"`
+	// OAuthAppID switches the source to another named OAuth app; empty clears
+	// the explicit selection.
+	OAuthAppID string `json:"oauthAppId,omitempty"`
 }
 
 // DSTestConfigRequest tests an unsaved provider config.
@@ -425,11 +434,14 @@ func (m *MemoryClient) ListDSProviders(ctx context.Context) ([]DSProvider, error
 // intended (non-secret) source config; scopes optionally overrides the default.
 // A non-empty reconnectSourceID re-runs consent for that existing source, whose
 // grant the callback replaces in place instead of creating another source.
-func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
+func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, oauthAppID, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
 	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/oauth/authorize"
 	var body any
-	if len(config) > 0 || len(scopes) > 0 || reconnectSourceID != "" {
+	if len(config) > 0 || len(scopes) > 0 || oauthAppID != "" || reconnectSourceID != "" {
 		payload := map[string]any{"config": config, "scopes": scopes}
+		if oauthAppID != "" {
+			payload["oauthAppId"] = oauthAppID
+		}
 		if reconnectSourceID != "" {
 			payload["reconnectSourceId"] = reconnectSourceID
 		}
@@ -753,4 +765,131 @@ func (m *MemoryClient) ListDocumentVersions(ctx context.Context, documentID stri
 		return nil, err
 	}
 	return out.Versions, nil
+}
+
+// DSOAuthProviderConfig is one provider's scope configuration inside a named
+// vendor-level OAuth app.
+type DSOAuthProviderConfig struct {
+	Scopes   []string `json:"scopes,omitempty"`
+	Strategy string   `json:"strategy,omitempty"`
+}
+
+// DSOAuthApp is a named, vendor-level OAuth app. The client secret is never
+// returned; redirect URIs are the deployment's resolved callback values.
+type DSOAuthApp struct {
+	ID               string                           `json:"id"`
+	Scope            string                           `json:"scope"`
+	Vendor           string                           `json:"vendor"`
+	VendorName       string                           `json:"vendorName"`
+	Name             string                           `json:"name"`
+	ClientID         string                           `json:"clientId"`
+	RedirectURIs     map[string]string                `json:"redirectUris,omitempty"`
+	JavascriptOrigin string                           `json:"javascriptOrigin,omitempty"`
+	ProviderConfigs  map[string]DSOAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config           map[string]any                   `json:"config,omitempty"`
+	Configured       bool                             `json:"configured"`
+	UsedBy           int                              `json:"usedBy"`
+	CreatedAt        string                           `json:"createdAt"`
+	UpdatedAt        string                           `json:"updatedAt"`
+}
+
+// DSCreateOAuthAppRequest is the write body for a named OAuth app.
+type DSCreateOAuthAppRequest struct {
+	Name            string                           `json:"name"`
+	Vendor          string                           `json:"vendor"`
+	ClientID        string                           `json:"clientId"`
+	ClientSecret    string                           `json:"clientSecret"`
+	ProviderConfigs map[string]DSOAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config          map[string]any                   `json:"config,omitempty"`
+}
+
+// DSUpdateOAuthAppRequest is the partial-update body.
+type DSUpdateOAuthAppRequest struct {
+	Name            *string                          `json:"name,omitempty"`
+	ClientID        *string                          `json:"clientId,omitempty"`
+	ClientSecret    string                           `json:"clientSecret,omitempty"`
+	ProviderConfigs map[string]DSOAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config          map[string]any                   `json:"config,omitempty"`
+}
+
+func (m *MemoryClient) ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error) {
+	var out []DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateOrgDSOAuthApp(ctx context.Context, orgID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) GetOrgDSOAuthApp(ctx context.Context, orgID, appID string) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateOrgDSOAuthApp(ctx context.Context, orgID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodPut, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteOrgDSOAuthApp(ctx context.Context, orgID, appID string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+func (m *MemoryClient) ListProjectDSOAuthApps(ctx context.Context, projectID string) ([]DSOAuthApp, error) {
+	var out []DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateProjectDSOAuthApp(ctx context.Context, projectID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) GetProjectDSOAuthApp(ctx context.Context, projectID, appID string) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateProjectDSOAuthApp(ctx context.Context, projectID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodPut, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
 }

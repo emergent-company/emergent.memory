@@ -1202,6 +1202,26 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/orgs/:orgId/data-source-integrations/oauth-apps
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/orgs/:orgId/data-source-integrations/oauth-apps
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:orgId/data-source-integrations/oauth-apps/:appId
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/orgs/:orgId/data-source-integrations/oauth-apps/:appId
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/orgs/:orgId/data-source-integrations/oauth-apps/:appId
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/orgs/:orgId/skills
       level: auth
       note: RequireAuth
@@ -1515,6 +1535,26 @@ routes:
       note: RequireAuth
     - method: PUT
       path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/projects/:projectId/data-source-integrations/oauth-apps
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/projects/:projectId/data-source-integrations/oauth-apps
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/projects/:projectId/data-source-integrations/oauth-apps/:appId
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/projects/:projectId/data-source-integrations/oauth-apps/:appId
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/projects/:projectId/data-source-integrations/oauth-apps/:appId
       level: auth
       note: RequireAuth
     - method: POST

@@ -129,6 +129,52 @@ type OAuthCredentialDescription struct {
 	ResolvedScope string                `json:"resolvedScope"`
 }
 
+// OAuthProviderConfig is one provider's scope configuration inside a named
+// vendor-level OAuth app.
+type OAuthProviderConfig struct {
+	Scopes   []string `json:"scopes,omitempty"`
+	Strategy string   `json:"strategy,omitempty"`
+}
+
+// OAuthApp is a named, vendor-level data-source OAuth app. The client secret is
+// write-only and never returned.
+type OAuthApp struct {
+	ID               string                         `json:"id"`
+	Scope            string                         `json:"scope"`
+	Vendor           string                         `json:"vendor"`
+	VendorName       string                         `json:"vendorName"`
+	Name             string                         `json:"name"`
+	ClientID         string                         `json:"clientId"`
+	RedirectURIs     map[string]string              `json:"redirectUris,omitempty"`
+	JavascriptOrigin string                         `json:"javascriptOrigin,omitempty"`
+	ProviderConfigs  map[string]OAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config           map[string]interface{}         `json:"config,omitempty"`
+	Configured       bool                           `json:"configured"`
+	UsedBy           int                            `json:"usedBy"`
+	CreatedAt        time.Time                      `json:"createdAt"`
+	UpdatedAt        time.Time                      `json:"updatedAt"`
+}
+
+// CreateOAuthAppRequest is the request body for a new named OAuth app.
+type CreateOAuthAppRequest struct {
+	Name            string                         `json:"name"`
+	Vendor          string                         `json:"vendor"`
+	ClientID        string                         `json:"clientId"`
+	ClientSecret    string                         `json:"clientSecret"`
+	ProviderConfigs map[string]OAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config          map[string]interface{}         `json:"config,omitempty"`
+}
+
+// UpdateOAuthAppRequest is the partial-update body. An empty ClientSecret keeps
+// the stored secret.
+type UpdateOAuthAppRequest struct {
+	Name            *string                        `json:"name,omitempty"`
+	ClientID        *string                        `json:"clientId,omitempty"`
+	ClientSecret    string                         `json:"clientSecret,omitempty"`
+	ProviderConfigs map[string]OAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config          map[string]interface{}         `json:"config,omitempty"`
+}
+
 // SavedCredential is a project-scoped reusable credential. It never carries the
 // secret; credentials are write-only on create/update.
 type SavedCredential struct {
@@ -190,7 +236,11 @@ type Integration struct {
 	ErrorCount           int        `json:"errorCount"`
 	// CredentialID names the project-scoped saved credential backing this
 	// source, when it uses one. It is a reference, not secret material.
-	CredentialID *string   `json:"credentialId,omitempty"`
+	CredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID names the named OAuth app this source uses; empty when it
+	// resolves to the sole project/org app or the deployment default.
+	OAuthAppID   *string   `json:"oauthAppId,omitempty"`
+	OAuthAppName string    `json:"oauthAppName,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
@@ -263,6 +313,8 @@ type CreateIntegrationRequest struct {
 	// CredentialID references a project-scoped saved credential instead of
 	// carrying inline credential keys in Config.
 	CredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID selects a named OAuth app; empty uses automatic resolution.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 }
 
 // UpdateIntegrationRequest is the request body for updating an integration.
@@ -276,6 +328,8 @@ type UpdateIntegrationRequest struct {
 	// CredentialID references a saved credential; an empty string clears the
 	// reference and returns the source to its inline credential blob.
 	CredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID selects a named OAuth app; an empty string clears the selection.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 }
 
 // TestConfigRequest is the request body for testing a provider config.
@@ -1332,4 +1386,105 @@ func (c *Client) DeleteProjectOAuthClient(ctx context.Context, projectID, provid
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return nil
+}
+
+// --- Named OAuth apps ---
+
+func (c *Client) oauthAppsRequest(ctx context.Context, method, path string, body, out any) error {
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request: %w", err)
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, reader)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+	if out == nil || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+	return nil
+}
+
+// ListOrgOAuthApps returns the org's named OAuth apps.
+func (c *Client) ListOrgOAuthApps(ctx context.Context, orgID string) ([]OAuthApp, error) {
+	var out []OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodGet, "/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-apps", nil, &out)
+	return out, err
+}
+
+// CreateOrgOAuthApp creates a named org OAuth app.
+func (c *Client) CreateOrgOAuthApp(ctx context.Context, orgID string, req *CreateOAuthAppRequest) (*OAuthApp, error) {
+	var out OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodPost, "/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-apps", req, &out)
+	return &out, err
+}
+
+// GetOrgOAuthApp returns one org OAuth app by id.
+func (c *Client) GetOrgOAuthApp(ctx context.Context, orgID, appID string) (*OAuthApp, error) {
+	var out OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodGet, "/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-apps/"+url.PathEscape(appID), nil, &out)
+	return &out, err
+}
+
+// UpdateOrgOAuthApp updates one org OAuth app by id.
+func (c *Client) UpdateOrgOAuthApp(ctx context.Context, orgID, appID string, req *UpdateOAuthAppRequest) (*OAuthApp, error) {
+	var out OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodPut, "/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-apps/"+url.PathEscape(appID), req, &out)
+	return &out, err
+}
+
+// DeleteOrgOAuthApp deletes one org OAuth app by id.
+func (c *Client) DeleteOrgOAuthApp(ctx context.Context, orgID, appID string) error {
+	return c.oauthAppsRequest(ctx, http.MethodDelete, "/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-apps/"+url.PathEscape(appID), nil, nil)
+}
+
+// ListProjectOAuthApps returns the project's named OAuth apps.
+func (c *Client) ListProjectOAuthApps(ctx context.Context, projectID string) ([]OAuthApp, error) {
+	var out []OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-apps", nil, &out)
+	return out, err
+}
+
+// CreateProjectOAuthApp creates a named project OAuth app.
+func (c *Client) CreateProjectOAuthApp(ctx context.Context, projectID string, req *CreateOAuthAppRequest) (*OAuthApp, error) {
+	var out OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodPost, "/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-apps", req, &out)
+	return &out, err
+}
+
+// GetProjectOAuthApp returns one project OAuth app by id.
+func (c *Client) GetProjectOAuthApp(ctx context.Context, projectID, appID string) (*OAuthApp, error) {
+	var out OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-apps/"+url.PathEscape(appID), nil, &out)
+	return &out, err
+}
+
+// UpdateProjectOAuthApp updates one project OAuth app by id.
+func (c *Client) UpdateProjectOAuthApp(ctx context.Context, projectID, appID string, req *UpdateOAuthAppRequest) (*OAuthApp, error) {
+	var out OAuthApp
+	err := c.oauthAppsRequest(ctx, http.MethodPut, "/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-apps/"+url.PathEscape(appID), req, &out)
+	return &out, err
+}
+
+// DeleteProjectOAuthApp deletes one project OAuth app by id.
+func (c *Client) DeleteProjectOAuthApp(ctx context.Context, projectID, appID string) error {
+	return c.oauthAppsRequest(ctx, http.MethodDelete, "/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-apps/"+url.PathEscape(appID), nil, nil)
 }
