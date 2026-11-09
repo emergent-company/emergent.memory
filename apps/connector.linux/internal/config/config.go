@@ -226,6 +226,9 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("create temp config in %s: %w", dir, err)
 	}
 	tmpName := tmp.Name()
+	// Remove the temp file on every failure path; after a successful rename
+	// this is a harmless ENOENT.
+	defer func() { _ = os.Remove(tmpName) }()
 	cleanup := func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
