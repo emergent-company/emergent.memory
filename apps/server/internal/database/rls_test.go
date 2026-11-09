@@ -1,5 +1,3 @@
-//go:build integration
-
 package database_test
 
 import (
@@ -24,8 +22,7 @@ const rlsSentinel = "00000000-0000-0000-0000-000000000000"
 // pooled connection.
 func TestSetRLSContext_AlwaysSetsValueAndIsTransactionScoped(t *testing.T) {
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "rls_set")
-	require.NoError(t, err)
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "rls_set")
 	defer testDB.Close()
 
 	// Pin one connection so the session- and transaction-scoped effects are
@@ -70,8 +67,7 @@ func TestSetRLSContext_AlwaysSetsValueAndIsTransactionScoped(t *testing.T) {
 // empty context sees nothing, and a project context sees only that project.
 func TestRLSPolicies_FailClosedForGraphTables(t *testing.T) {
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "rls_policies")
-	require.NoError(t, err)
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "rls_policies")
 	defer testDB.Close()
 
 	require.NoError(t, testDB.BeginTestTx(ctx))
@@ -88,7 +84,7 @@ func TestRLSPolicies_FailClosedForGraphTables(t *testing.T) {
 
 	// Insert as the (superuser) test role: superusers bypass RLS even on FORCE
 	// tables, which is also why the policies remain inert in the deployment.
-	_, err = db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, 'RLS Test Org')`, orgID)
+	_, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, 'RLS Test Org')`, orgID)
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO kb.projects (id, organization_id, name)
