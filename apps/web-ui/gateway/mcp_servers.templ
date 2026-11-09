@@ -198,6 +198,16 @@ templ mcpServerRow(srv MCPServer) {
 			} else {
 				@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
 			}
+			if label, variant, icon, ok := mcpServerAuthBadge(srv); ok {
+				@ui.Badge(ui.BadgeProps{
+					Label:   label,
+					Variant: variant,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Icon:    icon,
+					Attrs:   templ.Attributes{"data-testid": "mcp-auth-badge", "data-mcp-auth-state": label},
+				})
+			}
 			if mcpServerIsDevice(srv) {
 				@ui.Badge(ui.BadgeProps{
 					Label:   "device",
@@ -1019,7 +1029,7 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 						<span class="text-sm font-medium">Enabled</span>
 						<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
 					</label>
-					<div data-mcp-test-result hidden></div>
+					<div data-mcp-test-result role="status" aria-live="polite" hidden></div>
 				</div>
 			}
 		</div>
@@ -1371,7 +1381,7 @@ templ mcpServersScript() {
 					if (!area) return;
 					var row = rowFor(btn);
 					if (row) row.open = true;
-					renderInspect(area, j);
+					renderInspect(area, j, 'Inspect');
 				} finally {
 					setBusy(btn, false);
 				}
@@ -1394,18 +1404,26 @@ templ mcpServersScript() {
 					});
 					var j = await readJSON(resp);
 					if (!resp.ok) {
-						toast('error', j.error || ('Test failed (' + resp.status + ').'));
+						// A non-2xx test response carries the real failure in
+						// {"error": ...}. Render it in the form's result area, not
+						// only a toast: the toast is easy to miss and the user was
+						// left looking at a form that appeared to succeed.
+						var msg = j.error || ('Test failed (' + resp.status + ').');
+						if (area) renderCheckError(area, 'Test failed', msg);
+						toast('error', msg);
 						return;
 					}
-					if (area) renderInspect(area, j);
+					if (area) renderInspect(area, j, 'Test');
 				} catch (e) {
-					toast('error', 'Test failed: ' + (e && e.message ? e.message : 'network error'));
+					var msg = 'Test failed: ' + (e && e.message ? e.message : 'network error');
+					if (area) renderCheckError(area, 'Test failed', msg);
+					toast('error', msg);
 				} finally {
 					setBusy(btn, false);
 				}
 			}
 
-			function renderInspect(area, r) {
+			function renderInspect(area, r, actionLabel) {
 				area.hidden = false;
 				area.innerHTML = '';
 				var box = document.createElement('div');
@@ -1479,7 +1497,7 @@ templ mcpServersScript() {
 				if (r.status !== 'ok') {
 					box.className += ' border-error/25 bg-error/5';
 					head.appendChild(icon('lucide--circle-x'));
-					head.appendChild(textNode('Inspect failed'));
+					head.appendChild(textNode((actionLabel || 'Inspect') + ' failed'));
 					box.appendChild(head);
 					var err = document.createElement('p');
 					err.className = 'text-error mt-1';
@@ -1522,6 +1540,27 @@ templ mcpServersScript() {
 					none.textContent = 'No tools, prompts, or resources advertised.';
 					box.appendChild(none);
 				}
+			}
+
+			// renderCheckError writes a transport/handler failure into the form's
+			// result area. The message is untrusted (it can carry an upstream
+			// error body), so it is set via textContent only.
+			function renderCheckError(area, heading, msg) {
+				if (!area) return;
+				area.hidden = false;
+				area.replaceChildren();
+				var box = document.createElement('div');
+				box.className = 'rounded-box border border-error/25 bg-error/5 px-3 py-2.5 text-xs';
+				var head = document.createElement('p');
+				head.className = 'flex items-center gap-1.5 text-sm font-semibold text-error';
+				head.appendChild(icon('lucide--circle-x'));
+				head.appendChild(textNode(heading));
+				box.appendChild(head);
+				var err = document.createElement('p');
+				err.className = 'text-error mt-1 break-words';
+				err.textContent = msg || 'connection error';
+				box.appendChild(err);
+				area.appendChild(box);
 			}
 
 			function icon(name) {

@@ -238,6 +238,41 @@ func mcpServerOAuthShown(s MCPServer) bool {
 	return s.OAuth != nil
 }
 
+// mcpServerAuthBadge returns the list summary's at-a-glance operational-state
+// badge for a server whose "enabled" state alone can be misleading. A remote
+// server that participates in OAuth connect but has no stored token and no
+// cached tools cannot operate yet, so it renders "Needs auth" instead of
+// looking healthy; a stored token renders "Connected" (the server was
+// authorized at least once). A non-remote external server with no cached tools
+// has never completed a successful sync/probe and renders "Never tested".
+//
+// This derives entirely from existing list-DTO state: OAuth summary
+// (configured/connected) and the cached tool rows. It deliberately does not
+// invent a persisted last-tested/last-connected field — the backend has none
+// (see PR notes), so "Connected" means a token set is stored and "Never
+// tested" means no tools have ever been cached.
+//
+// Builtin rows, device-targeted rows, and rows that already carry a
+// "Needs configuration" warning are skipped (one warning per row is enough).
+func mcpServerAuthBadge(s MCPServer) (label string, variant ui.BadgeIntent, icon string, ok bool) {
+	if mcpServerIsBuiltin(s) || mcpServerIsDevice(s) || s.NeedsConfiguration {
+		return "", "", "", false
+	}
+	if s.OAuth != nil {
+		if s.OAuth.Connected {
+			return "Connected", ui.BadgeSuccess, "lucide--shield-check", true
+		}
+		if len(s.Tools) == 0 && s.ToolCount == 0 {
+			return "Needs auth", ui.BadgeWarning, "lucide--key-round", true
+		}
+		return "", "", "", false
+	}
+	if len(s.Tools) == 0 && s.ToolCount == 0 {
+		return "Never tested", ui.BadgeNeutral, "lucide--circle-help", true
+	}
+	return "", "", "", false
+}
+
 // mcpServerDisplayName is the list summary's label for a server. The builtin
 // server's stored name is the literal "builtin"; the UI shows it as "Memory
 // tools" so it reads as memory's own tool source rather than a transport.

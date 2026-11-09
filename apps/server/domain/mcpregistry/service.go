@@ -1020,6 +1020,10 @@ func (s *Service) TestServerConfig(ctx context.Context, projectID string, dto *C
 			if stored.Target == TargetDevice {
 				return nil, ErrDeviceServerNotOutbound
 			}
+			// Carry the stored identity onto the transient probe so the outbound
+			// path resolves the server's stored OAuth credential (a save-less
+			// edit-mode test must exercise the same auth a real call would).
+			server.ID = stored.ID
 			backfillTransientSecrets(server, stored)
 		}
 	}

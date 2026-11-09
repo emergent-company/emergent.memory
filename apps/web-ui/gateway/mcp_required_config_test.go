@@ -291,3 +291,99 @@ func TestUIMCPServersTestConnectionErrorIsJSON(t *testing.T) {
 		t.Errorf("test failure = %d %s, want 502 with the memory error", rec.Code, rec.Body.String())
 	}
 }
+
+// --- #514: at-a-glance auth / connection-state badge on the list row ---
+
+// TestRenderMCPServersPageAuthBadge covers the badge that stops an enabled but
+// non-operational MCP server from looking healthy. The signals are the existing
+// list-DTO state: the OAuth summary and the cached tool rows.
+func TestRenderMCPServersPageAuthBadge(t *testing.T) {
+	remote := func(oauth *MCPServerOAuth, tools ...MCPTool) MCPServer {
+		return MCPServer{
+			ID: "srv-remote", Name: "sentry", Type: "http", Enabled: true,
+			URL: "https://mcp.sentry.dev/mcp", OAuth: oauth, Tools: tools,
+		}
+	}
+
+	t.Run("remote without a token and without tools needs auth", func(t *testing.T) {
+		html := renderHTML(t, MCPServersPage(mcpServersPageData{
+			Servers: []MCPServer{remote(&MCPServerOAuth{})},
+		}))
+		for _, want := range []string{
+			`data-testid="mcp-auth-badge"`,
+			`data-mcp-auth-state="Needs auth"`,
+			"Needs auth",
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+	})
+
+	t.Run("stored token surfaces as connected", func(t *testing.T) {
+		html := renderHTML(t, MCPServersPage(mcpServersPageData{
+			Servers: []MCPServer{remote(&MCPServerOAuth{Configured: true, Connected: true})},
+		}))
+		for _, want := range []string{
+			`data-mcp-auth-state="Connected"`,
+			"Connected",
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+		if strings.Contains(html, `data-mcp-auth-state="Needs auth"`) {
+			t.Error("connected server must not render Needs auth")
+		}
+	})
+
+	t.Run("remote with cached tools and no token is not flagged", func(t *testing.T) {
+		html := renderHTML(t, MCPServersPage(mcpServersPageData{
+			Servers: []MCPServer{remote(&MCPServerOAuth{}, MCPTool{ToolName: "search"})},
+		}))
+		if strings.Contains(html, `data-testid="mcp-auth-badge"`) {
+			t.Error("a remote server that has cached tools must not be flagged")
+		}
+	})
+
+	t.Run("stdio server without cached tools was never tested", func(t *testing.T) {
+		html := renderHTML(t, MCPServersPage(mcpServersPageData{
+			Servers: []MCPServer{{ID: "srv-stdio", Name: "files", Type: "stdio", Command: "npx", Enabled: true}},
+		}))
+		for _, want := range []string{
+			`data-mcp-auth-state="Never tested"`,
+			"Never tested",
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+	})
+
+	t.Run("needs-configuration warning suppresses the auth badge", func(t *testing.T) {
+		srv := remote(&MCPServerOAuth{})
+		srv.NeedsConfiguration = true
+		srv.MissingConfigKeys = []string{"Authorization"}
+		html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{srv}}))
+		if strings.Contains(html, `data-testid="mcp-auth-badge"`) {
+			t.Error("a needs-configuration row already warns; it must not add a second badge")
+		}
+	})
+}
+
+// TestRenderMCPServerTestResultRegion covers #515: the test-result area is a
+// live status region, and the page script renders handler/transport failures
+// into it (not only a toast) with a test-specific label.
+func TestRenderMCPServerTestResultRegion(t *testing.T) {
+	html := renderHTML(t, MCPServerNewPage(mcpServerFormData{Type: "stdio", Enabled: true}))
+	for _, want := range []string{
+		`data-mcp-test-result role="status" aria-live="polite"`,
+		"renderCheckError(area, 'Test failed', msg)",
+		"(actionLabel || 'Inspect') + ' failed'",
+		"renderInspect(area, j, 'Test')",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("test-result region missing %q", want)
+		}
+	}
+}

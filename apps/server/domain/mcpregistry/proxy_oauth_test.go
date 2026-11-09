@@ -3,6 +3,7 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -593,5 +594,35 @@ func TestClassifyInstallAuth_NonAuthErrorIsNeither(t *testing.T) {
 	}
 	if requiresTokenHeader {
 		t.Error("requiresTokenHeader = true, want false for a non-auth error")
+	}
+}
+
+// emptyServerIDRejectingRepo mirrors the real store's Postgres behaviour: a
+// server_id comparison against an empty string raises the uuid cast error. It
+// pins the #515 regression where a transient /test draft server (ID "") made
+// Test connection surface `invalid input syntax for type uuid: ""`.
+type emptyServerIDRejectingRepo struct {
+	*fakeProxyRepo
+}
+
+func (r emptyServerIDRejectingRepo) FindOAuthForUser(ctx context.Context, serverID, userID string) (*MCPServerOAuth, error) {
+	if serverID == "" {
+		return nil, errors.New(`ERROR: invalid input syntax for type uuid: "" (SQLSTATE 22P02)`)
+	}
+	return r.fakeProxyRepo.FindOAuthForUser(ctx, serverID, userID)
+}
+
+func TestOAuthAuthorizationHeader_TransientServerHasNoCredential(t *testing.T) {
+	pm := &ProxyManager{
+		repo:      emptyServerIDRejectingRepo{&fakeProxyRepo{}},
+		encryptor: testEncryptor(t),
+		log:       slog.Default(),
+		conns:     make(map[string]*mcpConnection),
+	}
+
+	got, err := pm.oauthAuthorizationHeader(context.Background(), remoteServer("", "p1", "draft", "https://mcp.test/mcp"))
+	require.NoError(t, err)
+	if got != "" {
+		t.Errorf("header = %q, want empty for a transient draft server", got)
 	}
 }
