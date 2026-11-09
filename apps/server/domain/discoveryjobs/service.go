@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
+	"github.com/emergent-company/emergent.memory/pkg/typehygiene"
 )
 
 // discoveryMaxOutputTokens bounds one discovery model call. Schema discovery
@@ -1152,7 +1153,25 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	}
 	s.updateProgress(ctx, jobID, len(batches)+2, len(batches)+2, "Creating memory schema from discovered types...")
 
-	// Convert types and relationships to JSONArray for storage
+	// Reconcile against the project's registered types and its current
+	// discovered pack before writing: the same corpus (and case/plural/synonym
+	// variants of the same type) must converge on one type set, not append a new
+	// near-identical schema version every run.
+	registeredTypes, err := s.repo.RegisteredTypeNames(ctx, projectID)
+	if err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+	currentSchema, err := s.repo.CurrentDiscoveredSchema(ctx, projectID)
+	if err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+	reconciled := s.reconcileDiscoveredSchema(registeredTypes, currentSchema, refinedTypes, relationships)
+	refinedTypes = reconciled.Types
+	relationships = reconciled.Relationships
+
+	// Convert reconciled types and relationships to JSONArray for storage
 	typesArray := make(JSONArray, len(refinedTypes))
 	for i, t := range refinedTypes {
 		typesArray[i] = map[string]any{
@@ -1178,18 +1197,20 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		}
 	}
 
-	// Create auto memory schema
+	// Create or update the project's ONE current discovered schema. On a repeat
+	// run the existing pending pack is updated in place, so graph_schemas does
+	// not grow a new "Discovered Types - <timestamp>" row per discovery.
 	timestamp := time.Now().Format("2006-01-02-15-04-05")
 	packName := fmt.Sprintf("Discovered Types - %s", timestamp)
 
-	schemaID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+	schemaID, createdSchema, err := s.repo.UpsertDiscoveredMemorySchema(ctx, CreateMemorySchemaParams{
 		Name:                    packName,
 		Version:                 "1.0.0",
 		Description:             fmt.Sprintf("Auto-discovered types from %d entities", len(refinedTypes)),
 		Author:                  "Auto-Discovery System",
-		ObjectTypeSchemas:       s.typesToObjectSchemas(refinedTypes),
-		RelationshipTypeSchemas: s.relationshipsToSchemas(relationships),
-		UIConfigs:               s.typesToUIConfigs(refinedTypes),
+		ObjectTypeSchemas:       reconciled.ObjectTypeSchemas,
+		RelationshipTypeSchemas: reconciled.RelationshipTypeSchemas,
+		UIConfigs:               reconciled.UIConfigs,
 		Source:                  "discovered",
 		DiscoveryJobID:          &jobID,
 		PendingReview:           true,
@@ -1199,6 +1220,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
+	s.log.Info("reconciled discovered schema",
+		slog.String("job_id", jobID.String()),
+		slog.String("pack_id", schemaID.String()),
+		slog.Bool("created", createdSchema),
+		slog.Int("types_count", len(refinedTypes)))
 
 	// Phase 7: Generate SchemaExtractionPrompts and write back to the schema.
 	if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
@@ -2333,6 +2359,343 @@ func (s *Service) updateProgress(ctx context.Context, jobID uuid.UUID, current, 
 		"message":      message,
 	}
 	_ = s.repo.UpdateProgress(ctx, jobID, progress)
+}
+
+// reconciledDiscoveredSchema is the converged shape discovery writes back to
+// the project's single pending discovered pack.
+type reconciledDiscoveredSchema struct {
+	Types                   []DiscoveredType
+	Relationships           []DiscoveredRelationship
+	ObjectTypeSchemas       JSONMap
+	RelationshipTypeSchemas JSONMap
+	UIConfigs               JSONMap
+}
+
+// reconcileDiscoveredSchema collapses newly discovered types onto the names the
+// project already uses (registered types first, then the current discovered
+// pack) and merges every duplicate into one type. Existing pack entries are
+// carried forward, so a run converges instead of dropping types another run
+// found; only near-duplicate keys are normalized, and no graph object rows are
+// touched.
+func (s *Service) reconcileDiscoveredSchema(
+	registered []string,
+	current *DiscoveredSchemaSnapshot,
+	types []DiscoveredType,
+	relationships []DiscoveredRelationship,
+) reconciledDiscoveredSchema {
+	resolver := typehygiene.NewResolver()
+	for _, name := range registered {
+		resolver.Add(name)
+	}
+	var currentObjects, currentRelationships, currentUI JSONMap
+	if current != nil {
+		currentObjects = current.ObjectTypeSchemas
+		currentRelationships = current.RelationshipTypeSchemas
+		currentUI = current.UIConfigs
+		for _, name := range sortedMapKeys(currentObjects) {
+			resolver.ResolveOrAdd(name)
+		}
+	}
+
+	canonicalTypes := make([]DiscoveredType, 0, len(types))
+	for _, t := range types {
+		t.TypeName = resolver.ResolveOrAdd(t.TypeName)
+		canonicalTypes = append(canonicalTypes, t)
+	}
+	mergedTypes := mergeDiscoveredTypes(canonicalTypes)
+
+	canonicalRelationships := make([]DiscoveredRelationship, 0, len(relationships))
+	for _, rel := range relationships {
+		rel.SourceType = resolver.ResolveOrAdd(rel.SourceType)
+		rel.TargetType = resolver.ResolveOrAdd(rel.TargetType)
+		canonicalRelationships = append(canonicalRelationships, rel)
+	}
+	canonicalRelationships = dedupeDiscoveredRelationships(canonicalRelationships)
+
+	objectSchemas := rekeyObjectSchemas(currentObjects, resolver)
+	for name, schema := range s.typesToObjectSchemas(mergedTypes) {
+		if existing, ok := objectSchemas[name]; ok {
+			objectSchemas[name] = mergeObjectSchemaValues(existing, schema)
+			continue
+		}
+		objectSchemas[name] = schema
+	}
+	uiConfigs := rekeyFlatMap(currentUI, resolver)
+	for name, config := range s.typesToUIConfigs(mergedTypes) {
+		uiConfigs[name] = config
+	}
+	relationshipSchemas := rekeyRelationshipSchemas(currentRelationships, resolver)
+	for name, schema := range s.relationshipsToSchemas(canonicalRelationships) {
+		relationshipSchemas[name] = schema
+	}
+
+	return reconciledDiscoveredSchema{
+		Types:                   mergedTypes,
+		Relationships:           canonicalRelationships,
+		ObjectTypeSchemas:       objectSchemas,
+		RelationshipTypeSchemas: relationshipSchemas,
+		UIConfigs:               uiConfigs,
+	}
+}
+
+// mergeDiscoveredTypes groups types by normalized name and merges each group
+// into one deterministic type. The highest-confidence member supplies the
+// description and wins property conflicts; properties, required fields and
+// examples are unioned.
+func mergeDiscoveredTypes(types []DiscoveredType) []DiscoveredType {
+	groups := make(map[string][]DiscoveredType, len(types))
+	keys := make([]string, 0, len(types))
+	for _, t := range types {
+		key := typehygiene.NormalizeKey(t.TypeName)
+		if key == "" {
+			continue
+		}
+		if _, ok := groups[key]; !ok {
+			keys = append(keys, key)
+		}
+		groups[key] = append(groups[key], t)
+	}
+	sort.Strings(keys)
+
+	merged := make([]DiscoveredType, 0, len(keys))
+	for _, key := range keys {
+		group := groups[key]
+		sort.SliceStable(group, func(i, j int) bool {
+			if group[i].Confidence != group[j].Confidence {
+				return group[i].Confidence > group[j].Confidence
+			}
+			if group[i].Frequency != group[j].Frequency {
+				return group[i].Frequency > group[j].Frequency
+			}
+			return group[i].TypeName < group[j].TypeName
+		})
+		best := group[0]
+
+		properties := make(map[string]any)
+		requiredSet := make(map[string]bool)
+		var required []string
+		var examples []any
+		exampleKeys := make(map[string]bool)
+		totalFrequency := 0
+		for _, member := range group {
+			totalFrequency += member.Frequency
+			for name, schema := range member.Properties {
+				if _, exists := properties[name]; !exists {
+					properties[name] = schema
+				}
+			}
+			for _, name := range member.RequiredProperties {
+				requiredSet[name] = true
+			}
+			for _, example := range member.ExampleInstances {
+				key := fmt.Sprintf("%v", example)
+				if exampleKeys[key] {
+					continue
+				}
+				exampleKeys[key] = true
+				examples = append(examples, example)
+			}
+		}
+		for name := range requiredSet {
+			if _, present := properties[name]; present {
+				required = append(required, name)
+			}
+		}
+		sort.Strings(required)
+		if len(examples) > 5 {
+			examples = examples[:5]
+		}
+
+		merged = append(merged, DiscoveredType{
+			TypeName:           best.TypeName,
+			Description:        best.Description,
+			Confidence:         best.Confidence,
+			Properties:         properties,
+			RequiredProperties: required,
+			ExampleInstances:   examples,
+			Frequency:          totalFrequency,
+		})
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].TypeName < merged[j].TypeName })
+	return merged
+}
+
+// dedupeDiscoveredRelationships keeps one relationship per source/relation/
+// target, preferring the highest confidence, and sorts the result for stable
+// pack output.
+func dedupeDiscoveredRelationships(relationships []DiscoveredRelationship) []DiscoveredRelationship {
+	byKey := make(map[string]DiscoveredRelationship, len(relationships))
+	keys := make([]string, 0, len(relationships))
+	for _, rel := range relationships {
+		key := strings.ToLower(rel.SourceType) + "\x00" + strings.ToLower(rel.RelationType) + "\x00" + strings.ToLower(rel.TargetType)
+		existing, ok := byKey[key]
+		if !ok {
+			keys = append(keys, key)
+			byKey[key] = rel
+			continue
+		}
+		if rel.Confidence > existing.Confidence {
+			byKey[key] = rel
+		}
+	}
+	sort.Strings(keys)
+	out := make([]DiscoveredRelationship, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+// rekeyObjectSchemas normalizes existing pack keys onto canonical names. Two
+// old keys that collapse (Organization/Organisation) have their schemas merged
+// so neither property set is lost.
+func rekeyObjectSchemas(schemas JSONMap, resolver *typehygiene.Resolver) JSONMap {
+	out := make(JSONMap, len(schemas))
+	for _, key := range sortedMapKeys(schemas) {
+		canonical := resolver.ResolveOrAdd(key)
+		if existing, ok := out[canonical]; ok {
+			out[canonical] = mergeObjectSchemaValues(existing, schemas[key])
+			continue
+		}
+		out[canonical] = schemas[key]
+	}
+	return out
+}
+
+// rekeyFlatMap normalizes map keys (UI configs) onto canonical names. Values
+// are not type-bearing; last key in sorted order wins on collision.
+func rekeyFlatMap(values JSONMap, resolver *typehygiene.Resolver) JSONMap {
+	out := make(JSONMap, len(values))
+	for _, key := range sortedMapKeys(values) {
+		out[resolver.ResolveOrAdd(key)] = values[key]
+	}
+	return out
+}
+
+// rekeyRelationshipSchemas normalizes the type references inside existing
+// relationship definitions so they match the reconciled object type names.
+func rekeyRelationshipSchemas(schemas JSONMap, resolver *typehygiene.Resolver) JSONMap {
+	out := make(JSONMap, len(schemas))
+	for _, key := range sortedMapKeys(schemas) {
+		out[key] = rekeyRelationshipValue(schemas[key], resolver)
+	}
+	return out
+}
+
+func rekeyRelationshipValue(value any, resolver *typehygiene.Resolver) any {
+	definition, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	out := make(map[string]any, len(definition))
+	for field, fieldValue := range definition {
+		out[field] = fieldValue
+	}
+	for _, field := range []string{"sourceTypes", "targetTypes"} {
+		switch names := definition[field].(type) {
+		case []string:
+			rewritten := make([]string, len(names))
+			for i, name := range names {
+				rewritten[i] = resolver.ResolveOrAdd(name)
+			}
+			out[field] = rewritten
+		case []any:
+			rewritten := make([]any, len(names))
+			for i, name := range names {
+				if s, ok := name.(string); ok {
+					rewritten[i] = resolver.ResolveOrAdd(s)
+				} else {
+					rewritten[i] = name
+				}
+			}
+			out[field] = rewritten
+		}
+	}
+	return out
+}
+
+func mergeObjectSchemaValues(existing, incoming any) any {
+	existingMap, ok := existing.(map[string]any)
+	if !ok {
+		return incoming
+	}
+	incomingMap, ok := incoming.(map[string]any)
+	if !ok {
+		return incoming
+	}
+	out := make(map[string]any, len(existingMap)+len(incomingMap))
+	for key, value := range existingMap {
+		out[key] = value
+	}
+	for key, value := range incomingMap {
+		if key == "properties" {
+			out[key] = mergePropertyMaps(existingMap[key], value)
+			continue
+		}
+		if key == "required" {
+			out[key] = mergeStringLists(existingMap[key], value)
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func mergePropertyMaps(existing, incoming any) any {
+	existingMap, ok := existing.(map[string]any)
+	if !ok {
+		return incoming
+	}
+	incomingMap, ok := incoming.(map[string]any)
+	if !ok {
+		return incoming
+	}
+	out := make(map[string]any, len(existingMap)+len(incomingMap))
+	for key, value := range existingMap {
+		out[key] = value
+	}
+	for key, value := range incomingMap {
+		if _, exists := out[key]; !exists {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func mergeStringLists(existing, incoming any) any {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(value any) {
+		switch list := value.(type) {
+		case []string:
+			for _, item := range list {
+				if !seen[item] {
+					seen[item] = true
+					out = append(out, item)
+				}
+			}
+		case []any:
+			for _, item := range list {
+				if s, ok := item.(string); ok && !seen[s] {
+					seen[s] = true
+					out = append(out, s)
+				}
+			}
+		}
+	}
+	add(existing)
+	add(incoming)
+	sort.Strings(out)
+	return out
+}
+
+func sortedMapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (s *Service) typesToObjectSchemas(types []DiscoveredType) JSONMap {

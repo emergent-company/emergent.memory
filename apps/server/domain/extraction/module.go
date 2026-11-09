@@ -67,6 +67,35 @@ func provideExtractionJobCreator(svc *ObjectExtractionJobsService) documents.Ext
 	return svc
 }
 
+// projectAutoExtractReaderAdapter adapts projects.Repository to
+// documents.ProjectAutoExtractReader so the document upload/create handlers can
+// default per-request autoExtract to the project setting.
+type projectAutoExtractReaderAdapter struct {
+	repo *projects.Repository
+}
+
+func (a *projectAutoExtractReaderAdapter) AutoExtractObjectsForProject(ctx context.Context, projectID string) (bool, error) {
+	p, err := a.repo.GetByID(ctx, projectID, false)
+	if err != nil {
+		return false, err
+	}
+	if p == nil {
+		return false, nil
+	}
+	return p.AutoExtractObjects, nil
+}
+
+func provideProjectAutoExtractReader(repo *projects.Repository) documents.ProjectAutoExtractReader {
+	return &projectAutoExtractReaderAdapter{repo: repo}
+}
+
+// NewProjectAutoExtractReader exposes the project auto-extract adapter to
+// callers outside this package (notably tests that need the real DB-backed
+// reader without triggering an import cycle through package extraction).
+func NewProjectAutoExtractReader(repo *projects.Repository) documents.ProjectAutoExtractReader {
+	return provideProjectAutoExtractReader(repo)
+}
+
 // chunkingServiceAdapter adapts chunking.Service to documents.ChunkingService.
 type chunkingServiceAdapter struct {
 	svc *chunking.Service
@@ -197,6 +226,7 @@ var Module = fx.Module("extraction",
 		NewProjectEmbeddingHandler,
 		provideParsingJobCreator,
 		provideExtractionJobCreator,
+		provideProjectAutoExtractReader,
 		provideChunkingService,
 		provideEmbeddingEnqueuer,
 		provideRelEmbeddingEnqueuer,

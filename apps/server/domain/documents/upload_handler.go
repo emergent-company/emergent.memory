@@ -48,6 +48,7 @@ type UploadHandler struct {
 	storage               uploadStorage
 	parsingJobsService    ParsingJobCreator
 	extractionJobsService ExtractionJobCreator
+	projectAutoExtract    ProjectAutoExtractReader
 	allowedMIMETypes      map[string]struct{} // nil = unrestricted
 	log                   *slog.Logger
 }
@@ -87,6 +88,7 @@ func NewUploadHandler(
 	storageSvc uploadStorage,
 	parsingJobsService ParsingJobCreator,
 	extractionJobsService ExtractionJobCreator,
+	projectAutoExtract ProjectAutoExtractReader,
 	cfg *config.Config,
 	log *slog.Logger,
 ) *UploadHandler {
@@ -95,6 +97,7 @@ func NewUploadHandler(
 		storage:               storageSvc,
 		parsingJobsService:    parsingJobsService,
 		extractionJobsService: extractionJobsService,
+		projectAutoExtract:    projectAutoExtract,
 		log:                   log.With(logger.Scope("upload")),
 	}
 	return h.WithAllowedMIMETypes(cfg.Storage.AllowedMIMETypes)
@@ -163,7 +166,8 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	}
 
 	fileHash := computeFileHash(fileBytes)
-	autoExtract := c.FormValue("autoExtract") == "true"
+	requestedAutoExtract := requestedAutoExtractFromForm(c)
+	autoExtract := h.effectiveAutoExtract(c.Request().Context(), user.ProjectID, requestedAutoExtract)
 
 	uploadResult, err := h.storage.UploadDocument(
 		c.Request().Context(),
@@ -232,10 +236,12 @@ func (h *UploadHandler) UploadBatch(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("maximum 100 files allowed per batch")
 	}
 
-	autoExtract := false
-	if values := form.Value["autoExtract"]; len(values) > 0 && values[0] == "true" {
-		autoExtract = true
+	var requestedAutoExtract *bool
+	if values, ok := form.Value["autoExtract"]; ok {
+		explicit := len(values) > 0 && values[0] == "true"
+		requestedAutoExtract = &explicit
 	}
+	autoExtract := h.effectiveAutoExtract(c.Request().Context(), user.ProjectID, requestedAutoExtract)
 
 	ctx := c.Request().Context()
 	results := make([]BatchUploadFileResult, len(files))

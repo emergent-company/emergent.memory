@@ -398,8 +398,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register documents routes
 	docsRepo := documents.NewRepository(db, log)
 	docsSvc := documents.NewService(docsRepo, log)
-	docsHandler := documents.NewHandler(docsSvc, storageSvc, nil, nil, nil, log)
-	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, nil, &config.Config{}, log)
+	docsHandler := documents.NewHandler(docsSvc, storageSvc, nil, nil, nil, nil, log)
+	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, nil, nil, &config.Config{}, log)
 	documents.RegisterRoutes(e, docsHandler, uploadHandler, authMiddleware)
 
 	// Register sources routes

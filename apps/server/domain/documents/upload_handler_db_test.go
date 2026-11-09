@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
@@ -36,6 +37,7 @@ func TestUploadHandlerRecordsUploader(t *testing.T) {
 		&fakeStorage{enabled: true, uploadKey: "uploads/uploader.txt"},
 		&fakeParsingJobs{},
 		nil, // extraction jobs are only touched when autoExtract is set
+		nil, // project auto-extract reader
 		&config.Config{},
 		log,
 	)
@@ -99,6 +101,7 @@ func TestUploadForRememberRecordsUploader(t *testing.T) {
 		&fakeStorage{enabled: true, uploadKey: "uploads/remember.txt"},
 		&fakeParsingJobs{},
 		nil,
+		nil, // project auto-extract reader
 		&config.Config{},
 		log,
 	)
@@ -143,6 +146,7 @@ func TestUploadBatchRecordsUploader(t *testing.T) {
 		&fakeStorage{enabled: true, uploadKey: "uploads/batch.txt"},
 		&fakeParsingJobs{},
 		nil,
+		nil, // project auto-extract reader
 		&config.Config{},
 		log,
 	)
@@ -193,7 +197,7 @@ func TestCreateHandlerRecordsUploader(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// chunking and extraction are nil: a raw-content create returns before them
 	// once conversion is marked complete, which is the path under test.
-	handler := NewHandler(NewService(NewRepository(db, log), log), nil, nil, nil, nil, log)
+	handler := NewHandler(NewService(NewRepository(db, log), log), nil, nil, nil, nil, nil, log)
 
 	payload, err := json.Marshal(CreateDocumentRequest{Filename: "json-create.txt", Content: "created through the JSON endpoint"})
 	require.NoError(t, err)
@@ -211,4 +215,114 @@ func TestCreateHandlerRecordsUploader(t *testing.T) {
 		Scan(ctx, &recorded))
 	require.NotNil(t, recorded, "POST /api/documents must record the uploader")
 	require.Equal(t, uploaderID, *recorded)
+}
+
+// dbAutoExtractReader resolves the project flag straight from the test DB, so
+// these tests exercise the handler's default-resolution path without importing
+// the extraction package (which would be an import cycle from documents tests).
+type dbAutoExtractReader struct {
+	db bun.IDB
+}
+
+func (r dbAutoExtractReader) AutoExtractObjectsForProject(ctx context.Context, projectID string) (bool, error) {
+	var enabled bool
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("auto_extract_objects").
+		Where("id = ?", projectID).
+		Scan(ctx, &enabled)
+	return enabled, err
+}
+
+// TestUploadHandlerProjectAutoExtractDefault pins #498 for the single upload
+// path: when the request does not specify autoExtract, the project setting
+// decides; an explicit autoExtract=false must still override a project that has
+// auto-extraction enabled.
+func TestUploadHandlerProjectAutoExtractDefault(t *testing.T) {
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "documents_upload_autoextract")
+	defer tdb.Close()
+	db := tdb.GetDB()
+
+	projectID := seedUploaderProject(t, ctx, db)
+	_, err := db.NewRaw(`UPDATE kb.projects SET auto_extract_objects = true WHERE id = ?`, projectID).Exec(ctx)
+	require.NoError(t, err)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	newHandler := func(jobs *fakeParsingJobs) *UploadHandler {
+		return NewUploadHandler(
+			NewService(NewRepository(db, log), log),
+			&fakeStorage{enabled: true, uploadKey: "uploads/autoextract.txt"},
+			jobs,
+			nil,
+			dbAutoExtractReader{db: db},
+			&config.Config{},
+			log,
+		)
+	}
+
+	upload := func(t *testing.T, h *UploadHandler, filename string, body []byte, formFields map[string]string) {
+		t.Helper()
+		buf, contentType := multipartBodyWithFields(t, "file", filename, body, formFields)
+		c, rec := echoCtxWithUser(t, http.MethodPost, "/api/documents/upload", buf, contentType)
+		c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "", OrgID: "org-" + projectID, ProjectID: projectID})
+		require.NoError(t, h.Upload(c))
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	t.Run("no field uses project true", func(t *testing.T) {
+		jobs := &fakeParsingJobs{}
+		upload(t, newHandler(jobs), "project-default.txt", []byte("project default body"), nil)
+		require.Len(t, jobs.got, 1)
+		require.True(t, jobs.got[0].AutoExtract, "project auto_extract_objects=true must be the default")
+	})
+
+	t.Run("explicit false overrides project true", func(t *testing.T) {
+		jobs := &fakeParsingJobs{}
+		upload(t, newHandler(jobs), "explicit-false.txt", []byte("explicit false body"), map[string]string{"autoExtract": "false"})
+		require.Len(t, jobs.got, 1)
+		require.False(t, jobs.got[0].AutoExtract, "explicit autoExtract=false must override the project default")
+	})
+
+	t.Run("explicit true with project false", func(t *testing.T) {
+		offProject := seedUploaderProject(t, ctx, db)
+		jobs := &fakeParsingJobs{}
+		h := NewUploadHandler(
+			NewService(NewRepository(db, log), log),
+			&fakeStorage{enabled: true, uploadKey: "uploads/autoextract-off.txt"},
+			jobs,
+			nil,
+			dbAutoExtractReader{db: db},
+			&config.Config{},
+			log,
+		)
+		buf, contentType := multipartBodyWithFields(t, "file", "explicit-true.txt", []byte("explicit true body"), map[string]string{"autoExtract": "true"})
+		c, rec := echoCtxWithUser(t, http.MethodPost, "/api/documents/upload", buf, contentType)
+		c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "", OrgID: "org-" + offProject, ProjectID: offProject})
+		require.NoError(t, h.Upload(c))
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		require.Len(t, jobs.got, 1)
+		require.True(t, jobs.got[0].AutoExtract)
+	})
+
+	t.Run("project false and no field stays false", func(t *testing.T) {
+		offProject := seedUploaderProject(t, ctx, db)
+		jobs := &fakeParsingJobs{}
+		h := NewUploadHandler(
+			NewService(NewRepository(db, log), log),
+			&fakeStorage{enabled: true, uploadKey: "uploads/autoextract-off2.txt"},
+			jobs,
+			nil,
+			dbAutoExtractReader{db: db},
+			&config.Config{},
+			log,
+		)
+		buf, contentType := multipartBodyWithFields(t, "file", "project-off.txt", []byte("project off body"), nil)
+		c, rec := echoCtxWithUser(t, http.MethodPost, "/api/documents/upload", buf, contentType)
+		c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "", OrgID: "org-" + offProject, ProjectID: offProject})
+		require.NoError(t, h.Upload(c))
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		require.Len(t, jobs.got, 1)
+		require.False(t, jobs.got[0].AutoExtract)
+	})
 }

@@ -548,6 +548,97 @@ type CreateMemorySchemaParams struct {
 	ProjectID               *uuid.UUID
 }
 
+// DiscoveredSchemaSnapshot is the current pending discovery pack for a
+// project: the row discovery is allowed to update in place.
+type DiscoveredSchemaSnapshot struct {
+	ID                      uuid.UUID `bun:"id"`
+	Name                    string    `bun:"name"`
+	ObjectTypeSchemas       JSONMap   `bun:"object_type_schemas,type:jsonb"`
+	RelationshipTypeSchemas JSONMap   `bun:"relationship_type_schemas,type:jsonb"`
+	UIConfigs               JSONMap   `bun:"ui_configs,type:jsonb"`
+}
+
+// RegisteredTypeNames returns the project's reviewed/registered object type
+// names. Discovery uses these as the canonical spelling for near-duplicates.
+func (r *Repository) RegisteredTypeNames(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+	var names []string
+	err := r.db.NewSelect().
+		Table("kb.project_object_schema_registry").
+		Column("type_name").
+		Where("project_id = ?", projectID).
+		Order("type_name ASC").
+		Scan(ctx, &names)
+	if err != nil {
+		r.log.Error("failed to list registered type names", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return names, nil
+}
+
+// CurrentDiscoveredSchema returns the newest pending discovered pack for a
+// project, or (nil, nil) when the project has none yet. Older appended rows are
+// excluded by superseded_by; migration 00277 backfilled that column for the
+// duplicate rows created before discovery reconciled in place.
+func (r *Repository) CurrentDiscoveredSchema(ctx context.Context, projectID uuid.UUID) (*DiscoveredSchemaSnapshot, error) {
+	snapshot := &DiscoveredSchemaSnapshot{}
+	err := r.db.NewSelect().
+		Table("kb.graph_schemas").
+		Column("id", "name", "object_type_schemas", "relationship_type_schemas", "ui_configs").
+		Where("project_id = ?", projectID).
+		Where("source = 'discovered'").
+		Where("pending_review = true").
+		Where("superseded_by IS NULL").
+		Order("created_at DESC").
+		Order("id DESC").
+		Limit(1).
+		Scan(ctx, snapshot)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to get current discovered schema", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return snapshot, nil
+}
+
+// UpsertDiscoveredMemorySchema updates the project's current pending discovered
+// pack in place, or inserts the first one. It returns created=true only when a
+// new graph_schemas row was inserted.
+func (r *Repository) UpsertDiscoveredMemorySchema(ctx context.Context, params CreateMemorySchemaParams) (uuid.UUID, bool, error) {
+	if params.ProjectID == nil {
+		return uuid.Nil, false, apperror.ErrBadRequest.WithMessage("project id is required for a discovered schema")
+	}
+	existing, err := r.CurrentDiscoveredSchema(ctx, *params.ProjectID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if existing == nil {
+		id, err := r.CreateMemorySchema(ctx, params)
+		if err != nil {
+			return uuid.Nil, false, err
+		}
+		return id, true, nil
+	}
+
+	_, err = r.db.NewUpdate().
+		Table("kb.graph_schemas").
+		Set("description = ?", params.Description).
+		Set("author = ?", params.Author).
+		Set("object_type_schemas = ?", params.ObjectTypeSchemas).
+		Set("relationship_type_schemas = ?", params.RelationshipTypeSchemas).
+		Set("ui_configs = ?", params.UIConfigs).
+		Set("discovery_job_id = ?", params.DiscoveryJobID).
+		Set("updated_at = now()").
+		Where("id = ?", existing.ID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to update current discovered schema", logger.Error(err))
+		return uuid.Nil, false, apperror.ErrInternal.WithInternal(err)
+	}
+	return existing.ID, false, nil
+}
+
 // GetMemorySchema retrieves a memory schema by ID
 func (r *Repository) GetMemorySchema(ctx context.Context, packID uuid.UUID) (*MemorySchema, error) {
 	pack := &MemorySchema{}
