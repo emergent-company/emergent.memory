@@ -237,3 +237,41 @@ func TestExecuteListAgents_LegacyStructuredModelSurfacesPrefixed(t *testing.T) {
 		"legacy structured provider must fold into the canonical prefixed name on list_agents")
 	require.Empty(t, dtos[0].Model.Provider, "folded provider must be cleared")
 }
+
+// TestEnsureGraphQueryAgent_ClearsLegacyBareModel proves the query agent
+// self-heals a stored model reference that cannot be parsed (the legacy bare
+// name that made every search-knowledge call fail with "model name ... must
+// include a provider prefix"). Clearing it lets the executor resolve the
+// project default, while non-reference model fields (temperature) survive.
+func TestEnsureGraphQueryAgent_ClearsLegacyBareModel(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "agents_graph_query_bare_model")
+	t.Cleanup(tdb.Close)
+	ctx := context.Background()
+
+	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
+	defID := insertAgentDefinition(t, tdb.DB, ctx, projectID, "graph-query-agent", string(VisibilityInternal))
+	_, err := tdb.DB.ExecContext(ctx,
+		`UPDATE kb.agent_definitions SET model = ?::jsonb WHERE id = ?`,
+		`{"name":"gemini-3.1-flash-lite-preview","temperature":0.1}`, defID)
+	require.NoError(t, err)
+
+	repo := NewRepository(tdb.DB)
+
+	def, err := repo.EnsureGraphQueryAgent(ctx, projectID)
+	require.NoError(t, err)
+	require.NotNil(t, def)
+	require.NotNil(t, def.Model)
+	require.Empty(t, def.Model.Name, "invalid bare model reference must be cleared to use the project default")
+	require.Empty(t, def.Model.Provider)
+	require.NotNil(t, def.Model.Temperature, "temperature must survive the self-heal")
+	require.Equal(t, float32(0.1), *def.Model.Temperature)
+
+	reloaded, err := repo.FindDefinitionByID(ctx, defID, &projectID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	require.NotNil(t, reloaded.Model)
+	require.Empty(t, reloaded.Model.Name, "self-heal must persist the cleared reference")
+}

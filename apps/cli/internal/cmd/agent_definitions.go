@@ -663,11 +663,15 @@ Without flags, shows the current override for the agent. With flags, sets
 or updates the override. Overrides are merged on top of canonical defaults
 each time the agent runs — non-overridden fields always get the latest code defaults.
 
+Model overrides must use the canonical "provider/model" form (e.g.
+google/gemini-2.5-pro, deepseek/deepseek-v4-flash). Bare model names are rejected
+because the executor cannot determine which provider serves them.
+
 Examples:
   memory defs override graph-query-agent                          # view current override
-  memory defs override graph-query-agent --model gemini-2.5-pro   # override model
+  memory defs override graph-query-agent --model google/gemini-2.5-pro   # override model
   memory defs override cli-assistant-agent --max-steps 30         # override max steps
-  memory defs override graph-query-agent --model gemini-2.5-pro --temperature 0.2 --max-steps 20
+  memory defs override graph-query-agent --model google/gemini-2.5-pro --temperature 0.2 --max-steps 20
   memory defs override graph-query-agent --system-prompt-file prompt.txt
   memory defs override graph-query-agent --sandbox-enabled false  # disable sandbox
   memory defs override graph-query-agent --clear                  # remove override`,
@@ -742,7 +746,7 @@ func runOverrideAgent(cmd *cobra.Command, args []string) error {
 			// 404 means no override — show a helpful message
 			fmt.Printf("No override set for %s — agent uses canonical defaults.\n", agentName)
 			fmt.Printf("\nSet an override with:\n")
-			fmt.Printf("  memory defs override %s --model gemini-2.5-pro\n", agentName)
+			fmt.Printf("  memory defs override %s --model google/gemini-2.5-pro\n", agentName)
 			return nil
 		}
 
@@ -877,7 +881,7 @@ func runListOverrides(cmd *cobra.Command, args []string) error {
 	if len(entries) == 0 {
 		fmt.Println("No agent overrides set for this project.")
 		fmt.Println("\nSet one with:")
-		fmt.Println("  memory defs override graph-query-agent --model gemini-2.5-pro")
+		fmt.Println("  memory defs override graph-query-agent --model google/gemini-2.5-pro")
 		return nil
 	}
 

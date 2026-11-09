@@ -60,6 +60,48 @@ func TestNormalizeAgentModelConfig_ErrorMessageMentionsProviderModel(t *testing.
 	require.True(t, strings.Contains(err.Error(), "provider/model"), "got %q", err.Error())
 }
 
+// TestHealAgentModelRef guards the runtime self-heal used by
+// EnsureGraphQueryAgent. A valid explicit model must survive untouched (or be
+// canonicalized), while an unparsable legacy bare name must be cleared so the
+// executor falls back to the project default instead of failing every query.
+func TestHealAgentModelRef(t *testing.T) {
+	temperature := float32(0.2)
+	cases := []struct {
+		name     string
+		in       *ModelConfig
+		wantNil  bool
+		wantName string
+	}{
+		{name: "nil is a no-op", in: nil, wantNil: true},
+		{name: "canonical prefixed name survives", in: &ModelConfig{Name: "google/gemini-3.1-flash-lite-preview"},
+			wantName: "google/gemini-3.1-flash-lite-preview"},
+		{name: "structured provider is folded", in: &ModelConfig{Name: "gpt-4o", Provider: "openai"},
+			wantName: "openai/gpt-4o"},
+		{name: "bare name without provider is cleared", in: &ModelConfig{Name: "gemini-3.1-flash-lite-preview"},
+			wantName: ""},
+		{name: "malformed empty provider is cleared", in: &ModelConfig{Name: "/gpt-4o"},
+			wantName: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			temperatureCopy := temperature
+			if tc.in != nil {
+				tc.in.Temperature = &temperatureCopy
+			}
+			healAgentModelRef(tc.in)
+			if tc.wantNil {
+				require.Nil(t, tc.in)
+				return
+			}
+			require.Equal(t, tc.wantName, tc.in.Name)
+			require.Empty(t, tc.in.Provider)
+			require.NotNil(t, tc.in.Temperature, "non-reference fields must be preserved")
+			require.Equal(t, temperature, *tc.in.Temperature)
+		})
+	}
+}
+
 // TestFoldAgentModelRef guards the read-side fold (#1465) for legacy rows in
 // kb.agent_definitions.model that still hold the structured shape
 // {"name":"<bare>","provider":"<slug>"} (never backfilled). Each case asserts the
