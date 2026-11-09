@@ -41,7 +41,7 @@
 # be resolved.
 set -euo pipefail
 
-base="origin/main"
+base="origin/${PREFLIGHT_BASE:-${GITHUB_BASE_REF:-dev}}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="${2:?--base requires a ref}"; shift 2 ;;
@@ -159,7 +159,7 @@ while IFS= read -r f; do
     fi
 
     echo "migration-immutability: FAIL existing migration deleted/renamed: $f (Goose records versions by number; renumbering an applied migration silently skips it. Only a duplicated base version repaired by a contiguous successor is exempt — see the header of scripts/preflight/migration-immutability.sh)" >&2
-    echo "migration-immutability: NOTE if this branch never touched migrations, the base branch likely gained this migration after your branch point; merge the base branch (e.g. git merge origin/main) and re-run" >&2
+    echo "migration-immutability: NOTE if this branch never touched migrations, the base branch likely gained this migration after your branch point; merge the base branch (e.g. git merge origin/<base>) and re-run" >&2
     status=1
     continue
   fi

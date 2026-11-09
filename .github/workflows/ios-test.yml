@@ -22,15 +22,9 @@ on:
     paths:
       - 'apps/ios/**'
       - '.github/workflows/ios-test.yml'
-  pull_request:
-    branches: [main]
-    # `ready_for_review` is not a default type; the suite skips drafts (the Mac
-    # pool is a single slot, so a draft build is the most expensive idle work in
-    # the fleet).
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'apps/ios/**'
-      - '.github/workflows/ios-test.yml'
+  # No `pull_request` trigger: feature PRs go to `dev` for a fast lane. Runs on
+  # the `dev -> main` promotion/hotfix PR via promotion.yml and on pushes to main.
+  workflow_call:
   workflow_dispatch:
 
 permissions:

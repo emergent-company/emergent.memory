@@ -29,7 +29,10 @@ on:
   # `workflow_dispatch` **on a tag ref** as well as on a tag push; dispatching on
   # a branch stays inert, which is what makes this safe to trigger by hand.
   workflow_dispatch:
+  # Docs build only on promotion/hotfix PRs (`dev -> main`, `fix -> main`) and
+  # pushes to main; feature PRs to dev skip it to keep the fast lane fast.
   pull_request:
+    branches: [main]
     paths:
       - 'docs/**'
       - 'mkdocs.yml'

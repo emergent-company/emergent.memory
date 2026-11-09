@@ -18,9 +18,9 @@
 # not on a release tag.
 publish-self-hosted-images.yml
 build-publish.yml
-cli.yml
+cli-release.yml
 publish-workspace-image.yml
-server-sdk.yml
+server-sdk-release.yml
 release-versions.yml|--field tag=@TAG@
 docs.yml
 connector-release.yml

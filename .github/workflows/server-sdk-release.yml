@@ -1,0 +1,45 @@
+name: Go SDK Release
+
+# Tag-only SDK module tagging, split out of server-sdk.yml so the checks
+# workflow stays callable as a read-only reusable workflow (the tag job needs
+# contents: write, which a called workflow may not exceed its caller to get).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: server-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  create-sdk-tag:
+    name: Create SDK Module Tag
+    runs-on: [self-hosted, linux, x64, memory]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # RELEASE_TOKEN must be a PAT (classic) with `repo` + `workflow` scope,
+          # or the GitHub App must be granted the `workflows` permission; otherwise
+          # the fallback GITHUB_TOKEN push will still be rejected for modifying .github/workflows/.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Create SDK module tag
+        run: |
+          SDK_TAG="apps/server/pkg/sdk/${GITHUB_REF#refs/tags/}"
+          echo "Creating SDK module tag: $SDK_TAG"
+          if git rev-parse "$SDK_TAG" >/dev/null 2>&1; then
+            echo "Tag $SDK_TAG already exists, skipping"
+          else
+            git tag "$SDK_TAG"
+            git push origin "$SDK_TAG"
+          fi
