@@ -75,6 +75,7 @@ struct RecordedPollTests {
 
         await poll(client).run(
             scope: scope,
+            parkedRecordCount: 2,
             isCurrent: { true },
             apply: { applied.append($0) }
         )
