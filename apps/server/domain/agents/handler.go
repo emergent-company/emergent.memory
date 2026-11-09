@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -40,6 +41,7 @@ type Handler struct {
 	mcpService    *mcp.Service        // tool catalog source for the computed toolGroups; wired via WithMCPService
 	workActions   *WorkActionService  // human-action service (approve/request-changes/retry/reassign/cancel); wired via WithWorkActionService
 	triggers      triggerSyncer       // trigger registration surface for runtime agent write paths; wired via WithTriggerService
+	schemaRepo    *schemas.Repository // compiled type labels/colors for read-side citation derivation
 }
 
 // triggerSyncer is the trigger-registration surface the runtime agent write
@@ -116,6 +118,23 @@ func (h *Handler) WithWorkActionService(s *WorkActionService) {
 // (registerHandlerTriggerService).
 func (h *Handler) WithTriggerService(ts triggerSyncer) {
 	h.triggers = ts
+}
+
+// WithSchemaRepo attaches the compiled-type source used to fill citation
+// type_label/type_color when a run transcript is re-derived on read. Called from
+// fx Invoke; nil is safe and leaves citations with empty (omitted) labels.
+func (h *Handler) WithSchemaRepo(repo *schemas.Repository) {
+	h.schemaRepo = repo
+}
+
+// citationTypeMeta loads the run's project compiled citation metadata.
+// Best-effort: a nil repository or failed read yields nil, so a transcript read
+// never fails because of it.
+func (h *Handler) citationTypeMeta(ctx context.Context, projectID string) map[string]citations.TypeMeta {
+	if h.schemaRepo == nil || projectID == "" {
+		return nil
+	}
+	return h.schemaRepo.CitationTypeMeta(ctx, projectID)
 }
 
 // getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.
@@ -2385,7 +2404,7 @@ func (h *Handler) GetProjectRunFull(c echo.Context) error {
 	for i, m := range messages {
 		msgDTOs[i] = m.ToDTO()
 	}
-	annotateRunMessageCitations(msgDTOs, messages, toolCalls)
+	annotateRunMessageCitations(msgDTOs, messages, toolCalls, h.citationTypeMeta(ctx, projectID))
 	tcDTOs := make([]*AgentRunToolCallDTO, len(toolCalls))
 	for i, tc := range toolCalls {
 		tcDTOs[i] = tc.ToDTO()
@@ -2418,7 +2437,7 @@ func (h *Handler) GetProjectRunFull(c echo.Context) error {
 // live turn. User/tool/system turns and non-agent-reply messages are left
 // without citations. Non-fatal by construction: a message with no referable
 // text simply yields none.
-func annotateRunMessageCitations(msgDTOs []*AgentRunMessageDTO, messages []*AgentRunMessage, toolCalls []*AgentRunToolCall) {
+func annotateRunMessageCitations(msgDTOs []*AgentRunMessageDTO, messages []*AgentRunMessage, toolCalls []*AgentRunToolCall, typeLabels ...map[string]citations.TypeMeta) {
 	outputs := make([]citations.ToolCall, 0, len(toolCalls))
 	for _, tc := range toolCalls {
 		if tc != nil {
@@ -2431,7 +2450,7 @@ func annotateRunMessageCitations(msgDTOs []*AgentRunMessageDTO, messages []*Agen
 			continue
 		}
 		if IsAgentReplyRole(m.Role) {
-			msgDTOs[i].Citations = deriveMessageCitations(m.Content, candidates)
+			msgDTOs[i].Citations = deriveMessageCitations(m.Content, candidates, typeLabels...)
 		}
 	}
 }

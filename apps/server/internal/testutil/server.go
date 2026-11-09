@@ -288,6 +288,7 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
 	schemasRepo := schemas.NewRepository(db, log)
+	agentRepo.WithSchemaRepo(schemasRepo)
 
 	chatHandler := chat.NewHandler(
 		chatSvc,
@@ -599,7 +600,9 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	agentsRepo := agents.NewRepository(db)
 	sandboxStore := sandbox.NewStore(db)
 	providerRepo := provider.NewRepository(db, log)
+	agentsRepo.WithSchemaRepo(schemasRepo)
 	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, nil, providerRepo, sandboxStore)
+	agentsHandler.WithSchemaRepo(schemasRepo)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
 	// Register OpenAI-compatible agentcompat routes (/v1/chat/completions, /v1/models)

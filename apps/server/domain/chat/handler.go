@@ -466,7 +466,7 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 		})
 	}
 
-	items, err := h.agentRepo.GetConversationFullHistory(ctx, conv.SessionID.String())
+	items, err := h.agentRepo.GetConversationFullHistory(ctx, conv.SessionID.String(), h.citationTypeMeta(ctx, user.ProjectID))
 	if err != nil {
 		return apperror.ErrInternal.WithMessage("failed to load conversation history")
 	}

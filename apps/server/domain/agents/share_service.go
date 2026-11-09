@@ -18,6 +18,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/chat/citations"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
@@ -80,7 +81,7 @@ type ShareRepo interface {
 	Create(ctx context.Context, agent *Agent) error
 	FindQuestionByID(ctx context.Context, id string) (*AgentQuestion, error)
 	GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error)
-	GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error)
+	GetConversationFullHistory(ctx context.Context, sessionID string, typeLabels ...map[string]citations.TypeMeta) ([]*ConversationHistoryItem, error)
 	FindToolCallsByRunID(ctx context.Context, runID string) ([]*AgentRunToolCall, error)
 }
 
@@ -115,12 +116,13 @@ type shareRunner interface {
 
 // ShareService implements the public keyed agent-share feature.
 type ShareService struct {
-	repo      ShareRepo
-	apiTokens shareTokenService
-	runner    shareRunner
-	responder QuestionResponder
-	refSecret string // HMAC key for gateway-minted end-user refs (SHARE_REF_SECRET)
-	log       *slog.Logger
+	repo       ShareRepo
+	apiTokens  shareTokenService
+	runner     shareRunner
+	responder  QuestionResponder
+	refSecret  string              // HMAC key for gateway-minted end-user refs (SHARE_REF_SECRET)
+	schemaRepo *schemas.Repository // compiled type labels/colors for citations
+	log        *slog.Logger
 }
 
 // NewShareService constructs a ShareService.
@@ -136,6 +138,24 @@ func NewShareService(repo ShareRepo, apiTokens shareTokenService, runner shareRu
 		refSecret: refSecret,
 		log:       log.With("component", "share-service"),
 	}
+}
+
+// WithSchemaRepo attaches the compiled-type source used to fill citation
+// type_label/type_color on share citations (live emit and replayed transcripts).
+// Called from fx Invoke; nil is safe and leaves citations with empty (omitted)
+// labels.
+func (s *ShareService) WithSchemaRepo(repo *schemas.Repository) {
+	s.schemaRepo = repo
+}
+
+// citationTypeMeta loads the project's compiled citation metadata. Best-effort:
+// a nil repository or failed read yields nil, so a share turn/transcript never
+// fails because of it.
+func (s *ShareService) citationTypeMeta(ctx context.Context, projectID string) map[string]citations.TypeMeta {
+	if s.schemaRepo == nil || projectID == "" {
+		return nil
+	}
+	return s.schemaRepo.CitationTypeMeta(ctx, projectID)
 }
 
 // ============================================================================
@@ -664,7 +684,7 @@ func (s *ShareService) GetSession(ctx context.Context, binding *ShareLinkBinding
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.repo.GetConversationFullHistory(ctx, sess.SessionID)
+	items, err := s.repo.GetConversationFullHistory(ctx, sess.SessionID, s.citationTypeMeta(ctx, binding.Link.ProjectID))
 	if err != nil {
 		return nil, err
 	}
@@ -767,8 +787,8 @@ func (s *ShareService) pendingApprovals(ctx context.Context, sessionID string) (
 
 // sessionTranscript returns the plain user/assistant message history for a
 // session, derived from the existing run-message history (never a new store).
-func (s *ShareService) sessionTranscript(ctx context.Context, sessionID string) ([]ShareTranscriptMessage, error) {
-	items, err := s.repo.GetConversationFullHistory(ctx, sessionID)
+func (s *ShareService) sessionTranscript(ctx context.Context, projectID, sessionID string) ([]ShareTranscriptMessage, error) {
+	items, err := s.repo.GetConversationFullHistory(ctx, sessionID, s.citationTypeMeta(ctx, projectID))
 	if err != nil {
 		return nil, err
 	}
@@ -843,7 +863,7 @@ func (s *ShareService) GetSessionTranscriptByID(ctx context.Context, projectID, 
 	if row == nil {
 		return nil, apperror.New(http.StatusNotFound, "not_found", "share session not found")
 	}
-	return s.sessionTranscript(ctx, row.SessionID)
+	return s.sessionTranscript(ctx, projectID, row.SessionID)
 }
 
 // ownerSessionDTO maps a project-scoped share-session row to its owner DTO,
@@ -1268,7 +1288,7 @@ func (s *ShareService) CancelQuestion(ctx context.Context, binding *ShareLinkBin
 // finished share turn, mirroring the /api/chat emit path: the run's tool-call
 // outputs form the candidates, and only references actually present in the
 // response text + A2UI surfaces are kept. Non-fatal on error (returns nil).
-func (s *ShareService) DeriveCitations(ctx context.Context, runID, responseText string, surfaces []a2ui.Message) []citations.Citation {
+func (s *ShareService) DeriveCitations(ctx context.Context, runID, responseText string, surfaces []a2ui.Message, projectIDs ...string) []citations.Citation {
 	if runID == "" {
 		return nil
 	}
@@ -1287,7 +1307,11 @@ func (s *ShareService) DeriveCitations(ctx context.Context, runID, responseText 
 		}
 	}
 	candidates := citations.Candidates(outputs)
-	return citations.Derive(responseText, surfaces, candidates)
+	var typeLabels map[string]citations.TypeMeta
+	if len(projectIDs) > 0 {
+		typeLabels = s.citationTypeMeta(ctx, projectIDs[0])
+	}
+	return citations.Derive(responseText, surfaces, candidates, typeLabels)
 }
 
 // ============================================================================

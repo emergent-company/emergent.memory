@@ -452,8 +452,14 @@ func buildCitation(r Reference, cand Reference, keyUsed bool, keyToID map[string
 			src = cand.SrcID
 		}
 		// Keep the relationship in the url: the preview reads the fragment and
-		// renders "Referenced via <type>" instead of a plain object drawer.
-		url = "/objects/" + src + "#relationship-" + r.ID
+		// renders "Referenced via <type>" instead of a plain object drawer. Only a
+		// canonical UUID relationship id can be expressed as a fragment; a
+		// synthesized "src:type:dst" id is not a real relationship the preview can
+		// resolve, so it keeps the previous source-object url.
+		url = "/objects/" + src
+		if isUUID(r.ID) {
+			url += "#relationship-" + r.ID
+		}
 	}
 	cit := Citation{
 		Kind:  r.Kind,

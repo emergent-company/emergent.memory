@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 )
 
 // TestAnnotateRunMessageCitations locks the run-full contract the gateway's
@@ -80,5 +82,51 @@ func TestAgentRunMessageDTOWireShape(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"citations"`) {
 		t.Errorf("empty citations must be omitted, got %s", raw)
+	}
+}
+
+// TestDeriveMessageCitationsTypeLabels proves a transcript citation re-derived
+// on read (the reload/history path) carries the schema's display label and
+// color, not just the raw type name. The live SSE frame and the replayed
+// transcript must agree.
+func TestDeriveMessageCitationsTypeLabels(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	candidates := citations.Candidates([]citations.ToolCall{{Output: map[string]any{"data": []map[string]any{
+		{"object": map[string]any{"id": id, "type": "Company", "name": "Acme"}},
+	}}}})
+	content := map[string]any{"text": "See [Acme](/objects/" + id + ")"}
+
+	cits := deriveMessageCitations(content, candidates, map[string]citations.TypeMeta{
+		"Company": {Label: "Organisation", Color: "#4F46E5"},
+	})
+	if len(cits) != 1 {
+		t.Fatalf("deriveMessageCitations() = %+v, want 1 citation", cits)
+	}
+	if cits[0].TypeLabel != "Organisation" || cits[0].TypeColor != "#4F46E5" {
+		t.Errorf("history citation = %+v, want TypeLabel Organisation TypeColor #4F46E5", cits[0])
+	}
+}
+
+// TestAnnotateRunMessageCitationsTypeLabels locks the run-full transcript path:
+// annotateRunMessageCitations receives the project's type map and the derived
+// citation carries it.
+func TestAnnotateRunMessageCitationsTypeLabels(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	messages := []*AgentRunMessage{
+		{Role: "assistant", Content: map[string]any{"text": "See [Acme](/objects/" + id + ")"}},
+	}
+	msgDTOs := []*AgentRunMessageDTO{messages[0].ToDTO()}
+	toolCalls := []*AgentRunToolCall{{Output: map[string]any{"data": []map[string]any{
+		{"object": map[string]any{"id": id, "type": "Company", "name": "Acme"}},
+	}}}}
+
+	annotateRunMessageCitations(msgDTOs, messages, toolCalls, map[string]citations.TypeMeta{
+		"Company": {Label: "Organisation", Color: "#4F46E5"},
+	})
+	if len(msgDTOs[0].Citations) != 1 {
+		t.Fatalf("run transcript citations = %+v, want 1", msgDTOs[0].Citations)
+	}
+	if got := msgDTOs[0].Citations[0]; got.TypeLabel != "Organisation" || got.TypeColor != "#4F46E5" {
+		t.Errorf("run transcript citation = %+v, want TypeLabel Organisation TypeColor #4F46E5", got)
 	}
 }

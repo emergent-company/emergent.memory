@@ -99,6 +99,27 @@ test.describe('Chat sources — relationship context and type label', () => {
     expect(errors).toEqual([]);
   });
 
+  test('a synthesized non-UUID relationship id keeps its source-object link', async ({ page }) => {
+    const errors = await load(page, {});
+    await attach(page, [
+      {
+        kind: 'relationship',
+        id: `${SOURCE}:works_at:22222222-2222-4222-8222-222222222222`,
+        type: 'works_at',
+        label: 'Acme —works at→ Bob',
+        url: `/objects/${SOURCE}`,
+      },
+    ]);
+
+    // buildCitation omits the fragment for a synthesized id (it names no real
+    // edge), so the url is the plain source page and the row still links there.
+    await expect(page.getByTestId('chat-source').first().locator('a')).toHaveAttribute(
+      'href',
+      new RegExp(`/objects/${SOURCE}$`),
+    );
+    expect(errors).toEqual([]);
+  });
+
   test('an older citation without type_label still uses the embedded map', async ({ page }) => {
     const errors = await load(page, { person: { label: 'Person', color: '#4F46E5' } });
     await attach(page, [

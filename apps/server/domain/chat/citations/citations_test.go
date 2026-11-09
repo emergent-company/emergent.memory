@@ -532,3 +532,36 @@ func citationIDs(cits []Citation) map[string]bool {
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }
+
+// TestDerive_SynthesizedRelationshipURLKeepsSourcePage proves a synthesized
+// "src:type:dst" relationship id (A2UI props without an id) still resolves to
+// the source object's page. Such an id is not a real relationship the preview
+// can look up, so no #relationship- fragment is appended — and the web's
+// fragment regex therefore still matches and links the row.
+func TestDerive_SynthesizedRelationshipURLKeepsSourcePage(t *testing.T) {
+	synth := obj1 + ":works_at:" + obj2
+	cands := map[string]Reference{
+		synth: {Kind: "relationship", ID: synth, Type: "works_at", SrcID: obj1, DstID: obj2},
+	}
+	surfaces := []a2ui.Message{{
+		UpdateComponents: &a2ui.UpdateComponents{
+			SurfaceID: "s1",
+			Components: []a2ui.Component{{
+				ID:        "rel-1",
+				Component: "relationship",
+				Props:     map[string]any{"src_id": obj1, "dst_id": obj2, "type": "works_at"},
+			}},
+		},
+	}}
+
+	cits := Derive("", surfaces, cands)
+	if len(cits) != 1 {
+		t.Fatalf("Derive() = %+v, want 1 citation", cits)
+	}
+	if cits[0].ID != synth {
+		t.Errorf("citation id = %q, want synthesized %q", cits[0].ID, synth)
+	}
+	if cits[0].URL != "/objects/"+obj1 {
+		t.Errorf("synthesized relationship url = %q, want %q (no non-UUID fragment)", cits[0].URL, "/objects/"+obj1)
+	}
+}

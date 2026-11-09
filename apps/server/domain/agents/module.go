@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
@@ -75,9 +76,21 @@ var Module = fx.Module("agents",
 		registerWorkReconciler,
 		registerHandlerWorkActions,
 		registerHandlerTriggerService,
+		registerCitationSchemaRepo,
 		registerSkillCaptureAdapter,
 	),
 )
+
+// registerCitationSchemaRepo attaches the compiled-type source to the read-side
+// citation derivations (REST run transcript, share live emit, share replay,
+// MCP session history) so type_label/type_color survive reload exactly as they
+// do on the live chat frame. All three consumers accept nil, so handler-only
+// tests remain valid.
+func registerCitationSchemaRepo(h *Handler, share *ShareService, repo *Repository, schemasRepo *schemas.Repository) {
+	h.WithSchemaRepo(schemasRepo)
+	share.WithSchemaRepo(schemasRepo)
+	repo.WithSchemaRepo(schemasRepo)
+}
 
 // registerSkillCaptureAdapter installs the run-transcript reader on the capture
 // service and the capture hook on the executor. Both are optional setters so
