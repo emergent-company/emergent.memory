@@ -1020,6 +1020,11 @@ func (s *Service) TestServerConfig(ctx context.Context, projectID string, dto *C
 			if stored.Target == TargetDevice {
 				return nil, ErrDeviceServerNotOutbound
 			}
+			// Only the stored secret values are backfilled. The transient probe
+			// deliberately keeps an empty ID: the outbound path resolves OAuth
+			// credentials by server ID, and attaching them here would send the
+			// stored bearer to the draft URL (which the user may have changed)
+			// and let a token refresh persist on a save-less probe.
 			backfillTransientSecrets(server, stored)
 		}
 	}
