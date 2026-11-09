@@ -59,6 +59,29 @@ func TestValidateSchemaDefinitionsEnum(t *testing.T) {
 		}
 	})
 
+	t.Run("typeless enum declarations are shape-checked", func(t *testing.T) {
+		// Write-time enforcement constrains a typeless property's value, so a
+		// malformed declaration must be rejected at install time (#534).
+		errs := validateSchemaDefinitions(objectTypes(`{"status":{"enum":"draft"}}`), nil)
+		if len(errs) != 1 || !strings.Contains(errs[0], "non-empty list") {
+			t.Fatalf("expected typeless non-list enum error, got %v", errs)
+		}
+		errs = validateSchemaDefinitions(objectTypes(`{"status":{"type":"","enum":[]}}`), nil)
+		if len(errs) != 1 || !strings.Contains(errs[0], "non-empty list") {
+			t.Fatalf("expected typeless empty enum error, got %v", errs)
+		}
+		if errs := validateSchemaDefinitions(objectTypes(`{"status":{"enum":["draft","published"]}}`), nil); len(errs) != 0 {
+			t.Fatalf("expected typeless enum list to be accepted, got %v", errs)
+		}
+	})
+
+	t.Run("malformed enum is shape-checked on an unsupported type", func(t *testing.T) {
+		errs := validateSchemaDefinitions(objectTypes(`{"meta":{"type":"object","enum":"x"}}`), nil)
+		if len(errs) != 1 || !strings.Contains(errs[0], "non-empty list") {
+			t.Fatalf("expected non-list enum error, got %v", errs)
+		}
+	})
+
 	t.Run("enum on an unsupported type is left to the CLI warning", func(t *testing.T) {
 		errs := validateSchemaDefinitions(objectTypes(`{"meta":{"type":"object","enum":["x"]}}`), nil)
 		if len(errs) != 0 {

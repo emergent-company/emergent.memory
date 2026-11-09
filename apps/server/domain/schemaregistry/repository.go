@@ -753,10 +753,15 @@ func (r *Repository) UpsertRelationshipType(ctx context.Context, projectID strin
 		return nil, err
 	}
 
-	rs := RelationshipSchema{
-		Label:        req.Label,
-		InverseLabel: req.InverseLabel,
-		Description:  req.Description,
+	rs := schemas[req.Name]
+	if req.Label != "" {
+		rs.Label = req.Label
+	}
+	if req.InverseLabel != "" {
+		rs.InverseLabel = req.InverseLabel
+	}
+	if req.Description != "" {
+		rs.Description = req.Description
 	}
 	if req.SourceType != "" {
 		rs.SourceTypes = []string{req.SourceType}
@@ -764,6 +769,11 @@ func (r *Repository) UpsertRelationshipType(ctx context.Context, projectID strin
 	if req.TargetType != "" {
 		rs.TargetTypes = []string{req.TargetType}
 	}
+	// Start from the existing declaration and overlay the request's metadata:
+	// fields the request does not carry (properties, required, inverseType)
+	// must survive an upsert. Building a fresh RelationshipSchema here wiped
+	// every declared property — including the enums write-time validation now
+	// enforces (#535).
 	schemas[req.Name] = rs
 
 	if err := r.saveSchemaRelationships(ctx, schemaID, schemas); err != nil {
@@ -779,6 +789,9 @@ func (r *Repository) UpsertRelationshipType(ctx context.Context, projectID strin
 	}
 	if rs.Description != "" {
 		info.Description = &rs.Description
+	}
+	if rs.InverseType != "" {
+		info.InverseType = &rs.InverseType
 	}
 	info.SourceTypes = rs.SourceTypes
 	info.TargetTypes = rs.TargetTypes
@@ -832,7 +845,7 @@ func (r *Repository) saveSchemaRelationships(ctx context.Context, schemaID strin
 	}
 	_, err = r.db.NewRaw(
 		"UPDATE kb.graph_schemas SET relationship_type_schemas = ?, updated_at = ? WHERE id = ?",
-		data, time.Now(), schemaID,
+		string(data), time.Now(), schemaID,
 	).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to save relationship_type_schemas: %w", err)
