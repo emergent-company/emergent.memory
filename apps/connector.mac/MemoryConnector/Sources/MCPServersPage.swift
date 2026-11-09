@@ -15,6 +15,7 @@ struct MCPServersPage: View {
     @State private var store = MCPServersStore()
     @State private var showingAdd = false
     @State private var showingRegistry = false
+    @State private var showingImport = false
     @State private var selectedServer: HostedMCPServer?
 
     /// The active project's management port (when that project is connected).
@@ -50,6 +51,9 @@ struct MCPServersPage: View {
                     .buttonStyle(.borderless)
                     .disabled(!availability.isAvailable)
                     .help("Search the MCP registry and add a suggested server")
+                    ImportClaudeToolbarButton(isEnabled: availability.isAvailable) {
+                        showingImport = true
+                    }
                     Button {
                         showingAdd = true
                     } label: {
@@ -99,6 +103,9 @@ struct MCPServersPage: View {
         }
         .sheet(isPresented: $showingRegistry) {
             MCPRegistryBrowseSheet(store: store)
+        }
+        .sheet(isPresented: $showingImport) {
+            ImportClaudeConfigSheet(store: store)
         }
         .sheet(item: $selectedServer) { server in
             MCPServerDetailView(server: server, store: store)

@@ -32,6 +32,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Test connection (save-less probe). Registered before the write routes so
 	// Echo's static "/test" segment wins over the ":id" param route.
 	admin.POST("/test", h.TestServerConfig)
+	// Claude-format bulk import. Static segment, so it never collides with :id.
+	admin.POST("/import", h.ImportServers)
 
 	// Write operations
 	admin.POST("", h.CreateServer)

@@ -413,6 +413,68 @@ curl -X POST https://api.example.com/api/admin/mcp-servers \
   }'
 ```
 
+### Import a Claude MCP config
+
+Memory can import the `mcpServers` format used by Claude Desktop
+(`claude_desktop_config.json`), Claude Code (`.mcp.json` / `~/.claude.json`), and
+`claude mcp add-json`. Each valid entry is created; malformed entries and name
+conflicts are reported without aborting the rest.
+
+```bash
+# From a file
+memory agents mcp-servers import --from-claude ~/.claude.json --device laptop-connector
+
+# From stdin
+cat claude_desktop_config.json | memory agents mcp-servers import --from-claude -
+
+# Preview the plan without writing
+memory agents mcp-servers import --from-claude ./.mcp.json --device laptop-connector --dry-run
+```
+
+Delivery is chosen per entry by default (`--target auto`):
+
+| Entry | Lands as |
+|---|---|
+| `http` / `sse` (remote) | a server-target registry row, connected outbound by the Memory host |
+| `stdio` (local command) | a device-target registry row, pushed to the connector named by `--device` |
+
+`--target server` forces every entry onto the Memory host; `--target device`
+forces every entry onto the connector. A stdio entry without a device is a
+broadcast, which only project admins may create. Existing names are skipped
+unless `--overwrite` is passed. `${VAR}` placeholders in env/headers values are
+stored literally — Memory does not expand them.
+
+The same import is available in the web UI (**Settings → MCP Servers → Add
+server → Import from Claude**) and over the REST API:
+
+```bash
+curl -X POST https://api.example.com/api/admin/mcp-servers/import \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "config": {"mcpServers": {"github": {"command": "npx", "args": ["-y", "pkg"]}}},
+    "target": "auto",
+    "targetInstanceId": "laptop-connector",
+    "overwrite": false,
+    "dryRun": false
+  }'
+```
+
+The response lists `created`, `updated`, `skipped`, and `failed` entries.
+
+Local stdio entries are better imported by the **connector** itself, which runs
+them on the machine that owns the command. In the macOS connector app open
+**Hosted MCP Servers → Import from Claude…**, or on a Linux connector run:
+
+```bash
+memory-connector mcp import --from-claude ~/.claude.json --dry-run
+memory-connector mcp import --from-claude ~/.claude.json --overwrite
+```
+
+The connector import refuses while the connector is running (it would race the
+config file); use the app or its loopback management API for a live connector.
+An overwrite keeps the existing server's enabled state and `disabled_tools`.
+
 ### Inspect a server (preview tools without saving)
 
 ```bash

@@ -109,6 +109,13 @@ type CreateMCPServerRequest struct {
 	Env         map[string]any `json:"env,omitempty"`
 	URL         *string        `json:"url,omitempty"`
 	Headers     map[string]any `json:"headers,omitempty"`
+	// SecretEnvKeys/SecretHeadersKeys name the Env/Headers entries that memory
+	// must encrypt at rest. Values are still sent inline.
+	SecretEnvKeys     []string `json:"secretEnvKeys,omitempty"`
+	SecretHeadersKeys []string `json:"secretHeadersKeys,omitempty"`
+	// Target selects the delivery mode: "server" (default) or "device".
+	Target           string  `json:"target,omitempty"`
+	TargetInstanceID *string `json:"targetInstanceId,omitempty"`
 }
 
 // UpdateMCPServerRequest is the request body for updating an MCP server.
@@ -122,6 +129,54 @@ type UpdateMCPServerRequest struct {
 	Env         map[string]any `json:"env,omitempty"`
 	URL         *string        `json:"url,omitempty"`
 	Headers     map[string]any `json:"headers,omitempty"`
+	// SecretEnvKeys/SecretHeadersKeys name the Env/Headers entries that memory
+	// must encrypt at rest. A listed key with a blank value keeps its stored
+	// secret.
+	SecretEnvKeys     []string `json:"secretEnvKeys,omitempty"`
+	SecretHeadersKeys []string `json:"secretHeadersKeys,omitempty"`
+	// Target, when non-nil, switches the delivery mode ("server" | "device").
+	Target           *string `json:"target,omitempty"`
+	TargetInstanceID *string `json:"targetInstanceId,omitempty"`
+}
+
+// ImportMCPServersRequest is the body of POST /api/admin/mcp-servers/import.
+// Config is a Claude-format MCP document (see the mcpconfig package), sent
+// verbatim as JSON.
+type ImportMCPServersRequest struct {
+	Config           json.RawMessage `json:"config"`
+	Target           string          `json:"target,omitempty"`
+	TargetInstanceID string          `json:"targetInstanceId,omitempty"`
+	Overwrite        bool            `json:"overwrite,omitempty"`
+	DryRun           bool            `json:"dryRun,omitempty"`
+}
+
+// ImportSkip names one entry left untouched because it already exists.
+type ImportSkip struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// ImportFailure names one entry that could not be imported.
+type ImportFailure struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
+}
+
+// ImportWarning is a non-fatal observation about one entry.
+type ImportWarning struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
+// ImportResult summarises a Claude-config import. A partially successful import
+// reports the good entries in Created/Updated and the rest in Skipped/Failed.
+type ImportResult struct {
+	Created  []string        `json:"created"`
+	Updated  []string        `json:"updated"`
+	Skipped  []ImportSkip    `json:"skipped"`
+	Failed   []ImportFailure `json:"failed"`
+	Warnings []ImportWarning `json:"warnings"`
+	DryRun   bool            `json:"dryRun"`
 }
 
 // MCPServerInspect is the response for the inspect/test-connection endpoint.
@@ -309,6 +364,42 @@ func (c *Client) Create(ctx context.Context, createReq *CreateMCPServerRequest) 
 	}
 
 	var result APIResponse[MCPServer]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Import creates or updates MCP servers from a Claude-format config document.
+// POST /api/admin/mcp-servers/import
+func (c *Client) Import(ctx context.Context, importReq *ImportMCPServersRequest) (*APIResponse[ImportResult], error) {
+	body, err := json.Marshal(importReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/mcp-servers/import", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[ImportResult]
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

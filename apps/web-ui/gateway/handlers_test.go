@@ -1119,6 +1119,10 @@ func (f *fakeMemory) InstallRegistryServerToDevice(ctx context.Context, registry
 
 // MCP OAuth connect: base fake returns zero values so unrelated tests compile;
 // mcp-server handler tests override these via mcpTestBackend.
+func (f *fakeMemory) ImportMCPServers(ctx context.Context, config json.RawMessage, target, instanceID string, overwrite, dryRun bool) (*MCPImportResult, error) {
+	return &MCPImportResult{}, nil
+}
+
 func (f *fakeMemory) AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAuthAuthorize, error) {
 	return &MCPOAuthAuthorize{AuthorizeURL: "https://www.figma.com/oauth/mcp?state=fake"}, nil
 }

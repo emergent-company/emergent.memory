@@ -1,6 +1,7 @@
 package mcpregistry
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -364,6 +365,55 @@ type UpdateMCPServerDTO struct {
 type UpdateMCPServerToolDTO struct {
 	Enabled *bool           `json:"enabled"`
 	Config  *map[string]any `json:"config,omitempty"`
+}
+
+// ImportMCPServersDTO is the body of POST /api/admin/mcp-servers/import.
+// Config is a Claude-format MCP document (mcpServers object, or a single bare
+// server object). Target selects where imported entries land: "auto" (the
+// default) sends remote http/sse servers to the shared host and local stdio
+// servers to a connector device; "server" forces the shared host; "device"
+// forces a connector device. TargetInstanceID binds device entries to one
+// relay instance; empty means a broadcast (project admins only). Overwrite
+// updates servers whose name already exists instead of skipping them. DryRun
+// validates and plans the import without writing anything.
+type ImportMCPServersDTO struct {
+	Config           json.RawMessage `json:"config" validate:"required"`
+	Target           MCPServerTarget `json:"target"`
+	TargetInstanceID *string         `json:"targetInstanceId,omitempty"`
+	Overwrite        bool            `json:"overwrite"`
+	DryRun           bool            `json:"dryRun"`
+}
+
+// ImportSkipDTO names an entry left untouched and why (normally: it already
+// exists and Overwrite was false).
+type ImportSkipDTO struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// ImportFailureDTO names an entry that could not be imported and the error.
+type ImportFailureDTO struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
+}
+
+// ImportWarningDTO is a non-fatal observation about one entry (literal ${VAR}
+// placeholders, fields ignored for the chosen transport).
+type ImportWarningDTO struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
+// ImportMCPServersResultDTO summarises an import. Import is per-entry
+// tolerant: valid entries land in Created/Updated, the rest are reported in
+// Skipped/Failed.
+type ImportMCPServersResultDTO struct {
+	Created  []string           `json:"created"`
+	Updated  []string           `json:"updated"`
+	Skipped  []ImportSkipDTO    `json:"skipped"`
+	Failed   []ImportFailureDTO `json:"failed"`
+	Warnings []ImportWarningDTO `json:"warnings"`
+	DryRun   bool               `json:"dryRun"`
 }
 
 // InstallFromRegistryDTO is the request DTO for installing a server from the official MCP registry.

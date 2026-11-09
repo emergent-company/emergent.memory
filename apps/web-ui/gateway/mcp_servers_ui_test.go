@@ -281,6 +281,7 @@ func TestRenderMCPServersAddDialog(t *testing.T) {
 				// path 1: the existing manual form
 				`data-testid="mcp-server-add-new"`,
 				`href="/settings/mcp-servers/new"`,
+				`href="/settings/mcp-servers/import"`, `data-testid="mcp-server-add-import"`,
 				"Register a server",
 				"New server",
 				// path 2: the existing registry browse page
@@ -672,6 +673,42 @@ func TestRenderMCPServersOAuthClientConfigured(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("configured chip missing %q", want)
+		}
+	}
+}
+
+// TestRenderMCPServerImportPage asserts the import form carries every control
+// and that a populated result lists each bucket by name.
+func TestRenderMCPServerImportPage(t *testing.T) {
+	html := renderHTML(t, MCPServerImportPage(mcpImportPageData{
+		Target:  "auto",
+		Devices: []RelaySession{{InstanceID: "dev-1", Version: "1.2.3"}},
+	}))
+
+	for _, want := range []string{
+		`name="config"`, `name="target"`, `name="device"`,
+		`name="overwrite"`, `name="dryRun"`, `data-mcp-import`,
+		`value="dev-1"`, "Import servers",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("import page missing %q", want)
+		}
+	}
+
+	resultHTML := renderHTML(t, mcpImportResultPanel(&MCPImportResult{
+		Created:  []string{"github"},
+		Updated:  []string{"files"},
+		Skipped:  []MCPImportSkip{{Name: "old", Reason: "already exists"}},
+		Failed:   []MCPImportFailure{{Name: "bad", Error: "no transport"}},
+		Warnings: []MCPImportWarning{{Name: "local", Message: "placeholders are literal"}},
+	}))
+	for _, want := range []string{
+		"1 created", "1 updated", "1 skipped", "1 failed",
+		"github", "files", "already exists", "no transport",
+		"placeholders are literal", `data-testid="mcp-import-result"`,
+	} {
+		if !strings.Contains(resultHTML, want) {
+			t.Errorf("import result missing %q", want)
 		}
 	}
 }

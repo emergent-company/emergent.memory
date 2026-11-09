@@ -134,6 +134,37 @@ func (h *Handler) CreateServer(c echo.Context) error {
 	return c.JSON(http.StatusCreated, SuccessResponse(server.ToDTO()))
 }
 
+// ImportServers handles POST /api/admin/mcp-servers/import
+// @Summary      Import MCP servers from a Claude config
+// @Description  Create or update MCP servers from a Claude-format mcpServers document
+// @Tags         mcp-registry
+// @Accept       json
+// @Produce      json
+// @Param        request body ImportMCPServersDTO true "Claude config import"
+// @Success      200 {object} mcpregistry.APIResponse[mcpregistry.ImportMCPServersResultDTO]
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Router       /api/admin/mcp-servers/import [post]
+// @Security     bearerAuth
+func (h *Handler) ImportServers(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	var dto ImportMCPServersDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	result, err := h.svc.ImportServers(c.Request().Context(), user.ProjectID, &dto)
+	if err != nil {
+		return apperror.NewBadRequest(err.Error())
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(result))
+}
+
 // UpdateServer handles PATCH /api/admin/mcp-servers/:id
 // @Summary      Update MCP server
 // @Description  Update an existing MCP server configuration

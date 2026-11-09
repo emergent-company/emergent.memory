@@ -178,6 +178,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
+      path: /api/admin/mcp-servers/import
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
       path: /api/admin/mcp-servers/test
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
