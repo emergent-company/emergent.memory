@@ -1056,7 +1056,8 @@ func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), objectSimilarError(&GraphObject{ID: id}))
 		return nil
 	}
-	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(&GraphObject{ID: id}, filterSimilarMatches(similar)))
+	obj := &GraphObject{ID: id, Type: c.QueryParam("type")}
+	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(obj, filterSimilarMatches(similar)))
 	return nil
 }
 
@@ -2080,19 +2081,12 @@ func filterSimilarMatches(similar []SimilarObject) []SimilarObject {
 	return out
 }
 
-// similarityLabel converts a pgvector cosine distance (0..2, lower = more
-// similar) into a similarity percentage label, e.g. "83% similar".
-//
-// The wording is deliberate: the number ranks embedding closeness, it does not
-// assert that the two objects are the same thing, so calling it a "match" (as
-// this label did) overclaimed. The badge carries similarScoreHint to say what
-// the number actually measures.
-func similarityLabel(d float32) string {
-	return strconv.Itoa(similarMatchPercent(d)) + "% similar"
+// similarRankHint explains a rank badge: the list is ordered by cosine
+// similarity, and the percentage is proximity metadata — never a probability
+// that the two objects are the same.
+func similarRankHint(so SimilarObject, rank int) string {
+	return fmt.Sprintf("Rank #%d by cosine similarity of the two objects' embedding vectors. The underlying score is %d%% similar. Similarity measures how close the embeddings are — it is not a probability that the objects are the same.", rank, similarMatchPercent(so.Distance))
 }
-
-// similarScoreHint explains the similarity percentage on the badge tooltip.
-const similarScoreHint = "Cosine similarity of this object's embedding vector and the other object's, computed from type, key, and the name/title/summary/description and other property text. It ranks how close two objects are — it is not a probability that they are the same object."
 
 // mergeInstruction builds the first message for a merge session: it names both
 // objects (label, id, type, properties) and asks the agent to propose a merged

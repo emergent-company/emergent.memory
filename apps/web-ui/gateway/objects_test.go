@@ -948,7 +948,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 
 	// The Similar page paints the shared shell and defers the slow vector read.
 	similarHTML := renderHTML(t, objectSimilarPage(objectDetailShellData{Obj: obj, Active: "similar"}))
-	for _, want := range []string{"Similar objects", `hx-get="/objects/o1/similar/partial"`, "Finding similar objects", `aria-current="page"`} {
+	for _, want := range []string{"Similar objects", `hx-get="/objects/o1/similar/partial?type=person"`, "Finding similar objects", `aria-current="page"`} {
 		if !strings.Contains(similarHTML, want) {
 			t.Errorf("similar page missing %q:\n%s", want, similarHTML)
 		}
@@ -1287,25 +1287,6 @@ func TestFilterSimilarMatches(t *testing.T) {
 	out := filterSimilarMatches(in)
 	if len(out) != 2 || out[0].ID != "o1" || out[1].ID != "o2" {
 		t.Fatalf("filter = %+v, want [o1 o2]", out)
-	}
-}
-
-func TestSimilarityLabel(t *testing.T) {
-	cases := []struct {
-		d    float32
-		want string
-	}{
-		{0.0, "100% similar"},
-		{0.12, "88% similar"},
-		{0.5, "50% similar"},
-		{1.0, "0% similar"},
-		{1.5, "0% similar"},    // clamped
-		{-0.2, "100% similar"}, // clamped
-	}
-	for _, c := range cases {
-		if got := similarityLabel(c.d); got != c.want {
-			t.Errorf("similarityLabel(%v) = %q, want %q", c.d, got, c.want)
-		}
 	}
 }
 
@@ -4985,7 +4966,7 @@ func TestObjectSubpages(t *testing.T) {
 		body := rec.Body.String()
 		for _, want := range []string{
 			"Similar objects",
-			`hx-get="/objects/o1/similar/partial"`,
+			`hx-get="/objects/o1/similar/partial?type=Task"`,
 			"Finding similar objects",
 			`aria-current="page"`,
 		} {
@@ -4998,25 +4979,70 @@ func TestObjectSubpages(t *testing.T) {
 		}
 	})
 
-	t.Run("similar partial renders the deferred results", func(t *testing.T) {
-		f.similar = []SimilarObject{{ID: "o2", Type: "Task", Key: "t2", Distance: 0.1}}
-		rec := get("/objects/o1/similar/partial")
+	t.Run("similar partial renders ranked results with same-type marker", func(t *testing.T) {
+		prevSimilar := f.similar
+		defer func() { f.similar = prevSimilar }()
+		f.similar = []SimilarObject{
+			{ID: "o2", Type: "Task", Key: "t2", Distance: 0.1},
+			{ID: "o3", Type: "Task", Key: "t3", Distance: 0.15},
+		}
+		rec := get("/objects/o1/similar/partial?type=Task")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d", rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, "t2") || !strings.Contains(body, "Merge") {
+		if !strings.Contains(body, "t2") || !strings.Contains(body, "t3") || !strings.Contains(body, "Merge") {
 			t.Errorf("similar partial missing results:\n%s", body)
 		}
-		// The score is a similarity, not a "match": say so, and explain it.
-		if !strings.Contains(body, "90% similar") {
-			t.Errorf("similar partial should label the score as a similarity:\n%s", body)
+		// Rank badges replace the standalone percentage badge.
+		if !strings.Contains(body, `data-testid="similar-rank"`) {
+			t.Errorf("similar partial missing rank badge:\n%s", body)
+		}
+		if !strings.Contains(body, ">#1<") || !strings.Contains(body, ">#2<") {
+			t.Errorf("similar partial missing rank labels:\n%s", body)
+		}
+		if strings.Index(body, ">#1<") > strings.Index(body, ">#2<") {
+			t.Errorf("ranks out of order: #1 must precede #2:\n%s", body)
+		}
+		// The percentage is metadata in the tooltip, not a standalone badge label.
+		if strings.Contains(body, ">90% similar<") {
+			t.Errorf("similar partial must not render a standalone percentage badge:\n%s", body)
+		}
+		if !strings.Contains(body, "90%") {
+			t.Errorf("similar partial should still carry the percentage in the hint:\n%s", body)
+		}
+		if !strings.Contains(body, "Rank #1 by cosine similarity") {
+			t.Errorf("similar partial missing rank hint:\n%s", body)
+		}
+		if !strings.Contains(body, "not a probability that the objects are the same") {
+			t.Errorf("similar partial hint must disclaim probability:\n%s", body)
 		}
 		if strings.Contains(body, "% match") {
 			t.Errorf("similar partial must not call the score a match:\n%s", body)
 		}
-		if !strings.Contains(body, `title="Cosine similarity`) || !strings.Contains(body, "it is not a probability that they are the same object") {
-			t.Errorf("similar partial badge should carry the metric tooltip:\n%s", body)
+		// Query type (Task) matches the results' type, so the same-type marker shows.
+		if !strings.Contains(body, `data-testid="similar-same-type"`) || !strings.Contains(body, "Same type") {
+			t.Errorf("similar partial missing same-type marker:\n%s", body)
+		}
+	})
+
+	t.Run("similar partial omits same-type marker when query type differs", func(t *testing.T) {
+		prevSimilar := f.similar
+		defer func() { f.similar = prevSimilar }()
+		f.similar = []SimilarObject{{ID: "o2", Type: "Task", Key: "t2", Distance: 0.1}}
+		body := get("/objects/o1/similar/partial?type=Person").Body.String()
+		if strings.Contains(body, `data-testid="similar-same-type"`) {
+			t.Errorf("same-type marker must be absent when query type differs:\n%s", body)
+		}
+	})
+
+	t.Run("similar partial omits same-type marker without a query type", func(t *testing.T) {
+		prevSimilar := f.similar
+		defer func() { f.similar = prevSimilar }()
+		f.similar = []SimilarObject{{ID: "o2", Type: "Task", Key: "t2", Distance: 0.1}}
+		body := get("/objects/o1/similar/partial").Body.String()
+		if strings.Contains(body, `data-testid="similar-same-type"`) {
+			t.Errorf("same-type marker must be absent when no query type is given:\n%s", body)
 		}
 	})
 

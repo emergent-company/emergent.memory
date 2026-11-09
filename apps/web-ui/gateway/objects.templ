@@ -1361,8 +1361,8 @@ templ objectSimilarObjects(obj *GraphObject, similar []SimilarObject) {
 		Empty:     len(similar) == 0,
 		EmptyIcon: "lucide--git-merge", EmptyTitle: "No similar objects", EmptyDesc: "No other objects look like this one yet.",
 	}) {
-		for _, so := range similar {
-			@similarObjectRow(obj, so)
+		for i, so := range similar {
+			@similarObjectRow(obj, so, i+1)
 		}
 	}
 }
@@ -1378,9 +1378,11 @@ templ objectSimilarObjects(obj *GraphObject, similar []SimilarObject) {
 // page shell's <main> (htmx implicitInheritance=true); without it the swap
 // would replace the whole main-content region with the similar-objects card.
 templ objectSimilarObjectsDeferred(obj *GraphObject) {
+	{{ hxGetURL := "/objects/" + url.PathEscape(obj.ID) + "/similar/partial" }}
+	{{ if obj.Type != "" { hxGetURL += "?type=" + url.QueryEscape(obj.Type) } }}
 	<div
 		id="object-similar"
-		hx-get={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/similar/partial") }
+		hx-get={ templ.URL(hxGetURL) }
 		hx-trigger="load"
 		hx-target="this"
 		hx-swap="outerHTML"
@@ -1400,22 +1402,37 @@ templ objectSimilarObjectsDeferred(obj *GraphObject) {
 	</div>
 }
 
-// similarObjectRow is one similar object: label + type, similarity badge, and
-// a Merge button that deep-links into /chat with the merge instruction.
-templ similarObjectRow(obj *GraphObject, so SimilarObject) {
+// similarObjectRow is one similar object: rank, label + type, and a Merge
+// button that deep-links into /chat with the merge instruction. The rank badge
+// orders the list by cosine similarity; the percentage is proximity metadata,
+// surfaced only in the badge tooltip so it cannot read as a match score.
+templ similarObjectRow(obj *GraphObject, so SimilarObject, rank int) {
 	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
 		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "neutral"})
 		<div class="min-w-0 grow">
 			<p class="truncate text-sm font-medium">{ similarObjectLabel(so) }</p>
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
-				{ so.Type }
-			}
+			<div class="flex flex-wrap items-center gap-1">
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+					{ so.Type }
+				}
+				if obj.Type != "" && so.Type == obj.Type {
+					@ui.Badge(ui.BadgeProps{
+						Label:   "Same type",
+						Variant: ui.BadgeGhost,
+						Size:    ui.BadgeSizeXS,
+						Attrs:   templ.Attributes{"data-testid": "similar-same-type"},
+					})
+				}
+			</div>
 		</div>
 		@ui.Badge(ui.BadgeProps{
-			Label:   similarityLabel(so.Distance),
+			Label:   "#" + strconv.Itoa(rank),
 			Variant: ui.BadgeGhost,
 			Size:    ui.BadgeSizeXS,
-			Attrs:   templ.Attributes{"title": similarScoreHint},
+			Attrs: templ.Attributes{
+				"data-testid": "similar-rank",
+				"title":       similarRankHint(so, rank),
+			},
 		})
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
