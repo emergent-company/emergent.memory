@@ -949,6 +949,11 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 	if err := s.fillObjectContributions(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
 		return nil, err
 	}
+	// "Derived from what" is answered beside the contributions, from the same
+	// single-version read path (#153).
+	if err := s.fillObjectSynthesisLineage(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
+		return nil, err
+	}
 	return resp, nil
 }
 
@@ -1314,6 +1319,17 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 				return nil, false, fmt.Errorf("backfill extraction job id: %w", err)
 			}
 			existing.ExtractionJobID = req.ExtractionJobID
+		}
+		// A synthesis write that re-produces identical content takes the no-op
+		// path and mints no version. Record its inputs on the existing version
+		// row anyway: the row was still derived from this job, and the
+		// re-extraction's supersede rule must see it as re-produced rather than
+		// stale (#153).
+		if lineageAppliesTo(existing.DataClass) {
+			if err := s.repo.insertSynthesisLineage(ctx, tx.Tx, projectID, ContributionSubjectObject,
+				existing.ID, synthesisInputsFromContext(ctx)); err != nil {
+				return nil, false, fmt.Errorf("write object synthesis lineage: %w", err)
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
@@ -1844,6 +1860,11 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 	// history — the version row is what the contributions are keyed to, so a
 	// superseded version keeps the rows it arrived with.
 	if err := s.fillObjectContributions(ctx, projectID, data); err != nil {
+		return nil, err
+	}
+	// Each version also reports the inputs it was derived from, in the same one
+	// query for the whole history (#153).
+	if err := s.fillObjectSynthesisLineage(ctx, projectID, data); err != nil {
 		return nil, err
 	}
 
@@ -4942,6 +4963,22 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		}
 		response.Applied = true
 		response.AppliedObjects = &appliedCount
+
+		// A merge that landed everything is the point where a re-extraction's
+		// output is authoritative on the target: supersede the rows the same
+		// documents previously produced, keeping what this extraction re-produced
+		// (#153). Best-effort — the merge is already committed.
+		if leftForReview == 0 && relConflict == 0 {
+			if n, err := s.SupersedeStaleAfterBranchMerge(ctx, projectID, targetBranchID, &req.SourceBranchID); err != nil {
+				s.log.Warn("supersede stale derived rows after merge failed",
+					slog.String("source_branch_id", req.SourceBranchID.String()),
+					logger.Error(err))
+			} else if n > 0 {
+				s.log.Info("superseded stale rows derived from merged documents",
+					slog.String("source_branch_id", req.SourceBranchID.String()),
+					slog.Int("superseded", n))
+			}
+		}
 
 		{
 			relsMerged := 0

@@ -2723,6 +2723,22 @@ Table "kb"."sources" {
   }
 }
 
+Table "kb"."synthesis_lineage" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "subject_kind" text [not null]
+  "subject_version_id" uuid [not null]
+  "input_kind" text [not null]
+  "input_id" uuid [not null]
+  "derived_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, input_kind, input_id) [name: "idx_synthesis_lineage_project_input"]
+    (subject_version_id) [name: "idx_synthesis_lineage_version"]
+    (subject_kind, subject_version_id, input_kind, input_id) [name: "uq_synthesis_lineage_input", unique]
+  }
+}
+
 Table "kb"."system_process_logs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "process_id" text [not null]

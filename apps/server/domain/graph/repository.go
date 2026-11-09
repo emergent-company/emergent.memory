@@ -968,6 +968,17 @@ func (r *Repository) insertGraphObject(ctx context.Context, db bun.IDB, obj *Gra
 		r.log.Error("failed to create graph object", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
+
+	// Input lineage is written beside the version write, from the inputs the
+	// synthesis path declared on the context (#153). A synthesis path that
+	// creates a version through this primitive cannot forget the lineage write:
+	// there is no separate write to forget.
+	if lineageAppliesTo(obj.DataClass) {
+		if err := r.insertSynthesisLineage(ctx, db, obj.ProjectID, ContributionSubjectObject,
+			obj.ID, synthesisInputsFromContext(ctx)); err != nil {
+			return fmt.Errorf("write object synthesis lineage: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -977,9 +988,11 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 	// Bulk endpoints attach a statement_timeout to ctx via BulkContext so each
 	// item transaction is bounded. Create is otherwise a bare single-statement
 	// insert with no transaction to carry the setting, so when a bound is
-	// present run the insert in a transaction to apply it. Ordinary creates
-	// carry no bound and keep the single-statement path (no extra round trip).
-	if _, ok := database.StatementTimeoutFromContext(ctx); ok {
+	// present run the insert in a transaction to apply it. A synthesis write
+	// with declared inputs also gets a transaction so the version row and its
+	// lineage rows commit together rather than one without the other (#153).
+	_, hasTimeout := database.StatementTimeoutFromContext(ctx)
+	if hasTimeout || len(synthesisInputsFromContext(ctx)) > 0 {
 		tx, err := database.BeginSafeTx(ctx, r.db)
 		if err != nil {
 			return fmt.Errorf("begin create transaction: %w", err)
@@ -1106,6 +1119,26 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 		return fmt.Errorf("carry forward object contributions: %w", err)
 	}
 
+	// Input lineage follows the same rule as contributions (#153): a new
+	// version inherits the content inputs of the version it derives from and
+	// names that version row as its direct input, so an ordinary edit keeps the
+	// provenance of the content that survived it. The version write and its
+	// lineage are in the caller's transaction, so a reader never sees one
+	// without the other.
+	if lineageAppliesTo(newVersion.DataClass) {
+		if _, err := r.carryForwardSynthesisLineage(ctx, tx, ContributionSubjectObject,
+			prevHead.ID, newVersion.ID); err != nil {
+			return fmt.Errorf("carry forward object synthesis lineage: %w", err)
+		}
+		inputs := append([]SynthesisInput{
+			{Kind: LineageInputVersion, ID: prevHead.ID},
+		}, synthesisInputsFromContext(ctx)...)
+		if err := r.insertSynthesisLineage(ctx, tx, newVersion.ProjectID, ContributionSubjectObject,
+			newVersion.ID, inputs); err != nil {
+			return fmt.Errorf("write object synthesis lineage: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1196,6 +1229,19 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 	if _, err := r.copyContributions(ctx, tx, tombstone.ProjectID, ContributionSubjectObject,
 		[]uuid.UUID{mainHead.ID}, tombstone.ID, tombstone.BranchID, false); err != nil {
 		return fmt.Errorf("carry forward branch tombstone contributions: %w", err)
+	}
+
+	// The branch tombstone is a version of the main head, so it inherits the
+	// content lineage and names the main version row it was derived from.
+	if lineageAppliesTo(tombstone.DataClass) {
+		if _, err := r.carryForwardSynthesisLineage(ctx, tx, ContributionSubjectObject,
+			mainHead.ID, tombstone.ID); err != nil {
+			return fmt.Errorf("carry forward branch tombstone synthesis lineage: %w", err)
+		}
+		if err := r.insertSynthesisLineage(ctx, tx, tombstone.ProjectID, ContributionSubjectObject,
+			tombstone.ID, []SynthesisInput{{Kind: LineageInputVersion, ID: mainHead.ID}}); err != nil {
+			return fmt.Errorf("write branch tombstone synthesis lineage: %w", err)
+		}
 	}
 	return nil
 }
@@ -2217,7 +2263,18 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 	}
 
 	rowsAffected, _ := res.RowsAffected()
-	return rowsAffected > 0, nil
+	if rowsAffected == 0 {
+		return false, nil
+	}
+
+	// Same rule as object creates (#153): the synthesis inputs on the context
+	// are written beside the relationship version, so extraction's relationships
+	// are traceable to their document and job too.
+	if err := r.insertSynthesisLineage(ctx, tx, rel.ProjectID, ContributionSubjectRelationship,
+		rel.ID, synthesisInputsFromContext(ctx)); err != nil {
+		return false, fmt.Errorf("write relationship synthesis lineage: %w", err)
+	}
+	return true, nil
 }
 
 // CreateRelationshipVersion creates a new version of an existing relationship.
@@ -2283,6 +2340,20 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 	if _, err := r.copyContributions(ctx, tx, newVersion.ProjectID, ContributionSubjectRelationship,
 		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID, false); err != nil {
 		return fmt.Errorf("carry forward relationship contributions: %w", err)
+	}
+
+	// Relationships carry input lineage beside their version writes too (#153),
+	// with the same inheritance rule as objects.
+	if _, err := r.carryForwardSynthesisLineage(ctx, tx, ContributionSubjectRelationship,
+		prevHead.ID, newVersion.ID); err != nil {
+		return fmt.Errorf("carry forward relationship synthesis lineage: %w", err)
+	}
+	inputs := append([]SynthesisInput{
+		{Kind: LineageInputVersion, ID: prevHead.ID},
+	}, synthesisInputsFromContext(ctx)...)
+	if err := r.insertSynthesisLineage(ctx, tx, newVersion.ProjectID, ContributionSubjectRelationship,
+		newVersion.ID, inputs); err != nil {
+		return fmt.Errorf("write relationship synthesis lineage: %w", err)
 	}
 
 	return nil
@@ -4060,6 +4131,9 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectObject, pairs); err != nil {
 				return nil, 0, err
 			}
+			if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectObject, pairs); err != nil {
+				return nil, 0, err
+			}
 			batch = batch[:0]
 			pairs = make(map[uuid.UUID]uuid.UUID, 100)
 		}
@@ -4069,6 +4143,9 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			return nil, 0, apperror.ErrDatabase.WithInternal(err)
 		}
 		if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectObject, pairs); err != nil {
+			return nil, 0, err
+		}
+		if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectObject, pairs); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -4150,6 +4227,9 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectRelationship, pairs); err != nil {
 				return 0, 0, err
 			}
+			if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectRelationship, pairs); err != nil {
+				return 0, 0, err
+			}
 			batch = batch[:0]
 			pairs = make(map[uuid.UUID]uuid.UUID, 100)
 		}
@@ -4159,6 +4239,9 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			return 0, 0, apperror.ErrDatabase.WithInternal(err)
 		}
 		if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectRelationship, pairs); err != nil {
+			return 0, 0, err
+		}
+		if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectRelationship, pairs); err != nil {
 			return 0, 0, err
 		}
 	}
