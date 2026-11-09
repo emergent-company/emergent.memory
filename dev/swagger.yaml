@@ -3334,6 +3334,10 @@ definitions:
         description: Content
         type: string
       contentHash:
+        description: |-
+          ContentHash is the content identity hash: sha256(content) in lowercase
+          hex, maintained by the repository whenever Content is present. It is not
+          the source-change hash (see SourceTextHash).
         type: string
       conversionCompletedAt:
         type: string
@@ -3415,6 +3419,11 @@ definitions:
       sourceSyncedAt:
         type: string
       sourceTextHash:
+        description: |-
+          SourceTextHash hashes the parsed source text for change detection during
+          source sync. It is distinct from ContentHash (content identity): a re-sync
+          can skip on an unchanged text hash, and two source items can legitimately
+          share content bytes.
         type: string
       sourceType:
         description: Data source
@@ -11980,6 +11989,12 @@ definitions:
           plaintext token on new writes. Only the allowlisted name
           (GitTokenSecretRefEnv) may be referenced (issue #1844).
         type: string
+      output_proxy:
+        description: |-
+          OutputProxy enables server-side tool-output proxying: "rtk" rewrites
+          simple read-only shell commands to their rtk equivalents, "sqz"
+          compresses oversized workspace_bash output with sqz, "auto" does both.
+        type: string
       provider:
         description: 'Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)'
         type: string
@@ -11987,6 +12002,12 @@ definitions:
         $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.RepoSourceConfig'
       resource_limits:
         $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.ResourceLimits'
+      run_mode:
+        description: |-
+          RunMode selects the agent loop's tool surface. "" and "structured" keep
+          the fine-grained workspace_* tools; "mini" exposes only workspace_bash
+          plus a submit tool (one action per turn, minimal scaffold).
+        type: string
       setup_commands:
         items:
           type: string

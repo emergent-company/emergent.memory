@@ -33146,6 +33146,7 @@
                     "type": "string"
                 },
                 "contentHash": {
+                    "description": "ContentHash is the content identity hash: sha256(content) in lowercase\nhex, maintained by the repository whenever Content is present. It is not\nthe source-change hash (see SourceTextHash).",
                     "type": "string"
                 },
                 "conversionCompletedAt": {
@@ -33251,6 +33252,7 @@
                     "type": "string"
                 },
                 "sourceTextHash": {
+                    "description": "SourceTextHash hashes the parsed source text for change detection during\nsource sync. It is distinct from ContentHash (content identity): a re-sync\ncan skip on an unchanged text hash, and two source items can legitimately\nshare content bytes.",
                     "type": "string"
                 },
                 "sourceType": {
@@ -45179,6 +45181,10 @@
                     "description": "GitTokenSecretRef names a server-side git credential. It is a reference, not\na secret value: the token is resolved from the server environment at\nprovision time (see ResolveGitTokenSecretRef), so the database never stores a\nplaintext token on new writes. Only the allowlisted name\n(GitTokenSecretRefEnv) may be referenced (issue #1844).",
                     "type": "string"
                 },
+                "output_proxy": {
+                    "description": "OutputProxy enables server-side tool-output proxying: \"rtk\" rewrites\nsimple read-only shell commands to their rtk equivalents, \"sqz\"\ncompresses oversized workspace_bash output with sqz, \"auto\" does both.",
+                    "type": "string"
+                },
                 "provider": {
                     "description": "Explicit provider: \"firecracker\", \"gvisor\", \"e2b\", or \"\" (auto)",
                     "type": "string"
@@ -45188,6 +45194,10 @@
                 },
                 "resource_limits": {
                     "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.ResourceLimits"
+                },
+                "run_mode": {
+                    "description": "RunMode selects the agent loop's tool surface. \"\" and \"structured\" keep\nthe fine-grained workspace_* tools; \"mini\" exposes only workspace_bash\nplus a submit tool (one action per turn, minimal scaffold).",
+                    "type": "string"
                 },
                 "setup_commands": {
                     "type": "array",
