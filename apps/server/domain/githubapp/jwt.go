@@ -21,10 +21,24 @@ const (
 	jwtLifetime   = 480 * time.Second
 )
 
+// Private-key parse failures. SignAppJWT returns them as-is; callers that
+// validate a credential before sealing it classify them with errors.Is so they
+// can name the offending field without duplicating the parser (see
+// domain/sources.RegisterSourceApp).
+var (
+	// ErrPrivateKeyNotPEM means the value holds no PEM block at all.
+	ErrPrivateKeyNotPEM = errors.New("githubapp: private key is not PEM encoded")
+	// ErrPrivateKeyUnsupportedPEMType means the PEM block is not one of the two
+	// RSA encodings GitHub issues. The message carries the block type.
+	ErrPrivateKeyUnsupportedPEMType = errors.New("githubapp: unsupported private key PEM type")
+	// ErrPrivateKeyNotRSA means the PEM block parsed but holds a non-RSA key.
+	ErrPrivateKeyNotRSA = errors.New("githubapp: private key is not RSA")
+)
+
 // SignAppJWT signs the RS256 App JWT GitHub expects for App-level API calls.
 // The private key may be PKCS#1 ("RSA PRIVATE KEY") or PKCS#8 ("PRIVATE KEY").
 func SignAppJWT(appID int64, privateKeyPEM []byte, now time.Time) (string, error) {
-	key, err := parseRSAPrivateKey(privateKeyPEM)
+	key, err := ParseRSAPrivateKey(privateKeyPEM)
 	if err != nil {
 		return "", err
 	}
@@ -50,10 +64,15 @@ func SignAppJWT(appID int64, privateKeyPEM []byte, now time.Time) (string, error
 	return signing + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-func parseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
+// ParseRSAPrivateKey parses a PKCS#1 ("RSA PRIVATE KEY") or PKCS#8
+// ("PRIVATE KEY") PEM-encoded RSA private key. It is the single parser behind
+// both App-JWT minting and source-App registration validation. Errors never
+// carry key bytes; they carry the reason, wrapped in the ErrPrivateKey*
+// sentinels where the caller may need to classify them.
+func ParseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
-		return nil, errors.New("githubapp: private key is not PEM encoded")
+		return nil, ErrPrivateKeyNotPEM
 	}
 	switch block.Type {
 	case "RSA PRIVATE KEY":
@@ -69,10 +88,10 @@ func parseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 		}
 		key, ok := parsed.(*rsa.PrivateKey)
 		if !ok {
-			return nil, errors.New("githubapp: private key is not RSA")
+			return nil, ErrPrivateKeyNotRSA
 		}
 		return key, nil
 	default:
-		return nil, fmt.Errorf("githubapp: unsupported private key PEM type %q", block.Type)
+		return nil, fmt.Errorf("%w %q", ErrPrivateKeyUnsupportedPEMType, block.Type)
 	}
 }
