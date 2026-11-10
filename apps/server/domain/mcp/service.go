@@ -90,6 +90,10 @@ type Service struct {
 	// Blueprint tool handler (injected to break import cycle)
 	blueprintToolHandler BlueprintToolHandler
 
+	// GitHub App review tool handler (injected to break the
+	// githubapp -> agents -> mcp dependency direction).
+	githubAppToolHandler GitHubAppToolHandler
+
 	// Brave Search API configuration
 	braveSearchAPIKey  string
 	braveSearchTimeout time.Duration
@@ -342,6 +346,12 @@ func (s *Service) RegisterAgentToolHandler(h AgentToolHandler) {
 // Deferred to fx.Invoke to break the mcpregistry ↔ mcp constructor cycle.
 func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 	s.mcpRegistryToolHandler = h
+}
+
+// RegisterGitHubAppToolHandler wires the GitHub App review tools after
+// construction (githubapp -> agents -> mcp, so no constructor cycle).
+func (s *Service) RegisterGitHubAppToolHandler(h GitHubAppToolHandler) {
+	s.githubAppToolHandler = h
 }
 
 // dynamicToolBuilders is the ordered list of package-level tool builders that
@@ -2009,6 +2019,11 @@ func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID
 	// authority as the tools/list (GetToolDefinitions) path.
 	applyRequiredScopes(tools)
 
+	// Append the GitHub App review tools for projects with an installation.
+	if projectID != "" && s.githubAppToolHandler != nil {
+		tools = append(tools, s.githubAppToolHandler.GetGitHubAppToolDefinitionsForProject(ctx, projectID)...)
+	}
+
 	// Append tools from connected relay sessions for this project.
 	if s.relaySvc != nil && projectID != "" {
 		for _, sess := range s.relaySvc.ListByProject(projectID) {
@@ -3011,6 +3026,9 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
+		if s.githubAppToolHandler != nil && s.githubAppToolHandler.HandlesGitHubAppTool(toolName) {
+			return s.githubAppToolHandler.ExecuteGitHubAppTool(ctx, projectID, toolName, args)
+		}
 		// Attempt to route to a connected relay. Relay tools are named
 		// "{instanceID}_{toolName}" where instanceID may itself contain underscores.
 		// We try each connected session to find one whose prefix matches.

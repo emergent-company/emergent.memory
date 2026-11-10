@@ -111,6 +111,7 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	require.Equal(t, "owner/repo#7", run.TriggerMetadata["subjectRef"])
 	require.Equal(t, "h1", run.TriggerMetadata["headSha"])
 	require.Equal(t, "d1", run.TriggerMetadata["deliveryId"])
+	require.True(t, run.TrustedInternal, "the HMAC-verified ingress enqueues a trusted in-process review run")
 
 	// Duplicate delivery is a no-op.
 	require.NoError(t, deliver("d1", "pull_request", body("opened", "open", 7, "h1", "owner/repo", false)))

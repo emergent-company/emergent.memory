@@ -142,6 +142,38 @@ func (c *Client) GetPullRequest(ctx context.Context, repo string, number int) (*
 	}, nil
 }
 
+// CommitFile is one changed file in a commit diff.
+type CommitFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Patch     string `json:"patch"`
+}
+
+// CommitDiff is the diff and metadata for one commit SHA.
+type CommitDiff struct {
+	SHA     string       `json:"sha"`
+	Message string       `json:"-"`
+	Files   []CommitFile `json:"files"`
+}
+
+// GetCommit reads the diff for a specific commit. Reviewing a commit (not the
+// moving PR head) keeps the diff aligned with the reviewed SHA.
+func (c *Client) GetCommit(ctx context.Context, repo, sha string) (*CommitDiff, error) {
+	var raw struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+		Files []CommitFile `json:"files"`
+	}
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s", repo, sha), nil, &raw); err != nil {
+		return nil, err
+	}
+	return &CommitDiff{SHA: raw.SHA, Message: raw.Commit.Message, Files: raw.Files}, nil
+}
+
 // CreateReview posts an APPROVE or REQUEST_CHANGES review bound to headSHA.
 func (c *Client) CreateReview(ctx context.Context, repo string, number int, headSHA, event, body string) error {
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/pulls/%d/reviews", repo, number), map[string]any{

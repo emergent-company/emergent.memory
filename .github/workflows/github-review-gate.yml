@@ -1,0 +1,80 @@
+name: GitHub review gate
+
+# Arms the merge guard and enables auto-merge from the review bot's marker.
+#
+# The review agent posts a conversation comment:
+#
+#     Reviewed-SHA: <40-hex head>
+#     Verdict: MERGE | CHANGES_REQUESTED
+#
+# A review event alone cannot re-run `merge-guard` (it triggers on
+# pull_request_target push/reopen events), and the wrapper reads issue comments.
+# This workflow is the bridge: when the configured review bot comments a marker
+# for the current head, it dispatches a fresh guard run and enables auto-merge;
+# a rejection disables auto-merge.
+#
+# Trust: `GITHUB_REVIEW_BOT_LOGIN` is a repository variable naming the review
+# App's bot login (e.g. `memory-reviewer[bot]`). The App's immutable user id must
+# also be in `MERGE_GUARD_TRUSTED_USER_IDS`, so the guard itself accepts the
+# marker. Both gates are required; this workflow never trusts a human-commenter.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  gate:
+    name: Review gate
+    if: ${{ github.event.issue.pull_request != null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Arm or disable from the bot marker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+          BOT_LOGIN: ${{ vars.GITHUB_REVIEW_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${BOT_LOGIN:-}" ]]; then
+            echo "GITHUB_REVIEW_BOT_LOGIN is unset; review gate is disabled"
+            exit 0
+          fi
+          if [[ "${AUTHOR}" != "${BOT_LOGIN}" ]]; then
+            exit 0
+          fi
+
+          sha=$(printf '%s\n' "${BODY}" | sed -n 's/^Reviewed-SHA: \([0-9a-f]\{40\}\)[[:space:]]*$/\1/p' | tail -1)
+          verdict=$(printf '%s\n' "${BODY}" | sed -n 's/^Verdict: \([A-Za-z_][A-Za-z_ ]*\)[[:space:]]*$/\1/p' | tail -1)
+          if [[ -z "${sha}" || -z "${verdict}" ]]; then
+            exit 0
+          fi
+
+          head=$(gh pr view "${PR}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')
+          if [[ "${sha}" != "${head}" ]]; then
+            echo "marker ${sha} does not name the head ${head}; ignoring"
+            exit 0
+          fi
+
+          case "${verdict^^}" in
+            MERGE)
+              gh workflow run merge-guard.yml --repo "${REPO}" -f pr="${PR}" \
+                || echo "warning: could not dispatch merge-guard"
+              gh pr merge "${PR}" --repo "${REPO}" --auto --squash \
+                || echo "warning: could not enable auto-merge"
+              ;;
+            CHANGES_REQUESTED)
+              gh pr merge "${PR}" --repo "${REPO}" --disable-auto || true
+              ;;
+            *)
+              echo "unknown verdict ${verdict}; ignoring"
+              ;;
+          esac

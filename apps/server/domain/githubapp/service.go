@@ -429,7 +429,10 @@ func (s *Service) handlePullRequest(ctx context.Context, v *VerifiedDelivery) er
 		Queue:           defaultQueue(inst.Queue),
 		TriggerMessage:  &message,
 		TriggerMetadata: metadata,
-		TrustedInternal: false,
+		// The webhook is HMAC-verified server ingress. The review run needs
+		// trusted in-process authority to call the GitHub review tools; PR
+		// content is still treated as untrusted data by the agent prompt.
+		TrustedInternal: true,
 	})
 	if err != nil {
 		return fmt.Errorf("githubapp: enqueue review run: %w", err)
