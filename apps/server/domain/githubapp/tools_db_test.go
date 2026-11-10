@@ -61,7 +61,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 		case r.URL.Path == "/app/installations/42/access_tokens":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_test", "expires_at": time.Now().Add(time.Hour)})
-		case r.URL.Path == "/repos/owner/repo/commits/head-sha":
+		case r.URL.Path == "/repos/owner/repo/commits/abc1234":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"sha": "abc1234", "commit": map[string]any{"message": "fix"},
 				"files": []map[string]any{{"filename": "a.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@"}},
