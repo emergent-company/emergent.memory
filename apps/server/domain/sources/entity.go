@@ -118,7 +118,10 @@ type Source struct {
 	CredentialID *uuid.UUID `bun:"credential_id,type:uuid" json:"credentialId,omitempty"`
 	// McpSlug is the immutable MCP server/tool-name segment for this source.
 	// Null for providers that do not expose source-backed MCP tools.
-	McpSlug             *string        `bun:"mcp_slug" json:"mcpSlug,omitempty"`
+	McpSlug *string `bun:"mcp_slug" json:"mcpSlug,omitempty"`
+	// OAuthAppID references the named, vendor-level OAuth app this source uses.
+	// NULL means resolve from the sole project/org app or the deployment default.
+	OAuthAppID *uuid.UUID `bun:"oauth_app_id,type:uuid" json:"oauthAppId,omitempty"`
 	SyncPolicy          string         `bun:"sync_policy,notnull" json:"syncPolicy"`
 	SyncIntervalMinutes *int           `bun:"sync_interval_minutes" json:"syncIntervalMinutes,omitempty"`
 	Cursor              map[string]any `bun:"cursor,type:jsonb,notnull" json:"cursor"`
@@ -279,7 +282,11 @@ type Integration struct {
 	// CredentialID names the project-scoped saved credential backing this
 	// source, when it uses one. Omitted for legacy sources whose credentials
 	// were stored inline. It is a reference, not secret material.
-	CredentialID *string   `json:"credentialId,omitempty"`
+	CredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID/OAuthAppName name the vendor-level OAuth app the source uses.
+	// OAuthAppID is empty when the source resolves to the deployment default.
+	OAuthAppID   *string   `json:"oauthAppId,omitempty"`
+	OAuthAppName string    `json:"oauthAppName,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
@@ -311,6 +318,9 @@ type CreateIntegrationRequest struct {
 	// SavedCredentialID references a project-scoped saved credential. When set,
 	// the source references it instead of storing an inline credential copy.
 	SavedCredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID selects the named OAuth app this source uses. Empty lets the
+	// resolver pick the sole project/org app or the deployment default.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 	// AllowIncompleteConfig lets a caller (the OAuth callback) create a source
 	// whose config is missing its sync target (folder_id/repo). The target is
 	// selected after consent and applied via a later update, so config
@@ -329,6 +339,9 @@ type UpdateIntegrationRequest struct {
 	// SavedCredentialID references a project-scoped saved credential. An empty
 	// string clears the reference and returns the source to its inline blob.
 	SavedCredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID selects the named OAuth app. An empty string clears the explicit
+	// selection and returns the source to automatic resolution.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 }
 
 // TestConfigRequest mirrors pkg/sdk/datasources.TestConfigRequest.

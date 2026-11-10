@@ -58,6 +58,17 @@ func (s *Service) ListOrgOAuthClients(ctx context.Context, orgID uuid.UUID, user
 	}
 	out := make([]*OAuthClientConfigDTO, 0, len(rows))
 	for _, row := range rows {
+		if _, ok := s.orgAppStore(); ok {
+			vendor := s.appVendor(row)
+			for _, p := range s.vendorProviders(vendor) {
+				dto, derr := s.legacyDTO(ctx, row, p.Catalog().Type)
+				if derr != nil {
+					return nil, derr
+				}
+				out = append(out, dto)
+			}
+			continue
+		}
 		dto, err := s.toOAuthClientDTO(row)
 		if err != nil {
 			return nil, err
@@ -76,6 +87,21 @@ func (s *Service) GetOrgOAuthClient(ctx context.Context, orgID uuid.UUID, userID
 	}
 	if _, err := s.oauthProvider(providerType); err != nil {
 		return nil, err
+	}
+	if st, ok := s.orgAppStore(); ok {
+		vendor, _, _ := s.vendorForProvider(providerType)
+		apps, lerr := st.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+		if lerr != nil {
+			return nil, lerr
+		}
+		switch len(apps) {
+		case 0:
+			return &OAuthClientConfigDTO{ProviderType: providerType, Configured: false}, nil
+		case 1:
+			return s.legacyDTO(ctx, apps[0], providerType)
+		default:
+			return nil, ambiguousAppConflict(vendor, apps)
+		}
 	}
 	row, err := s.orgStore().GetOAuthClientConfig(ctx, orgID, providerType)
 	if err != nil {
@@ -96,6 +122,43 @@ func (s *Service) UpsertOrgOAuthClient(ctx context.Context, orgID uuid.UUID, use
 	}
 	if _, err := s.oauthProvider(providerType); err != nil {
 		return nil, err
+	}
+	if st, ok := s.orgAppStore(); ok {
+		vendor, vendorName, _ := s.vendorForProvider(providerType)
+		apps, lerr := st.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+		if lerr != nil {
+			return nil, lerr
+		}
+		cfg := OAuthProviderConfig{Scopes: req.Scopes, Strategy: strings.TrimSpace(req.Strategy)}
+		switch len(apps) {
+		case 0:
+			dto, cerr := s.CreateOrgOAuthApp(ctx, orgID, userID, &CreateOAuthAppRequest{
+				Name:            vendorName,
+				Vendor:          vendor,
+				ClientID:        req.ClientID,
+				ClientSecret:    req.ClientSecret,
+				ProviderConfigs: map[string]OAuthProviderConfig{providerType: cfg},
+				Config:          req.Config,
+			})
+			if cerr != nil {
+				return nil, cerr
+			}
+			return s.legacyFromAppDTO(dto, providerType), nil
+		case 1:
+			clientID := strings.TrimSpace(req.ClientID)
+			dto, uerr := s.UpdateOrgOAuthApp(ctx, orgID, userID, apps[0].ID.String(), &UpdateOAuthAppRequest{
+				ClientID:        &clientID,
+				ClientSecret:    req.ClientSecret,
+				ProviderConfigs: mergeProviderConfig(apps[0].ProviderConfigs, providerType, cfg),
+				Config:          req.Config,
+			})
+			if uerr != nil {
+				return nil, uerr
+			}
+			return s.legacyFromAppDTO(dto, providerType), nil
+		default:
+			return nil, ambiguousAppConflict(vendor, apps)
+		}
 	}
 	clientID := strings.TrimSpace(req.ClientID)
 	if clientID == "" {
@@ -131,13 +194,19 @@ func (s *Service) UpsertOrgOAuthClient(ctx context.Context, orgID uuid.UUID, use
 		return nil, err
 	}
 
+	vendor, vendorName, _ := s.vendorForProvider(providerType)
 	saved, err := s.orgStore().UpsertOAuthClientConfig(ctx, &OAuthClientConfig{
 		OrganizationID:  orgID,
+		Vendor:          vendor,
+		Name:            vendorName,
 		Provider:        providerType,
 		EncryptedClient: blob,
 		Scopes:          req.Scopes,
 		Strategy:        strings.TrimSpace(req.Strategy),
-		Config:          req.Config,
+		ProviderConfigs: map[string]OAuthProviderConfig{
+			providerType: {Scopes: req.Scopes, Strategy: strings.TrimSpace(req.Strategy)},
+		},
+		Config: req.Config,
 	})
 	if err != nil {
 		return nil, err
@@ -150,6 +219,21 @@ func (s *Service) UpsertOrgOAuthClient(ctx context.Context, orgID uuid.UUID, use
 func (s *Service) DeleteOrgOAuthClient(ctx context.Context, orgID uuid.UUID, userID, providerType string) error {
 	if err := s.requireOrgAdmin(ctx, orgID, userID); err != nil {
 		return err
+	}
+	if st, ok := s.orgAppStore(); ok {
+		vendor, _, _ := s.vendorForProvider(providerType)
+		apps, lerr := st.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+		if lerr != nil {
+			return lerr
+		}
+		switch len(apps) {
+		case 0:
+			return apperror.ErrNotFound
+		case 1:
+			return s.DeleteOrgOAuthApp(ctx, orgID, userID, apps[0].ID.String())
+		default:
+			return ambiguousAppConflict(vendor, apps)
+		}
 	}
 	return s.orgStore().DeleteOAuthClientConfig(ctx, orgID, providerType)
 }
@@ -168,6 +252,17 @@ func (s *Service) ListProjectOAuthClients(ctx context.Context, projectID uuid.UU
 	}
 	out := make([]*OAuthClientConfigDTO, 0, len(rows))
 	for _, row := range rows {
+		if _, ok := s.projectAppStore(); ok {
+			vendor := s.appVendor(row)
+			for _, p := range s.vendorProviders(vendor) {
+				dto, derr := s.legacyDTO(ctx, row, p.Catalog().Type)
+				if derr != nil {
+					return nil, derr
+				}
+				out = append(out, dto)
+			}
+			continue
+		}
 		dto, err := s.toOAuthClientDTO(row)
 		if err != nil {
 			return nil, err
@@ -186,6 +281,21 @@ func (s *Service) GetProjectOAuthClient(ctx context.Context, projectID uuid.UUID
 	}
 	if _, err := s.oauthProvider(providerType); err != nil {
 		return nil, err
+	}
+	if st, ok := s.projectAppStore(); ok {
+		vendor, _, _ := s.vendorForProvider(providerType)
+		apps, lerr := st.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
+		if lerr != nil {
+			return nil, lerr
+		}
+		switch len(apps) {
+		case 0:
+			return &OAuthClientConfigDTO{ProviderType: providerType, Configured: false}, nil
+		case 1:
+			return s.legacyDTO(ctx, apps[0], providerType)
+		default:
+			return nil, ambiguousAppConflict(vendor, apps)
+		}
 	}
 	row, err := s.projectStore().GetProjectOAuthClientConfig(ctx, projectID, providerType)
 	if err != nil {
@@ -206,6 +316,43 @@ func (s *Service) UpsertProjectOAuthClient(ctx context.Context, projectID uuid.U
 	}
 	if _, err := s.oauthProvider(providerType); err != nil {
 		return nil, err
+	}
+	if st, ok := s.projectAppStore(); ok {
+		vendor, vendorName, _ := s.vendorForProvider(providerType)
+		apps, lerr := st.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
+		if lerr != nil {
+			return nil, lerr
+		}
+		cfg := OAuthProviderConfig{Scopes: req.Scopes, Strategy: strings.TrimSpace(req.Strategy)}
+		switch len(apps) {
+		case 0:
+			dto, cerr := s.CreateProjectOAuthApp(ctx, projectID, userID, &CreateOAuthAppRequest{
+				Name:            vendorName,
+				Vendor:          vendor,
+				ClientID:        req.ClientID,
+				ClientSecret:    req.ClientSecret,
+				ProviderConfigs: map[string]OAuthProviderConfig{providerType: cfg},
+				Config:          req.Config,
+			})
+			if cerr != nil {
+				return nil, cerr
+			}
+			return s.legacyFromAppDTO(dto, providerType), nil
+		case 1:
+			clientID := strings.TrimSpace(req.ClientID)
+			dto, uerr := s.UpdateProjectOAuthApp(ctx, projectID, userID, apps[0].ID.String(), &UpdateOAuthAppRequest{
+				ClientID:        &clientID,
+				ClientSecret:    req.ClientSecret,
+				ProviderConfigs: mergeProviderConfig(apps[0].ProviderConfigs, providerType, cfg),
+				Config:          req.Config,
+			})
+			if uerr != nil {
+				return nil, uerr
+			}
+			return s.legacyFromAppDTO(dto, providerType), nil
+		default:
+			return nil, ambiguousAppConflict(vendor, apps)
+		}
 	}
 	clientID := strings.TrimSpace(req.ClientID)
 	if clientID == "" {
@@ -248,14 +395,20 @@ func (s *Service) UpsertProjectOAuthClient(ctx context.Context, projectID uuid.U
 		return nil, err
 	}
 
+	vendor, vendorName, _ := s.vendorForProvider(providerType)
 	saved, err := s.projectStore().UpsertProjectOAuthClientConfig(ctx, &OAuthClientConfig{
 		OrganizationID:  orgID,
 		ProjectID:       &projectID,
+		Vendor:          vendor,
+		Name:            vendorName,
 		Provider:        providerType,
 		EncryptedClient: blob,
 		Scopes:          req.Scopes,
 		Strategy:        strings.TrimSpace(req.Strategy),
-		Config:          req.Config,
+		ProviderConfigs: map[string]OAuthProviderConfig{
+			providerType: {Scopes: req.Scopes, Strategy: strings.TrimSpace(req.Strategy)},
+		},
+		Config: req.Config,
 	})
 	if err != nil {
 		return nil, err
@@ -269,14 +422,146 @@ func (s *Service) DeleteProjectOAuthClient(ctx context.Context, projectID uuid.U
 	if err := s.requireProjectAdmin(ctx, projectID, userID); err != nil {
 		return err
 	}
+	if st, ok := s.projectAppStore(); ok {
+		vendor, _, _ := s.vendorForProvider(providerType)
+		apps, lerr := st.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
+		if lerr != nil {
+			return lerr
+		}
+		switch len(apps) {
+		case 0:
+			return apperror.ErrNotFound
+		case 1:
+			return s.DeleteProjectOAuthApp(ctx, projectID, userID, apps[0].ID.String())
+		default:
+			return ambiguousAppConflict(vendor, apps)
+		}
+	}
 	return s.projectStore().DeleteProjectOAuthClientConfig(ctx, projectID, providerType)
 }
 
 // ---- resolution + helpers ----
 
-// resolveOAuthClient resolves the OAuth client for a provider for a project:
-// project config → org config → deployment-default env → actionable error
-// (design D3).
+// resolveOAuthClient resolves the OAuth client for a provider and project. When
+// the store supports named apps, selection is: explicit app → sole project app
+// for the vendor → sole org app for the vendor → deployment default → actionable
+// error. Stores that only implement the legacy per-provider interface keep the
+// old project → org → deployment path.
+func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, providerType string, appID *uuid.UUID) (OAuthClient, error) {
+	_, hasProjectApps := s.projectAppStore()
+	_, hasOrgApps := s.orgAppStore()
+	if !hasProjectApps && !hasOrgApps {
+		return s.resolveOAuthClientLegacy(ctx, projectID, providerType)
+	}
+
+	vendor, _, ok := s.vendorForProvider(providerType)
+	if !ok {
+		return OAuthClient{}, apperror.NewValidation("unsupported providerType: " + providerType)
+	}
+
+	if appID != nil {
+		row, err := s.getVisibleApp(ctx, projectID, *appID)
+		if err != nil {
+			return OAuthClient{}, err
+		}
+		if s.appVendor(row) != vendor {
+			return OAuthClient{}, apperror.NewValidation("OAuth app " + appID.String() + " belongs to vendor " + s.appVendor(row) + ", not " + vendor)
+		}
+		return s.clientFromApp(row, providerType, s.orgStrategyForVendor(ctx, projectID, vendor, providerType))
+	}
+
+	if pst, ok := s.projectAppStore(); ok {
+		apps, err := pst.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
+		if err != nil {
+			return OAuthClient{}, err
+		}
+		if len(apps) == 1 {
+			return s.clientFromApp(apps[0], providerType, s.orgStrategyForVendor(ctx, projectID, vendor, providerType))
+		}
+		if len(apps) > 1 {
+			return OAuthClient{}, ambiguousAppError(vendor, apps)
+		}
+	}
+
+	if ost, ok := s.orgAppStore(); ok {
+		orgID, err := s.orgStore().ResolveOrgID(ctx, projectID)
+		switch {
+		case err == nil:
+			apps, lerr := ost.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+			if lerr != nil {
+				return OAuthClient{}, lerr
+			}
+			if len(apps) == 1 {
+				return s.clientFromApp(apps[0], providerType, "")
+			}
+			if len(apps) > 1 {
+				return OAuthClient{}, ambiguousAppError(vendor, apps)
+			}
+		case !errors.Is(err, apperror.ErrNotFound):
+			return OAuthClient{}, err
+		}
+	}
+
+	if c, ok := s.oauthClients[providerType]; ok && c.ClientID != "" && c.ClientSecret != "" {
+		return c, nil
+	}
+	return OAuthClient{}, s.missingOAuthClientError(providerType)
+}
+
+// ambiguousAppError tells the caller to choose one of several applicable apps.
+func ambiguousAppError(vendor string, apps []*OAuthClientConfig) error {
+	names := make([]string, 0, len(apps))
+	for _, app := range apps {
+		names = append(names, app.Name)
+	}
+	return apperror.NewValidation("multiple OAuth apps configured for " + vendor + " (" + strings.Join(names, ", ") + "): choose one by setting oauthAppId")
+}
+
+// getVisibleApp loads an app the project may use: a project app owned by the
+// project, or an org app owned by the project's organization.
+func (s *Service) getVisibleApp(ctx context.Context, projectID, appID uuid.UUID) (*OAuthClientConfig, error) {
+	if pst, ok := s.projectAppStore(); ok {
+		if row, err := pst.GetProjectOAuthClientConfigByID(ctx, projectID, appID); err == nil {
+			return row, nil
+		} else if !errors.Is(err, apperror.ErrNotFound) {
+			return nil, err
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		orgID, err := s.orgStore().ResolveOrgID(ctx, projectID)
+		if err == nil {
+			if row, gerr := ost.GetOAuthClientConfigByID(ctx, orgID, appID); gerr == nil {
+				return row, nil
+			} else if !errors.Is(gerr, apperror.ErrNotFound) {
+				return nil, gerr
+			}
+		} else if !errors.Is(err, apperror.ErrNotFound) {
+			return nil, err
+		}
+	}
+	return nil, apperror.NewValidation("OAuth app not found in this project or its organization")
+}
+
+// orgStrategyForVendor returns the strategy the org app for a vendor applies to
+// a provider, or "". Used when a project app has no explicit strategy.
+func (s *Service) orgStrategyForVendor(ctx context.Context, projectID uuid.UUID, vendor, providerType string) string {
+	ost, ok := s.orgAppStore()
+	if !ok {
+		return ""
+	}
+	orgID, err := s.orgStore().ResolveOrgID(ctx, projectID)
+	if err != nil {
+		return ""
+	}
+	apps, err := ost.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+	if err != nil || len(apps) != 1 {
+		return ""
+	}
+	return appProviderConfig(apps[0], providerType).Strategy
+}
+
+// resolveOAuthClientLegacy is the pre-app resolution path, kept for stores that
+// only implement the per-provider interface.
 //
 // Scope-strategy resolution order (design D6), per client:
 //  1. explicit scopes (stored on the winning row) win outright;
@@ -284,7 +569,7 @@ func (s *Service) DeleteProjectOAuthClient(ctx context.Context, projectID uuid.U
 //  3. an empty project-row strategy inherits the org row's strategy for the
 //     same provider (only the strategy is inherited — project credentials win);
 //  4. when neither supplies a strategy, the provider default applies.
-func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, providerType string) (OAuthClient, error) {
+func (s *Service) resolveOAuthClientLegacy(ctx context.Context, projectID uuid.UUID, providerType string) (OAuthClient, error) {
 	// Project override wins; it is keyed by projectID directly (no org
 	// resolution).
 	if s.projectOAuth != nil {
@@ -409,8 +694,8 @@ func (s *Service) orgStrategyForProject(ctx context.Context, projectID uuid.UUID
 // strategy whose scopes the client carries, otherwise "" (the provider default
 // applies). It never fails — a missing or unreadable OAuth client means the
 // deployment default, which is what the authorize request would use too.
-func (s *Service) effectiveOAuthStrategy(ctx context.Context, projectID uuid.UUID, providerType string) string {
-	client, err := s.resolveOAuthClient(ctx, projectID, providerType)
+func (s *Service) effectiveOAuthStrategy(ctx context.Context, projectID uuid.UUID, providerType string, appID *uuid.UUID) string {
+	client, err := s.resolveOAuthClient(ctx, projectID, providerType, appID)
 	if err != nil {
 		return ""
 	}

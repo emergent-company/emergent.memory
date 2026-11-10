@@ -242,6 +242,8 @@ type fakeMemory struct {
 	dsLastOAuthConfig            map[string]any            // last config passed to StartDSOAuth
 	dsLastOAuthReconnectSourceID string                    // last reconnect source id passed to StartDSOAuth
 	dsOrgOAuthClients            []DSOAuthClientConfig     // returned by List/GetDSOAuthClient
+	dsOrgOAuthApps               []DSOAuthApp              // returned by ListOrgDSOAuthApps
+	dsProjectOAuthApps           []DSOAuthApp              // returned by ListProjectDSOAuthApps
 	dsOrgOAuthClientErr          error                     // any org OAuth-client method failure
 	dsUpsertedOAuthReq           *DSSetOAuthClientRequest  // last request passed to UpsertDSOAuthClient
 	dsUpsertedOAuthOrg           string                    // last org id passed to UpsertDSOAuthClient
@@ -5060,7 +5062,7 @@ func (f *fakeMemory) CancelDSSyncJob(ctx context.Context, id, jobID string) (*DS
 	return &DSCancelSyncJobResponse{Success: true, Message: "cancelled"}, nil
 }
 
-func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
+func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, oauthAppID, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
 	f.dsLastOAuthProvider = providerType
 	f.dsLastOAuthConfig = config
 	f.dsLastOAuthReconnectSourceID = reconnectSourceID
@@ -5196,4 +5198,50 @@ func (f *fakeMemory) PreviewDSScope(ctx context.Context, id string, req *DSScope
 
 func (f *fakeMemory) UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error) {
 	return &DSScopePreview{PreviewHash: previewHash, BaseScopeHash: baseScopeHash, Changed: true}, nil
+}
+
+
+func (f *fakeMemory) ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error) {
+	if f.dsOrgOAuthApps != nil {
+		return f.dsOrgOAuthApps, nil
+	}
+	return nil, nil
+}
+func (f *fakeMemory) CreateOrgDSOAuthApp(ctx context.Context, orgID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error) {
+	return &DSOAuthApp{}, nil
+}
+func (f *fakeMemory) GetOrgDSOAuthApp(ctx context.Context, orgID, appID string) (*DSOAuthApp, error) {
+	for i := range f.dsOrgOAuthApps {
+		if f.dsOrgOAuthApps[i].ID == appID {
+			return &f.dsOrgOAuthApps[i], nil
+		}
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Code: "not_found"}
+}
+func (f *fakeMemory) UpdateOrgDSOAuthApp(ctx context.Context, orgID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error) {
+	return &DSOAuthApp{}, nil
+}
+func (f *fakeMemory) DeleteOrgDSOAuthApp(ctx context.Context, orgID, appID string) error { return nil }
+func (f *fakeMemory) ListProjectDSOAuthApps(ctx context.Context, projectID string) ([]DSOAuthApp, error) {
+	if f.dsProjectOAuthApps != nil {
+		return f.dsProjectOAuthApps, nil
+	}
+	return nil, nil
+}
+func (f *fakeMemory) CreateProjectDSOAuthApp(ctx context.Context, projectID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error) {
+	return &DSOAuthApp{}, nil
+}
+func (f *fakeMemory) GetProjectDSOAuthApp(ctx context.Context, projectID, appID string) (*DSOAuthApp, error) {
+	for i := range f.dsProjectOAuthApps {
+		if f.dsProjectOAuthApps[i].ID == appID {
+			return &f.dsProjectOAuthApps[i], nil
+		}
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Code: "not_found"}
+}
+func (f *fakeMemory) UpdateProjectDSOAuthApp(ctx context.Context, projectID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error) {
+	return &DSOAuthApp{}, nil
+}
+func (f *fakeMemory) DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error {
+	return nil
 }

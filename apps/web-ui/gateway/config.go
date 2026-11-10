@@ -150,6 +150,13 @@ type Config struct {
 	// (self-hosted gateways such as litellm). Empty = strict public-only
 	// (SSRF guard default).
 	ProviderProbeAllow []string
+
+	// TrustedProxyCIDRs (TRUSTED_PROXY_CIDRS, comma-separated) names the
+	// networks a forwarding proxy connects from. c.RealIP() reads
+	// X-Forwarded-For only when the socket peer is inside one of them,
+	// resolving the right-most untrusted hop; empty = fail closed on the socket
+	// peer address and ignore forwarded headers. See ip_trust.go and issue #26.
+	TrustedProxyCIDRs []string
 }
 
 func LoadConfig() Config {
@@ -222,6 +229,7 @@ func LoadConfig() Config {
 		GitHubReviewRepos:   os.Getenv("GITHUB_REVIEW_REPOS"),
 		AgentTriggerToken:   os.Getenv("AGENT_TRIGGER_TOKEN"),
 		ProviderProbeAllow:  splitCSV(os.Getenv("PROVIDER_PROBE_ALLOW")),
+		TrustedProxyCIDRs:   splitCSV(os.Getenv("TRUSTED_PROXY_CIDRS")),
 	}
 }
 
@@ -349,6 +357,11 @@ func (c Config) Validate() error {
 	// which is invisible to GitHub and unretryable. Fail fast instead.
 	if c.GitHubWebhookSecret != "" && c.AgentTriggerToken == "" {
 		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is set but AGENT_TRIGGER_TOKEN is empty")
+	}
+	// A malformed TRUSTED_PROXY_CIDRS entry must be a boot error: silently
+	// ignoring it would change which peer may set the rate-limit key.
+	if _, err := parseTrustedProxyCIDRs(c.TrustedProxyCIDRs); err != nil {
+		return err
 	}
 	return nil
 }

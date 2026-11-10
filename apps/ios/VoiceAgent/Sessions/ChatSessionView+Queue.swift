@@ -57,10 +57,16 @@ extension ChatSessionView {
     /// target must outlive `start()`: `@State` owns the pump, and the hook only
     /// holds it weakly.
     func attachQueuePump() {
+        // Captured by value here rather than through `self`: the hook is stored
+        // by the transport and must not reach back into the view.
+        let planStore = plan
         queuePump = ChatQueuePump.install(
             on: transport,
             queue: queue,
-            sender: makeQueueSender()
+            sender: makeQueueSender(),
+            // A finished turn is when the agent writes or advances its plan, so
+            // the plan card refreshes here as well as on a refresh frame (#440).
+            alsoOnTurnFinished: { planStore.refresh() }
         )
     }
 
@@ -114,24 +120,40 @@ final class ChatQueuePump {
     /// The pump owns the sender: the hook only points here weakly, so a sender
     /// held by a caller's local would die with the call that built it.
     private let sender: ChatQueueSender
+    /// A second listener on the same turn-end hook (the plan card, #440).
+    private let alsoOnTurnFinished: (() -> Void)?
 
-    private init(queue: ChatQueueStore, sender: ChatQueueSender) {
+    private init(
+        queue: ChatQueueStore,
+        sender: ChatQueueSender,
+        alsoOnTurnFinished: (() -> Void)?
+    ) {
         self.queue = queue
         self.sender = sender
+        self.alsoOnTurnFinished = alsoOnTurnFinished
     }
 
     /// Builds the session's pump and hooks it to the transport.
     ///
     /// The returned object owns both the sender and the queue and must outlive
     /// the call; the hook holds it weakly, so it stays alive only while the view
-    /// keeps it.
+    /// keeps it. `alsoOnTurnFinished` runs after the queue releases its row, for
+    /// the other listeners a turn's end has (the plan card).
     static func install(
         on transport: HTTPChatTransport,
         queue: ChatQueueStore,
-        sender: ChatQueueSender
+        sender: ChatQueueSender,
+        alsoOnTurnFinished: (() -> Void)? = nil
     ) -> ChatQueuePump {
-        let pump = ChatQueuePump(queue: queue, sender: sender)
-        transport.onTurnFinished = { [weak pump] in pump?.releaseOneRow() }
+        let pump = ChatQueuePump(
+            queue: queue,
+            sender: sender,
+            alsoOnTurnFinished: alsoOnTurnFinished
+        )
+        transport.onTurnFinished = { [weak pump] in
+            pump?.releaseOneRow()
+            pump?.alsoOnTurnFinished?()
+        }
         return pump
     }
 

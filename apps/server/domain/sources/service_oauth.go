@@ -36,6 +36,10 @@ const oauthAccountEmailKey = "oauth_account_email"
 // user-submitted config; edits preserve it.
 const oauthGrantedScopesKey = "oauth_granted_scopes"
 
+// oauthPendingAppKey is the reserved pending-state config key carrying the
+// named OAuth app the flow uses. It is stripped before the source is stored.
+const oauthPendingAppKey = "_oauth_app_id"
+
 // StartOAuthRequest carries the inputs for starting an OAuth connect.
 type StartOAuthRequest struct {
 	UserID *uuid.UUID
@@ -44,6 +48,9 @@ type StartOAuthRequest struct {
 	// when the callback creates the source.
 	Config map[string]any
 	Scopes []string
+	// OAuthAppID selects the named OAuth app the source uses. Empty lets the
+	// resolver pick the sole project/org app or the deployment default.
+	OAuthAppID *string
 	// ReconnectSourceID re-runs consent for an existing source instead of
 	// connecting a new one: the callback replaces that source's stored grant in
 	// place, preserving its name, config and history (#2107). Config is ignored
@@ -86,6 +93,29 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		return nil, apperror.NewInternal("generate pkce verifier", err)
 	}
 
+	// A reconnect carries the target source through the pending state so the
+	// callback can replace its grant rather than create a source. Validated here,
+	// while the caller's project scope is still known: the id arrives from the
+	// browser, so a cross-project or mismatched id must not become a flow. It
+	// also pins the source's own app, so a multi-app vendor reconnects without
+	// becoming ambiguous.
+	if req.ReconnectSourceID != nil && *req.ReconnectSourceID != uuid.Nil {
+		src, serr := s.repo.GetByID(ctx, *req.ReconnectSourceID, projectID)
+		if serr != nil {
+			return nil, serr
+		}
+		if src.Provider != providerType {
+			return nil, apperror.NewValidation("source " + src.ID.String() + " is a " + src.Provider + " source, not " + providerType)
+		}
+		cfg := map[string]any{oauthReconnectKey: src.ID.String()}
+		if src.OAuthAppID != nil {
+			appID := src.OAuthAppID.String()
+			req.OAuthAppID = &appID
+			cfg[oauthPendingAppKey] = appID
+		}
+		req.Config = cfg
+	}
+
 	// Resolve the client. Dynamic (self-registering) providers discover + DCR a
 	// client instead of reading a configured one; static providers (Google/GitHub)
 	// keep the resolveOAuthClient path byte-for-byte.
@@ -112,30 +142,22 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		// just-issued authorization code).
 		req.Config = withDynamicOAuthConfig(req.Config, dc)
 	} else {
-		client, err = s.resolveOAuthClient(ctx, projectID, providerType)
+		var appID *uuid.UUID
+		if req.OAuthAppID != nil && strings.TrimSpace(*req.OAuthAppID) != "" {
+			id, perr := uuid.Parse(strings.TrimSpace(*req.OAuthAppID))
+			if perr != nil {
+				return nil, apperror.NewValidation("invalid OAuth app id")
+			}
+			appID = &id
+		}
+		client, err = s.resolveOAuthClient(ctx, projectID, providerType, appID)
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	// A reconnect carries the target source through the pending state so the
-	// callback can replace its grant rather than create a source. Validated here,
-	// while the caller's project scope is still known: the id arrives from the
-	// browser, so a cross-project or mismatched id must not become a flow.
-	if req.ReconnectSourceID != nil && *req.ReconnectSourceID != uuid.Nil {
-		src, serr := s.repo.GetByID(ctx, *req.ReconnectSourceID, projectID)
-		if serr != nil {
-			return nil, serr
+		if appID != nil {
+			req.Config = cloneConfig(req.Config)
+			req.Config[oauthPendingAppKey] = appID.String()
 		}
-		if src.Provider != providerType {
-			return nil, apperror.NewValidation("source " + src.ID.String() + " is a " + src.Provider + " source, not " + providerType)
-		}
-		cfg := map[string]any{oauthReconnectKey: src.ID.String()}
-		// The callback still needs the discovered dynamic client, if any.
-		if v, ok := req.Config[oauthDynamicKey]; ok {
-			cfg[oauthDynamicKey] = v
-		}
-		req.Config = cfg
 	}
 
 	if err := s.repo.CreateOAuthPendingState(ctx, &OAuthPendingState{
@@ -168,7 +190,7 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 func sanitizeOAuthFlowConfig(cfg map[string]any) map[string]any {
 	out := make(map[string]any, len(cfg))
 	for k, v := range cfg {
-		if k == oauthReconnectKey || k == oauthDynamicKey {
+		if k == oauthReconnectKey || k == oauthDynamicKey || k == oauthPendingAppKey {
 			continue
 		}
 		out[k] = v
@@ -272,7 +294,15 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		}
 		dynamic = true
 	} else {
-		client, err = s.resolveOAuthClient(ctx, pending.ProjectID, pending.Provider)
+		var appID *uuid.UUID
+		if raw, ok := pending.Config[oauthPendingAppKey].(string); ok && strings.TrimSpace(raw) != "" {
+			id, perr := uuid.Parse(raw)
+			if perr != nil {
+				return nil, fail(apperror.NewValidation("oauth state carries an invalid OAuth app id"))
+			}
+			appID = &id
+		}
+		client, err = s.resolveOAuthClient(ctx, pending.ProjectID, pending.Provider, appID)
 		if err != nil {
 			return nil, fail(err)
 		}
@@ -300,6 +330,13 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	// Reserved flow keys are flow state, never source config.
 	delete(cfg, oauthDynamicKey)
 	delete(cfg, oauthReconnectKey)
+	var chosenAppID *uuid.UUID
+	if raw, ok := cfg[oauthPendingAppKey].(string); ok && strings.TrimSpace(raw) != "" {
+		if id, perr := uuid.Parse(raw); perr == nil && id != uuid.Nil {
+			chosenAppID = &id
+		}
+	}
+	delete(cfg, oauthPendingAppKey)
 	name := "Data source"
 	if v, ok := cfg["name"].(string); ok && strings.TrimSpace(v) != "" {
 		name = v
@@ -364,6 +401,16 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		if rerr != nil {
 			return nil, fail(rerr)
 		}
+		if chosenAppID != nil {
+			if serr := s.repo.SetSourceOAuthApp(ctx, src.ID, src.ProjectID, chosenAppID); serr != nil {
+				return nil, fail(serr)
+			}
+			reloaded, gerr := s.Get(ctx, src.ProjectID, src.ID)
+			if gerr != nil {
+				return nil, fail(gerr)
+			}
+			updated = reloaded
+		}
 		return &OAuthCompletion{Integration: updated, Reconnected: true}, nil
 	}
 
@@ -372,10 +419,17 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 			return nil, fail(verr)
 		}
 	}
+
+	var appIDStr *string
+	if chosenAppID != nil {
+		raw := chosenAppID.String()
+		appIDStr = &raw
+	}
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
 		Name:                  name,
 		ProviderType:          pending.Provider,
 		Config:                cfg,
+		OAuthAppID:            appIDStr,
 		AllowIncompleteConfig: true,
 	})
 	if err != nil {

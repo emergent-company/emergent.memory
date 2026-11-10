@@ -59,11 +59,23 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	installErrorHandler(e)
-	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
-	// extractor trusts loopback/private/link-local peers, so the gateway — always
-	// reached through traefik on a private network — keys rate limits (and any
-	// future RealIP() use) on the client rather than traefik's socket address.
-	e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	// Client-IP trust is explicit and configured, never echo v4's permissive
+	// default (which trusts loopback/private/link-local peers, the trust model
+	// in GHSA-246p-cpwv-v3jq / GHSA-99jh-6h7p-pp36). With TRUSTED_PROXY_CIDRS
+	// naming the proxy hop (e.g. the compose network gateway 172.18.0.1/32 in
+	// production), RealIP() resolves X-Forwarded-For to the right-most
+	// untrusted hop, so the share rate limiter keys on the real client. Unset
+	// fails closed: RealIP() is the socket peer, so a forwarded header cannot
+	// move a bucket. That is the interim mitigation for issue #26 while the
+	// echo v5 rewrite lands.
+	ipExtractor, ipTrustMode, err := newIPExtractor(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		// Config.Validate already rejected this at startup; keep the failure
+		// loud rather than falling back to a different trust model.
+		log.Fatalf("invalid %s: %v", trustedProxyEnvVar, err)
+	}
+	e.IPExtractor = ipExtractor
+	log.Printf("client IP trust: %s", ipTrustMode)
 	// Annotate every go-daisy component root with data-component="pkg/Component"
 	// so the element-level feedback overlay can name the component instead of a
 	// raw CSS selector. Always on: names only (no data-props); see componentAnnotations.
@@ -160,6 +172,10 @@ func main() {
 	api.GET("/conversations/:id/history", s.getConversationHistory)
 	api.GET("/conversations/:id/dump", s.getConversationDump)
 	api.GET("/conversations/:id/events", s.conversationEvents)
+	// The agent's plan for the conversation's ACP session, as JSON (the twin of
+	// the /partial/chat-todos fragment, issue #440). Device-reachable via
+	// deviceConversationReadPath (auth.go).
+	api.GET("/conversations/:id/todos", s.getConversationTodos)
 	// Session lifecycle (chat-conversation-lifecycle): the rail's per-row
 	// Archive / Unarchive / Delete actions. Delete is permanent and is the only
 	// irreversible one; the client confirms before calling it.
@@ -250,12 +266,22 @@ func main() {
 	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.getDSOAuthClient)
 	api.PUT("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.upsertDSOAuthClient)
 	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.deleteDSOAuthClient)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-apps", s.listDSOAuthApps)
+	api.POST("/orgs/:orgId/data-source-integrations/oauth-apps", s.createDSOAuthApp)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-apps/:appId", s.getDSOAuthApp)
+	api.PUT("/orgs/:orgId/data-source-integrations/oauth-apps/:appId", s.updateDSOAuthApp)
+	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-apps/:appId", s.deleteDSOAuthApp)
 	// Project-scoped OAuth-client config (project_admin only; the handler
 	// enforces it). A project client overrides the org-wide one.
 	api.GET("/projects/:projectId/data-source-integrations/oauth-clients", s.listProjectDSOAuthClients)
 	api.GET("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.getProjectDSOAuthClient)
 	api.PUT("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.upsertProjectDSOAuthClient)
 	api.DELETE("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.deleteProjectDSOAuthClient)
+	api.GET("/projects/:projectId/data-source-integrations/oauth-apps", s.listProjectDSOAuthApps)
+	api.POST("/projects/:projectId/data-source-integrations/oauth-apps", s.createProjectDSOAuthApp)
+	api.GET("/projects/:projectId/data-source-integrations/oauth-apps/:appId", s.getProjectDSOAuthApp)
+	api.PUT("/projects/:projectId/data-source-integrations/oauth-apps/:appId", s.updateProjectDSOAuthApp)
+	api.DELETE("/projects/:projectId/data-source-integrations/oauth-apps/:appId", s.deleteProjectDSOAuthApp)
 	api.GET("/blueprints/installed", s.listInstalledBlueprints)
 	api.GET("/blueprints/available", s.listAvailableBlueprints)
 	api.GET("/blueprints/compiled-types", s.getCompiledTypes)
@@ -556,6 +582,11 @@ func main() {
 	e.POST("/settings/credentials/saved", s.uiSavedCredentialCreate)
 	e.POST("/settings/credentials/saved/:id/update", s.uiSavedCredentialUpdate)
 	e.POST("/settings/credentials/saved/:id/delete", s.uiSavedCredentialDelete)
+	e.GET("/settings/credentials/apps/new", s.uiProjectOAuthAppNew)
+	e.POST("/settings/credentials/apps", s.uiProjectOAuthAppCreate)
+	e.GET("/settings/credentials/apps/:appId", s.uiProjectOAuthAppDetail)
+	e.POST("/settings/credentials/apps/:appId", s.uiProjectOAuthAppUpdate)
+	e.POST("/settings/credentials/apps/:appId/delete", s.uiProjectOAuthAppDelete)
 	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
 	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
 	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
@@ -663,6 +694,11 @@ func main() {
 	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
 	// Per-provider org OAuth app editor: the same shared card the project editor
 	// uses, so each provider is edited on its own page instead of a stacked form.
+	e.GET("/orgs/:id/settings/oauth-apps/new", s.uiOrgOAuthAppNew)
+	e.POST("/orgs/:id/settings/oauth-apps", s.uiOrgOAuthAppCreate)
+	e.GET("/orgs/:id/settings/oauth-apps/:appId", s.uiOrgOAuthAppDetail)
+	e.POST("/orgs/:id/settings/oauth-apps/:appId", s.uiOrgOAuthAppUpdate)
+	e.POST("/orgs/:id/settings/oauth-apps/:appId/delete", s.uiOrgOAuthAppDelete)
 	e.GET("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientDetail)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
