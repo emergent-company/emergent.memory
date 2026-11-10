@@ -14,8 +14,12 @@ extension ChatTimelineStore {
             apply(activity)
         case let .citations(citations):
             setCitations(citations)
-        case .failure, .done:
+        case let .failure(message):
             closeReasoning()
+            closeLiveRun(status: "failed", error: message)
+        case .done:
+            closeReasoning()
+            closeLiveRun(status: "completed", error: nil)
         case let .replay(events):
             for event in events {
                 apply(event)
@@ -60,6 +64,30 @@ extension ChatTimelineStore {
                 citations: ChatCitation.deduplicated(existing + citations)
             )
         )
+    }
+
+    /// Closes the live run's window when the turn ends, so its footer can draw
+    /// without waiting for the recorded history reload. The stream forwards no
+    /// model, so the line gains one only after the record lands; the end time
+    /// and duration are the client's own, which is all a live run can know.
+    private func closeLiveRun(status: String, error: String?) {
+        guard let end = claimLiveRunEnd() else { return }
+        let id = "live-run-end-\(end.id)"
+        // A replayed terminal frame must not stack a second window, even if a
+        // replayed `meta` reopened the run.
+        guard !items.contains(where: { $0.id == id }) else { return }
+        appendRow(TimelineItem(
+            id: id,
+            runID: end.id,
+            createdAt: now(),
+            kind: .runBoundary(RunWindow(
+                id: end.id,
+                status: status,
+                startedAt: end.startedAt,
+                completedAt: now(),
+                error: error
+            ))
+        ))
     }
 
     /// The user's own turn, added optimistically while the request is in flight

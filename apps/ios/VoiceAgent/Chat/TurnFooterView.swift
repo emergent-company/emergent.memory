@@ -1,18 +1,16 @@
 import SwiftUI
 
 /// A finished turn's footer: model, wall-clock duration, end time, and a
-/// "Copy turn" action — drawn only when the turn's run carries all three.
+/// "Copy turn" action — drawn only when the turn's run carries an end boundary.
 ///
-/// Nothing mounts this yet. The run data is blocked on the history timeline
-/// (`emergent.memory#431` for the route, `emergent.memory#435` for the decode),
-/// and a live stream carries no model or duration either. Until then the view
-/// is invisible by construction: `run` is nil, and even a partial run renders
-/// nothing rather than a footer that cannot be interpreted and would vanish on
-/// reload.
+/// `ChatTimelineView` places it on the last reply of each ended run, the same
+/// one-footer-per-turn rule as the web's `attachTurnFooters`; the run-boundary
+/// rows themselves are never drawn. A run with no end boundary (still going, or
+/// never recorded one) has no footer.
 struct TurnFooterView: View {
-    /// The turn's run, when the transport can supply one.
+    /// The turn's run, once its record has both boundaries.
     let run: TurnRunInfo?
-    /// What "Copy turn" writes: the reply's plain text.
+    /// What "Copy turn" writes: that reply's plain text.
     let text: () -> String
     var timeZone: TimeZone = .current
     var locale: Locale = .current
@@ -45,7 +43,7 @@ struct TurnFooterView: View {
             ),
             text: { "The reply's text." }
         )
-        // Renders nothing: the data plumbing is not here yet.
+        // Renders nothing: this turn has no run window.
         TurnFooterView(run: nil, text: { "" })
     }
     .padding()

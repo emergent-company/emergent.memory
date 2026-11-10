@@ -34,7 +34,9 @@ struct ChatTimelineLiveTests {
         let fromRecord = Fixture.drawn(recorded)
         let live = store.items
 
-        #expect(Fixture.labels(live) == Fixture.labels(fromRecord))
+        // `.done` now appends the run's end boundary (the turn footer's window),
+        // which draws no row — compare what the chat draws, not the raw store.
+        #expect(Fixture.labels(Fixture.drawn(live)) == Fixture.labels(fromRecord))
         #expect(Fixture.assistantTexts(live) == Fixture.assistantTexts(fromRecord))
         #expect(Fixture.reasoningTexts(live) == Fixture.reasoningTexts(fromRecord))
         #expect(Fixture.toolIDs(live) == Fixture.toolIDs(fromRecord))
