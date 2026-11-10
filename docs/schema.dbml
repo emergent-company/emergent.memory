@@ -2756,6 +2756,34 @@ Table "kb"."source_objects" {
   }
 }
 
+Table "kb"."source_outcome_sequences" {
+  "project_id" uuid [pk]
+  "last_seq" bigint [not null, default: 0]
+}
+
+Table "kb"."source_outcomes" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "subject_kind" text [not null, default: 'object']
+  "external_id" text [not null]
+  "state" text [not null]
+  "canonical_id" uuid
+  "external_revision" text [not null, default: '']
+  "external_revision_seq" bigint [not null, default: 0]
+  "generation" bigint [not null, default: 0]
+  "adopted_by_source_id" uuid
+  "reason" text [not null, default: '']
+  "seq" bigint [not null]
+  "first_seen_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, source_id, seq) [name: "idx_source_outcomes_cursor"]
+    (project_id, source_id, external_id) [name: "uq_source_outcomes_record", unique]
+  }
+}
+
 Table "kb"."source_sync_jobs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "status" text [not null, default: 'pending']
@@ -3136,6 +3164,8 @@ Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_grants"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_objects"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_outcomes"."adopted_by_source_id" > "kb"."sources"."id"
+Ref: "kb"."source_outcomes"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."sources"."oauth_app_id" > "kb"."oauth_client_configs"."id"
