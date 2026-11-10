@@ -15,10 +15,10 @@ struct ToolActivityGroupingTests {
 
     @Test @MainActor func groupViewBuildsForOneStepAndMany() {
         // One step keeps the plain chip; the view must build either way.
-        _ = ToolActivityGroup(tools: [tool("entity-search")], turnID: UUID())
+        _ = ToolActivityGroup(tools: [tool("entity-search")], groupID: "group")
         _ = ToolActivityGroup(
             tools: [tool("entity-search"), tool("web-fetch", running: true)],
-            turnID: UUID()
+            groupID: "group"
         )
     }
 }
@@ -126,43 +126,77 @@ struct ToolActivitySpokenLineTests {
 // MARK: - Disclosure
 
 @MainActor
-struct ToolActivityDisclosureTests {
+struct ChatDisclosureTests {
     @Test func followsTheDefaultUntilTheReaderTouchesIt() {
-        let disclosure = ToolActivityDisclosure()
-        let turn = UUID()
+        let disclosure = ChatDisclosure()
+        let group = "call-1"
         // A running run is open; the same run settled is closed.
-        #expect(disclosure.isExpanded(turn, default: true))
-        #expect(!disclosure.isExpanded(turn, default: false))
+        #expect(disclosure.isExpanded(group, default: true))
+        #expect(!disclosure.isExpanded(group, default: false))
     }
 
-    @Test func keepsTheReadersChoiceWhenTheRunSettles() {
-        let disclosure = ToolActivityDisclosure()
-        let turn = UUID()
+    /// A reader who opens a running group keeps it open when it settles: the
+    /// default flips from open to closed, the recorded choice does not.
+    @Test func keepsTheReadersOpenChoiceWhenTheRunSettles() {
+        let disclosure = ChatDisclosure()
+        let group = "call-1"
         // Opened by hand while steps were still running.
-        disclosure.setExpanded(true, for: turn)
+        #expect(disclosure.isExpanded(group, default: true))
+        disclosure.setExpanded(true, for: group)
         // The last step settled: the default flips to closed.
-        #expect(disclosure.isExpanded(turn, default: false))
+        #expect(disclosure.isExpanded(group, default: false))
 
         // And the other way: closed by hand, the run does not reopen itself.
-        disclosure.setExpanded(false, for: turn)
-        #expect(!disclosure.isExpanded(turn, default: true))
+        disclosure.setExpanded(false, for: group)
+        #expect(!disclosure.isExpanded(group, default: true))
     }
 
-    @Test func keysTheChoiceByTurn() {
-        let disclosure = ToolActivityDisclosure()
-        let first = UUID()
-        let second = UUID()
-        disclosure.setExpanded(true, for: first)
-        #expect(disclosure.isExpanded(first, default: false))
-        #expect(!disclosure.isExpanded(second, default: false))
+    /// Two runs in one turn are independent: tapping the first must not change
+    /// the second. This is the regression the per-turn key caused.
+    @Test func twoGroupsInOneTurnOpenIndependently() {
+        let disclosure = ChatDisclosure()
+        var turn = ChatTurn(anchorMessageID: "message-1")
+        turn.toolGroups = [
+            ToolCallGroup(id: "call-1", tools: []),
+            ToolCallGroup(id: "call-3", tools: []),
+        ]
+
+        disclosure.setExpanded(true, for: turn.toolGroups[0].id)
+        #expect(disclosure.isExpanded(turn.toolGroups[0].id, default: false))
+        // The second run keeps the settled default: closed.
+        #expect(!disclosure.isExpanded(turn.toolGroups[1].id, default: false))
+    }
+
+    /// A thinking block remembers its own choice too, and the choice survives
+    /// the block being replaced when the turn settles.
+    @Test func thinkingStateIsRememberedPerBlockAndSurvivesSettling() {
+        let disclosure = ChatDisclosure()
+        var turn = ChatTurn(anchorMessageID: "message-1")
+        turn.thinkingBlocks = [
+            ThinkingBlock(id: "thinking-1", text: "reasoning", isLive: true, isOpen: true),
+            ThinkingBlock(id: "thinking-2", text: "more", isLive: true, isOpen: true),
+        ]
+        let blockID = turn.thinkingBlocks[0].id
+        #expect(!disclosure.isThinkingExpanded(blockID))
+
+        disclosure.toggleThinking(blockID)
+        #expect(disclosure.isThinkingExpanded(blockID))
+        #expect(!disclosure.isThinkingExpanded(turn.thinkingBlocks[1].id))
+
+        // The turn settles: the same block id is rendered with isLive == false.
+        turn.thinkingBlocks[0] = ThinkingBlock(id: blockID, text: "reasoning done", isLive: false, isOpen: false)
+        #expect(disclosure.isThinkingExpanded(turn.thinkingBlocks[0].id))
     }
 
     @Test func clearForgetsEveryChoice() {
-        let disclosure = ToolActivityDisclosure()
-        let turn = UUID()
-        disclosure.setExpanded(true, for: turn)
+        let disclosure = ChatDisclosure()
+        disclosure.setExpanded(true, for: "call-1")
+        disclosure.setThinkingExpanded(true, for: "thinking-1")
+        disclosure.setSourcesExpanded(true, for: "message-1")
         disclosure.clear()
-        #expect(!disclosure.isExpanded(turn, default: false))
+        #expect(!disclosure.isExpanded("call-1", default: false))
+        #expect(!disclosure.isThinkingExpanded("thinking-1"))
+        #expect(!disclosure.isSourcesExpanded("message-1"))
     }
 }
 
@@ -206,7 +240,7 @@ struct ToolActivityGroupLayoutTests {
     }
 
     @Test func aSettledRunIsOneTapTarget() {
-        let disclosure = ToolActivityDisclosure()
+        let disclosure = ChatDisclosure()
         let height = height(of: group(disclosure))
         // The 44pt minimum, not a line of 13pt text.
         #expect(height >= 44)
@@ -214,30 +248,53 @@ struct ToolActivityGroupLayoutTests {
     }
 
     @Test func theReadersChoiceRevealsTheRows() {
-        let turn = UUID()
-        let closed = height(of: group(ToolActivityDisclosure(), turnID: turn))
+        let groupID = "call-1"
+        let closed = height(of: group(ChatDisclosure(), groupID: groupID))
 
-        let opened = ToolActivityDisclosure()
-        opened.setExpanded(true, for: turn)
-        let expanded = height(of: group(opened, turnID: turn))
+        let opened = ChatDisclosure()
+        opened.setExpanded(true, for: groupID)
+        let expanded = height(of: group(opened, groupID: groupID))
 
         // Two step chips, not just the line they are hidden behind.
         #expect(expanded > closed + 30)
     }
 
     @Test func aSingleStepIsJustItsRow() {
-        let disclosure = ToolActivityDisclosure()
-        let one = ToolActivityGroup(tools: [tools[0]], turnID: UUID())
-            .environment(\.toolActivityDisclosure, disclosure)
+        let disclosure = ChatDisclosure()
+        let one = ToolActivityGroup(tools: [tools[0]], groupID: "group")
+            .environment(\.chatDisclosure, disclosure)
         // No summary line above it: the row alone, still a full tap target.
         let height = height(of: one)
         #expect(height >= 44)
         #expect(height < 90)
     }
 
-    private func group(_ disclosure: ToolActivityDisclosure, turnID: UUID = UUID()) -> some View {
-        ToolActivityGroup(tools: tools, turnID: turnID)
-            .environment(\.toolActivityDisclosure, disclosure)
+    /// Two runs in one turn open independently: opening the first must not
+    /// reveal the second's rows. The per-turn key used to expand both at once.
+    @Test func openingOneGroupLeavesTheOtherFolded() {
+        let disclosure = ChatDisclosure()
+        let bothFolded = height(of: twoGroups(disclosure))
+
+        disclosure.setExpanded(true, for: "call-a")
+        let oneOpen = height(of: twoGroups(disclosure))
+        #expect(oneOpen > bothFolded + 30)
+
+        disclosure.setExpanded(true, for: "call-b")
+        let bothOpen = height(of: twoGroups(disclosure))
+        #expect(bothOpen > oneOpen + 30)
+    }
+
+    private func twoGroups(_ disclosure: ChatDisclosure) -> some View {
+        VStack(alignment: .leading) {
+            ToolActivityGroup(tools: tools, groupID: "call-a")
+            ToolActivityGroup(tools: tools, groupID: "call-b")
+        }
+        .environment(\.chatDisclosure, disclosure)
+    }
+
+    private func group(_ disclosure: ChatDisclosure, groupID: String = "group") -> some View {
+        ToolActivityGroup(tools: tools, groupID: groupID)
+            .environment(\.chatDisclosure, disclosure)
     }
 
     /// Runs a real SwiftUI layout pass at phone width with an unbounded height

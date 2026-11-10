@@ -145,8 +145,8 @@ struct ToolActivitySummaryLineLayoutTests {
     }
 
     private var summaryLine: some View {
-        ToolActivityGroup(tools: crowded, turnID: UUID())
-            .environment(\.toolActivityDisclosure, ToolActivityDisclosure())
+        ToolActivityGroup(tools: crowded, groupID: "group")
+            .environment(\.chatDisclosure, ChatDisclosure())
     }
 
     /// Every piece is single-line, so the summary keeps its 44pt tap target at
