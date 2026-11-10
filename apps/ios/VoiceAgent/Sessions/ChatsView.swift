@@ -303,7 +303,7 @@ struct ChatsView: View {
     /// collapsed parent).
     private func revealOpenThread() {
         let openIDs = [activeSession.liveConversationID, activeSession.launchConversationID]
-            .compactMap { $0 }
+            .compactMap(\.self)
         guard !openIDs.isEmpty else { return }
         for summary in store.sessions where openIDs.contains(summary.room) {
             if let parent = summary.parentConversationID, !parent.isEmpty {
@@ -565,7 +565,7 @@ private struct SessionRunBadge: View {
     }
 
     var body: some View {
-        if let label = label {
+        if let label {
             Text(label)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(tint)
@@ -579,15 +579,15 @@ private struct SessionRunBadge: View {
     private var label: String? {
         switch summary.bucket {
         case "needs_input":
-            return pendingCount > 0
+            pendingCount > 0
                 ? String(localized: "chats.badge.waiting.count \(pendingCount)")
                 : String(localized: "chats.badge.waiting")
         case "running":
-            return String(localized: "chats.badge.working")
+            String(localized: "chats.badge.working")
         case "failed":
-            return String(localized: "chats.badge.failed")
+            String(localized: "chats.badge.failed")
         default:
-            return nil
+            nil
         }
     }
 
