@@ -237,3 +237,42 @@ func TestResolveOAuthClient_AppProviderStrategy(t *testing.T) {
 		t.Fatalf("Scopes = %v, want [%s]", got.Scopes, googleDriveFile)
 	}
 }
+
+func TestResolveOAuthClient_CrossProviderDoesNotLeakScopes(t *testing.T) {
+	orgID, projectID := uuid.New(), uuid.New()
+	store := &namedAppStore{orgID: orgID, projectApps: map[uuid.UUID][]*OAuthClientConfig{}}
+	svc := newNamedAppService(t, store)
+
+	app := namedApp(t, svc, orgID, &projectID, "google", "Drive only", "gid")
+	app.ProviderConfigs["google_drive"] = OAuthProviderConfig{Strategy: string(ScopeStrategyDriveFile)}
+	// Keep a legacy provider-scoped scope set on the row, as a migrated row does.
+	app.Scopes = []string{googleDriveFile}
+	app.Provider = ProviderTypeGoogleDrive
+	store.projectApps[projectID] = []*OAuthClientConfig{app}
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGmail, nil)
+	if err != nil {
+		t.Fatalf("resolve gmail: %v", err)
+	}
+	if len(got.Scopes) != 0 || got.Strategy != "" {
+		t.Fatalf("gmail resolved with Drive scopes %v/%q", got.Scopes, got.Strategy)
+	}
+}
+
+func TestResolveOAuthClient_ZeroAppIDForcesDeploymentDefault(t *testing.T) {
+	orgID, projectID := uuid.New(), uuid.New()
+	store := &namedAppStore{orgID: orgID, projectApps: map[uuid.UUID][]*OAuthClientConfig{}}
+	svc := newNamedAppService(t, store)
+	store.projectApps[projectID] = []*OAuthClientConfig{
+		namedApp(t, svc, orgID, &projectID, "google", "One", "one"),
+		namedApp(t, svc, orgID, &projectID, "google", "Two", "two"),
+	}
+	zero := uuid.Nil
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, &zero)
+	if err != nil {
+		t.Fatalf("forced deployment: %v", err)
+	}
+	if got.ClientID != "deploy-id" {
+		t.Fatalf("ClientID = %q, want the deployment default", got.ClientID)
+	}
+}

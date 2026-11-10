@@ -287,6 +287,9 @@ func (s *Service) CreateProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureAppNameFree(ctx, false, projectID, uuid.Nil, vendor, name, uuid.Nil); err != nil {
+		return nil, err
+	}
 	blob, err := s.encryptCredentials(Credentials{oauthClientIDKey: clientID, oauthClientSecretKey: secret})
 	if err != nil {
 		return nil, err
@@ -533,6 +536,10 @@ func (s *Service) clientFromApp(row *OAuthClientConfig, providerType, inheritedS
 	if err != nil {
 		return OAuthClient{}, err
 	}
+	// A vendor app backs several providers with different scopes. Never carry
+	// the legacy row's provider-specific scopes into a different provider.
+	client.Scopes = nil
+	client.Strategy = ""
 	cfg := appProviderConfig(row, providerType)
 	if len(cfg.Scopes) > 0 {
 		client.Scopes = cfg.Scopes
@@ -617,4 +624,63 @@ func (s *Service) legacyFromAppDTO(dto *OAuthAppDTO, providerType string) *OAuth
 		UpdatedAt:        dto.UpdatedAt,
 		Config:           dto.Config,
 	}
+}
+
+// implicitSourceAppID returns the sole app a provider would resolve to at
+// project or org scope. It is persisted on new sources so adding a second app
+// later cannot silently change an existing source's client.
+func (s *Service) implicitSourceAppID(ctx context.Context, projectID uuid.UUID, providerType string) *uuid.UUID {
+	vendor, _, ok := s.vendorForProvider(providerType)
+	if !ok {
+		return nil
+	}
+	if pst, ok := s.projectAppStore(); ok {
+		if apps, err := pst.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor); err == nil && len(apps) == 1 {
+			id := apps[0].ID
+			return &id
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		orgID, err := s.orgStore().ResolveOrgID(ctx, projectID)
+		if err == nil {
+			if apps, lerr := ost.ListOAuthClientConfigsByVendor(ctx, orgID, vendor); lerr == nil && len(apps) == 1 {
+				id := apps[0].ID
+				return &id
+			}
+		}
+	}
+	return nil
+}
+
+// ambiguousAppConflict is the legacy per-provider shim's answer when a vendor
+// has several apps: the old API cannot name one, so it reports a conflict.
+func ambiguousAppConflict(vendor string, apps []*OAuthClientConfig) error {
+	names := make([]string, 0, len(apps))
+	for _, app := range apps {
+		names = append(names, app.Name)
+	}
+	return apperror.NewConflict("multiple OAuth apps configured for " + vendor + " (" + strings.Join(names, ", ") + "): manage them as named apps")
+}
+
+// ensureAppNameFree rejects a case-insensitive duplicate name in the same scope
+// and vendor before the database's unique index turns it into a 500.
+func (s *Service) ensureAppNameFree(ctx context.Context, isOrg bool, projectID, orgID uuid.UUID, vendor, name string, exclude uuid.UUID) error {
+	var apps []*OAuthClientConfig
+	var err error
+	if isOrg {
+		st, _ := s.orgAppStore()
+		apps, err = st.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+	} else {
+		st, _ := s.projectAppStore()
+		apps, err = st.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
+	}
+	if err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if app.ID != exclude && strings.EqualFold(app.Name, name) {
+			return apperror.NewConflict("an OAuth app named " + name + " already exists for " + vendor)
+		}
+	}
+	return nil
 }

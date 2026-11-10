@@ -1429,6 +1429,9 @@ func (s *Server) uiOrgOAuthClientDetail(c echo.Context) error {
 	if provider == nil {
 		return c.NoContent(http.StatusNotFound)
 	}
+	if redirect := s.legacyAppRedirect(c, ctx, true, "", orgID, provider.Vendor, provider.Type, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients"); redirect != "" {
+		return c.Redirect(http.StatusSeeOther, redirect)
+	}
 	cfg, cerr := s.memory.GetDSOAuthClient(ctx, orgID, providerType)
 	if cerr != nil {
 		cerr = userFacingError(cerr)
@@ -2130,6 +2133,45 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	}))
 }
 
+// legacyAppRedirect maps a deprecated per-provider editor URL to the named-app
+// surface: the sole app's editor when there is one, otherwise the app list.
+// Empty means "no named apps yet; render the legacy create form".
+func (s *Server) legacyAppRedirect(c echo.Context, ctx context.Context, isOrg bool, projectID string, orgID, vendor, providerType, listHref string) string {
+	vendor = strings.TrimSpace(vendor)
+	if vendor == "" {
+		vendor = providerType
+	}
+	apps, err := s.listOAuthApps(ctx, isOrg, projectID, orgID)
+	if err != nil {
+		return ""
+	}
+	matches := make([]DSOAuthApp, 0)
+	for _, app := range apps {
+		if app.Vendor == vendor {
+			matches = append(matches, app)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return ""
+	case 1:
+		base := "/settings/credentials/apps"
+		if isOrg {
+			base = "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps"
+		}
+		return base + "/" + url.PathEscape(matches[0].ID)
+	default:
+		return listHref
+	}
+}
+
+func (s *Server) listOAuthApps(ctx context.Context, isOrg bool, projectID string, orgID string) ([]DSOAuthApp, error) {
+	if isOrg {
+		return s.memory.ListOrgDSOAuthApps(ctx, orgID)
+	}
+	return s.memory.ListProjectDSOAuthApps(ctx, projectID)
+}
+
 // uiProjectCredential renders the per-provider project OAuth app editor
 // (project-admin only; hidden and 404 for everyone else). The org-wide app's
 // configured flag comes from the member-safe endpoint so a project admin who is
@@ -2159,6 +2201,9 @@ func (s *Server) uiProjectCredential(c echo.Context) error {
 	}
 	if provider == nil {
 		return c.NoContent(http.StatusNotFound)
+	}
+	if redirect := s.legacyAppRedirect(c, ctx, false, project.ID, "", provider.Vendor, provider.Type, "/settings/credentials"); redirect != "" {
+		return c.Redirect(http.StatusSeeOther, redirect)
 	}
 	cfg, cerr := s.memory.GetProjectDSOAuthClient(ctx, project.ID, providerType)
 	if cerr != nil {
@@ -2810,11 +2855,15 @@ func dsOAuthAppRows(apps []DSOAuthApp, scope string, canManage bool, manageBase 
 }
 
 func (s *Server) uiProjectOAuthAppNew(c echo.Context) error {
-	providers, err := s.memory.ListDSProviders(c.Request().Context())
+	ctx := c.Request().Context()
+	project, _ := s.memory.GetCurrentProject(ctx)
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providers, err := s.memory.ListDSProviders(ctx)
 	if err != nil {
 		return redirectWithError(c, "/settings/credentials", userFacingError(err))
 	}
-	project, _ := s.memory.GetCurrentProject(c.Request().Context())
 	orgName := ""
 	orgID := ""
 	if project != nil {
@@ -2837,8 +2886,8 @@ func (s *Server) uiProjectOAuthAppNew(c echo.Context) error {
 func (s *Server) uiProjectOAuthAppDetail(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, _ := s.memory.GetCurrentProject(ctx)
-	if project == nil {
-		return redirectWithError(c, "/settings/credentials", errors.New("no active project"))
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
 	}
 	app, err := s.memory.GetProjectDSOAuthApp(ctx, project.ID, c.Param("appId"))
 	if err != nil {
@@ -2866,8 +2915,8 @@ func (s *Server) uiProjectOAuthAppDetail(c echo.Context) error {
 func (s *Server) uiProjectOAuthAppCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, _ := s.memory.GetCurrentProject(ctx)
-	if project == nil {
-		return redirectWithError(c, "/settings/credentials", errors.New("no active project"))
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
 	}
 	req := dsOAuthAppRequestFromForm(c)
 	_, err := s.memory.CreateProjectDSOAuthApp(ctx, project.ID, req)
@@ -2880,8 +2929,8 @@ func (s *Server) uiProjectOAuthAppCreate(c echo.Context) error {
 func (s *Server) uiProjectOAuthAppUpdate(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, _ := s.memory.GetCurrentProject(ctx)
-	if project == nil {
-		return redirectWithError(c, "/settings/credentials", errors.New("no active project"))
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
 	}
 	req := dsOAuthAppUpdateFromForm(c)
 	_, err := s.memory.UpdateProjectDSOAuthApp(ctx, project.ID, c.Param("appId"), req)
@@ -2894,8 +2943,8 @@ func (s *Server) uiProjectOAuthAppUpdate(c echo.Context) error {
 func (s *Server) uiProjectOAuthAppDelete(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, _ := s.memory.GetCurrentProject(ctx)
-	if project == nil {
-		return redirectWithError(c, "/settings/credentials", errors.New("no active project"))
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
 	}
 	if err := s.memory.DeleteProjectDSOAuthApp(ctx, project.ID, c.Param("appId")); err != nil {
 		return redirectWithError(c, "/settings/credentials", userFacingError(err))
@@ -2906,6 +2955,9 @@ func (s *Server) uiProjectOAuthAppDelete(c echo.Context) error {
 func (s *Server) uiOrgOAuthAppNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
 	providers, err := s.memory.ListDSProviders(ctx)
 	if err != nil {
 		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
@@ -2928,6 +2980,9 @@ func (s *Server) uiOrgOAuthAppNew(c echo.Context) error {
 func (s *Server) uiOrgOAuthAppDetail(c echo.Context) error {
 	ctx := c.Request().Context()
 	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
 	app, err := s.memory.GetOrgDSOAuthApp(ctx, orgID, c.Param("appId"))
 	if err != nil {
 		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
@@ -2952,6 +3007,9 @@ func (s *Server) uiOrgOAuthAppDetail(c echo.Context) error {
 
 func (s *Server) uiOrgOAuthAppCreate(c echo.Context) error {
 	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
 	if _, err := s.memory.CreateOrgDSOAuthApp(c.Request().Context(), orgID, dsOAuthAppRequestFromForm(c)); err != nil {
 		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-apps/new", userFacingError(err))
 	}
@@ -2960,6 +3018,9 @@ func (s *Server) uiOrgOAuthAppCreate(c echo.Context) error {
 
 func (s *Server) uiOrgOAuthAppUpdate(c echo.Context) error {
 	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
 	if _, err := s.memory.UpdateOrgDSOAuthApp(c.Request().Context(), orgID, c.Param("appId"), dsOAuthAppUpdateFromForm(c)); err != nil {
 		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-apps/"+url.PathEscape(c.Param("appId")), userFacingError(err))
 	}
@@ -2968,6 +3029,9 @@ func (s *Server) uiOrgOAuthAppUpdate(c echo.Context) error {
 
 func (s *Server) uiOrgOAuthAppDelete(c echo.Context) error {
 	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
 	if err := s.memory.DeleteOrgDSOAuthApp(c.Request().Context(), orgID, c.Param("appId")); err != nil {
 		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
 	}

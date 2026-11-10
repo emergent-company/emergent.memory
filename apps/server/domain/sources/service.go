@@ -418,6 +418,7 @@ func (s *Service) List(ctx context.Context, projectID uuid.UUID) ([]*Integration
 	out := make([]*Integration, len(srcs))
 	for i, src := range srcs {
 		out[i] = s.toIntegration(src)
+		s.fillOAuthAppName(ctx, projectID, out[i], src.OAuthAppID)
 	}
 	return out, nil
 }
@@ -480,6 +481,9 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	oauthAppID, err := s.validateSourceApp(ctx, projectID, req.ProviderType, req.OAuthAppID)
 	if err != nil {
 		return nil, err
+	}
+	if oauthAppID == nil {
+		oauthAppID = s.implicitSourceAppID(ctx, projectID, req.ProviderType)
 	}
 
 	now := s.now()
@@ -566,6 +570,7 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 		return nil, err
 	}
 	out := s.toIntegration(src)
+	s.fillOAuthAppName(ctx, projectID, out, src.OAuthAppID)
 	// Report the effective scope strategy so the UI can explain an empty
 	// resource listing caused by a scope that cannot list (drive.file without
 	// the Google Picker) instead of re-deriving the resolution itself.
@@ -713,6 +718,17 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		appID, aerr := s.validateSourceApp(ctx, projectID, existing.Provider, req.OAuthAppID)
 		if aerr != nil {
 			return nil, aerr
+		}
+		oldID := uuid.Nil
+		if existing.OAuthAppID != nil {
+			oldID = *existing.OAuthAppID
+		}
+		newID := uuid.Nil
+		if appID != nil {
+			newID = *appID
+		}
+		if oldID != newID && (existing.CredentialID != nil || len(existing.EncryptedCredentials) > 0) {
+			return nil, apperror.NewValidation("switching OAuth apps requires reconnecting the source")
 		}
 		existing.OAuthAppID = appID
 	}
@@ -990,6 +1006,28 @@ func (s *Service) publicConfig(src *Source) map[string]any {
 		return stripCredentialKeys(src.Config, p.CredentialKeys())
 	}
 	return src.Config
+}
+
+// fillOAuthAppName adds the display name of the source's OAuth app. The name is
+// not stored on the source; it is resolved from the app row so a rename is
+// reflected immediately.
+func (s *Service) fillOAuthAppName(ctx context.Context, projectID uuid.UUID, out *Integration, appID *uuid.UUID) {
+	if out == nil || appID == nil {
+		return
+	}
+	if pst, ok := s.projectAppStore(); ok {
+		if row, err := pst.GetProjectOAuthClientConfigByID(ctx, projectID, *appID); err == nil {
+			out.OAuthAppName = row.Name
+			return
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		if orgID, err := s.orgStore().ResolveOrgID(ctx, projectID); err == nil {
+			if row, gerr := ost.GetOAuthClientConfigByID(ctx, orgID, *appID); gerr == nil {
+				out.OAuthAppName = row.Name
+			}
+		}
+	}
 }
 
 // toIntegration maps a persisted source to the SDK integration shape. It never

@@ -58,6 +58,17 @@ func (s *Service) ListOrgOAuthClients(ctx context.Context, orgID uuid.UUID, user
 	}
 	out := make([]*OAuthClientConfigDTO, 0, len(rows))
 	for _, row := range rows {
+		if _, ok := s.orgAppStore(); ok {
+			vendor := s.appVendor(row)
+			for _, p := range s.vendorProviders(vendor) {
+				dto, derr := s.legacyDTO(ctx, row, p.Catalog().Type)
+				if derr != nil {
+					return nil, derr
+				}
+				out = append(out, dto)
+			}
+			continue
+		}
 		dto, err := s.toOAuthClientDTO(row)
 		if err != nil {
 			return nil, err
@@ -89,7 +100,7 @@ func (s *Service) GetOrgOAuthClient(ctx context.Context, orgID uuid.UUID, userID
 		case 1:
 			return s.legacyDTO(ctx, apps[0], providerType)
 		default:
-			return nil, ambiguousAppError(vendor, apps)
+			return nil, ambiguousAppConflict(vendor, apps)
 		}
 	}
 	row, err := s.orgStore().GetOAuthClientConfig(ctx, orgID, providerType)
@@ -146,7 +157,7 @@ func (s *Service) UpsertOrgOAuthClient(ctx context.Context, orgID uuid.UUID, use
 			}
 			return s.legacyFromAppDTO(dto, providerType), nil
 		default:
-			return nil, ambiguousAppError(vendor, apps)
+			return nil, ambiguousAppConflict(vendor, apps)
 		}
 	}
 	clientID := strings.TrimSpace(req.ClientID)
@@ -241,6 +252,17 @@ func (s *Service) ListProjectOAuthClients(ctx context.Context, projectID uuid.UU
 	}
 	out := make([]*OAuthClientConfigDTO, 0, len(rows))
 	for _, row := range rows {
+		if _, ok := s.projectAppStore(); ok {
+			vendor := s.appVendor(row)
+			for _, p := range s.vendorProviders(vendor) {
+				dto, derr := s.legacyDTO(ctx, row, p.Catalog().Type)
+				if derr != nil {
+					return nil, derr
+				}
+				out = append(out, dto)
+			}
+			continue
+		}
 		dto, err := s.toOAuthClientDTO(row)
 		if err != nil {
 			return nil, err
@@ -272,7 +294,7 @@ func (s *Service) GetProjectOAuthClient(ctx context.Context, projectID uuid.UUID
 		case 1:
 			return s.legacyDTO(ctx, apps[0], providerType)
 		default:
-			return nil, ambiguousAppError(vendor, apps)
+			return nil, ambiguousAppConflict(vendor, apps)
 		}
 	}
 	row, err := s.projectStore().GetProjectOAuthClientConfig(ctx, projectID, providerType)
@@ -329,7 +351,7 @@ func (s *Service) UpsertProjectOAuthClient(ctx context.Context, projectID uuid.U
 			}
 			return s.legacyFromAppDTO(dto, providerType), nil
 		default:
-			return nil, ambiguousAppError(vendor, apps)
+			return nil, ambiguousAppConflict(vendor, apps)
 		}
 	}
 	clientID := strings.TrimSpace(req.ClientID)
@@ -437,6 +459,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 		return OAuthClient{}, apperror.NewValidation("unsupported providerType: " + providerType)
 	}
 
+	forceDeployment := appID != nil && *appID == uuid.Nil
 	if appID != nil && *appID != uuid.Nil {
 		row, err := s.getVisibleApp(ctx, projectID, *appID)
 		if err != nil {
@@ -448,7 +471,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 		return s.clientFromApp(row, providerType, s.orgStrategyForVendor(ctx, projectID, vendor, providerType))
 	}
 
-	if pst, ok := s.projectAppStore(); ok {
+	if pst, ok := s.projectAppStore(); ok && !forceDeployment {
 		apps, err := pst.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
 		if err != nil {
 			return OAuthClient{}, err
@@ -461,7 +484,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 		}
 	}
 
-	if ost, ok := s.orgAppStore(); ok {
+	if ost, ok := s.orgAppStore(); ok && !forceDeployment {
 		orgID, err := s.orgStore().ResolveOrgID(ctx, projectID)
 		switch {
 		case err == nil:

@@ -86,6 +86,9 @@ type OAuthAuthorizeRequest struct {
 	// ReconnectSourceID re-runs consent for an existing source; the callback
 	// replaces that source's grant in place instead of creating a new source.
 	ReconnectSourceID string `json:"reconnectSourceId,omitempty"`
+	// OAuthAppID selects a named OAuth app. Use the zero UUID to force the
+	// deployment default when several apps exist.
+	OAuthAppID string `json:"oauthAppId,omitempty"`
 }
 
 // OAuthAuthorizeResponse is the result of starting an OAuth connect.

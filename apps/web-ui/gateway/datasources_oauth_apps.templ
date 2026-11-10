@@ -252,7 +252,7 @@ templ OAuthAppChoicePage(providerType string, apps []DSOAuthApp) {
 					</div>
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeLink,
-						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(providerType),
+						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(providerType) + "&oauthAppId=00000000-0000-0000-0000-000000000000",
 						Variant: ui.ButtonOutline,
 						Size:    ui.ButtonSM,
 						Icon:    "lucide--server",

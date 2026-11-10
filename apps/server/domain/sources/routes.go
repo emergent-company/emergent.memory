@@ -85,7 +85,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// layer — project-admin authority is enforced inside the handler via the
 	// shared project-administration check (pkg/auth.CanAdministerProject).
 	projectClients := e.Group("/api/projects/:projectId/data-source-integrations/oauth-clients")
-	projectClients.Use(authMiddleware.RequireAuth())
+	projectClients.Use(authMiddleware.RequireAuth(), authMiddleware.RequireProjectMember())
 	projectClients.GET("", h.ListProjectOAuthClients)
 	projectClients.GET("/:providerType", h.GetProjectOAuthClient)
 	projectClients.PUT("/:providerType", h.UpsertProjectOAuthClient)
@@ -102,7 +102,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	orgApps.DELETE("/:appId", h.DeleteOrgOAuthApp)
 
 	projectApps := e.Group("/api/projects/:projectId/data-source-integrations/oauth-apps")
-	projectApps.Use(authMiddleware.RequireAuth())
+	projectApps.Use(authMiddleware.RequireAuth(), authMiddleware.RequireProjectMember())
 	projectApps.GET("", h.ListProjectOAuthApps)
 	projectApps.POST("", h.CreateProjectOAuthApp)
 	projectApps.GET("/:appId", h.GetProjectOAuthApp)

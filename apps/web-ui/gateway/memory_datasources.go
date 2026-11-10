@@ -221,9 +221,9 @@ type DSUpdateIntegrationRequest struct {
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
 	// CredentialID switches the source to another saved credential.
 	CredentialID string `json:"credentialId,omitempty"`
-	// OAuthAppID switches the source to another named OAuth app; empty clears
-	// the explicit selection.
-	OAuthAppID string `json:"oauthAppId,omitempty"`
+	// OAuthAppID switches the source to another named OAuth app; nil leaves the
+	// selection unchanged and an empty string clears it.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 }
 
 // DSTestConfigRequest tests an unsaved provider config.

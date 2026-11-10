@@ -2856,15 +2856,15 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 		t.Fatalf("member editor status = %d, want 404", rec.Code)
 	}
 
-	// Admin editor resolves the provider from the catalog.
+	// The legacy per-provider editor redirects to the sole named app.
 	e = newDSUIServer(projectCredentialsAdminFake())
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("admin editor status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Google OAuth app") {
-		t.Errorf("editor body missing the vendor label: %s", body)
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials/apps/app-1" {
+		t.Errorf("legacy editor redirect = %q", loc)
 	}
 
 	// Unknown provider is a 404, not an empty editor.
