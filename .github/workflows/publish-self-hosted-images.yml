@@ -15,7 +15,7 @@ env:
 jobs:
   build-server:
     name: Build and Push Server Image
-    # 2026-11-10: moved to `memory` pool (buildx v0.38.1 + QEMU binfmt verified) — emergent.memory.infra#270
+    # Runs on the self-hosted memory pool; buildx + multi-arch QEMU verified there 2026-11-10.
     runs-on: [self-hosted, linux, x64, memory]
     permissions:
       contents: write
