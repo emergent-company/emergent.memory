@@ -430,7 +430,11 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 							<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
 							<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder={ "e.g. " + p.Name + " docs" }/>
 						</div>
-						@dsSyncModeSelect("manual", nil)
+						// A trigger-only provider never syncs documents, so it has no
+						// sync mode to choose (the server rejects scheduled sync for it).
+						if p.Type != dsProviderTypeGitHubApp {
+							@dsSyncModeSelect("manual", nil)
+						}
 					</div>
 				}
 				@components.PanelCard("", nil) {
@@ -658,6 +662,14 @@ templ dsConfigFieldInput(f dsConfigField) {
 				}
 			}
 			if f.Select.LoadErr != nil {
+				// An already-bound source keeps its current App in the payload
+				// even when the registry cannot be listed, so an unrelated edit
+				// (name, repos) still saves. The server stays authoritative on
+				// the value; a connect form has no value to preserve and the
+				// alert plus the register link is its terminal state.
+				if f.Value != "" {
+					<input type="hidden" name={ f.Key } value={ f.Value } data-testid={ "ds-field-" + f.Key + "-current" }/>
+				}
 				<div data-testid={ "ds-field-" + f.Key + "-error" }>
 					@ui.Alert(ui.AlertProps{
 						Type:    ui.AlertWarning,
@@ -909,7 +921,11 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 		if src == nil {
 			@pageError("Data source unavailable", loadErr)
 		} else {
-			@dataSourceDetailHeader(src, providerName, resourcePrompt == nil)
+			{{ /* A github_app source is trigger-only: it never syncs documents, so
+			      the sync action and history would only produce a job that fails
+			      (or an empty card inviting it). */ }}
+			{{ canSync := resourcePrompt == nil && src.ProviderType != dsProviderTypeGitHubApp }}
+			@dataSourceDetailHeader(src, providerName, canSync)
 			@flashToasts(flashMsg, flashErr)
 			if credentialSummary != nil && credentialSummary.PickerBlocked {
 				@dsPickerBlockedNotice(*credentialSummary)
@@ -937,7 +953,9 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			}
 			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields, picker)
 			<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-config-picker.js")) }></script>
-			@dsSyncHistory(src.ID, jobs)
+			if canSync {
+				@dsSyncHistory(src.ID, jobs)
+			}
 			if picker.ShowModal {
 				@savedCredentialModal(picker, nil)
 			}
@@ -986,7 +1004,28 @@ templ dsSourceTriggersPanel(view dsSourceTriggersView) {
 					}
 				</ul>
 			}
-			@dsSourceTriggerCreateForm(view)
+			// The create form's agent picker has nothing to offer without an
+			// agent, so it is replaced by the remediation link instead of a
+			// submit that can only post an empty agentId.
+			if len(view.Agents) == 0 {
+				<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
+					@ui.EmptyNote(ui.EmptyNoteProps{}) {
+						This project has no agents yet. Create one before binding a trigger.
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/agents",
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--bot",
+						Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
+					}) {
+						Open Agents
+					}
+				</div>
+			} else {
+				@dsSourceTriggerCreateForm(view)
+			}
 		}
 	</div>
 }
@@ -1058,18 +1097,12 @@ templ dsSourceTriggerCreateForm(view dsSourceTriggersView) {
 			</div>
 			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for="trigger-agent">Agent <span class="text-error" aria-hidden="true">*</span></label>
-				if len(view.Agents) == 0 {
-					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-trigger-agents-empty"}}) {
-						This project has no agents yet. Create one before binding a trigger.
+				<select id="trigger-agent" name="agentId" required class="select w-full" data-testid="ds-trigger-agent-select">
+					<option value="">Select an agent</option>
+					for _, agent := range view.Agents {
+						<option value={ agent.ID }>{ agent.Name }</option>
 					}
-				} else {
-					<select id="trigger-agent" name="agentId" required class="select w-full" data-testid="ds-trigger-agent-select">
-						<option value="">Select an agent</option>
-						for _, agent := range view.Agents {
-							<option value={ agent.ID }>{ agent.Name }</option>
-						}
-					</select>
-				}
+				</select>
 			</div>
 			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for="trigger-queue">Queue</label>
@@ -1557,7 +1590,11 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 					}
 				}
 				<div class="mt-3 flex flex-col gap-4">
-					@dsSyncModeSelect(src.SyncMode, src.SyncIntervalMinutes)
+					// A trigger-only provider never syncs documents, so its edit
+					// form has no sync mode to choose.
+					if src.ProviderType != dsProviderTypeGitHubApp {
+						@dsSyncModeSelect(src.SyncMode, src.SyncIntervalMinutes)
+					}
 					@dsConfigFieldInputs(configFields)
 				</div>
 			</div>

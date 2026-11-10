@@ -35,7 +35,7 @@ func dsTestSyncJobs(n int) []DSSyncJob {
 // next page through the htmx partial and disappears on the last page.
 func TestUISyncHistoryPagesFiveAndLoadsMore(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", Config: map[string]any{"folder_id": "f1"}}},
 		dsSyncJobs:     map[string][]DSSyncJob{"s1": dsTestSyncJobs(12)},
 	}
 	e := newDSUIServer(f)

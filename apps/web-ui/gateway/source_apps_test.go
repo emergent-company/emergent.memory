@@ -25,6 +25,7 @@ func sourceAppsTestServer(f *fakeMemory) *echo.Echo {
 	e.GET(dsSourceAppsPath, s.uiSourceApps)
 	e.POST(dsSourceAppsPath, s.uiSourceAppCreate)
 	e.POST(dsSourceAppsPath+"/:appId/delete", s.uiSourceAppDelete)
+	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
@@ -406,11 +407,23 @@ func TestDataSourceDetailRendersTriggersForGitHubApp(t *testing.T) {
 	if strings.Contains(body, `data-testid="ds-trigger-agents-empty"`) {
 		t.Error("agent picker reported an empty project though agents exist")
 	}
+	// A trigger-only source never syncs documents: no sync action, and no
+	// history card inviting the action that can only fail.
+	for _, dead := range []string{
+		`data-testid="ds-trigger-sync"`,
+		`data-testid="ds-sync-history"`,
+		`data-testid="ds-sync-empty"`,
+		`data-testid="ds-field-sync-mode"`,
+	} {
+		if strings.Contains(body, dead) {
+			t.Errorf("github_app detail rendered %q", dead)
+		}
+	}
 }
 
-func TestDataSourceDetailOmitsTriggersForOtherProviders(t *testing.T) {
+func TestDataSourceDetailHidesTriggerCreateWithoutAgents(t *testing.T) {
 	f := sourceAppsAdminFake()
-	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "Drive", ProviderType: "google_drive"}}
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
 	e := sourceAppsTestServer(f)
 
 	rec := httptest.NewRecorder()
@@ -418,8 +431,96 @@ func TestDataSourceDetailOmitsTriggersForOtherProviders(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), `data-testid="ds-triggers"`) {
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-trigger-agents-empty"`) {
+		t.Error("no-agents state is not explained")
+	}
+	if !strings.Contains(body, `href="/agents"`) {
+		t.Error("no-agents state does not link to the agents page")
+	}
+	for _, dead := range []string{
+		`data-testid="ds-trigger-form"`,
+		`data-testid="ds-trigger-agent-select"`,
+		`data-testid="ds-trigger-create"`,
+	} {
+		if strings.Contains(body, dead) {
+			t.Errorf("no-agents state rendered %q", dead)
+		}
+	}
+}
+
+func TestDataSourceConnectHidesSyncModeForGitHubApp(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsProviders = []DSProvider{{Type: dsProviderTypeGitHubApp, Name: "GitHub App", AuthMethods: []string{"config"}}}
+	f.dsSchema = &DSProviderSchema{Type: dsProviderTypeGitHubApp, Properties: map[string]any{
+		"app_id":          map[string]any{"type": "string"},
+		"installation_id": map[string]any{"type": "string"},
+		"repos":           map[string]any{"type": "array"},
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/new?providerType="+dsProviderTypeGitHubApp, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-connect-form"`) {
+		t.Fatalf("github_app connect form did not render: %s", body)
+	}
+	// The app_id picker is still the org-App select special case.
+	if !strings.Contains(body, `data-testid="ds-field-app_id-empty"`) {
+		t.Errorf("app_id field did not render its empty registry state: %s", body)
+	}
+	for _, dead := range []string{`data-testid="ds-field-sync-mode"`, `data-testid="ds-field-sync-interval"`} {
+		if strings.Contains(body, dead) {
+			t.Errorf("github_app connect form rendered %q", dead)
+		}
+	}
+}
+
+func TestDataSourceConnectKeepsSyncModeForOtherProviders(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsProviders = []DSProvider{{Type: dsProviderTypeGoogleDrive, Name: "Google Drive", AuthMethods: []string{"credentials"}}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/new?providerType="+dsProviderTypeGoogleDrive, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-field-sync-mode"`) {
+		t.Error("non-trigger provider lost its sync-mode select")
+	}
+}
+
+func TestDataSourceDetailOmitsTriggersForOtherProviders(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{
+		ID: "s1", Name: "Drive", ProviderType: "google_drive",
+		Config: map[string]any{"folder_id": "f1"},
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `data-testid="ds-triggers"`) {
 		t.Error("non-github_app source rendered the trigger panel")
+	}
+	// The sync affordances the trigger-only provider hides stay for a syncing
+	// provider: the canSync condition must not switch them off globally.
+	for _, want := range []string{
+		`data-testid="ds-trigger-sync"`,
+		`data-testid="ds-sync-history"`,
+		`data-testid="ds-field-sync-mode"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("google_drive detail missing %q", want)
+		}
 	}
 }
 
@@ -616,6 +717,36 @@ func TestDsConfigFieldInputRendersAppSelect(t *testing.T) {
 		body := buf.String()
 		if !strings.Contains(body, `data-testid="ds-field-app_id-error"`) || !strings.Contains(body, "nope") {
 			t.Errorf("load error not rendered: %s", body)
+		}
+		// The connect form has no bound App to preserve: no empty hidden input
+		// (submitting one would just trade the alert for "app_id is required").
+		if strings.Contains(body, `name="app_id"`) {
+			t.Errorf("connect form rendered an app_id input on load error: %s", body)
+		}
+		if !strings.Contains(body, "Open source Apps") || !strings.Contains(body, dsSourceAppsPath) {
+			t.Errorf("load-error state lost its remediation link: %s", body)
+		}
+	})
+
+	t.Run("load error keeps a bound App in the payload", func(t *testing.T) {
+		f := dsConfigField{Key: "app_id", Label: "App ID", Type: "string", Value: "app-uuid-1", Select: &dsFieldSelect{
+			EmptyHref:  dsSourceAppsPath,
+			EmptyLabel: "Open source Apps",
+			LoadErr:    errors.New("nope"),
+		}}
+		var buf bytes.Buffer
+		if err := dsConfigFieldInput(f).Render(context.Background(), &buf); err != nil {
+			t.Fatal(err)
+		}
+		body := buf.String()
+		if !strings.Contains(body, `data-testid="ds-field-app_id-current"`) {
+			t.Fatalf("edit form lost its current app_id: %s", body)
+		}
+		if !strings.Contains(body, `name="app_id"`) || !strings.Contains(body, `value="app-uuid-1"`) {
+			t.Errorf("hidden app_id does not carry the bound value: %s", body)
+		}
+		if !strings.Contains(body, `data-testid="ds-field-app_id-error"`) {
+			t.Error("load error alert was dropped alongside the hidden input")
 		}
 	})
 }
