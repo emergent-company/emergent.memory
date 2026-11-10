@@ -408,6 +408,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// sync continues — and credentialDeps logs it (#2091).
 	deps := w.svc.credentialDeps(job.ProjectID, src.ID)
 	deps.Extract = w.extractText
+	deps.SourceConfig = src.Config
 	connector, err := provider.NewConnector(ctx, creds, deps)
 	if err != nil {
 		return w.failJob(ctx, job, src, fmt.Errorf("initialize connector: %w", err))
@@ -543,14 +544,23 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		if err != nil {
 			failed++
 			failedItems[item.ID] = true
-			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": err.Error()})
-			// Metadata records do not depend on the body fetch; keep the graph
-			// metadata current even when text retrieval fails.
-			ids, rels, _ := w.applyItemRecords(ctx, job, src, item, "")
-			for k, v := range ids {
-				objectIDs[k] = v
+			// A failed body fetch can still carry metadata records (a connector
+			// that returns partial records alongside its error). Keep that graph
+			// metadata current, but fold a metadata failure into the item's error
+			// instead of discarding it; on a plain failure Records is nil and this
+			// branch does nothing.
+			itemErr := err.Error()
+			if len(item.Records) > 0 {
+				ids, rels, recErr := w.applyItemRecords(ctx, job, src, item, "")
+				for k, v := range ids {
+					objectIDs[k] = v
+				}
+				pendingRels = append(pendingRels, rels...)
+				if recErr != nil {
+					itemErr = itemErr + "; metadata: " + recErr.Error()
+				}
 			}
-			pendingRels = append(pendingRels, rels...)
+			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": itemErr})
 			if uerr := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); uerr != nil {
 				return w.failJob(ctx, job, src, uerr)
 			}
@@ -888,7 +898,14 @@ func (w *SyncWorker) applyItemRecords(ctx context.Context, job *SyncJob, src *So
 			}
 			props["_source_id"] = job.SourceID.String()
 			props["_source_provider"] = src.Provider
-			props["_source_external_id"] = item.ID
+			// The record's own external id. A thread item emits one record per
+			// message, so stamping the item id (the thread id) on an EmailMessage
+			// whose key is the message id would name the wrong object.
+			externalID := item.ID
+			if rec.Key != "" {
+				externalID = rec.Key
+			}
+			props["_source_external_id"] = externalID
 			if documentID != "" {
 				props["_document_id"] = documentID
 			}

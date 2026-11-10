@@ -114,6 +114,15 @@ type ConnectorDeps struct {
 	// source at the next expiry (#2091), but a failed write must not fail the work
 	// that just succeeded.
 	PersistCredentials func(ctx context.Context, creds Credentials) error
+
+	// SourceConfig is the stored, non-secret config of the source this connector
+	// was built for. A connector whose fetch-time behaviour depends on config
+	// (Gmail derives the typed records to emit from the selected object types)
+	// reads it here instead of caching the cfg of one enumeration call, which made
+	// a fetch depend on whether an enumeration had run first. It is nil for work
+	// against a form the user is still filling in; a connector that needs it must
+	// fail loudly rather than silently pick defaults.
+	SourceConfig map[string]any
 }
 
 // Connector is the provider-neutral transport the sync worker drives: it

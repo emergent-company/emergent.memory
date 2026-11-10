@@ -862,6 +862,8 @@ func (h *Handler) UpdateSourceScope(c echo.Context) error {
 		Filter               map[string]any `json:"filter"`
 		ObjectTypes          []string       `json:"objectTypes"`
 		MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled"`
+		Since                *string        `json:"since"`
+		LabelIDs             []string       `json:"labelIds"`
 		PreviewHash          string         `json:"previewHash"`
 		BaseScopeHash        string         `json:"baseScopeHash"`
 	}
@@ -870,6 +872,7 @@ func (h *Handler) UpdateSourceScope(c echo.Context) error {
 	}
 	result, err := h.svc.UpdateSourceScope(c.Request().Context(), projectID, id, &SourceScopeRequest{
 		Filter: req.Filter, ObjectTypes: req.ObjectTypes, MCPWriteToolsEnabled: req.MCPWriteToolsEnabled,
+		Since: req.Since, LabelIDs: req.LabelIDs,
 	}, req.PreviewHash, req.BaseScopeHash)
 	if err != nil {
 		return err

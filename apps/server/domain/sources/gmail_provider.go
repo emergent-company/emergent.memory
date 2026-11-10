@@ -302,7 +302,6 @@ func gmailCredentials(creds Credentials) gmail.Credentials {
 type gmailConnector struct {
 	client GmailTransport
 	deps   ConnectorDeps
-	cfg    gmailConfig
 }
 
 // Keys the connector persists in the source cursor row. They share the map with
@@ -375,7 +374,6 @@ func (c *gmailConnector) EnumerateWithCursor(ctx context.Context, cfg map[string
 	if err != nil {
 		return nil, nil, err
 	}
-	c.cfg = parsed
 	state := gmailBackfillFrom(cursor, gmailScopeFingerprint(parsed), time.Now().UTC())
 	floor := gmailBackfillFloor(parsed.Since)
 
@@ -582,7 +580,15 @@ func (c *gmailConnector) FetchWithRecords(ctx context.Context, item SourceItem) 
 	if err != nil {
 		return "", "", nil, err
 	}
-	return content, "text/markdown", gmailThreadRecords(thread, c.cfg), nil
+	// The typed-record selection is the source's stored config, carried on the
+	// connector's deps. Fetch has no cfg argument, and caching the cfg of one
+	// earlier enumeration call on the connector made a fetch depend on whether an
+	// enumeration had happened to run first in the same run.
+	parsed, err := parseGmailConfig(c.deps.SourceConfig)
+	if err != nil {
+		return "", "", nil, apperror.NewInternal("gmail connector is missing its source config", err)
+	}
+	return content, "text/markdown", gmailThreadRecords(thread, parsed), nil
 }
 
 // gmailThreadRecords builds the typed records for one thread.

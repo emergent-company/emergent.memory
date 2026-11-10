@@ -1341,6 +1341,10 @@ type SourceScopeRequest struct {
 	Filter               map[string]interface{} `json:"filter,omitempty"`
 	ObjectTypes          []string               `json:"objectTypes,omitempty"`
 	MCPWriteToolsEnabled *bool                  `json:"mcpWriteToolsEnabled,omitempty"`
+	// Since and LabelIDs are the legacy per-source scope keys. They are part of
+	// the scope contract, so they are editable alongside the filter.
+	Since    *string  `json:"since,omitempty"`
+	LabelIDs []string `json:"labelIds,omitempty"`
 }
 
 // SourceScopePreview is the validated result of a scope preview or update.
@@ -1371,6 +1375,12 @@ func (c *Client) UpdateSourceScope(ctx context.Context, integrationID string, sc
 	}
 	if scope.MCPWriteToolsEnabled != nil {
 		body["mcpWriteToolsEnabled"] = *scope.MCPWriteToolsEnabled
+	}
+	if scope.Since != nil {
+		body["since"] = *scope.Since
+	}
+	if scope.LabelIDs != nil {
+		body["labelIds"] = scope.LabelIDs
 	}
 	return c.sourceScopeRequest(ctx, "PATCH", integrationID+"/scope", body)
 }

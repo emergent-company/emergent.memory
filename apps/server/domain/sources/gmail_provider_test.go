@@ -75,6 +75,13 @@ func gmailTestCredentials() Credentials {
 	return Credentials{"refresh_token": "rt", "client_id": "cid", "client_secret": "secret", "scope": gmailReadonlyScope}
 }
 
+// gmailTestDeps returns connector deps that carry a valid stored source config.
+// FetchWithRecords reads the typed-record selection from ConnectorDeps, so a
+// connector built without it fails loudly rather than picking defaults.
+func gmailTestDeps() ConnectorDeps {
+	return ConnectorDeps{SourceConfig: map[string]any{"query": "in:inbox"}}
+}
+
 func TestGmailProviderCatalog(t *testing.T) {
 	p := newGmailProvider("", "")
 	cat := p.Catalog()
@@ -274,7 +281,7 @@ func TestGmailEnumerate(t *testing.T) {
 		{ID: "t1", HistoryID: 4242, Snippet: "Quarterly\n  planning notes"},
 		{ID: "t2", HistoryID: 0, Snippet: ""},
 	}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -321,7 +328,7 @@ func TestGmailEnumerate(t *testing.T) {
 
 func TestGmailEnumerateError(t *testing.T) {
 	f := &fakeGmailTransport{listErr: errors.New("boom")}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -357,7 +364,7 @@ func TestGmailFetchMarkdown(t *testing.T) {
 			},
 		},
 	}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -411,7 +418,7 @@ func TestGmailFetchPlaceholderBody(t *testing.T) {
 			Date:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		}}},
 	}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -429,7 +436,7 @@ func TestGmailFetchPlaceholderBody(t *testing.T) {
 
 func TestGmailFetchEmptyThreadFails(t *testing.T) {
 	f := &fakeGmailTransport{threads: map[string]*gmail.Thread{"t1": {ID: "t1"}}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -442,7 +449,7 @@ func TestGmailFetchEmptyThreadFails(t *testing.T) {
 // filter over a live mailbox, so absence can mean "archived", not "deleted".
 func TestGmailNeverDeletes(t *testing.T) {
 	f := &fakeGmailTransport{}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -487,7 +494,7 @@ func TestGmailListResources(t *testing.T) {
 func TestGmailGrantRejectedIsActionable(t *testing.T) {
 	rejected := &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
 	f := &fakeGmailTransport{testErr: rejected}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -498,7 +505,7 @@ func TestGmailGrantRejectedIsActionable(t *testing.T) {
 
 	// A transient failure keeps its raw error so the caller retries.
 	f2 := &fakeGmailTransport{testErr: errors.New("503 backend error")}
-	conn2, err := gmailProviderWith(f2).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn2, err := gmailProviderWith(f2).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -583,7 +590,7 @@ func (w *windowGmailTransport) TestConnection(_ context.Context) error { return 
 
 func newWindowConnector(t *testing.T, f GmailTransport) CursorConnector {
 	t.Helper()
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}

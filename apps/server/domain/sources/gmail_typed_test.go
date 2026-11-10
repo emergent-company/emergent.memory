@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/gmail"
 )
 
@@ -100,8 +101,8 @@ func TestGmailThreadRecordsRespectSelection(t *testing.T) {
 
 func TestGmailToolNamesIncludeAlias(t *testing.T) {
 	defs := newGmailProvider("", "").ToolDefinitions("alice", false)
-	if len(defs) != 3 {
-		t.Fatalf("read defs = %d, want 3", len(defs))
+	if len(defs) != 4 {
+		t.Fatalf("read defs = %d, want 4", len(defs))
 	}
 	for _, def := range defs {
 		if !strings.HasPrefix(def.Name, "gmail-alice-") {
@@ -113,8 +114,8 @@ func TestGmailToolNamesIncludeAlias(t *testing.T) {
 	}
 
 	writeDefs := newGmailProvider("", "").ToolDefinitions("alice", true)
-	if len(writeDefs) != len(defs)+6 {
-		t.Fatalf("write defs = %d, want read + 6", len(writeDefs))
+	if len(writeDefs) != len(defs)+5 {
+		t.Fatalf("write defs = %d, want read + 5", len(writeDefs))
 	}
 	found := false
 	for _, def := range writeDefs {
@@ -127,5 +128,32 @@ func TestGmailToolNamesIncludeAlias(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("message-send definition missing")
+	}
+}
+
+// TestGmailDraftListIsARead pins that listing drafts is a read: the tools/list
+// surface must not hide it from a read-scoped agent, and the opt-in gate for
+// write tools must not cover it.
+func TestGmailDraftListIsARead(t *testing.T) {
+	var draftList *mcp.ToolDefinition
+	for _, def := range newGmailProvider("", "").ToolDefinitions("alice", false) {
+		if def.Name == "gmail-alice-draft-list" {
+			d := def
+			draftList = &d
+		}
+	}
+	if draftList == nil {
+		t.Fatal("draft-list is not offered without the write opt-in")
+	}
+	if draftList.RequiredScope != "email:read" {
+		t.Fatalf("draft-list scope = %q, want email:read", draftList.RequiredScope)
+	}
+	if isGmailWriteAction("draft-list") {
+		t.Fatal("draft-list is classified as a write action")
+	}
+	for _, action := range []string{"message-send", "draft-create", "draft-update", "draft-send", "draft-delete"} {
+		if !isGmailWriteAction(action) {
+			t.Fatalf("%s is not classified as a write action", action)
+		}
 	}
 }

@@ -19,14 +19,22 @@ type SourceScopeInput struct {
 	Filter               map[string]any `json:"filter,omitempty"`
 	ObjectTypes          []string       `json:"objectTypes,omitempty"`
 	MCPWriteToolsEnabled bool           `json:"mcpWriteToolsEnabled"`
+	// Since and LabelIDs are the legacy per-source scope keys. They are part of
+	// the scope contract (the stored rows still carry them, and a scope edit must
+	// not leave them uneditable), so they are hashed and written with the rest.
+	Since    string   `json:"since,omitempty"`
+	LabelIDs []string `json:"labelIds,omitempty"`
 }
 
 // SourceScopeRequest is a partial scope change. Omitted fields keep the stored
-// value; MCPWriteToolsEnabled is a pointer so false is expressible.
+// value; MCPWriteToolsEnabled, Since and LabelIDs are pointers (or nil slices)
+// so an explicit clear is expressible.
 type SourceScopeRequest struct {
 	Filter               map[string]any `json:"filter"`
 	ObjectTypes          []string       `json:"objectTypes"`
 	MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled"`
+	Since                *string        `json:"since"`
+	LabelIDs             []string       `json:"labelIds"`
 }
 
 // SourceScopePreview is the validated result of a proposed scope.
@@ -159,6 +167,13 @@ func sourceScopeFromConfig(cfg map[string]any) SourceScopeInput {
 	if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
 		out.MCPWriteToolsEnabled = v
 	}
+	if v, ok := cfg["since"].(string); ok {
+		out.Since = strings.TrimSpace(v)
+	}
+	if ids, err := stringList(cfg["label_ids"]); err == nil {
+		out.LabelIDs = append(out.LabelIDs, ids...)
+		sort.Strings(out.LabelIDs)
+	}
 	sort.Strings(out.ObjectTypes)
 	return out
 }
@@ -168,6 +183,8 @@ func mergeSourceScope(current SourceScopeInput, req *SourceScopeRequest) SourceS
 		Filter:               cloneScopeMap(current.Filter),
 		ObjectTypes:          append([]string(nil), current.ObjectTypes...),
 		MCPWriteToolsEnabled: current.MCPWriteToolsEnabled,
+		Since:                current.Since,
+		LabelIDs:             append([]string(nil), current.LabelIDs...),
 	}
 	if req == nil {
 		return out
@@ -181,7 +198,14 @@ func mergeSourceScope(current SourceScopeInput, req *SourceScopeRequest) SourceS
 	if req.MCPWriteToolsEnabled != nil {
 		out.MCPWriteToolsEnabled = *req.MCPWriteToolsEnabled
 	}
+	if req.Since != nil {
+		out.Since = strings.TrimSpace(*req.Since)
+	}
+	if req.LabelIDs != nil {
+		out.LabelIDs = append([]string(nil), req.LabelIDs...)
+	}
 	sort.Strings(out.ObjectTypes)
+	sort.Strings(out.LabelIDs)
 	return out
 }
 
@@ -190,7 +214,19 @@ func configWithScope(base map[string]any, scope SourceScopeInput) (map[string]an
 	cfg["filter"] = cloneScopeMap(scope.Filter)
 	cfg["object_types"] = append([]string(nil), scope.ObjectTypes...)
 	cfg["mcp_write_tools_enabled"] = scope.MCPWriteToolsEnabled
-	// Reject accidental mutation outside the scope-owned keys.
+	// The legacy scope keys move with the scope: writing the whole scope keeps
+	// them from becoming reachable only through SQL. An empty value removes the
+	// key, so the stored shape stays canonical.
+	if scope.Since != "" {
+		cfg["since"] = scope.Since
+	} else {
+		delete(cfg, "since")
+	}
+	if len(scope.LabelIDs) > 0 {
+		cfg["label_ids"] = append([]string(nil), scope.LabelIDs...)
+	} else {
+		delete(cfg, "label_ids")
+	}
 	return cfg, nil
 }
 
@@ -200,6 +236,8 @@ func sourceScopeHash(provider string, scope SourceScopeInput) string {
 		"filter":               scope.Filter,
 		"objectTypes":          scope.ObjectTypes,
 		"mcpWriteToolsEnabled": scope.MCPWriteToolsEnabled,
+		"since":                scope.Since,
+		"labelIds":             scope.LabelIDs,
 	}
 	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)

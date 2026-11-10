@@ -58,6 +58,16 @@ func (p *gmailProvider) ToolDefinitions(alias string, writeEnabled bool) []mcp.T
 			RequiredScope: read,
 			InputSchema:   mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{}},
 		},
+		{
+			// Listing drafts performs no write; it is a read of the account's
+			// drafts and is gated on read scope like the other reads.
+			Name:          prefix + "draft-list",
+			Description:   "List Gmail drafts.",
+			RequiredScope: read,
+			InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{
+				"max_results": {Type: "integer"},
+			}},
+		},
 	}
 	if !writeEnabled {
 		return defs
@@ -104,14 +114,6 @@ func (p *gmailProvider) ToolDefinitions(alias string, writeEnabled bool) []mcp.T
 			InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{
 				"draft_id": {Type: "string"},
 			}, Required: []string{"draft_id"}},
-		},
-		mcp.ToolDefinition{
-			Name:          prefix + "draft-list",
-			Description:   "List Gmail drafts.",
-			RequiredScope: write,
-			InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{
-				"max_results": {Type: "integer"},
-			}},
 		},
 		mcp.ToolDefinition{
 			Name:          prefix + "draft-delete",

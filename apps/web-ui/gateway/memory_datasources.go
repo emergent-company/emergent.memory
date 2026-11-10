@@ -775,6 +775,10 @@ type DSScopeRequest struct {
 	Filter               map[string]any `json:"filter,omitempty"`
 	ObjectTypes          []string       `json:"objectTypes,omitempty"`
 	MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled,omitempty"`
+	// Since and LabelIDs are the legacy per-source scope keys; they are part of
+	// the scope contract and travel with it.
+	Since    *string  `json:"since,omitempty"`
+	LabelIDs []string `json:"labelIds,omitempty"`
 }
 
 // DSScopePreview is the API's scope preview/update result.
@@ -804,6 +808,12 @@ func (m *MemoryClient) UpdateDSScope(ctx context.Context, id string, req *DSScop
 	}
 	if req.MCPWriteToolsEnabled != nil {
 		body["mcpWriteToolsEnabled"] = *req.MCPWriteToolsEnabled
+	}
+	if req.Since != nil {
+		body["since"] = *req.Since
+	}
+	if req.LabelIDs != nil {
+		body["labelIds"] = req.LabelIDs
 	}
 	var out DSScopePreview
 	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope"
