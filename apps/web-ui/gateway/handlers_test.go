@@ -258,22 +258,35 @@ type fakeMemory struct {
 	dsUpsertedProjectOAuthReq  *DSSetOAuthClientRequest // last request passed to UpsertProjectDSOAuthClient
 	dsDeletedProjectOAuthID    string                   // last project id passed to DeleteProjectDSOAuthClient
 	dsDeletedProjectOAuthProv  string                   // last provider passed to DeleteProjectDSOAuthClient
-	dsResources                []DSResource             // returned by ListDSResources
-	dsResourcesTruncated       bool                     // truncated flag returned by ListDSResources
-	dsResourcesErr             error                    // ListDSResources failure
-	dsResourcesQuery           string                   // last query passed to ListDSResources
-	dsResourcesCallCount       int                      // number of ListDSResources calls
-	dsProviderResources        []DSResource             // returned by ListDSProviderResources
-	dsProviderResourcesTrunc   bool                     // truncated flag for ListDSProviderResources
-	dsProviderResourcesErr     error                    // ListDSProviderResources failure
-	dsProviderRefs             []DSResource             // returned by ListDSProviderRefs
-	dsProviderRefsTrunc        bool                     // truncated flag for ListDSProviderRefs
-	dsProviderRefsErr          error                    // ListDSProviderRefs failure
-	dsListedProviderType       string                   // last provider type passed to the listing methods
-	dsListedCredentialID       string                   // last credential id passed to the listing methods
-	dsListedConfig             map[string]any           // last config passed to the listing methods
-	dsSavedResourceID          string                   // last id passed to SaveDSResource
-	dsSavedResourceCfg         map[string]any           // last cfg passed to SaveDSResource
+	// Org source Apps + github_app triggers (see source_apps.go).
+	dsSourceApps             []SourceApp                  // returned by ListOrgSourceApps
+	dsSourceAppErr           error                        // any org source-App method failure
+	dsCreatedSourceAppReq    *DSSourceAppRequest          // last request forwarded to CreateOrgSourceApp
+	dsCreatedSourceAppOrg    string                       // last org id passed to CreateOrgSourceApp
+	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
+	dsSourceTriggers         map[string][]DSSourceTrigger // triggers per source id
+	dsSourceTriggerErr       error                        // any trigger method failure
+	dsCreatedTriggerReq      *DSSourceTriggerRequest      // last request forwarded to CreateSourceTrigger
+	dsCreatedTriggerSource   string                       // last source id passed to CreateSourceTrigger
+	dsUpdatedTriggerReq      *DSSourceTriggerRequest      // last request forwarded to UpdateSourceTrigger
+	dsUpdatedTriggerID       string                       // last trigger id passed to UpdateSourceTrigger
+	dsDeletedTriggerID       string                       // last trigger id passed to DeleteSourceTrigger
+	dsResources              []DSResource                 // returned by ListDSResources
+	dsResourcesTruncated     bool                         // truncated flag returned by ListDSResources
+	dsResourcesErr           error                        // ListDSResources failure
+	dsResourcesQuery         string                       // last query passed to ListDSResources
+	dsResourcesCallCount     int                          // number of ListDSResources calls
+	dsProviderResources      []DSResource                 // returned by ListDSProviderResources
+	dsProviderResourcesTrunc bool                         // truncated flag for ListDSProviderResources
+	dsProviderResourcesErr   error                        // ListDSProviderResources failure
+	dsProviderRefs           []DSResource                 // returned by ListDSProviderRefs
+	dsProviderRefsTrunc      bool                         // truncated flag for ListDSProviderRefs
+	dsProviderRefsErr        error                        // ListDSProviderRefs failure
+	dsListedProviderType     string                       // last provider type passed to the listing methods
+	dsListedCredentialID     string                       // last credential id passed to the listing methods
+	dsListedConfig           map[string]any               // last config passed to the listing methods
+	dsSavedResourceID        string                       // last id passed to SaveDSResource
+	dsSavedResourceCfg       map[string]any               // last cfg passed to SaveDSResource
 	// Saved, project-scoped credentials (see datasources_ui.go).
 	dsSavedCredentials       []DSSavedCredential             // returned by ListSavedDSCredentials
 	dsSavedCredentialErr     error                           // any saved-credential method failure
@@ -5242,5 +5255,125 @@ func (f *fakeMemory) UpdateProjectDSOAuthApp(ctx context.Context, projectID, app
 	return &DSOAuthApp{}, nil
 }
 func (f *fakeMemory) DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error {
+	return nil
+}
+
+// --- org source Apps + github_app triggers (see source_apps.go) ---
+
+func (f *fakeMemory) ListOrgSourceApps(ctx context.Context, orgID string) ([]SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	out := make([]SourceApp, 0, len(f.dsSourceApps))
+	for _, app := range f.dsSourceApps {
+		if app.OrgID == "" || app.OrgID == orgID {
+			out = append(out, app)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeMemory) CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsCreatedSourceAppOrg = orgID
+	f.dsCreatedSourceAppReq = req
+	app := SourceApp{
+		ID:         "sapp-new",
+		OrgID:      orgID,
+		Provider:   req.Provider,
+		AppID:      req.AppID,
+		Slug:       req.Slug,
+		WebhookKey: "webhook-key-new",
+		CreatedAt:  "2026-09-01T00:00:00Z",
+		UpdatedAt:  "2026-09-01T00:00:00Z",
+	}
+	f.dsSourceApps = append(f.dsSourceApps, app)
+	return &app, nil
+}
+
+func (f *fakeMemory) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {
+	f.dsDeletedSourceAppID = appID
+	if f.dsSourceAppErr != nil {
+		return f.dsSourceAppErr
+	}
+	kept := f.dsSourceApps[:0]
+	for _, app := range f.dsSourceApps {
+		if app.ID != appID {
+			kept = append(kept, app)
+		}
+	}
+	f.dsSourceApps = kept
+	return nil
+}
+
+func (f *fakeMemory) ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error) {
+	if f.dsSourceTriggerErr != nil {
+		return nil, f.dsSourceTriggerErr
+	}
+	return f.dsSourceTriggers[sourceID], nil
+}
+
+func (f *fakeMemory) CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
+	if f.dsSourceTriggerErr != nil {
+		return nil, f.dsSourceTriggerErr
+	}
+	if f.dsSourceTriggers == nil {
+		f.dsSourceTriggers = map[string][]DSSourceTrigger{}
+	}
+	f.dsCreatedTriggerSource = sourceID
+	f.dsCreatedTriggerReq = req
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	trigger := DSSourceTrigger{
+		ID:        "trig-new",
+		SourceID:  sourceID,
+		EventType: req.EventType,
+		AgentID:   req.AgentID,
+		Queue:     req.Queue,
+		Enabled:   enabled,
+		CreatedAt: "2026-09-01T00:00:00Z",
+		UpdatedAt: "2026-09-01T00:00:00Z",
+	}
+	f.dsSourceTriggers[sourceID] = append(f.dsSourceTriggers[sourceID], trigger)
+	return &trigger, nil
+}
+
+func (f *fakeMemory) UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
+	if f.dsSourceTriggerErr != nil {
+		return nil, f.dsSourceTriggerErr
+	}
+	f.dsUpdatedTriggerID = triggerID
+	f.dsUpdatedTriggerReq = req
+	for i := range f.dsSourceTriggers[sourceID] {
+		if f.dsSourceTriggers[sourceID][i].ID != triggerID {
+			continue
+		}
+		if req.Enabled != nil {
+			f.dsSourceTriggers[sourceID][i].Enabled = *req.Enabled
+		}
+		return &f.dsSourceTriggers[sourceID][i], nil
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "trigger not found"}
+}
+
+func (f *fakeMemory) DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error {
+	if f.dsSourceTriggerErr != nil {
+		return f.dsSourceTriggerErr
+	}
+	f.dsDeletedTriggerID = triggerID
+	if f.dsSourceTriggers == nil {
+		f.dsSourceTriggers = map[string][]DSSourceTrigger{}
+	}
+	kept := f.dsSourceTriggers[sourceID][:0]
+	for _, trigger := range f.dsSourceTriggers[sourceID] {
+		if trigger.ID != triggerID {
+			kept = append(kept, trigger)
+		}
+	}
+	f.dsSourceTriggers[sourceID] = kept
 	return nil
 }

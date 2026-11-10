@@ -477,6 +477,12 @@ func main() {
 	e.GET("/data-sources/:id/sync-jobs/partial", s.uiDataSourceSyncJobsPartial)
 	e.POST("/data-sources/:id/sync-jobs/:jobId/cancel", s.uiDataSourceCancelSync)
 	e.POST("/data-sources/:id/delete", s.uiDataSourceDelete)
+	// github_app trigger bindings (event → agent) on the source detail page.
+	// Project-scoped and documents:write on the API side; the UI follows the
+	// same form/redirect/flash conventions as the source's other actions.
+	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
+	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
+	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
 	e.GET("/objects", s.uiObjects)
 	e.GET("/objects/partial", s.uiObjectsPartial)
 	e.GET("/objects/stats", s.uiObjectsStatsPartial)
@@ -599,6 +605,13 @@ func main() {
 	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
 	// Retired URL: the project OAuth-client page became the Credentials table.
 	e.GET("/settings/oauth-clients", s.uiProjectOAuthClientsRedirect)
+	// Organization source Apps (GitHub App credentials) + the github_app
+	// trigger bindings on a source (see source_apps.go). The Apps page lives in
+	// the project settings rail because the org is taken from the active
+	// project; its writes are org-admin only and the page says so.
+	e.GET("/settings/source-apps", s.uiSourceApps)
+	e.POST("/settings/source-apps", s.uiSourceAppCreate)
+	e.POST("/settings/source-apps/:appId/delete", s.uiSourceAppDelete)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)
 	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)

@@ -40,6 +40,11 @@ type dsConfigField struct {
 	// browser to re-submit them (the edit form never carries credential inputs).
 	// Empty on the connect form, where the credentials are still unsaved.
 	SourceID string
+	// Select, when non-nil, renders the field as a select whose options the
+	// gateway resolved instead of a free-text input — github_app's app_id is the
+	// org's registered source App, never an arbitrary id (see
+	// dsAttachSourceAppSelect). Nil keeps the schema's own widget.
+	Select *dsFieldSelect
 }
 
 // dsConfigFieldOrder fixes the render order of the known config keys; any
@@ -50,6 +55,9 @@ var dsConfigFieldOrder = []string{
 	// in crawl-scope order (start URLs, then filters, then limits).
 	"start_urls", "include_globs", "exclude_globs", "max_pages", "max_depth",
 	"folders", "mime_types", "recursive",
+	// A github_app source picks its org App, its installation, then the repo
+	// allowlist — the order the GitHub App setup steps actually happen in.
+	"app_id", "installation_id", "repos",
 	"repo", "ref", "paths", "extensions",
 	"client_id", "client_secret", "refresh_token",
 }
@@ -610,6 +618,10 @@ func (s *Server) uiDataSourceNew(c echo.Context) error {
 			schemaErr = userFacingError(serr)
 		}
 		configFields, credentialFields = dsConfigFields(schema, nil)
+		// github_app's app_id names one of the org's registered Apps, so the
+		// connect form offers them as a select (with the register link in its
+		// empty state) rather than a raw id the server would reject.
+		configFields = s.dsAttachSourceAppSelect(ctx, selected.Type, configFields)
 		// ?credentialId (server-provided link) and ?savedCredential (the
 		// post-create redirect from the shared modal) both preselect a
 		// credential on the connect form.
@@ -2628,7 +2640,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, dsSavedCredentialPicker{}, nil, userFacingError(err), nil, nil, "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, dsSavedCredentialPicker{}, nil, userFacingError(err), nil, nil, nil, "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	var providers []DSProvider
@@ -2647,6 +2659,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	var configFields, credentialFields []dsConfigField
 	if schema, serr := s.memory.GetDSProviderSchema(ctx, src.ProviderType); serr == nil {
 		configFields, credentialFields = dsConfigFields(schema, src.Config)
+		configFields = s.dsAttachSourceAppSelect(ctx, src.ProviderType, configFields)
 	}
 	// A saved source's suggestions list through its stored credentials; the
 	// connect form (no source yet) keeps the unsaved-config endpoints.
@@ -2667,10 +2680,16 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 		{key: "updated", msg: "Data source updated."},
 		{key: "synced", msg: "Sync triggered."},
 		{key: "cancelled", msg: "Sync cancelled."},
+		{key: "triggerCreated", msg: "Trigger added."},
+		{key: "triggerToggled", msg: "Trigger updated."},
+		{key: "triggerDeleted", msg: "Trigger removed."},
 	})
 	flashErr := flashError(c)
+	// Trigger bindings exist only for the event-driven github_app provider; any
+	// other provider gets no panel (the API would have nothing to list).
+	triggers := s.dsDataSourceTriggers(c, src)
 	return s.page(c, pageTitle(dsSourceName(*src)),
-		DataSourceDetailPage(src, providerName, configFields, credentialFields, picker, jobs, nil, resourcePrompt, credentialSummary, flashMsg, flashErr))
+		DataSourceDetailPage(src, providerName, configFields, credentialFields, picker, jobs, nil, resourcePrompt, credentialSummary, triggers, flashMsg, flashErr))
 }
 
 // uiDataSourceUpdate handles the settings form (PRG). The config is rebuilt from

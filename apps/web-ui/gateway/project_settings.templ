@@ -48,6 +48,10 @@ templ settingsSubNav(active string, providersMissing bool) {
 		// Credentials are visible to every project member; the per-provider
 		// editor and writes stay project-admin only.
 		{Key: "credentials", Href: "/settings/credentials", Icon: "lucide--key-round", Label: "Credentials"},
+		// Source Apps are organization-scoped GitHub App credentials. Every
+		// member can open the page; the register/delete controls and the App
+		// list are org-admin only (the page renders the forbidden state).
+		{Key: "source-apps", Href: "/settings/source-apps", Icon: "lucide--webhook", Label: "Source apps"},
 	}
 	items = append(items, components.RailItem{Key: "budget", Href: "/settings/budget", Icon: "lucide--wallet", Label: "Budget"}) }}
 	@components.SettingsRail("Settings sections", active, items)

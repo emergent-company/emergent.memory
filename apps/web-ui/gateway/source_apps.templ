@@ -1,0 +1,178 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// SourceAppsPage is the organization's GitHub App registry: every registered App
+// with its numeric id, the webhook URL GitHub must deliver to, and the register
+// form. The API behind it is org-admin only, so a caller who cannot administer
+// the org gets sourceAppsForbidden instead of an empty list and dead controls.
+templ SourceAppsPage(data dsSourceAppsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Source apps")), "", "Source apps", dsSourceAppsSubtitle(data.OrgName), detailHeaderOpts{Margin: "mb-6"})
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("source-apps", data.ProvidersMissing), nil) {
+			if data.LoadErr != nil {
+				@pageErrorNotice("Source apps unavailable", data.LoadErr)
+			} else if data.Forbidden {
+				@sourceAppsForbidden()
+			} else {
+				@sourceAppsList(data)
+				@sourceAppRegisterCard()
+			}
+		}
+	}
+}
+
+// sourceAppsForbidden is the org-admin-only state: the page exists for every
+// project member (the settings rail links here), but nothing is listed and no
+// write control is rendered that the API would answer with 403.
+templ sourceAppsForbidden() {
+	<div data-testid="ds-source-apps-forbidden">
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--lock",
+			Title:       "Organization administrators only",
+			Description: "Source Apps are organization-wide GitHub App credentials, so only an organization administrator can register, view, or remove them. Ask an administrator if a GitHub App source needs one.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	</div>
+}
+
+// sourceAppsList is the registered Apps, one row each.
+templ sourceAppsList(data dsSourceAppsPageData) {
+	<div class="mb-4" data-testid="ds-source-apps">
+		@components.PanelCard("", nil) {
+			<h2 class="text-base font-semibold">Registered Apps</h2>
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+				One App can back several GitHub App sources across this organization's projects. The private key and webhook secret are stored encrypted and never shown again.
+			}
+			if len(data.Rows) == 0 {
+				<div class="mt-3" data-testid="ds-source-apps-empty">
+					@ui.EmptyNote(ui.EmptyNoteProps{}) {
+						No GitHub Apps are registered yet. Register one below, then point its webhook at the URL this page shows.
+					}
+				</div>
+			} else {
+				<ul class="mt-3 flex flex-col gap-3" data-testid="ds-source-app-list">
+					for _, row := range data.Rows {
+						@sourceAppRow(row)
+					}
+				</ul>
+			}
+		}
+	</div>
+}
+
+// sourceAppRow is one registered App: identity, the delivery URL GitHub needs,
+// and the delete action.
+templ sourceAppRow(row dsSourceAppRow) {
+	{{ clipboardID := "ds-source-app-webhook-" + row.ID }}
+	<li class="flex flex-col gap-3 rounded-box border border-base-content/10 px-3 py-3" data-testid="ds-source-app-row" data-app-row-id={ row.ID }>
+		<div class="flex flex-wrap items-start justify-between gap-3">
+			<div class="flex min-w-0 flex-wrap items-center gap-2">
+				@ui.Badge(ui.BadgeProps{Label: "GitHub App", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM, Icon: "lucide--github"})
+				<span class="text-sm font-medium" data-testid="ds-source-app-slug">{ row.Slug }</span>
+				<span class="text-xs text-muted" data-testid="ds-source-app-id">App ID { strconv.FormatInt(row.AppID, 10) }</span>
+				<span class="text-xs text-muted">Registered { relTimeOrDash(row.CreatedAt) }</span>
+			</div>
+			<form
+				method="post"
+				action={ templ.URL(dsSourceAppsPath + "/" + url.PathEscape(row.ID) + "/delete") }
+				class="inline-flex"
+				hx-confirm="Remove this GitHub App registration? Sources still bound to it must be deleted or switched first."
+			>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+					Attrs:   templ.Attributes{"data-testid": "ds-source-app-delete"},
+				}) {
+					Remove
+				}
+			</form>
+		</div>
+		<div data-testid="ds-source-app-webhook">
+			if row.WebhookURL != "" {
+				@form.ClipboardCopy([]form.ClipboardCopyItem{
+					{
+						ID:          clipboardID,
+						Label:       "Webhook URL",
+						Value:       row.WebhookURL,
+						ButtonLabel: "Copy",
+						Mono:        true,
+					},
+				})
+			} else {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+					The deployment did not report a public URL, so the webhook delivery URL cannot be built here. Set it to /api/webhooks/source-apps/{ row.WebhookKey } on your memory deployment.
+				}
+			}
+		</div>
+	</li>
+}
+
+// sourceAppRegisterCard is the register form. Both secrets are write-only: they
+// are submitted once and never rendered back.
+templ sourceAppRegisterCard() {
+	<div data-testid="ds-source-app-register">
+		@components.PanelCard("", nil) {
+			<h2 class="text-base font-semibold">Register a GitHub App</h2>
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+				Use the App ID, slug, private key, and webhook secret from the App's settings on GitHub. Create the App under the organization that owns this memory organization.
+			}
+			<form method="post" action={ templ.URL(dsSourceAppsPath) } class="mt-3 flex flex-col gap-4" data-testid="ds-source-app-form">
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="source-app-id">App ID <span class="text-error" aria-hidden="true">*</span></label>
+						<input id="source-app-id" name="appId" type="number" min="1" step="1" required class="input w-full" data-testid="ds-source-app-app-id"/>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+							The numeric App ID from GitHub's App settings, not the client id.
+						}
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="source-app-slug">Slug <span class="text-error" aria-hidden="true">*</span></label>
+						<input id="source-app-slug" name="slug" type="text" required class="input w-full" placeholder="my-org-bot" data-testid="ds-source-app-slug-input"/>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+							The App's URL slug on GitHub, used as its label when binding a source.
+						}
+					</div>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="source-app-private-key">Private key <span class="text-error" aria-hidden="true">*</span></label>
+					<textarea id="source-app-private-key" name="privateKey" rows="4" required class="textarea w-full font-mono text-xs" placeholder="-----BEGIN RSA PRIVATE KEY-----" data-testid="ds-source-app-private-key"></textarea>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+						The PEM private key GitHub generated for the App. It is write-only and never shown again.
+					}
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="source-app-webhook-secret">Webhook secret <span class="text-error" aria-hidden="true">*</span></label>
+					<input id="source-app-webhook-secret" name="webhookSecret" type="password" required autocomplete="new-password" class="input w-full" data-testid="ds-source-app-webhook-secret"/>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+						The secret set on the App's webhook. It is write-only: every delivery is verified against the stored copy.
+					}
+				</div>
+				<div>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plus",
+						Attrs:   templ.Attributes{"data-testid": "ds-source-app-save"},
+					}) {
+						Register App
+					}
+				</div>
+			</form>
+		}
+	</div>
+}
