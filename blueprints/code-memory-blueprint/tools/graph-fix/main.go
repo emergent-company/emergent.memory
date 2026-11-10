@@ -177,10 +177,6 @@ func run() error {
 		// docs
 		{"ep-docs-getcategories", "docs", "GET", "/api/docs/categories", "GetCategories", "apps/server/domain/docs/routes.go"},
 		// extraction embedding (already exist in graph, but skipped by sync — update via file_updates above)
-		// githubapp
-		{"ep-githubapp-callback", "githubapp", "GET", "/api/v1/settings/github/callback", "Callback", "apps/server/domain/githubapp/routes.go"},
-		{"ep-githubapp-clisetup", "githubapp", "POST", "/api/v1/settings/github/cli", "CLISetup", "apps/server/domain/githubapp/routes.go"},
-		{"ep-githubapp-webhook", "githubapp", "POST", "/api/v1/settings/github/webhook", "Webhook", "apps/server/domain/githubapp/routes.go"},
 		// health
 		{"ep-health-healthz", "health", "GET", "/healthz", "Healthz", "apps/server/domain/health/routes.go"},
 		// mcpregistry
