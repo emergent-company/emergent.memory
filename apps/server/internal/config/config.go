@@ -9,6 +9,8 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/internal/proxytrust"
 )
 
 var Module = fx.Module("config",
@@ -21,9 +23,16 @@ type Config struct {
 	ServerPort      int    `env:"SERVER_PORT" envDefault:"3002"`
 	ServerAddress   string `env:"SERVER_ADDRESS" envDefault:"0.0.0.0"`
 	InternalBaseURL string `env:"INTERNAL_BASE_URL" envDefault:""`
-	Environment     string `env:"ENVIRONMENT" envDefault:"local"`
-	Debug           bool   `env:"DEBUG" envDefault:"false"`
-	LogLevel        string `env:"LOG_LEVEL" envDefault:"info"`
+	// TrustedProxyCIDRs (TRUSTED_PROXY_CIDRS, comma-separated) names the
+	// networks a forwarding proxy connects from. X-Forwarded-For is honoured
+	// only when the socket peer is inside one of them, resolving the right-most
+	// untrusted hop; empty = fail closed on the socket peer address and ignore
+	// forwarded headers. See internal/proxytrust and GHSA-246p-cpwv-v3jq /
+	// GHSA-99jh-6h7p-pp36 (#26).
+	TrustedProxyCIDRs []string `env:"TRUSTED_PROXY_CIDRS"`
+	Environment       string   `env:"ENVIRONMENT" envDefault:"local"`
+	Debug             bool     `env:"DEBUG" envDefault:"false"`
+	LogLevel          string   `env:"LOG_LEVEL" envDefault:"info"`
 
 	// Database settings
 	Database DatabaseConfig
@@ -1132,6 +1141,12 @@ func NewConfig(log *slog.Logger) (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+	// Reject a malformed TRUSTED_PROXY_CIDRS entry at startup instead of
+	// silently changing the client-IP trust model (the extractor itself fails
+	// closed, but a typo should be a boot error, not a degraded rate-limit key).
+	if _, err := proxytrust.Parse(cfg.TrustedProxyCIDRs); err != nil {
+		return nil, err
 	}
 
 	log.Info("configuration loaded",

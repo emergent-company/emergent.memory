@@ -23,6 +23,9 @@ extension ChatSessionView {
     /// Subscribes for the open text chat. A new chat has no id yet, so this is
     /// called again from `onConversationLearned` once the `meta` frame names it.
     func startConversationEventsIfNeeded() {
+        // The plan card is mode-independent: refresh it whenever the chat opens
+        // (text or voice), returns to the foreground, or switches mode (#440).
+        refreshPlan()
         guard activeSession.mode == .text, let conversationID = openConversationID else { return }
         attachConversationEventsCallbacks()
         liveRun.attach(conversationID: conversationID)
@@ -54,6 +57,9 @@ extension ChatSessionView {
         let wasWorking = attachedTurnID != nil
         let wasCancelling = transport.isCancelling
         transport.applyRunRefresh(state)
+        // Every refresh frame is a moment the plan may have changed: it is the
+        // same trigger the web chat refreshes its todo card on (#440).
+        refreshPlan()
 
         if state.isWorking, !transport.isStreaming {
             beginAttachedRunIfNeeded()
