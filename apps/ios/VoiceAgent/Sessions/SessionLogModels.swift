@@ -25,18 +25,30 @@ struct SessionSummary: Identifiable, Codable, Equatable, Sendable {
     var title: String?
     /// True when the conversation is archived (hidden from the default list).
     var isArchived: Bool = false
+    /// Parent conversation when this row is a sub-chat spawned by an agent run.
+    var parentConversationID: String? = nil
+    /// Run-state bucket, the same value the web rail badge reads:
+    /// `needs_input`, `failed`, `running`, or `done`. Nil/empty hides the badge.
+    var bucket: String? = nil
+    /// Pending tool approvals for this conversation (part of the waiting count).
+    var pendingApprovals: Int = 0
+    /// Pending ask-user questions for this conversation.
+    var pendingQuestions: Int = 0
 
     var id: String {
         room
     }
 
     enum CodingKeys: String, CodingKey {
-        case room, turns, preview, origin, title
+        case room, turns, preview, origin, title, bucket
         case startedAt = "started_at"
         case endedAt = "ended_at"
         case toolCalls = "tool_calls"
         case agentDefinitionID = "agent_definition_id"
         case isArchived = "is_archived"
+        case parentConversationID = "parent_conversation_id"
+        case pendingApprovals = "pending_approvals"
+        case pendingQuestions = "pending_questions"
     }
 }
 
@@ -55,6 +67,10 @@ extension SessionSummary {
         agentDefinitionID = (try? container.decodeIfPresent(String.self, forKey: .agentDefinitionID)) ?? nil
         title = (try? container.decodeIfPresent(String.self, forKey: .title)) ?? nil
         isArchived = (try? container.decodeIfPresent(Bool.self, forKey: .isArchived)) ?? false
+        parentConversationID = (try? container.decodeIfPresent(String.self, forKey: .parentConversationID)) ?? nil
+        bucket = (try? container.decodeIfPresent(String.self, forKey: .bucket)) ?? nil
+        pendingApprovals = (try? container.decodeIfPresent(Int.self, forKey: .pendingApprovals)) ?? 0
+        pendingQuestions = (try? container.decodeIfPresent(Int.self, forKey: .pendingQuestions)) ?? 0
     }
 }
 
